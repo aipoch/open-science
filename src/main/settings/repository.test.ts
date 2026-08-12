@@ -3,7 +3,9 @@ import { isAbsolute, join, normalize, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SettingsRepository, sanitizeSettings } from './repository'
+import { sanitizeSettings } from './document-codec'
+import { SettingsDocumentStore } from './document-store'
+import { SettingsRepository } from './repository'
 import type { StoredProvider } from './types'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
@@ -49,6 +51,77 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('defaults legacy and malformed Subagent model settings to dynamic inheritance', () => {
+    expect(sanitizeSettings({ providers: [] }).subagentModel).toEqual({ mode: 'inherit' })
+    expect(
+      sanitizeSettings({
+        providers: [],
+        subagentModel: { mode: 'fixed', providerId: 'p1', model: '', reasoningEffort: 'high' }
+      }).subagentModel
+    ).toEqual({ mode: 'inherit' })
+  })
+
+  it('preserves a structurally valid fixed Subagent model when its provider is unavailable', () => {
+    expect(
+      sanitizeSettings({
+        providers: [],
+        subagentModel: {
+          mode: 'fixed',
+          providerId: 'removed-provider',
+          model: 'removed-model',
+          reasoningEffort: 'high'
+        }
+      }).subagentModel
+    ).toEqual({
+      mode: 'fixed',
+      providerId: 'removed-provider',
+      model: 'removed-model',
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('atomically replaces the complete Subagent model configuration', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setSubagentModel({
+      mode: 'fixed',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'max'
+    })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      subagentModel: {
+        mode: 'fixed',
+        providerId: 'provider-a',
+        model: 'model-a',
+        reasoningEffort: 'max'
+      }
+    })
+
+    await repository.setSubagentModel({ mode: 'inherit' })
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      subagentModel: { mode: 'inherit' }
+    })
+  })
+
+  it('retains the committed Subagent model when authoritative validation rejects a stale write', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.setSubagentModel({ mode: 'inherit' })
+
+    await expect(
+      repository.setSubagentModel(
+        { mode: 'fixed', providerId: 'gone', model: 'gone-model', reasoningEffort: 'default' },
+        () => {
+          throw new Error('refresh catalog')
+        }
+      )
+    ).rejects.toThrow('refresh catalog')
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      subagentModel: { mode: 'inherit' }
+    })
+  })
+
   it('keeps only an existing Claude subscription provider as the preferred mode', () => {
     const providers = [
       {
@@ -350,6 +423,28 @@ describe('settings repository', () => {
     expect((await repository.getSettings()).closePreference).toBeUndefined()
   })
 
+  it('persists, sanitizes, and clears the project files filter preference', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setProjectFilesFilter({ sourceMode: 'local', localRootId: 'root-1' })
+    expect((await new SettingsRepository(root).getSettings()).projectFilesFilter).toEqual({
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+    expect(
+      sanitizeSettings({ projectFilesFilter: { sourceMode: 'remote' } }).projectFilesFilter
+    ).toBeUndefined()
+    expect(sanitizeSettings({ projectFilesFilter: 'local' }).projectFilesFilter).toBeUndefined()
+    expect(
+      sanitizeSettings({ projectFilesFilter: { sourceMode: 'artifacts', optionId: 4 } })
+        .projectFilesFilter
+    ).toEqual({ sourceMode: 'artifacts' })
+
+    await repository.setProjectFilesFilter(undefined)
+    expect((await repository.getSettings()).projectFilesFilter).toBeUndefined()
+  })
+
   it('persists the app icon variant across a sanitized read and a reload', async () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
@@ -371,6 +466,35 @@ describe('settings repository', () => {
     expect(sanitizeSettings({ appIconVariant: 'sparkle' }).appIconVariant).toBeUndefined()
     expect(sanitizeSettings({ appIconVariant: 3 }).appIconVariant).toBeUndefined()
     expect(sanitizeSettings({}).appIconVariant).toBeUndefined()
+  })
+
+  it.each(['ask', 'auto', 'full'] as const)(
+    'keeps the %s default permission profile on load',
+    (profile) => {
+      expect(sanitizeSettings({ defaultPermissionProfile: profile }).defaultPermissionProfile).toBe(
+        profile
+      )
+    }
+  )
+
+  it('drops an invalid default permission profile on load', () => {
+    expect(
+      sanitizeSettings({ defaultPermissionProfile: 'unsafe' }).defaultPermissionProfile
+    ).toBeUndefined()
+    expect(
+      sanitizeSettings({ defaultPermissionProfile: 1 }).defaultPermissionProfile
+    ).toBeUndefined()
+    expect(sanitizeSettings({}).defaultPermissionProfile).toBeUndefined()
+  })
+
+  it('persists the default permission profile across a sanitized read and reload', async () => {
+    const root = await createStorageRoot()
+    const repository = new SettingsRepository(root)
+
+    await repository.setDefaultPermissionProfile('full')
+
+    expect((await repository.getSettings()).defaultPermissionProfile).toBe('full')
+    expect((await new SettingsRepository(root).getSettings()).defaultPermissionProfile).toBe('full')
   })
 
   it('persists the Codex adapter and paired native runtime across a sanitized read', async () => {
@@ -631,6 +755,28 @@ describe('settings repository', () => {
 
     const settings = await repository.getSettings()
     expect(settings.providers.map((item) => item.id).sort()).toEqual(['p1', 'p2', 'p3'])
+  })
+
+  it('preserves concurrent mutations from Settings and legacy Compute callers', async () => {
+    const store = new SettingsDocumentStore(await createStorageRoot())
+    const settings = new SettingsRepository(store)
+    const legacyCompute = new SettingsRepository(store)
+
+    await Promise.all([
+      settings.upsertProvider(provider({ id: 'p-settings' })),
+      legacyCompute.addComputeGrant({
+        projectId: 'project-1',
+        operation: 'submit_job',
+        providerId: 'ssh:cluster'
+      })
+    ])
+
+    await expect(settings.getSettings()).resolves.toMatchObject({
+      providers: [expect.objectContaining({ id: 'p-settings' })],
+      computeGrants: [
+        { projectId: 'project-1', operation: 'submit_job', providerId: 'ssh:cluster' }
+      ]
+    })
   })
 
   it('stamps onboardingCompletedAt once and is idempotent', async () => {
@@ -952,6 +1098,23 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
   })
 
+  it('persists and clears only the encrypted GitHub token reference and display mask', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setGitHubToken('enc:ciphertext', 'gith…oken')
+    expect(await repository.getSettings()).toMatchObject({
+      githubTokenRef: 'enc:ciphertext',
+      githubTokenMask: 'gith…oken'
+    })
+
+    await repository.setGitHubToken(undefined, undefined)
+    expect((await repository.getSettings()).githubTokenRef).toBeUndefined()
+    expect((await repository.getSettings()).githubTokenMask).toBeUndefined()
+    expect(
+      sanitizeSettings({ githubTokenRef: 42, githubTokenMask: false }).githubTokenRef
+    ).toBeUndefined()
+  })
+
   it('drops non-string / duplicate disabledSkillIds on read', async () => {
     const root = await createStorageRoot()
 
@@ -1006,17 +1169,19 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).notebookRuntimes).toBeUndefined()
   })
 
-  it('rejects a malformed runtime selection (no interpreter path)', async () => {
+  it('rejects malformed runtime selections before applying language constraints', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 
-    await expect(
-      repository.setRuntimeSelection('python', {
-        source: 'external',
-        interpreterPath: '',
-        appOwnedOverlay: false,
-        packageInstallAuthorized: false
-      })
-    ).rejects.toThrow(/invalid/i)
+    for (const language of ['python', 'r'] as const) {
+      await expect(
+        repository.setRuntimeSelection(language, {
+          source: 'external',
+          interpreterPath: '',
+          appOwnedOverlay: false,
+          packageInstallAuthorized: false
+        })
+      ).rejects.toThrow(/invalid/i)
+    }
   })
 
   it('persists and clears a per-language runtime enablement via setRuntimeEnablement', async () => {

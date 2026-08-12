@@ -79,7 +79,11 @@ describe('notebook RPC agentsCall route', () => {
       token: 'tok',
       agentsService: { read }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     try {
       const res = await fetch(connection.endpoint, {
         method: 'POST',
@@ -127,7 +131,11 @@ describe('notebook RPC agentsCall route', () => {
       transport: 'tcp',
       agentsService: { read }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     try {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
@@ -164,7 +172,11 @@ describe('notebook RPC agentsCall route', () => {
       token: 'tok',
       agentsService: { read }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     try {
       await fetch(connection.endpoint, {
         method: 'POST',
@@ -181,7 +193,7 @@ describe('notebook RPC agentsCall route', () => {
       // sees the caller-supplied session id as a user param.
       expect(read).toHaveBeenCalledWith(
         { op: 'list_skills', params: { name_or_id: 'demo' } },
-        { sessionId: 'trusted-session' }
+        { sessionId: 'trusted-session', callerRole: 'main' }
       )
     } finally {
       connection.release()
@@ -198,7 +210,11 @@ describe('notebook RPC agentsCall route', () => {
       token: 'tok',
       agentsService: { read }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     try {
       const res = await fetch(connection.endpoint, {
         method: 'POST',
@@ -224,7 +240,11 @@ describe('notebook RPC agentsCall route', () => {
       token: 'tok',
       agentsService: { read }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     try {
       await fetch(connection.endpoint, {
         method: 'POST',
@@ -254,7 +274,7 @@ describe('notebook RPC agentsCall route', () => {
       // Only the trusted session_id (as context) and the legitimate method filter reach the service.
       expect(read).toHaveBeenCalledWith(
         { op: 'list_skills', params: { name_or_id: 'demo' } },
-        { sessionId: 'trusted-session' }
+        { sessionId: 'trusted-session', callerRole: 'main' }
       )
     } finally {
       connection.release()
@@ -270,7 +290,11 @@ describe('notebook RPC agentsCall route', () => {
       token: 'tok',
       agentsService: { read, dispatch }
     })
-    const connection = await server.issueControlConnection('trusted-session', 'default-project')
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     try {
       const res = await fetch(connection.endpoint, {
         method: 'POST',

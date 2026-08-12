@@ -7,6 +7,10 @@ import { pathToFileURL } from 'node:url'
 
 const PLATFORMS = ['linux-x64', 'macos-arm64', 'macos-x64', 'windows-x64']
 const DISTRIBUTABLE = /\.(?:AppImage|deb|dmg|exe|zip)$/
+const CHECK_STATES = ['passed', 'not-applicable']
+const DATABASE_BASELINE_ID = '0001_runtime_schema_baseline'
+const DATABASE_BASELINE_CHECKSUM =
+  'e29d0483786c3ed2e1c9cd358369b254a54ccf54213931c5ef71a8fd4e161525'
 
 const argumentValue = (argv, name) => {
   const index = argv.indexOf(name)
@@ -26,22 +30,56 @@ const artifactEvidence = async (directory) => {
   )
 }
 
+const assertDatabaseMigrationCertification = (record) => {
+  if (
+    record?.schemaVersion !== 1 ||
+    record.compatibilityFloor?.migrationId !== DATABASE_BASELINE_ID ||
+    record.compatibilityFloor?.migrationChecksum !== DATABASE_BASELINE_CHECKSUM ||
+    !/^\d+\.\d+\.\d+$/.test(record.compatibilityFloor?.sqliteVersion ?? '') ||
+    record.checks?.freshInstall !== 'passed' ||
+    record.checks?.legacyAdoption !== 'passed' ||
+    record.checks?.reopen !== 'passed' ||
+    record.checks?.specialPath !== 'passed'
+  ) {
+    throw new Error('Invalid packaged database migration certification.')
+  }
+  return record
+}
+
+const compareSqliteVersions = (left, right) => {
+  const leftParts = left.split('.').map(Number)
+  const rightParts = right.split('.').map(Number)
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return leftParts[index] - rightParts[index]
+  }
+  return 0
+}
+
 const writePlatformEvidence = async ({ argv, environment = process.env }) => {
   const platform = argumentValue(argv, '--platform')
   const artifactDirectoryArgument = argumentValue(argv, '--artifact-dir')
   const outputArgument = argumentValue(argv, '--output')
+  const electronP0 = argumentValue(argv, '--electron-p0')
+  const visualRegression = argumentValue(argv, '--visual-regression')
   const packageSmoke = argumentValue(argv, '--package-smoke')
+  const databaseMigrationCertification = argumentValue(argv, '--database-migration-certification')
   const authenticode = argumentValue(argv, '--authenticode')
   if (
     !PLATFORMS.includes(platform) ||
     !artifactDirectoryArgument ||
     !outputArgument ||
+    !CHECK_STATES.includes(electronP0) ||
+    !CHECK_STATES.includes(visualRegression) ||
     !['passed', 'not-applicable'].includes(packageSmoke) ||
+    !databaseMigrationCertification ||
     !['passed', 'not-required', 'not-applicable'].includes(authenticode)
   ) {
     throw new Error(
       'Usage: --platform <platform> --artifact-dir <path> --output <path> ' +
+        '--electron-p0 <passed|not-applicable> ' +
+        '--visual-regression <passed|not-applicable> ' +
         '--package-smoke <passed|not-applicable> ' +
+        '--database-migration-certification <path> ' +
         '--authenticode <passed|not-required|not-applicable>'
     )
   }
@@ -62,11 +100,14 @@ const writePlatformEvidence = async ({ argv, environment = process.env }) => {
       runAttempt: environment.GITHUB_RUN_ATTEMPT
     },
     checks: {
-      electronP0: 'passed',
-      visualRegression: 'passed',
+      electronP0,
+      visualRegression,
       packageSmoke,
       authenticode
     },
+    databaseMigration: assertDatabaseMigrationCertification(
+      JSON.parse(await readFile(resolve(databaseMigrationCertification), 'utf8'))
+    ),
     artifacts: await artifactEvidence(artifactDirectory)
   }
   await writeFile(output, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8')
@@ -80,10 +121,11 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
   const status = argumentValue(argv, '--status')
   const reason = argumentValue(argv, '--reason')
   const updaterObservationPath = argumentValue(argv, '--updater-observation')
-  if (!outputArgument || !currentTag || !['passed', 'not-applicable'].includes(status)) {
+  const databaseMigrationCertification = argumentValue(argv, '--database-migration-certification')
+  if (!outputArgument || !currentTag || !['passed', 'failed', 'not-applicable'].includes(status)) {
     throw new Error(
       'Usage: --output <path> --current-tag <tag> [--previous-tag <tag>] ' +
-        '--status <passed|not-applicable> [--updater-observation <path>]'
+        '--status <passed|failed|not-applicable> [--updater-observation <path>]'
     )
   }
   if (status === 'passed' && !previousTag) {
@@ -92,14 +134,20 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
   if (status === 'passed' && !updaterObservationPath) {
     throw new Error('A passed Windows update drill requires differential updater observation.')
   }
+  if (status === 'passed' && !databaseMigrationCertification) {
+    throw new Error('A passed Windows update drill requires database migration certification.')
+  }
   if (status === 'not-applicable' && reason !== 'no-previous-stable-release') {
     throw new Error('A non-applicable Windows update drill requires an approved reason.')
+  }
+  if (status === 'failed' && (!previousTag || !reason)) {
+    throw new Error('A failed Windows update drill requires the previous tag and failure reason.')
   }
   if (!environment.GITHUB_SHA || !environment.GITHUB_RUN_ID || !environment.GITHUB_RUN_ATTEMPT) {
     throw new Error('Windows update evidence requires GitHub run identity variables.')
   }
 
-  const check = status === 'passed' ? 'passed' : 'not-applicable'
+  const check = status === 'passed' ? 'passed' : status === 'failed' ? 'failed' : 'not-applicable'
   let updater
   if (updaterObservationPath) {
     updater = JSON.parse(await readFile(resolve(updaterObservationPath), 'utf8'))
@@ -127,6 +175,11 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
       throw new Error('Windows updater observation versions do not match the release tags.')
     }
   }
+  const databaseMigration = databaseMigrationCertification
+    ? assertDatabaseMigrationCertification(
+        JSON.parse(await readFile(resolve(databaseMigrationCertification), 'utf8'))
+      )
+    : undefined
   const evidence = {
     schemaVersion: 1,
     kind: 'windows-update-drill',
@@ -149,7 +202,8 @@ const writeWindowsUpdateEvidence = async ({ argv, environment = process.env }) =
       restart: check
     },
     ...(updater ? { updater } : {}),
-    ...(status === 'not-applicable' ? { reason } : {})
+    ...(databaseMigration ? { databaseMigration } : {}),
+    ...(status !== 'passed' ? { reason } : {})
   }
   await writeFile(resolve(outputArgument), `${JSON.stringify(evidence, null, 2)}\n`, 'utf8')
   return evidence
@@ -159,12 +213,11 @@ const aggregateEvidence = async ({ argv }) => {
   const directoryArgument = argumentValue(argv, '--directory')
   const outputArgument = argumentValue(argv, '--output')
   const expectedSha = argumentValue(argv, '--expected-sha')
-  const requireStableReleaseChecks = argv.includes('--require-stable-release-checks')
-  const windowsFullSuite = argumentValue(argv, '--windows-full-suite')
+  const requireWindowsUpdate = argv.includes('--require-windows-update')
   if (!directoryArgument || !outputArgument || !expectedSha) {
     throw new Error(
       'Usage: --directory <path> --output <path> --expected-sha <sha> ' +
-        '[--require-stable-release-checks] [--windows-full-suite passed]'
+        '[--require-windows-update]'
     )
   }
   const directory = resolve(directoryArgument)
@@ -188,11 +241,16 @@ const aggregateEvidence = async ({ argv }) => {
 
   for (const platform of PLATFORMS) {
     const record = byPlatform.get(platform)
+    try {
+      assertDatabaseMigrationCertification(record?.databaseMigration)
+    } catch {
+      throw new Error(`Invalid release certification evidence for ${platform}.`)
+    }
     if (
       record.schemaVersion !== 1 ||
       record.source?.sha !== expectedSha ||
-      record.checks?.electronP0 !== 'passed' ||
-      record.checks?.visualRegression !== 'passed' ||
+      record.checks?.electronP0 !== 'not-applicable' ||
+      record.checks?.visualRegression !== 'not-applicable' ||
       !Array.isArray(record.artifacts) ||
       record.artifacts.length === 0
     ) {
@@ -209,14 +267,19 @@ const aggregateEvidence = async ({ argv }) => {
     }
   }
   let windowsUpdate
-  if (requireStableReleaseChecks) {
-    if (windowsFullSuite !== 'passed') {
-      throw new Error('Stable release evidence requires the blocking Windows full suite.')
-    }
+  if (requireWindowsUpdate) {
     const updatePath = join(directory, 'certification-windows-update.json')
     windowsUpdate = JSON.parse(await readFile(updatePath, 'utf8').catch(() => 'null'))
+    let validDatabaseMigration = false
+    try {
+      assertDatabaseMigrationCertification(windowsUpdate?.databaseMigration)
+      validDatabaseMigration = true
+    } catch {
+      validDatabaseMigration = false
+    }
     const passedChecks =
       windowsUpdate?.status === 'passed' &&
+      validDatabaseMigration &&
       windowsUpdate.updater?.schemaVersion === 1 &&
       windowsUpdate.updater?.mode === 'electron-updater-differential' &&
       windowsUpdate.updater?.feedRequests >= 1 &&
@@ -254,13 +317,20 @@ const aggregateEvidence = async ({ argv }) => {
     }
   }
 
+  const platformRecords = PLATFORMS.map((platform) => byPlatform.get(platform))
+  const databaseCompatibilityFloor = {
+    migrationId: DATABASE_BASELINE_ID,
+    migrationChecksum: DATABASE_BASELINE_CHECKSUM,
+    sqliteVersion: platformRecords
+      .map((record) => record.databaseMigration.compatibilityFloor.sqliteVersion)
+      .sort(compareSqliteVersions)[0]
+  }
   const report = {
     schemaVersion: 1,
     sourceSha: expectedSha,
-    platforms: PLATFORMS.map((platform) => byPlatform.get(platform)),
-    ...(requireStableReleaseChecks
-      ? { releaseChecks: { windowsFullSuite: 'passed', windowsUpdate } }
-      : {})
+    databaseCompatibilityFloor,
+    platforms: platformRecords,
+    ...(requireWindowsUpdate ? { releaseChecks: { windowsUpdate } } : {})
   }
   await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
   return report

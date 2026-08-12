@@ -22,6 +22,7 @@ import {
   samePath
 } from '../storage-root'
 import { resolveMicromamba } from '../notebook/micromamba'
+import type { MicromambaRunner } from '../notebook/windows-micromamba-runner'
 import { captureMicromamba } from '../notebook/provisioner-runtime'
 import { exportRuntimeLocks } from '../notebook/runtime-relocation'
 import { removeMicromambaCacheForRoot } from '../notebook/micromamba-cache'
@@ -58,6 +59,7 @@ type StorageCommandOwnerDeps = {
     getActiveNotebookSessions: () => SessionSource[]
   }
   getActivePromptSessions: () => SessionSource[]
+  getActiveDelegatedSessions: () => SessionSource[]
   settingsService: {
     setDataRoot: (path: string) => Promise<void>
     // Stamps onboardingCompletedAt. Injected (rather than importing the renderer store action)
@@ -79,6 +81,8 @@ type StorageCommandOwnerDeps = {
   broadcastProgress?: (progress: MigrationProgress) => void
   cleanupRuntimeCache?: (runtimeRoot: string) => void
   logger?: Logger
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
+  exportRuntimeLocks?: typeof exportRuntimeLocks
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -189,6 +193,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const detectActive = (): ActiveSessionInfo[] =>
     detectActiveSessions({
       runtime: { getActivePromptSessions: deps.getActivePromptSessions },
+      delegated: { getActiveDelegatedSessions: deps.getActiveDelegatedSessions },
       // Call as a method (arrow wrapper), never a bare reference: the real notebook service is a
       // class whose getActiveNotebookSessions reads `this.sessions`, so extracting it loose would
       // drop `this` and throw "Cannot read properties of undefined (reading 'values')".
@@ -220,6 +225,15 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     if (activeMigration) {
       return { ok: false, error: 'A migration is already in progress.' }
     }
+    // Re-check at the mutating boundary: a child can start after the modal's detect-active call, and
+    // a stale or forged renderer must not bypass the user-owned stop flow.
+    if (deps.getActiveDelegatedSessions().length > 0) {
+      return {
+        ok: false,
+        error:
+          'Subagents are still running. Return to their tasks and stop them before moving data.'
+      }
+    }
 
     const controller = new AbortController()
     const correlationId = randomUUID()
@@ -240,9 +254,11 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
           notebook: deps.notebook,
           // Preserve the runtime across the move by exporting each env to an offline lock at the
           // new root; the copied pkgs cache lets the provisioner rebuild them offline on relaunch.
-          exportRuntimeLocks: (fromDataRoot, toDataRoot) =>
-            exportRuntimeLocks(fromDataRoot, toDataRoot, {
-              mm: resolveMicromamba({ resourcesPath: process.resourcesPath }),
+          exportRuntimeLocks: async (fromDataRoot, toDataRoot) =>
+            (deps.exportRuntimeLocks ?? exportRuntimeLocks)(fromDataRoot, toDataRoot, {
+              mm: deps.micromambaRunner
+                ? await deps.micromambaRunner.resolve()
+                : resolveMicromamba({ resourcesPath: process.resourcesPath }),
               capture: captureMicromamba
             })
         },

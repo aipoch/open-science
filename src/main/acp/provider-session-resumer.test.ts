@@ -4,9 +4,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
-import { claudeCodeFramework } from '../agent-framework'
+import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
+import {
+  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+  SIDE_CHAT_SESSION_CAPABILITY_POLICY,
+  type SessionCapabilityPolicy
+} from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
 const permissionProfile: SessionPermissionProfileState = {
@@ -26,15 +31,32 @@ const backend: AcpBackendGenerationView = {
   adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
 }
 
+const codexResponsesBackend: AcpBackendGenerationView = {
+  ...backend,
+  framework: codexFramework,
+  backendId: 'codex:builtin-codex-subscription',
+  modelRoute: 'codex-responses'
+}
+
+const opencodeBackend: AcpBackendGenerationView = {
+  ...backend,
+  framework: opencodeFramework,
+  backendId: 'opencode:provider-a',
+  modelRoute: 'opencode-openai'
+}
+
 type HarnessOptions = {
   attached?: boolean
   attachError?: Error
   backendAfterFirstConfigure?: AcpBackendGenerationView
+  capabilityPolicy?: SessionCapabilityPolicy
   configureError?: Error
   ensureConnected?: () => Promise<ClientConnection>
   foreignIdentityCollision?: (sessionIds: readonly string[]) => Error | undefined
+  initialBackend?: AcpBackendGenerationView
   invalidateDuringResume?: boolean
   observerError?: Error
+  projectAgentContext?: string
   resumeError?: unknown
   supportsResume?: boolean
 }
@@ -44,6 +66,7 @@ type ResumerHarness = {
   assertCurrentConnection: ReturnType<typeof vi.fn>
   attachSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
+  clearLivePermissionProfile: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
   configurePermissionProfile: ReturnType<typeof vi.fn>
   connection: ClientConnection
@@ -52,10 +75,13 @@ type ResumerHarness = {
   identityClaimedAtAdoption: () => boolean
   order: string[]
   providerSession: ActiveSession
+  provision: ReturnType<typeof vi.fn>
   registry: AcpSessionRegistry
   release: ReturnType<typeof vi.fn>
+  backend: AcpBackendGenerationView
   request: ReturnType<typeof vi.fn>
   resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
+  sessionSetupAppends: string[][]
   setTimer: ReturnType<typeof vi.fn>
   successorSession: ActiveSession
 }
@@ -64,7 +90,20 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   const order: string[] = []
   let timerCallback: (() => void) | undefined
   let identityClaimedAtAdoption = false
-  let currentBackend = backend
+  const sessionSetupAppends: string[][] = []
+  // Capture wraps whichever backend the harness runs with (default or injected via initialBackend).
+  const baseBackend = options.initialBackend ?? backend
+  const capturingBackend: AcpBackendGenerationView = {
+    ...baseBackend,
+    framework: {
+      ...baseBackend.framework,
+      buildSessionSetup: (input) => {
+        sessionSetupAppends.push([...(input.systemPromptAppends ?? [])])
+        return baseBackend.framework.buildSessionSetup(input)
+      }
+    }
+  }
+  let currentBackend = capturingBackend
   const providerSession = {
     sessionId: 'provider-session',
     dispose: vi.fn(() => order.push('session dispose'))
@@ -173,6 +212,24 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     return {} as ReturnType<typeof setTimeout>
   })
   const assertCurrentConnection = vi.fn()
+  const clearLivePermissionProfile = vi.fn()
+  const provision = vi.fn(async () => {
+    order.push('capability provision')
+    return {
+      mcpServers: [],
+      descriptor: {
+        role: 'primary' as const,
+        delegation: 'denied' as const,
+        transport: 'none' as const,
+        capabilities: [],
+        canonicalMcpServerNames: [],
+        modelFacingMcpServerNames: [],
+        controlRpcMethods: []
+      },
+      commit,
+      release
+    }
+  })
   const resumer = new AcpProviderSessionResumer({
     defaultCwd: '/default',
     defaultProjectName: 'default-project',
@@ -195,27 +252,14 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
         mayRenewAfterConnectionSetup: true,
         blockStartup: false
       }),
-    capabilities: {
-      provision: vi.fn(async () => {
-        order.push('capability provision')
-        return {
-          mcpServers: [],
-          descriptor: {
-            role: 'primary' as const,
-            delegation: 'denied' as const,
-            transport: 'none' as const,
-            capabilities: [],
-            canonicalMcpServerNames: [],
-            modelFacingMcpServerNames: [],
-            controlRpcMethods: []
-          },
-          commit,
-          release
-        }
-      })
-    },
+    capabilities: { provision },
+    capabilityPolicy: options.capabilityPolicy ?? CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
     configurator: { configure, configurePermissionProfile },
     adopter: { adopt },
+    clearLivePermissionProfile,
+    resolveProjectAgentContext: options.projectAgentContext
+      ? vi.fn(async () => options.projectAgentContext)
+      : undefined,
     updateCwd: () => order.push('cwd callback'),
     pushEvent: () => {
       order.push('event callback')
@@ -244,7 +288,9 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     adopt,
     assertCurrentConnection,
     attachSession,
+    backend: capturingBackend,
     commit,
+    clearLivePermissionProfile,
     configure,
     configurePermissionProfile,
     connection,
@@ -253,16 +299,28 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     identityClaimedAtAdoption: () => identityClaimedAtAdoption,
     order,
     providerSession,
+    provision,
     registry,
     release,
     request,
     resume,
+    sessionSetupAppends,
     setTimer,
     successorSession
   }
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('preserves the runtime capability policy on compatible provider resume', async () => {
+    const harness = createHarness({ capabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
+
+    await harness.resume()
+
+    expect(harness.provision).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
+    )
+  })
+
   it('refreshes an attached Session without entering provider startup', async () => {
     const harness = createHarness({ attached: true })
 
@@ -275,12 +333,13 @@ describe('AcpProviderSessionResumer', () => {
 
     expect(response).toEqual({
       sessionId: 'stable-app-session',
+      providerSessionId: 'provider-session',
       cwd: resolve('/moved-workspace'),
       frameworkId: 'claude-code',
       backendId: 'claude-code'
     })
     expect(harness.configurePermissionProfile).toHaveBeenCalledWith({
-      backend,
+      backend: harness.backend,
       connection: harness.connection,
       session: harness.providerSession,
       permissionProfile: 'full'
@@ -292,6 +351,7 @@ describe('AcpProviderSessionResumer', () => {
       permissionProfile
     })
     expect(harness.registry.currentSessionId).toBe('stable-app-session')
+    expect(harness.clearLivePermissionProfile).toHaveBeenCalledWith('stable-app-session')
     expect(harness.order).toEqual(['configure permission', 'cwd callback', 'state callback'])
     expect(harness.request).not.toHaveBeenCalled()
     expect(harness.adopt).not.toHaveBeenCalled()
@@ -389,6 +449,7 @@ describe('AcpProviderSessionResumer', () => {
 
     expect(response).toEqual({
       sessionId: 'stable-app-session',
+      providerSessionId: 'provider-session',
       cwd: resolve('/workspace'),
       frameworkId: 'claude-code',
       backendId: 'claude-code'
@@ -450,6 +511,67 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.order.indexOf('capability release')).toBeLessThan(
       harness.order.indexOf('adopt fresh')
     )
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('fresh-adopts a legacy Codex Responses Session after its adapter returns Unknown error', async () => {
+    const harness = createHarness({
+      initialBackend: codexResponsesBackend,
+      resumeError: { code: -32603, message: 'Unknown error' }
+    })
+
+    await expect(
+      harness.resume({
+        sessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        previousFrameworkId: 'codex',
+        previousBackendId: codexResponsesBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request).toHaveBeenCalledOnce()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('fresh-adopts a persisted Codex Responses Session after its adapter returns Unknown error', async () => {
+    const providerSessionId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    const harness = createHarness({
+      initialBackend: codexResponsesBackend,
+      resumeError: { code: -32603, message: 'Unknown error' }
+    })
+
+    await expect(
+      harness.resume({
+        providerSessionId,
+        previousFrameworkId: 'codex',
+        previousBackendId: codexResponsesBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sessionId: providerSessionId })
+    )
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    expect(harness.adopt).toHaveBeenCalledOnce()
+  })
+
+  it('fresh-adopts a legacy OpenCode Session after its adapter returns Unknown error', async () => {
+    const harness = createHarness({
+      initialBackend: opencodeBackend,
+      resumeError: { code: -32603, message: 'Unknown error' }
+    })
+
+    await expect(
+      harness.resume({
+        sessionId: 'ses_03fed93d1ffe1uw7XFraUNPhun',
+        previousFrameworkId: 'opencode',
+        previousBackendId: opencodeBackend.backendId
+      })
+    ).resolves.toMatchObject({ contextReset: true })
+
+    expect(harness.request).toHaveBeenCalledOnce()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
     expect(harness.adopt).toHaveBeenCalledOnce()
   })
 
@@ -524,15 +646,52 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.order).toContain('state callback')
   })
 
-  it('preserves the advertised-resume failure without allocating capabilities', async () => {
+  it('targets the persisted provider Session id instead of the stable application alias', async () => {
+    const harness = createHarness()
+
+    const response = await harness.resume({ providerSessionId: 'provider-session' })
+
+    expect(harness.request.mock.calls[0]?.[1]).toMatchObject({
+      sessionId: 'provider-session'
+    })
+    expect(response).toMatchObject({
+      sessionId: 'stable-app-session',
+      providerSessionId: 'provider-session'
+    })
+  })
+
+  it('fresh-adopts when resume capability is not advertised', async () => {
     const harness = createHarness({ supportsResume: false })
 
-    await expect(harness.resume()).rejects.toThrow('ACP agent does not support session resume.')
+    await expect(harness.resume()).resolves.toMatchObject({
+      sessionId: 'stable-app-session',
+      contextReset: true
+    })
 
     expect(harness.request).not.toHaveBeenCalled()
-    expect(harness.adopt).not.toHaveBeenCalled()
+    expect(harness.adopt).toHaveBeenCalledOnce()
     expect(harness.order).not.toContain('capability provision')
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
+  })
+
+  it('appends the project Agent Context when resuming a compatible provider session', async () => {
+    const harness = createHarness({
+      initialBackend: {
+        ...opencodeBackend,
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'Baked instructions.' }
+      },
+      projectAgentContext: 'Always cite DOIs.'
+    })
+
+    await harness.resume({
+      previousFrameworkId: 'opencode',
+      previousBackendId: opencodeBackend.backendId
+    })
+
+    expect(harness.sessionSetupAppends.at(-1)).toContain('Always cite DOIs.')
+    expect(
+      harness.registry.lookup('stable-app-session')?.aggregate.snapshot().sessionSetupPromptPrefix
+    ).toContain('Always cite DOIs.')
   })
 
   it('replays configuration against a live effort change before publication', async () => {

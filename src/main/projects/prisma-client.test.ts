@@ -1,14 +1,15 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Prisma, type PrismaClient } from '@prisma/client'
+import { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { applyRuntimeSchemaBaseline } from '../database/legacy-baseline-adapter'
 import { ProjectRepository } from './repository'
 import {
   createProjectDbClient,
   disconnectProjectDbClient,
-  ensureProjectSchema,
+  migrateApplicationDatabase,
   getProjectDbClient
 } from './prisma-client'
 import { ReviewRepository } from '../reviewer/repository'
@@ -36,7 +37,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     for (const model of Prisma.dmmf.datamodel.models) {
       const tableName = model.dbName ?? model.name
@@ -53,7 +54,7 @@ describe('project prisma client (integration)', () => {
     }
   })
 
-  it('adds archive visibility to an existing Project table without rewriting its activity time', async () => {
+  it('adds visibility and pin state to an existing Project without rewriting its activity time', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-archive-migration-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -70,21 +71,53 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('project-1', 'Project', '2026-08-06T00:00:00.000Z')`
     )
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'project-1' } })
     ).resolves.toMatchObject({
       archivedAt: null,
+      pinned: false,
       updatedAt: new Date('2026-08-06T00:00:00.000Z')
     })
+  })
+
+  it('adds the Agent Context column to an existing Project table with an empty default', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-project-agent-context-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await client.$executeRawUnsafe(`CREATE TABLE "Project" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "description" TEXT NOT NULL DEFAULT '',
+      "isExample" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL
+    )`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "Project" ("id", "name", "updatedAt") VALUES ('project-1', 'Project', '2026-08-06T00:00:00.000Z')`
+    )
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: [
+        '0001_runtime_schema_baseline',
+        '0002_project_agent_context',
+        '0003_granted_local_roots'
+      ]
+    })
+
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: 'project-1' } })
+    ).resolves.toMatchObject({ agentContext: '' })
   })
 
   it('creates the Permission Grant authority table with constrained scopes and owner cascade', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-permission-grant-schema-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
       'PRAGMA table_info("PermissionGrant")'
@@ -119,13 +152,51 @@ describe('project prisma client (integration)', () => {
     ).resolves.toEqual([])
   })
 
+  it('creates the Granted Local Root table with a unique path index', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-granted-root-schema-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+
+    const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      'PRAGMA table_info("GrantedLocalRoot")'
+    )
+    expect(columns.map((column) => column.name)).toEqual([
+      'id',
+      'path',
+      'name',
+      'access',
+      'createdAt',
+      'updatedAt'
+    ])
+
+    const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
+      `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'GrantedLocalRoot'`
+    )
+    expect(indexes.map((index) => index.name)).toContain('GrantedLocalRoot_path_key')
+
+    await client.$executeRawUnsafe(
+      `INSERT INTO "GrantedLocalRoot" ("id", "path", "name", "access", "updatedAt") VALUES ('root-1', '/data/one', 'one', 'ro', CURRENT_TIMESTAMP)`
+    )
+    await expect(
+      client.$executeRawUnsafe(
+        `INSERT INTO "GrantedLocalRoot" ("id", "path", "name", "access", "updatedAt") VALUES ('root-2', '/data/one', 'one', 'rw', CURRENT_TIMESTAMP)`
+      )
+    ).rejects.toThrow()
+
+    // Migrating again is idempotent against the now-populated table.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+  })
+
   it('creates an unread-task table that rejects duplicate session IDs', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-unread-task-schema-'))
 
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const columns = await client.$queryRawUnsafe<Array<{ name: string }>>(
       'PRAGMA table_info("UnreadTaskSession")'
@@ -148,7 +219,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: {
         projectId: 'project-1',
@@ -200,7 +271,7 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "ArtifactLineage" ("id", "projectId", "sessionId", "normalizedFilename", "filename", "updatedAt") VALUES ('artifact-1', 'project-1', 'session-1', 'result.png', 'result.png', CURRENT_TIMESTAMP)`
     )
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     await expect(
       client.fileOriginSession.findUniqueOrThrow({
@@ -243,9 +314,23 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "state", "updatedAt") VALUES ('project-1', 'session-1', 'corrupt', CURRENT_TIMESTAMP)`
     )
 
-    await expect(ensureProjectSchema(client)).rejects.toThrow(
-      'FileOriginSession.state contains unsupported value "corrupt"'
-    )
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      cause: {
+        name: 'DatabaseValidationError',
+        data: {
+          kind: 'unsupported-value',
+          table: 'FileOriginSession',
+          column: 'state',
+          expected: ['active', 'deleting', 'deleted'],
+          actual: {
+            type: 'string',
+            length: 7,
+            sha256: expect.stringMatching(/^[0-9a-f]{64}$/)
+          }
+        }
+      }
+    })
     await expect(
       client.$queryRawUnsafe<Array<{ state: string }>>(
         `SELECT state FROM "FileOriginSession" WHERE "projectId" = 'project-1' AND "sessionId" = 'session-1'`
@@ -276,7 +361,17 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "FileOriginSession" ("projectId", "sessionId", "state", "futureMarker", "updatedAt") VALUES ('project-1', 'session-1', 'active', 'keep-me', CURRENT_TIMESTAMP)`
     )
 
-    await expect(ensureProjectSchema(client)).rejects.toThrow(/futureMarker/)
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      cause: {
+        name: 'DatabaseValidationError',
+        data: {
+          kind: 'unknown-columns',
+          table: 'FileOriginSession',
+          actual: ['futureMarker']
+        }
+      }
+    })
     await expect(
       client.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info('FileOriginSession')`)
     ).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'futureMarker' })]))
@@ -293,7 +388,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -436,6 +531,11 @@ describe('project prisma client (integration)', () => {
       )
     ).rejects.toThrow()
     await expect(
+      client.$executeRawUnsafe(
+        `UPDATE "ArtifactVersionInput" SET "inputFileVersionId" = 'different-upload-version' WHERE "id" = 'input-1'`
+      )
+    ).rejects.toThrow()
+    await expect(
       client.reviewScopeSnapshot.update({
         where: { id: 'review-snapshot-1' },
         data: { state: 'unsupported' }
@@ -449,7 +549,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
     await client.$executeRawUnsafe('DROP TABLE "ArtifactVersionInput"')
     await client.$executeRawUnsafe(`CREATE TABLE "ArtifactVersionInput" (
@@ -474,8 +574,11 @@ describe('project prisma client (integration)', () => {
       CONSTRAINT "ArtifactVersionInput_sourceKind_check" CHECK ("sourceKind" IN ('artifact-version', 'upload-version'))
     )`)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
     await expect(
       client.$executeRawUnsafe(`INSERT INTO "ArtifactVersionInput" (
@@ -496,7 +599,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -548,8 +651,11 @@ describe('project prisma client (integration)', () => {
       'ALTER TABLE "ArtifactVersionLegacy" RENAME TO "ArtifactVersion"'
     )
     await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    // Simulate a pre-ledger database: it predates both the migration ledger and Agent Context.
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+    await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "agentContext"')
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     await expect(
       client.artifactVersion.findUniqueOrThrow({ where: { id: 'artifact-version-1' } })
@@ -580,7 +686,9 @@ describe('project prisma client (integration)', () => {
       $queryRawUnsafe: vi.fn(async () => [])
     } as unknown as PrismaClient
 
-    await expect(ensureProjectSchema(client)).rejects.toBe(migrationFailure)
+    await expect(applyRuntimeSchemaBaseline(client, { pendingCheckConstraints: [] })).rejects.toBe(
+      migrationFailure
+    )
   })
 
   it('releases and recreates the shared client for exclusive migration validation', async () => {
@@ -595,13 +703,63 @@ describe('project prisma client (integration)', () => {
     await expect(second.$queryRawUnsafe('PRAGMA integrity_check')).resolves.toBeDefined()
   })
 
+  it('backs up legacy data through the shared client on a portable storage path', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open science 数据 legacy backup-'))
+    const databasePath = join(storageRoot, 'open-science.db')
+    const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
+    const seedClient = createProjectDbClient(storageRoot)
+    try {
+      await seedClient.$executeRawUnsafe(`CREATE TABLE "Project" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "description" TEXT NOT NULL DEFAULT '',
+        "isExample" BOOLEAN NOT NULL DEFAULT false,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL
+      )`)
+      await seedClient.$executeRaw`
+        INSERT INTO "Project" ("id", "name", "updatedAt")
+        VALUES (${'legacy-project'}, ${'Preserved'}, ${new Date('2026-01-02T03:04:05Z')})
+      `
+    } finally {
+      await seedClient.$disconnect()
+    }
+
+    disconnect = disconnectProjectDbClient
+    const client = await getProjectDbClient(storageRoot)
+
+    await expect(access(backupPath)).resolves.toBeUndefined()
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
+    ).resolves.toMatchObject({ name: 'Preserved' })
+
+    const backupClient = new PrismaClient({
+      datasources: { db: { url: `file:${backupPath.replaceAll('\\', '/')}` } }
+    })
+    try {
+      await expect(
+        backupClient.$queryRaw<Array<{ id: string; name: string }>>`
+          SELECT "id", "name" FROM "Project"
+        `
+      ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
+      await expect(
+        backupClient.$queryRaw<Array<{ name: string }>>`
+          SELECT "name" FROM "sqlite_schema"
+          WHERE "type" = 'table' AND "name" = '_open_science_migrations'
+        `
+      ).resolves.toEqual([])
+    } finally {
+      await backupClient.$disconnect()
+    }
+  })
+
   it('round-trips artifact lineage versions and enforces their session-scoped ordering keys', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-provenance-'))
 
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const provenanceTables = await client.$queryRawUnsafe<Array<{ name: string }>>(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('FileOriginSession', 'ArtifactLineage', 'ArtifactVersion', 'ArtifactVersionInput', 'ArtifactMessageSnapshot', 'UploadFile', 'UploadVersion', 'ReviewFindingDisposition', 'ReviewScopeSnapshot') ORDER BY name`
@@ -701,7 +859,7 @@ describe('project prisma client (integration)', () => {
       })
     ).rejects.toThrow()
 
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
   })
 
   it('ensures the schema (no seed) and round-trips CRUD', async () => {
@@ -710,7 +868,7 @@ describe('project prisma client (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
@@ -718,7 +876,7 @@ describe('project prisma client (integration)', () => {
     expect(await repository.list()).toEqual([])
 
     // Ensuring again is idempotent (table already exists, still no seed).
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     expect(await repository.list()).toEqual([])
 
     const indexes = await client.$queryRawUnsafe<Array<{ name: string }>>(
@@ -748,6 +906,10 @@ describe('project prisma client (integration)', () => {
     const renamed = await repository.update({ id: created.id, name: 'Renamed' })
     expect(renamed.name).toBe('Renamed')
 
+    const pinned = await repository.update({ id: created.id, pinned: true })
+    expect(pinned.pinned).toBe(true)
+    expect(pinned.updatedAt).toBe(renamed.updatedAt)
+
     // Any project is deletable — there is no protected default.
     await repository.delete(created.id)
     expect(await repository.get(created.id)).toBeNull()
@@ -763,7 +925,7 @@ describe('project prisma client (integration)', () => {
     disconnect = () => client.$disconnect()
 
     // Fresh install: FINDING_TABLE_DDL already contains reflagCount; client can read/write it.
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const reviewRepo = new ReviewRepository(() => Promise.resolve(client))
 
@@ -787,8 +949,8 @@ describe('project prisma client (integration)', () => {
     const [updated] = await reviewRepo.getReviewsForSession('s1')
     expect(updated.checks[0]!.reflagCount).toBe(1)
 
-    // Migration guard is idempotent — calling ensureProjectSchema a second time must not throw.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    // Migration guard is idempotent — calling migrateApplicationDatabase a second time must not throw.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
   })
 
   // Simulates an old DB that has the Finding table without reflagCount; the migration guard must add
@@ -835,11 +997,17 @@ describe('project prisma client (integration)', () => {
       `INSERT INTO "Finding" ("id","reviewId","claim","evidence") VALUES ('f1','r1','old claim','old evidence')`
     )
 
-    // Run ensureProjectSchema — the migration guard must add reflagCount without error.
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    // Run migrateApplicationDatabase — the migration guard must add reflagCount without error.
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      applied: [
+        '0001_runtime_schema_baseline',
+        '0002_project_agent_context',
+        '0003_granted_local_roots'
+      ]
+    })
 
     // Running it again is idempotent (guard catches duplicate-column error).
-    await expect(ensureProjectSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
 
     // The old row reads back with reflagCount = 0 (the column default).
     const reviewRepo = new ReviewRepository(() => Promise.resolve(client))

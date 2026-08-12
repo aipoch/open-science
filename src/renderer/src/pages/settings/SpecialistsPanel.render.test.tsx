@@ -99,6 +99,7 @@ beforeEach(() => {
     },
     settings: {
       listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [], ncbi: null }),
+      onConnectorRuntimeChanged: vi.fn(() => vi.fn()),
       listSkills: vi.fn().mockResolvedValue([])
     }
   } as unknown as Window['api']
@@ -121,6 +122,23 @@ afterEach(() => {
 })
 
 describe('SpecialistsPanel', () => {
+  it('renders safely when the web surface omits the specialist API', async () => {
+    const specialistApi = window.api.specialist
+    delete (window.api as { specialist?: Window['api']['specialist'] }).specialist
+    useSpecialistStore.setState({ items: [], isLoaded: false })
+
+    try {
+      await act(async () => {
+        root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+      })
+
+      expect(document.body.textContent).toContain('No specialists yet')
+      expect(useSpecialistStore.getState().isLoaded).toBe(true)
+    } finally {
+      window.api.specialist = specialistApi
+    }
+  })
+
   // Shared preview fixture: builtin + owned selected by default, referenced skill unchecked.
   const exportPreviewFixture = (
     overrides: Partial<{
@@ -1332,7 +1350,10 @@ describe('SpecialistsPanel Chat with agent', () => {
     ).find((item) => item.textContent?.includes('Chat with agent'))
     await act(async () => clickRadixMenuItem(chatItem))
 
-    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith('active-project')
+    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith(
+      'active-project',
+      'specialist'
+    )
   })
 
   it('closes Settings and starts a customize conversation for the resolved project', async () => {
@@ -1347,7 +1368,10 @@ describe('SpecialistsPanel Chat with agent', () => {
       clickRadixMenuItem(chatItem)
     })
 
-    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith('climate-models')
+    expect(navigationMock.startCustomizeConversation).toHaveBeenCalledWith(
+      'climate-models',
+      'specialist'
+    )
     expect(closeSettingsSpy).toHaveBeenCalled()
   })
 

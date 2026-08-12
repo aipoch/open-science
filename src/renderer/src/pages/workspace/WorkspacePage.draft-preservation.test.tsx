@@ -19,12 +19,14 @@ import {
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
 let conversationProps: {
+  composerFocusKey: string
   draftDoc: ComposerDoc
   attachments: UploadedAttachment[]
   attachmentTransfers: ComposerUploadTransfer[]
@@ -32,6 +34,7 @@ let conversationProps: {
   onDraftDocChange: (doc: ComposerDoc) => void
   isHistoryBrowsing: boolean
   historyStatus: string
+  permissionProfile: PermissionProfileId
   onNavigateHistory: (direction: 'previous' | 'next') => boolean
   onSpecialistChange?: (specialistId: string | undefined) => void
   onSendMessage: (forcedSkillIds: string[]) => void
@@ -212,7 +215,7 @@ describe('WorkspacePage draft preservation', () => {
       sessions: [createSession('sess-a', 'proj-1'), createSession('sess-b', 'proj-1')],
       selectedSessionId: 'sess-a'
     })
-    useSettingsStore.setState({ skills: [] })
+    useSettingsStore.setState({ skills: [], defaultPermissionProfile: 'ask' })
     useSpecialistStore.setState({ items: [], isLoaded: false })
     vi.clearAllMocks()
     runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'm1' })
@@ -327,6 +330,7 @@ describe('WorkspacePage draft preservation', () => {
 
   it('preserves each session doc independently when switching away and back', async () => {
     await renderPage()
+    expect(conversationProps.composerFocusKey).toBe('sess-a')
 
     await act(async () => {
       conversationProps.onDraftDocChange(textDoc('draft for A'))
@@ -335,6 +339,7 @@ describe('WorkspacePage draft preservation', () => {
 
     // Switching to session B clears the composer to B's own (empty) doc.
     await openSession('sess-b')
+    expect(conversationProps.composerFocusKey).toBe('sess-b')
     expect(conversationProps.draftDoc).toEqual(emptyDoc)
 
     await act(async () => {
@@ -343,10 +348,50 @@ describe('WorkspacePage draft preservation', () => {
 
     // Switching back to session A restores A's doc, and B keeps its own.
     await openSession('sess-a')
+    expect(conversationProps.composerFocusKey).toBe('sess-a')
     expect(conversationProps.draftDoc).toEqual(textDoc('draft for A'))
 
     await openSession('sess-b')
     expect(conversationProps.draftDoc).toEqual(textDoc('draft for B'))
+  })
+
+  it('uses the configured profile only for new conversations', async () => {
+    useSettingsStore.setState({ defaultPermissionProfile: 'auto' })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a' ? { ...session, permissionProfile: 'full' } : session
+      ),
+      selectedSessionId: 'sess-a'
+    }))
+    await renderPage()
+
+    expect(conversationProps.permissionProfile).toBe('full')
+
+    await act(async () => {
+      sidebarProps.onNewConversation()
+    })
+
+    expect(conversationProps.permissionProfile).toBe('auto')
+    expect(conversationProps.composerFocusKey).toBe('new:proj-1')
+  })
+
+  it('targets the new-conversation composer after the keyboard shortcut', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a'
+          ? { ...session, messages: [userMessage('prompt', 'Start a new conversation')] }
+          : session
+      )
+    }))
+    await renderPage()
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true })
+      )
+    })
+
+    expect(conversationProps.composerFocusKey).toBe('new:proj-1')
   })
 
   it('browses visible Session prompts and restores the unsent scratch draft', async () => {
@@ -499,6 +544,7 @@ describe('WorkspacePage draft preservation', () => {
         {
           id: 'lit',
           name: 'Literature',
+          displayName: 'Literature',
           description: 'Search papers',
           source: 'featured',
           enabled: true,
@@ -628,6 +674,51 @@ describe('WorkspacePage draft preservation', () => {
       sidebarProps.onNewConversation()
     })
     expect(conversationProps.draftDoc).toEqual(textDoc('draft for new conversation'))
+  })
+
+  it.each([
+    ['Cmd+N on macOS', 'darwin', { metaKey: true }],
+    ['Ctrl+N on Windows', 'win32', { ctrlKey: true }]
+  ])('opens a new conversation with %s', async (_label, platform, modifiers) => {
+    window.api = { ...window.api, platform } as never
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'sess-a'
+          ? { ...session, messages: [userMessage('prompt', 'existing conversation')] }
+          : session
+      )
+    }))
+    await renderPage()
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'n',
+      bubbles: true,
+      cancelable: true,
+      ...modifiers
+    })
+    await act(async () => window.dispatchEvent(event))
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it('keeps the draft when the current conversation has no messages', async () => {
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('unsent draft'))
+    })
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'n',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    await act(async () => window.dispatchEvent(event))
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
+    expect(conversationProps.draftDoc).toEqual(textDoc('unsent draft'))
   })
 
   it('preserves a skill chip as a structured node when switching away and back', async () => {

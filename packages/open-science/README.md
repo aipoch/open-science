@@ -15,10 +15,54 @@ const client = await connectToOpenScience()
 const run = await client.startRun({
   project: 'systematic-review',
   prompt: 'Summarize the evidence.',
+  cwd: '/absolute/path/to/research',
   permissionProfile: 'auto'
 })
 const result = await client.waitForRun(run.id)
 console.log(result.output)
+```
+
+SDK and HTTP callers must supply an absolute `cwd`. Open Science canonicalizes and validates it,
+persists it as the Session working directory, and returns the effective path on every Run. Supplying
+`cwd` with `sessionId` is allowed only when both paths resolve to the same directory. Omit `cwd` to
+use a managed workspace. External working directories remain caller-owned and are never removed by
+Open Science.
+
+For live automation feedback, subscribe before starting the Run. `run.progress` reports ordered
+provider-neutral phases and emits a heartbeat every ten seconds until the first visible provider
+output. The timer starts after Task has prepared the Session and registered its Run; Session
+creation or resume time before registration is outside this event stream:
+
+```js
+const abortController = new AbortController()
+const events = client.events({ signal: abortController.signal })
+await events.ready
+
+const progress = (async () => {
+  for await (const event of events) {
+    if (event.type === 'run.progress') {
+      console.log(event.data.phase, event.data.elapsedMs, event.data.heartbeat)
+    }
+  }
+})()
+
+const observedRun = await client.startRun({
+  project: 'systematic-review',
+  prompt: 'Summarize the evidence.',
+  permissionProfile: 'auto'
+})
+const observedResult = await client.waitForRun(observedRun.id)
+abortController.abort()
+await progress
+console.log(observedResult.output)
+```
+
+To stop a still-running task instead of waiting for it, cancel it explicitly. Cancellation waits for
+provider work and application finalization to drain before returning the terminal Run:
+
+```js
+const cancelled = await client.cancelRun(run.id)
+console.log(cancelled.status) // cancelled
 ```
 
 The client discovers the local daemon and reads its authentication token from the Open Science config

@@ -258,16 +258,14 @@ export class SpecialistRepository {
           `Revision conflict: expected ${expectedRevision}, found ${current.revision}.`
         )
       }
-      // Name uniqueness when renaming.
-      if (patch.name && patch.name !== current.name) {
-        if (doc.specialists.some((s) => s.id !== id && s.name === patch.name)) {
-          throw new Error(`Specialist with name "${patch.name}" already exists.`)
-        }
+      if (patch.name !== undefined && patch.name !== current.name) {
+        throw new Error('Specialist name is immutable.')
       }
       const updated: StoredSpecialist = {
         ...current,
         ...patch,
         id, // id is immutable
+        name: current.name,
         revision: current.revision + 1
       }
       const specialists = [...doc.specialists]

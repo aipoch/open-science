@@ -1,8 +1,7 @@
 // Durable per-project preview panel state, persisted in SQLite (see src/main/projects).
 //
-// Only restart-durable content is stored: the panel open/collapsed state and opened *file* previews.
-// Notebook tabs are runtime-only (endpoint/token change per app session) and re-appear via
-// notebook.onAvailable, so they are intentionally not persisted.
+// Only restart-durable content is stored: file previews and the Session-scoped Subagents selection.
+// Notebook and other tool tabs are runtime-only and re-appear from their existing owners.
 
 import type { ProjectFileOriginSession } from './project-files'
 
@@ -29,11 +28,21 @@ export type PersistedPreviewFileItem = {
   originSession?: ProjectFileOriginSession
 }
 
+export type PersistedSubagentsPreviewItem = {
+  id: string
+  sessionId: string
+  title: string
+  type: 'tool'
+  toolKind: 'subagents'
+  selectedAgentFrameId: string
+}
+
 export type PersistedPreviewState = {
   version: typeof PREVIEW_STATE_VERSION
   panelState: PersistedPreviewPanelState
   activeItemId?: string
   items: PersistedPreviewFileItem[]
+  subagents?: PersistedSubagentsPreviewItem
 }
 
 export type LoadPreviewStateRequest = {
@@ -122,6 +131,26 @@ const sanitizePreviewFileItem = (value: unknown): PersistedPreviewFileItem | und
   return item
 }
 
+const sanitizeSubagentsPreviewItem = (
+  value: unknown
+): PersistedSubagentsPreviewItem | undefined => {
+  if (!isRecord(value) || value.type !== 'tool' || value.toolKind !== 'subagents') {
+    return undefined
+  }
+  const id = asString(value.id)
+  const sessionId = asString(value.sessionId)
+  const selectedAgentFrameId = asString(value.selectedAgentFrameId)
+  if (!id || !sessionId || !selectedAgentFrameId) return undefined
+  return {
+    id,
+    sessionId,
+    title: asString(value.title) ?? 'Subagents',
+    type: 'tool',
+    toolKind: 'subagents',
+    selectedAgentFrameId
+  }
+}
+
 // Produces the only preview-state shape the renderer and main process should consume.
 export const normalizePersistedPreviewState = (value: unknown): PersistedPreviewState => {
   if (!isRecord(value)) return createEmptyPersistedPreviewState()
@@ -131,17 +160,25 @@ export const normalizePersistedPreviewState = (value: unknown): PersistedPreview
         .map(sanitizePreviewFileItem)
         .filter((item): item is PersistedPreviewFileItem => !!item)
     : []
+  const subagents =
+    sanitizeSubagentsPreviewItem(value.subagents) ??
+    (Array.isArray(value.items)
+      ? value.items.map(sanitizeSubagentsPreviewItem).find(Boolean)
+      : undefined)
   const panelState: PersistedPreviewPanelState = value.panelState === 'open' ? 'open' : 'collapsed'
   const requestedActiveItemId = asString(value.activeItemId)
   // Keep the active id only when it still points at a persisted item.
-  const activeItemId = items.some((item) => item.id === requestedActiveItemId)
+  const activeItemId = [...items, ...(subagents ? [subagents] : [])].some(
+    (item) => item.id === requestedActiveItemId
+  )
     ? requestedActiveItemId
     : undefined
 
   const state: PersistedPreviewState = {
     version: PREVIEW_STATE_VERSION,
     panelState,
-    items
+    items,
+    ...(subagents ? { subagents } : {})
   }
 
   if (activeItemId) state.activeItemId = activeItemId

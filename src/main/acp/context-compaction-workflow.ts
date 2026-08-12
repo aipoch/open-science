@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import type { AcpCompactSessionRequest, AcpRuntimeEvent } from '../../shared/acp'
@@ -105,13 +106,15 @@ class AcpContextCompactionWorkflow {
     }
     const checkpoint = this.options.context.checkpointSession(sessionId)
     const restoreContext = (): void => this.options.context.restoreSession(sessionId, checkpoint)
+    const toolCallId = `context-compaction:${randomUUID()}`
     this.publishEvent({
       kind: 'compaction',
       compactionReason: reason,
       level: 'info',
       sessionId,
       status: 'in_progress',
-      title: 'Compacting context'
+      title: 'Compacting context',
+      toolCallId
     })
 
     try {
@@ -130,7 +133,8 @@ class AcpContextCompactionWorkflow {
               level: 'info',
               sessionId,
               status: 'cancelled',
-              title: 'Context compaction cancelled'
+              title: 'Context compaction cancelled',
+              toolCallId
             })
             return message.response
           }
@@ -153,7 +157,8 @@ class AcpContextCompactionWorkflow {
             level: 'info',
             sessionId,
             status: 'completed',
-            title: 'Context compacted'
+            title: 'Context compacted',
+            toolCallId
           })
           return message.response
         }
@@ -179,7 +184,8 @@ class AcpContextCompactionWorkflow {
         sessionId,
         status: 'failed',
         title: 'Context compaction failed',
-        text: this.options.errorMessage(error)
+        text: this.options.errorMessage(error),
+        toolCallId
       })
       throw error
     }

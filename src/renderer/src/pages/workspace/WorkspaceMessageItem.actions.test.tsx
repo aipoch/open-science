@@ -18,7 +18,8 @@ vi.mock('@/components/ui/message-scroller', () => ({
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
+  PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
 
 // Artifact rendering is outside this test's boundary and imports the PDF worker bundle.
@@ -157,6 +158,17 @@ describe('WorkspaceMessageItem user message actions', () => {
     expect(bubbleRow?.classList.contains('w-full')).toBe(true)
   })
 
+  it('labels an interrupted user turn without creating another message item', async () => {
+    await renderItem(createMessage({ interrupted: true }))
+
+    expect(container.querySelectorAll('[data-slot="user-message-bubble"]')).toHaveLength(1)
+    const interruption = container.querySelector('[data-slot="user-message-interrupted"]')
+    expect(interruption?.textContent).toBe('This turn was interrupted.')
+    expect(interruption?.classList.contains('italic')).toBe(true)
+    expect(interruption?.classList.contains('text-amber-600')).toBe(true)
+    expect(interruption?.classList.contains('dark:text-amber-400')).toBe(true)
+  })
+
   it('renders copy and edit actions next to user bubbles only', async () => {
     await renderItem(createMessage())
 
@@ -166,6 +178,22 @@ describe('WorkspaceMessageItem user message actions', () => {
     await renderItem(createMessage({ role: 'agent' }))
 
     expect(container.querySelector('[aria-label="Copy message"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
+  })
+
+  it('renders a delivered Side chat advisory as context instead of an editable user prompt', async () => {
+    await renderItem(
+      createMessage({
+        content: 'Use a black line.',
+        relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+      })
+    )
+
+    expect(container.querySelector('[data-testid="side-chat-advisory"]')?.textContent).toContain(
+      'Side chat'
+    )
+    expect(container.textContent).toContain('Use a black line.')
+    expect(container.querySelector('[data-slot="user-message-bubble"]')).toBeNull()
     expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
   })
 

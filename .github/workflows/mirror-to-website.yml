@@ -1,21 +1,11 @@
-# Mirror a published GitHub Release to the website's S3-compatible storage + CDN. GitHub Release stays
-# the single source of truth; release.yml calls this workflow directly after publish, while release
-# events and manual dispatch remain available for externally published releases and backfills. It sends
+# Manually mirror a published GitHub Release to the website's S3-compatible storage + CDN after its
+# release notes are ready. GitHub Release stays the single source of truth. This workflow sends
 # installers to a fast, in-country endpoint and writes version.json (website + in-app update prompt).
 # Cache correctness is handled purely via Cache-Control headers at upload time (immutable installers,
 # no-cache manifest) — no CDN purge API is needed.
 name: Mirror to website
 
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: 'Release tag to mirror (e.g. v0.1.2)'
-        required: true
-        type: string
-  # Also handle externally published releases and manual backfills.
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -33,11 +23,11 @@ jobs:
       - name: Checkout (for the manifest script)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # Tag from the Release event, or the manual input; version is the tag without a leading 'v'.
+      # Tag comes from the required manual input; version is the tag without a leading 'v'.
       - name: Resolve tag and version
         id: ref
         run: |
-          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          tag="${{ inputs.tag }}"
           if [ -z "$tag" ]; then
             echo "No tag resolved from event or input" >&2
             exit 1

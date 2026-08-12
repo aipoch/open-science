@@ -73,7 +73,7 @@ export type CompletionHandoffCommand = { id: string; sessionId: string }
 // source of truth for approved SDK handoffs.
 export type PendingSwitchBroadcast = {
   sessionId: string
-  // Target Specialist public name, or null to revert to Main Agent. Display-only; never a secret.
+  // Target Specialist immutable public name, or null to revert to Main Agent. Never a secret.
   targetName: string | null
 }
 
@@ -271,7 +271,6 @@ export type UpdateSpecialistInput = {
   id: string
   revision: number
   packageVersion?: string
-  name?: string
   displayName?: string
   description?: string
   systemPrompt?: string
@@ -426,12 +425,9 @@ export const validateCreateSpecialistInput = (
 }
 
 // Validate the provided (partial) fields for an UpdateSpecialistInput.
-// Only fields that are present are validated. Name uniqueness skips the
-// specialist's own id (`input.id`) so self-rename is allowed.
+// Only fields that are present are validated. The stable name is not updateable.
 export const validateUpdateSpecialistInput = (
-  input: UpdateSpecialistInput,
-  existingNames: string[],
-  existingIds?: Map<string, string>
+  input: UpdateSpecialistInput
 ): SpecialistFieldError[] => {
   const errors: SpecialistFieldError[] = []
 
@@ -439,15 +435,6 @@ export const validateUpdateSpecialistInput = (
     const packageVersionError = validateSpecialistPackageVersion(input.packageVersion)
     if (packageVersionError) {
       errors.push({ field: 'packageVersion', message: packageVersionError })
-    }
-  }
-
-  if (input.name !== undefined) {
-    const nameError = validateSpecialistName(input.name, existingNames, input.id, existingIds)
-    if (nameError) errors.push({ field: 'name', message: nameError })
-    else {
-      const publicNameError = validateSpecialistPublicName(input.name)
-      if (publicNameError) errors.push({ field: 'name', message: publicNameError })
     }
   }
 

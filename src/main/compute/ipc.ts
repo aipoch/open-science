@@ -4,12 +4,6 @@ import { join } from 'node:path'
 
 import { BrowserWindow, shell } from 'electron'
 
-import {
-  createIpcHandlerInstallationScope,
-  ipcMainHandle,
-  type IpcHandlerInstallation
-} from '../ipc-handler-registry'
-
 import type {
   ComputeApprovalDecision,
   ComputeHost,
@@ -17,33 +11,27 @@ import type {
   ComputeJob,
   JobSummary,
   CreateComputeHostRequest,
-  DeleteComputeHostRequest,
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
 import { computeProviderId } from '../../shared/compute'
-import type {
-  DirListing,
-  DownloadDest,
-  LocalFile,
-  SerializableRemoteFsError
-} from '../../shared/remote-fs'
-import { encodeRemoteFsError } from '../../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createLogger, errorLogFields } from '../logger'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
-import { SettingsRepository } from '../settings/repository'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
+import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { opencodeConfigDir } from '../agent-framework/opencode'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
-import { ComputeApprovalBroker } from './compute-approval-broker'
+import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
 import { ComputeService, type ArtifactResolver } from './compute-service'
 import { ConcurrencyManager } from './concurrency-manager'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
+import { createComputeJobDeletionOwner, type ComputeJobDeletionOwner } from './job-deletion-owner'
 import { readSshConfigHostAliases } from './ssh-config'
 import { SystemSshRunner } from './ssh-runner'
 import { SystemScpRunner } from './scp-runner'
@@ -52,11 +40,11 @@ import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enab
 import { getJobHarvestDir } from './harvest-engine'
 import { workspaceRelativePath } from './workspace-path'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import { createComputePermissionGrantAdapter } from './permission-grant-adapter'
+import {
+  createComputePermissionGrantAdapter,
+  type LegacyComputeGrantPort
+} from './permission-grant-adapter'
 import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from './skill-doc'
-
-// IPC channel names for the renderer job feed (Phase 3d, issue 05).
-export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 const log = createLogger('compute')
@@ -172,17 +160,18 @@ type ComputeHandlers = {
     queued_count: number
     provider_ceilings: Record<string, number>
   }>
-  // Lists the contents of a remote directory (non-approval, metadata only).
   listDir: (providerId: string, path: string) => Promise<DirListing>
-  // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
   download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
-  // Reveals a local file in the OS file manager (Finder/Explorer).
   revealInFolder: (filePath: string) => void
   // The compute service instance, exposed so the notebook RPC server can wire computeCall.
   computeService: ComputeService
+  concurrencyManager?: ConcurrencyManager
   // Responds to a pending approval request from the renderer. Decision now includes
   // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
+  approvalReplay: (id: string) => ComputeApprovalRequest | null
+  approvalPauseSession: (sessionId: string) => void
+  approvalResumeSession: (sessionId: string) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
   jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
@@ -191,23 +180,31 @@ type ComputeHandlers = {
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
 }
 
+type ComputeHostLifecycle = Readonly<{
+  pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
+}>
+
 // Adapts a repository into thin handlers.
 const createComputeHandlers = (
   repository: ComputeHostRepository,
   listSshAliases: () => Promise<string[]> = readSshConfigHostAliases,
   injectedService?: ComputeService,
   injectedBroker?: ComputeApprovalBroker,
-  settingsRepository?: SettingsRepository,
+  legacyComputeGrants?: LegacyComputeGrantPort,
   jobRepository?: ComputeJobRepository,
   onJobUpdated?: (job: ComputeJob) => void,
   artifactResolver?: ArtifactResolver,
   storageRoot?: string,
-  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
+  taskNotifications?: Pick<
+    TaskNotificationService,
+    'handleComputeApproval' | 'settleAuthorization'
+  >,
   permissionGrantRegistry?: PermissionGrantRegistry,
-  syncComputeSkillDocument?: () => Promise<void>
+  syncComputeSkillDocument?: () => Promise<void>,
+  hostLifecycle?: ComputeHostLifecycle
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
-    ? createComputePermissionGrantAdapter(permissionGrantRegistry, settingsRepository)
+    ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
     : undefined
   if (permissionGrants) {
     void permissionGrants
@@ -228,20 +225,26 @@ const createComputeHandlers = (
             onNotificationError: (error) =>
               log.warn('compute approval notification failed', errorLogFields(error))
           })
-        : (request: ComputeApprovalRequest) => {
+        : (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => {
             // Tests and isolated registrations without the notification service still receive cards.
             for (const win of BrowserWindow.getAllWindows()) {
-              win.webContents.send('compute:approval-request', request)
+              win.webContents.send('compute:approval-request', {
+                ...request,
+                ...(context?.sessionId ? { session_id: context.sessionId } : {})
+              })
             }
           },
-      // Isolated legacy callers retain their old hooks. Production uses only the Registry adapter.
+      onSettled: taskNotifications
+        ? (id, state) => void taskNotifications.settleAuthorization('compute', id, state)
+        : undefined,
+      // Isolated/no-Registry callers retain the former settings-backed Project grant behavior.
       checkProjectGrant:
-        settingsRepository && !permissionGrantRegistry
-          ? (grant) => settingsRepository.hasComputeGrant(grant)
+        legacyComputeGrants && !permissionGrantRegistry
+          ? (grant) => legacyComputeGrants.hasComputeGrant(grant)
           : undefined,
       saveProjectGrant:
-        settingsRepository && !permissionGrantRegistry
-          ? (grant) => settingsRepository.addComputeGrant(grant).then(() => undefined)
+        legacyComputeGrants && !permissionGrantRegistry
+          ? (grant) => legacyComputeGrants.addComputeGrant(grant).then(() => undefined)
           : undefined,
       isProviderCurrent: async ({ providerId, ownerId }) => {
         const current = await repository.get(providerId)
@@ -273,55 +276,50 @@ const createComputeHandlers = (
   // jobs when a slot frees up. It is wired here (not in ComputeService) because it needs a
   // dispatchJob closure carrying the same runner/scp/repository deps the dispatcher uses. Only built
   // for the production path — tests inject their own service and drive the manager directly.
+  const sshRunner = new SystemSshRunner()
+  const scpRunner = new SystemScpRunner()
+  const concurrencyManager =
+    !injectedService && jobRepository
+      ? new ConcurrencyManager(
+          jobRepository,
+          repository,
+          (queuedJobId, handleJobUpdated) =>
+            dispatchJob(queuedJobId, {
+              runner: sshRunner,
+              scpRunner,
+              hostRepository: repository,
+              jobRepository,
+              onJobUpdated: handleJobUpdated
+            }),
+          onJobUpdated
+        )
+      : undefined
   const service =
     injectedService ??
-    (() => {
-      const sshRunner = new SystemSshRunner()
-      const scpRunner = new SystemScpRunner()
-
-      // ConcurrencyManager owns the complete publish-and-drain policy. It hands that same bound
-      // sink to queued dispatches, while ComputeService delegates direct dispatch and poller updates
-      // to it. This keeps one contract without a construction-order callback box.
-      const concurrencyManager = jobRepository
-        ? new ConcurrencyManager(
-            jobRepository,
-            repository,
-            (queuedJobId, handleJobUpdated) =>
-              dispatchJob(queuedJobId, {
-                runner: sshRunner,
-                scpRunner,
-                hostRepository: repository,
-                jobRepository,
-                onJobUpdated: handleJobUpdated
-              }),
-            onJobUpdated
-          )
-        : undefined
-
-      return new ComputeService(
-        sshRunner,
-        repository,
-        broker,
-        scpRunner,
-        undefined,
-        jobRepository,
-        undefined,
-        artifactResolver,
-        storageRoot,
-        concurrencyManager
-      )
-    })()
+    new ComputeService(
+      sshRunner,
+      repository,
+      broker,
+      scpRunner,
+      undefined,
+      jobRepository,
+      undefined,
+      artifactResolver,
+      storageRoot,
+      concurrencyManager
+    )
 
   return {
     list: () => repository.list(),
     get: (providerId) => repository.get(providerId),
     create: (request) =>
       runHostLifecycleMutation(async () => {
-        if (permissionGrantRegistry) {
+        if (permissionGrantRegistry || hostLifecycle) {
           const providerId = computeProviderId(request.sshAlias)
           const existing = await repository.get(providerId)
           if (!existing) {
-            await permissionGrantRegistry.prune({ kind: 'compute_provider', providerId })
+            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+            await hostLifecycle?.pruneSessionEnabledHosts(providerId)
           }
         }
         const host = await repository.create(request)
@@ -341,9 +339,25 @@ const createComputeHandlers = (
         }
         await broker.invalidateProvider(providerId)
         try {
-          await repository.delete(providerId)
-          await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
-          await syncComputeSkillDocument?.()
+          const deleteProvider = (): Promise<void> => repository.delete(providerId)
+          if (hostLifecycle) {
+            await hostLifecycle.pruneSessionEnabledHosts(providerId, deleteProvider)
+          } else {
+            await deleteProvider()
+          }
+          try {
+            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+          } catch (error) {
+            log.warn(
+              'compute permission grant cleanup after host deletion failed',
+              errorLogFields(error)
+            )
+          }
+          try {
+            await syncComputeSkillDocument?.()
+          } catch (error) {
+            log.warn('compute skill sync after host deletion failed', errorLogFields(error))
+          }
         } finally {
           broker.completeProviderInvalidation(providerId)
         }
@@ -364,7 +378,11 @@ const createComputeHandlers = (
       shell.showItemInFolder(filePath)
     },
     computeService: service,
+    concurrencyManager,
     approvalRespond: (id, decision) => broker.respond(id, decision),
+    approvalReplay: (id) => broker.getPending(id),
+    approvalPauseSession: (sessionId) => broker.pauseSession(sessionId),
+    approvalResumeSession: (sessionId) => broker.resumeSession(sessionId),
     jobsList: async (filter) => {
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
@@ -427,32 +445,34 @@ const syncCurrentComputeSkillDocuments = async (
 
 // Broadcasts a job summary to all renderer windows. Called by the JobPoller onJobUpdated hook
 // and by the job dispatcher on status transitions (Phase 3d, design.md §9).
-export const broadcastJobUpdated = (summary: JobSummary): void => {
+export const broadcastJobUpdated = (summary: JobSummary): void =>
   broadcastToRenderers(COMPUTE_JOB_UPDATED_CHANNEL, summary)
-}
 
-// Builds the onJobUpdated hook shared by the JobPoller (poll transitions/tails) and the
-// ComputeService/dispatcher (submitted→running→error transitions). Looks up the host display name
-// asynchronously, then broadcasts. Fire-and-forget: a transient failure to fetch the host falls
-// back to the provider_id string so the broadcast always happens.
 export const createJobUpdatedBroadcaster =
-  (hostRepository: ComputeHostRepository, storageRoot: string): ((job: ComputeJob) => void) =>
+  (
+    hostRepository: ComputeHostRepository,
+    storageRoot: string,
+    jobRepository: Pick<ComputeJobRepository, 'get'>
+  ): ((job: ComputeJob) => void) =>
   (job) => {
-    void hostRepository
-      .get(job.provider_id)
-      .then(async (host) => {
-        const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, storageRoot)
-        broadcastJobUpdated(summary)
-      })
-      .catch(async () => {
-        const summary = await toJobSummary(job, job.provider_id, storageRoot)
-        broadcastJobUpdated(summary)
-      })
+    void (async () => {
+      let displayName = job.provider_id
+      try {
+        const host = await hostRepository.get(job.provider_id)
+        if (host) displayName = host.displayName
+      } catch {
+        // Preserve provider fallback; likewise, only a successful null Job lookup proves deletion.
+      }
+      if (!(await jobRepository.get(job.job_id).catch(() => true))) return
+      const summary = await toJobSummary(job, displayName, storageRoot)
+      if (await jobRepository.get(job.job_id).catch(() => true)) broadcastJobUpdated(summary)
+    })().catch(() => undefined)
   }
 
 type ComputeIpcModule = {
   handlers: ComputeHandlers
   computeService: ComputeService
+  jobDeletionOwner: ComputeJobDeletionOwner
   jobRepository: ComputeJobRepository
   hostRepository: ComputeHostRepository
   enabledComputeHostsRegistry: EnabledComputeHostsRegistry
@@ -470,157 +490,50 @@ const createComputeIpcModule = (
   // one constructed by createComputeHandlers. Lets the renderer-callable error wrapper around
   // `compute:list-dir` / `compute:download` be exercised end-to-end against a fake service.
   injectedService?: ComputeService,
-  taskNotifications?: Pick<TaskNotificationService, 'handleComputeApproval'>,
-  permissionGrantRegistry?: PermissionGrantRegistry
+  taskNotifications?: Pick<
+    TaskNotificationService,
+    'handleComputeApproval' | 'settleAuthorization'
+  >,
+  permissionGrantRegistry?: PermissionGrantRegistry,
+  legacyComputeGrants?: LegacyComputeGrantPort,
+  hostLifecycle?: ComputeHostLifecycle
 ): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
-
-  // Read the legacy settings repository only for lazy one-way Project grant import. New remembered
-  // approvals are written exclusively through the SQLite PermissionGrant Registry.
-  const settingsRepo = new SettingsRepository(storageRoot)
+  const effectiveLegacyComputeGrants =
+    legacyComputeGrants ?? createSettingsComputeGrantPort(storageRoot)
 
   // Broadcast dispatcher status transitions to the renderer, same hook shape as the JobPoller uses.
-  const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot)
-
+  const onJobUpdated = createJobUpdatedBroadcaster(repository, dataRoot, jobRepository)
   const handlers = createComputeHandlers(
     repository,
     undefined,
     injectedService,
     undefined,
-    settingsRepo,
+    effectiveLegacyComputeGrants,
     jobRepository,
     onJobUpdated,
     artifactResolver,
     dataRoot,
     taskNotifications,
     permissionGrantRegistry,
-    () => syncCurrentComputeSkillDocuments(storageRoot, repository)
+    () => syncCurrentComputeSkillDocuments(storageRoot, repository),
+    hostLifecycle
   )
+  const jobDeletionOwner = createComputeJobDeletionOwner({
+    jobRepository,
+    hostRepository: repository,
+    runner: new SystemSshRunner(),
+    queueManager: handlers.concurrencyManager
+  })
 
   return {
     handlers,
     computeService: handlers.computeService,
+    jobDeletionOwner,
     jobRepository,
     hostRepository: repository,
     enabledComputeHostsRegistry
-  }
-}
-
-type ComputeIpcAdapter = Pick<ComputeIpcModule, 'handlers' | 'enabledComputeHostsRegistry'>
-
-const registerComputeIpcHandlerSet = ({
-  handlers,
-  enabledComputeHostsRegistry
-}: ComputeIpcAdapter): void => {
-  ipcMainHandle('compute:list', () => handlers.list())
-  ipcMainHandle('compute:get', (_event, providerId: string) => handlers.get(providerId))
-  ipcMainHandle('compute:create', (_event, request: CreateComputeHostRequest) =>
-    handlers.create(request)
-  )
-  ipcMainHandle('compute:delete', async (_event, request: DeleteComputeHostRequest) => {
-    await handlers.delete(request.providerId)
-  })
-  ipcMainHandle('compute:ssh-config-aliases', () => handlers.sshConfigAliases())
-  ipcMainHandle('compute:probe', (_event, providerId: string) => handlers.probe(providerId))
-  ipcMainHandle('compute:details:get', (_event, providerId: string) =>
-    handlers.detailsGet(providerId)
-  )
-  ipcMainHandle(
-    'compute:details:save',
-    (_event, providerId: string, text: string, oldText: string, author: DetailsAuthor) =>
-      handlers.detailsSave(providerId, text, oldText, author)
-  )
-  ipcMainHandle('compute:scratch:set', (_event, providerId: string, path: string) =>
-    handlers.scratchSet(providerId, path)
-  )
-  ipcMainHandle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
-    handlers.concurrencySet(providerId, limit)
-  )
-  // Session-level concurrency control (Phase 3c, issue 04).
-  ipcMainHandle(
-    'compute:session:set-concurrency-limit',
-    (_event, sessionId: string, limit: number) =>
-      handlers.setSessionConcurrencyLimit(sessionId, limit)
-  )
-  ipcMainHandle('compute:session:status', (_event, sessionId: string) =>
-    handlers.getSessionConcurrencyStatus(sessionId)
-  )
-  // Lists a remote directory (browse experience, issue 05).
-  ipcMainHandle('compute:list-dir', async (_event, providerId: string, path: string) => {
-    try {
-      return await handlers.listDir(providerId, path)
-    } catch (err) {
-      const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
-      if (e.remoteFsError) {
-        throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
-      }
-      throw err
-    }
-  })
-  // Downloads a remote file to OS Downloads or project artifact. No approval gate (issue 03).
-  ipcMainHandle(
-    'compute:download',
-    async (_event, providerId: string, remotePath: string, dest: DownloadDest) => {
-      try {
-        return await handlers.download(providerId, remotePath, dest)
-      } catch (err) {
-        const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
-        if (e.remoteFsError) {
-          throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
-        }
-        throw err
-      }
-    }
-  )
-  // Reveals a local file path in the OS file manager (Finder / Explorer).
-  ipcMainHandle('compute:reveal-in-folder', (_event, filePath: string) => {
-    handlers.revealInFolder(filePath)
-  })
-  // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
-  // chosen scope: 'once' | 'conversation' | 'project' | 'deny'.
-  ipcMainHandle(
-    'compute:approval-respond',
-    (_event, request: { id: string; decision: ComputeApprovalDecision }) => {
-      handlers.approvalRespond(request.id, request.decision)
-    }
-  )
-  // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
-  ipcMainHandle(
-    COMPUTE_JOBS_LIST_CHANNEL,
-    (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
-  )
-  // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
-  ipcMainHandle('compute:jobs:pending-notification', (_event, sessionId: string) =>
-    handlers.jobsPendingNotification(sessionId)
-  )
-  // Marks job ids as notification-consumed (analysis turn done — issue 05).
-  ipcMainHandle('compute:jobs:mark-consumed', (_event, sessionId: string, jobIds: string[]) =>
-    handlers.jobsMarkConsumed(sessionId, jobIds)
-  )
-
-  // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session
-  // JSON); the main-process registry is the runtime cache consulted by list_compute RPC ops.
-  ipcMainHandle('compute:enabled-hosts:get', (_event, sessionId: string): string[] =>
-    enabledComputeHostsRegistry.get(sessionId)
-  )
-  ipcMainHandle(
-    'compute:enabled-hosts:set',
-    (_event, sessionId: string, providerIds: string[]): void => {
-      enabledComputeHostsRegistry.set(sessionId, providerIds)
-    }
-  )
-}
-
-// Installs only the renderer-callable Electron adapter over an already-constructed Compute module.
-const installComputeIpcHandlers = (module: ComputeIpcAdapter): IpcHandlerInstallation => {
-  const scope = createIpcHandlerInstallationScope()
-  try {
-    registerComputeIpcHandlerSet(module)
-    return scope.complete()
-  } catch (error) {
-    scope.rollback()
-    throw error
   }
 }
 
@@ -629,7 +542,8 @@ export {
   createComputeIpcModule,
   createDefaultComputeHostRepository,
   createDefaultComputeJobRepository,
-  installComputeIpcHandlers,
   enabledComputeHostsRegistry
 }
-export type { ComputeHandlers, ComputeIpcModule }
+export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
+export type { ComputeIpcAdapter } from './electron-ipc-adapter'
+export type { ComputeHandlers, ComputeHostLifecycle, ComputeIpcModule }

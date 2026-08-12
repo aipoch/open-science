@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
-import { RENDERER_CONTRACT_CATALOG, RENDERER_CONTRACT_GROUPS } from './renderer-contract-catalog'
+import {
+  ELECTRON_APPLICATION_COMMAND_CHANNELS,
+  RENDERER_CONTRACT_CATALOG,
+  RENDERER_CONTRACT_GROUPS
+} from './renderer-contract-catalog'
 import { projectRendererContractMaps } from './renderer-contract'
 
 const paths = (
@@ -12,18 +16,19 @@ describe('renderer contract catalog', () => {
   it('pins the complete capability-owned inventory and legacy map projection', () => {
     const projection = projectRendererContractMaps(RENDERER_CONTRACT_CATALOG)
 
-    expect(RENDERER_CONTRACT_GROUPS).toHaveLength(30)
-    expect(RENDERER_CONTRACT_CATALOG).toHaveLength(311)
+    expect(RENDERER_CONTRACT_GROUPS).toHaveLength(33)
+    expect(RENDERER_CONTRACT_CATALOG).toHaveLength(350)
     expect(projection.invoke).toEqual(WEB_INVOKE_CHANNELS)
     expect(projection.event).toEqual(WEB_EVENT_CHANNELS)
-    expect(Object.keys(projection.invoke)).toHaveLength(231)
-    expect(Object.keys(projection.event)).toHaveLength(32)
+    expect(Object.keys(projection.invoke)).toHaveLength(252)
+    expect(Object.keys(projection.event)).toHaveLength(36)
   })
 
   it('separates actual Web installation from the generated compatibility projection', () => {
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb !== 'unavailable')
-    ).toHaveLength(259)
+    ).toHaveLength(283)
+
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'browser-native')
     ).toEqual(['getRuntimeVersions', 'saveBlobFile', 'saveManagedFile', 'window.close'])
@@ -53,10 +58,11 @@ describe('renderer contract catalog', () => {
     })
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'unavailable')
-    ).toHaveLength(52)
+    ).toHaveLength(67)
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
-    ).toHaveLength(58)
+    ).toHaveLength(68)
+
     expect(
       paths(({ eventDeliverability }) =>
         Object.values(eventDeliverability).includes('installed-undelivered')
@@ -177,7 +183,7 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(23)
+    expect(compute).toHaveLength(24)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
@@ -202,5 +208,24 @@ describe('renderer contract catalog', () => {
       deactivateChannel: 'shortcut:window-find-unready',
       deactivate: 'on-dispose'
     })
+  })
+
+  it('marks only the runtime-validated Project command slice', () => {
+    expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
+      'projects.create',
+      'projects.delete',
+      'projects.get',
+      'projects.list',
+      'projects.update',
+      'projects.updateArchive'
+    ])
+    expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
+      'projects:create',
+      'projects:delete',
+      'projects:get',
+      'projects:list',
+      'projects:update',
+      'projects:update-archive'
+    ])
   })
 })

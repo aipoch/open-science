@@ -91,7 +91,6 @@ const makeProfileService = (
       const idx = stored.findIndex((p) => p.id === input.id)
       if (idx < 0) throw new Error(`Specialist ${input.id} not found after update.`)
       const merged: SpecialistProfileView = { ...stored[idx] }
-      if (input.name !== undefined) merged.name = input.name
       if (input.displayName !== undefined) merged.displayName = input.displayName
       if (input.description !== undefined) merged.description = input.description
       if (input.systemPrompt !== undefined) merged.systemPrompt = input.systemPrompt
@@ -238,6 +237,7 @@ const skills = (...entries: Partial<SkillCatalogReadModel>[]): SkillCatalogReadM
 const connectors = (...entries: Partial<ConnectorReadModel>[]): ConnectorReadModel[] =>
   entries.map((e) => ({
     id: 'bundled',
+    name: 'bundled',
     displayName: 'Bundled',
     description: '',
     mainEnabled: true,
@@ -435,14 +435,14 @@ describe('executeAgentsMutation — create', () => {
     expect(passed.selectedCapabilities?.skillIds).toEqual(['stable-1'])
   })
 
-  it('create resolves a connector public name to its stable id', async () => {
+  it('create resolves a connector immutable name to its stable id', async () => {
     const svc = makeProfileService([])
     const { catalog } = makeCatalog(
       skills(),
-      connectors({ id: 'stable-c', displayName: 'My Connector' })
+      connectors({ id: 'stable-c', name: 'my-connector', displayName: 'My Connector' })
     )
     await executeAgentsMutation(
-      { op: 'create', params: { name: 'Bio', connector_names: ['My Connector'] } },
+      { op: 'create', params: { name: 'Bio', connector_names: ['my-connector'] } },
       { profileService: svc, catalog }
     )
     const passed = svc.calls[0].args[0] as CreateSpecialistInput
@@ -605,7 +605,7 @@ describe('executeAgentsMutation — update', () => {
     expect(decide).not.toHaveBeenCalled()
   })
 
-  it('update reads changes from the nested patch so a rename never collides with the lookup name', async () => {
+  it('update reads changes from the nested patch', async () => {
     const svc = makeProfileService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(skills(), connectors())
     const result = (await executeAgentsMutation(
@@ -617,16 +617,18 @@ describe('executeAgentsMutation — update', () => {
     expect(result.revision).toBe(2)
   })
 
-  it('update applies a rename on the ordinary path (renames are chat-reviewed, not privileged)', async () => {
+  it('update changes displayName without changing the immutable name', async () => {
     const svc = makeProfileService([baseProfile({ revision: 1 })])
     const { catalog } = makeCatalog(skills(), connectors())
     const decide = vi.fn()
     const result = (await executeAgentsMutation(
-      { op: 'update', params: { name: 'Bio', patch: { revision: 1, name: 'NewName' } } },
+      {
+        op: 'update',
+        params: { name: 'Bio', patch: { revision: 1, display_name: 'New label' } }
+      },
       { profileService: svc, catalog, approvalGateway: { decide } }
     )) as SpecialistProfileView
-    expect(result.name).toBe('NewName')
-    // Rename is an ordinary mutation: the approval gateway is never consulted.
+    expect(result).toMatchObject({ name: 'Bio', displayName: 'New label' })
     expect(decide).not.toHaveBeenCalled()
   })
 

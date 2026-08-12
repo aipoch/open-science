@@ -224,6 +224,32 @@ describe('StorageMigrationModal', () => {
     expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
   })
 
+  it('blocks migration for delegated work and only lets the user return to stop it manually', async () => {
+    const api = installApi({
+      detectActive: vi
+        .fn()
+        .mockResolvedValue([{ projectId: 'proj-a', sessionId: 'delegated-1', kind: 'delegated' }])
+    })
+    const onClose = vi.fn()
+
+    await act(async () => {
+      root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={onClose} />)
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toMatch(/subagents are still running/i)
+    expect(document.body.textContent).toMatch(/stop its subagents/i)
+    expect(document.body.textContent).not.toContain('Interrupt and move')
+    expect(api.migrate).not.toHaveBeenCalled()
+    expect(api.cancelMigrate).not.toHaveBeenCalled()
+
+    clickButton((button) => button.textContent?.trim() === 'Return to tasks')
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(api.migrate).not.toHaveBeenCalled()
+    expect(api.cancelMigrate).not.toHaveBeenCalled()
+  })
+
   it('cancels an in-flight migration and closes without showing an error', async () => {
     let resolveMigrate: ((outcome: MigrationOutcome) => void) | undefined
     const api = installApi({

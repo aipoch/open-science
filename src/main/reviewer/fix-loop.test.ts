@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AcpRuntime } from '../acp/runtime.test-utils'
 import { ReviewRepository } from './repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
 import type { PersistedChatSession, PersistedChatMessage } from '../../shared/session-persistence'
@@ -391,7 +391,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -473,7 +473,7 @@ describe('fix loop: all-pass on re-review ends the loop (resolved)', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -551,7 +551,7 @@ describe('fix loop: cancellation', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     const review = await runReview({
@@ -637,7 +637,7 @@ describe('fix loop: newly discovered issues remain in the automatic remediation 
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -731,7 +731,7 @@ describe('fix loop: cap at 3 rounds → unaddressed', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -814,7 +814,7 @@ describe('fix loop: stable finding identity survives reviewer paraphrases', () =
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -878,7 +878,7 @@ describe('fix loop: claim left unchanged stays open', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({
@@ -958,7 +958,7 @@ describe('fix loop: distinct Review rows per iteration', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     const client = createProjectDbClient(temporaryRoot!)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new ReviewRepository(() => Promise.resolve(client))
 
     await runReview({

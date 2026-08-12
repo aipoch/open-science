@@ -29,6 +29,7 @@ type SkillCommands = Parameters<
 const skill = (id: string, enabled = true): SkillView => ({
   id,
   name: id,
+  displayName: id,
   description: `${id} description`,
   source: 'personal',
   updatedAt: '2026-08-06T00:00:00.000Z',

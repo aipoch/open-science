@@ -190,6 +190,23 @@ describe('installPackages', () => {
     ])
   })
 
+  it('uses the shared prepared runner for a managed conda install', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    const runner = {
+      initialPath: '/resources/micromamba.exe',
+      resolve: vi.fn().mockResolvedValue('/local-tools/micromamba-compat.exe')
+    }
+
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'] },
+      { spawn, ...base, micromamba: undefined, micromambaRunner: runner }
+    )
+
+    expect(result.ok).toBe(true)
+    expect(runner.resolve).toHaveBeenCalledOnce()
+    expect(calls[0][0]).toBe('/local-tools/micromamba-compat.exe')
+  })
+
   it('routes python usePip installs to the env pip with the resolved index url', async () => {
     const { spawn, calls } = scriptedSpawn([ok])
     await installPackages(

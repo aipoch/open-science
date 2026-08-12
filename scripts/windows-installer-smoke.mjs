@@ -10,6 +10,15 @@ import { pathToFileURL } from 'node:url'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import {
+  parsePackagedSqliteVersion,
+  readDatabaseMigrationLedger,
+  seedLegacyDatabase,
+  verifyDatabaseMigrationLedger,
+  verifyLegacyProjectPreserved,
+  writeDatabaseMigrationCertification
+} from './database-migration-ledger-smoke.mjs'
+import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs'
 
 const APP_EXECUTABLE = 'open-science.exe'
 const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
@@ -64,8 +73,13 @@ const buildSmokePlan = ({ currentInstaller, previousInstaller }) => [
     ? [
         { installer: previousInstaller, phase: 'previous' },
         { installer: currentInstaller, phase: 'current', runningInstaller: previousInstaller },
-        { installer: previousInstaller, phase: 'rollback', runningInstaller: currentInstaller },
-        { installer: currentInstaller, phase: 'restart', runningInstaller: previousInstaller }
+        {
+          installer: previousInstaller,
+          phase: 'rollback',
+          runningInstaller: currentInstaller,
+          launchInstalledApp: false
+        },
+        { installer: currentInstaller, phase: 'restart' }
       ]
     : [{ installer: currentInstaller, phase: 'current' }])
 ]
@@ -96,16 +110,15 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/
+    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
 
   const url = new URL(match[1])
   const token = url.searchParams.get('token')
-  if (!token) return undefined
   return {
     endpoint: url.origin,
-    auth: `token=${encodeURIComponent(token)}`
+    ...(token ? { auth: `token=${encodeURIComponent(token)}` } : {})
   }
 }
 
@@ -218,7 +231,8 @@ const runProcess = (executable, args, options = {}, terminate = terminateProcess
     let stdout = ''
     let stderr = ''
     let settled = false
-    let timedOut = false
+    let stopping = false
+    let abortProcess
 
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
@@ -233,29 +247,46 @@ const runProcess = (executable, args, options = {}, terminate = terminateProcess
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (abortProcess) options.signal?.removeEventListener('abort', abortProcess)
       if (error) rejectProcess(error)
       else resolveProcess({ code, stdout, stderr })
     }
 
-    const timer = setTimeout(() => {
-      timedOut = true
-      const finishTimeout = () => {
-        finish(
-          new Error(
-            `${basename(executable)} timed out after ${options.timeoutMs ?? PROCESS_TIMEOUT_MS}ms.`
-          )
-        )
-      }
+    const stopProcess = (error) => {
+      if (settled || stopping) return
+      stopping = true
+      clearTimeout(timer)
       void Promise.resolve()
         .then(() => terminate(child))
-        .then(finishTimeout, finishTimeout)
+        .then(
+          () => finish(error),
+          () => finish(error)
+        )
+    }
+
+    const timer = setTimeout(() => {
+      stopProcess(
+        new Error(
+          `${basename(executable)} timed out after ${options.timeoutMs ?? PROCESS_TIMEOUT_MS}ms.`
+        )
+      )
     }, options.timeoutMs ?? PROCESS_TIMEOUT_MS)
 
+    abortProcess = () => {
+      stopProcess(
+        options.signal.reason instanceof Error
+          ? options.signal.reason
+          : new Error(`${basename(executable)} was aborted.`)
+      )
+    }
+    options.signal?.addEventListener('abort', abortProcess, { once: true })
+    if (options.signal?.aborted) abortProcess()
+
     child.once('error', (error) => {
-      if (!timedOut) finish(error)
+      if (!stopping) finish(error)
     })
     child.once('exit', (code) => {
-      if (timedOut) return
+      if (stopping) return
       if (code !== 0 && !options.allowNonZero) {
         finish(
           new Error(
@@ -612,6 +643,14 @@ const assertPackagedResources = async (installDirectory) => {
   for (const path of packagedResourcePaths(installDirectory)) {
     if (!(await pathExists(path))) throw new Error(`Packaged Windows resource is missing: ${path}`)
   }
+  const prismaRoot = join(installDirectory, 'resources', 'node_modules', '.prisma', 'client')
+  const engines = await readdir(prismaRoot)
+  const nativeEngines = engines.filter(
+    (name) => name.includes('query_engine-') && name.endsWith('.node')
+  )
+  if (nativeEngines.length !== 1 || nativeEngines[0] !== 'query_engine-windows.dll.node') {
+    throw new Error(`Packaged Windows must contain exactly one Prisma engine in ${prismaRoot}.`)
+  }
 }
 
 const upgradeSentinelPath = (configRoot, sentinelName) => join(configRoot, sentinelName)
@@ -638,9 +677,12 @@ const assertUpgradeProfilePreserved = async (configRoot, sentinelName) => {
 
 const createUpgradeProfileGuard = (
   enabled,
-  sentinelName = `${UPGRADE_SENTINEL_PREFIX}${randomUUID()}`
+  sentinelName = `${UPGRADE_SENTINEL_PREFIX}${randomUUID()}`,
+  readLedger = readDatabaseMigrationLedger
 ) => {
   let previousConfigRoot
+  let previousMigrationIds
+  let expectDowngradeBlock = false
   let sentinelCreated = false
 
   const verifyCycle = async (phase, configRoot) => {
@@ -649,6 +691,7 @@ const createUpgradeProfileGuard = (
       previousConfigRoot = configRoot
       await writeUpgradeSentinel(configRoot, sentinelName)
       sentinelCreated = true
+      previousMigrationIds = (await readLedger(configRoot))?.map(({ id }) => id)
       return
     }
     if (!previousConfigRoot) {
@@ -660,6 +703,10 @@ const createUpgradeProfileGuard = (
       )
     }
     await assertUpgradeProfilePreserved(configRoot, sentinelName)
+    if (phase === 'current' && previousMigrationIds) {
+      const currentMigrationIds = (await readLedger(configRoot))?.map(({ id }) => id) ?? []
+      expectDowngradeBlock = currentMigrationIds.some((id) => !previousMigrationIds.includes(id))
+    }
   }
 
   const cleanup = async (primaryError) => {
@@ -674,10 +721,17 @@ const createUpgradeProfileGuard = (
     }
   }
 
-  return { cleanup, verifyCycle }
+  return { cleanup, shouldExpectDowngradeBlock: () => expectDowngradeBlock, verifyCycle }
 }
 
-const launchAndProbe = async ({ installDirectory, expectedVersion, env, legacyConfigRoots }) => {
+const launchAndProbe = async ({
+  installDirectory,
+  expectedVersion,
+  env,
+  legacyConfigRoots,
+  verifyLedger = false,
+  onSqliteVersion
+}) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
 
   const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
@@ -700,7 +754,10 @@ const launchAndProbe = async ({ installDirectory, expectedVersion, env, legacyCo
   try {
     const { endpoint, auth } = await Promise.race([
       waitFor('the installed app web service', async () => {
-        return parsePackagedAppEndpoint(output())
+        return authenticatePackagedAppEndpoint(output(), [
+          env.OPEN_SCIENCE_E2E_STORAGE_ROOT,
+          ...(legacyConfigRoots ?? [])
+        ])
       }),
       exit.then((code) => {
         throw new Error(`Installed app exited before becoming healthy (${code}).\n${output()}`)
@@ -718,6 +775,8 @@ const launchAndProbe = async ({ installDirectory, expectedVersion, env, legacyCo
     await requestPackagedAppShutdown(endpoint, auth)
     const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
+    if (verifyLedger) await verifyDatabaseMigrationLedger(configRoot)
+    if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
     return configRoot
   } catch (error) {
     await terminateProcessTree(child)
@@ -729,9 +788,51 @@ const launchAndProbe = async ({ installDirectory, expectedVersion, env, legacyCo
   }
 }
 
+const launchAndExpectDatabaseBlocked = async ({ installDirectory, env }) => {
+  const child = spawn(
+    join(installDirectory, APP_EXECUTABLE),
+    ['--open-science-headless', '--serve=0'],
+    { env, windowsHide: true }
+  )
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.setEncoding('utf8')
+  child.stderr?.setEncoding('utf8')
+  child.stdout?.on('data', (chunk) => (stdout += chunk))
+  child.stderr?.on('data', (chunk) => (stderr += chunk))
+  const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
+  const exit = observeChildExit(child)
+  let exitCode
+  void exit.then((code) => {
+    exitCode = code
+  })
+
+  try {
+    await waitFor('the ledger-aware downgrade to block', async () =>
+      exitCode === undefined ? undefined : true
+    )
+    if (exitCode === 0) {
+      throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output()}`)
+    }
+    if (!/database_newer_than_app|newer version of Open Science/i.test(output())) {
+      throw new Error(
+        `Ledger-aware downgrade did not report the expected compatibility error.\n${output()}`
+      )
+    }
+  } catch (error) {
+    await terminateProcessTree(child)
+    throw error
+  }
+}
+
 // Leaves a healthy packaged process running so the next silent installer must handle the real
 // executable/process lock. The caller owns termination if installation fails.
-const launchForProcessLock = async ({ installDirectory, expectedVersion, env }) => {
+const launchForProcessLock = async ({
+  installDirectory,
+  expectedVersion,
+  env,
+  legacyConfigRoots
+}) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
   const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
     env,
@@ -747,7 +848,12 @@ const launchForProcessLock = async ({ installDirectory, expectedVersion, env }) 
   const exit = observeChildExit(child)
   try {
     const { endpoint, auth } = await Promise.race([
-      waitFor('the process-lock app web service', async () => parsePackagedAppEndpoint(output())),
+      waitFor('the process-lock app web service', async () =>
+        authenticatePackagedAppEndpoint(output(), [
+          env.OPEN_SCIENCE_E2E_STORAGE_ROOT,
+          ...(legacyConfigRoots ?? [])
+        ])
+      ),
       exit.then((code) => {
         throw new Error(`Process-lock app exited before becoming healthy (${code}).\n${output()}`)
       })
@@ -766,7 +872,14 @@ const launchForProcessLock = async ({ installDirectory, expectedVersion, env }) 
   }
 }
 
-const installAndProbe = async ({ installer, installDirectory, phase, env, legacyConfigRoots }) => {
+const installAndProbe = async ({
+  installer,
+  installDirectory,
+  phase,
+  env,
+  legacyConfigRoots,
+  onSqliteVersion
+}) => {
   console.log(`Smoke testing ${phase} installer: ${basename(installer)}`)
   await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   await assertPackagedResources(installDirectory)
@@ -776,7 +889,9 @@ const installAndProbe = async ({ installer, installDirectory, phase, env, legacy
     installDirectory,
     expectedVersion: installerVersion(installer),
     env,
-    legacyConfigRoots
+    legacyConfigRoots,
+    verifyLedger: phase !== 'previous',
+    onSqliteVersion
   })
 }
 
@@ -785,12 +900,16 @@ const installOverRunningApp = async ({
   runningInstaller,
   installDirectory,
   phase,
-  env
+  env,
+  legacyConfigRoots,
+  launchInstalledApp = true,
+  onSqliteVersion
 }) => {
   const running = await launchForProcessLock({
     installDirectory,
     expectedVersion: installerVersion(runningInstaller),
-    env
+    env,
+    legacyConfigRoots
   })
   try {
     await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
@@ -803,10 +922,14 @@ const installOverRunningApp = async ({
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
   if (phase === 'current') await runPackagedLocalRpcSmoke({ installDirectory, env })
+  if (!launchInstalledApp) return undefined
   return launchAndProbe({
     installDirectory,
     expectedVersion: installerVersion(installer),
-    env
+    env,
+    legacyConfigRoots,
+    verifyLedger: true,
+    onSqliteVersion
   })
 }
 
@@ -878,14 +1001,18 @@ const main = async () => {
     ? await findSetupInstaller(options.previousInstallerDirectory)
     : undefined
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
-  const installDirectory = join(root, 'app')
-  const profileDirectory = join(root, 'profile')
+  const installDirectory = join(root, 'installed app 程序')
+  const profileDirectory = join(root, 'profile 数据 with spaces')
+  const freshStorageRoot = join(root, 'fresh database 数据 with spaces')
+  const legacyStorageRoot = join(root, 'legacy database 数据 with spaces')
   const legacyConfigRoots = [
     win32.join(homedir(), CONFIG_DIRECTORY),
     win32.join(profileDirectory, CONFIG_DIRECTORY)
   ]
   const env = windowsProfileEnvironment(profileDirectory)
   const upgradeProfileGuard = createUpgradeProfileGuard(Boolean(previousInstaller))
+  const sqliteVersions = []
+  const onSqliteVersion = (sqliteVersion) => sqliteVersions.push(sqliteVersion)
   await Promise.all([
     mkdir(env.APPDATA, { recursive: true }),
     mkdir(env.LOCALAPPDATA, { recursive: true }),
@@ -898,16 +1025,55 @@ const main = async () => {
       buildSmokePlan({ currentInstaller, previousInstaller }),
       async (cycle) => {
         const configRoot = cycle.runningInstaller
-          ? await installOverRunningApp({ ...cycle, installDirectory, env })
+          ? await installOverRunningApp({
+              ...cycle,
+              installDirectory,
+              env,
+              legacyConfigRoots,
+              onSqliteVersion: cycle.phase === 'rollback' ? undefined : onSqliteVersion
+            })
           : await installAndProbe({
               ...cycle,
               installDirectory,
               env,
-              legacyConfigRoots: cycle.phase === 'previous' ? legacyConfigRoots : undefined
+              legacyConfigRoots,
+              onSqliteVersion: cycle.phase === 'previous' ? undefined : onSqliteVersion
             })
-        await upgradeProfileGuard.verifyCycle(cycle.phase, configRoot)
+        if (cycle.phase === 'rollback' && upgradeProfileGuard.shouldExpectDowngradeBlock()) {
+          await launchAndExpectDatabaseBlocked({ installDirectory, env })
+        }
+        if (configRoot) await upgradeProfileGuard.verifyCycle(cycle.phase, configRoot)
       }
     )
+    const smokeIsolatedDatabase = async (storageRoot, expectLegacyProject) => {
+      const isolatedEnv = { ...env, OPEN_SCIENCE_E2E_STORAGE_ROOT: storageRoot }
+      for (let launch = 0; launch < 2; launch += 1) {
+        const configRoot = await launchAndProbe({
+          installDirectory,
+          expectedVersion: installerVersion(currentInstaller),
+          env: isolatedEnv,
+          verifyLedger: true,
+          onSqliteVersion
+        })
+        if (resolve(configRoot).toLowerCase() !== resolve(storageRoot).toLowerCase()) {
+          throw new Error('Windows database smoke did not use its isolated storage root.')
+        }
+      }
+      if (expectLegacyProject) await verifyLegacyProjectPreserved(storageRoot)
+    }
+    await smokeIsolatedDatabase(freshStorageRoot, false)
+    await seedLegacyDatabase(legacyStorageRoot)
+    await smokeIsolatedDatabase(legacyStorageRoot, true)
+    await writeDatabaseMigrationCertification({
+      output: join(options.installerDirectory, 'database-migration-certification.json'),
+      sqliteVersions,
+      checks: {
+        freshInstall: 'passed',
+        legacyAdoption: 'passed',
+        reopen: 'passed',
+        specialPath: 'passed'
+      }
+    })
     await uninstallAndVerify(installDirectory, env)
     console.log('Windows installer smoke completed successfully.')
   } catch (error) {
@@ -935,6 +1101,7 @@ if (invokedAsScript) {
 }
 
 export {
+  authenticatePackagedAppEndpoint,
   assertPackagedResources,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
@@ -944,6 +1111,7 @@ export {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  launchAndExpectDatabaseBlocked,
   installAndProbe,
   launchAndProbe,
   packagedMainEntryPath,

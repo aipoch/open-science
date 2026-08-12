@@ -13,6 +13,10 @@ describe('createComputeJobRuntime', () => {
     const handleJobUpdated = vi.fn()
     const start = vi.fn()
     const stop = vi.fn()
+    const pause = vi.fn(async () => undefined)
+    const resume = vi.fn()
+    const unbind = vi.fn()
+    const jobDeletionOwner = { bindRuntime: vi.fn(() => unbind) }
     const runner = {} as SshRunner
     const scpRunner = {} as ScpRunner
     const hostRepository = {} as ComputeHostRepository
@@ -22,11 +26,12 @@ describe('createComputeJobRuntime', () => {
     let wiredPollerDeps: JobPollerDeps | undefined
     const createPoller = vi.fn((deps: JobPollerDeps) => {
       wiredPollerDeps = deps
-      return { start, stop }
+      return { start, stop, pause, resume }
     })
     const runtime = createComputeJobRuntime(
       {
         computeService: { handleJobUpdated },
+        jobDeletionOwner,
         hostRepository,
         jobRepository,
         storageRoot: '/data'
@@ -57,5 +62,7 @@ describe('createComputeJobRuntime', () => {
     })
     expect(start).toHaveBeenCalledTimes(1)
     expect(stop).toHaveBeenCalledTimes(1)
+    expect(jobDeletionOwner.bindRuntime).toHaveBeenCalledWith({ start, stop, pause, resume })
+    expect(unbind).toHaveBeenCalledOnce()
   })
 })

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { createPermissionGrantRegistry, PermissionGrantTargetUnavailableError } from './registry'
 
 let storageRoot: string | undefined
@@ -26,7 +26,7 @@ const openClient = async (): Promise<PrismaClient> => {
 
   const client = createProjectDbClient(storageRoot)
   clients.push(client)
-  await ensureProjectSchema(client)
+  await migrateApplicationDatabase(client)
   return client
 }
 

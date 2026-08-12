@@ -6,7 +6,8 @@ describe('toCustomMcpConfig', () => {
   it('maps a stored stdio server to a McpClientManager config', () => {
     const server: StoredCustomMcpServer = {
       id: 'srv-1',
-      name: 'My Server',
+      name: 'my-server',
+      displayName: 'My Server',
       transport: 'stdio',
       command: 'npx',
       args: ['-y', 'some-mcp-server'],
@@ -16,7 +17,7 @@ describe('toCustomMcpConfig', () => {
 
     expect(toCustomMcpConfig(server)).toEqual({
       id: 'srv-1',
-      name: 'My Server',
+      name: 'my-server',
       transport: 'stdio',
       command: 'npx',
       args: ['-y', 'some-mcp-server'],
@@ -29,7 +30,8 @@ describe('toCustomMcpConfig', () => {
   it('falls back to an empty command when the stored server has none', () => {
     const server: StoredCustomMcpServer = {
       id: 'srv-1',
-      name: 'My Server',
+      name: 'my-server',
+      displayName: 'My Server',
       transport: 'stdio',
       enabled: true
     }
@@ -40,7 +42,8 @@ describe('toCustomMcpConfig', () => {
   it('maps a remote server url/headers/transport', () => {
     const server: StoredCustomMcpServer = {
       id: 'srv-remote',
-      name: 'Remote Server',
+      name: 'remote-server',
+      displayName: 'Remote Server',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
       headers: { Authorization: 'Bearer token' },
@@ -49,7 +52,7 @@ describe('toCustomMcpConfig', () => {
 
     expect(toCustomMcpConfig(server)).toEqual({
       id: 'srv-remote',
-      name: 'Remote Server',
+      name: 'remote-server',
       transport: 'streamable_http',
       command: '',
       args: undefined,
@@ -62,7 +65,8 @@ describe('toCustomMcpConfig', () => {
   it('maps OAuth configuration and decrypted state to the manager', () => {
     const server: StoredCustomMcpServer = {
       id: 'srv-oauth',
-      name: 'OAuth Server',
+      name: 'oauth-server',
+      displayName: 'OAuth Server',
       transport: 'streamable_http',
       url: 'https://example.com/mcp',
       oauth: { scopes: ['openid'] },
@@ -72,7 +76,7 @@ describe('toCustomMcpConfig', () => {
 
     expect(toCustomMcpConfig(server)).toEqual({
       id: 'srv-oauth',
-      name: 'OAuth Server',
+      name: 'oauth-server',
       transport: 'streamable_http',
       command: '',
       args: undefined,
@@ -90,7 +94,8 @@ describe('toCustomMcpConfig', () => {
 describe('selectEnabledCustomServers', () => {
   const stdioServer: StoredCustomMcpServer = {
     id: 'srv-stdio',
-    name: 'Stdio Server',
+    name: 'stdio-server',
+    displayName: 'Stdio Server',
     transport: 'stdio',
     command: 'npx',
     enabled: true
@@ -98,19 +103,22 @@ describe('selectEnabledCustomServers', () => {
   const disabledServer: StoredCustomMcpServer = {
     ...stdioServer,
     id: 'srv-off',
-    name: 'Disabled Server',
+    name: 'disabled-server',
+    displayName: 'Disabled Server',
     enabled: false
   }
   const remoteServer: StoredCustomMcpServer = {
     id: 'srv-remote',
-    name: 'Remote Server',
+    name: 'remote-server',
+    displayName: 'Remote Server',
     transport: 'streamable_http',
     url: 'https://example.com/mcp',
     enabled: true
   }
   const sseServer: StoredCustomMcpServer = {
     id: 'srv-sse',
-    name: 'SSE Server',
+    name: 'sse-server',
+    displayName: 'SSE Server',
     transport: 'sse',
     url: 'https://example.com/sse',
     enabled: true
@@ -118,29 +126,34 @@ describe('selectEnabledCustomServers', () => {
   const unauthenticatedOAuthServer: StoredCustomMcpServer = {
     ...remoteServer,
     id: 'srv-oauth-waiting',
-    name: 'OAuth Waiting',
+    name: 'oauth-waiting',
+    displayName: 'OAuth Waiting',
     oauth: {}
   }
   const authenticatedOAuthServer: StoredCustomMcpServer = {
     ...unauthenticatedOAuthServer,
     id: 'srv-oauth-ready',
-    name: 'OAuth Ready',
+    name: 'oauth-ready',
+    displayName: 'OAuth Ready',
     oauthState: { tokens: { access_token: 'access', token_type: 'Bearer' } }
   }
   const bundledRouteCollision: StoredCustomMcpServer = {
     ...stdioServer,
     id: 'srv-reserved-route',
-    name: 'Chemistry'
+    name: 'chemistry',
+    displayName: 'Other Chemistry'
   }
   const duplicateRouteA: StoredCustomMcpServer = {
     ...stdioServer,
     id: 'srv-duplicate-a',
-    name: 'Duplicate MCP'
+    name: 'duplicate-mcp',
+    displayName: 'Duplicate A'
   }
   const duplicateRouteB: StoredCustomMcpServer = {
     ...stdioServer,
     id: 'srv-duplicate-b',
-    name: 'Duplicate-MCP!'
+    name: 'duplicate-mcp',
+    displayName: 'Duplicate B'
   }
 
   it('returns enabled servers across all supported transports', () => {
@@ -176,31 +189,25 @@ describe('selectEnabledCustomServers', () => {
     expect(selectEnabledCustomServers({ enabledIds: [], autoAllowIds: [] })).toEqual([])
   })
 
-  it('fails closed when a slug overlaps another Connector legacy alias', () => {
-    const legacyOwner: StoredCustomMcpServer = {
+  it('fails closed when custom Connectors have duplicate names', () => {
+    const first: StoredCustomMcpServer = {
       ...stdioServer,
-      id: 'legacy-owner-uuid',
-      slug: 'stable-owner',
-      name: 'legacy-route'
+      id: 'first',
+      name: 'same-name',
+      displayName: 'First'
     }
-    const nameHijacker: StoredCustomMcpServer = {
+    const second: StoredCustomMcpServer = {
       ...stdioServer,
-      id: 'name-hijacker-uuid',
-      slug: 'legacy-route',
-      name: 'Name hijacker'
-    }
-    const uuidHijacker: StoredCustomMcpServer = {
-      ...stdioServer,
-      id: 'uuid-hijacker-uuid',
-      slug: 'legacy-owner-uuid',
-      name: 'UUID hijacker'
+      id: 'second',
+      name: 'same-name',
+      displayName: 'Second'
     }
 
     expect(
       selectEnabledCustomServers({
         enabledIds: [],
         autoAllowIds: [],
-        customMcpServers: [legacyOwner, nameHijacker, uuidHijacker]
+        customMcpServers: [first, second]
       })
     ).toEqual([])
   })

@@ -57,7 +57,7 @@ const startLoop = (
 }
 
 // A catalog stub that returns a deterministic, secret-free catalog. Includes a Main-disabled skill
-// (personal-foo) and a custom connector (cust-1, runnable) plus an unreachable custom connector
+// (personal-foo) and a custom connector (my-server, runnable) plus an unreachable custom connector
 // (cust-dead) to exercise the availability gate.
 const stubCatalog: AgentsCatalogSource = {
   listSkillCatalog: async () => [
@@ -83,8 +83,21 @@ const stubCatalog: AgentsCatalogSource = {
     autoAllowIds: [],
     disabledConnectorIds: [],
     customMcpServers: [
-      { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' },
-      { id: 'cust-dead', name: 'Dead Server', transport: 'stdio', enabled: true }
+      {
+        id: 'cust-1',
+        name: 'my-server',
+        displayName: 'My Server',
+        transport: 'stdio',
+        enabled: true,
+        command: 'run'
+      },
+      {
+        id: 'cust-dead',
+        name: 'dead-server',
+        displayName: 'Dead Server',
+        transport: 'stdio',
+        enabled: true
+      }
     ]
   })
 }
@@ -95,6 +108,7 @@ gate('host.agents repl mutation integration', () => {
   let token: string
   let profileStorage: string
   let runtimeStorage: string
+  let releaseControl: (() => void) | undefined
 
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-mut-profile-'))
@@ -123,12 +137,18 @@ gate('host.agents repl mutation integration', () => {
       token: 'integration-token',
       agentsService
     })
-    const connection = await rpcServer.ensureStarted()
+    const connection = await rpcServer.issueControlConnection(
+      'mutation-session',
+      'default-project',
+      'root-frame-mutation-session'
+    )
     endpoint = connection.endpoint
     token = connection.token
+    releaseControl = connection.release
   })
 
   afterAll(async () => {
+    releaseControl?.()
     await rpcServer?.close()
     await rm(profileStorage, { recursive: true, force: true })
     await rm(runtimeStorage, { recursive: true, force: true })
@@ -157,11 +177,34 @@ gate('host.agents repl mutation integration', () => {
     }
   }, 60_000)
 
-  it('create() with skill_names produces Selected and resolves a public name to a stable id', async () => {
+  it('create() maps every camelCase public input key to the unchanged Agents RPC contract', async () => {
     const { child, send } = startLoop(env())
     try {
       const r = await send(
-        "return JSON.stringify(await host.agents.create({ name: 'SelBot', skill_names: ['foo'] }))"
+        "return JSON.stringify(await host.agents.create({ name: 'MappedBot', displayName: 'Mapped Bot', description: 'mapped', systemPrompt: 'prompt', iconKey: 'beaker', colorKey: 'green', enabled: true, skillNames: ['demo'], connectorNames: ['my-server'] }))"
+      )
+      expect(r.error).toBeNull()
+      expect(JSON.parse(r.result ?? '{}')).toMatchObject({
+        name: 'MappedBot',
+        displayName: 'Mapped Bot',
+        description: 'mapped',
+        systemPrompt: 'prompt',
+        iconKey: 'beaker',
+        colorKey: 'green',
+        enabled: true,
+        capabilityMode: 'selected',
+        selectedCapabilities: { skillIds: ['demo'], connectorIds: ['my-server'] }
+      })
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('create() with skillNames produces Selected and resolves a public name to a stable id', async () => {
+    const { child, send } = startLoop(env())
+    try {
+      const r = await send(
+        "return JSON.stringify(await host.agents.create({ name: 'SelBot', skillNames: ['foo'] }))"
       )
       expect(r.error).toBeNull()
       const created = JSON.parse(r.result ?? '{}')
@@ -177,12 +220,12 @@ gate('host.agents repl mutation integration', () => {
     const { child, send } = startLoop(env())
     try {
       const r = await send(
-        "return JSON.stringify(await host.agents.create({ name: 'ConnBot', connector_names: ['cust-1'] }))"
+        "return JSON.stringify(await host.agents.create({ name: 'ConnBot', connectorNames: ['my-server'] }))"
       )
       expect(r.error).toBeNull()
       const created = JSON.parse(r.result ?? '{}')
       expect(created.capabilityMode).toBe('selected')
-      expect(created.selectedCapabilities.connectorIds).toEqual(['cust-1'])
+      expect(created.selectedCapabilities.connectorIds).toEqual(['my-server'])
     } finally {
       child.kill()
     }
@@ -199,15 +242,51 @@ gate('host.agents repl mutation integration', () => {
         ).result ?? '{}'
       )
       const r = await send(
-        `return JSON.stringify(await host.agents.update('UpdBot', { revision: ${created.revision}, description: 'after', skill_names: ['demo'] }))`
+        `return JSON.stringify(await host.agents.update('UpdBot', { revision: ${created.revision}, displayName: 'Updated Bot', description: 'after', systemPrompt: 'updated prompt', iconKey: 'flask', colorKey: 'blue', skillNames: ['demo'], connectorNames: ['my-server'] }))`
       )
       expect(r.error).toBeNull()
       const updated = JSON.parse(r.result ?? '{}')
       // read-back reflects the actual post-write state, not the echoed request.
+      expect(updated.displayName).toBe('Updated Bot')
       expect(updated.description).toBe('after')
+      expect(updated.systemPrompt).toBe('updated prompt')
+      expect(updated.iconKey).toBe('flask')
+      expect(updated.colorKey).toBe('blue')
       expect(updated.capabilityMode).toBe('selected')
       expect(updated.selectedCapabilities.skillIds).toEqual(['demo'])
+      expect(updated.selectedCapabilities.connectorIds).toEqual(['my-server'])
       expect(updated.revision).toBe(created.revision + 1)
+    } finally {
+      child.kill()
+    }
+  }, 60_000)
+
+  it('rejects every old Agents input key before it reaches the RPC service', async () => {
+    const { child, send } = startLoop(env())
+    try {
+      const r = await send(
+        "const errors = []; for (const key of ['display_name', 'system_prompt', 'icon_key', 'color_key', 'skill_names', 'connector_names']) { " +
+          "try { await host.agents.create({ name: 'Old-' + key, [key]: key.endsWith('_names') ? [] : 'x' }) } " +
+          "catch (error) { errors.push(error.name + ': ' + error.message) } } " +
+          "for (const key of ['display_name', 'system_prompt', 'icon_key', 'color_key', 'skill_names', 'connector_names']) { " +
+          "try { await host.agents.update('MappedBot', { revision: 1, [key]: key.endsWith('_names') ? [] : 'x' }) } " +
+          "catch (error) { errors.push(error.name + ': ' + error.message) } } return JSON.stringify(errors)"
+      )
+      expect(r.error).toBeNull()
+      expect(JSON.parse(r.result ?? '[]')).toEqual([
+        'TypeError: host.agents.create input unknown option: display_name',
+        'TypeError: host.agents.create input unknown option: system_prompt',
+        'TypeError: host.agents.create input unknown option: icon_key',
+        'TypeError: host.agents.create input unknown option: color_key',
+        'TypeError: host.agents.create input unknown option: skill_names',
+        'TypeError: host.agents.create input unknown option: connector_names',
+        'TypeError: host.agents.update patch unknown option: display_name',
+        'TypeError: host.agents.update patch unknown option: system_prompt',
+        'TypeError: host.agents.update patch unknown option: icon_key',
+        'TypeError: host.agents.update patch unknown option: color_key',
+        'TypeError: host.agents.update patch unknown option: skill_names',
+        'TypeError: host.agents.update patch unknown option: connector_names'
+      ])
     } finally {
       child.kill()
     }
@@ -219,7 +298,7 @@ gate('host.agents repl mutation integration', () => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'SwitchBot', skill_names: ['demo'] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'SwitchBot', skillNames: ['demo'] }))"
           )
         ).result ?? '{}'
       )
@@ -236,13 +315,13 @@ gate('host.agents repl mutation integration', () => {
     }
   }, 60_000)
 
-  it('attach_skill / detach_skill mutate the current mode without switching it', async () => {
+  it('attachSkill / detachSkill mutate the current mode without switching it', async () => {
     const { child, send } = startLoop(env())
     try {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'AttachBot', skill_names: [] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'AttachBot', skillNames: [] }))"
           )
         ).result ?? '{}'
       )
@@ -250,7 +329,7 @@ gate('host.agents repl mutation integration', () => {
       const attached = JSON.parse(
         (
           await send(
-            `return JSON.stringify(await host.agents.attach_skill('AttachBot', 'demo', { revision: ${created.revision} }))`
+            `return JSON.stringify(await host.agents.attachSkill('AttachBot', 'demo', { revision: ${created.revision} }))`
           )
         ).result ?? '{}'
       )
@@ -260,7 +339,7 @@ gate('host.agents repl mutation integration', () => {
       const detached = JSON.parse(
         (
           await send(
-            `return JSON.stringify(await host.agents.detach_skill('AttachBot', 'demo', { revision: ${attached.revision} }))`
+            `return JSON.stringify(await host.agents.detachSkill('AttachBot', 'demo', { revision: ${attached.revision} }))`
           )
         ).result ?? '{}'
       )
@@ -271,28 +350,28 @@ gate('host.agents repl mutation integration', () => {
     }
   }, 60_000)
 
-  it('attach_connector / detach_connector follow the same mode rules', async () => {
+  it('attachConnector / detachConnector follow the same mode rules', async () => {
     const { child, send } = startLoop(env())
     try {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'ConnAttachBot', connector_names: [] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'ConnAttachBot', connectorNames: [] }))"
           )
         ).result ?? '{}'
       )
       const attached = JSON.parse(
         (
           await send(
-            `return JSON.stringify(await host.agents.attach_connector('ConnAttachBot', 'cust-1', { revision: ${created.revision} }))`
+            `return JSON.stringify(await host.agents.attachConnector('ConnAttachBot', 'my-server', { revision: ${created.revision} }))`
           )
         ).result ?? '{}'
       )
-      expect(attached.selectedCapabilities.connectorIds).toEqual(['cust-1'])
+      expect(attached.selectedCapabilities.connectorIds).toEqual(['my-server'])
       const detached = JSON.parse(
         (
           await send(
-            `return JSON.stringify(await host.agents.detach_connector('ConnAttachBot', 'cust-1', { revision: ${attached.revision} }))`
+            `return JSON.stringify(await host.agents.detachConnector('ConnAttachBot', 'my-server', { revision: ${attached.revision} }))`
           )
         ).result ?? '{}'
       )
@@ -319,7 +398,7 @@ gate('host.agents repl mutation integration', () => {
     const { child, send } = startLoop(env())
     try {
       const r = await send(
-        "try { await host.agents.create({ name: 'AmbigBot', skill_names: ['nope'] }); return 'no-throw' } catch (e) { return e.message }"
+        "try { await host.agents.create({ name: 'AmbigBot', skillNames: ['nope'] }); return 'no-throw' } catch (e) { return e.message }"
       )
       expect(r.result).toMatch(/host\.agents\.create:/)
       expect(r.result).toMatch(/stable id|No skill matches/)
@@ -334,14 +413,14 @@ gate('host.agents repl mutation integration', () => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'GateBot', connector_names: [] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'GateBot', connectorNames: [] }))"
           )
         ).result ?? '{}'
       )
       const r = await send(
-        `try { await host.agents.attach_connector('GateBot', 'cust-dead', { revision: ${created.revision} }); return 'no-throw' } catch (e) { return e.message }`
+        `try { await host.agents.attachConnector('GateBot', 'cust-dead', { revision: ${created.revision} }); return 'no-throw' } catch (e) { return e.message }`
       )
-      expect(r.result).toMatch(/host\.agents\.attach_connector:/)
+      expect(r.result).toMatch(/host\.agents\.attachConnector:/)
     } finally {
       child.kill()
     }
@@ -354,12 +433,12 @@ gate('host.agents repl mutation integration', () => {
     // them. (delete/switch are the privileged ops that require approval; they are out of scope here.)
     const { child, send } = startLoop(env())
     try {
-      // Create in Selected mode (skill_names: []) so attach_skill mutates inclusions; the point is
+      // Create in Selected mode (skillNames: []) so attachSkill mutates inclusions; the point is
       // that the whole round-trip completes with no approval gateway wired.
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'NoCardBot', description: 'd', skill_names: [] }))"
+            "return JSON.stringify(await host.agents.create({ name: 'NoCardBot', description: 'd', skillNames: [] }))"
           )
         ).result ?? '{}'
       )
@@ -376,7 +455,7 @@ gate('host.agents repl mutation integration', () => {
       const attached = JSON.parse(
         (
           await send(
-            `return JSON.stringify(await host.agents.attach_skill('NoCardBot', 'demo', { revision: ${updated.revision} }))`
+            `return JSON.stringify(await host.agents.attachSkill('NoCardBot', 'demo', { revision: ${updated.revision} }))`
           )
         ).result ?? '{}'
       )

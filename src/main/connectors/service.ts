@@ -2,8 +2,13 @@ import { createHmac, randomBytes } from 'node:crypto'
 
 import { ParserEngine } from './engine'
 import { ALL_CONNECTOR_IDS, getDescriptor } from './registry'
-import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './custom-mcp-bootstrap'
-import type { CustomMcpServerConfig } from './mcp-client-manager'
+import {
+  classifyCustomMcpFailure,
+  isCustomMcpServerRouteSafe,
+  toCustomMcpConfig,
+  type CustomMcpFailureAvailability
+} from './custom-mcp-bootstrap'
+import { McpToolCallError, type CustomMcpServerConfig } from './mcp-client-manager'
 import type { ConnectorCredentials, ToolDescriptor } from './types'
 import type { StoredConnectors, StoredCustomMcpServer } from '../settings/types'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -12,7 +17,6 @@ import type { ConnectorPermissionRequest } from '../permission-grants/connector-
 import type { PermissionGrantScope } from '../../shared/permission-grants'
 import type { ApprovalDecision, ConnectorApprovalScope } from '../../shared/settings'
 import type { SpecialistProfileView } from '../../shared/specialist'
-import { customConnectorSlug } from '../../shared/custom-connector'
 
 type McpClientManagerLike = {
   listTools(config: CustomMcpServerConfig): Promise<Array<{ name: string }>>
@@ -57,6 +61,10 @@ type ConnectorServiceDeps = {
   // a function (rather than a session-start snapshot) so edited/deleted profiles take effect on the
   // next connector call.
   resolveSpecialistProfile?: (specialistId: string) => Promise<SpecialistProfileView | undefined>
+  onCustomServerAvailabilityChanged?: (
+    serverId: string,
+    availability: CustomMcpFailureAvailability | undefined
+  ) => void
 }
 
 // Optional routing context for a connector call. Present for calls that originate inside a session
@@ -82,6 +90,10 @@ type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
 }
+
+const customMcpFailureCategory = (
+  availability: CustomMcpFailureAvailability
+): 'connector_unavailable' | 'connector_unauthenticated' => `connector_${availability}`
 
 const stableRecordEntries = (record: Record<string, string> | undefined): [string, string][] =>
   Object.entries(record ?? {}).sort(([left], [right]) => left.localeCompare(right))
@@ -185,7 +197,9 @@ export class ConnectorService {
       serverId,
       (this.customServerFailureEpochs.get(serverId) ?? 0) + 1
     )
-    this.unavailableCustomConnectors.delete(serverId)
+    if (this.unavailableCustomConnectors.delete(serverId)) {
+      this.deps.onCustomServerAvailabilityChanged?.(serverId, undefined)
+    }
   }
 
   async call(
@@ -202,13 +216,11 @@ export class ConnectorService {
     }
 
     const customServers = (await this.currentConnectors())?.customMcpServers ?? []
-    const custom =
-      customServers.find((server) => customConnectorSlug(server) === connector) ??
-      customServers.find((server) => server.name === connector)
+    const custom = customServers.find((server) => server.name === connector)
     const access = await this.resolveAccess(
       connector,
       context,
-      custom ? [customConnectorSlug(custom), custom.name, custom.id] : [connector]
+      custom ? [custom.name] : [connector]
     )
     if (!custom) {
       throw new ConnectorGateError(
@@ -285,7 +297,10 @@ export class ConnectorService {
     const physicalFailure = this.unavailableCustomConnectors.get(custom.id)
     if (physicalFailure) throw new ConnectorGateError(physicalFailure)
     if (!access.bypassMainEnablement && !custom.enabled) {
-      throw new ConnectorGateError('connector_disabled', `connector not enabled: ${custom.name}`)
+      throw new ConnectorGateError(
+        'connector_disabled',
+        `connector not enabled: ${custom.displayName}`
+      )
     }
     if (!this.isCustomConfigRunnable(custom, customServers)) {
       throw new ConnectorGateError('connector_unavailable')
@@ -315,13 +330,9 @@ export class ConnectorService {
       // Never relay a transport error: custom server URLs, headers, or server-provided diagnostics
       // can contain credentials. Record only the availability category for subsequent fail-closed
       // dispatches; a successful connection clears the transient state.
-      const category =
-        error instanceof Error &&
-        /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
-          ? 'connector_unauthenticated'
-          : 'connector_unavailable'
-      this.recordCustomServerFailure(custom.id, failureEpoch, category)
-      throw new ConnectorGateError(category)
+      const availability = classifyCustomMcpFailure(error)
+      this.recordCustomServerFailure(custom.id, failureEpoch, availability)
+      throw new ConnectorGateError(customMcpFailureCategory(availability))
     }
 
     if (!tools.some((tool) => tool.name === method)) {
@@ -356,27 +367,33 @@ export class ConnectorService {
     try {
       const result = await this.deps.mcpClientManager.call(config, method, args)
       if ((this.customServerFailureEpochs.get(custom.id) ?? 0) === failureEpoch) {
-        this.unavailableCustomConnectors.delete(custom.id)
+        if (this.unavailableCustomConnectors.delete(custom.id)) {
+          this.deps.onCustomServerAvailabilityChanged?.(custom.id, undefined)
+        }
       }
       return result
     } catch (error) {
-      const category =
-        error instanceof Error &&
-        /(?:401|403|unauthoriz|authenticat|forbidden)/i.test(error.message)
-          ? 'connector_unauthenticated'
-          : 'connector_unavailable'
-      this.recordCustomServerFailure(custom.id, failureEpoch, category)
-      throw new ConnectorGateError(category)
+      const availability = classifyCustomMcpFailure(error)
+      // A structured tool error proves the MCP server is reachable. Keep connector-managed login
+      // tools callable, but publish stale host-managed OAuth so Settings can offer sign-in recovery.
+      if (
+        !(error instanceof McpToolCallError) ||
+        (custom.oauth && availability === 'unauthenticated')
+      ) {
+        this.recordCustomServerFailure(custom.id, failureEpoch, availability)
+      }
+      throw new ConnectorGateError(customMcpFailureCategory(availability))
     }
   }
 
   private recordCustomServerFailure(
     serverId: string,
     expectedEpoch: number,
-    category: 'connector_unavailable' | 'connector_unauthenticated'
+    availability: CustomMcpFailureAvailability
   ): void {
     if ((this.customServerFailureEpochs.get(serverId) ?? 0) === expectedEpoch) {
-      this.unavailableCustomConnectors.set(serverId, category)
+      this.unavailableCustomConnectors.set(serverId, customMcpFailureCategory(availability))
+      this.deps.onCustomServerAvailabilityChanged?.(serverId, availability)
     }
   }
 
@@ -412,7 +429,7 @@ export class ConnectorService {
   }
 
   // The Permission Broker owns Connector policy precedence as well as durable grant matching. This
-  // service supplies only the registered identity, routing aliases, and current settings snapshot.
+  // service supplies only the registered identity and current settings snapshot.
   private async ensureAuthorized(
     connectorLabel: string,
     capabilityServerId: string,
@@ -474,16 +491,19 @@ export class ConnectorService {
       if (!current) throw new ConnectorGateError('connector_unavailable')
       this.assertCustomServerCurrent(current, generation)
       if (!access.bypassMainEnablement && !current.enabled) {
-        throw new ConnectorGateError('connector_disabled', `connector not enabled: ${current.name}`)
+        throw new ConnectorGateError(
+          'connector_disabled',
+          `connector not enabled: ${current.displayName}`
+        )
       }
       if (!this.isCustomConfigRunnable(current, customServers)) {
         throw new ConnectorGateError('connector_unavailable')
       }
 
       const request = this.authorizationRequest(
-        current.name,
+        current.displayName,
         current.id,
-        [current.id, customConnectorSlug(current), current.name],
+        [current.name],
         method,
         args,
         context,

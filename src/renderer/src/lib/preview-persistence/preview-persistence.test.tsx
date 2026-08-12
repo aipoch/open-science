@@ -139,6 +139,43 @@ describe('preview persistence projections', () => {
     expect(persisted.items[0]).not.toHaveProperty('type')
   })
 
+  it('round-trips the one durable Session Subagents Preview and selected Frame', () => {
+    usePreviewWorkbenchStore.setState({
+      panelState: 'collapsed',
+      activeItemId: 'tool:session-1:subagents',
+      items: [
+        {
+          id: 'tool:session-1:subagents',
+          sessionId: 'session-1',
+          projectId: 'project-a',
+          type: 'tool',
+          toolKind: 'subagents',
+          title: 'Subagents',
+          selectedAgentFrameId: 'child-21',
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    const persisted = toPersistedPreviewState(usePreviewWorkbenchStore.getState())
+    const restored = toRestoredSlice(persisted)
+
+    expect(restored).toMatchObject({
+      panelState: 'collapsed',
+      activeItemId: 'tool:session-1:subagents',
+      items: [
+        {
+          id: 'tool:session-1:subagents',
+          type: 'tool',
+          toolKind: 'subagents',
+          sessionId: 'session-1',
+          selectedAgentFrameId: 'child-21'
+        }
+      ]
+    })
+  })
+
   it('round-trips durable file fields through persist then restore', () => {
     usePreviewWorkbenchStore.setState({
       panelState: 'open',
@@ -446,6 +483,51 @@ describe('usePreviewPersistence per-project save/restore', () => {
     expect(save).not.toHaveBeenCalledWith(expect.objectContaining({ projectId: 'project-a' }))
     // The switch still loads the incoming project.
     expect(load).toHaveBeenCalledWith({ projectId: 'project-b' })
+  })
+
+  it('writes through the selected Subagent Frame before a process restart', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+    save.mockClear()
+
+    act(() => {
+      usePreviewWorkbenchStore.setState({
+        panelState: 'open',
+        activeItemId: 'tool:session-1:subagents',
+        items: [
+          {
+            id: 'tool:session-1:subagents',
+            sessionId: 'session-1',
+            projectId: 'project-a',
+            type: 'tool',
+            toolKind: 'subagents',
+            title: 'Subagents',
+            selectedAgentFrameId: 'child-05',
+            createdAt: 1,
+            updatedAt: 2
+          }
+        ]
+      })
+    })
+
+    expect(save).toHaveBeenCalledWith({
+      projectId: 'project-a',
+      state: {
+        version: PREVIEW_STATE_VERSION,
+        panelState: 'open',
+        activeItemId: 'tool:session-1:subagents',
+        items: [],
+        subagents: {
+          id: 'tool:session-1:subagents',
+          sessionId: 'session-1',
+          title: 'Subagents',
+          type: 'tool',
+          toolKind: 'subagents',
+          selectedAgentFrameId: 'child-05'
+        }
+      }
+    })
   })
 
   it('flushes the active project on unmount', async () => {

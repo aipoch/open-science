@@ -30,6 +30,7 @@ Commands:
   project create <name> [--description <text>]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--wait]
   run status <run-id>
+  run cancel <run-id>
   session status <session-id>
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
@@ -42,12 +43,14 @@ Options:
   --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
+  --cwd <path>           Working directory for a new or matching existing session
   --prompt <text>        Prompt text (or read stdin when omitted)
   --prompt-file <path>   Read the prompt from a UTF-8 file
   --approval-profile <profile>  ask, auto, or full (default: ask)
   --skill <id>           Force-load a skill for this run (repeatable)
   --wait                 Wait for the run to finish
   --timeout-ms <ms>      Stop waiting after this many milliseconds
+  --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line
   --output <path>        Artifact download destination
   --yes                  Confirm the offline rollback conversion
@@ -65,6 +68,7 @@ const VALUE_OPTIONS = {
   '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
+  '--cwd': 'cwd',
   '--prompt': 'prompt',
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
@@ -89,7 +93,8 @@ export const parseCliArgs = (argv) => {
   const args = [...argv]
   const command = args.shift()
   const subcommand =
-    GROUP_COMMANDS.has(command) || (command === 'run' && args[0] === 'status')
+    GROUP_COMMANDS.has(command) ||
+    (command === 'run' && (args[0] === 'status' || args[0] === 'cancel'))
       ? args.shift()
       : undefined
   const options = {
@@ -107,6 +112,7 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--yes') options.yes = true
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
+    else if (arg === '--cancel-on-timeout') options.cancelOnTimeout = true
     else if (arg === '--skill') {
       const value = args.shift()
       if (!value) throw new CliUsageError('--skill requires a value.')
@@ -142,11 +148,20 @@ export const parseCliArgs = (argv) => {
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
   }
+  if (options.cwd !== undefined && !options.cwd.trim()) {
+    throw new CliUsageError('--cwd requires a non-empty path.')
+  }
+  if (options.cwd && (command !== 'run' || subcommand)) {
+    throw new CliUsageError('--cwd requires run.')
+  }
   if (options.jsonl && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--jsonl requires run --wait.')
   }
   if (options.timeoutMs !== undefined && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--timeout-ms requires run --wait.')
+  }
+  if (options.cancelOnTimeout && options.timeoutMs === undefined) {
+    throw new CliUsageError('--cancel-on-timeout requires --timeout-ms.')
   }
   if (options.noSandbox && command !== 'start') {
     throw new CliUsageError('--no-sandbox requires start.')
@@ -607,6 +622,22 @@ const readPrompt = async (options, deps) => {
 const emitRunEvent = (event, options, deps) => {
   if (options.jsonl) {
     deps.log(JSON.stringify(event))
+  } else if (event.type === 'run.progress') {
+    if (event.data?.heartbeat) {
+      const seconds = Math.max(1, Math.round((event.data.elapsedMs ?? 0) / 1_000))
+      const subject =
+        event.data.phase === 'provider-accepted' ? 'the first provider output' : 'the provider'
+      deps.log(`Still waiting for ${subject} (${seconds}s elapsed).`)
+      return
+    }
+    const message = {
+      accepted: 'Run accepted.',
+      'session-ready': 'Session ready.',
+      'prompt-dispatched': 'Prompt dispatched to the agent.',
+      'provider-accepted': 'Provider accepted the prompt.',
+      'first-visible-output': 'First provider output received.'
+    }[event.data?.phase]
+    if (message) deps.log(message)
   } else if (event.type === 'permission.requested') {
     deps.warn(
       'Run is waiting for approval. Approve the request in Open Science Desktop or the Web UI.'
@@ -682,6 +713,12 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     outputValue(await client.getRun(runId), options, deps)
     return
   }
+  if (command === 'run' && subcommand === 'cancel') {
+    const runId = positionals[0]
+    if (!runId) throw new CliUsageError('Run id is required.')
+    outputValue(await client.cancelRun(runId), options, deps)
+    return
+  }
   if (command === 'run') {
     if (!options.project) throw new CliUsageError('--project is required.')
     const prompt = await readPrompt(options, deps)
@@ -701,6 +738,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       const started = await client.startRun({
         project: options.project,
         prompt,
+        ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
         ...(options.session ? { sessionId: options.session } : {}),
         ...(options.approvalProfile ? { permissionProfile: options.approvalProfile } : {}),
         ...(options.skills?.length ? { skillIds: options.skills } : {})
@@ -712,11 +750,27 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
           emitRunEvent(event, options, deps)
         }
       }
-      result = options.wait
-        ? options.timeoutMs === undefined
-          ? await client.waitForRun(started.id)
-          : await client.waitForRun(started.id, { timeoutMs: options.timeoutMs })
-        : started
+      try {
+        result = options.wait
+          ? options.timeoutMs === undefined
+            ? await client.waitForRun(started.id)
+            : await client.waitForRun(started.id, { timeoutMs: options.timeoutMs })
+          : started
+      } catch (error) {
+        if (options.cancelOnTimeout && error?.code === 'timeout') {
+          try {
+            await client.cancelRun(started.id)
+          } catch (cancelError) {
+            if (error instanceof Error) {
+              if (error.cause === undefined) error.cause = cancelError
+              const cancelMessage =
+                cancelError instanceof Error ? cancelError.message : String(cancelError)
+              error.message = `${error.message} Server run cancellation also failed: ${cancelMessage}`
+            }
+          }
+        }
+        throw error
+      }
     } finally {
       abortController.abort()
       await eventTask
@@ -724,6 +778,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (options.json || options.jsonl) outputValue(result, options, deps)
     else if (result.status === 'completed') deps.log(result.output || `Run completed: ${result.id}`)
     else if (result.status === 'failed') deps.log(`Run failed: ${result.error ?? result.id}`)
+    else if (result.status === 'cancelled') deps.log(`Run cancelled: ${result.id}`)
     else deps.log(`Run started: ${result.id} (session ${result.sessionId})`)
     if (result.status === 'failed') deps.setExitCode(1)
     return

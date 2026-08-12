@@ -5,14 +5,19 @@ import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConversationPanel } from './ConversationPanel'
-import { emptyDoc } from './composer/composer-doc'
+import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -32,6 +37,16 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
   DropdownMenuContent: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  DropdownMenuSub: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({
+    children,
+    ...rest
+  }: PropsWithChildren<{ 'data-testid'?: string }>): React.JSX.Element => (
+    <div {...rest}>{children}</div>
+  ),
+  DropdownMenuSubContent: ({ children }: PropsWithChildren): React.JSX.Element => (
     <div>{children}</div>
   ),
   DropdownMenuSeparator: (): React.JSX.Element => <hr />,
@@ -61,11 +76,33 @@ vi.mock('@/components/ui/tooltip', () => ({
 }))
 
 vi.mock('./ComposerModelPicker', () => ({
-  ComposerModelPicker: (): null => null
+  ComposerModelPicker: (): React.JSX.Element => (
+    <button type="button" data-testid="mock-model-picker">
+      Model
+    </button>
+  )
 }))
 
 vi.mock('./ComposerAgentControlsMenu', () => ({
-  ComposerAgentControlsMenu: (): null => null
+  ComposerAgentControlsMenu: (props: {
+    readOnly?: boolean
+    permissionProfileReadOnly?: boolean
+    grantActionsReadOnly?: boolean
+    autoReviewDisabled?: boolean
+    specialistReadOnly?: boolean
+  }): React.JSX.Element => (
+    <button
+      type="button"
+      data-testid="mock-agent-controls"
+      data-read-only={String(props.readOnly === true)}
+      data-permission-read-only={String(props.permissionProfileReadOnly === true)}
+      data-grants-read-only={String(props.grantActionsReadOnly === true)}
+      data-auto-review-disabled={String(props.autoReviewDisabled === true)}
+      data-specialist-read-only={String(props.specialistReadOnly === true)}
+    >
+      Agent controls
+    </button>
+  )
 }))
 
 // session-job-store mock: controls whether the active session has running/finished jobs.
@@ -103,11 +140,25 @@ vi.mock('@/components/RemoteJobBadge', () => ({
 }))
 
 vi.mock('./WorkspaceMessageScroller', () => ({
-  WorkspaceMessageScroller: (): null => null
+  WorkspaceMessageScroller: ({
+    isResumingSession,
+    pendingElicitations = []
+  }: {
+    isResumingSession?: boolean
+    pendingElicitations?: unknown[]
+  }): React.JSX.Element => (
+    <>
+      {isResumingSession ? (
+        <span data-testid="resume-progress-indicator">Resuming session</span>
+      ) : null}
+      <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
+    </>
+  )
 }))
 
 vi.mock('./PermissionApprovalControls', () => ({
-  PermissionApprovalControls: (): null => null
+  PermissionApprovalControls: ({ requests }: { requests: unknown[] }): React.JSX.Element | null =>
+    requests.length > 0 ? <span data-testid="permission-approval-controls" /> : null
 }))
 
 const { respondToSessionPlanMock } = vi.hoisted(() => ({
@@ -166,6 +217,115 @@ const planOriginMessages = (): ChatSession['messages'] => [
   }
 ]
 
+const delegatedQuestionSession = (): ChatSession => ({
+  id: 'session-delegated-question',
+  projectId: 'project-a',
+  title: 'Delegated question',
+  cwd: '/workspace',
+  status: 'idle',
+  messages: [],
+  activities: [],
+  createdAt: 1,
+  updatedAt: 3,
+  conversationGraph: {
+    schemaVersion: 1,
+    rootFrameId: 'root',
+    activeFrameId: 'root',
+    frames: [
+      {
+        id: 'root',
+        originBindingState: 'root',
+        kind: 'root',
+        status: 'completed',
+        activeBranchId: 'root-branch',
+        createdAt: 1
+      },
+      {
+        id: 'child',
+        parentFrameId: 'root',
+        originMessageId: 'root-prompt',
+        originBindingState: 'validated',
+        kind: 'delegate',
+        delegateName: 'Researcher',
+        status: 'completed',
+        activeBranchId: 'child-branch',
+        createdAt: 2
+      }
+    ],
+    branches: [
+      {
+        id: 'root-branch',
+        agentFrameId: 'root',
+        headMessageId: 'root-prompt',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child-branch',
+        agentFrameId: 'child',
+        headMessageId: 'child-message',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ],
+    messages: [
+      {
+        id: 'root-prompt',
+        role: 'user',
+        content: 'Research this topic',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: 'root',
+        introducedOnBranchId: 'root-branch',
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'child-message',
+        role: 'agent',
+        content: 'I need one detail.',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: 'child',
+        introducedOnBranchId: 'child-branch',
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ],
+    activities: [],
+    activityGroups: [],
+    runtimeSegments: []
+  },
+  runtimeContext: {
+    version: 1,
+    revision: 1,
+    delegatedWork: {
+      records: [],
+      questionRequests: [
+        {
+          requestId: 'question-1',
+          canonicalDigest: 'a'.repeat(64),
+          sourceFrameId: 'child',
+          sourceAttemptId: 'attempt-1',
+          sourceRuntimeSegmentId: 'runtime-1',
+          sourceMessageBranchId: 'child-branch',
+          rootOriginMessageId: 'root-prompt',
+          rootBranchId: 'root-branch',
+          sourceName: 'Researcher',
+          questions: [
+            { question: 'Which scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }
+          ],
+          sequence: 1,
+          askedAt: 2,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0
+        }
+      ]
+    }
+  }
+})
+
 const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {}): void => {
   act(() => {
     root.render(
@@ -185,6 +345,7 @@ const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {
         permissionProfileState={undefined}
         permissionGrants={[]}
         contextUsage={undefined}
+        canChangeAgentControls
         canChangePermissionProfile
         onDraftDocChange={vi.fn()}
         onSendMessage={vi.fn()}
@@ -260,6 +421,14 @@ describe('ConversationPanel header spacing', () => {
       expect.arrayContaining(['px-4', 'pt-2'])
     )
     expect(getConversationHeader().className.split(' ')).not.toContain('pl-8')
+    const messageButton = getConversationHeader().querySelector<HTMLButtonElement>(
+      '[aria-label^="Messages,"]'
+    )
+    expect(messageButton).not.toBeNull()
+    expect(messageButton?.className.split(' ')).toContain('md:hidden')
+    const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
+    expect(surfaceFade?.classList.contains('-top-12')).toBe(true)
+    expect(surfaceFade?.classList.contains('h-12')).toBe(true)
   })
 })
 
@@ -279,10 +448,186 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount())
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
   container.remove()
 })
 
 describe('ConversationPanel composer intake', () => {
+  it('focuses the ordinary composer when the draft context changes', () => {
+    renderPanel({ composerFocusKey: 'session-a' })
+    expect(document.activeElement).toBe(getComposerEditor())
+
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+    expect(document.activeElement).toBe(navigationButton)
+
+    renderPanel({ composerFocusKey: 'session-b' })
+    expect(document.activeElement).toBe(getComposerEditor())
+  })
+
+  it('does not focus the hidden composer while a blocking interaction owns its lane', () => {
+    renderPanel({ composerFocusKey: 'session-a' })
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+
+    renderPanel({
+      composerFocusKey: 'session-blocked',
+      pendingPermissions: [{ requestId: 'permission-focus' } as never]
+    })
+
+    expect(getComposerForm().hidden).toBe(true)
+    expect(document.activeElement).toBe(navigationButton)
+  })
+
+  it('does not refocus the composer when draft editing becomes available', () => {
+    renderPanel({ composerFocusKey: 'session-preparing', canEditDraft: false })
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+
+    renderPanel({ composerFocusKey: 'session-preparing', canEditDraft: true })
+
+    expect(document.activeElement).toBe(navigationButton)
+  })
+
+  it('keeps the Main composer available while a delegated question is pending', () => {
+    renderPanel({
+      activeSession: delegatedQuestionSession(),
+      canSendMessage: true
+    })
+
+    expect(container.textContent).toContain('Asked by Researcher')
+    expect(container.textContent).toContain('Which scope?')
+    expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
+    expect(getComposerForm().contains(getComposerEditor())).toBe(true)
+  })
+
+  it('advances to the next Subagent request after Finish and removes an empty queue', async () => {
+    const firstSession = delegatedQuestionSession()
+    const graph = firstSession.conversationGraph!
+    graph.frames.push({
+      id: 'child-two',
+      parentFrameId: 'root',
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      delegateName: 'Reviewer',
+      status: 'completed',
+      activeBranchId: 'child-two-branch',
+      createdAt: 3
+    })
+    graph.branches.push({
+      id: 'child-two-branch',
+      agentFrameId: 'child-two',
+      headMessageId: 'child-two-message',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    graph.messages.push({
+      id: 'child-two-message',
+      role: 'agent',
+      content: 'I need the result format.',
+      status: 'complete',
+      eventIds: [],
+      agentFrameId: 'child-two',
+      introducedOnBranchId: 'child-two-branch',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    const secondRequest: DelegatedQuestionRequest = {
+      requestId: 'question-2',
+      canonicalDigest: 'b'.repeat(64),
+      sourceFrameId: 'child-two',
+      sourceAttemptId: 'attempt-2',
+      sourceRuntimeSegmentId: 'runtime-2',
+      sourceMessageBranchId: 'child-two-branch',
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: 'Reviewer',
+      questions: [
+        { question: 'Which format?', options: [{ label: 'Narrative' }, { label: 'Table' }] }
+      ],
+      sequence: 2,
+      askedAt: 3,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    }
+    Object.assign(firstSession, {
+      runtimeContext: {
+        ...firstSession.runtimeContext!,
+        delegatedWork: {
+          ...firstSession.runtimeContext!.delegatedWork!,
+          questionRequests: [
+            ...firstSession.runtimeContext!.delegatedWork!.questionRequests!,
+            secondRequest
+          ]
+        }
+      }
+    })
+    const onRespondToElicitation = vi.fn().mockResolvedValue(undefined)
+    const buttonNamed = (name: string): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === name
+      )
+
+    renderPanel({ activeSession: firstSession, onRespondToElicitation })
+    expect(container.textContent).toContain('Asked by Researcher')
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Narrow"]')?.click()
+    )
+    await act(async () => buttonNamed('Finish')?.click())
+    expect(onRespondToElicitation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requestId: 'question-1',
+        delegatedQuestion: expect.objectContaining({ action: 'confirm' })
+      })
+    )
+
+    const secondSession = structuredClone(firstSession)
+    Object.assign(secondSession, {
+      runtimeContext: {
+        ...secondSession.runtimeContext!,
+        delegatedWork: {
+          ...secondSession.runtimeContext!.delegatedWork!,
+          questionRequests: secondSession.runtimeContext!.delegatedWork!.questionRequests!.slice(1)
+        }
+      }
+    })
+    renderPanel({ activeSession: secondSession, onRespondToElicitation })
+    expect(container.textContent).toContain('Asked by Reviewer')
+    expect(container.textContent).toContain('Which format?')
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Narrative"]')?.click()
+    )
+    await act(async () => buttonNamed('Finish')?.click())
+    expect(onRespondToElicitation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requestId: 'question-2',
+        delegatedQuestion: expect.objectContaining({ action: 'confirm' })
+      })
+    )
+
+    const emptySession = structuredClone(secondSession)
+    Object.assign(emptySession, {
+      runtimeContext: {
+        ...emptySession.runtimeContext!,
+        delegatedWork: {
+          ...emptySession.runtimeContext!.delegatedWork!,
+          questionRequests: []
+        }
+      }
+    })
+    renderPanel({ activeSession: emptySession, onRespondToElicitation })
+    expect(container.querySelector('[data-testid="delegated-question-card"]')).toBeNull()
+  })
+
   it.each([
     ['darwin', '⌘K'],
     ['win32', 'Ctrl+K'],
@@ -299,12 +644,498 @@ describe('ConversationPanel composer intake', () => {
     window.api = previousApi
   })
 
-  it('shows file type and per-file size behavior before selection', () => {
+  it('shows structured input in a content-bounded lane without notebook chrome', () => {
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Skill type',
+        kind: 'single-select' as const,
+        options: [
+          { value: 'integration', label: 'Multi-omics integration' },
+          { value: 'clinical', label: 'Clinical statistics' }
+        ]
+      },
+      {
+        id: 'question_0_custom',
+        label: 'Other',
+        kind: 'text' as const
+      }
+    ]
+    const activeSession: ChatSession = {
+      id: 'session-elicitation',
+      projectId: 'project-a',
+      title: 'Structured input',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [],
+      activities: [
+        {
+          id: 'tool-ask-1',
+          kind: 'tool',
+          title: 'AskUserQuestion',
+          status: 'in_progress',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'What kind of skill are you trying to create?',
+            fields,
+            state: 'pending'
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
+    renderPanel({
+      activeSession,
+      notebookReference: {
+        sessionId: activeSession.id,
+        projectName: activeSession.projectId,
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/notebook',
+        dataRoot: '/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/notebook/run.json'
+      },
+      pendingElicitations: [
+        {
+          requestId: 'elicitation-1',
+          sessionId: activeSession.id,
+          toolCallId: 'tool-ask-1',
+          message: 'What kind of skill are you trying to create?',
+          fields
+        }
+      ]
+    })
+
+    const elicitationComposer = container.querySelector('[data-testid="elicitation-composer"]')
+    expect(elicitationComposer).not.toBeNull()
+    expect(elicitationComposer?.classList.contains('max-h-[min(70dvh,44rem)]')).toBe(true)
+    expect(elicitationComposer?.classList.contains('overflow-visible')).toBe(true)
+    expect(elicitationComposer?.classList.contains('px-px')).toBe(true)
+    expect(elicitationComposer?.classList.contains('pb-px')).toBe(true)
+    const resizeHandle = container.querySelector(
+      '[aria-label="Resize question panel"]'
+    ) as HTMLButtonElement
+    expect(resizeHandle).not.toBeNull()
+    expect(resizeHandle.classList.contains('touch-none')).toBe(true)
+    expect(resizeHandle.classList.contains('[@media(pointer:coarse)]:h-11')).toBe(true)
+    const scrollSurface = container.querySelector(
+      '[data-testid="elicitation-composer-scroll"]'
+    ) as HTMLDivElement
+    expect(scrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(scrollSurface.classList.contains('overscroll-contain')).toBe(true)
+    expect(scrollSurface.classList.contains('border-border-200')).toBe(true)
+    expect(scrollSurface.classList.contains('shadow-sm')).toBe(true)
+    expect(scrollSurface.classList.contains('shadow-card-opaque')).toBe(false)
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+
+    const optionRows = container.querySelectorAll<HTMLElement>(
+      '[data-elicitation-option-row="true"]'
+    )
+    expect(optionRows).toHaveLength(2)
+    ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 480 }) as DOMRect
+    scrollSurface.getBoundingClientRect = () => ({ top: 32 }) as DOMRect
+    optionRows[1].getBoundingClientRect = () => ({ bottom: 180 }) as DOMRect
+
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 200 }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('380px')
+
+    act(() => {
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 400 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 400 }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
+
+    ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 288 }) as DOMRect
+    act(() => {
+      resizeHandle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('288px')
+
+    Object.defineProperties(scrollSurface, {
+      clientHeight: { configurable: true, value: 256 },
+      scrollHeight: { configurable: true, value: 400 }
+    })
+    act(() => {
+      resizeHandle.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowUp' }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('320px')
+
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 568 })
+    ;(elicitationComposer as HTMLElement).getBoundingClientRect = () => ({ height: 300 }) as DOMRect
+    Object.defineProperties(scrollSurface, {
+      clientHeight: { configurable: true, value: 250 },
+      scrollHeight: { configurable: true, value: 500 }
+    })
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 0 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 0 }))
+    })
+    expect((elicitationComposer as HTMLElement).style.height).toBe('398px')
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+
+    renderPanel({
+      activeSession: {
+        ...activeSession,
+        activities: [
+          {
+            ...activeSession.activities![0],
+            id: 'tool-ask-2',
+            elicitation: {
+              message: 'Choose the next skill type.',
+              fields,
+              state: 'pending'
+            }
+          }
+        ]
+      },
+      pendingElicitations: [
+        {
+          requestId: 'elicitation-2',
+          sessionId: activeSession.id,
+          toolCallId: 'tool-ask-2',
+          message: 'Choose the next skill type.',
+          fields
+        }
+      ]
+    })
+
+    const nextElicitationComposer = container.querySelector(
+      '[data-testid="elicitation-composer"]'
+    ) as HTMLDivElement
+    expect(nextElicitationComposer).not.toBe(elicitationComposer)
+    expect(nextElicitationComposer.style.height).toBe('')
+
+    const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
+    expect(surfaceFade?.classList.contains('-top-18')).toBe(true)
+    expect(surfaceFade?.classList.contains('h-18')).toBe(true)
+    expect(surfaceFade?.classList.contains('bg-gradient-to-t')).toBe(true)
+    expect(surfaceFade?.classList.contains('from-bg-10')).toBe(true)
+    expect(surfaceFade?.classList.contains('to-bg-10/0')).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="composer-card-backdrop"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
+    const hiddenComposer = container.querySelector('[role="textbox"]')?.closest('form')
+    expect(hiddenComposer?.hidden).toBe(true)
+    expect(hiddenComposer?.classList.contains('hidden')).toBe(true)
+    expect(container.querySelector('[aria-label="Cancel run"]')?.closest('form')?.hidden).toBe(true)
+
+    renderPanel({
+      activeSession: {
+        ...activeSession,
+        status: 'idle',
+        activities: activeSession.activities?.map((activity) => ({
+          ...activity,
+          status: 'completed',
+          elicitation: activity.elicitation
+            ? {
+                ...activity.elicitation,
+                state: 'answered',
+                answers: [{ fieldId: 'question_0', value: 'integration' }]
+              }
+            : undefined
+        }))
+      },
+      pendingElicitations: []
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(false)
+  })
+
+  it('puts permission approval ahead of Ask-User in a content-bounded composer lane', () => {
+    const activeSession: ChatSession = {
+      id: 'session-existing',
+      projectId: 'project-a',
+      title: 'Permission request',
+      cwd: '/workspace',
+      status: 'waiting-permission',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
+    renderPanel({
+      activeSession,
+      notebookReference: {
+        sessionId: activeSession.id,
+        projectName: activeSession.projectId,
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/notebook',
+        dataRoot: '/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/notebook/run.json'
+      },
+      pendingPermissions: [{ requestId: 'permission-1' } as never],
+      pendingElicitations: [
+        {
+          requestId: 'elicitation-after-permission',
+          sessionId: 'session-existing',
+          toolCallId: 'tool-ask-after-permission',
+          message: 'Which scope should the agent use?',
+          fields: [
+            {
+              id: 'question_0',
+              label: 'Scope',
+              kind: 'single-select',
+              options: [{ value: 'focused', label: 'Focused' }]
+            }
+          ]
+        }
+      ]
+    })
+
+    const permissionComposer = container.querySelector(
+      '[data-testid="permission-composer"]'
+    ) as HTMLDivElement
+    const scrollSurface = container.querySelector(
+      '[data-testid="permission-composer-scroll"]'
+    ) as HTMLDivElement
+    const resizeHandle = container.querySelector(
+      '[aria-label="Resize permission panel"]'
+    ) as HTMLButtonElement
+
+    expect(permissionComposer).not.toBeNull()
+    expect(scrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(resizeHandle).not.toBeNull()
+    expect(resizeHandle.classList.contains('active:bg-bg-200')).toBe(false)
+    expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+    expect(getComposerForm().hidden).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="composer-surface-fade"]')
+        ?.classList.contains('-top-18')
+    ).toBe(true)
+
+    permissionComposer.getBoundingClientRect = () => ({ height: 320 }) as DOMRect
+    Object.defineProperties(scrollSurface, {
+      clientHeight: { configurable: true, value: 280 },
+      scrollHeight: { configurable: true, value: 280 }
+    })
+
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 0 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 0 }))
+    })
+    expect(permissionComposer.style.height).toBe('320px')
+
+    Object.defineProperty(scrollSurface, 'scrollHeight', { configurable: true, value: 620 })
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1000 })
+    act(() => {
+      resizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 300 })
+      )
+      resizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: -300 }))
+      resizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: -300 }))
+    })
+    expect(permissionComposer.style.height).toBe('660px')
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
+
+    renderPanel({ pendingPermissions: [{ requestId: 'permission-2' } as never] })
+    const nextPermissionComposer = container.querySelector(
+      '[data-testid="permission-composer"]'
+    ) as HTMLDivElement
+    expect(nextPermissionComposer).not.toBe(permissionComposer)
+    expect(nextPermissionComposer.style.height).toBe('')
+  })
+
+  it('serializes a pending question ahead of Plan approval in the shared blocking lane', () => {
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Scope',
+        kind: 'single-select' as const,
+        options: [
+          { value: 'focused', label: 'Focused' },
+          { value: 'broad', label: 'Broad' }
+        ]
+      },
+      { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+    ]
+    const pendingActivity: NonNullable<ChatSession['activities']>[number] = {
+      id: 'tool-choice-before-plan',
+      kind: 'tool',
+      title: 'Choose a scope',
+      status: 'in_progress',
+      eventIds: [],
+      sortIndex: 1,
+      promptMessageId: 'interaction-1',
+      createdAt: 1,
+      updatedAt: 1,
+      elicitation: {
+        message: 'Which scope should the Plan use?',
+        fields,
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'choice-before-plan' }
+      }
+    }
+    const session: ChatSession = {
+      id: 'session-choice-before-plan',
+      projectId: 'project-a',
+      title: 'Choice before Plan',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
+      messages: planOriginMessages(),
+      activities: [pendingActivity],
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      },
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({ activeSession: session, canEditDraft: false })
+
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-composer"] h3')?.textContent).toBe(
+      'Scope'
+    )
+    expect(container.textContent).not.toContain('Plan ready for review')
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(true)
+
+    renderPanel({
+      activeSession: {
+        ...session,
+        activities: [
+          {
+            ...pendingActivity,
+            status: 'completed',
+            elicitation: {
+              ...pendingActivity.elicitation!,
+              state: 'answered',
+              answers: [{ fieldId: 'question_0', value: 'focused' }]
+            }
+          }
+        ]
+      },
+      canEditDraft: false
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(container.textContent).toContain('Plan ready for review')
+    expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(true)
+  })
+
+  it('restores a durable pending choice from the persisted activity', async () => {
+    const onRespondToElicitation = vi.fn().mockResolvedValue(undefined)
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Approach',
+        kind: 'single-select' as const,
+        options: [
+          { value: 'minimal', label: 'Minimal' },
+          { value: 'expanded', label: 'Expanded' }
+        ]
+      },
+      { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+    ]
+    const activeSession: ChatSession = {
+      id: 'session-restored-choice',
+      projectId: 'project-a',
+      title: 'Restored choice',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      activities: [
+        {
+          id: 'tool-choice-1',
+          kind: 'tool',
+          title: 'Choose an approach',
+          status: 'failed',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Choose an approach',
+            fields,
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    renderPanel({ activeSession, pendingElicitations: [], onRespondToElicitation })
+
+    const option = container.querySelector<HTMLButtonElement>(
+      '[data-testid="elicitation-option-minimal"]'
+    )
+    expect(option).not.toBeNull()
+    await act(async () => option?.click())
+    expect(option?.getAttribute('data-selected')).toBe('true')
+    expect(onRespondToElicitation).not.toHaveBeenCalled()
+    const finish = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Finish'
+    )
+    await act(async () => finish?.click())
+
+    expect(onRespondToElicitation).toHaveBeenCalledWith({
+      requestId: 'choice-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'minimal' }],
+      request: {
+        requestId: 'choice-1',
+        sessionId: 'session-restored-choice',
+        toolCallId: 'tool-choice-1',
+        message: 'Choose an approach',
+        fields,
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+      }
+    })
+  })
+
+  it('keeps attachment limits discoverable in the tooltip and touch fallback', () => {
     renderPanel()
 
-    expect(container.querySelector('[data-testid="attachment-limits"]')?.textContent).toContain(
-      'Any file type · 10 GB per file. Large files are linked, not embedded.'
+    const guidance = 'Any file type · 10 GB per file. Large files are linked, not embedded.'
+    expect(container.querySelector('[data-testid="menu-attach-files"]')?.textContent).toBe(
+      'Attach files'
     )
+    expect(
+      [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
+        (node) => node.textContent === guidance
+      )
+    ).toBe(true)
+
+    const fallback = container.querySelector('[data-testid="attachment-limits-touch"]')
+    expect(fallback?.textContent).toBe(guidance)
+    expect(fallback?.className).toContain('hidden')
+    expect(fallback?.className).toContain('[@media(pointer:coarse)]:block')
+
+    renderPanel({ canEditDraft: false })
+    expect(fallback?.className).toContain('block')
+    expect(fallback?.className).not.toContain('hidden')
   })
 
   it('keeps a pending Plan read-only after the Agent interaction ends without a decision', () => {
@@ -421,7 +1252,7 @@ describe('ConversationPanel composer intake', () => {
 
   it('submits on Enter through the editor with the picked skill ids', () => {
     const onSendMessage = vi.fn()
-    renderPanel({ onSendMessage })
+    renderPanel({ canSendMessage: true, onSendMessage })
 
     const editor = getComposerEditor()
     const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
@@ -489,6 +1320,588 @@ describe('ConversationPanel composer intake', () => {
       (container.querySelector('[data-testid="menu-branch-in-new-session"]') as HTMLButtonElement)
         .disabled
     ).toBe(false)
+  })
+
+  it('offers Side chat between Plan first and Branch for a text-only existing Session draft', () => {
+    const onStartSideChat = vi.fn()
+    const session: ChatSession = {
+      id: 'session-existing',
+      projectId: 'project-a',
+      title: 'Existing session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    renderPanel({
+      activeSession: session,
+      canSendMessage: true,
+      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+      onPlanFirst: vi.fn(),
+      onStartSideChat,
+      onBranchInNewSession: vi.fn()
+    })
+
+    const items = [...container.querySelectorAll('[role="menuitem"], [data-testid^="menu-"]')]
+      .filter((element) =>
+        ['menu-plan-first', 'menu-side-chat', 'menu-branch-in-new-session'].includes(
+          element.getAttribute('data-testid') ?? ''
+        )
+      )
+      .map((element) => element.getAttribute('data-testid'))
+    const side = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+
+    expect(items).toEqual(['menu-plan-first', 'menu-side-chat', 'menu-branch-in-new-session'])
+    expect(side.disabled).toBe(false)
+    act(() => side.click())
+    expect(onStartSideChat).toHaveBeenCalledOnce()
+  })
+
+  it('keeps Side chat available while the main Session is running', () => {
+    const onStartSideChat = vi.fn()
+    renderPanel({
+      activeSession: {
+        id: 'session-running',
+        projectId: 'project-a',
+        title: 'Running session',
+        cwd: '/workspace',
+        status: 'running',
+        messages: planOriginMessages(),
+        createdAt: 1,
+        updatedAt: 2
+      },
+      canSendMessage: false,
+      canEditDraft: true,
+      draftDoc: { nodes: [{ type: 'text', text: 'Ask while main runs' }] },
+      onStartSideChat
+    })
+
+    const trigger = container.querySelector(
+      '[data-testid="running-side-chat-menu-trigger"]'
+    ) as HTMLButtonElement
+    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    expect(trigger.disabled).toBe(false)
+    expect(item.disabled).toBe(false)
+    act(() => item.click())
+    expect(onStartSideChat).toHaveBeenCalledOnce()
+  })
+
+  it.each(['waiting-for-user', 'waiting-permission'] as const)(
+    'keeps Side chat disabled while the main Session is %s',
+    (status) => {
+      const onStartSideChat = vi.fn()
+      renderPanel({
+        activeSession: {
+          id: 'session-waiting',
+          projectId: 'project-a',
+          title: 'Waiting session',
+          cwd: '/workspace',
+          status,
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        },
+        canSendMessage: false,
+        canEditDraft: true,
+        draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+        onStartSideChat
+      })
+
+      const trigger = container.querySelector(
+        '[data-testid="running-side-chat-menu-trigger"]'
+      ) as HTMLButtonElement
+      const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+      expect(trigger.disabled).toBe(true)
+      expect(item.disabled).toBe(true)
+      act(() => item.click())
+      expect(onStartSideChat).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps Side chat disabled while the main Session is waiting-plan-approval', () => {
+    const onStartSideChat = vi.fn()
+    renderPanel({
+      activeSession: {
+        id: 'session-plan-waiting',
+        projectId: 'project-a',
+        title: 'Waiting Plan',
+        cwd: '/workspace',
+        status: 'waiting-plan-approval',
+        messages: planOriginMessages(),
+        createdAt: 1,
+        updatedAt: 2
+      },
+      canSendMessage: false,
+      canEditDraft: true,
+      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+      onStartSideChat
+    })
+
+    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    expect(item.disabled).toBe(true)
+    act(() => item.click())
+    expect(onStartSideChat).not.toHaveBeenCalled()
+  })
+
+  it('explains why strict Side chat is unavailable for an unsupported backend', () => {
+    const reason = 'Strict tool isolation is unavailable.'
+    renderPanel({
+      activeSession: {
+        id: 'session-existing',
+        projectId: 'project-a',
+        title: 'Existing session',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: planOriginMessages(),
+        createdAt: 1,
+        updatedAt: 2
+      },
+      canSendMessage: true,
+      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+      onStartSideChat: vi.fn(),
+      sideChatDisabledReason: reason
+    })
+
+    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    expect(item.disabled).toBe(true)
+    expect(item.textContent).toContain(reason)
+  })
+
+  it('keeps Side chat disabled until the Session has a normal main conversation', () => {
+    renderPanel({
+      activeSession: {
+        id: 'session-empty',
+        projectId: 'project-a',
+        title: 'Empty session',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      },
+      canSendMessage: true,
+      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
+      onStartSideChat: vi.fn()
+    })
+
+    expect(
+      (container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement).disabled
+    ).toBe(true)
+  })
+
+  it('replaces the ordinary composer with an in-flow Side chat panel', () => {
+    const onCloseSideChat = vi.fn()
+    renderPanel({
+      notebookReference: {
+        sessionId: 'session-existing',
+        projectName: 'project-a',
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/notebook',
+        dataRoot: '/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/notebook/run.json'
+      },
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: false,
+        entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' }]
+      },
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat
+    })
+
+    const panel = container.querySelector('[data-testid="side-chat-panel"]')
+    const surface = container.querySelector('[data-testid="side-chat-panel-scroll"]')
+    const resizeHandle = container.querySelector('[aria-label="Resize Side chat panel"]')
+
+    expect(panel).not.toBeNull()
+    expect(panel?.classList.contains('relative')).toBe(true)
+    expect(panel?.classList.contains('absolute')).toBe(false)
+    expect(panel?.classList.contains('pt-0')).toBe(true)
+    expect(resizeHandle?.classList.contains('-translate-y-1/2')).toBe(true)
+    expect(resizeHandle?.classList.contains('bg-gradient-to-b')).toBe(true)
+    expect(surface?.classList.contains('overflow-hidden')).toBe(true)
+    expect(surface?.classList.contains('shadow-none')).toBe(true)
+    expect(surface?.classList.contains('shadow-sm')).toBe(false)
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(getComposerForm().hidden).toBe(true)
+    const sideChatPanel = panel as HTMLElement
+    const plus = sideChatPanel.querySelector('[data-testid="side-chat-plus-button"]')
+    const agentControls = sideChatPanel.querySelector('[data-testid="mock-agent-controls"]')
+    const modelPicker = sideChatPanel.querySelector('[data-testid="mock-model-picker"]')
+    expect(plus?.getAttribute('aria-disabled')).toBe('true')
+    expect((plus as HTMLButtonElement).disabled).toBe(false)
+    expect(agentControls?.getAttribute('data-read-only')).toBe('true')
+    expect(agentControls?.getAttribute('data-permission-read-only')).toBe('true')
+    expect(agentControls?.getAttribute('data-grants-read-only')).toBe('true')
+    expect(agentControls?.getAttribute('data-auto-review-disabled')).toBe('true')
+    expect(agentControls?.getAttribute('data-specialist-read-only')).toBe('true')
+    expect((modelPicker as HTMLButtonElement).disabled).toBe(false)
+    const followUp = container.querySelector('textarea[placeholder="Follow up…"]')
+    expect(followUp).not.toBeNull()
+    expect(document.activeElement).toBe(followUp)
+    act(() =>
+      (container.querySelector('[aria-label="Close Side chat"]') as HTMLButtonElement).click()
+    )
+    expect(onCloseSideChat).toHaveBeenCalledOnce()
+    renderPanel({ onCloseSideChat })
+    expect(document.activeElement).toBe(getComposerEditor())
+
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+    renderPanel({
+      composerFocusKey: 'session-blocked-after-side-chat',
+      pendingPermissions: [{ requestId: 'permission-after-side-chat' } as never]
+    })
+
+    expect(getComposerForm().hidden).toBe(true)
+    expect(document.activeElement).toBe(navigationButton)
+  })
+
+  it('keeps the Side chat input fixed and pins streamed output to the bottom', () => {
+    const sideChatProps = {
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    }
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: 'Keep this draft',
+        running: true,
+        entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' }]
+      }
+    })
+
+    const messageScroll = container.querySelector(
+      '[data-testid="side-chat-message-scroll"]'
+    ) as HTMLDivElement
+    const messageScrollViewport = messageScroll.querySelector(
+      '[data-slot="scroll-area-viewport"]'
+    ) as HTMLDivElement
+    const header = container.querySelector('[data-testid="side-chat-header"]') as HTMLDivElement
+    const viewport = container.querySelector(
+      '[data-testid="side-chat-message-viewport"]'
+    ) as HTMLDivElement
+    const composer = container.querySelector('[data-testid="side-chat-composer"]') as HTMLDivElement
+    const topFade = container.querySelector('[data-testid="side-chat-message-fade-top"]')
+    const bottomFade = container.querySelector('[data-testid="side-chat-message-fade-bottom"]')
+
+    expect(
+      container
+        .querySelector('[data-testid="side-chat-panel"]')
+        ?.classList.contains('h-[min(70dvh,44rem)]')
+    ).toBe(true)
+    expect(viewport.previousElementSibling).toBe(header)
+    expect(viewport.nextElementSibling).toBe(composer)
+    expect(messageScroll.parentElement).toBe(viewport)
+    expect(header.classList.contains('shrink-0')).toBe(true)
+    expect(composer.classList.contains('shrink-0')).toBe(true)
+    expect(viewport.classList.contains('overflow-hidden')).toBe(true)
+    expect(messageScroll.getAttribute('data-slot')).toBe('scroll-area')
+    expect(messageScrollViewport).not.toBeNull()
+    expect(topFade?.classList.contains('bg-gradient-to-b')).toBe(true)
+    expect(bottomFade?.classList.contains('bg-gradient-to-t')).toBe(true)
+    Object.defineProperty(messageScrollViewport, 'scrollHeight', {
+      configurable: true,
+      value: 640
+    })
+    messageScrollViewport.scrollTop = 0
+
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: 'Keep this draft',
+        running: true,
+        entries: [
+          { id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' },
+          { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Streaming output' }
+        ]
+      }
+    })
+
+    const followUp = container.querySelector(
+      'textarea[placeholder="Follow up…"]'
+    ) as HTMLTextAreaElement
+    expect(messageScrollViewport.scrollTop).toBe(640)
+    expect(followUp.value).toBe('Keep this draft')
+    expect(followUp.disabled).toBe(false)
+    expect(container.querySelector('[aria-label="Send Side chat follow up"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Cancel Side chat response"]')).not.toBeNull()
+  })
+
+  it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const sideChatProps = {
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    }
+    const entries = [
+      { id: 'user-history', kind: 'message' as const, role: 'user' as const, text: 'Old prompt' },
+      {
+        id: 'assistant-history',
+        kind: 'message' as const,
+        role: 'assistant' as const,
+        text: 'Historical answer'
+      },
+      { id: 'user-live', kind: 'message' as const, role: 'user' as const, text: 'New prompt' },
+      {
+        id: 'assistant-live',
+        kind: 'message' as const,
+        role: 'assistant' as const,
+        text: 'Flow'
+      }
+    ]
+
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: true,
+        entries: entries.slice(0, -1)
+      }
+    })
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: true,
+        entries
+      }
+    })
+
+    expect(container.textContent).toContain('Historical answer')
+    expect(container.textContent).not.toContain('Flow')
+    expect(container.querySelectorAll('.agent-markdown-streaming')).toHaveLength(1)
+
+    await act(async () => vi.advanceTimersByTimeAsync(496))
+    expect(container.textContent).not.toContain('Flow')
+    await act(async () => vi.advanceTimersByTimeAsync(16))
+    expect(container.textContent).toContain('F')
+
+    const nextAssistant = {
+      id: 'assistant-after-tool',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      text: 'Next'
+    }
+
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: true,
+        entries: [
+          ...entries,
+          {
+            id: 'tool-live',
+            kind: 'tool',
+            title: 'Tool after current answer',
+            status: 'in_progress'
+          },
+          nextAssistant
+        ]
+      }
+    })
+    expect(container.textContent).not.toContain('Tool after current answer')
+    expect(container.textContent).not.toContain(nextAssistant.text)
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('Flow')
+    expect(container.textContent).toContain('Tool after current answer')
+    expect(container.textContent).not.toContain(nextAssistant.text)
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.textContent).toContain('N')
+    expect(container.textContent).not.toContain(nextAssistant.text)
+  })
+
+  it('does not replay a buffered Side chat answer after the panel reopens', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const sideChatProps = {
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    }
+    const userEntry = {
+      id: 'user-reopen',
+      kind: 'message' as const,
+      role: 'user' as const,
+      text: 'Keep going'
+    }
+    const assistantEntry = {
+      id: 'assistant-reopen',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      text: 'Resume without replay'
+    }
+    const sideChat = {
+      generation: 2,
+      parentSessionId: 'session-existing',
+      projectId: 'project-a',
+      sideSessionId: 'side-2',
+      draft: '',
+      running: true,
+      entries: [userEntry, assistantEntry]
+    }
+
+    renderPanel({ ...sideChatProps, sideChat: { ...sideChat, entries: [userEntry] } })
+    renderPanel({ ...sideChatProps, sideChat })
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.textContent).toContain('R')
+    expect(container.textContent).not.toContain(assistantEntry.text)
+
+    renderPanel()
+    renderPanel({ ...sideChatProps, sideChat })
+
+    expect(container.textContent).toContain(assistantEntry.text)
+
+    const continuedAnswer = `${assistantEntry.text}, then continue`
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        ...sideChat,
+        entries: [userEntry, { ...assistantEntry, text: continuedAnswer }]
+      }
+    })
+    expect(container.textContent).not.toContain(continuedAnswer)
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.textContent).toContain(`${assistantEntry.text},`)
+  })
+
+  it('keeps main approval and ask-user surfaces waiting while Side chat is open', () => {
+    const activeSession: ChatSession = {
+      id: 'session-existing',
+      projectId: 'project-a',
+      title: 'Existing session',
+      cwd: '/workspace',
+      status: 'waiting-permission',
+      interrupted: true,
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const pendingPermissions = [{} as never]
+    const pendingElicitations = [{} as never]
+
+    renderPanel({
+      activeSession,
+      pendingPermissions,
+      pendingElicitations,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: false,
+        entries: []
+      },
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    })
+
+    expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Resume session"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="scroller-pending-elicitations"]')?.textContent
+    ).toBe('0')
+    expect(getComposerForm().hidden).toBe(true)
+
+    renderPanel({ activeSession, pendingPermissions, pendingElicitations })
+
+    expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="scroller-pending-elicitations"]')?.textContent
+    ).toBe('1')
+  })
+
+  it('reveals a waiting Plan immediately after Side chat closes', () => {
+    const activeSession: ChatSession = {
+      id: 'session-plan-under-side-chat',
+      projectId: 'project-a',
+      title: 'Plan under Side chat',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      messages: planOriginMessages(),
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      },
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    renderPanel({
+      activeSession,
+      sideChat: {
+        generation: 1,
+        parentSessionId: activeSession.id,
+        projectId: activeSession.projectId,
+        sideSessionId: 'side-plan',
+        draft: '',
+        running: false,
+        entries: []
+      },
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    })
+
+    expect(container.querySelector('[data-testid="plan-composer"]')).toBeNull()
+
+    renderPanel({ activeSession })
+
+    expect(container.querySelector('[data-testid="plan-composer"]')).not.toBeNull()
   })
 
   it('disables Plan first for an attachment-only draft', () => {
@@ -610,6 +2023,76 @@ describe('ConversationPanel composer intake', () => {
 })
 
 describe('ConversationPanel interrupted Session recovery', () => {
+  it('shows message-area progress while the Session resume is in flight', async () => {
+    let resolveResume: (() => void) | undefined
+    const onResumeSession = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveResume = resolve
+        })
+    )
+    const interruptedSession: ChatSession = {
+      id: 'session-interrupted',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'idle',
+      interrupted: true,
+      messages: planOriginMessages(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+
+    renderPanel({ activeSession: interruptedSession, onResumeSession })
+
+    const resumeButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Resume session"]'
+    )
+    await act(async () => resumeButton?.click())
+
+    expect(onResumeSession).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
+
+    await act(async () => resolveResume?.())
+
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
+  })
+
+  it('does not show one Session resume progress on another active Session', async () => {
+    let resolveResume: (() => void) | undefined
+    const onResumeSession = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveResume = resolve
+        })
+    )
+    const interruptedSession: ChatSession = {
+      id: 'session-interrupted',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'idle',
+      interrupted: true,
+      messages: planOriginMessages(),
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+
+    renderPanel({ activeSession: interruptedSession, onResumeSession })
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Resume session"]')?.click()
+    )
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
+
+    renderPanel({
+      activeSession: { ...interruptedSession, id: 'session-other', interrupted: undefined },
+      onResumeSession
+    })
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
+
+    await act(async () => resolveResume?.())
+  })
+
   it('keeps Resume disabled while Session persistence is unavailable', () => {
     const onResumeSession = vi.fn().mockResolvedValue(undefined)
     const interruptedSession: ChatSession = {
@@ -644,14 +2127,20 @@ describe('ConversationPanel interrupted Session recovery', () => {
 })
 
 describe('ConversationPanel + menu', () => {
-  it('renders both Attach files and Request review items', () => {
+  it('renders Context window as the separated final menu item', () => {
     renderPanel()
 
     const attachItem = container.querySelector('[data-testid="menu-attach-files"]')
+    const contextWindowItem = container.querySelector('[data-testid="menu-context-window"]')
     const reviewItem = container.querySelector('[data-testid="menu-request-review"]')
 
     expect(attachItem).not.toBeNull()
+    expect(contextWindowItem).not.toBeNull()
     expect(reviewItem).not.toBeNull()
+    expect(reviewItem?.compareDocumentPosition(contextWindowItem as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(contextWindowItem?.previousElementSibling?.tagName).toBe('HR')
   })
 
   it('describes the composer add icon with a tooltip', () => {
@@ -659,7 +2148,7 @@ describe('ConversationPanel + menu', () => {
 
     expect(
       [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
-        (node) => node.textContent === 'Add attachment or request review'
+        (node) => node.textContent === 'Add attachment, view context window, or request review'
       )
     ).toBe(true)
   })
@@ -684,22 +2173,74 @@ describe('ConversationPanel + menu', () => {
         lifecycle: 'awaiting_approval'
       }
     }
-    renderPanel({ activeSession: session, canEditDraft: false })
+    mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
+    renderPanel({
+      activeSession: session,
+      canEditDraft: false,
+      notebookReference: {
+        sessionId: session.id,
+        projectName: session.projectId,
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/notebook',
+        dataRoot: '/data',
+        runtimeRoot: '/runtime',
+        runJsonPath: '/notebook/run.json'
+      }
+    })
 
     const pendingEditor = container.querySelector('[role="textbox"]')
     expect(pendingEditor?.closest('form')?.classList.contains('hidden')).toBe(true)
     expect(container.textContent).toContain('Plan ready for review')
+    const planComposer = container.querySelector('[data-testid="plan-composer"]') as HTMLDivElement
+    const planScrollSurface = container.querySelector(
+      '[data-testid="plan-composer-scroll"]'
+    ) as HTMLDivElement
+    const planResizeHandle = container.querySelector(
+      '[aria-label="Resize Plan panel"]'
+    ) as HTMLButtonElement
+    expect(planComposer).not.toBeNull()
+    expect(planScrollSurface.classList.contains('overflow-y-auto')).toBe(true)
+    expect(planResizeHandle).not.toBeNull()
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>('button')].some(
+        (button) => button.textContent === 'Dismiss'
+      )
+    ).toBe(false)
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
     const pendingPlanCard = [...container.querySelectorAll('article')].find((article) =>
       article.textContent?.includes('Plan ready for review')
     )
-    expect(pendingPlanCard?.classList.contains('relative')).toBe(true)
-    expect(pendingPlanCard?.classList.contains('z-10')).toBe(true)
+    expect(pendingPlanCard?.classList.contains('border-0')).toBe(true)
+    expect(pendingPlanCard?.classList.contains('shadow-none')).toBe(true)
     expect(
       container
         .querySelector('[data-testid="composer-plus-trigger"]')
         ?.closest('form')
         ?.classList.contains('hidden')
     ).toBe(true)
+
+    planComposer.getBoundingClientRect = () => ({ height: 260 }) as DOMRect
+    Object.defineProperties(planScrollSurface, {
+      clientHeight: { configurable: true, value: 228 },
+      scrollHeight: { configurable: true, value: 228 }
+    })
+    act(() => {
+      planResizeHandle.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientY: 100 })
+      )
+      planResizeHandle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientY: 0 }))
+      planResizeHandle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientY: 0 }))
+    })
+    expect(planComposer.style.height).toBe('260px')
+
+    act(() => {
+      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Open')
+        ?.click()
+    })
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('tool:session-plan:plan')
 
     await act(async () => {
       ;[...container.querySelectorAll<HTMLButtonElement>('button')]
@@ -712,6 +2253,8 @@ describe('ConversationPanel + menu', () => {
     expect(
       container.querySelector('[role="textbox"]')?.closest('form')?.classList.contains('hidden')
     ).toBe(false)
+    expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
 
     renderPanel({
       activeSession: {
@@ -785,7 +2328,7 @@ describe('ConversationPanel + menu', () => {
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(textarea, '批准执行')
+      setter?.call(textarea, 'Approved for execution')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
       textarea
         .closest('form')
@@ -795,7 +2338,7 @@ describe('ConversationPanel + menu', () => {
 
     expect(respondToSessionPlanMock).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-plan-text-approval' }),
-      { feedback: '批准执行' }
+      { feedback: 'Approved for execution' }
     )
   })
 
@@ -927,41 +2470,35 @@ describe('ConversationPanel + menu', () => {
     )
   })
 
-  it.each([
-    ['Approve', 'approved'],
-    ['Dismiss', 'rejected']
-  ] as const)(
-    'routes restored Plan %s through the durable decision API',
-    async (label, decision) => {
-      const session: ChatSession = {
-        id: `session-restored-${decision}`,
-        projectId: 'project-a',
-        title: 'Restored pending Plan',
-        cwd: '/workspace',
-        status: 'waiting-plan-approval',
-        messages: planOriginMessages(),
-        createdAt: 1,
-        updatedAt: 2,
-        activePlanProjection: {
-          ...completedPlanProjection,
-          approval: 'pending',
-          lifecycle: 'awaiting_approval'
-        }
+  it('routes restored Plan approval through the durable decision API', async () => {
+    const session: ChatSession = {
+      id: 'session-restored-approved',
+      projectId: 'project-a',
+      title: 'Restored pending Plan',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2,
+      activePlanProjection: {
+        ...completedPlanProjection,
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
       }
-      const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
-      renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
-
-      await act(async () => {
-        ;[...container.querySelectorAll<HTMLButtonElement>('button')]
-          .find((button) => button.textContent === label)
-          ?.click()
-        await Promise.resolve()
-      })
-
-      expect(onRespondToRestoredPlan).toHaveBeenCalledWith({ decision })
-      expect(respondToSessionPlanMock).not.toHaveBeenCalled()
     }
-  )
+    const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
+    renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
+
+    await act(async () => {
+      ;[...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Approve')
+        ?.click()
+      await Promise.resolve()
+    })
+
+    expect(onRespondToRestoredPlan).toHaveBeenCalledWith({ decision: 'approved' })
+    expect(respondToSessionPlanMock).not.toHaveBeenCalled()
+  })
 
   it('Attach files item triggers the hidden file input (onStageAttachmentFiles path)', () => {
     // We can only confirm the item exists and is not disabled; the picker click is browser-native.
@@ -1018,6 +2555,97 @@ describe('ConversationPanel + menu', () => {
   })
 })
 
+describe('ConversationPanel Your files menu', () => {
+  const grantedRoot = {
+    id: 'root-1',
+    path: '/Users/roxi/data',
+    name: 'data',
+    access: 'ro' as const
+  }
+
+  beforeEach(() => {
+    useGrantedFoldersStore.setState({
+      ...createInitialGrantedFoldersState(),
+      roots: [grantedRoot],
+      loaded: true
+    })
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'darwin',
+      localFs: {
+        listDir: vi.fn().mockResolvedValue({
+          entries: [{ name: 'study.csv', isDirectory: false, size: 1, mtimeMs: 0 }],
+          truncated: false,
+          resolvedPath: grantedRoot.path
+        })
+      }
+    }
+  })
+
+  afterEach(() => {
+    useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    delete (window as unknown as { api?: unknown }).api
+  })
+
+  it('renders the Your files submenu trigger in the + menu', () => {
+    renderPanel()
+
+    expect(container.querySelector('[data-testid="composer-your-files-trigger"]')).not.toBeNull()
+  })
+
+  it('appends a linked-folder mention to the owned draft doc when a file is sent', async () => {
+    const onDraftDocChange = vi.fn()
+    renderPanel({ onDraftDocChange })
+
+    await act(async () => {
+      ;(
+        container.querySelector('[data-testid="your-files-root-toggle-root-1"]') as HTMLElement
+      ).click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const send = container.querySelector('[data-testid="your-files-send-root-1-study.csv"]')
+    expect(send).not.toBeNull()
+    await act(async () => {
+      ;(send as HTMLElement).click()
+      await Promise.resolve()
+    })
+
+    expect(onDraftDocChange).toHaveBeenCalledWith({
+      nodes: [
+        expect.objectContaining({
+          type: 'artifact',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'study.csv'
+        })
+      ]
+    })
+  })
+
+  it('renders a linked-folder draft chip as a dark-gray @ pill', () => {
+    const draftDoc: ComposerDoc = {
+      nodes: [
+        { type: 'text', text: 'analyze ' },
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ]
+    }
+    renderPanel({ draftDoc })
+
+    const chip = container.querySelector('[data-mention-source="linked-folder"]')
+    expect(chip?.className).toContain('bg-path-chip')
+    expect(chip?.className).toContain('text-path-chip-foreground')
+    expect(chip?.textContent).toBe('@data/study.csv')
+  })
+})
+
 describe('ConversationPanel fix loop lock', () => {
   const idleSession: ChatSession = {
     id: 'session-fix-loop',
@@ -1043,6 +2671,70 @@ describe('ConversationPanel fix loop lock', () => {
   const lockedSession: ChatSession = {
     ...idleSession,
     fixLoopActive: true
+  }
+
+  const detachedChildSession: ChatSession = {
+    ...idleSession,
+    status: 'idle',
+    activeRun: undefined,
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'detached-root',
+      activeFrameId: 'detached-root',
+      frames: [
+        {
+          id: 'detached-root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'completed',
+          activeBranchId: 'detached-root-branch',
+          createdAt: 1,
+          completedAt: 2
+        },
+        {
+          id: 'detached-child',
+          parentFrameId: 'detached-root',
+          originMessageId: 'detached-origin',
+          originBindingState: 'validated',
+          kind: 'delegate',
+          status: 'running',
+          activeBranchId: 'detached-child-branch',
+          createdAt: 2
+        }
+      ],
+      branches: [
+        {
+          id: 'detached-root-branch',
+          agentFrameId: 'detached-root',
+          headMessageId: 'detached-origin',
+          createdAt: 1,
+          updatedAt: 2
+        },
+        {
+          id: 'detached-child-branch',
+          agentFrameId: 'detached-child',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      messages: [
+        {
+          id: 'detached-origin',
+          role: 'user',
+          content: 'Delegate background work.',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'detached-root',
+          introducedOnBranchId: 'detached-root-branch',
+          revisionRootMessageId: 'detached-origin',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    }
   }
 
   it('send button is disabled when canSendMessage is false (fix loop active)', () => {
@@ -1102,6 +2794,122 @@ describe('ConversationPanel fix loop lock', () => {
     })
 
     expect(onCancelRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Send and branch-scoped Stop together after a timed Main turn settles', () => {
+    const onCancelRun = vi.fn()
+    const onStopSubagents = vi.fn()
+    renderPanel({
+      activeSession: detachedChildSession,
+      canSendMessage: true,
+      onCancelRun,
+      onStopSubagents
+    })
+
+    expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="subagents-bar"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Running"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('1 subagent running')
+    const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    expect(stop).not.toBeNull()
+    expect(
+      [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
+        (tooltip) => tooltip.textContent === 'Stop subagents'
+      )
+    ).toBe(true)
+
+    act(() => stop.click())
+    expect(onStopSubagents).toHaveBeenCalledOnce()
+    expect(onCancelRun).not.toHaveBeenCalled()
+  })
+
+  it('preserves duplicate prevention, progress, and failure recovery for detached-only Stop', async () => {
+    let rejectStop!: (error: Error) => void
+    const onStopSubagents = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectStop = reject
+        })
+    )
+    renderPanel({ activeSession: detachedChildSession, canSendMessage: true, onStopSubagents })
+
+    const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    act(() => {
+      stop.click()
+      stop.click()
+    })
+    expect(onStopSubagents).toHaveBeenCalledOnce()
+    expect(stop.disabled).toBe(true)
+    expect(stop.getAttribute('aria-label')).toBe('Stopping subagents')
+
+    await act(async () => {
+      rejectStop(new Error('detached cascade unavailable'))
+      await Promise.resolve()
+    })
+
+    const retry = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    expect(retry.disabled).toBe(false)
+    const stopAlert = container.querySelector('[role="alert"]') as HTMLElement
+    expect(stopAlert.textContent).toContain('detached cascade unavailable')
+    expect(stopAlert.classList.contains('sr-only')).toBe(false)
+  })
+
+  it('uses the same disabled gate for mouse and Enter while branch Stop is pending', () => {
+    const onSendMessage = vi.fn()
+    const onStopSubagents = vi.fn(() => new Promise<void>(() => undefined))
+    renderPanel({
+      activeSession: detachedChildSession,
+      canSendMessage: true,
+      onSendMessage,
+      onStopSubagents
+    })
+    const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
+    act(() => stop.click())
+
+    const send = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
+    expect(send.disabled).toBe(true)
+    act(() => {
+      send.click()
+      getComposerEditor().dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(onSendMessage).not.toHaveBeenCalled()
+  })
+
+  it('shows cascade progress, prevents duplicate Stop, and restores the control after failure', async () => {
+    let rejectStop!: (error: Error) => void
+    const onCancelRun = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectStop = reject
+        })
+    )
+    const runningSession: ChatSession = {
+      ...idleSession,
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+    }
+    renderPanel({ activeSession: runningSession, canSendMessage: false, onCancelRun })
+
+    const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    act(() => {
+      cancelButton.click()
+      cancelButton.click()
+    })
+
+    expect(onCancelRun).toHaveBeenCalledOnce()
+    expect(cancelButton.disabled).toBe(true)
+    expect(cancelButton.getAttribute('aria-label')).toBe('Stopping run and subagents')
+
+    await act(async () => {
+      rejectStop(new Error('cascade unavailable'))
+      await Promise.resolve()
+    })
+
+    const retry = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
+    expect(retry.disabled).toBe(false)
+    expect(container.textContent).toContain('cascade unavailable')
   })
 
   it('keeps the split-send width while running so adjacent hover controls do not shift', () => {

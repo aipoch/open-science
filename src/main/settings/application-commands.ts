@@ -9,10 +9,14 @@ import type {
   PreviewSkillZipRequest,
   RefreshProviderModelsRequest,
   ScanRepoRequest,
+  SaveGitHubTokenRequest,
   SetAppIconVariantRequest,
   SetClosePreferenceRequest,
+  SetDefaultPermissionProfileRequest,
   SetNotificationsEnabledRequest,
   SetPackageMirrorRequest,
+  SetProjectFilesFilterRequest,
+  SetSubagentModelRequest,
   ValidateProviderRequest
 } from '../../shared/settings'
 import {
@@ -26,7 +30,11 @@ import type { SettingsService } from './service'
 import {
   readAppIconVariant,
   readClosePreference,
-  readNotificationsEnabled
+  readDefaultPermissionProfile,
+  readGitHubToken,
+  readNotificationsEnabled,
+  readProjectFilesFilter,
+  readSubagentModel
 } from './transport-validation'
 import type { AppearanceSettingsWorkflows } from './workflows/appearance'
 
@@ -41,6 +49,7 @@ type CoreSettingsCommandStore = Pick<
   | 'detectOpencode'
   | 'getConnectorDetail'
   | 'getPackageMirror'
+  | 'getGitHubTokenStatus'
   | 'getPreflight'
   | 'getSettingsView'
   | 'getSkillDetail'
@@ -57,9 +66,14 @@ type CoreSettingsCommandStore = Pick<
   | 'previewSkillZip'
   | 'refreshProviderModels'
   | 'scanRepoSkills'
+  | 'saveGitHubToken'
+  | 'removeGitHubToken'
   | 'setClosePreference'
+  | 'setDefaultPermissionProfile'
   | 'setNotificationsEnabled'
   | 'setPackageMirror'
+  | 'setProjectFilesFilter'
+  | 'setSubagentModel'
   | 'validateProvider'
 >
 
@@ -105,6 +119,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'detectOpencode'>
   >('settings:detect-opencode'),
+  getGitHubTokenStatus: defineApplicationCommand<
+    'settings:get-github-token-status',
+    readonly [],
+    StoreResult<'getGitHubTokenStatus'>
+  >('settings:get-github-token-status'),
   getConnectorDetail: defineApplicationCommand<
     'settings:get-connector-detail',
     readonly [id: string],
@@ -198,6 +217,16 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: ScanRepoRequest],
     StoreResult<'scanRepoSkills'>
   >('settings:scan-repo-skills'),
+  saveGitHubToken: defineApplicationCommand<
+    'settings:save-github-token',
+    readonly [request: SaveGitHubTokenRequest],
+    StoreResult<'saveGitHubToken'>
+  >('settings:save-github-token'),
+  removeGitHubToken: defineApplicationCommand<
+    'settings:remove-github-token',
+    readonly [],
+    StoreResult<'removeGitHubToken'>
+  >('settings:remove-github-token'),
   setAppIconVariant: defineApplicationCommand<
     'settings:set-app-icon-variant',
     readonly [request: SetAppIconVariantRequest],
@@ -208,6 +237,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetClosePreferenceRequest],
     StoreResult<'setClosePreference'>
   >('settings:set-close-preference'),
+  setDefaultPermissionProfile: defineApplicationCommand<
+    'settings:set-default-permission-profile',
+    readonly [request: SetDefaultPermissionProfileRequest],
+    StoreResult<'setDefaultPermissionProfile'>
+  >('settings:set-default-permission-profile'),
   setNotificationsEnabled: defineApplicationCommand<
     'settings:set-notifications-enabled',
     readonly [request: SetNotificationsEnabledRequest],
@@ -218,6 +252,16 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetPackageMirrorRequest],
     StoreResult<'setPackageMirror'>
   >('settings:set-package-mirror'),
+  setProjectFilesFilter: defineApplicationCommand<
+    'settings:set-project-files-filter',
+    readonly [request: SetProjectFilesFilterRequest],
+    StoreResult<'setProjectFilesFilter'>
+  >('settings:set-project-files-filter'),
+  setSubagentModel: defineApplicationCommand<
+    'settings:set-subagent-model',
+    readonly [request: SetSubagentModelRequest],
+    StoreResult<'setSubagentModel'>
+  >('settings:set-subagent-model'),
   validateProvider: defineApplicationCommand<
     'settings:validate-provider',
     readonly [request: ValidateProviderRequest],
@@ -234,6 +278,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.detectCodex,
   settingsCoreApplicationCommands.detectOpencode,
   settingsCoreApplicationCommands.getConnectorDetail,
+  settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
   settingsCoreApplicationCommands.getPreflight,
   settingsCoreApplicationCommands.getSettings,
@@ -252,10 +297,15 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.previewSkillZip,
   settingsCoreApplicationCommands.refreshProviderModels,
   settingsCoreApplicationCommands.scanRepoSkills,
+  settingsCoreApplicationCommands.saveGitHubToken,
+  settingsCoreApplicationCommands.removeGitHubToken,
   settingsCoreApplicationCommands.setAppIconVariant,
   settingsCoreApplicationCommands.setClosePreference,
+  settingsCoreApplicationCommands.setDefaultPermissionProfile,
   settingsCoreApplicationCommands.setNotificationsEnabled,
   settingsCoreApplicationCommands.setPackageMirror,
+  settingsCoreApplicationCommands.setProjectFilesFilter,
+  settingsCoreApplicationCommands.setSubagentModel,
   settingsCoreApplicationCommands.validateProvider
 ] as const)
 
@@ -298,6 +348,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:detect-opencode': () => dependencies.service.detectOpencode(),
       'settings:get-connector-detail': ({ args }) =>
         dependencies.service.getConnectorDetail(args[0]),
+      'settings:get-github-token-status': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:get-github-token-status')
+        return dependencies.service.getGitHubTokenStatus()
+      },
       'settings:get-package-mirror': () => dependencies.service.getPackageMirror(),
       'settings:get-preflight': () => dependencies.service.getPreflight(),
       'settings:get-settings': () => dependencies.service.getSettingsView(),
@@ -328,6 +382,14 @@ const registerCoreSettingsApplicationCommands = (
       'settings:refresh-provider-models': ({ args }) =>
         dependencies.service.refreshProviderModels(args[0]),
       'settings:scan-repo-skills': ({ args }) => dependencies.service.scanRepoSkills(args[0]),
+      'settings:save-github-token': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:save-github-token')
+        return dependencies.service.saveGitHubToken(readGitHubToken(args[0]))
+      },
+      'settings:remove-github-token': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:remove-github-token')
+        return dependencies.service.removeGitHubToken()
+      },
       'settings:set-app-icon-variant': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-app-icon-variant')
         return dependencies.appearance.setAppIconVariant(readAppIconVariant(args[0]))
@@ -335,6 +397,12 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-close-preference': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-close-preference')
         return dependencies.service.setClosePreference(readClosePreference(args[0]))
+      },
+      'settings:set-default-permission-profile': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-default-permission-profile')
+        return dependencies.service.setDefaultPermissionProfile(
+          readDefaultPermissionProfile(args[0])
+        )
       },
       'settings:set-notifications-enabled': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:set-notifications-enabled')
@@ -344,6 +412,12 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:set-package-mirror')
         return dependencies.service.setPackageMirror(args[0])
       },
+      'settings:set-project-files-filter': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-project-files-filter')
+        return dependencies.service.setProjectFilesFilter(readProjectFilesFilter(args[0]))
+      },
+      'settings:set-subagent-model': ({ args }) =>
+        dependencies.service.setSubagentModel(readSubagentModel(args[0])),
       'settings:validate-provider': ({ args }) => dependencies.service.validateProvider(args[0])
     })
     return scope.complete()

@@ -17,7 +17,7 @@ import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-mes
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ManagedFileIndexRepository } from '../project-files/repository'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { SessionPersistenceCoordinator } from './coordinator'
 import { SessionRepository } from './repository'
 
@@ -35,7 +35,7 @@ describe('artifact finalization startup recovery', () => {
   beforeEach(async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-finalization-recovery-'))
     client = createProjectDbClient(storageRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     sessions = new SessionRepository(storageRoot)
     files = new ManagedFileIndexRepository(() => Promise.resolve(client), storageRoot)
   })

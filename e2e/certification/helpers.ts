@@ -40,20 +40,47 @@ const sendPrompt = async (
   reply: string,
   timeout = 30_000
 ): Promise<void> => {
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
   const expectedReply = page.getByText(reply, { exact: false })
   const fixtureFailure = page.getByText(/^E2E fixture failure:/)
-  await expect(expectedReply.or(fixtureFailure)).toBeVisible({ timeout })
-  if (await fixtureFailure.isVisible()) throw new Error(await fixtureFailure.innerText())
+  const existingReplyCount = await expectedReply.count()
+  const existingFailureCount = await fixtureFailure.count()
+  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(
+    expectedReply.nth(existingReplyCount).or(fixtureFailure.nth(existingFailureCount))
+  ).toBeVisible({ timeout })
+  if ((await fixtureFailure.count()) > existingFailureCount) {
+    throw new Error(await fixtureFailure.last().innerText())
+  }
 }
 
 const openRecentSession = async (page: Page, prompt: string): Promise<void> => {
+  const promptPrefix = prompt.slice(0, 36)
   const session = page
     .getByRole('region', { name: 'Recent sessions' })
-    .getByRole('button', { name: prompt })
+    .getByRole('button', { name: new RegExp(promptPrefix, 'u') })
   await expect(session).toBeVisible({ timeout: 60_000 })
   await session.click()
 }
 
-export { createProject, openRecentSession, sendPrompt }
+const openProjectSession = async (
+  page: Page,
+  projectName: string,
+  prompt: string
+): Promise<void> => {
+  const project = page
+    .getByRole('region', { name: 'Projects' })
+    .getByRole('button', { name: projectName, exact: true })
+  await expect(project).toBeVisible({ timeout: 60_000 })
+  await project.click()
+  const promptPrefix = prompt.slice(0, 36)
+  const heading = page.getByRole('heading', { name: new RegExp(promptPrefix, 'u') })
+  if (await heading.isVisible()) return
+  const session = page
+    .getByRole('navigation', { name: 'Sessions' })
+    .getByRole('button', { name: new RegExp(promptPrefix, 'u') })
+  await expect(session).toBeVisible({ timeout: 60_000 })
+  await session.click()
+}
+
+export { createProject, openProjectSession, openRecentSession, sendPrompt }

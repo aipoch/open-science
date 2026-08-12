@@ -1,5 +1,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import {
+  StdioClientTransport,
+  getDefaultEnvironment
+} from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
@@ -7,6 +10,7 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
 import type { StoredCustomMcpOAuthState } from '../settings/types'
+import { augmentedPathEnv } from '../settings/shell-path'
 
 // Config for a user-added custom MCP server. OAuth state is a transient main-process projection;
 // stdio remains non-OAuth and remote servers can use OAuth, static headers, or neither.
@@ -35,6 +39,15 @@ export type McpClientManagerTool = {
   inputSchema?: unknown
 }
 
+// Marks an MCP server's structured tool-level failure separately from connection/transport errors.
+// Callers can report a safe category without treating a reachable server as physically unavailable.
+export class McpToolCallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'McpToolCallError'
+  }
+}
+
 type McpClientManagerDeps = {
   createClient?: (
     config: CustomMcpServerConfig,
@@ -58,7 +71,10 @@ export function buildTransport(
       return new StdioClientTransport({
         command: config.command,
         args: config.args,
-        env: config.env
+        env: augmentedPathEnv({
+          ...getDefaultEnvironment(),
+          ...config.env
+        }) as Record<string, string>
       })
     }
     case 'streamable_http': {
@@ -315,7 +331,7 @@ function unwrapToolResult(result: unknown): unknown {
       : undefined
 
   if (isError) {
-    throw new Error(typeof text === 'string' ? text : 'MCP tool call failed')
+    throw new McpToolCallError(typeof text === 'string' ? text : 'MCP tool call failed')
   }
   if (typeof text === 'string') {
     try {

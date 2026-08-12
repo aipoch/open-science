@@ -35,10 +35,23 @@ const isAssistantRuntimeChatMessageEvent = (
 ): event is AssistantRuntimeChatMessageEvent =>
   isRuntimeChatMessageEvent(event) && event.role === 'assistant' && Boolean(event.sessionId)
 
+// Text-only assistant deltas are safe to pace and batch. Images remain hard presentation boundaries.
+const isBufferableAssistantTextEvent = (
+  event: AcpRuntimeEvent
+): event is AssistantRuntimeChatMessageEvent & { text: string } =>
+  isAssistantRuntimeChatMessageEvent(event) &&
+  typeof getAcpRuntimeEventText(event) === 'string' &&
+  !getAcpRuntimeEventImage(event)
+
 // Chooses the stream id used by the workspace store for chunk merging.
 const createRuntimeStreamId = (event: RuntimeChatMessageEvent): string =>
   event.messageId ?? event.id
 
-export { createRuntimeStreamId, isAssistantRuntimeChatMessageEvent, isRuntimeChatMessageEvent }
+export {
+  createRuntimeStreamId,
+  isAssistantRuntimeChatMessageEvent,
+  isBufferableAssistantTextEvent,
+  isRuntimeChatMessageEvent
+}
 export { getAcpRuntimeEventImage, getAcpRuntimeEventText }
 export type { RuntimeChatMessageEvent, RuntimeChatRole }

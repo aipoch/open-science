@@ -1,0 +1,99 @@
+name: Package Smoke
+
+# Blocking native-package certification. Each matrix leg downloads the exact artifact produced by
+# build.yml, so a failed smoke can be retried without rebuilding or re-signing any package.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Smoke ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-26
+            platform: mac
+          - name: macos-x64
+            os: macos-26-intel
+            platform: mac
+          - name: linux-x64
+            os: ubuntu-latest
+            platform: linux
+          - name: windows-x64
+            os: windows-latest
+            platform: win
+    steps:
+      - name: Checkout certification tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ matrix.name }}
+          path: dist
+
+      - name: Smoke test macOS packages
+        if: matrix.platform == 'mac'
+        timeout-minutes: 10
+        run: node scripts/macos-package-smoke.mjs --artifact-dir dist
+
+      - name: Smoke test Windows installer
+        if: matrix.platform == 'win'
+        timeout-minutes: 10
+        run: node scripts/windows-installer-smoke.mjs --installer-dir dist
+
+      - name: Smoke test Linux packages
+        if: matrix.platform == 'linux'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          sudo apt-get install --yes ./dist/*.deb
+          trap 'sudo apt-get remove --yes open-science || true' EXIT
+          xvfb-run -a node scripts/linux-package-smoke.mjs \
+            --artifact-dir dist \
+            --installed-executable /usr/bin/open-science
+
+      - name: Record platform certification evidence
+        shell: bash
+        run: |
+          database_certification="dist/database-migration-certification-${{ matrix.name }}.json"
+          mv dist/database-migration-certification.json "$database_certification"
+          authenticode=not-applicable
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            authenticode=not-required
+          fi
+          node scripts/ci/release-certification-evidence.mjs write \
+            --platform "${{ matrix.name }}" \
+            --artifact-dir dist \
+            --output "dist/certification-${{ matrix.name }}.json" \
+            --electron-p0 not-applicable \
+            --visual-regression not-applicable \
+            --package-smoke passed \
+            --database-migration-certification "$database_certification" \
+            --authenticode "$authenticode"
+
+      - name: Upload platform certification evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: certification-${{ matrix.name }}
+          retention-days: 7
+          path: |
+            dist/certification-${{ matrix.name }}.json
+            dist/database-migration-certification-${{ matrix.name }}.json
+          if-no-files-found: error

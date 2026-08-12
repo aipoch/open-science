@@ -121,9 +121,6 @@ describe('ProfileService.create', () => {
     await expect(
       guarded.update({ id: builtin.id, revision: 0, description: 'changed' })
     ).rejects.toMatchObject(builtinError)
-    await expect(
-      guarded.rename({ id: builtin.id, name: 'RENAMED', expectedRevision: 0 })
-    ).rejects.toMatchObject(builtinError)
     await expect(guarded.setEnabled(builtin.id, false)).rejects.toMatchObject(builtinError)
     await expect(guarded.delete(builtin.id)).rejects.toMatchObject(builtinError)
     await expect(guarded.attachSkill(builtin.id, 'skill-a', 0)).rejects.toMatchObject(builtinError)
@@ -391,41 +388,44 @@ describe('ProfileService.update', () => {
     await expect(restarted.getById(created.id)).resolves.toMatchObject({ packageVersion: '1.0.0' })
   })
 
-  it('atomically persists enabled with other fields and bumps revision once', async () => {
+  it('atomically persists enabled with displayName and bumps revision once', async () => {
     const created = await service.create({ name: 'My Bot' })
     const updated = await service.update({
       id: created.id,
       revision: created.revision,
-      name: 'My Disabled Bot',
+      displayName: 'My Disabled Bot',
       enabled: false
     })
 
     expect(updated).toMatchObject({
       id: created.id,
-      name: 'My Disabled Bot',
+      name: 'My Bot',
+      displayName: 'My Disabled Bot',
       enabled: false,
       revision: created.revision + 1
     })
 
     const restarted = new ProfileService(new SpecialistRepository(tmpDir))
     await expect(restarted.getById(created.id)).resolves.toMatchObject({
-      name: 'My Disabled Bot',
+      name: 'My Bot',
+      displayName: 'My Disabled Bot',
       enabled: false,
       revision: created.revision + 1
     })
   })
 
-  it('updates identity fields and bumps revision', async () => {
+  it('updates presentation fields and bumps revision without changing name', async () => {
     const created = await service.create({ name: 'RNA-seq Reviewer' })
     const updated = await service.update({
       id: created.id,
       revision: created.revision,
-      name: 'RNA-seq Auditor',
+      displayName: 'RNA-seq Auditor',
       description: 'Updated description.',
       systemPrompt: 'Be rigorous.'
     })
     expect(updated.id).toBe(created.id)
-    expect(updated.name).toBe('RNA-seq Auditor')
+    expect(updated.name).toBe('RNA-seq Reviewer')
+    expect(updated.displayName).toBe('RNA-seq Auditor')
     expect(updated.description).toBe('Updated description.')
     expect(updated.systemPrompt).toBe('Be rigorous.')
     expect(updated.revision).toBe(created.revision + 1)
@@ -509,41 +509,47 @@ describe('ProfileService.update', () => {
     })
   })
 
-  it('keeps the immutable id and supports renaming', async () => {
+  it('rejects a name field smuggled across the update boundary', async () => {
     const created = await service.create({ name: 'My Bot' })
-    const updated = await service.update({
-      id: created.id,
-      revision: created.revision,
-      name: 'Custom Renamed'
-    })
-    expect(updated.id).toBe(created.id)
-    expect(updated.name).toBe('Custom Renamed')
+    await expect(
+      service.update({
+        id: created.id,
+        revision: created.revision,
+        name: 'Custom Renamed'
+      } as never)
+    ).rejects.toThrow(/name is immutable/i)
+    expect(await service.getById(created.id)).toMatchObject(created)
   })
 
-  it('allows keeping the same name (self excluded from uniqueness)', async () => {
+  it('allows keeping the same display name', async () => {
     const created = await service.create({ name: 'My Bot' })
     const updated = await service.update({
       id: created.id,
       revision: created.revision,
-      name: created.name
+      displayName: created.displayName
     })
     expect(updated.name).toBe(created.name)
   })
 
-  it('rejects a name that collides with another specialist', async () => {
+  it('allows duplicate display names because they are not references', async () => {
     const first = await service.create({ name: 'Alpha Bot' })
     const second = await service.create({ name: 'Beta Bot' })
-    await expect(
-      service.update({ id: second.id, revision: second.revision, name: first.name })
-    ).rejects.toThrow(/already in use/i)
-
-    expect(await service.list()).toHaveLength(2)
+    const updated = await service.update({
+      id: second.id,
+      revision: second.revision,
+      displayName: first.displayName
+    })
+    expect(updated).toMatchObject({ name: 'Beta Bot', displayName: 'Alpha Bot' })
   })
 
   it('rejects a stale revision (optimistic concurrency conflict)', async () => {
     const created = await service.create({ name: 'My Bot' })
     await expect(
-      service.update({ id: created.id, revision: created.revision + 1, name: 'Valid Name' })
+      service.update({
+        id: created.id,
+        revision: created.revision + 1,
+        displayName: 'Valid label'
+      })
     ).rejects.toThrow(/revision conflict/i)
   })
 
@@ -555,39 +561,25 @@ describe('ProfileService.update', () => {
     expect(listener).toHaveBeenCalledOnce()
   })
 
-  it('follows an uncustomized display name across a rename so the settings list shows the new name', async () => {
-    // No displayName at create: it is snapshotted to the name (service.ts create defaulting).
+  it('defaults displayName to name and lets displayName change independently', async () => {
     const created = await service.create({ name: 'Old Name' })
-    const renamed = await service.update({
+    expect(created.displayName).toBe('Old Name')
+    const updated = await service.update({
       id: created.id,
       revision: created.revision,
-      name: 'New Name'
+      displayName: 'New Label'
     })
-    // The settings list shows displayName ?? name; an uncustomized display name must follow the
-    // rename (host.agents.update rename path), not keep showing the stale snapshot.
-    expect(renamed.displayName).toBe('New Name')
+    expect(updated).toMatchObject({ name: 'Old Name', displayName: 'New Label' })
   })
 
-  it('keeps a custom display name across a rename when displayName is left unset', async () => {
+  it('keeps a custom display name when it is omitted from an update', async () => {
     const created = await service.create({ name: 'Old Name', displayName: 'Friendly Name' })
-    const renamed = await service.update({
+    const updated = await service.update({
       id: created.id,
       revision: created.revision,
-      name: 'New Name'
+      description: 'Changed'
     })
-    expect(renamed.name).toBe('New Name')
-    expect(renamed.displayName).toBe('Friendly Name')
-  })
-
-  it('explicitly setting displayName in the same rename patch still wins over the follow-along default', async () => {
-    const created = await service.create({ name: 'Old Name' })
-    const renamed = await service.update({
-      id: created.id,
-      revision: created.revision,
-      name: 'New Name',
-      displayName: 'Explicit Label'
-    })
-    expect(renamed.displayName).toBe('Explicit Label')
+    expect(updated).toMatchObject({ name: 'Old Name', displayName: 'Friendly Name' })
   })
 
   it('rejects an update missing revision', async () => {
@@ -658,16 +650,20 @@ describe('ProfileService lifecycle mutations', () => {
     })
   })
 
-  it('keeps UUID stable across public rename and rejects a stale delete', async () => {
+  it('keeps UUID and name stable across a display-name edit and rejects a stale delete', async () => {
     const created = await service.create({ name: 'RNA Reviewer', displayName: 'RNA reviewer' })
-    const renamed = await service.rename({
+    const updated = await service.update({
       id: created.id,
-      name: 'RNA Auditor',
-      expectedRevision: created.revision
+      revision: created.revision,
+      displayName: 'RNA Auditor'
     })
-    expect(renamed).toMatchObject({ id: created.id, name: 'RNA Auditor' })
+    expect(updated).toMatchObject({
+      id: created.id,
+      name: 'RNA Reviewer',
+      displayName: 'RNA Auditor'
+    })
     await expect(service.delete(created.id, created.revision)).rejects.toThrow(/revision conflict/i)
-    expect(await service.getById(created.id)).toMatchObject({ name: 'RNA Auditor' })
+    expect(await service.getById(created.id)).toMatchObject({ name: 'RNA Reviewer' })
   })
 
   it('duplicates deeply without persisting until the caller creates it', async () => {
@@ -681,7 +677,7 @@ describe('ProfileService lifecycle mutations', () => {
       }
     })
     const draft = await service.duplicate(created.id)
-    // New single-name model: duplicate returns a free-form "Copy" suffix name.
+    // A duplicate receives a new immutable name and matching initial display label.
     expect(draft).toMatchObject({ name: 'Chemist Copy', displayName: 'Chemist Copy' })
     expect(await service.list()).toHaveLength(1)
     draft.selectedCapabilities?.skillIds.push('other')
@@ -733,24 +729,24 @@ describe('ProfileService restart persistence', () => {
 })
 
 describe('ProfileService session binding with stable IDs', () => {
-  it('keeps the UUID stable after rename — a stored session binding still resolves', async () => {
+  it('keeps the UUID stable after a display-name edit — a stored session binding still resolves', async () => {
     const created = await service.create({ name: 'RNA_REVIEWER' })
     const originalId = created.id
 
     // Simulate a session binding: record the profile UUID.
     const sessionBinding = { profileId: created.id }
 
-    // Rename the profile.
-    await service.rename({
+    await service.update({
       id: created.id,
-      name: 'RNA_AUDITOR',
-      expectedRevision: created.revision
+      displayName: 'RNA Auditor',
+      revision: created.revision
     })
 
-    // The session binding UUID still resolves to the renamed profile.
+    // The session binding UUID still resolves to the same immutable profile name.
     const resolved = await service.getById(sessionBinding.profileId)
     expect(resolved.id).toBe(originalId)
-    expect(resolved.name).toBe('RNA_AUDITOR')
+    expect(resolved.name).toBe('RNA_REVIEWER')
+    expect(resolved.displayName).toBe('RNA Auditor')
   })
 
   it('reports missing for a deleted profile UUID without erroring the catalog', async () => {

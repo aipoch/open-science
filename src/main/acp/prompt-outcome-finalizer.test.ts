@@ -2,7 +2,7 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
-import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import {
   AcpPromptOutcomeFinalizer,
   type AcpPromptFinalizationHandles,
@@ -29,7 +29,7 @@ const deferred = <T = void>(): {
 const createHarness = (
   options: { now?: () => number } = {}
 ): {
-  context: ContextUsageTurnHandle
+  context: ContextWindowTurnHandle
   events: Array<Partial<AcpRuntimeEvent>>
   handles: MutableHandles
   interaction: AcpPromptSessionInteractionScope
@@ -41,13 +41,19 @@ const createHarness = (
   const interactions = new AcpSessionInteractionOwner({ now: options.now })
   const interaction = interactions.claim({ sessionId: 's1', kind: 'prompt' })
   const context = {
+    captureTerminal: vi.fn((providerResponseObserved = false) => ({
+      contextWindow: { used: 12, size: 128_000 },
+      source: providerResponseObserved
+        ? ('provider-response' as const)
+        : ('local-estimate' as const)
+    })),
     complete: vi.fn(() => {
       journal.push('context:complete')
       return true
     }),
     fail: vi.fn(() => journal.push('context:fail')),
     supersede: vi.fn(() => journal.push('context:supersede'))
-  } as unknown as ContextUsageTurnHandle
+  } as unknown as ContextWindowTurnHandle
   const handles = {
     sessionId: 's1',
     promptMessageId: 'prompt-1',
@@ -72,7 +78,10 @@ const createHarness = (
       journal.push('artifact:dispose')
     }),
     failPendingSkillActivities: vi.fn(() => journal.push('skills:fail')),
-    recordContextUsed: vi.fn((used) => journal.push(`context:used:${used}`)),
+    recordContextUsed: vi.fn((used) => {
+      journal.push(`context:used:${used}`)
+      return true
+    }),
     errorMessage: (error) => (error instanceof Error ? error.message : String(error)),
     errorKind: (error) => (error as { data?: { errorKind?: string } } | undefined)?.data?.errorKind,
     pushEvent: vi.fn((event) => {
@@ -101,7 +110,8 @@ const stopped = (
   facts: {
     turnUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 },
     modelTurnCount: 4,
-    contextUsedTokens: 12
+    contextUsedTokens: 12,
+    lastModelStepUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 }
   }
 })
 
@@ -123,6 +133,12 @@ describe('AcpPromptOutcomeFinalizer', () => {
           cacheTokens: 2,
           outputTokens: 3,
           turnCount: 4
+        },
+        terminalContextWindow: {
+          termination: { kind: 'stop', stopReason: 'end_turn' },
+          contextWindow: { used: 12, size: 128_000 },
+          modelStepUsage: { inputTokens: 10, cacheTokens: 2, outputTokens: 3 },
+          source: 'provider-response'
         }
       })
     ])
@@ -145,6 +161,21 @@ describe('AcpPromptOutcomeFinalizer', () => {
       'activity'
     ])
     expect(harness.interactions.current('s1')).toBeUndefined()
+  })
+
+  it('does not mark rejected context reconciliation as a provider response', async () => {
+    const harness = createHarness()
+    harness.handles.recordContextUsed = vi.fn(() => false)
+    expect(harness.interactions.captureTerminal(harness.interaction, 'stop')).toBe(true)
+
+    await new AcpPromptOutcomeFinalizer().finalize(harness.handles, stopped())
+
+    expect(harness.context.captureTerminal).toHaveBeenCalledWith(false)
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        terminalContextWindow: expect.objectContaining({ source: 'local-estimate' })
+      })
+    )
   })
 
   it('keeps the captured terminal timestamp while Artifact publication is slow', async () => {
@@ -318,7 +349,12 @@ describe('AcpPromptOutcomeFinalizer', () => {
         kind: 'error',
         timestamp: 321,
         recoverable: testCase.recoverable,
-        providerError: testCase.providerError
+        providerError: testCase.providerError,
+        terminalContextWindow: {
+          termination: { kind: 'error' },
+          contextWindow: { used: 12, size: 128_000 },
+          source: 'local-estimate'
+        }
       })
     )
     expect(harness.context.fail).toHaveBeenCalledOnce()
@@ -357,7 +393,16 @@ describe('AcpPromptOutcomeFinalizer', () => {
 
     expect(harness.handles.emitUserMessage).toHaveBeenCalledOnce()
     expect(harness.events).toContainEqual(
-      expect.objectContaining({ kind: 'stop', timestamp: 456, text: 'cancelled' })
+      expect.objectContaining({
+        kind: 'stop',
+        timestamp: 456,
+        text: 'cancelled',
+        terminalContextWindow: {
+          termination: { kind: 'stop', stopReason: 'cancelled' },
+          contextWindow: { used: 12, size: 128_000 },
+          source: 'local-estimate'
+        }
+      })
     )
     expect(harness.context.fail).toHaveBeenCalledOnce()
     expect(harness.handles.skill.close).toHaveBeenCalledWith('cancelled')

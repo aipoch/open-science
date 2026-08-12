@@ -45,7 +45,11 @@ export const useJobAnalysisEffect = ({
     const trigger = createJobAnalysisTrigger({
       isSessionInFlight: (sessionId) => {
         const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
-        return session?.status === 'running' || session?.status === 'waiting-permission'
+        return (
+          session?.status === 'running' ||
+          session?.status === 'waiting-for-user' ||
+          session?.status === 'waiting-permission'
+        )
       },
       sendPrompt: async (sessionId, text) => {
         if (!isActive) return undefined
@@ -64,7 +68,11 @@ export const useJobAnalysisEffect = ({
         const unsubscribe = useSessionStore.subscribe((state) => {
           const session = state.sessions.find((candidate) => candidate.id === sessionId)
           if (!session) return
-          if (session.status !== 'running' && session.status !== 'waiting-permission') {
+          if (
+            session.status !== 'running' &&
+            session.status !== 'waiting-for-user' &&
+            session.status !== 'waiting-permission'
+          ) {
             unsubscribe()
             turnEndUnsubscribes.delete(unsubscribe)
             if (isActive) callback()

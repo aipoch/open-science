@@ -1,0 +1,642 @@
+{
+  "schemaVersion": 1,
+  "modules": {
+    "session_renderer": {
+      "ownerPaths": [
+        "src/renderer/src/stores/session-store.ts",
+        "src/renderer/src/stores/session-store-interaction-state.ts",
+        "src/renderer/src/stores/session-store-persistence-merge.ts",
+        "src/renderer/src/stores/session-store-persistence-owner.ts",
+        "src/renderer/src/stores/session-store-message-graph-owner.ts",
+        "src/renderer/src/stores/session-store-message-graph-helpers.ts",
+        "src/renderer/src/stores/session-store-run-projection-owner.ts",
+        "src/renderer/src/stores/session-store-run-output-helpers.ts",
+        "src/renderer/src/stores/session-store-run-activity-helpers.ts",
+        "src/renderer/src/stores/session-store-run-terminal-helpers.ts"
+      ],
+      "interfacePaths": ["src/renderer/src/stores/session-store.ts"],
+      "consumerModules": ["workspace_runtime", "project_files_view", "workspace_page"],
+      "testFiles": {
+        "owner": [
+          "src/renderer/src/stores/session-store.test.ts",
+          "src/renderer/src/stores/session-store.architecture.test.ts"
+        ],
+        "contract": ["src/shared/session-persistence.test.ts"],
+        "consumer": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"]
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "workspace_runtime": {
+      "ownerPaths": [
+        "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts",
+        "src/renderer/src/lib/acp/workspace-events.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
+        "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
+      ],
+      "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
+      "consumerModules": ["workspace_page"],
+      "testFiles": {
+        "owner": [
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
+          "src/renderer/src/lib/acp/workspace-events.test.ts"
+        ],
+        "contract": [
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx"
+        ],
+        "consumer": ["src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx"]
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "project_files_view": {
+      "ownerPaths": [
+        "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
+        "src/renderer/src/pages/workspace/project-files-presentation-owner.tsx",
+        "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
+        "src/renderer/src/pages/workspace/project-files-query-model.ts",
+        "src/renderer/src/pages/workspace/use-project-files-index.ts"
+      ],
+      "interfacePaths": ["src/renderer/src/pages/workspace/ProjectFilesView.tsx"],
+      "consumerModules": ["workspace_page"],
+      "testFiles": {
+        "owner": [
+          "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
+          "src/renderer/src/pages/workspace/workspace-components.test.tsx",
+          "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
+        ],
+        "contract": ["src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"],
+        "consumer": [
+          "src/renderer/src/pages/workspace/previews/PreviewToolContent.test.tsx",
+          "src/renderer/src/pages/workspace/previews/PreviewToolContent.plan.test.tsx"
+        ]
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "workspace_page": {
+      "ownerPaths": [
+        "src/renderer/src/pages/workspace/WorkspacePage.tsx",
+        "src/renderer/src/pages/workspace/workspace-panel-layout.tsx",
+        "src/renderer/src/pages/workspace/workspace-composer-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-conversation-controller.ts",
+        "src/renderer/src/pages/workspace/use-side-chat-controller.ts",
+        "src/renderer/src/pages/workspace/workspace-session-controller.ts",
+        "src/renderer/src/pages/workspace/composer-attachment-intake.ts",
+        "src/renderer/src/pages/workspace/composer-upload-transfer.ts",
+        "src/renderer/src/pages/workspace/composer/composer-history.ts"
+      ],
+      "interfacePaths": ["src/renderer/src/pages/workspace/WorkspacePage.tsx"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/renderer/src/pages/workspace/WorkspacePage.draft-preservation.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.customize-prefill.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.edit-message.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.image-staging.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.pending-switch.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.preview-panel-resize.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspacePage.specialist-barrier.test.tsx",
+          "src/renderer/src/pages/workspace/workspace-page.architecture.test.ts",
+          "src/renderer/src/pages/workspace/workspace-composer-controller.test.ts",
+          "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts",
+          "src/renderer/src/pages/workspace/use-side-chat-controller.test.ts",
+          "src/renderer/src/pages/workspace/workspace-session-controller.test.ts",
+          "src/renderer/src/pages/workspace/composer-attachment-intake.test.ts",
+          "src/renderer/src/pages/workspace/composer-upload-transfer.test.ts",
+          "src/renderer/src/pages/workspace/composer/composer-history.test.ts",
+          "src/renderer/src/pages/workspace/workspace-components.test.tsx"
+        ],
+        "contract": [
+          "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",
+          "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.interaction.test.tsx",
+          "src/renderer/src/pages/workspace/HandoffLifecycleStatus.integration.test.tsx",
+          "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
+          "src/renderer/src/pages/workspace/handoff-lifecycle-projection.test.ts",
+          "src/renderer/src/stores/session-store.test.ts"
+        ],
+        "consumer": []
+      },
+      "capabilityOverlays": ["renderer_state"],
+      "fallbackCapability": "renderer_view"
+    },
+    "reviewer_orchestrator": {
+      "ownerPaths": [
+        "src/main/reviewer/orchestrator.ts",
+        "src/main/reviewer/review-assessment-owner.ts",
+        "src/main/reviewer/reviewer-fix-loop-owner.ts",
+        "src/main/reviewer/reviewer-session-driver.ts"
+      ],
+      "interfacePaths": [
+        "src/main/reviewer/orchestrator.ts",
+        "src/main/reviewer/ipc.ts",
+        "src/shared/reviewer.ts"
+      ],
+      "consumerModules": ["workspace_runtime", "workspace_page", "artifact_provenance"],
+      "testFiles": {
+        "owner": [
+          "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
+          "src/main/reviewer/review-assessment-owner.test.ts",
+          "src/main/reviewer/orchestrator.test.ts",
+          "src/main/reviewer/orchestrator-drive.test.ts",
+          "src/main/reviewer/log-capture.test.ts",
+          "src/main/reviewer/orchestrator-prompt.test.ts",
+          "src/main/reviewer/orchestrator-prompt-prefix.test.ts",
+          "src/main/reviewer/orchestrator.start-contract.test.ts",
+          "src/main/reviewer/fix-loop.test.ts",
+          "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
+          "src/main/reviewer/correction.test.ts"
+        ],
+        "contract": [
+          "src/main/reviewer/ipc.test.ts",
+          "src/main/reviewer/lifecycle.test.ts",
+          "src/main/reviewer/mcp-server.test.ts",
+          "src/main/application-command-wiring.test.ts",
+          "src/main/host-application-commands.test.ts",
+          "src/main/application-command-composition.test.ts",
+          "src/main/web-service/application-event-projections.test.ts",
+          "src/shared/renderer-contract-catalog.test.ts",
+          "src/preload/index.test.ts",
+          "src/renderer/web/api-installer.test.ts"
+        ],
+        "consumer": [
+          "packages/open-science/cli.test.ts",
+          "src/main/notebook/local-rpc-notebook-adapter.test.ts",
+          "src/renderer/src/lib/acp/workspace-events.test.ts",
+          "src/renderer/src/stores/review-store.test.ts",
+          "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "compute_service": {
+      "ownerPaths": [
+        "src/main/compute/compute-host-profile-owner.ts",
+        "src/main/compute/compute-job-lifecycle.ts",
+        "src/main/compute/job-deletion-owner.ts",
+        "src/main/compute/compute-job-workflow-owner.ts",
+        "src/main/compute/compute-remote-operation-owner.ts",
+        "src/main/compute/concurrency-manager.ts",
+        "src/main/compute/job-dispatcher.ts",
+        "src/main/compute/job-poller.ts",
+        "src/main/compute/job-repository.ts",
+        "src/main/compute/enabled-hosts-registry.ts",
+        "src/main/compute/session-enabled-hosts-owner.ts",
+        "src/main/compute/permission-grant-adapter.ts",
+        "src/main/compute/compute-service.ts"
+      ],
+      "interfacePaths": [
+        "src/main/compute/compute-service.ts",
+        "src/main/compute/ipc.ts",
+        "src/main/compute/electron-ipc-adapter.ts"
+      ],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/main/compute/compute-job-lifecycle.test.ts",
+          "src/main/compute/job-deletion-owner.test.ts",
+          "src/main/compute/compute-service.architecture.test.ts",
+          "src/main/compute/compute-host-profile-owner.test.ts",
+          "src/main/compute/compute-job-workflow-owner.test.ts",
+          "src/main/compute/compute-remote-operation-owner.test.ts",
+          "src/main/compute/session-enabled-hosts-owner.test.ts",
+          "src/main/compute/permission-grant-adapter.test.ts",
+          "src/main/compute/compute-service.test.ts",
+          "src/main/compute/compute-jobs.integration.test.ts",
+          "src/main/compute/concurrency-integration.test.ts"
+        ],
+        "contract": [
+          "src/main/application-command-composition.test.ts",
+          "src/main/compute/concurrency-manager.test.ts",
+          "src/main/compute/job-dispatcher.test.ts",
+          "src/main/compute/job-poller.test.ts",
+          "src/main/compute/scp-runner.test.ts",
+          "src/main/compute/ssh-runner.test.ts",
+          "src/main/compute/ipc.test.ts",
+          "src/main/compute/application-commands.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/notebook/local-rpc-server.test.ts",
+          "src/shared/remote-fs.test.ts"
+        ],
+        "consumer": [
+          "src/main/compute/job-runtime.test.ts",
+          "src/main/compute/enabled-hosts-registry.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "user_skills_repository": {
+      "ownerPaths": [
+        "src/main/skills/user-skill-repository.ts",
+        "src/main/skills/user-skill-store.ts",
+        "src/main/skills/agent-home-skill-owner.ts",
+        "src/main/skills/skill-bundle-import-owner.ts",
+        "src/main/skills/user-skill-import-contracts.ts",
+        "src/main/skills/skill-mutation-owner.ts",
+        "src/main/skills/skill-package-transaction-owner.ts"
+      ],
+      "interfacePaths": ["src/main/skills/user-skill-repository.ts"],
+      "consumerModules": ["settings_service_facade"],
+      "testFiles": {
+        "owner": [
+          "src/main/skills/user-skill-repository.architecture.test.ts",
+          "src/main/skills/user-skill-repository.atomic.test.ts",
+          "src/main/skills/user-skill-repository.test.ts"
+        ],
+        "contract": [
+          "src/main/skills/host-skills-service.test.ts",
+          "src/main/skills/skill-archive-sniffer.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
+        ],
+        "consumer": [
+          "src/main/skills/conversation-import.test.ts",
+          "src/main/skills/specialist-package-adapter.test.ts",
+          "src/main/notebook/local-rpc-server.test.ts",
+          "src/main/notebook/local-rpc-server.skill-import.test.ts",
+          "src/main/notebook/local-rpc-server.skills.test.ts",
+          "src/main/settings/service.test.ts",
+          "src/main/specialist/package/release-certification.test.ts",
+          "src/main/specialist/package/service.test.ts",
+          "src/preload/index.test.ts",
+          "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx",
+          "src/renderer/src/stores/settings-skills-slice.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "settings_repository": {
+      "ownerPaths": [
+        "src/main/settings/repository.ts",
+        "src/main/settings/record-codec.ts",
+        "src/main/settings/document-codec.ts",
+        "src/main/settings/document-store.ts",
+        "src/main/settings/compute-grant-port.ts",
+        "src/main/settings/subagent-model-settings.ts"
+      ],
+      "interfacePaths": [
+        "src/main/settings/repository.ts",
+        "src/main/settings/compute-grant-port.ts"
+      ],
+      "consumerModules": [
+        "settings_provider_accounts",
+        "settings_service_facade",
+        "compute_service"
+      ],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/document-store.test.ts",
+          "src/main/settings/document-codec.test.ts",
+          "src/main/settings/record-codec.test.ts",
+          "src/main/settings/repository.test.ts",
+          "src/main/settings/compute-grants.test.ts",
+          "src/main/settings/connectors-settings.test.ts",
+          "src/main/settings/custom-mcp-settings.test.ts",
+          "src/main/settings/mirror-settings.test.ts"
+        ],
+        "contract": ["src/shared/settings.test.ts"],
+        "consumer": [
+          "src/main/settings/service.test.ts",
+          "src/main/compute/ipc.test.ts",
+          "src/main/compute/permission-grant-adapter.test.ts",
+          "src/main/settings/agent-runtime-manager.test.ts",
+          "src/main/settings/connector-settings.test.ts",
+          "src/main/settings/notebook-runtime-settings.test.ts",
+          "src/main/settings/preferences.test.ts",
+          "src/main/settings/skill-catalog.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "settings_provider_accounts": {
+      "ownerPaths": [
+        "src/main/settings/provider-accounts.ts",
+        "src/main/settings/provider-auth-lifecycle.ts",
+        "src/main/settings/provider-runtime-projection.ts"
+      ],
+      "interfacePaths": ["src/main/settings/provider-accounts.ts"],
+      "consumerModules": ["settings_backend_resolution", "settings_service_facade"],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/provider-accounts.test.ts",
+          "src/main/settings/provider-auth-lifecycle.test.ts",
+          "src/main/settings/provider-auth-lifecycle.architecture.test.ts",
+          "src/main/settings/provider-runtime-projection.test.ts",
+          "src/main/settings/provider-runtime-projection.architecture.test.ts",
+          "src/main/settings/codex-auth.test.ts",
+          "src/main/settings/claude-isolated-auth.test.ts",
+          "src/main/settings/claude-shared-auth.test.ts",
+          "src/main/settings/validate.test.ts",
+          "src/main/settings/list-models.test.ts",
+          "src/main/settings/crypto.test.ts",
+          "src/main/settings/provider-env.test.ts"
+        ],
+        "contract": [
+          "src/main/settings/service.providers.test.ts",
+          "src/main/settings/runtime-application-commands.test.ts",
+          "src/shared/provider-registry.test.ts",
+          "src/shared/provider-reasoning-effort.test.ts"
+        ],
+        "consumer": [
+          "src/main/settings/agent-runtime-manager.test.ts",
+          "src/main/settings/backend-resolver.test.ts",
+          "src/renderer/src/stores/settings-provider-auth-slice.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "settings_backend_resolution": {
+      "ownerPaths": [
+        "src/main/settings/backend-resolver.ts",
+        "src/main/settings/backend-selection-owner.ts",
+        "src/main/settings/backend-route-planner.ts",
+        "src/main/settings/provider-loopback-http-host.ts",
+        "src/main/settings/provider-transport-owner.ts",
+        "src/main/settings/responses-bridge.ts",
+        "src/main/settings/responses-protocol-types.ts",
+        "src/main/settings/responses-request-adapter.ts",
+        "src/main/settings/responses-response-adapter.ts"
+      ],
+      "interfacePaths": [
+        "src/main/settings/backend-resolver.ts",
+        "src/main/settings/responses-bridge.ts"
+      ],
+      "consumerModules": [
+        "settings_service_facade",
+        "reviewer_orchestrator",
+        "artifact_provenance"
+      ],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/backend-resolver.test.ts",
+          "src/main/settings/backend-selection-owner.test.ts",
+          "src/main/settings/backend-selection-owner.architecture.test.ts",
+          "src/main/settings/backend-route-planner.test.ts",
+          "src/main/settings/backend-route-planner.architecture.test.ts",
+          "src/main/settings/provider-transport-owner.test.ts",
+          "src/main/settings/provider-transport-owner.architecture.test.ts",
+          "src/main/settings/provider-loopback-http-host.test.ts",
+          "src/main/settings/provider-loopback-http-host.architecture.test.ts",
+          "src/main/settings/responses-request-adapter.architecture.test.ts",
+          "src/main/settings/responses-request-adapter.test.ts",
+          "src/main/settings/responses-response-adapter.architecture.test.ts",
+          "src/main/settings/responses-response-adapter.test.ts",
+          "src/main/settings/responses-bridge.test.ts",
+          "src/main/settings/responses-bridge.integration.test.ts",
+          "src/main/settings/native-responses-compatibility.test.ts",
+          "src/main/settings/anthropic-provider-bridge.test.ts",
+          "src/main/settings/openai-provider-bridge.test.ts",
+          "src/main/settings/system-proxy.test.ts"
+        ],
+        "contract": [
+          "src/main/agent-framework/codex.test.ts",
+          "src/main/agent-framework/opencode.test.ts",
+          "src/main/agent-framework/registry.test.ts"
+        ],
+        "consumer": [
+          "packages/open-science/cli.test.ts",
+          "src/main/acp/artifact-code-reconstruction-runner.test.ts",
+          "src/main/acp/backend-generation-owner.test.ts",
+          "src/main/acp/provider-prompt-executor.test.ts",
+          "src/main/acp/task-agent-port.test.ts",
+          "src/main/acp/turn-skill-owner.test.ts",
+          "src/main/artifacts/code-reconstruction.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/reviewer/mcp-server.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "settings_service_facade": {
+      "ownerPaths": ["src/main/settings/service.ts", "src/main/settings/subagent-model-owner.ts"],
+      "interfacePaths": [
+        "src/main/settings/service.ts",
+        "src/main/settings/application-commands.ts",
+        "src/main/settings/runtime-application-commands.ts",
+        "src/main/settings/integration-application-commands.ts",
+        "src/main/settings/ipc.ts"
+      ],
+      "consumerModules": ["workspace_runtime"],
+      "testFiles": {
+        "owner": [
+          "src/main/settings/settings-backend.architecture.test.ts",
+          "src/main/settings/service.test.ts",
+          "src/main/settings/service.providers.test.ts",
+          "src/main/settings/service.connectors.test.ts"
+        ],
+        "contract": [
+          "src/main/settings/application-commands.test.ts",
+          "src/main/settings/runtime-application-commands.test.ts",
+          "src/main/settings/integration-application-commands.test.ts",
+          "src/main/settings/ipc.test.ts",
+          "src/main/settings/capabilities.test.ts",
+          "src/main/settings/workflows.test.ts",
+          "src/main/application-command-composition.test.ts",
+          "src/main/application-command-wiring.test.ts",
+          "src/shared/renderer-contract-catalog.test.ts",
+          "src/shared/renderer-surface-inventory.test.ts",
+          "src/shared/renderer-surface-matrix.test.ts",
+          "src/shared/web-rpc-contract.test.ts",
+          "src/preload/electron-renderer-contract-adapter.test.ts",
+          "src/renderer/web/api-installer.test.ts"
+        ],
+        "consumer": [
+          "packages/open-science/cli.test.ts",
+          "src/main/acp/backend-generation-owner.test.ts",
+          "src/main/acp/runtime-provider-session-composition.test.ts",
+          "src/main/acp/task-agent-port.test.ts",
+          "src/main/notebook/local-rpc-notebook-adapter.test.ts",
+          "src/main/notebook/local-rpc-server.mcpcall.test.ts",
+          "src/main/notebook/mcp-server.test.ts",
+          "src/main/web-service/http-server.test.ts",
+          "src/renderer/src/stores/settings-runtime-slice.test.ts",
+          "src/renderer/src/stores/settings-store.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["settings_ipc", "renderer_settings", "windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "artifact_storage": {
+      "ownerPaths": [
+        "src/main/artifacts/compatibility-owner.ts",
+        "src/main/artifacts/pending-file-transaction.ts",
+        "src/main/artifacts/publication-owner.ts",
+        "src/main/artifacts/publication-types.ts",
+        "src/main/artifacts/repository.ts",
+        "src/main/artifacts/run-marker-codec.ts",
+        "src/main/artifacts/storage-access.ts",
+        "src/main/artifacts/storage-layout.ts"
+      ],
+      "interfacePaths": ["src/main/artifacts/repository.ts"],
+      "consumerModules": ["artifact_provenance"],
+      "testFiles": {
+        "owner": [
+          "src/main/artifacts/repository.test.ts",
+          "src/main/artifacts/repository.rollback.test.ts"
+        ],
+        "contract": ["src/main/artifacts/ipc.test.ts"],
+        "consumer": ["src/main/artifacts/provenance-repository.test.ts"]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "upload_repository": {
+      "ownerPaths": [
+        "src/main/uploads/repository.ts",
+        "src/main/uploads/active-transfer-owner.ts",
+        "src/main/uploads/legacy-recovery-owner.ts",
+        "src/main/uploads/managed-upload-resolver.ts",
+        "src/main/uploads/staged-publication-owner.ts",
+        "src/main/uploads/storage-helpers.ts",
+        "src/main/uploads/verified-legacy-cleanup-owner.ts"
+      ],
+      "interfacePaths": ["src/main/uploads/repository.ts"],
+      "consumerModules": ["session_persistence"],
+      "testFiles": {
+        "owner": [
+          "src/main/uploads/repository.test.ts",
+          "src/main/uploads/repository.characterization.test.ts",
+          "src/main/uploads/repository.architecture.test.ts"
+        ],
+        "contract": ["src/main/uploads/ipc.test.ts", "src/main/uploads/command-owner.test.ts"],
+        "consumer": [
+          "src/main/session-persistence/deletion-integration.test.ts",
+          "src/main/acp/file-reference-resolver.test.ts",
+          "src/main/acp/prompt-content-owner.test.ts",
+          "src/main/skills/conversation-import.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "project_files_repository": {
+      "ownerPaths": [
+        "src/main/project-files/mutation-owner.ts",
+        "src/main/project-files/mutation-projection.ts",
+        "src/main/project-files/query-owner.ts",
+        "src/main/project-files/query-support.ts",
+        "src/main/project-files/repository.ts"
+      ],
+      "interfacePaths": ["src/main/project-files/repository.ts"],
+      "consumerModules": ["session_persistence"],
+      "testFiles": {
+        "owner": [
+          "src/main/project-files/repository.architecture.test.ts",
+          "src/main/project-files/repository.test.ts"
+        ],
+        "contract": ["src/main/project-files/ipc.test.ts"],
+        "consumer": [
+          "src/main/session-persistence/coordinator.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts",
+          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "artifact_provenance": {
+      "ownerPaths": [
+        "src/main/artifacts/provenance-canonical.ts",
+        "src/main/artifacts/provenance-core-evidence.ts",
+        "src/main/artifacts/provenance-dependency-reader.ts",
+        "src/main/artifacts/provenance-execution-evidence.ts",
+        "src/main/artifacts/provenance-finalization-recovery.ts",
+        "src/main/artifacts/provenance-message-finalization.ts",
+        "src/main/artifacts/provenance-message-snapshot.ts",
+        "src/main/artifacts/provenance-producer-capture.ts",
+        "src/main/artifacts/provenance-read-model.ts",
+        "src/main/artifacts/provenance-repository.ts",
+        "src/main/artifacts/provenance-staging-recovery.ts",
+        "src/main/artifacts/provenance-storage.ts",
+        "src/main/artifacts/provenance-unindexed-recovery.ts",
+        "src/main/artifacts/provenance-version-writer.ts"
+      ],
+      "interfacePaths": [
+        "src/main/artifacts/provenance-message-snapshot.ts",
+        "src/main/artifacts/provenance-repository.ts"
+      ],
+      "consumerModules": ["session_persistence"],
+      "testFiles": {
+        "owner": [
+          "src/main/artifacts/provenance-dependency-read.test.ts",
+          "src/main/artifacts/provenance-lifecycle-contract.test.ts",
+          "src/main/artifacts/provenance-message-snapshot.test.ts",
+          "src/main/artifacts/provenance-repository.architecture.test.ts",
+          "src/main/artifacts/provenance-repository.test.ts",
+          "src/main/artifacts/provenance-write-contract.test.ts"
+        ],
+        "contract": [
+          "src/main/artifacts/ipc.test.ts",
+          "src/main/artifacts/mcp-server.test.ts",
+          "src/main/data-content-application-commands.test.ts",
+          "src/main/notebook/local-rpc-notebook-adapter.test.ts",
+          "src/preload/index.test.ts"
+        ],
+        "consumer": [
+          "src/main/acp/file-reference-resolver.test.ts",
+          "src/main/acp/runtime.test.ts",
+          "src/main/artifacts/code-reconstruction.test.ts",
+          "src/main/notebook/local-rpc-server.test.ts",
+          "src/main/reviewer/ipc.test.ts",
+          "src/main/session-artifact-file-resolver.test.ts",
+          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",
+          "src/main/session-persistence/coordinator.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts",
+          "src/main/tasks/task-runner.test.ts",
+          "src/renderer/src/lib/acp/workspace-events.test.ts",
+          "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
+          "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
+          "src/renderer/src/pages/workspace/WorkspaceMessageScroller.interaction.test.tsx"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    },
+    "session_persistence": {
+      "ownerPaths": [
+        "src/main/session-persistence/coordinator.ts",
+        "src/main/session-persistence/delegated-question-owner.ts",
+        "src/main/session-persistence/delegated-work-owner.ts",
+        "src/main/session-persistence/delegated-work-store.ts",
+        "src/main/session-persistence/deletion-owner.ts",
+        "src/main/session-persistence/legacy-upload.ts",
+        "src/main/session-persistence/message-delivery-owner.ts",
+        "src/main/session-persistence/reconciliation-owner.ts",
+        "src/main/session-persistence/side-chat-owner.ts",
+        "src/main/session-persistence/state-owner.ts"
+      ],
+      "interfacePaths": ["src/main/session-persistence/coordinator.ts"],
+      "consumerModules": [],
+      "testFiles": {
+        "owner": [
+          "src/main/session-persistence/coordinator.architecture.test.ts",
+          "src/main/session-persistence/coordinator.test.ts"
+        ],
+        "contract": [
+          "src/shared/session-persistence.test.ts",
+          "src/main/session-persistence/coordinator-contract.test.ts"
+        ],
+        "consumer": [
+          "src/main/session-persistence/artifact-finalization-recovery.integration.test.ts",
+          "src/main/session-persistence/deletion-integration.test.ts"
+        ]
+      },
+      "capabilityOverlays": ["windows_sensitive"],
+      "fallbackCapability": "main_runtime"
+    }
+  }
+}

@@ -6,6 +6,7 @@ import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
+  MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport
 } from '@/components/ui/message-scroller'
@@ -41,10 +42,13 @@ import { NotebookInputDataStrip } from './NotebookInputDataStrip'
 import { NotebookCodeBlock } from './notebook-code'
 import { NotebookDialogCell } from './SessionNotebookDialog'
 import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'
+import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompactionActivityRow'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
+import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { createConversationItems } from './workspace-conversation-items'
 import { groupConversationItems } from './workspace-tool-activity-groups'
+import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 type ProvenanceTab = 'code' | 'execution' | 'messages' | 'environment' | 'review'
 type DeferredProvenanceTab = Extract<ProvenanceTab, 'execution' | 'messages' | 'review'>
@@ -374,8 +378,13 @@ const ProvenanceMessagesTimeline = ({
                 }
 
                 // Artifact provenance builds its immutable transcript from persisted messages and
-                // activities only, so no live coordinator lifecycle rows are supplied here.
-                if (conversationItem.type === 'handoff') return null
+                // activities only, so no coordinator lifecycle or durable Subagent command rows
+                // are supplied here.
+                if (
+                  conversationItem.type === 'handoff' ||
+                  conversationItem.type === 'subagent-message'
+                )
+                  return null
 
                 if (conversationItem.type === 'plan-activity') {
                   return (
@@ -384,6 +393,34 @@ const ProvenanceMessagesTimeline = ({
                       activity={conversationItem.activity}
                       contentPaddingClassName="px-0 md:px-0"
                     />
+                  )
+                }
+
+                if (conversationItem.type === 'compaction-activity') {
+                  return (
+                    <WorkspaceContextCompactionActivityRow
+                      key={conversationItem.id}
+                      activity={conversationItem.activity}
+                      contentPaddingClassName="px-0 md:px-0"
+                    />
+                  )
+                }
+
+                if (conversationItem.type === 'activity') {
+                  return (
+                    <MessageScrollerItem
+                      key={conversationItem.id}
+                      messageId={conversationItem.id}
+                      className="min-w-0"
+                    >
+                      <div className="py-3">
+                        {conversationItem.activity.elicitation ? (
+                          <WorkspaceElicitationCard
+                            elicitation={conversationItem.activity.elicitation}
+                          />
+                        ) : null}
+                      </div>
+                    </MessageScrollerItem>
                   )
                 }
 
@@ -423,6 +460,7 @@ const ArtifactProvenancePanel = ({
   onClose,
   onVersionChange
 }: ArtifactProvenancePanelProps): React.JSX.Element => {
+  const tabScrollFadeRef = useHorizontalScrollFade<HTMLDivElement>()
   const lineageKey = `${projectId}:${item.sessionId}:${item.artifactId ?? ''}`
   const lineageRequestKey = `${lineageKey}:${item.selectedVersionId ?? ''}`
   const [lineageResult, setLineageResult] = useState<{
@@ -976,8 +1014,9 @@ const ArtifactProvenancePanel = ({
       </div>
 
       <div
+        ref={tabScrollFadeRef}
         role="tablist"
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
+        className="scroll-fade-x flex shrink-0 gap-1 overflow-x-auto border-b border-border-300/60 px-2 py-1"
       >
         {tabs.map((tab) => (
           <button
@@ -985,7 +1024,7 @@ const ArtifactProvenancePanel = ({
             type="button"
             role="tab"
             aria-selected={activeTab === tab.id}
-            className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-300 hover:text-text-100'}`}
+            className={`rounded px-2 py-1 text-xs ${activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
             onClick={() => setActiveTab(tab.id)}
           >
             {tab.label}
@@ -1077,7 +1116,7 @@ const ArtifactProvenancePanel = ({
                 />
               )}
               {generatedCode ? (
-                <div className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <div className="min-w-0 flex-1 truncate text-sm text-text-200">
                   <span>LLM-generated reconstruction · see </span>
                   <Button
                     type="button"
@@ -1095,20 +1134,20 @@ const ArtifactProvenancePanel = ({
                   {codeReconstructionResult.message}
                 </p>
               ) : codeReconstructionState?.state === 'unavailable' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   {codeReconstructionUnavailableLabel(codeReconstructionState.reason)}
                 </p>
               ) : codeReconstructionResult?.status === 'generating' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   Using the provider and model selected when generation started.
                 </p>
               ) : codeReconstructionState?.state === 'ready' ? (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   Generate a standalone script from the immutable Execution Log with your current
                   provider and model.
                 </p>
               ) : (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-300">
+                <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   Checking for a previously generated script…
                 </p>
               )}

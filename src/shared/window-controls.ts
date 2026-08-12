@@ -40,8 +40,9 @@ export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
 // separate from SHOW so a late theme result never steals focus or re-runs the remembered query.
 export const WINDOW_FIND_APPEARANCE_CHANNEL = 'window:find-appearance'
 
-// Main renderer -> main: the app's resolved appearance changed. Main validates and caches this on the
-// window-owned overlay manager, which forwards it if the find bar is currently open.
+// Main renderer -> main: the app's resolved appearance changed. Main validates it, applies native
+// platform appearance (for example the macOS Dock icon), and caches it on the window-owned overlay
+// manager, which forwards it if the find bar is currently open.
 export const WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL = 'window:find-appearance-changed'
 
 // Overlay -> main: the user closed the find bar — hide the overlay and release the main-window focus.

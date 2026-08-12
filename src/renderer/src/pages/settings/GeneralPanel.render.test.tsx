@@ -9,6 +9,7 @@ import { useThemeStore } from '@/stores/theme-store'
 import { GeneralPanel } from './GeneralPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
+vi.mock('@/assets/logo-dark.png', () => ({ default: 'logo-dark.png' }))
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -231,6 +232,19 @@ describe('GeneralPanel appearance', () => {
     await flush()
 
     expect(useThemeStore.getState().preference).toBe('system')
+  })
+
+  it('binds macOS Dock appearance to Theme and hides the competing icon picker', async () => {
+    window.api.platform = 'darwin'
+
+    await act(async () => {
+      root.render(<GeneralPanel />)
+    })
+    await flush()
+
+    expect(container.textContent).toContain('The Dock icon follows the resolved theme.')
+    expect(document.body.querySelector('[role="radiogroup"][aria-label="App icon"]')).toBeNull()
+    expect(settingsApi.listAppIcons).not.toHaveBeenCalled()
   })
 })
 

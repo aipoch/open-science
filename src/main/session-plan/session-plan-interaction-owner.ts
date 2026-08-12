@@ -1,3 +1,5 @@
+import { PlanCommandError } from '../../shared/session-plan/contract'
+
 type SessionPlanInteractionIdentity = Readonly<{
   artifactVersionId: string
   interactionId: string
@@ -14,10 +16,13 @@ type SessionPlanExecutionBinding = Readonly<{
   interactionSequence: number
 }>
 
+type SessionPlanAgentDecisionAuthorization = SessionPlanExecutionBinding
+
 type SessionPlanInteractionRow = {
   identity?: SessionPlanInteractionIdentity
   approvalReservation?: string
   approval?: SessionPlanApprovalParking
+  agentDecisionAuthorization?: SessionPlanAgentDecisionAuthorization
   execution?: SessionPlanExecutionBinding
 }
 
@@ -31,6 +36,7 @@ class SessionPlanInteractionOwner {
   }: SessionPlanInteractionIdentity & Readonly<{ sessionId: string }>): void {
     const row = this.rows.get(sessionId) ?? {}
     row.identity = { artifactVersionId, interactionId }
+    delete row.agentDecisionAuthorization
     this.rows.set(sessionId, row)
   }
 
@@ -50,7 +56,10 @@ class SessionPlanInteractionOwner {
   reserveApproval(sessionId: string, interactionId: string): void {
     const row = this.rows.get(sessionId) ?? {}
     if (row.approvalReservation || row.approval) {
-      throw new Error('A Session Plan is already awaiting approval.')
+      throw new PlanCommandError(
+        'approval-already-pending',
+        'A Session Plan is already awaiting approval.'
+      )
     }
     row.approvalReservation = interactionId
     this.rows.set(sessionId, row)
@@ -76,7 +85,10 @@ class SessionPlanInteractionOwner {
   parkApproval(sessionId: string, interactionId: string): Promise<unknown> {
     const row = this.rows.get(sessionId) ?? {}
     if (row.approvalReservation || row.approval) {
-      throw new Error('A Session Plan is already awaiting approval.')
+      throw new PlanCommandError(
+        'approval-already-pending',
+        'A Session Plan is already awaiting approval.'
+      )
     }
     this.rows.set(sessionId, row)
     return new Promise((resolve, reject) => {
@@ -105,6 +117,47 @@ class SessionPlanInteractionOwner {
     delete row.approval
     this.prune(sessionId, row)
     approval.reject(new Error(reason))
+    return true
+  }
+
+  authorizeAgentDecision({
+    sessionId,
+    artifactVersionId,
+    interactionSequence
+  }: SessionPlanAgentDecisionAuthorization & Readonly<{ sessionId: string }>): void {
+    const row = this.rows.get(sessionId) ?? {}
+    row.agentDecisionAuthorization = { artifactVersionId, interactionSequence }
+    this.rows.set(sessionId, row)
+  }
+
+  isAgentDecisionAuthorized({
+    sessionId,
+    artifactVersionId,
+    interactionSequence
+  }: SessionPlanAgentDecisionAuthorization & Readonly<{ sessionId: string }>): boolean {
+    const authorization = this.rows.get(sessionId)?.agentDecisionAuthorization
+    return (
+      authorization?.artifactVersionId === artifactVersionId &&
+      authorization.interactionSequence === interactionSequence
+    )
+  }
+
+  consumeAgentDecisionAuthorization(
+    input: SessionPlanAgentDecisionAuthorization & Readonly<{ sessionId: string }>
+  ): boolean {
+    if (!this.isAgentDecisionAuthorized(input)) return false
+    const row = this.rows.get(input.sessionId)
+    if (!row) return false
+    delete row.agentDecisionAuthorization
+    this.prune(input.sessionId, row)
+    return true
+  }
+
+  releaseAgentDecisionAuthorization(sessionId: string, interactionSequence: number): boolean {
+    const row = this.rows.get(sessionId)
+    if (row?.agentDecisionAuthorization?.interactionSequence !== interactionSequence) return false
+    delete row.agentDecisionAuthorization
+    this.prune(sessionId, row)
     return true
   }
 
@@ -145,7 +198,13 @@ class SessionPlanInteractionOwner {
   }
 
   private prune(sessionId: string, row: SessionPlanInteractionRow): void {
-    if (!row.identity && !row.approvalReservation && !row.approval && !row.execution) {
+    if (
+      !row.identity &&
+      !row.approvalReservation &&
+      !row.approval &&
+      !row.agentDecisionAuthorization &&
+      !row.execution
+    ) {
       this.rows.delete(sessionId)
     }
   }

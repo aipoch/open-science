@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
 
-import type { ActiveSessionInfo } from '../shared/storage'
+import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../shared/storage'
 import {
   WINDOW_CLOSE_CONFIRM_REQUEST_CHANNEL,
   WINDOW_CLOSE_CONFIRM_RESPONSE_CHANNEL,
@@ -35,7 +35,10 @@ export type CloseConfirmDeps = {
   onRendererUnresponsive?: (cbs: { onHang: () => void; onRecover: () => void }) => () => void
   // Native fallback when the renderer can't answer (dead/hung, or no window at all). May reject;
   // the coordinator wraps it so a rejection never leaves the confirm unsettled.
-  nativeFallback: (variant: CloseConfirmVariant) => Promise<NativeCloseConfirmResult>
+  nativeFallback: (
+    variant: CloseConfirmVariant,
+    sessions: ActiveSessionInfo[]
+  ) => Promise<NativeCloseConfirmResult>
   // Read/write the saved Windows titlebar-close behavior. Persistence failures fall back to asking.
   getClosePreference: () => Promise<CloseActionPreference | undefined>
   setClosePreference: (preference: CloseActionPreference) => Promise<void>
@@ -69,10 +72,13 @@ export const createCloseConfirm = (
 
   return async (variant, sessions) => {
     if (variant === 'quit' && sessions.length === 0) return 'quit'
+    const hasDelegatedWork = hasDelegatedActiveSession(sessions)
+    const enforceDelegatedBlock = (choice: CloseConfirmChoice): CloseConfirmChoice =>
+      hasDelegatedWork && choice === 'quit' ? (variant === 'quit' ? 'cancel' : 'minimize') : choice
 
     if (variant === 'close-to-tray') {
       const preference = await deps.getClosePreference().catch(() => undefined)
-      if (preference) return preference
+      if (preference) return enforceDelegatedBlock(preference)
     }
 
     const persistPreference = async (
@@ -89,11 +95,12 @@ export const createCloseConfirm = (
     // for close-to-tray and proceed for quit.
     const safeFallback = async (): Promise<CloseConfirmChoice> => {
       try {
-        const result = await deps.nativeFallback(variant)
-        await persistPreference(result.choice, result.remember)
-        return result.choice
+        const result = await deps.nativeFallback(variant, sessions)
+        const choice = enforceDelegatedBlock(result.choice)
+        await persistPreference(choice, result.remember)
+        return choice
       } catch {
-        return variant === 'quit' ? 'quit' : 'minimize'
+        return enforceDelegatedBlock(variant === 'quit' ? 'quit' : 'minimize')
       }
     }
 
@@ -115,7 +122,8 @@ export const createCloseConfirm = (
         offResponse()
         offGone()
         offHang?.()
-        void persistPreference(choice, remember).then(() => resolve(choice))
+        const enforcedChoice = enforceDelegatedBlock(choice)
+        void persistPreference(enforcedChoice, remember).then(() => resolve(enforcedChoice))
       }
 
       // Known limitation (cosmetic): when a fallback settles the confirm, a modal the renderer had
@@ -172,10 +180,21 @@ export const createCloseConfirm = (
 // back to a windowless one.
 const nativeFallback = async (
   getWindow: () => BrowserWindow | undefined,
-  variant: CloseConfirmVariant
+  variant: CloseConfirmVariant,
+  sessions: ActiveSessionInfo[]
 ): Promise<NativeCloseConfirmResult> => {
-  const options =
-    variant === 'quit'
+  const hasDelegatedWork = hasDelegatedActiveSession(sessions)
+  const options = hasDelegatedWork
+    ? {
+        type: 'warning' as const,
+        buttons: [variant === 'quit' ? 'Return to tasks' : 'Minimize to tray'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Open Science',
+        message: 'Subagents are still running',
+        detail: 'Return to the running tasks and stop their subagents before quitting Open Science.'
+      }
+    : variant === 'quit'
       ? {
           type: 'question' as const,
           buttons: ['Cancel', 'Quit'],
@@ -201,6 +220,7 @@ const nativeFallback = async (
     window && !window.isDestroyed()
       ? await dialog.showMessageBox(window, options)
       : await dialog.showMessageBox(options)
+  if (hasDelegatedWork) return { choice: variant === 'quit' ? 'cancel' : 'minimize' }
   if (variant === 'quit') return { choice: response === 1 ? 'quit' : 'cancel' }
   return {
     choice: response === 1 ? 'quit' : 'minimize',
@@ -251,7 +271,7 @@ export const createElectronCloseConfirm = (
         window.webContents.off('responsive', onRecover)
       }
     },
-    nativeFallback: (variant) => nativeFallback(getWindow, variant),
+    nativeFallback: (variant, sessions) => nativeFallback(getWindow, variant, sessions),
     getClosePreference: preferences.get,
     setClosePreference: preferences.set,
     newRequestId: () => randomUUID()

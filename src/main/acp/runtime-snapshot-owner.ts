@@ -69,35 +69,17 @@ class AcpRuntimeSnapshotOwner {
       }
     }
 
+    // Preserve the normalized event shape as it evolves. Explicitly override the owned identity,
+    // timestamp, defaults, and bounded image/raw fields so future presentation metadata cannot be
+    // silently dropped by a second hand-maintained projection list.
     const runtimeEvent: AcpRuntimeEvent = {
+      ...event,
       id: event.id ?? this.nextEventId(),
       timestamp: event.timestamp ?? Date.now(),
       level: event.level ?? 'info',
-      kind: event.kind,
-      compactionReason: event.compactionReason,
-      recoverable: event.recoverable,
-      providerError: event.providerError,
-      turnUsage: event.turnUsage,
-      sessionId: event.sessionId,
-      messageId: event.messageId,
-      role: event.role,
       text,
       image,
-      title: event.title,
-      status: event.status,
-      toolCallId: event.toolCallId,
-      providerToolName: event.providerToolName,
-      toolKind: event.toolKind,
-      toolContent: event.toolContent,
-      toolLocations: event.toolLocations,
-      rawInput: event.rawInput,
-      rawOutput: event.rawOutput,
-      runId: event.runId,
       promptMessageId: event.promptMessageId,
-      artifactSessionId: event.artifactSessionId,
-      artifactClaimId: event.artifactClaimId,
-      artifacts: event.artifacts,
-      planProjection: event.planProjection,
       raw
     }
 

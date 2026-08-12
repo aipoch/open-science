@@ -48,8 +48,12 @@ describe('createDesktopBadgeAdapter', () => {
     adapter.setCount(0)
 
     expect(createWindowsOverlay.mock.calls).toEqual([['3'], ['9+']])
-    expect(window.setOverlayIcon).toHaveBeenNthCalledWith(1, overlays.get('3'), '3 unread tasks')
-    expect(window.setOverlayIcon).toHaveBeenNthCalledWith(2, overlays.get('9+'), '19 unread tasks')
+    expect(window.setOverlayIcon).toHaveBeenNthCalledWith(1, overlays.get('3'), '3 unread messages')
+    expect(window.setOverlayIcon).toHaveBeenNthCalledWith(
+      2,
+      overlays.get('9+'),
+      '19 unread messages'
+    )
     expect(window.setOverlayIcon).toHaveBeenNthCalledWith(3, null, '')
   })
 

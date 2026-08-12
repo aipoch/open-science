@@ -1,7 +1,14 @@
 import { useCallback, useId, useLayoutEffect, useRef } from 'react'
 
 import type { SkillView } from '../../../../../shared/settings'
+import { resolveLocalPath } from '../../../../../shared/local-fs'
 import { cn } from '@/lib/utils'
+import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+
+import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from '../preview-file-item'
+import { createPreviewFileItemFromMention } from '../preview-file-item'
+import { createPreviewRequestScope } from '../previews/preview-file-reader'
 
 import { ArtifactMentionPopup, type PickedArtifact } from './ArtifactMentionPopup'
 import {
@@ -40,6 +47,11 @@ type ComposerEditorProps = {
   isHistoryBrowsing?: boolean
   historyStatus?: string
   onNavigateHistory?: (direction: 'previous' | 'next') => boolean
+  // Scope for previewing clicked `@` mention chips (uploads/artifacts); without it those chips
+  // stay inert on click (linked-folder chips resolve through the granted-roots store instead).
+  mentionPreviewContext?: { sessionId: string; projectId?: string }
+  focusRequest?: string | number
+  restoreFocusRequest?: number
 }
 
 // Structural equality over doc nodes; used to decide whether the incoming prop diverges from what
@@ -145,6 +157,9 @@ const moveCaretToEnd = (root: HTMLElement): void => {
   selection?.addRange(range)
 }
 
+const canReceiveFocus = (root: HTMLElement): boolean =>
+  root.getAttribute('contenteditable') === 'true' && root.closest('[hidden]') === null
+
 // A contenteditable composer driven by a pure ComposerDoc model. External doc changes flow into the
 // DOM via applyDocToDom; user edits flow out via domToDoc. A `/` mention trigger mounts a skill popup.
 export const ComposerEditor = ({
@@ -159,7 +174,10 @@ export const ComposerEditor = ({
   allowedSkillIds,
   isHistoryBrowsing = false,
   historyStatus = '',
-  onNavigateHistory
+  onNavigateHistory,
+  mentionPreviewContext,
+  focusRequest,
+  restoreFocusRequest
 }: ComposerEditorProps): React.JSX.Element => {
   const editorRef = useRef<HTMLDivElement>(null)
   const historyDescriptionId = useId()
@@ -196,14 +214,91 @@ export const ComposerEditor = ({
   useLayoutEffect(() => {
     const root = editorRef.current
     if (!root) return
-    if (!nodesEqual(domToDoc(root).nodes, doc.nodes)) applyDocToDom(root, doc)
-    if (restoreHistoryCaretRef.current) {
+    const shouldPreserveFocus =
+      focusRequest !== undefined && canReceiveFocus(root) && document.activeElement === root
+    const docChanged = !nodesEqual(domToDoc(root).nodes, doc.nodes)
+    if (docChanged) applyDocToDom(root, doc)
+    if (restoreHistoryCaretRef.current || (docChanged && shouldPreserveFocus)) {
       restoreHistoryCaretRef.current = false
       moveCaretToEnd(root)
     }
-  }, [doc])
+  }, [doc, focusRequest])
+
+  useLayoutEffect(() => {
+    const root = editorRef.current
+    if (root && focusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
+  }, [focusRequest])
+
+  useLayoutEffect(() => {
+    const root = editorRef.current
+    if (root && restoreFocusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
+  }, [restoreFocusRequest])
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
+
+  // Clicking an `@` mention chip opens the file in the preview workbench, like the sent-message
+  // pills do. Linked-folder chips resolve rootId + relativePath through the granted-roots store
+  // (inert once the root is revoked); upload/artifact chips probe first so a stale chip stays
+  // inert, then open through the mention preview item.
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    const root = editorRef.current
+    const chip = (event.target as HTMLElement).closest?.(
+      '[data-mention-type="artifact"]'
+    ) as HTMLElement | null
+    if (!root || !chip || !root.contains(chip)) return
+    const source = chip.getAttribute('data-mention-source')
+
+    if (source === 'linked-folder') {
+      const rootId = chip.getAttribute('data-mention-root-id')
+      const relativePath = chip.getAttribute('data-mention-relative-path')
+      if (!rootId || !relativePath) return
+      const grantedRoot = useGrantedFoldersStore
+        .getState()
+        .roots.find((candidate) => candidate.id === rootId)
+      if (!grantedRoot) return
+      event.preventDefault()
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+        createPreviewFileItemFromLocal({
+          sessionId: LOCAL_PREVIEW_SESSION_ID,
+          path: resolveLocalPath(grantedRoot.path, relativePath, window.api?.platform ?? 'darwin'),
+          name: chip.getAttribute('data-mention-filename') ?? relativePath
+        })
+      )
+      return
+    }
+
+    if ((source !== 'upload' && source !== 'artifact') || !mentionPreviewContext) return
+    const path = chip.getAttribute('data-mention-path')
+    if (!path) return
+    event.preventDefault()
+    const part: Parameters<typeof createPreviewFileItemFromMention>[0] = {
+      type: 'artifact',
+      id: chip.getAttribute('data-mention-id') ?? path,
+      name: chip.getAttribute('data-mention-filename') ?? path,
+      path,
+      source,
+      mimeType: chip.getAttribute('data-mention-mime-type') ?? undefined,
+      versionId: chip.getAttribute('data-mention-version-id') ?? undefined
+    }
+    const { sessionId, projectId } = mentionPreviewContext
+    void (async () => {
+      const read =
+        source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+      try {
+        await read({
+          ...createPreviewRequestScope({ projectId, sessionId, source, path }),
+          path,
+          maxBytes: 1,
+          encoding: 'utf8'
+        })
+      } catch {
+        return
+      }
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createPreviewFileItemFromMention(part, sessionId, projectId))
+    })()
+  }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (disabled) return
@@ -266,7 +361,7 @@ export const ComposerEditor = ({
 
   // Replace the active `/query` token with a skill chip, then close the popup.
   const handleSelectSkill = (skill: SkillView): void => {
-    mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.name })
+    mention.replaceTokenWith({ type: 'skill', id: skill.id, name: skill.displayName })
     mention.cancel()
   }
 
@@ -299,6 +394,7 @@ export const ComposerEditor = ({
         data-placeholder={placeholder}
         className={cn(composerEditorClassName, className)}
         onInput={handleInput}
+        onClick={handleClick}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         onCompositionStart={() => {

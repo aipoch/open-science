@@ -596,6 +596,39 @@ describe('ComposerAgentControlsMenu', () => {
     expect(revokeButton?.disabled).toBe(true)
   })
 
+  it('keeps only permission mode editable when other agent controls are read-only', () => {
+    act(() => {
+      root.render(
+        <ComposerAgentControlsMenu
+          profile="ask"
+          autoReviewEnabled={false}
+          readOnly={true}
+          permissionProfileReadOnly={false}
+          enabledComputeHosts={[]}
+          showSpecialist
+          onProfileChange={vi.fn()}
+          onAutoReviewChange={vi.fn()}
+          onComputeHostToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(
+      findButton(
+        'Auto-approve editsAuto-approve edits to files in the workspace. Still ask before commands, network, and MCP.'
+      ).disabled
+    ).toBe(false)
+    expect(
+      findButton('Auto-reviewA reviewer agent checks every change before it lands.').disabled
+    ).toBe(true)
+    expect(findButton('cluster-1').disabled).toBe(true)
+    expect(
+      container
+        .querySelector('[data-testid="specialist-submenu-stub"]')
+        ?.getAttribute('data-read-only')
+    ).toBe('true')
+  })
+
   it('keeps conversation grant actions available while profile controls are read-only', () => {
     const onRevokeGrant = vi.fn()
     const onClearGrants = vi.fn()
@@ -762,12 +795,15 @@ describe('ComposerAgentControlsMenu', () => {
   it('folds Compute into a hover submenu that holds the SSH hosts and Manage compute', () => {
     // Regression guard (#545 flattened Compute into the primary panel): Compute must be a
     // single hover-expandable row whose content holds the host list, and the top-level order
-    // stays permission mode -> auto-review -> specialist -> compute.
+    // stays permission mode -> session grants -> auto-review -> specialist -> compute.
     act(() => {
       root.render(
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
+          grants={[
+            { categoryKey: 'shell:git', label: 'git status', kind: 'shell', scope: 'session' }
+          ]}
           enabledComputeHosts={[]}
           showSpecialist
           onProfileChange={vi.fn()}
@@ -790,7 +826,7 @@ describe('ComposerAgentControlsMenu', () => {
     expect(computeSubContents).toHaveLength(1)
     expect(computeSubContents[0]?.textContent).toContain('Manage compute...')
 
-    // Top-level order: permission mode -> auto-review -> specialist -> compute.
+    // Top-level order: permission mode -> session grants -> divider -> auto-review -> specialist -> compute.
     const orderAnchor = (needle: string): Element => {
       const match = Array.from(container.querySelectorAll('[data-testid="submenu-trigger"]')).find(
         (el) => el.textContent?.includes(needle)
@@ -803,12 +839,21 @@ describe('ComposerAgentControlsMenu', () => {
     const autoReviewRow = findButton(
       'Auto-reviewA reviewer agent checks every change before it lands.'
     )
+    const sessionGrantsHeading = Array.from(container.querySelectorAll('span')).find(
+      (element) => element.textContent === 'Allowed this session'
+    )
     const specialistStub = container.querySelector('[data-testid="specialist-submenu-stub"]')
+    expect(sessionGrantsHeading).not.toBeUndefined()
     expect(specialistStub).not.toBeNull()
 
     const precedes = (a: Element, b: Element): boolean =>
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
-    expect(precedes(permissionTrigger, autoReviewRow)).toBe(true)
+    const autoReviewDivider = Array.from(container.querySelectorAll('hr')).find(
+      (separator) =>
+        precedes(sessionGrantsHeading as Element, separator) && precedes(separator, autoReviewRow)
+    )
+    expect(precedes(permissionTrigger, sessionGrantsHeading as Element)).toBe(true)
+    expect(autoReviewDivider).not.toBeUndefined()
     expect(precedes(autoReviewRow, specialistStub as Element)).toBe(true)
     expect(precedes(specialistStub as Element, computeTrigger)).toBe(true)
   })
@@ -857,7 +902,7 @@ describe('ComposerAgentControlsMenu', () => {
         <ComposerAgentControlsMenu
           profile="ask"
           autoReviewEnabled={false}
-          readOnly // session running -> mutating controls frozen
+          readOnly
           showSpecialist
           specialistId="uuid-1"
           onSpecialistChange={vi.fn()}

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
 import {
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -9,10 +11,11 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, sep } from 'node:path'
+import { basename, dirname, join, relative, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,12 +25,13 @@ import {
   type PersistedUploadedAttachment
 } from '../../shared/uploads'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
   OrphanLegacyUploadAuthorityMissingError,
   UnsafeLegacyUploadResidualError,
   UploadRepository
 } from './repository'
+import { VerifiedLegacyCleanupOwner } from './verified-legacy-cleanup-owner'
 import { stageUploadFixtures } from './repository.test-utils'
 
 let storageRoot: string | undefined
@@ -376,7 +380,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, {
       getClient: () => Promise.resolve(client)
     })
@@ -453,7 +457,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, {
       getClient: () => Promise.resolve(client)
     })
@@ -490,7 +494,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const [pending] = await stageUploadFixtures(repository, {
       files: [
@@ -567,7 +571,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = Buffer.from('already renamed')
     const versionId = 'upload-version-post-rename'
@@ -636,7 +640,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = Buffer.from('copied before crash')
     const checksum = createHash('sha256').update(content).digest('hex')
@@ -697,7 +701,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
     await mkdir(dirname(legacyPath), { recursive: true })
@@ -778,7 +782,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = 'sample,value\na,1\n'
     const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
@@ -843,7 +847,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = 'sample,value\na,1\n'
     const legacyPath = join(root, 'uploads', 'default-project', 'session-1', 'legacy.csv')
@@ -932,7 +936,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const uploadId = 'conflicting-orphan-upload'
     const absentPath = join(root, 'uploads', 'default-project', 'session-1', 'absent.csv')
@@ -982,7 +986,7 @@ describe('upload repository', () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const uploadId = 'conflicting-existing-upload'
     const versionId = 'conflicting-existing-version'
@@ -1072,11 +1076,285 @@ describe('upload repository', () => {
     await expect(client.fileOriginSession.count()).resolves.toBe(1)
   })
 
+  it('restores missing ready content only from a checksum-verified legacy copy', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
+    const content = Buffer.from('sample,value\na,1\n')
+    const checksum = createHash('sha256').update(content).digest('hex')
+    const checksumMismatch = Buffer.alloc(content.byteLength, 'x')
+    const uploadId = 'legacy-upload-ready'
+    const versionId = 'legacy-ready-version-1'
+    const filename = 'legacy.csv'
+    const contentStorageKey = [
+      'uploads',
+      'project-1',
+      'session-1',
+      uploadId,
+      'versions',
+      versionId,
+      'content'
+    ].join('/')
+    const finalPath = join(root, ...contentStorageKey.split('/'))
+    const legacyPath = join(root, 'uploads', 'default-project', 'session-1', filename)
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(legacyPath, checksumMismatch)
+    await client.fileOriginSession.create({
+      data: { projectId: 'project-1', sessionId: 'session-1' }
+    })
+    await client.uploadFile.create({
+      data: {
+        id: uploadId,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename,
+        originalFilename: filename,
+        versions: {
+          create: {
+            id: versionId,
+            versionNumber: 1,
+            state: 'ready',
+            contentStorageKey,
+            filename,
+            originalFilename: filename,
+            contentType: 'text/csv',
+            sizeBytes: BigInt(content.byteLength),
+            checksum
+          }
+        }
+      }
+    })
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Legacy ready upload',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Inspect this',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: uploadId,
+              versionId,
+              versionNumber: 1,
+              sessionId: 'session-1',
+              name: filename,
+              originalName: filename,
+              mimeType: 'text/csv',
+              size: content.byteLength,
+              checksum,
+              sha256: checksum
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const cleanupInput = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      uploadFileId: uploadId,
+      versionId,
+      filename
+    }
+    const hardLinkUnavailable = vi.fn(async () => {
+      throw Object.assign(new Error('Hard links are unavailable.'), { code: 'EPERM' })
+    })
+    const publishReadyContentNoReplace = async (
+      _rootPath: string,
+      parentPath: string,
+      sourceName: string,
+      destinationName: string
+    ): Promise<void> => {
+      const sourcePath = join(parentPath, sourceName)
+      await copyFile(sourcePath, join(parentPath, destinationName), constants.COPYFILE_EXCL)
+      await rm(sourcePath)
+    }
+    const fallbackCleanupOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: hardLinkUnavailable,
+        publishReadyContentNoReplace
+      },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
+
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(checksumMismatch)
+
+    await writeFile(legacyPath, content)
+    const unsupportedPublicationOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: async () => {
+          throw Object.assign(new Error('Hard links are unavailable.'), { code: 'EPERM' })
+        },
+        publishReadyContentNoReplace: () => {
+          throw Object.assign(new Error('Atomic publication is unavailable.'), {
+            code: 'ENOTSUP'
+          })
+        }
+      },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
+    await expect(
+      unsupportedPublicationOwner.removeVerifiedLegacyCopy(cleanupInput)
+    ).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'atomic no-replace publication is unavailable on the storage filesystem'
+    })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+
+    const staleRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.00000000-0000-4000-8000-000000000001.tmp`
+    const freshRecoveryTemporaryPath = `${finalPath}.legacy-recovery.copy.00000000-0000-4000-8000-000000000002.tmp`
+    await mkdir(dirname(finalPath), { recursive: true })
+    await writeFile(staleRecoveryTemporaryPath, content.subarray(0, 1))
+    await writeFile(freshRecoveryTemporaryPath, content.subarray(0, 2))
+    const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1_000)
+    await utimes(staleRecoveryTemporaryPath, staleTime, staleTime)
+    await expect(fallbackCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'removed'
+    })
+    expect(hardLinkUnavailable).toHaveBeenCalledOnce()
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+    await expect(readFile(legacyPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(staleRecoveryTemporaryPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(freshRecoveryTemporaryPath)).resolves.toEqual(content.subarray(0, 2))
+    await rm(freshRecoveryTemporaryPath)
+
+    await expect(
+      repository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(finalPath)).resolves.toEqual(content)
+
+    await rm(finalPath)
+    await writeFile(legacyPath, content)
+    const racedContent = Buffer.alloc(content.byteLength, 'y')
+    const inPlaceRaceRepository = new UploadRepository(root, {
+      getClient: () => Promise.resolve(client),
+      renameLegacyForCleanup: async (source, destination) => {
+        await writeFile(source, racedContent)
+        await rename(source, destination)
+      }
+    })
+    await expect(
+      inPlaceRaceRepository.upgradeLegacySessionUploads(session, { mode: 'reconcile' })
+    ).resolves.toMatchObject({ messages: [{ uploads: [{ versionId }] }] })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(racedContent)
+
+    await writeFile(legacyPath, content)
+    const finalRaceContent = Buffer.alloc(content.byteLength, 'z')
+    const finalRaceCleanupOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: hardLinkUnavailable,
+        publishReadyContentNoReplace,
+        copyReadyContent: async (source, destination, mode) => {
+          await copyFile(source, destination, mode)
+          await writeFile(finalPath, finalRaceContent)
+        }
+      },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
+    await expect(finalRaceCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'the deterministic legacy path changed while restoring Version content'
+    })
+    await expect(readFile(finalPath)).resolves.toEqual(finalRaceContent)
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    await rm(finalPath)
+
+    const finalParent = dirname(finalPath)
+    const outsideFinalParent = join(root, 'outside-ready-version')
+    await rm(finalParent, { recursive: true, force: true })
+    await mkdir(outsideFinalParent)
+    await symlink(
+      outsideFinalParent,
+      finalParent,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    await writeFile(legacyPath, content)
+    await expect(fallbackCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'the ready Version content parent contains a symbolic link or escapes storage'
+    })
+    await expect(readFile(finalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    expect(hardLinkUnavailable).toHaveBeenCalledTimes(2)
+    await expect(readFile(join(outsideFinalParent, 'content'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(stat(outsideFinalParent)).resolves.toMatchObject({})
+    await rm(finalParent)
+
+    const movedFinalParent = join(root, 'moved-ready-version')
+    const raceCleanupOwner = new VerifiedLegacyCleanupOwner(
+      root,
+      {
+        getClient: () => Promise.resolve(client),
+        linkReadyContent: hardLinkUnavailable,
+        publishReadyContentNoReplace,
+        copyReadyContent: async (source, destination, mode) => {
+          await copyFile(source, destination, mode)
+          const destinationName = basename(String(destination))
+          await rename(finalParent, movedFinalParent)
+          await symlink(
+            outsideFinalParent,
+            finalParent,
+            process.platform === 'win32' ? 'junction' : 'dir'
+          )
+          await copyFile(
+            join(movedFinalParent, destinationName),
+            join(outsideFinalParent, destinationName)
+          )
+        }
+      },
+      {
+        resolveManagedUploadPath: (...args) => repository.resolveManagedUploadPath(...args)
+      }
+    )
+    await expect(raceCleanupOwner.removeVerifiedLegacyCopy(cleanupInput)).resolves.toEqual({
+      status: 'unsafe-residual',
+      reason: 'the ready Version content parent changed before publication'
+    })
+    await expect(readFile(join(outsideFinalParent, 'content'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    await expect(readFile(legacyPath)).resolves.toEqual(content)
+    expect(hardLinkUnavailable).toHaveBeenCalledTimes(3)
+    await rm(finalParent)
+    await rm(movedFinalParent, { recursive: true, force: true })
+  })
+
   it('removes a verified legacy copy when reusing an existing ready Upload Version', async () => {
     const root = await createStorageRoot()
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const repository = new UploadRepository(root, { getClient: () => Promise.resolve(client) })
     const content = Buffer.from('sample,value\na,1\n')
     const checksum = '5fe3f7b7e3492c63599954312dcb1e1d78488782753b6d3068c8d03292c7c1f6'
@@ -1459,7 +1737,7 @@ describe('upload repository', () => {
 
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'other-project', sessionId: 'session-1' }
     })
@@ -1508,7 +1786,7 @@ describe('upload repository', () => {
     ])
     const client = createProjectDbClient(root)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.managedFile.create({
       data: {
         source: 'upload',

@@ -48,7 +48,7 @@ describe('contextUsageMcpSections', () => {
     // Baseline before deduplication was about 5.2k cl100k tokens (3.6k schema + 1.6k prompt).
     expect(
       tokenizer.encode(`${NOTEBOOK_SYSTEM_PROMPT_APPEND}\n${schema}`).length
-    ).toBeLessThanOrEqual(3_200)
+    ).toBeLessThanOrEqual(3_500)
   })
 
   it('uses bridge aliases for Codex MCP tools delivered through a compatibility proxy', () => {

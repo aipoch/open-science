@@ -19,6 +19,7 @@ import type {
   CreateSkillRequest,
   DeleteSkillRequest,
   EnvironmentCheckResult,
+  GitHubTokenStatus,
   ImportAgentHomeSkillsRequest,
   ImportAgentHomeSkillsResult,
   InstallClaudeRequest,
@@ -45,7 +46,9 @@ import type {
   PreviewAgentHomeSkillRequest,
   PreviewGitHubSkillRequest,
   PreviewSkillZipRequest,
+  ProjectFilesFilterPreference,
   ReasoningEffort,
+  SubagentModelConfiguration,
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
   SkillSource,
@@ -57,9 +60,11 @@ import type {
   ValidateProviderResult
 } from '../../shared/settings'
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { resolveStorageRoot } from '../storage-root'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
@@ -81,6 +86,7 @@ import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './pref
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
+import type { CustomServerRuntimeProjectionProvider } from './connector-settings'
 import { ProviderAccountsModule } from './provider-accounts'
 import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
 import {
@@ -89,12 +95,14 @@ import {
   type AgentBackendSelection,
   type ExplicitAgentBackendTarget
 } from './backend-resolver'
-import { CONNECTOR_CATALOG } from '../connectors/catalog'
-import { SkillRegistry } from '../skills/registry'
+import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { UserSkillRepository } from '../skills/user-skill-repository'
+import type { SkillExportArchive } from '../skills/export'
+import type { FetchLike } from '../skills/github-import'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from './types'
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
+import { createSubagentModels, SubagentModelOwner } from './subagent-model-owner'
 
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
@@ -130,6 +138,8 @@ export type SettingsServiceOptions = {
   skillRegistry?: SkillRegistry
   // Writable personal/imported skill store, injectable so tests can use a temp storage root.
   userSkills?: UserSkillRepository
+  // GitHub request implementation, injectable so credential tests never hit the network.
+  githubFetch?: FetchLike
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
   executeClaudeProbe?: ExecuteClaudeProbe
   // One-shot managed Claude installer, injectable so tests avoid real network/fs.
@@ -168,6 +178,7 @@ class SettingsService {
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
   private readonly backendResolver: AgentBackendResolver
+  private readonly subagentModels: SubagentModelOwner
   private readonly storageRoot: string
   private readonly userClaudeDir: string
   private customServerAuthenticator?: (serverId: string) => Promise<void>
@@ -188,7 +199,8 @@ class SettingsService {
       userCodexDir,
       userAgentsDir: options.userAgentsDir ?? join(homedir(), '.agents'),
       skillRegistry: options.skillRegistry ?? new SkillRegistry(),
-      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot)
+      userSkills: options.userSkills ?? new UserSkillRepository(this.storageRoot),
+      githubFetch: options.githubFetch
     })
     const allocateSettingsIdSequence = createSettingsIdSequence()
     this.runtimeManager = new AgentRuntimeManager({
@@ -231,6 +243,11 @@ class SettingsService {
       storageRoot: this.storageRoot,
       userClaudeDir: this.userClaudeDir
     })
+    this.subagentModels = createSubagentModels(
+      this.repository,
+      this.providers,
+      this.backendResolver
+    )
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -273,22 +290,25 @@ class SettingsService {
       onboardingCompletedAt: preferences.onboardingCompletedAt,
       packageMirror: settings.packageMirror,
       reasoningEffort: preferences.reasoningEffort,
+      subagentModel: settings.subagentModel ?? { mode: 'inherit' },
       notificationsEnabled: preferences.notificationsEnabled,
       conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
       closePreference: preferences.closePreference,
       appIconVariant: preferences.appIconVariant,
+      projectFilesFilter: preferences.projectFilesFilter,
+      defaultPermissionProfile: preferences.defaultPermissionProfile,
+
       agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentFrameworks: listAgentFrameworks().map((framework) => ({
         id: framework.id,
         displayName: framework.displayName,
         supportsSkills: framework.supportsSkills,
+        supportsDelegatedWork: framework.supportsDelegatedWork,
         supportedApiTypes: [...framework.supportedApiTypes]
       }))
     }
   }
 
-  // Reads the package-mirror configuration, read fresh so callers see the latest saved state.
-  // Empty object means public hosts (no override configured).
   async getPackageMirror(): Promise<PackageMirror> {
     return this.notebookRuntimeSettings.getPackageMirror()
   }
@@ -338,23 +358,18 @@ class SettingsService {
     return this.notebookRuntimeSettings.setInstallAuthorized(language, envId, authorized)
   }
 
-  // The manual-interpreter catalog for a language (paths added via "Add interpreter…"), for merging
-  // into environment discovery. Empty array when none.
   async getManualInterpreters(language: NotebookLanguage): Promise<string[]> {
     return (await this.notebookRuntimeSettings.getSnapshot(language)).manualInterpreters
   }
 
-  // Adds an interpreter path to a language's manual catalog (idempotent), returning the refreshed list.
   async addManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
     return this.notebookRuntimeSettings.addManualInterpreter(language, path)
   }
 
-  // Removes an interpreter path from a language's manual catalog, returning the refreshed list.
   async removeManualInterpreter(language: NotebookLanguage, path: string): Promise<string[]> {
     return this.notebookRuntimeSettings.removeManualInterpreter(language, path)
   }
 
-  // Sets (or clears) the package-mirror configuration and returns the sanitized, persisted value.
   async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
     return this.notebookRuntimeSettings.setPackageMirror(request)
   }
@@ -368,7 +383,6 @@ class SettingsService {
     return changed ? this.repository.getSettings() : settings
   }
 
-  // Selects the agent backend to drive; the caller reconnects so the choice applies to the next spawn.
   async setAgentFramework(id: AgentFrameworkId): Promise<SettingsSnapshot> {
     await this.repository.setAgentFramework(id)
 
@@ -383,6 +397,11 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  async setSubagentModel(configuration: SubagentModelConfiguration): Promise<SettingsSnapshot> {
+    await this.subagentModels.set(configuration)
+    return this.getSettingsView()
+  }
+
   // Projects one of the app's five stable user-intent slots through the active model's static effort
   // profile. This is intentionally async only because settings are read from disk; capability lookup
   // is synchronous and never performs provider discovery or a network request.
@@ -390,17 +409,26 @@ class SettingsService {
     return this.backendResolver.resolveActiveReasoningEffort(intent)
   }
 
+  async admitSubagentExecutionModel(
+    ...args: Parameters<SubagentModelOwner['admit']>
+  ): ReturnType<SubagentModelOwner['admit']> {
+    return this.subagentModels.admit(...args)
+  }
+
+  async resolveSubagentExecutionModel(
+    ...args: Parameters<SubagentModelOwner['resolve']>
+  ): ReturnType<SubagentModelOwner['resolve']> {
+    return this.subagentModels.resolve(...args)
+  }
+
   async resolveActiveModelChangeTarget(): Promise<AgentModelChangeTarget | undefined> {
     return this.backendResolver.resolveActiveModelChangeTarget()
   }
 
-  // Whether desktop notifications for finished/failed agent tasks are on, read fresh so the
-  // notification path sees a toggle change immediately (no restart, no cached copy to go stale).
   async getNotificationsEnabled(): Promise<boolean> {
     return (await this.preferences.getSnapshot()).notificationsEnabled
   }
 
-  // Sets the desktop-notification preference and returns the refreshed snapshot for the renderer.
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.preferences.setNotificationsEnabled(enabled)
 
@@ -431,20 +459,30 @@ class SettingsService {
     return this.getSettingsView()
   }
 
-  // The selected app-icon look, read fresh so the startup apply reflects the latest saved choice.
+  async setProjectFilesFilter(
+    filter: ProjectFilesFilterPreference | undefined
+  ): Promise<SettingsSnapshot> {
+    await this.preferences.setProjectFilesFilter(filter)
+
+    return this.getSettingsView()
+  }
+
   async getAppIconVariant(): Promise<AppIconVariant> {
     return (await this.preferences.getSnapshot()).appIconVariant
   }
 
-  // Persists the app-icon look; the caller applies it live to the window and dock/taskbar.
   async setAppIconVariant(variant: AppIconVariant): Promise<SettingsSnapshot> {
     await this.preferences.setAppIconVariant(variant)
 
     return this.getSettingsView()
   }
 
-  // Detects the opencode executable and persists its path, mirroring detectClaude. Returns the refreshed
-  // snapshot so the settings card reflects the result.
+  async setDefaultPermissionProfile(profile: PermissionProfileId): Promise<SettingsSnapshot> {
+    await this.preferences.setDefaultPermissionProfile(profile)
+
+    return this.getSettingsView()
+  }
+
   async detectOpencode(): Promise<SettingsSnapshot> {
     await this.runtimeManager.detectOpencode()
     return this.getSettingsView()
@@ -455,9 +493,29 @@ class SettingsService {
     return this.getSettingsView()
   }
 
-  // Compatibility facade: Skill state and filesystem rules live in SkillCatalogModule.
   async listSkills(): Promise<SkillView[]> {
     return this.skills.listSkills()
+  }
+
+  // Internal main-process adapter used by host.skills. Unlike listSkills(), this includes bundled
+  // internal Skills and returns source directories only to the trusted caller callback.
+  async listHostSkills(): Promise<BundledSkill[]> {
+    return this.skills.listHostSkills()
+  }
+
+  async withHostSkillRead<T>(
+    id: string,
+    read: (skill: BundledSkill) => Promise<T>
+  ): Promise<T | undefined> {
+    return this.skills.withHostSkillRead(id, read)
+  }
+
+  async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.skills.publishHostSkill(name, sourcePath, overwrite)
+  }
+
+  async buildSkillExport(id: string): Promise<SkillExportArchive> {
+    return this.skills.buildSkillExport(id)
   }
 
   // Specialist scopes intentionally see the installed catalog irrespective of Main Agent toggles.
@@ -484,6 +542,9 @@ class SettingsService {
     return this.connectors.provisionedConnectorSkillNames()
   }
 
+  setCustomServerRuntimeProjectionProvider(provider: CustomServerRuntimeProjectionProvider): void {
+    this.connectors.setCustomServerRuntimeProjectionProvider(provider)
+  }
   // Returns the subset of forced ids that are currently disabled in settings — i.e. the picks that need
   // a respawn to materialize. Enabled picks are already present and need no reconnect.
   async skillsNeedingForceLoad(forcedIds: string[]): Promise<string[]> {
@@ -507,40 +568,23 @@ class SettingsService {
   async codexSkillCatalog(
     codexHome: string | undefined
   ): Promise<Array<{ name: string; description: string; path: string; source?: 'connector' }>> {
-    return this.skills.codexSkillCatalog(codexHome, (settings) => {
-      return this.connectors.enabledConnectorIds(settings.connectors).flatMap((id) => {
-        const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)
-        return connector
-          ? [
-              {
-                directory: `mcp-${id}`,
-                name: `mcp-${id}`,
-                description: connector.useWhen,
-                source: 'connector' as const
-              }
-            ]
-          : []
-      })
-    })
+    return this.skills.codexSkillCatalog(codexHome, (settings) =>
+      this.connectors.connectorSkillCatalogEntries(settings.connectors)
+    )
   }
 
-  // Returns one skill's view plus its SKILL.md body for the detail view (any source).
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     return this.skills.getSkillDetail(id)
   }
 
-  // Toggles a skill and returns the refreshed list. The agent picks up the change on its next reconnect
-  // (driven by the IPC layer's onSkillsChanged), which re-provisions the config dir.
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {
     return this.skills.setSkillEnabled(request)
   }
 
-  // Creates a personal skill from the in-app editor, returning the refreshed list.
   async createSkill(request: CreateSkillRequest): Promise<SkillView[]> {
     return this.skills.createSkill(request)
   }
 
-  // Updates an existing personal skill in place, returning the refreshed list.
   async updateSkill(request: UpdateSkillRequest): Promise<SkillView[]> {
     return this.skills.updateSkill(request)
   }
@@ -557,6 +601,18 @@ class SettingsService {
   // Imports a skill from a public GitHub URL (deduplicated), returning the outcome + refreshed list.
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
     return this.skills.importSkill(request)
+  }
+
+  async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
+    return this.skills.getGitHubTokenStatus()
+  }
+
+  async saveGitHubToken(token: string): Promise<GitHubTokenStatus> {
+    return this.skills.saveGitHubToken(token)
+  }
+
+  async removeGitHubToken(): Promise<GitHubTokenStatus> {
+    return this.skills.removeGitHubToken()
   }
 
   // Imports a skill from an uploaded .zip / .skill bundle, returning the outcome + refreshed list. The
@@ -919,6 +975,27 @@ class SettingsService {
     await this.repository.setComputeBookmarks(providerId, folders)
   }
 
+  // Reads the legacy settings.json granted-roots field for the one-time import into the
+  // GrantedLocalRoot table (see local-fs/granted-roots-repository.ts). Malformed entries (e.g. from
+  // a hand-edited settings.json) are dropped rather than failing the import. Production reads and
+  // writes of granted roots go through the SQLite repository, never here.
+  async getGrantedLocalRoots(): Promise<GrantedLocalRoot[]> {
+    const settings = await this.repository.getSettings()
+    return (settings.grantedLocalRoots ?? []).filter(
+      (root): root is GrantedLocalRoot =>
+        typeof root?.id === 'string' &&
+        typeof root?.path === 'string' &&
+        typeof root?.name === 'string' &&
+        (root?.access === 'ro' || root?.access === 'rw')
+    )
+  }
+
+  // Removes the legacy settings.json granted-roots field once the import into the GrantedLocalRoot
+  // table has completed (see getGrantedLocalRoots).
+  async clearGrantedLocalRoots(): Promise<void> {
+    await this.repository.clearGrantedLocalRoots()
+  }
+
   // Captures only non-secret backend identity. Runtime generations resolve credentials again at spawn,
   // so decrypted keys are not retained by the coordinator after AcpRuntime finishes authentication.
   async captureActiveAgentBackendSelection(): Promise<AgentBackendSelection> {
@@ -934,6 +1011,12 @@ class SettingsService {
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
     return this.backendResolver.resolveExplicitTarget(target, context)
+  }
+
+  async resolveAdmittedSubagentBackend(
+    ...args: Parameters<SubagentModelOwner['resolveAdmittedBackend']>
+  ): ReturnType<SubagentModelOwner['resolveAdmittedBackend']> {
+    return this.subagentModels.resolveAdmittedBackend(...args)
   }
 
   async resolveAgentBackend(

@@ -1,13 +1,15 @@
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
+import { resolveNotebookRunFigures } from './notebook-run-figures'
 
-// Shared "cell output" area for the notebook panel and the session dialog. Renders the structured
-// run.outputs[] — text streams and echoed results as text, figures inline as images — so repl echoes
-// (display text/plain) and plots (display image/png) show instead of only text.stdout/stderr. Older
-// runs persisted before outputs[] existed fall back to the flattened text streams. Text bodies render
-// ANSI SGR color codes as styled spans (terminal-like) rather than raw escape characters.
+// Shared cell-output area for Notebook, Session dialog, and conversation tool rows. Text and figures
+// are intentionally separate: text owns its collapse control, while every figure stays visible in an
+// individual frame. Older runs without outputs[] fall back to flattened text streams. ANSI SGR codes
+// render as styled spans (terminal-like) rather than raw escape characters.
 
 const preClassName =
   'max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-bg-200 p-2 font-mono text-xs'
+const figureImageClassName =
+  'block h-auto max-h-[16rem] w-auto max-w-full rounded-lg border border-border-200 object-contain'
 
 // Drops a single trailing newline so streamed text doesn't render an extra blank line.
 const trimTrailingNewline = (text: string): string => text.replace(/\n$/u, '')
@@ -135,34 +137,34 @@ const renderAnsi = (text: string): React.ReactNode => {
 
 // --- output rendering ---
 
-// Renders one display bundle: each image mime inline, every other (text) mime as a text block.
-const NotebookDisplayOutput = ({ data }: { data: Record<string, string> }): React.JSX.Element => (
-  <>
-    {Object.entries(data).map(([mime, payload], index) =>
-      mime.startsWith('image/') ? (
-        <img
-          key={index}
-          data-testid="notebook-output-image"
-          src={`data:${mime};base64,${payload}`}
-          alt="Figure output"
-          className="max-h-80 max-w-full rounded border border-border-200 object-contain"
-          draggable={false}
-        />
-      ) : (
+// Renders only the textual part of a display bundle. Figure mimes have a separate, always-visible
+// surface below the independently collapsible text output.
+const NotebookDisplayTextOutput = ({
+  data
+}: {
+  data: Record<string, string>
+}): React.JSX.Element | null => {
+  const textEntries = Object.entries(data).filter(([mime]) => !mime.startsWith('image/'))
+
+  if (textEntries.length === 0) return null
+
+  return (
+    <>
+      {textEntries.map(([mime, payload]) => (
         <pre
-          key={index}
+          key={mime}
           data-testid="notebook-output-text"
           className={`${preClassName} text-text-200`}
         >
           {renderAnsi(payload)}
         </pre>
-      )
-    )}
-  </>
-)
+      ))}
+    </>
+  )
+}
 
 // Renders one structured output entry, or null when it carries no visible content.
-const renderOutput = (output: NotebookOutput, index: number): React.JSX.Element | null => {
+const renderTextOutput = (output: NotebookOutput, index: number): React.JSX.Element | null => {
   switch (output.type) {
     case 'stream': {
       const text = trimTrailingNewline(output.text)
@@ -214,7 +216,7 @@ const renderOutput = (output: NotebookOutput, index: number): React.JSX.Element 
       )
     }
     case 'display':
-      return <NotebookDisplayOutput key={index} data={output.data} />
+      return <NotebookDisplayTextOutput key={index} data={output.data} />
     default:
       return null
   }
@@ -230,34 +232,102 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
   if (stdout.trim().length === 0 && stderr.trim().length === 0) return null
 
   return (
-    <div className="mt-2 space-y-1" data-testid="notebook-run-outputs">
+    <>
       {stdout.trim().length > 0 ? (
         <pre className={`${preClassName} text-text-200`}>{renderAnsi(stdout)}</pre>
       ) : null}
       {stderr.trim().length > 0 ? (
         <pre className={`${preClassName} text-danger-000`}>{renderAnsi(stderr)}</pre>
       ) : null}
+    </>
+  )
+}
+
+const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+  let rendered: React.JSX.Element[]
+
+  if (run.outputs.length > 0) {
+    rendered = run.outputs
+      .map((output, index) => renderTextOutput(output, index))
+      .filter((node): node is React.JSX.Element => node !== null)
+  } else {
+    const legacy = <LegacyTextOutput run={run} />
+    const hasLegacyText = [run.text.stdout, run.text.stderr, run.text.traceback].some(
+      (value) => value.trim().length > 0
+    )
+    rendered = hasLegacyText ? [legacy] : []
+  }
+
+  if (rendered.length === 0) return null
+
+  return (
+    <details open className="group mt-2" data-testid="notebook-text-output">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1 text-xs text-text-300">
+        <span aria-hidden="true" className="transition-transform group-open:rotate-90">
+          ▸
+        </span>
+        <span className="group-open:hidden">Show output</span>
+        <span className="hidden group-open:inline">Hide output</span>
+      </summary>
+      <div className="space-y-1 pt-1">{rendered}</div>
+    </details>
+  )
+}
+
+const NotebookRunFigureOutputs = ({
+  run,
+  align = 'center'
+}: {
+  run: NotebookRunRecord
+  align?: 'start' | 'center'
+}): React.JSX.Element | null => {
+  const figures = resolveNotebookRunFigures(run)
+
+  if (figures.length === 0) return null
+
+  return (
+    <div className="mt-2 space-y-2" data-testid="notebook-figure-outputs">
+      {figures.map((figure) => (
+        <div key={figure.key} data-testid="notebook-figure-output" className="w-full">
+          <div
+            className={`flex min-h-24 w-full items-center ${align === 'start' ? 'justify-start' : 'justify-center'}`}
+          >
+            <img
+              data-testid="notebook-output-image"
+              src={`data:${figure.mimeType};base64,${figure.payload}`}
+              alt={figure.name}
+              className={figureImageClassName}
+              draggable={false}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
 
-// Renders the captured output for one run, preferring structured outputs and falling back to text.
+// Composes the two independent output surfaces used by the notebook panel and session dialog.
 const NotebookRunOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
-  if (run.outputs.length > 0) {
-    const rendered = run.outputs
-      .map((output, index) => renderOutput(output, index))
-      .filter((node): node is React.JSX.Element => node !== null)
+  const hasText =
+    run.outputs.some((output) => {
+      if (output.type === 'stream' || output.type === 'text') return output.text.trim().length > 0
+      if (output.type === 'json' || output.type === 'error') return true
+      return Object.keys(output.data).some((mime) => !mime.startsWith('image/'))
+    }) ||
+    (run.outputs.length === 0 &&
+      [run.text.stdout, run.text.stderr, run.text.traceback].some(
+        (value) => value.trim().length > 0
+      ))
+  const hasFigures = resolveNotebookRunFigures(run).length > 0
 
-    if (rendered.length === 0) return null
+  if (!hasText && !hasFigures) return null
 
-    return (
-      <div className="mt-2 space-y-1" data-testid="notebook-run-outputs">
-        {rendered}
-      </div>
-    )
-  }
-
-  return <LegacyTextOutput run={run} />
+  return (
+    <div data-testid="notebook-run-outputs">
+      <NotebookRunTextOutputs run={run} />
+      <NotebookRunFigureOutputs run={run} />
+    </div>
+  )
 }
 
-export { NotebookRunOutputs }
+export { NotebookRunFigureOutputs, NotebookRunOutputs }

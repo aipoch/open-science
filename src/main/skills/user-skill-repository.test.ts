@@ -171,11 +171,95 @@ describe('frontmatterBlock', () => {
 })
 
 describe('UserSkillRepository', () => {
+  it('publishes a complete personal skill directory and only overwrites explicitly', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const draft = await mkdtemp(join(tmpdir(), 'skill-draft-'))
+    await mkdir(join(draft, 'scripts'), { recursive: true })
+    await writeFile(
+      join(draft, 'SKILL.md'),
+      '---\nname: analysis-helper\ndescription: Analyze a dataset.\n---\nUse the script.\n'
+    )
+    await writeFile(join(draft, 'scripts', 'run.js'), 'console.log("v1")\n')
+
+    await expect(repo.publishPersonalDirectory('analysis-helper', draft)).resolves.toBe(
+      'personal-analysis-helper'
+    )
+    await expect(
+      readFile(join(storage, 'skills', 'personal', 'analysis-helper', 'scripts', 'run.js'), 'utf8')
+    ).resolves.toBe('console.log("v1")\n')
+
+    await writeFile(join(draft, 'scripts', 'run.js'), 'console.log("v2")\n')
+    await expect(repo.publishPersonalDirectory('analysis-helper', draft)).rejects.toThrow(
+      'already exists'
+    )
+    await expect(repo.publishPersonalDirectory('analysis-helper', draft, true)).resolves.toBe(
+      'personal-analysis-helper'
+    )
+    await expect(
+      readFile(join(storage, 'skills', 'personal', 'analysis-helper', 'scripts', 'run.js'), 'utf8')
+    ).resolves.toBe('console.log("v2")\n')
+  })
+
+  it('rejects unsafe entries before publishing a personal skill directory', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const draft = await mkdtemp(join(tmpdir(), 'skill-draft-'))
+    await writeFile(
+      join(draft, 'SKILL.md'),
+      '---\nname: unsafe\ndescription: Unsafe test.\n---\nBody.\n'
+    )
+    await symlink(join(storage, 'outside'), join(draft, 'escape'))
+
+    await expect(repo.publishPersonalDirectory('unsafe', draft)).rejects.toThrow('symbolic link')
+    await expect(stat(join(storage, 'skills', 'personal', 'unsafe'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+
+  it('holds the mutation lock throughout a caller-controlled Skill read', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const id = await repo.createPersonal({
+      name: 'locked',
+      description: 'Original.',
+      body: '# Original'
+    })
+    let releaseRead!: () => void
+    const readReleased = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let markReadStarted!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve
+    })
+
+    const read = repo.withSkillReadLock(id, async (skill) => {
+      markReadStarted()
+      await readReleased
+      return skill.name
+    })
+    await readStarted
+
+    let updateFinished = false
+    const update = repo
+      .updatePersonal(id, { name: 'locked', description: 'Updated.', body: '# Updated' })
+      .finally(() => {
+        updateFinished = true
+      })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(updateFinished).toBe(false)
+
+    releaseRead()
+    await expect(read).resolves.toBe('locked')
+    await update
+    expect(updateFinished).toBe(true)
+  })
+
   it('creates, lists, reads, updates, and deletes a personal skill', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 
     const id = await repo.createPersonal({
-      name: 'My Skill',
+      name: 'my-skill',
       description: 'Does a thing.',
       body: '# My Skill\nBody.'
     })
@@ -185,7 +269,7 @@ describe('UserSkillRepository', () => {
     expect(listed).toHaveLength(1)
     expect(listed[0]).toMatchObject({
       id: 'personal-my-skill',
-      name: 'My Skill',
+      name: 'my-skill',
       description: 'Does a thing.',
       source: 'personal'
     })
@@ -193,7 +277,7 @@ describe('UserSkillRepository', () => {
     expect(await repo.body(id)).toContain('# My Skill')
 
     await repo.updatePersonal(id, {
-      name: 'My Skill',
+      name: 'my-skill',
       description: 'Updated.',
       body: '# Updated body'
     })
@@ -211,7 +295,7 @@ describe('UserSkillRepository', () => {
     // a bogus field (`not: a-key`). It must survive intact and leave the body untouched.
     const description = 'First line\n---\nnot: a-key\nSecond line'
     const id = await repo.createPersonal({
-      name: 'Tricky',
+      name: 'tricky',
       description,
       body: '# Real body\nkeep me'
     })
@@ -227,14 +311,15 @@ describe('UserSkillRepository', () => {
     expect(body).not.toContain('not: a-key')
   })
 
-  it('gives colliding names a numeric suffix', async () => {
+  it('rejects colliding personal skill names', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 
-    const first = await repo.createPersonal({ name: 'Dup', description: 'a', body: 'x' })
-    const second = await repo.createPersonal({ name: 'Dup', description: 'b', body: 'y' })
+    const first = await repo.createPersonal({ name: 'dup', description: 'a', body: 'x' })
 
     expect(first).toBe('personal-dup')
-    expect(second).toBe('personal-dup-2')
+    await expect(repo.createPersonal({ name: 'dup', description: 'b', body: 'y' })).rejects.toThrow(
+      /already exists/
+    )
   })
 
   it('writes reference files under references/ when creating a skill', async () => {
@@ -242,7 +327,7 @@ describe('UserSkillRepository', () => {
     const repo = new UserSkillRepository(storage)
 
     await repo.createPersonal({
-      name: 'With Refs',
+      name: 'with-refs',
       description: 'd',
       body: 'x',
       references: [{ path: 'helper.py', dataBase64: Buffer.from('print(1)').toString('base64') }]
@@ -255,28 +340,28 @@ describe('UserSkillRepository', () => {
     expect(written).toBe('print(1)')
   })
 
-  it('honors an explicit slug and rejects collisions, reserved prefixes, and invalid ids', async () => {
+  it('uses the immutable name and rejects collisions, reserved prefixes, and invalid names', async () => {
     const repo = new UserSkillRepository(await makeStorage())
 
-    const id = await repo.createPersonal({ name: 'Anything', description: 'd', body: 'x' }, 'my-id')
+    const id = await repo.createPersonal({ name: 'my-id', description: 'd', body: 'x' })
     expect(id).toBe('personal-my-id')
 
-    // Colliding with the just-created slug is rejected (no silent suffix).
+    // Colliding with the just-created name is rejected (no silent suffix).
     await expect(
-      repo.createPersonal({ name: 'Other', description: 'd', body: 'y' }, 'my-id')
+      repo.createPersonal({ name: 'my-id', description: 'd', body: 'y' })
     ).rejects.toThrow(/already exists/)
 
     // Reserved built-in / MCP prefixes are rejected.
     await expect(
-      repo.createPersonal({ name: 'x', description: 'd', body: 'x' }, 'os-thing')
+      repo.createPersonal({ name: 'os-thing', description: 'd', body: 'x' })
     ).rejects.toThrow(/os- or mcp-/)
     await expect(
-      repo.createPersonal({ name: 'x', description: 'd', body: 'x' }, 'mcp-thing')
+      repo.createPersonal({ name: 'mcp-thing', description: 'd', body: 'x' })
     ).rejects.toThrow(/os- or mcp-/)
 
     // Unsafe characters are rejected.
     await expect(
-      repo.createPersonal({ name: 'x', description: 'd', body: 'x' }, 'Bad ID')
+      repo.createPersonal({ name: 'Bad Name', description: 'd', body: 'x' })
     ).rejects.toThrow(/lowercase/)
   })
 
@@ -286,7 +371,7 @@ describe('UserSkillRepository', () => {
     const b64 = (text: string): string => Buffer.from(text).toString('base64')
 
     const id = await repo.createPersonal({
-      name: 'Refs',
+      name: 'refs',
       description: 'd',
       body: 'x',
       references: [
@@ -296,7 +381,7 @@ describe('UserSkillRepository', () => {
     })
 
     await repo.updatePersonal(id, {
-      name: 'Refs',
+      name: 'refs',
       description: 'd',
       body: 'x',
       references: [
@@ -1344,7 +1429,7 @@ describe('UserSkillRepository', () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
     const id = await repo.createPersonal({
-      name: 'Round Trip',
+      name: 'round-trip',
       description: 'desc',
       metadata: {
         author: 'Ada',
@@ -1361,10 +1446,10 @@ describe('UserSkillRepository', () => {
       join(storage, 'skills', 'personal', 'round-trip', 'SKILL.md'),
       'utf8'
     )
-    expect(raw).toContain('name: Round Trip')
+    expect(raw).toContain('name: round-trip')
     expect(raw).toContain('description: desc')
     expect(parseFrontmatter(raw).fields).toMatchObject({
-      name: 'Round Trip',
+      name: 'round-trip',
       description: 'desc',
       author: 'Ada',
       license: 'MIT'

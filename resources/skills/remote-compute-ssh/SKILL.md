@@ -5,7 +5,7 @@ license: Apache-2.0
 ---
 
 This skill covers remote compute over SSH: listing hosts, creating handles, running short
-remote commands (call_command), reading/writing host knowledge docs, and the full async
+remote commands (callCommand), reading/writing host knowledge docs, and the full async
 job lifecycle — submit → harvest → analysis turn → publish artifacts.
 
 **Where host.compute runs:** `host.compute` lives ONLY on the control-plane REPL kernel — run
@@ -35,7 +35,7 @@ Always check which host is active before creating a handle:
 ```javascript
 // Returns the session-enabled host provider_ids (a string[] subset of all registered hosts).
 // Empty array means the user hasn't chosen a host for this conversation yet.
-const activeHosts = await host.compute.list_compute()
+const activeHosts = await host.compute.listCompute()
 const c = activeHosts[0] ? host.compute.create(activeHosts[0]) : null
 ```
 
@@ -46,15 +46,15 @@ const c = activeHosts[0] ? host.compute.create(activeHosts[0]) : null
 const hosts = await host.compute.list()
 
 // List session-enabled hosts (user's active selection for this conversation)
-const activeHosts = await host.compute.list_compute()
+const activeHosts = await host.compute.listCompute()
 
 // Create a handle to a specific host (no network call)
 const c = host.compute.create('ssh:<alias>')
 
 // Run a short remote command (throws on approval_denied / host_unreachable / timeout)
-const result = await c.call_command('<shell command>', '<one-line intent for the approval card>', {
-  login_shell: true, // default: true — runs login profiles, then readable ~/.bashrc, before this command
-  timeout_seconds: 60 // optional — the host applies its own default (60s) when omitted
+const result = await c.callCommand('<shell command>', '<one-line intent for the approval card>', {
+  loginShell: true, // default: true — runs login profiles, then readable ~/.bashrc, before this command
+  timeoutSeconds: 60 // optional — the host applies its own default (60s) when omitted
 })
 // result → { exit_code, stdout, stderr, truncated }
 
@@ -67,41 +67,41 @@ await host.compute.details('ssh:<alias>', {
   text: '\n## Note\nlearned X on <date>'
 })
 
-// Replace the entire host knowledge doc (old_text must match the current doc exactly)
+// Replace the entire host knowledge doc (oldText must match the current doc exactly)
 await host.compute.details('ssh:<alias>', {
   mode: 'replace',
   text: '<new full doc>',
-  old_text: info.doc // from the read above
+  oldText: info.doc // from the read above
 })
 ```
 
-With `login_shell: true`, the remote Bash login profiles run first and then Open Science attempts to
+With `loginShell: true`, the remote Bash login profiles run first and then Open Science attempts to
 source `~/.bashrc` when it is readable. A `.bashrc` can deliberately return early for non-interactive
 shells, so variables declared after such a guard are not available. A missing `.bashrc` is a no-op.
-Set `login_shell: false` to run the command without either initialization step. Initialization failures
+Set `loginShell: false` to run the command without either initialization step. Initialization failures
 are reported through the normal command result/error behavior.
 
 ## API reference (async jobs)
 
-Use `submit_job` for long-running computations (minutes to hours). It returns immediately with a
+Use `submitJob` for long-running computations (minutes to hours). It returns immediately with a
 `job_id`; the job runs on the remote host in the background. When the job finishes, the app
 automatically harvests the outputs and initiates a new analysis turn — **you never poll or block**.
 
 ```javascript
 // List the session's active compute hosts (set via the ≡ host selector)
-const activeHosts = await host.compute.list_compute()
+const activeHosts = await host.compute.listCompute()
 // returns ['ssh:<alias>', ...] — the provider_ids currently enabled for this session
 
 // Submit a non-blocking job — returns immediately after the user approves
 const c = host.compute.create('ssh:<alias>')
-const job = await c.submit_job(
+const job = await c.submitJob(
   '<one-line intent for the approval card>', // shown in the approval card
   '<shell command>', // command to run remotely
   {
-    timeout_seconds: 3600, // optional; default 24 h, max 7 days
+    timeoutSeconds: 3600, // optional; default 24 h, max 7 days
     inputs: [
-      { src: 'in.dat', dst_filename: 'in.dat' }, // stage a workspace file
-      { remote_path: 'ssh:<alias>/<abs_path>' } // link a remote file (no transfer)
+      { src: 'in.dat', dstFilename: 'in.dat' }, // stage a workspace file
+      { remotePath: 'ssh:<alias>/<abs_path>' } // link a remote file (no transfer)
     ],
     outputs: [
       '*.result', // featured (default visibility)
@@ -111,8 +111,8 @@ const job = await c.submit_job(
     ],
     harvest: {
       exclude: ['work/**'], // never harvest these paths
-      max_file_mb: 100, // single-file cap (default 100 MB)
-      max_total_mb: 500 // total-harvest cap (default 500 MB)
+      maxFileMb: 100, // single-file cap (default 100 MB)
+      maxTotalMb: 500 // total-harvest cap (default 500 MB)
     }
   }
 )
@@ -130,7 +130,7 @@ conversation — the conversation is NOT locked while the job runs, so the user 
   other tasks. No blocking wait.
 - **When the job finishes:** the app initiates a new analysis turn automatically. You do not
   trigger this — it happens without any action on your part.
-- **Do NOT write** a loop calling `attach_job().status()` to wait for completion. That is the
+- **Do NOT write** a loop calling `attachJob().status()` to wait for completion. That is the
   app's job, not yours. Writing such a loop would block the conversation for the entire job
   duration.
 
@@ -138,13 +138,13 @@ conversation — the conversation is NOT locked while the job runs, so the user 
 
 ```javascript
 // Non-blocking DB read — no SSH. Use if you need a status snapshot mid-conversation.
-const handle = c.attach_job(job.job_id)
+const handle = c.attachJob(job.job_id)
 const s = await handle.status()
 // s → { job_id, status, exit_code, stdout_tail, stderr_tail, remote_workdir }
 // status: 'submitted' | 'running' | 'success' | 'failed' | 'timeout' | 'error'
 ```
 
-### submit_job status values
+### submitJob status values
 
 | status      | meaning                                                                |
 | ----------- | ---------------------------------------------------------------------- |
@@ -152,7 +152,7 @@ const s = await handle.status()
 | `running`   | remote process confirmed alive (pid recorded)                          |
 | `success`   | exit code 0                                                            |
 | `failed`    | non-zero exit (`job_failed`) or process vanished (`process_vanished`)  |
-| `timeout`   | exceeded `timeout_seconds`                                             |
+| `timeout`   | exceeded `timeoutSeconds`                                              |
 | `error`     | never reached the remote host (`host_unreachable` / `dispatch_failed`) |
 
 ## Workflow: the analysis turn
@@ -160,14 +160,14 @@ const s = await handle.status()
 When the app initiates the analysis turn, it provides the `job_id`, `status`, and
 `featured_files` (workspace-relative paths under `hpc/<job_id>/featured/`). In this turn:
 
-1. Call `attach_job(job_id).result()` to get the full result dict.
+1. Call `attachJob(job_id).result()` to get the full result dict.
 2. Inspect the outputs, run any analysis needed.
 3. Call `write_artifact_file` to publish outputs worth keeping as artifacts.
 
 ```javascript
 // In the analysis turn — read the full harvested result (non-blocking DB + directory scan)
 const c = host.compute.create('ssh:<alias>')
-const r = await c.attach_job(job_id).result()
+const r = await c.attachJob(job_id).result()
 // r → {
 //   job_id, status, exit_code,
 //   featured_files: ['hpc/<job_id>/featured/out.result', ...],   // workspace-relative
@@ -205,26 +205,26 @@ for (const path of r.featured_files) {
 
 Read `r.exit_code` and `r.stderr_tail`. An infrastructure failure (wrong partition, env not
 activated, missing module, OOM, walltime) is yours to fix — adjust `command`, record the fix,
-fresh `c.submit_job()`. A harvest failure (`r.stderr_tail` notes it, `r.remote_workdir` is
+fresh `c.submitJob()`. A harvest failure (`r.stderr_tail` notes it, `r.remote_workdir` is
 preserved) means some files were not downloaded — the remote workdir is kept so you can
-`c.call_command('ls ...', intent='...')` to inspect what's there.
+`c.callCommand('ls ...', intent='...')` to inspect what's there.
 
 ## Chaining jobs via left_on_remote
 
 Large outputs declared with `residency: 'remote'` or files that exceed the size threshold stay
-on the remote host and appear in `r.left_on_remote`. Use their URIs directly as `remote_path`
+on the remote host and appear in `r.left_on_remote`. Use their URIs directly as `remotePath`
 inputs to the next job — no local round-trip:
 
 ```javascript
 // In the analysis turn — chain a left_on_remote output into the next job
 const big_output_uri = r.left_on_remote[0].uri // e.g. 'ssh:biowulf//scratch/jobs/<id>/big.h5'
 
-const job2 = await c.submit_job(
+const job2 = await c.submitJob(
   'process big.h5 output from job 1',
   'python process.py --input big.h5 --out summary.csv',
   {
     inputs: [
-      { remote_path: big_output_uri } // symlinked in job workdir, no transfer
+      { remotePath: big_output_uri } // symlinked in job workdir, no transfer
     ],
     outputs: ['summary.csv']
   }
@@ -242,13 +242,13 @@ completions into one turn with multiple job_ids):
 const c = host.compute.create('ssh:gpu-cluster')
 const jobs = []
 for (const seed of [0, 1, 2, 3, 4]) {
-  const job = await c.submit_job(
+  const job = await c.submitJob(
     `AlphaFold seed ${seed}`,
     `python fold.py --seed ${seed} --in input.fasta --out ranked.pdb`,
     {
-      inputs: [{ src: 'input.fasta', dst_filename: 'input.fasta' }],
+      inputs: [{ src: 'input.fasta', dstFilename: 'input.fasta' }],
       outputs: [{ glob: '*.pdb', visibility: 'featured' }],
-      timeout_seconds: 3600
+      timeoutSeconds: 3600
     }
   )
   jobs.push(job.job_id)
@@ -271,7 +271,7 @@ the whole conversation, not on the handle's bound provider.
 const c = host.compute.create('ssh:<alias>')
 
 // Set the conversation-wide limit (positive integer 1..500).
-await c.set_concurrency_limit(2)
+await c.setConcurrencyLimit(2)
 
 // Read the session's concurrency status (non-blocking DB read, no SSH).
 const s = await c.status()
@@ -283,11 +283,11 @@ const s = await c.status()
 // }
 ```
 
-## call_command error handling
+## callCommand error handling
 
 ```javascript
 try {
-  const r = await c.call_command('cmd', '<intent>')
+  const r = await c.callCommand('cmd', '<intent>')
 } catch (e) {
   const code = e.error_code || ''
   if (code === 'host_unreachable') {
@@ -295,7 +295,7 @@ try {
   } else if (code === 'approval_denied') {
     // User declined the approval card
   } else if (code === 'timeout') {
-    // Command exceeded timeout_seconds
+    // Command exceeded timeoutSeconds
   }
 }
 ```
@@ -305,7 +305,7 @@ try {
 1. `await host.compute.details(provider_id, { mode: 'read' })` — a `## Resources` skeleton means
    first contact; populated sections mean prior sessions did the legwork, trust them.
 2. Bind once: `const c = host.compute.create(provider_id)`.
-3. Run one batched probe: `await c.call_command('id; module avail 2>&1 | head -40', '<intent>')`.
+3. Run one batched probe: `await c.callCommand('id; module avail 2>&1 | head -40', '<intent>')`.
 4. Append what you learned via `await host.compute.details(..., { mode: 'append' })`.
 
 ## What to record in the knowledge doc

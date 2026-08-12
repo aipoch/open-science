@@ -1,9 +1,50 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { Streamdown } from 'streamdown'
 
 import { describe, expect, it } from 'vitest'
 
 describe('AgentMarkdown fullscreen chrome', () => {
+  it('keeps the streaming caret visible before and between text segments', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const streamingBlock = css.slice(
+      css.indexOf('.agent-markdown-streaming'),
+      css.indexOf('/* --- Streamdown dropdown panels')
+    )
+
+    expect(streamingBlock).toContain('& > div > :empty:not(:last-child)')
+    expect(streamingBlock).toContain('opacity: 1')
+    expect(streamingBlock).not.toContain('cursor-blink')
+  })
+
+  it('anchors a thin streaming caret to the terminal text block', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const streamingBlock = css.slice(
+      css.indexOf('.agent-markdown-streaming'),
+      css.indexOf('/* --- Streamdown dropdown panels')
+    )
+    const markup = renderToStaticMarkup(
+      createElement(
+        Streamdown,
+        { animated: false, dir: 'auto', isAnimating: true, mode: 'streaming' },
+        'Example output with Python (matplotlib)'
+      )
+    )
+
+    expect(markup).toContain('style="display:contents"')
+    expect(markup).not.toContain('--streamdown-caret')
+    expect(streamingBlock).not.toContain('!important')
+    expect(streamingBlock).toContain('& .agent-markdown > :last-child:empty::after')
+    expect(streamingBlock).toContain('& .agent-markdown > :last-child > :last-child::after')
+    expect(streamingBlock).toContain("content: ''")
+    expect(streamingBlock).toContain('width: 1px')
+    expect(streamingBlock).toContain('height: 1.25em')
+    expect(streamingBlock).toContain('overflow: hidden')
+    expect(streamingBlock).toContain('background-color: currentColor')
+  })
+
   it('keeps Mermaid fullscreen functionality enabled while matching the dialog overlay chrome', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
     const config = readFileSync(resolve(__dirname, 'streamdown-config.ts'), 'utf8')

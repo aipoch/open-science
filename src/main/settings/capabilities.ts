@@ -1,8 +1,10 @@
 import type { PackageMirror } from '../../shared/mirror'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type {
   AppIconVariant,
+  ProjectFilesFilterPreference,
   ReasoningEffort,
   SetPackageMirrorRequest
 } from '../../shared/settings'
@@ -20,6 +22,8 @@ export type SettingsPreferencesSnapshot = {
   conversationSkillImportEnabled: boolean
   closePreference?: CloseActionPreference
   appIconVariant: AppIconVariant
+  projectFilesFilter?: ProjectFilesFilterPreference
+  defaultPermissionProfile: PermissionProfileId
 }
 
 export interface SettingsPreferences {
@@ -35,6 +39,10 @@ export interface SettingsPreferences {
     preference: CloseActionPreference | undefined
   ): Promise<SettingsPreferencesSnapshot>
   setAppIconVariant(variant: AppIconVariant): Promise<SettingsPreferencesSnapshot>
+  setProjectFilesFilter(
+    filter: ProjectFilesFilterPreference | undefined
+  ): Promise<SettingsPreferencesSnapshot>
+  setDefaultPermissionProfile(profile: PermissionProfileId): Promise<SettingsPreferencesSnapshot>
 }
 
 // One language's complete persisted Notebook policy, projected as detached values. Package mirrors

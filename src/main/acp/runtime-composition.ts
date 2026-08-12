@@ -1,9 +1,14 @@
 import { homedir } from 'node:os'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
+import {
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+} from '../../shared/lifecycle-events'
 import {
   filterSpecialistConnectorSkills,
   resolveEffectiveSpecialistSkills
@@ -11,6 +16,7 @@ import {
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
+import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { createLogger, errorLogFields } from '../logger'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
@@ -18,7 +24,10 @@ import {
   runTaskNotificationInBackground,
   type TaskNotificationService
 } from '../notifications/task-notifications'
+import type { NotificationInboxController } from '../notifications/notification-inbox-controller'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { ProjectRepository } from '../projects/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { AcpSettingsCapabilities } from '../settings/service-capabilities'
 import {
@@ -26,9 +35,12 @@ import {
   buildSpecialistIdentityPrefix
 } from '../specialist/identity'
 import type { ProfileService } from '../specialist/service'
-import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
+import { resolveConfigRoot, resolveDataRoot, resolveStorageRoot } from '../storage-root'
 import type { UploadRepository } from '../uploads/repository'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import type { NotebookRpcConnection } from '../notebook/mcp-server'
+import type { ResolvedAgentBackend } from '../agent-framework'
+import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { projectRegistrySessionGrants } from './permission-broker'
 import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './runtime'
@@ -37,6 +49,25 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 const log = createLogger('acp')
+
+// Builds the session-setup resolver for a project's Agent Context system-prompt append. The ACP
+// projectName carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_NAME fallback
+// namespace), blank contexts, and lookup failures all yield undefined so session setup proceeds
+// without an append.
+const createProjectAgentContextResolver = (repository: {
+  get: (id: string) => Promise<{ agentContext?: string } | null>
+}): ((projectName: string) => Promise<string | undefined>) => {
+  return async (projectName) => {
+    try {
+      const project = await repository.get(projectName)
+      const context = project?.agentContext?.trim()
+      return context ? context : undefined
+    } catch (error) {
+      log.warn('project Agent Context lookup failed', errorLogFields(error))
+      return undefined
+    }
+  }
+}
 
 type AcpRuntimeArtifacts = {
   repository: ArtifactRepository
@@ -59,9 +90,18 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     paths: string[]
   ) => Promise<() => void>
   settingsService: AcpSettingsCapabilities
+  // The SQLite-backed granted-roots store ("Grant folder access"); the linked-folder file-reference
+  // resolver reads it fresh per resolution. Absent only in tests — linked-folder references then
+  // fail closed (no root resolves).
+  grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'>
   permissionGrantRegistry?: PermissionGrantRegistry
+  permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
   initializationBarrier?: Promise<unknown>
   taskNotifications?: TaskNotificationService
+  notificationInbox?: Pick<
+    NotificationInboxController,
+    'record' | 'settleAction' | 'settleAuthorization'
+  >
   onSessionTurnStarted?: (sessionId: string, turnToken: string) => void
   onSessionTurnEnded?: (sessionId: string, turnToken: string) => void
   onSkillImportAttachmentEligible?: (
@@ -81,7 +121,16 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     | 'patchSessionRuntimeContext'
     | 'appendUserMessageToInteraction'
     | 'containsMessageOnActiveBranch'
+    | 'loadSessionForContinuation'
+    | 'sessionProjectId'
   >
+  delegatedWork?: RootDelegatedWorkControl
+  fixedBackend?: ResolvedAgentBackend
+  runtimeCallbacks?: AcpRuntimeCallbacks
+  delegatedNotebookConnection?: NotebookRpcConnection
+  delegatedArtifactCurrentRunFile?: string
+  spawnAgent?: () => ChildProcessWithoutNullStreams
+  sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
 }
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
@@ -95,9 +144,12 @@ const createAcpRuntime = ({
   peekNotebookHandoffContext,
   authorizeSkillImportReferencedUploads,
   settingsService,
+  grantedRootsRepository,
   permissionGrantRegistry,
+  permissionGrantContext,
   initializationBarrier,
   taskNotifications,
+  notificationInbox,
   onSessionTurnStarted,
   onSessionTurnEnded,
   onSkillImportAttachmentEligible,
@@ -107,12 +159,21 @@ const createAcpRuntime = ({
   onDisconnected,
   beforeSessionDelete,
   profileService,
-  sessionPersistenceCoordinator
+  sessionPersistenceCoordinator,
+  delegatedWork,
+  fixedBackend,
+  runtimeCallbacks,
+  delegatedNotebookConnection,
+  delegatedArtifactCurrentRunFile,
+  spawnAgent,
+  sideChatRelays
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
-  const callbacks: AcpRuntimeCallbacks = {
+  // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
+  const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
+  const callbacks: AcpRuntimeCallbacks = runtimeCallbacks ?? {
     onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
       broadcastToRenderers('acp:event', event)
@@ -133,18 +194,28 @@ const createAcpRuntime = ({
           (error) => log.warn('permission notification failed', errorLogFields(error))
         )
       }
+    },
+    onPermissionSettled: (requestId, state) => {
+      if (!notificationInbox) return
+      runTaskNotificationInBackground(
+        () => notificationInbox.settleAuthorization('agent-tool', requestId, state),
+        (error) => log.warn('permission inbox settlement failed', errorLogFields(error))
+      )
     }
   }
 
   return new AcpRuntimeCoordinator(
     (runtimeCallbacks, permissionGrantStore) => {
-      const selection = settingsService.captureActiveAgentBackendSelection()
+      const selection = fixedBackend
+        ? undefined
+        : settingsService.captureActiveAgentBackendSelection()
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
         resolveBackend: async (context) =>
-          settingsService.resolveAgentBackend(await selection, context),
+          fixedBackend ?? settingsService.resolveAgentBackend(await selection!, context),
+        ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
         skills: {
           needForceLoad: (ids) => settingsService.skillsNeedingForceLoad(ids),
@@ -153,46 +224,108 @@ const createAcpRuntime = ({
             settingsService.codexSkillDescriptorsForIds(ids, codexHome),
           catalogForCodexHome: (codexHome) => settingsService.codexSkillCatalog(codexHome)
         },
-        artifacts: {
-          configRoot,
-          dataRoot,
-          projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
-          mcpEntryPath,
-          repository,
-          runRegistry,
-          provenance: provenanceRepository,
-          getRpcConnection: () => notebookRpcServer.ensureStarted(),
-          issueRpcCapability: (binding) => notebookRpcServer.issueArtifactRunCapability(binding),
-          revokeRpcCapability: (token) => notebookRpcServer.revokeArtifactRunCapability(token)
-        },
-        uploads: { repository: uploadRepository },
+        ...(!delegatedNotebookConnection || delegatedArtifactCurrentRunFile
+          ? {
+              artifacts: {
+                configRoot,
+                dataRoot,
+                projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+                mcpEntryPath,
+                repository,
+                runRegistry,
+                provenance: provenanceRepository,
+                getRpcConnection: () => notebookRpcServer.ensureStarted(),
+                issueRpcCapability: (binding) =>
+                  notebookRpcServer.issueArtifactRunCapability(binding),
+                revokeRpcCapability: (token) =>
+                  notebookRpcServer.revokeArtifactRunCapability(token),
+                ...(delegatedArtifactCurrentRunFile
+                  ? { currentRunFile: delegatedArtifactCurrentRunFile }
+                  : {})
+              }
+            }
+          : {}),
+        ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
+        grantedRoots: grantedRootsRepository
+          ? {
+              // Read fresh per resolution so a just-removed root stops resolving immediately.
+              resolveRootPath: async (rootId) =>
+                (await grantedRootsRepository.list()).find((root) => root.id === rootId)?.path
+            }
+          : undefined,
         notebook: {
           projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
           mcpEntryPath,
           getRpcConnection: ({ sessionId, projectId }) =>
-            notebookRpcServer.issueSessionConnection(sessionId, projectId),
-          registerSessionAlias: (aliasSessionId, sessionId) =>
-            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-          releaseSessionCapabilities: (sessionId) =>
-            notebookRpcServer.releaseSessionCapabilities(sessionId),
-          registerSessionSpecialist: (sessionId, specialistId) =>
-            notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
-          setArtifactProvenanceContext: (sessionId, context) =>
-            notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
-          registerTurnInputs: (request) => notebookRpcServer.registerNotebookTurnInputs(request),
-          peekHandoffContext: peekNotebookHandoffContext
+            delegatedNotebookConnection
+              ? Promise.resolve(delegatedNotebookConnection)
+              : notebookRpcServer.issueSessionConnection(
+                  sessionId,
+                  projectId,
+                  `root-frame-${sessionId}`
+                ),
+          ...(delegatedNotebookConnection
+            ? {}
+            : {
+                registerSessionAlias: (aliasSessionId, sessionId) =>
+                  notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+                releaseSessionCapabilities: (sessionId) =>
+                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                registerSessionSpecialist: (sessionId, specialistId) =>
+                  notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
+                setArtifactProvenanceContext: (sessionId, context) =>
+                  notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
+                registerTurnInputs: (request) =>
+                  notebookRpcServer.registerNotebookTurnInputs(request),
+                peekHandoffContext: peekNotebookHandoffContext
+              })
         },
-        skillImport: {
-          mcpEntryPath,
-          isEnabled: () => settingsService.getConversationSkillImportEnabled(),
-          getRpcConnection: ({ sessionId }) =>
-            notebookRpcServer.issueSkillImportConnection(sessionId),
-          registerSessionAlias: (aliasSessionId, sessionId) =>
-            notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-          releaseSessionCapabilities: (sessionId) =>
-            notebookRpcServer.releaseSessionCapabilities(sessionId),
-          authorizeReferencedUploads: authorizeSkillImportReferencedUploads
-        },
+        ...(delegatedNotebookConnection
+          ? {}
+          : {
+              skillImport: {
+                mcpEntryPath,
+                isEnabled: () => settingsService.getConversationSkillImportEnabled(),
+                getRpcConnection: ({ sessionId }: { sessionId: string }) =>
+                  notebookRpcServer.issueSkillImportConnection(sessionId),
+                registerSessionAlias: (aliasSessionId: string, sessionId: string) =>
+                  notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
+                releaseSessionCapabilities: (sessionId: string) =>
+                  notebookRpcServer.releaseSessionCapabilities(sessionId),
+                authorizeReferencedUploads: authorizeSkillImportReferencedUploads
+              }
+            }),
+        ...(!delegatedNotebookConnection && sessionPersistenceCoordinator
+          ? {
+              permissionWait: {
+                sessions: sessionPersistenceCoordinator,
+                onSessionUpdated: (session) => {
+                  try {
+                    broadcastToRenderers('session:updated', {
+                      session,
+                      originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
+                    })
+                  } catch (error) {
+                    // The durable commit remains authoritative when a renderer projection is gone.
+                    log.warn('permission wait Session publication failed', errorLogFields(error))
+                  }
+                },
+                onContinuationSessionUpdated: (session) => {
+                  try {
+                    broadcastToRenderers('session:updated', {
+                      session,
+                      originClientId: MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID
+                    })
+                  } catch (error) {
+                    log.warn(
+                      'durable continuation Session publication failed',
+                      errorLogFields(error)
+                    )
+                  }
+                }
+              }
+            }
+          : {}),
         ...(sessionPersistenceCoordinator
           ? {
               plan: {
@@ -201,13 +334,55 @@ const createAcpRuntime = ({
                   notebookRpcServer.issuePlanConnection(sessionId, projectId),
                 registerSessionAlias: (aliasSessionId, sessionId) =>
                   notebookRpcServer.registerSessionAlias(aliasSessionId, sessionId),
-                sessions: sessionPersistenceCoordinator
+                sessions: sessionPersistenceCoordinator,
+                onApprovalRequested: (request) => {
+                  if (taskNotifications) {
+                    runTaskNotificationInBackground(
+                      () => taskNotifications.handlePlanApproval(request),
+                      (error) =>
+                        log.warn('plan approval notification failed', errorLogFields(error))
+                    )
+                    return
+                  }
+                  if (notificationInbox) {
+                    runTaskNotificationInBackground(
+                      () =>
+                        notificationInbox.record({
+                          dedupeKey: `authorization:session-plan:${request.artifactVersionId}`,
+                          kind: 'authorization.required',
+                          source: 'session-plan',
+                          projectId: request.projectId,
+                          sessionId: request.sessionId,
+                          originId: request.artifactVersionId,
+                          title: 'Plan approval needed',
+                          summary: 'A plan needs your approval.',
+                          actionState: 'pending'
+                        }),
+                      (error) =>
+                        log.warn('plan approval inbox record failed', errorLogFields(error))
+                    )
+                  }
+                },
+                onApprovalSettled: (request) => {
+                  if (!notificationInbox) return
+                  runTaskNotificationInBackground(
+                    () =>
+                      notificationInbox.settleAuthorization(
+                        'session-plan',
+                        request.artifactVersionId,
+                        request.state
+                      ),
+                    (error) => log.warn('plan approval inbox settle failed', errorLogFields(error))
+                  )
+                }
               }
             }
           : {}),
         callbacks: runtimeCallbacks,
+        sideChatRelays,
         permissionGrantStore,
         permissionGrantRegistry,
+        permissionGrantContext,
         resolveSpecialistIdentity: profileService
           ? async (specialistId: string, frameworkId: string) => {
               let profile
@@ -250,7 +425,8 @@ const createAcpRuntime = ({
                 return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
               }
             }
-          : undefined
+          : undefined,
+        resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository)
       }
       const baseOwners = composeAcpRuntimeBaseOwners(runtimeOptions)
       return new AcpRuntime(
@@ -274,9 +450,10 @@ const createAcpRuntime = ({
     },
     permissionGrantRegistry
       ? () => projectRegistrySessionGrants(permissionGrantRegistry.listCached())
-      : undefined
+      : undefined,
+    delegatedWork
   )
 }
 
-export { createAcpRuntime }
+export { createAcpRuntime, createProjectAgentContextResolver }
 export type { AcpRuntimeCompositionOptions }

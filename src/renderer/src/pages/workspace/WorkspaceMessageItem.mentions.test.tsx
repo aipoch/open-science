@@ -15,7 +15,8 @@ vi.mock('@/components/ui/message-scroller', () => ({
 }))
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
+  PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
 }))
 
 vi.mock('./artifact-preview', () => ({
@@ -189,6 +190,52 @@ describe('WorkspaceMessageItem mention pills', () => {
       source: 'artifact'
     })
   })
+
+  it('renders a linked-folder mention as a dark-gray @ pill over the relative path', () => {
+    const onPreviewMentionArtifact = vi.fn()
+    const linkedMessage = createMessage({
+      content: 'analyze @data/study.csv',
+      parts: [
+        { type: 'text', text: 'analyze ' },
+        {
+          type: 'artifact',
+          id: 'linked-1',
+          name: 'study.csv',
+          source: 'linked-folder',
+          rootId: 'root-1',
+          relativePath: 'data/study.csv'
+        }
+      ]
+    })
+
+    act(() => {
+      root.render(
+        <WorkspaceMessageItem
+          message={linkedMessage}
+          onPreviewArtifact={noop}
+          onPreviewUploadAttachment={noop}
+          onOpenSkillMention={noop}
+          onPreviewMentionArtifact={onPreviewMentionArtifact}
+        />
+      )
+    })
+
+    const pill = container.querySelector('[aria-label="Preview study.csv"]')
+    expect(pill?.className).toContain('bg-path-chip')
+    expect(pill?.className).toContain('text-path-chip-foreground')
+    expect(pill?.textContent).toBe('@data/study.csv')
+    expect(pill?.getAttribute('title')).toBe('@data/study.csv')
+
+    clickButton('Preview study.csv')
+    expect(onPreviewMentionArtifact).toHaveBeenCalledWith({
+      type: 'artifact',
+      id: 'linked-1',
+      name: 'study.csv',
+      source: 'linked-folder',
+      rootId: 'root-1',
+      relativePath: 'data/study.csv'
+    })
+  })
 })
 
 describe('WorkspaceMessageItem file names', () => {
@@ -249,7 +296,7 @@ describe('WorkspaceMessageItem file names', () => {
     const button = container.querySelector(`[aria-label="Preview generated file ${name}"]`)
     expectSplitFileName(button, 'lon', 't', '.csv')
     expect(button?.querySelector('div[class*="px-1.5"]')).not.toBeNull()
-    expect(button?.querySelector('span.text-text-300')?.className).toContain('ml-1')
+    expect(button?.querySelector('span.text-text-000')?.className).toContain('ml-1')
   })
 })
 

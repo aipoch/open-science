@@ -9,14 +9,17 @@ import type {
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
 // lightweight mock instead of a real (engine-backed) PrismaClient.
-type ProjectClient = Pick<PrismaClient, 'project' | 'projectDeletionIntent'>
+type ProjectClient = Pick<PrismaClient, '$executeRaw' | 'project' | 'projectDeletionIntent'>
 
 // Normalizes Prisma rows into the epoch-ms shape shared with the renderer.
 const toProject = (row: PrismaProject): Project => ({
   id: row.id,
   name: row.name,
   description: row.description,
+  // An empty Agent Context is omitted on the wire, matching the optional shared schema field.
+  ...(row.agentContext ? { agentContext: row.agentContext } : {}),
   isExample: row.isExample,
+  ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime()
@@ -56,15 +59,21 @@ class ProjectRepository {
 
     const client = await this.getClient()
     const row = await client.project.create({
-      data: { name, description: request.description?.trim() ?? '' }
+      data: {
+        name,
+        description: request.description?.trim() ?? '',
+        agentContext: request.agentContext?.trim() ?? ''
+      }
     })
 
     return toProject(row)
   }
 
-  // Updates name and/or description, ignoring undefined fields so callers can patch either one.
+  // Updates editable fields, ignoring undefined values so callers can patch only what changed.
+  // Pin-only changes preserve updatedAt because pinning controls placement, not research activity.
   async update(request: UpdateProjectRequest): Promise<Project> {
-    const data: { name?: string; description?: string } = {}
+    const data: { name?: string; description?: string; agentContext?: string; pinned?: boolean } =
+      {}
 
     if (request.name !== undefined) {
       const name = request.name.trim()
@@ -80,7 +89,35 @@ class ProjectRepository {
       data.description = request.description.trim()
     }
 
+    if (request.agentContext !== undefined) {
+      data.agentContext = request.agentContext.trim()
+    }
+
     const client = await this.getClient()
+
+    if (
+      request.pinned !== undefined &&
+      request.name === undefined &&
+      request.description === undefined &&
+      request.agentContext === undefined
+    ) {
+      // Prisma's @updatedAt automation also runs for administrative changes. Updating only the pin
+      // column in SQL avoids both a fake activity bump and a read/write race that could restore an
+      // older timestamp over concurrent Project activity.
+      const updated = await client.$executeRaw`
+        UPDATE "Project"
+        SET "pinned" = ${request.pinned}
+        WHERE "id" = ${request.id}
+      `
+      if (updated !== 1) throw new Error('Project not found.')
+
+      const row = await client.project.findUnique({ where: { id: request.id } })
+      if (!row) throw new Error('Project not found.')
+      return toProject(row)
+    }
+
+    if (request.pinned !== undefined) data.pinned = request.pinned
+
     const row = await client.project.update({ where: { id: request.id }, data })
 
     return toProject(row)

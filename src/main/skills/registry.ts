@@ -15,7 +15,9 @@ const log = createLogger('skills')
 // tooling needs a compute backend this app does not provide.
 export type BundledSkill = {
   id: string
+  // Stable invocation name from SKILL.md. Presentation must use displayName instead.
   name: string
+  displayName: string
   description: string
   source: SkillSource
   updatedAt: string
@@ -26,9 +28,19 @@ export type BundledSkill = {
   thirdParty?: string
   category?: string
   requirements?: string
+  // Internal bundled Skills are materialized for the agent runtime but omitted from every Settings
+  // and Specialist picker surface. The source remains `featured`; exposure is a presentation rule,
+  // not a fourth persisted Skill source.
+  exposure?: 'catalog' | 'internal'
 }
 
-type ManifestEntry = { id: string; name: string; source: SkillSource; updatedAt: string }
+type ManifestEntry = {
+  id: string
+  name: string
+  source: SkillSource
+  updatedAt: string
+  exposure?: 'catalog' | 'internal'
+}
 
 const SAFE_ID = /^[a-z0-9-]+$/
 
@@ -75,6 +87,9 @@ const readManifest = async (rootDir: string): Promise<ManifestEntry[]> => {
         SAFE_ID.test(record.id) &&
         typeof record?.name === 'string' &&
         record?.source === 'featured' &&
+        (record?.exposure === undefined ||
+          record?.exposure === 'catalog' ||
+          record?.exposure === 'internal') &&
         typeof record?.updatedAt === 'string'
       )
     })
@@ -110,7 +125,8 @@ class SkillRegistry {
 
         skills.push({
           id: entry.id,
-          name: entry.name,
+          name: fields.name || entry.id,
+          displayName: fields.displayname || entry.name || fields.name || entry.id,
           description: fields.description ?? '',
           source: entry.source,
           updatedAt: entry.updatedAt,
@@ -121,15 +137,16 @@ class SkillRegistry {
           // The "Third-party software, content, terms, and information" row; several key spellings.
           thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty,
           category: fields.category,
-          requirements: fields.requirements
+          requirements: fields.requirements,
+          exposure: entry.exposure
         })
       } catch (error) {
         log.warn('skipping bundled skill with unreadable SKILL.md', { id: entry.id, error })
       }
     }
 
-    // Featured skills always display alphabetically by name; the manifest order is not significant.
-    return skills.sort((a, b) => a.name.localeCompare(b.name))
+    // Featured skills always display alphabetically by presentation label; manifest order is not significant.
+    return skills.sort((a, b) => a.displayName.localeCompare(b.displayName))
   }
 
   async body(id: string): Promise<string> {

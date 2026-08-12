@@ -107,6 +107,12 @@ const expectedCustomizeDoc: ComposerDoc = {
     { type: 'text', text: '  Help me create a new specialist.' }
   ]
 }
+const expectedSkillCustomizeDoc: ComposerDoc = {
+  nodes: [
+    { type: 'skill', id: 'customize', name: 'Customize' },
+    { type: 'text', text: '  Help me create a new skill.' }
+  ]
+}
 
 describe('WorkspacePage customize prefill', () => {
   let container: HTMLDivElement
@@ -196,21 +202,36 @@ describe('WorkspacePage customize prefill', () => {
   }
 
   it('prefills the new-conversation composer with the exact /customize doc on entry', async () => {
-    useNavigationStore.setState({ pendingCustomizePrefill: 'proj-1' })
+    useNavigationStore.setState({
+      pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }
+    })
     await renderPage()
 
     expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
   })
 
+  it('prefills the Skill chat entry with the Skill Creator goal', async () => {
+    useNavigationStore.setState({
+      pendingCustomizePrefill: { projectId: 'proj-1', goal: 'skill', requestId: 1 }
+    })
+    await renderPage()
+
+    expect(conversationProps.draftDoc).toEqual(expectedSkillCustomizeDoc)
+  })
+
   it('clears the pending prefill intent once it has been applied', async () => {
-    useNavigationStore.setState({ pendingCustomizePrefill: 'proj-1' })
+    useNavigationStore.setState({
+      pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }
+    })
     await renderPage()
 
     expect(useNavigationStore.getState().pendingCustomizePrefill).toBeUndefined()
   })
 
   it('does not auto-send or create a session on entry', async () => {
-    useNavigationStore.setState({ pendingCustomizePrefill: 'proj-1' })
+    useNavigationStore.setState({
+      pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }
+    })
     await renderPage()
 
     expect(runtime.sendMessage).not.toHaveBeenCalled()
@@ -220,7 +241,9 @@ describe('WorkspacePage customize prefill', () => {
   })
 
   it('leaves the new-conversation draft with no Specialist binding', async () => {
-    useNavigationStore.setState({ pendingCustomizePrefill: 'proj-1' })
+    useNavigationStore.setState({
+      pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }
+    })
     await renderPage()
 
     // The fresh New Conversation draft carries no Specialist binding (no badge, no Customize Profile).
@@ -242,7 +265,9 @@ describe('WorkspacePage customize prefill', () => {
   })
 
   it('uses the normal picked-Skill mechanism: the chip is a real skill node, not parsed text', async () => {
-    useNavigationStore.setState({ pendingCustomizePrefill: 'proj-1' })
+    useNavigationStore.setState({
+      pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }
+    })
     await renderPage()
 
     expect(conversationProps.draftDoc.nodes[0]).toEqual({
@@ -323,7 +348,9 @@ describe('WorkspacePage customize prefill', () => {
   })
 
   it('preserves an existing draft once the prefill has been consumed on first mount', async () => {
-    useNavigationStore.setState({ pendingCustomizePrefill: 'proj-1' })
+    useNavigationStore.setState({
+      pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }
+    })
     await renderPage()
     expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
 

@@ -5,7 +5,9 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  authenticatePackagedAppEndpoint,
   artifactVersion,
+  assertPackagedResources,
   findAppBundle,
   findArtifact,
   packagedLaunchArguments,
@@ -59,10 +61,20 @@ describe('macOS package smoke', () => {
     expect(() => parseArguments([])).toThrow(/Usage/)
   })
 
-  it('extracts the authenticated packaged service endpoint', () => {
-    expect(
-      parsePackagedAppEndpoint('Open Science Web: http://127.0.0.1:3210/?token=abc_123')
-    ).toEqual({ endpoint: 'http://127.0.0.1:3210', auth: 'token=abc_123' })
+  it('authenticates the token-free readiness endpoint through the service state contract', async () => {
+    const output = 'Open Science Web: http://127.0.0.1:3210/'
+    expect(parsePackagedAppEndpoint(output)).toEqual({ endpoint: 'http://127.0.0.1:3210' })
+    await expect(
+      authenticatePackagedAppEndpoint(output, ['/config'], {
+        readText: async (path: string) =>
+          path.endsWith('web-service.json')
+            ? JSON.stringify({ port: 3210 })
+            : 'macos_smoke_token_12345678901234567890\n'
+      })
+    ).resolves.toEqual({
+      endpoint: 'http://127.0.0.1:3210',
+      auth: 'token=macos_smoke_token_12345678901234567890'
+    })
     expect(parsePackagedAppEndpoint('not ready')).toBeUndefined()
   })
 
@@ -72,5 +84,42 @@ describe('macOS package smoke', () => {
       '--open-science-headless',
       '--serve=0'
     ])
+  })
+
+  it('requires the adaptive icon catalog and its legacy ICNS fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-macos-app-'))
+    roots.push(root)
+    const appBundle = join(root, 'Open Science.app')
+    const executableDirectory = join(appBundle, 'Contents', 'MacOS')
+    const resources = join(appBundle, 'Contents', 'Resources')
+    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    await Promise.all([
+      mkdir(executableDirectory, { recursive: true }),
+      mkdir(resources, { recursive: true }),
+      mkdir(prismaClient, { recursive: true })
+    ])
+    await Promise.all([
+      writeFile(join(executableDirectory, 'Open Science'), ''),
+      writeFile(join(resources, 'app.asar'), ''),
+      writeFile(join(resources, 'micromamba'), ''),
+      writeFile(join(resources, 'Assets.car'), ''),
+      writeFile(join(resources, 'icon.icns'), ''),
+      writeFile(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'), '')
+    ])
+
+    await expect(assertPackagedResources(appBundle)).resolves.toEqual({
+      executable: join(executableDirectory, 'Open Science'),
+      micromamba: join(resources, 'micromamba')
+    })
+
+    await rm(join(resources, 'Assets.car'))
+    await expect(assertPackagedResources(appBundle)).rejects.toThrow()
+
+    await writeFile(join(resources, 'Assets.car'), '')
+    await writeFile(join(prismaClient, 'libquery_engine-darwin.dylib.node'), '')
+    await expect(assertPackagedResources(appBundle)).rejects.toThrow(/exactly one Prisma engine/)
+    await rm(join(prismaClient, 'libquery_engine-darwin.dylib.node'))
+    await rm(join(prismaClient, 'libquery_engine-darwin-arm64.dylib.node'))
+    await expect(assertPackagedResources(appBundle)).rejects.toThrow(/Prisma engine/)
   })
 })

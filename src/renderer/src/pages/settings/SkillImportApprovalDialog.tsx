@@ -218,8 +218,14 @@ const SkillImportApprovalRequestDialog = ({
   )
 }
 
-export function SkillImportApprovalDialog(): React.JSX.Element | null {
-  const request = useSkillImportStore((state) => state.pending[0])
+export function SkillImportApprovalDialog({
+  blockedSessionIds
+}: {
+  blockedSessionIds?: ReadonlySet<string>
+}): React.JSX.Element | null {
+  const request = useSkillImportStore((state) =>
+    state.pending.find((candidate) => !blockedSessionIds?.has(candidate.sessionId))
+  )
   const respond = useSkillImportStore((state) => state.respond)
 
   return request ? (

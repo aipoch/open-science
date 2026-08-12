@@ -26,10 +26,13 @@ import { type ComposerDoc } from './composer/composer-doc'
 
 // Capture the ConversationPanel props the page computes, notably canSendMessage and the draft callback.
 let conversationProps: {
+  actionError: string | null
   draftDoc: ComposerDoc
   canEditDraft: boolean
   canSendMessage: boolean
   canEditMessage: boolean
+  canChangeAgentControls: boolean
+  canChangePermissionProfile: boolean
   canCompactContext: boolean
   compactContextDisabledReason?: string
   onDraftDocChange: (doc: ComposerDoc) => void
@@ -40,11 +43,13 @@ let conversationProps: {
 }
 
 const runtime = vi.hoisted(() => ({
+  actionError: null as string | null,
   promptInFlightSessionIds: [] as string[],
   sendPreparationInFlightSessionIds: [] as string[],
   nativeContextCompactionSessionIds: ['sess-a'] as string[],
   sendMessage: vi.fn(),
   compactContext: vi.fn(),
+  ensureSessionReady: vi.fn().mockResolvedValue(undefined),
   cancelRun: vi.fn(),
   deleteRuntimeSession: vi.fn(),
   respondToPermission: vi.fn()
@@ -62,13 +67,14 @@ vi.mock('@/components/ui/resizable', () => ({
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
-    actionError: null,
+    actionError: runtime.actionError,
     pendingPermissions: [],
     promptInFlightSessionIds: runtime.promptInFlightSessionIds,
     sendPreparationInFlightSessionIds: runtime.sendPreparationInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.nativeContextCompactionSessionIds,
     sendMessage: runtime.sendMessage,
     compactContext: runtime.compactContext,
+    ensureSessionReady: runtime.ensureSessionReady,
     cancelRun: runtime.cancelRun,
     deleteRuntimeSession: runtime.deleteRuntimeSession,
     respondToPermission: runtime.respondToPermission
@@ -173,13 +179,15 @@ describe('WorkspacePage send gate while compacting', () => {
       selectedSessionId: 'sess-a'
     })
     vi.clearAllMocks()
+    runtime.actionError = null
     runtime.promptInFlightSessionIds = []
     runtime.sendPreparationInFlightSessionIds = []
     runtime.nativeContextCompactionSessionIds = ['sess-a']
 
     window.api = {
       acp: {
-        getPlanProjection: vi.fn(() => Promise.resolve(null))
+        getPlanProjection: vi.fn(() => Promise.resolve(null)),
+        respondPlan: vi.fn(() => Promise.resolve({ changed: true }))
       },
       notebook: {
         onAvailable: vi.fn(() => vi.fn()),
@@ -248,6 +256,51 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.canSendMessage).toBe(true)
   })
 
+  it.each(['running', 'waiting-permission'] as const)(
+    'keeps permission mode editable while the Session is %s',
+    async (status) => {
+      useSessionStore.setState({
+        sessions: [createSession({ status })],
+        selectedSessionId: 'sess-a'
+      })
+
+      await renderPage()
+
+      expect(conversationProps.canChangeAgentControls).toBe(false)
+      expect(conversationProps.canChangePermissionProfile).toBe(true)
+    }
+  )
+
+  it('does not query Plan authority before a newly bound Session is persisted', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    vi.mocked(window.api.acp.getPlanProjection).mockRejectedValueOnce(
+      new Error('Cannot read runtime context for a missing Session.')
+    )
+
+    await renderPage()
+
+    expect(window.api.acp.getPlanProjection).not.toHaveBeenCalled()
+  })
+
+  it('blocks overlapping actions while the Session is waiting for a user answer', async () => {
+    useSessionStore.setState({
+      sessions: [createSession({ status: 'waiting-for-user' })],
+      selectedSessionId: 'sess-a'
+    })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.onDraftDocChange(textDoc('start another request'))
+    })
+
+    expect(conversationProps.canSendMessage).toBe(false)
+    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.canChangeAgentControls).toBe(false)
+  })
+
   it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
     useSessionStore.setState({
       sessions: [createSession({ status: 'waiting-plan-approval' })],
@@ -260,7 +313,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(useSessionStore.getState().sessions[0]?.status).toBe('idle')
   })
 
-  it('sends restored Plan-card feedback as a fresh user turn', async () => {
+  it('submits restored Plan-card feedback through the atomic human-gated Plan command', async () => {
     const pending = {
       ...planProjection('pending'),
       originatingPromptMessageId: planOriginMessage.id
@@ -284,58 +337,52 @@ describe('WorkspacePage send gate while compacting', () => {
       })
     })
 
-    expect(runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'sess-a',
-        text: 'Split the analysis by cohort.',
-        attachments: [],
+    expect(window.api.acp.respondPlan).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      sessionId: 'sess-a',
+      feedback: 'Split the analysis by cohort.'
+    })
+    expect(runtime.ensureSessionReady).toHaveBeenCalledWith('sess-a')
+    expect(runtime.ensureSessionReady.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(window.api.acp.respondPlan).mock.invocationCallOrder[0]!
+    )
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it.each(['approved', 'rejected'] as const)(
+    'submits restored %s through the human-gated Plan command',
+    async (decision) => {
+      const pending = {
+        ...planProjection('pending'),
+        originatingPromptMessageId: planOriginMessage.id
+      }
+      useSessionStore.setState({
+        sessions: [
+          createSession({
+            status: 'waiting-plan-approval',
+            messages: [planOriginMessage],
+            activePlanProjection: pending
+          })
+        ],
+        selectedSessionId: 'sess-a'
+      })
+      runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
+      await renderPage()
+
+      await act(async () => {
+        await conversationProps.onRespondToRestoredPlan({ decision })
+      })
+
+      expect(window.api.acp.respondPlan).toHaveBeenCalledWith({
         projectId: 'proj-1',
-        planContinuation: {
-          artifactVersionId: 'plan-version-1',
-          revision: 3,
-          pendingAction: 'review'
-        }
-      })
-    )
-  })
-
-  it.each([
-    ['approved', 'Approve the current Plan and continue.', 'approve'],
-    ['rejected', 'Dismiss the current Plan.', 'reject']
-  ] as const)('starts a fresh Plan interaction for restored %s', async (decision, text, action) => {
-    const pending = {
-      ...planProjection('pending'),
-      originatingPromptMessageId: planOriginMessage.id
-    }
-    useSessionStore.setState({
-      sessions: [
-        createSession({
-          status: 'waiting-plan-approval',
-          messages: [planOriginMessage],
-          activePlanProjection: pending
-        })
-      ],
-      selectedSessionId: 'sess-a'
-    })
-    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'message-1' })
-    await renderPage()
-
-    await act(async () => {
-      await conversationProps.onRespondToRestoredPlan({ decision })
-    })
-
-    expect(runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
         sessionId: 'sess-a',
-        text,
-        planContinuation: {
-          artifactVersionId: 'plan-version-1',
-          revision: 3,
-          pendingAction: action
-        }
+        artifactVersionId: 'plan-version-1',
+        expectedRevision: 3,
+        decision
       })
-    )
-  })
+      expect(runtime.sendMessage).not.toHaveBeenCalled()
+    }
+  )
 
   it('sends approved-Plan continuation language as an ordinary Message for the Agent to interpret', async () => {
     useSessionStore.setState({
@@ -531,6 +578,7 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.canEditDraft).toBe(false)
     expect(conversationProps.canSendMessage).toBe(false)
     expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.canChangePermissionProfile).toBe(false)
   })
 
   it('blocks new prompts after terminal conversation graph synchronization fails', async () => {
@@ -565,5 +613,43 @@ describe('WorkspacePage send gate while compacting', () => {
     expect(conversationProps.compactContextDisabledReason).toBe(
       'Resolve the current session error before compacting.'
     )
+  })
+
+  it('surfaces restored permission retry errors without replacing the authorization card', async () => {
+    runtime.actionError = 'Permission response failed'
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-restored',
+              sessionId: session.id,
+              toolCallId: 'tool-1',
+              title: 'Run npm test',
+              options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        }
+      }))
+    }))
+    await renderPage()
+
+    expect(conversationProps.actionError).toBe('Permission response failed')
+
+    runtime.actionError = null
+    await act(async () => {
+      useSessionStore.getState().failRun('sess-a', 'Continuation failed')
+      useSessionStore.getState().setPermissionPending('sess-a')
+    })
+
+    expect(conversationProps.actionError).toBe('Continuation failed')
   })
 })

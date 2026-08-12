@@ -20,6 +20,7 @@ import type {
   RemoteAccessSnapshot,
   RemotePairingDecision
 } from '../../../../shared/remote-access'
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { SettingsSection } from './SettingsLayout'
@@ -250,14 +251,12 @@ export const RemoteControlPanel = (): React.JSX.Element => {
             Choose who can reach this computer&apos;s Open Science workspace. All projects, agents,
             files, and notebook runtimes continue to run on this computer. Install and sign in to
             the Remote.It desktop app before enabling access.{' '}
-            <a
+            <ExternalTextLink
               href={REMOTE_IT_DOWNLOAD_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-primary underline-offset-2 hover:underline"
+              className="box-decoration-clone rounded-sm bg-primary/10 px-1 py-0.5 font-medium text-primary underline decoration-primary/50 underline-offset-2 transition-colors hover:bg-primary/15 hover:decoration-primary"
             >
               Download Remote.It App
-            </a>
+            </ExternalTextLink>
           </>
         }
         actionClassName="w-full sm:w-auto"

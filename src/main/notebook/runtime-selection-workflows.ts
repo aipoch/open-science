@@ -19,6 +19,7 @@ import {
 import { listEnvPackages } from './package-listing'
 import { RuntimeRegistry } from './runtime-registry'
 import { prepareExternalPythonRuntime, type AppOwnedExternalSelection } from './venv-overlay'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 
 type RuntimeRegistryPort = Pick<RuntimeRegistry, 'survey' | 'readiness'>
 
@@ -72,6 +73,7 @@ type RuntimeSelectionWorkflowDeps = {
   // Injectable for tests so the package-listing workflows never spawn micromamba/pip/Rscript;
   // production defaults to listEnvPackages against the real env.
   listPackages?: (env: DiscoveredInterpreter) => Promise<EnvPackage[]>
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
 }
 
 type RuntimeSelectionWorkflows = {
@@ -150,7 +152,10 @@ const createRuntimeSelectionWorkflows = (
     const list =
       deps.listPackages ??
       ((target: DiscoveredInterpreter) =>
-        listEnvPackages(target, { runtimeRoot: deps.runtimeRoot() }))
+        listEnvPackages(target, {
+          runtimeRoot: deps.runtimeRoot(),
+          micromambaRunner: deps.micromambaRunner
+        }))
     return list(env)
   }
 

@@ -463,8 +463,9 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
       { id: 'MiniMax-M3[1m]', contextWindow: 1_000_000, reasoningEffort: 'none-high' },
       { id: 'MiniMax-M2.7', contextWindow: 204_800 },
       { id: 'MiniMax-M2.5', contextWindow: 204_800 }
-    ]
-    // MiniMax's chat models are text-only, so no `multimodal` rule (image input stays disabled).
+    ],
+    // M3 is natively multimodal; older M2 models remain text-only.
+    multimodal: { multimodalModels: ['MiniMax-M3', 'MiniMax-M3[1m]'] }
   },
   {
     id: 'stepfun',

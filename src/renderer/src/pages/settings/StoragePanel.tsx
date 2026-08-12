@@ -41,6 +41,7 @@ const formatBytes = (bytes: number): string => {
 
 const CATEGORY_LABELS: Record<UsageCategoryKey, string> = {
   artifacts: 'Artifacts',
+  delegation: 'Subagent workspaces',
   uploads: 'Uploads',
   runtime: 'Runtime',
   notebooks: 'Notebooks',
@@ -51,6 +52,7 @@ const CATEGORY_LABELS: Record<UsageCategoryKey, string> = {
 // even though the bar only renders non-zero segments while the legend lists every category.
 const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   artifacts: 'bg-sky-500',
+  delegation: 'bg-cyan-500',
   runtime: 'bg-violet-500',
   uploads: 'bg-amber-500',
   notebooks: 'bg-emerald-500',

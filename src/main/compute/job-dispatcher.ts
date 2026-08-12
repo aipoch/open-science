@@ -9,6 +9,7 @@ import type { ScpRunner } from './scp-runner'
 import { SystemScpRunner, runScpUpload } from './scp-runner'
 import { shellSingleQuote } from './scp-runner'
 import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
+import { ComputeJobLifecycle } from './compute-job-lifecycle'
 
 // Maximum number of bytes for the per-job dispatch SSH command (enough for base64 of large scripts).
 const DISPATCH_MAX_OUTPUT_BYTES = 4 * 1024
@@ -136,18 +137,14 @@ export async function dispatchJob(jobId: string, deps: DispatcherDeps): Promise<
 async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<void> {
   const { runner, hostRepository, jobRepository, onJobUpdated } = deps
   const scpRunner = deps.scpRunner ?? new SystemScpRunner()
+  const lifecycle = new ComputeJobLifecycle(jobRepository, onJobUpdated)
 
   const job = await jobRepository.get(jobId)
   if (!job) return // already gone (unlikely but guard anyway)
 
   const host = await hostRepository.get(job.provider_id)
   if (!host) {
-    const updated = await jobRepository.update(jobId, {
-      status: 'error',
-      errorCode: 'dispatch_failed',
-      finishedAt: new Date()
-    })
-    onJobUpdated?.(updated)
+    await lifecycle.dispatchError(jobId, { errorCode: 'dispatch_failed' })
     return
   }
 
@@ -157,13 +154,10 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     target = await resolveSshTarget(host.sshAlias, host.sshOverrides)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    const updated = await jobRepository.update(jobId, {
-      status: 'error',
+    await lifecycle.dispatchError(jobId, {
       errorCode: 'host_unreachable',
-      stderrTail: msg,
-      finishedAt: new Date()
+      stderrTail: msg
     })
-    onJobUpdated?.(updated)
     return
   }
 
@@ -176,13 +170,10 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     try {
       entries = JSON.parse(job.input_manifest) as StagedInputEntry[]
     } catch {
-      const updated = await jobRepository.update(jobId, {
-        status: 'error',
+      await lifecycle.dispatchError(jobId, {
         errorCode: 'dispatch_failed',
-        stderrTail: 'Failed to parse inputManifest JSON',
-        finishedAt: new Date()
+        stderrTail: 'Failed to parse inputManifest JSON'
       })
-      onJobUpdated?.(updated)
       return
     }
 
@@ -194,13 +185,10 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     })
     if (mkdirResult.exitCode !== 0) {
       const tail = mkdirResult.stderr || `mkdir exit ${mkdirResult.exitCode ?? 'null'}`
-      const updated = await jobRepository.update(jobId, {
-        status: 'error',
+      await lifecycle.dispatchError(jobId, {
         errorCode: 'dispatch_failed',
-        stderrTail: tail,
-        finishedAt: new Date()
+        stderrTail: tail
       })
-      onJobUpdated?.(updated)
       return
     }
 
@@ -208,13 +196,10 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
       await stageInputs(entries, workdir, runner, target, scpRunner)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      const updated = await jobRepository.update(jobId, {
-        status: 'error',
+      await lifecycle.dispatchError(jobId, {
         errorCode: 'dispatch_failed',
-        stderrTail: `Input staging failed: ${msg}`,
-        finishedAt: new Date()
+        stderrTail: `Input staging failed: ${msg}`
       })
-      onJobUpdated?.(updated)
       return
     }
   }
@@ -254,39 +239,30 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
   // Connection-level failure.
   if (runResult.timedOut || runResult.exitCode === 255) {
     const tail = runResult.stderr || 'SSH connection failed'
-    const updated = await jobRepository.update(jobId, {
-      status: 'error',
+    await lifecycle.dispatchError(jobId, {
       errorCode: 'host_unreachable',
-      stderrTail: tail,
-      finishedAt: new Date()
+      stderrTail: tail
     })
-    onJobUpdated?.(updated)
     return
   }
 
   // Non-connection failure (mkdir, base64, etc.)
   if (runResult.exitCode !== 0) {
     const tail = runResult.stderr || `exit code ${runResult.exitCode ?? 'null'}`
-    const updated = await jobRepository.update(jobId, {
-      status: 'error',
+    await lifecycle.dispatchError(jobId, {
       errorCode: 'dispatch_failed',
-      stderrTail: tail,
-      finishedAt: new Date()
+      stderrTail: tail
     })
-    onJobUpdated?.(updated)
     return
   }
 
   // Parse pid from stdout (last non-empty line).
   const pid = Number.parseInt(runResult.stdout.trim().split('\n').pop() ?? '', 10)
   if (!Number.isFinite(pid) || pid <= 0) {
-    const updated = await jobRepository.update(jobId, {
-      status: 'error',
+    await lifecycle.dispatchError(jobId, {
       errorCode: 'dispatch_failed',
-      stderrTail: `Could not read pid from dispatch output: ${JSON.stringify(runResult.stdout)}`,
-      finishedAt: new Date()
+      stderrTail: `Could not read pid from dispatch output: ${JSON.stringify(runResult.stdout)}`
     })
-    onJobUpdated?.(updated)
     return
   }
 
@@ -299,10 +275,5 @@ async function dispatchJobInner(jobId: string, deps: DispatcherDeps): Promise<vo
     workdir
   }
 
-  const updated = await jobRepository.update(jobId, {
-    status: 'running',
-    remoteHandle: JSON.stringify(handle),
-    startedAt: new Date()
-  })
-  onJobUpdated?.(updated)
+  await lifecycle.dispatchRunning(jobId, JSON.stringify(handle))
 }

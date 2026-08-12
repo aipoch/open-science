@@ -31,10 +31,12 @@ describe('sanitizeConnectors', () => {
 })
 
 describe('SettingsRepository connector mutators', () => {
-  const withRepo = async (fn: (repo: SettingsRepository) => Promise<void>): Promise<void> => {
+  const withRepo = async (
+    fn: (repo: SettingsRepository, storageDir: string) => Promise<void>
+  ): Promise<void> => {
     const dir = await mkdtemp(join(tmpdir(), 'osci-connectors-'))
     try {
-      await fn(new SettingsRepository(dir))
+      await fn(new SettingsRepository(dir), dir)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -84,12 +86,9 @@ describe('SettingsRepository connector mutators', () => {
   })
 
   it('persists mutations to disk', async () => {
-    await withRepo(async (repo) => {
+    await withRepo(async (repo, storageDir) => {
       await repo.setConnectorDisabled('rna', true)
-      const raw = await readFile(
-        join((repo as unknown as { storageDir: string }).storageDir, 'settings.json'),
-        'utf8'
-      )
+      const raw = await readFile(join(storageDir, 'settings.json'), 'utf8')
       expect(JSON.parse(raw).connectors.disabledConnectorIds).toEqual(['rna'])
     })
   })

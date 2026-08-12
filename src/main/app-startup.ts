@@ -17,6 +17,43 @@ export type SecondInstanceRelay = {
   bind: (handler: (argv: string[]) => void) => void
 }
 
+type StartupWindowSurface = {
+  focus: () => void
+  isDestroyed: () => boolean
+  isMinimized: () => boolean
+  restore: () => void
+  show: () => void
+}
+
+export const createStartupWindowSecondInstanceHandler =
+  (window: StartupWindowSurface, forward: (argv: string[]) => void): ((argv: string[]) => void) =>
+  (argv) => {
+    if (!window.isDestroyed()) {
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.focus()
+    }
+    forward(argv)
+  }
+
+export const createStartupWindowCloseOptions = (
+  quit: () => void
+): {
+  classifyClose: () => 'close' | 'quit'
+  requestQuit: () => void
+  resolveCloseAction: () => Promise<'quit'>
+} => {
+  let quitRequested = false
+  return {
+    classifyClose: (): 'close' | 'quit' => (quitRequested ? 'close' : 'quit'),
+    resolveCloseAction: async (): Promise<'quit'> => 'quit',
+    requestQuit: (): void => {
+      quitRequested = true
+      quit()
+    }
+  }
+}
+
 export const createSecondInstanceRelay = (): SecondInstanceRelay => {
   const pending: string[][] = []
   let handler: ((argv: string[]) => void) | undefined
@@ -49,6 +86,8 @@ export type AppStartupDeps<Context> = {
   // Installs the tray/window/quit lifecycle; returns the second-instance handler for the relay to drain.
   // The handler decides per forwarded argv whether to surface the window or start the web service.
   installAppLifecycle: (context: Context) => { onSecondInstance: (argv: string[]) => void }
+  // Publishes renderer readiness only after lifecycle installation and adapter wiring complete.
+  markReady?: (context: Context) => void
   diagnostics?: DiagnosticOperation
 }
 
@@ -73,6 +112,7 @@ export const orchestrateAppStartup = async <Context>(
     deps.diagnostics?.phase('install-lifecycle')
     deps.installMigrationQuitGuard(context)
     const { onSecondInstance } = deps.installAppLifecycle(context)
+    deps.markReady?.(context)
     relay.bind(onSecondInstance)
     deps.diagnostics?.complete({ instance: 'primary' })
   } catch (error) {

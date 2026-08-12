@@ -28,12 +28,12 @@ metadata:
 
 ## Prerequisites
 
-| Requirement | Minimum | Recommended      |
-| ----------- | ------- | ---------------- |
-| Python      | 3.11    | 3.12 (<3.13)     |
-| CUDA        | 12.1+   | 12.4+            |
-| GPU VRAM    | 24 GB (7B bf16) | 80 GB (40B) |
-| RAM         | 32 GB   | 128 GB           |
+| Requirement | Minimum         | Recommended  |
+| ----------- | --------------- | ------------ |
+| Python      | 3.11            | 3.12 (<3.13) |
+| CUDA        | 12.1+           | 12.4+        |
+| GPU VRAM    | 24 GB (7B bf16) | 80 GB (40B)  |
+| RAM         | 32 GB           | 128 GB       |
 
 ## How to run
 
@@ -68,11 +68,11 @@ print(out.sequences[0])
 
 ## Models
 
-| Name        | Params | Context | VRAM (bf16) | Notes                              |
-| ----------- | ------ | ------- | ----------- | ---------------------------------- |
-| `evo2_7b`   | 7 B    | 1 M nt  | ~22 GB      | Default; fits on a single 24 GB+ GPU |
-| `evo2_40b`  | 40 B   | 1 M nt  | ~78 GB      | H100 80 GB or multi-GPU            |
-| `evo2_1b_base` | 1 B | 8 K nt  | ~6 GB       | FP8 path requires sm_89+ (H100)    |
+| Name           | Params | Context | VRAM (bf16) | Notes                                |
+| -------------- | ------ | ------- | ----------- | ------------------------------------ |
+| `evo2_7b`      | 7 B    | 1 M nt  | ~22 GB      | Default; fits on a single 24 GB+ GPU |
+| `evo2_40b`     | 40 B   | 1 M nt  | ~78 GB      | H100 80 GB or multi-GPU              |
+| `evo2_1b_base` | 1 B    | 8 K nt  | ~6 GB       | FP8 path requires sm_89+ (H100)      |
 
 ## Output format
 
@@ -93,7 +93,6 @@ Need a DNA model?
 └─ Protein, not DNA → fair-esm2 / esmfold2
 ```
 
-
 ## Remote compute
 
 7B/40B inference is GPU-bound (≥24 GB / 80 GB VRAM). Read
@@ -102,12 +101,12 @@ Need a DNA model?
 
 ```python
 c = host.compute.create(provider)
-job = c.submit_job(
+job = c.submitJob(
     intent="Evo2-7B score 200bp variant window — 1×GPU, ~2 min",
-    inputs=[{"src": "score_evo2.py", "dst_filename": "score_evo2.py"}],
+    inputs=[{"src": "score_evo2.py", "dstFilename": "score_evo2.py"}],
     command="python3 score_evo2.py",   # env selection is host-specific — see compute_details for your provider
     outputs=["scores.json"],
-    timeout_seconds=1800,
+    timeoutSeconds=1800,
 )
 print(job.job_id)   # cell ends here — kernel never blocks on compute
 ```
@@ -120,7 +119,7 @@ save_artifacts(payload["featured_files"])   # paths under hpc/<job_id>/
 ```
 
 For the full result dict (`output_files`, `remote_workdir`, …), re-enter the
-kernel: `c.attach_job(job_id).result()` then `c.close()`. See the
+kernel: `c.attachJob(job_id).result()` then `c.close()`. See the
 `remote-compute-ssh` / `remote-compute-modal` skill for the orchestration
 details.
 
@@ -129,23 +128,22 @@ Inside `score_evo2.py`, point `HF_HOME` at the provider's weight-cache mount
 doesn't try to write `refs/` into a read-only mount. Weight footprint:
 ~15 GB (7B), ~80 GB (40B).
 
-
 ## Typical performance
 
-| Task                        | 7B on H100 | Notes                       |
-| --------------------------- | ---------- | --------------------------- |
-| Model load (cached)         | ~5-7 min   | First call hydrates weights |
-| `score_sequences`, 200×200bp| ~10-20 s   | After load                  |
-| `generate`, 1×512 nt        | ~15 s      |                             |
+| Task                         | 7B on H100 | Notes                       |
+| ---------------------------- | ---------- | --------------------------- |
+| Model load (cached)          | ~5-7 min   | First call hydrates weights |
+| `score_sequences`, 200×200bp | ~10-20 s   | After load                  |
+| `generate`, 1×512 nt         | ~15 s      |                             |
 
 ## Troubleshooting
 
-| Symptom                              | Cause                          | Fix                                        |
-| ------------------------------------ | ------------------------------ | ------------------------------------------ |
-| `Transformer Engine not installed`   | No FP8 — falls back to bf16    | Informational only on non-H100; ignore     |
-| OOM on load                          | 40B on <80 GB GPU              | Use `evo2_7b` or shard with `device_map`   |
-| HF tries to write `refs/main`        | `HF_HOME` points at RO mount   | Set `HF_HUB_OFFLINE=1`                     |
-| `dtype mismatch` in `score_sequences`| Passing tensors not strings    | Pass `list[str]`; the API tokenises for you |
+| Symptom                               | Cause                        | Fix                                         |
+| ------------------------------------- | ---------------------------- | ------------------------------------------- |
+| `Transformer Engine not installed`    | No FP8 — falls back to bf16  | Informational only on non-H100; ignore      |
+| OOM on load                           | 40B on <80 GB GPU            | Use `evo2_7b` or shard with `device_map`    |
+| HF tries to write `refs/main`         | `HF_HOME` points at RO mount | Set `HF_HUB_OFFLINE=1`                      |
+| `dtype mismatch` in `score_sequences` | Passing tensors not strings  | Pass `list[str]`; the API tokenises for you |
 
 ---
 

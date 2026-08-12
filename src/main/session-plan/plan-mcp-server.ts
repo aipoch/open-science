@@ -12,7 +12,11 @@ import {
   type PlanCommandErrorCode
 } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
-import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
+import {
+  fetchLocalRpc,
+  fetchLongLivedLocalRpc,
+  type LocalRpcTransport
+} from '../local-rpc-transport'
 import { PLAN_MCP_SERVER_ARG } from '../mcp-server-args'
 
 const PLAN_MCP_SERVER_NAME = 'open-science-plan'
@@ -34,7 +38,7 @@ const updateStepStatusToolSchema = {
 }
 
 type PlanMcpHandler = Readonly<{
-  generate: (content: GeneratePlanContent) => Promise<unknown>
+  generate: (content: GeneratePlanContent, signal?: AbortSignal) => Promise<unknown>
   approve: () => Promise<unknown>
   reject: () => Promise<unknown>
   updateStepStatus: (input: {
@@ -107,7 +111,7 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
         'Create an immutable execution Plan or explicitly decide the active Plan. Generation blocks until the user responds. Text responses always return as kind:feedback and remain ordinary user Messages; interpret the full meaning, then call this tool again with only decision:"approved" or decision:"rejected" when the intent is unambiguous, or revise and regenerate when changes are requested. Calling decision:"approved" also binds an already-approved interrupted Plan to the current user interaction. Never execute from message text alone. The legacy approve:true is equivalent to decision:"approved". Do not combine a decision with Plan content.',
       inputSchema: generatePlanToolSchema
     },
-    async ({ decision, approve, task_summary, phases, desired_outputs, feasibility }) => {
+    async ({ decision, approve, task_summary, phases, desired_outputs, feasibility }, extra) => {
       const hasContent =
         task_summary !== undefined ||
         phases !== undefined ||
@@ -146,7 +150,7 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
           desired_outputs,
           feasibility
         })
-        const result = await handler.generate(document)
+        const result = await handler.generate(document, extra.signal)
         executionArtifactVersionId = projectionVersionId(result) ?? executionArtifactVersionId
         return result
       })
@@ -173,9 +177,11 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
 const callPlanRpc = async (
   environment: PlanMcpEnvironment,
   operation: 'generate' | 'approve' | 'reject' | 'updateStepStatus',
-  input?: unknown
+  input?: unknown,
+  signal?: AbortSignal
 ): Promise<unknown> => {
-  const response = await fetchLocalRpc(
+  const request = operation === 'generate' ? fetchLongLivedLocalRpc : fetchLocalRpc
+  const response = await request(
     environment,
     {
       method: 'POST',
@@ -191,7 +197,8 @@ const callPlanRpc = async (
           operation,
           input
         }
-      })
+      }),
+      signal
     },
     'Session Plan RPC'
   )
@@ -223,8 +230,8 @@ const createPlanMcpServerForEnvironment = (
   environment: PlanMcpEnvironment
 ): ModelContextProtocolServer =>
   createPlanMcpServer({
-    generate: async (content) => {
-      const result = await callPlanRpc(environment, 'generate', content)
+    generate: async (content, signal) => {
+      const result = await callPlanRpc(environment, 'generate', content, signal)
       const versionId = projectionVersionId(result)
       if (versionId) executionVersionByEnvironment.set(environment, versionId)
       return result

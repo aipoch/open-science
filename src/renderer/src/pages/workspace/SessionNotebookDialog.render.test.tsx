@@ -2,6 +2,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
 import { SessionNotebookContent } from './SessionNotebookDialog'
+import {
+  createNotebookFrameFilterOptions,
+  filterNotebookRunsForSessionBranch,
+  notebookFrameLabels,
+  projectNotebookRunsForFrame
+} from './session-notebook-projection'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
@@ -17,6 +23,8 @@ const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord 
   outputs: [],
   artifacts: [],
   workingFiles: [],
+  rootFrameId: 'root-frame-s1',
+  agentFrameId: 'root-frame-s1',
   ...overrides
 })
 
@@ -26,9 +34,16 @@ const renderContent = (props: {
   runs: NotebookRunRecord[]
   status: 'loading' | 'error' | 'ready'
   error?: string
+  frameLabels?: Readonly<Record<string, string>>
 }): string =>
   renderToStaticMarkup(
-    <SessionNotebookContent onClose={vi.fn()} onExport={vi.fn()} onExportAll={vi.fn()} {...props} />
+    <SessionNotebookContent
+      onClose={vi.fn()}
+      onExport={vi.fn()}
+      onExportAll={vi.fn()}
+      frameLabels={{ 'root-frame-s1': 'Main Agent' }}
+      {...props}
+    />
   )
 
 describe('SessionNotebookContent', () => {
@@ -133,6 +148,120 @@ describe('SessionNotebookContent', () => {
   })
 })
 
+describe('Session Notebook producer projection', () => {
+  const attributedRuns = [
+    makeRun({
+      runId: 'root-run',
+      startedAt: 1,
+      rootFrameId: 'root-frame-s1',
+      agentFrameId: 'root-frame-s1'
+    }),
+    makeRun({ runId: 'child-two-run', startedAt: 2, agentFrameId: 'frame-two' }),
+    makeRun({
+      runId: 'legacy-run',
+      startedAt: 3,
+      rootFrameId: undefined,
+      agentFrameId: undefined
+    }),
+    makeRun({ runId: 'child-one-run', startedAt: 4, agentFrameId: 'frame-one' })
+  ]
+
+  it('names only the Main Agent and delegated Subagents from the Session graph', () => {
+    expect(
+      notebookFrameLabels({
+        conversationGraph: {
+          rootFrameId: 'root-frame-s1',
+          frames: [
+            { id: 'root-frame-s1', kind: 'root' },
+            { id: 'frame-one', kind: 'delegate', delegateName: 'Evidence check' },
+            { id: 'review-frame', kind: 'review', agentName: 'Reviewer' }
+          ]
+        }
+      } as never)
+    ).toEqual({
+      'root-frame-s1': 'Main Agent',
+      'frame-one': 'Evidence check'
+    })
+  })
+
+  it('derives named Main Agent and Subagent producers without All or Unattributed', () => {
+    expect(
+      createNotebookFrameFilterOptions(attributedRuns, {
+        'root-frame-s1': 'Main agent',
+        'frame-one': 'Evidence check',
+        'frame-two': 'Sensitivity check'
+      })
+    ).toEqual([
+      { value: 'frame:root-frame-s1', label: 'Main agent', count: 1 },
+      { value: 'frame:frame-one', label: 'Evidence check', count: 1 },
+      { value: 'frame:frame-two', label: 'Sensitivity check', count: 1 }
+    ])
+    expect(
+      projectNotebookRunsForFrame(attributedRuns, 'frame:frame-two').map((run) => run.runId)
+    ).toEqual(['child-two-run'])
+  })
+
+  it('does not expose raw Frame IDs when producer names are unavailable', () => {
+    expect(createNotebookFrameFilterOptions(attributedRuns)).toEqual([])
+
+    const html = renderContent({ sessionId: 's1', runs: [], status: 'ready' })
+    expect(html).toContain('No execution records for this session.')
+    expect(html).not.toContain('aria-label="Filter notebook runs by Agent"')
+  })
+
+  it('renders a named Agent filter that remains usable at narrow widths', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: attributedRuns,
+      status: 'ready',
+      frameLabels: {
+        'root-frame-s1': 'Main Agent',
+        'frame-one': 'Evidence check',
+        'frame-two': 'Sensitivity check'
+      }
+    })
+
+    expect(html).toContain('aria-label="Filter notebook runs by Agent"')
+    expect(html).toContain('role="combobox"')
+    expect(html).toContain('title="Main Agent"')
+    expect(html).not.toContain('<option')
+    expect(html).not.toContain('>All ·')
+    expect(html).not.toContain('Unattributed')
+    expect(html).not.toContain('>frame-one ·')
+    expect(html).toContain('max-w-full')
+    expect(html).toContain('focus-visible:ring-3')
+  })
+
+  it('keeps child evidence while applying active-Branch filtering only to root and legacy Runs', () => {
+    const session = {
+      messages: [{ id: 'active-root-message' }],
+      conversationGraph: { rootFrameId: 'root-frame-s1' }
+    }
+    const runs = [
+      makeRun({
+        runId: 'active-root',
+        agentFrameId: 'root-frame-s1',
+        promptMessageId: 'active-root-message'
+      }),
+      makeRun({
+        runId: 'inactive-root',
+        agentFrameId: 'root-frame-s1',
+        promptMessageId: 'old-root-message'
+      }),
+      makeRun({
+        runId: 'child',
+        agentFrameId: 'frame-child',
+        promptMessageId: 'child-message'
+      }),
+      makeRun({ runId: 'inactive-legacy', promptMessageId: 'old-root-message' })
+    ]
+
+    expect(
+      filterNotebookRunsForSessionBranch(runs, session as never).map((run) => run.runId)
+    ).toEqual(['active-root', 'child'])
+  })
+})
+
 describe('SessionNotebookContent per-kernel tabs', () => {
   it('renders a tab per present kind and shows the default (python) pane', () => {
     const pythonRun = makeRun({ runId: 'p1', kernelKind: 'python', script: 'print(1)' })
@@ -153,6 +282,8 @@ describe('SessionNotebookContent per-kernel tabs', () => {
     expect(html).toContain('data-testid="session-notebook-tab-python"')
     expect(html).toContain('data-testid="session-notebook-tab-repl"')
     expect(html).toContain('data-testid="session-notebook-tab-bash"')
+    expect(html.match(/focus-visible:ring-\[3px\]/g)).toHaveLength(3)
+    expect(html).toContain('focus-visible:ring-3')
     expect(html).toContain('Agent SDK')
     expect(html).toContain('Bash')
 

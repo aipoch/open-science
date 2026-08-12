@@ -3,6 +3,8 @@ import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
 
+import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
+
 import {
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
@@ -112,6 +114,22 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
 
+  it('directs agents to concise Host SDK help without prefetching every topic', () => {
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Main/root agents')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain("await host.help('delegate')")
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('role-aware catalog')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('field descriptions')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/do not prefetch.*topics/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Delegate agents should use the same catalog')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('unavailable root-only topics remain visible')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_frame_message(')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_message(')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('{task')
+
+    expect(REPL_EXECUTE_DOC).toContain("await host.help('delegate')")
+    expect(REPL_EXECUTE_DOC).toMatch(/do not prefetch.*topics/i)
+  })
+
   it('does not inject a 4000-character output instruction into agent guidance', () => {
     const agentGuidance = [
       NOTEBOOK_SYSTEM_PROMPT_APPEND,
@@ -144,6 +162,24 @@ describe('notebook MCP server config', () => {
     expect(toolNames).not.toContain('notebook_run_cell')
   })
 
+  it('locks the complete Notebook MCP capability inventory', () => {
+    expect(NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)).toEqual([
+      'ask_user_question',
+      'notebook_execute',
+      'repl_execute',
+      'bash_execute',
+      'notebook_state',
+      'list_notebook_runtimes',
+      'notebook_bind_runtime',
+      'notebook_switch_runtime',
+      'notebook_restart',
+      'notebook_shutdown',
+      'inspect_packages',
+      'manage_packages',
+      'manage_environments'
+    ])
+  })
+
   it('exposes manage_environments and explains named environments are separate namespaces', () => {
     const toolNames = NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)
     expect(toolNames).toContain('manage_environments')
@@ -152,6 +188,91 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('./handoff/')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND.toLowerCase()).toContain('separate')
+  })
+})
+
+describe('ask_user_question tool', () => {
+  const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'ask_user_question')
+
+  it('is available in Default mode and accepts 1-3 compact questions', () => {
+    expect(tool).toBeDefined()
+    expect(tool?.method).toBe('requestUserInput')
+    expect(tool?.description).toContain('Default mode')
+    expect(tool?.description).toContain('materially different interpretations')
+    expect(tool?.description).toContain('first tool call')
+    expect(tool?.description).toContain('include every known question in one call')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('ask_user_question')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Default mode')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('materially different interpretations')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('first tool call')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('all 1-3 known questions in one call')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('do not inspect or use other tools first')
+
+    const schema = z.object(tool?.inputSchema ?? {})
+    const option = (label: string): { label: string; description: string } => ({
+      label,
+      description: `${label} details`
+    })
+
+    expect(
+      schema.parse({
+        questions: [
+          {
+            question: 'Which path should I take?',
+            header: 'Approach',
+            options: [option('Minimal'), option('Expanded')]
+          },
+          {
+            question: 'Which output should I produce?',
+            header: 'Output',
+            options: [option('Notebook'), option('Report')]
+          }
+        ]
+      })
+    ).toEqual({
+      questions: [
+        {
+          question: 'Which path should I take?',
+          header: 'Approach',
+          options: [option('Minimal'), option('Expanded')]
+        },
+        {
+          question: 'Which output should I produce?',
+          header: 'Output',
+          options: [option('Notebook'), option('Report')]
+        }
+      ]
+    })
+    expect(() =>
+      schema.parse({
+        questions: [
+          {
+            question: 'Which path?',
+            options: [option('A'), option('B'), option('C'), option('D'), option('E')]
+          }
+        ]
+      })
+    ).toThrow()
+    expect(() =>
+      schema.parse({
+        questions: [
+          { question: 'One?', options: [option('A'), option('B')] },
+          { question: 'Two?', options: [option('A'), option('B')] },
+          { question: 'Three?', options: [option('A'), option('B')] },
+          { question: 'Four?', options: [option('A'), option('B')] }
+        ]
+      })
+    ).toThrow()
+  })
+
+  it('returns only the choice outcome within the shared control-tool result budget', () => {
+    expect(
+      tool?.mapResult?.(
+        { action: 'answered', answer: 'Minimal', internal: 'must not reach the agent' },
+        {}
+      )
+    ).toEqual({ action: 'answered', answer: 'Minimal' })
+    expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_CONTROL_RESULT_LIMIT)
   })
 })
 
@@ -226,7 +347,10 @@ describe('repl_execute tool', () => {
     expect(tool?.method).toBe('executeControl')
 
     const schema = z.object(tool?.inputSchema ?? {})
-    expect(schema.parse({ code: 'return 1' })).toEqual({ code: 'return 1' })
+    expect(schema.parse({ code: 'return 1' })).toEqual({
+      code: 'return 1',
+      timeoutMs: 1_815_000
+    })
     expect(schema.parse({ code: 'return 1', timeoutMs: 5000 })).toEqual({
       code: 'return 1',
       timeoutMs: 5000
@@ -238,13 +362,52 @@ describe('repl_execute tool', () => {
 
   it('describes the control-plane repl (host.mcp + handoff) distinctly from notebook_execute', () => {
     expect(tool?.description).toBe(REPL_EXECUTE_DOC)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('host.capabilities')
+    expect(tool?.description).toContain('host.capabilities')
+    expect(tool?.description).toContain('host.llm')
+    expect(tool?.description).toContain('self-awareness')
     expect(tool?.description).toContain('host.mcp')
     // host.compute (remote compute) is only reachable here too, same as host.mcp.
     expect(tool?.description).toContain('host.compute')
+    expect(tool?.description).toContain('host.agents')
+    expect(tool?.description).toContain('host.skills')
     expect(tool?.description).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
     expect(tool?.description).not.toContain('./handoff/')
     expect(tool?.description.toLowerCase()).toContain('connector')
     expect(tool?.description).toContain('notebook_execute')
+  })
+
+  it('advertises the role-scoped subagent Host SDK on the only tool that can call it', () => {
+    expect(tool?.description).toContain('Main/root agents')
+    expect(tool?.description).toContain('host.help')
+    expect(tool?.description).toContain("host.help('delegate')")
+    expect(tool?.description).toContain('role-aware catalog')
+    expect(tool?.description).toContain('field descriptions')
+    expect(tool?.description).toMatch(/do not prefetch.*topics/i)
+    expect(tool?.description).toContain('Delegate agents should use the same catalog')
+    expect(tool?.description).not.toContain('host.send_frame_message(')
+    expect(tool?.description).not.toContain('host.send_message(')
+  })
+
+  it('keeps the concise delegate guide intact through the Agent-facing execution projection', () => {
+    const capabilities = Object.fromEntries(
+      HOST_SDK_SUBAGENT_OPERATION_IDS.map((id) => [id.slice('host.'.length), true])
+    ) as Record<
+      (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number] extends `host.${infer Op}` ? Op : never,
+      boolean
+    >
+    const guide = JSON.stringify(
+      hostSdkHelp.query('delegate', { callerRole: 'main', capabilities })
+    )
+
+    const compact = compactNotebookExecutionResult({
+      status: 'completed',
+      outputs: [{ type: 'display', data: { 'text/plain': guide } }]
+    }) as { truncated?: boolean; outputs?: Array<{ data: Record<string, string> }> }
+
+    expect(compact.truncated).toBeUndefined()
+    expect(compact.outputs?.[0].data['text/plain']).toBe(guide)
+    expect(guide).not.toContain('omitted')
   })
 
   it('forwards repl_execute input to the executeControl RPC method', async () => {

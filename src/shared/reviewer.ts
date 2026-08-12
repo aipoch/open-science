@@ -51,6 +51,16 @@ export type TurnScope = {
   artifactVersionIds: string[]
 }
 
+// Immutable provenance supplied when the audited turn belongs to a completed delegate Attempt.
+// The Reviewer owner re-resolves and verifies every anchor before it creates a Review row.
+export type DelegatedReviewEvidenceScope = {
+  attemptId: string
+  agentFrameId: string
+  messageBranchId: string
+  terminalMessageId: string
+  artifactVersionIds: readonly string[]
+}
+
 // Task state of the review itself (did it run/finish/fail), orthogonal to its outcome.
 export type ReviewLifecycle = 'running' | 'complete' | 'error'
 // Result of a completed review: no warn/fail checks = pass, at least one warn/fail = flagged.
@@ -262,6 +272,7 @@ export type ReviewRunRequest = {
   // runs from concurrent entry points. 'manual' (Request review / stale/error Re-run) intentionally
   // bypasses that check so the user can force a fresh review. Defaults to 'manual' when omitted.
   origin?: ReviewRunOrigin
+  evidenceScope?: DelegatedReviewEvidenceScope
 }
 
 // Distinguishes an automatic post-turn review from a user-initiated one — see ReviewRunRequest.origin.

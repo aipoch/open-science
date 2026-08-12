@@ -241,7 +241,10 @@ describe('approval notification broadcasts', () => {
 
     broadcast(request, context)
 
-    expect(broadcastToRenderers).toHaveBeenCalledWith('compute:approval-request', request)
+    expect(broadcastToRenderers).toHaveBeenCalledWith('compute:approval-request', {
+      ...request,
+      session_id: 'session-42'
+    })
     expect(handleComputeApproval).toHaveBeenCalledWith(request, 'session-42')
   })
 

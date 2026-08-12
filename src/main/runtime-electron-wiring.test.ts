@@ -30,7 +30,7 @@ describe('production Electron runtime wiring', () => {
   })
 
   it('installs the constructed Compute and ACP modules before remaining surfaces', async () => {
-    const compute = { handlers: {}, enabledComputeHostsRegistry: {} } as never
+    const compute = { handlers: {}, enabledHosts: {} } as never
     const runtime = {} as never
     const workflows = {} as never
 
@@ -73,7 +73,7 @@ describe('production Electron runtime wiring', () => {
 
   it('rolls back every installed adapter in reverse order when a later install fails', async () => {
     const rollbackOrder: string[] = []
-    const compute = { handlers: {}, enabledComputeHostsRegistry: {} } as never
+    const compute = { handlers: {}, enabledHosts: {} } as never
     const runtime = {} as never
     const workflows = {} as never
     installComputeIpcHandlers.mockReturnValueOnce({

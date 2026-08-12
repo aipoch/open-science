@@ -13,12 +13,13 @@ import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
 
+import type { ApplicationCommandContract } from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
 import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
 import type * as PreviewResources from '../shared/preview-resources'
 import type * as PreviewState from '../shared/preview-state'
-import type * as Projects from '../shared/projects'
+import * as Projects from '../shared/projects'
 import type * as SessionPersistence from '../shared/session-persistence'
 import * as Uploads from '../shared/uploads'
 
@@ -36,10 +37,15 @@ type OwnerResult<Owner, Method extends keyof Owner> = Owner[Method] extends (
 
 const commandFor =
   <Owner>() =>
-  <const Name extends string, Method extends keyof Owner>(name: Name, method: Method) => {
+  <const Name extends string, Method extends keyof Owner>(
+    name: Name,
+    method: Method,
+    contract?: ApplicationCommandContract<OwnerArgs<Owner, Method>, OwnerResult<Owner, Method>>
+  ) => {
     void method
     return defineApplicationCommand<Name, OwnerArgs<Owner, Method>, OwnerResult<Owner, Method>>(
-      name
+      name,
+      contract
     )
   }
 
@@ -208,22 +214,43 @@ const dataContentApplicationCommands = Object.freeze({
     'project-files:search-artifacts',
     'searchArtifacts'
   ),
-  projectCreate: projectCommand('projects:create', 'create'),
-  projectUpdateArchive: projectCommand('projects:update-archive', 'updateArchive'),
+  projectCreate: projectCommand(
+    'projects:create',
+    'create',
+    Projects.projectApplicationCommandContracts.create
+  ),
+  projectUpdateArchive: projectCommand(
+    'projects:update-archive',
+    'updateArchive',
+    Projects.projectApplicationCommandContracts.updateArchive
+  ),
   projectDelete: defineApplicationCommand<
     'projects:delete',
     readonly [request: Projects.DeleteProjectRequest],
     void
-  >('projects:delete'),
-  projectGet: projectCommand('projects:get', 'get'),
-  projectList: projectCommand('projects:list', 'list'),
-  projectUpdate: projectCommand('projects:update', 'update'),
+  >('projects:delete', Projects.projectApplicationCommandContracts.delete),
+  projectGet: projectCommand(
+    'projects:get',
+    'get',
+    Projects.projectApplicationCommandContracts.get
+  ),
+  projectList: projectCommand(
+    'projects:list',
+    'list',
+    Projects.projectApplicationCommandContracts.list
+  ),
+  projectUpdate: projectCommand(
+    'projects:update',
+    'update',
+    Projects.projectApplicationCommandContracts.update
+  ),
   sessionDelete: sessionCommand('sessions:delete-session', 'deleteSession'),
   sessionExportConversation: electronCommand(
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'
   ),
   sessionLoadAll: sessionCommand('sessions:load-all', 'loadAll'),
+  sessionLoadOne: sessionCommand('sessions:load-one', 'loadOne'),
   sessionSaveManifest: sessionCommand('sessions:save-manifest', 'saveManifest'),
   sessionUpdateArchive: sessionCommand('sessions:update-archive', 'updateArchive'),
   sessionSave: defineApplicationCommand<
@@ -295,6 +322,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionExportConversation,
     dataContentApplicationCommands.sessionLoadAll,
+    dataContentApplicationCommands.sessionLoadOne,
     dataContentApplicationCommands.sessionSaveManifest,
     dataContentApplicationCommands.sessionUpdateArchive,
     dataContentApplicationCommands.sessionSave
@@ -461,6 +489,8 @@ const registerDataContentApplicationCommands = (
       },
       'sessions:load-all': () =>
         dependencies.withDataRootWrite(() => dependencies.sessions.loadAll()),
+      'sessions:load-one': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.sessions.loadOne(args[0])),
       'sessions:save-manifest': ({ args }) =>
         dependencies.withDataRootWrite(() => dependencies.sessions.saveManifest(args[0])),
       'sessions:update-archive': (invocation) => {

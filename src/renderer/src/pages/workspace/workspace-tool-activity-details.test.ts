@@ -210,6 +210,9 @@ describe('workspace tool activity details', () => {
     const details = buildToolActivityDetails(activity)
 
     expect(details?.displayName).toBe('Notebook cell')
+    // Only the compact run id enters transcript presentation data. Figure bytes stay in the local
+    // notebook state and are resolved by the expanded row at render time.
+    expect(details?.notebookRunId).toBe('notebook-run-1')
     expect(details?.sections[0]).toMatchObject({
       kind: 'code',
       label: 'Code',

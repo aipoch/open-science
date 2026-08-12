@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseFrontmatter, parseSkillDocument, splitFrontmatter } from './frontmatter'
+import {
+  frontmatterFieldNames,
+  parseFrontmatter,
+  parseSkillDocument,
+  splitFrontmatter
+} from './frontmatter'
 
 describe('parseSkillDocument', () => {
   it('separates identity fields from reusable metadata while preserving frontmatter presence', () => {
@@ -27,6 +32,13 @@ describe('parseSkillDocument', () => {
 })
 
 describe('parseFrontmatter', () => {
+  it('reports every root field name even when its value is structured', () => {
+    expect(frontmatterFieldNames('---\nname: demo\nmetadata:\n  owner: team\n---\nBody')).toEqual([
+      'name',
+      'metadata'
+    ])
+  })
+
   it('parses every scalar field into a lowercased map and strips the block', () => {
     const raw = [
       '---',

@@ -49,6 +49,7 @@ beforeEach(() => {
       {
         id: 'a',
         name: 'Alpha',
+        displayName: 'Alpha',
         description: 'First',
         source: 'featured' as const,
         updatedAt: '2026-07-08T00:00:00.000Z',

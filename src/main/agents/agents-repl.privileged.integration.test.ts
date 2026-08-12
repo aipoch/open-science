@@ -30,8 +30,8 @@ import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contra
 // SwitchNotifier broadcast, and the catalog-invalidation callback.
 //
 // Coverage (design.md §15 / acceptance criteria 1, 4, 6):
-//  - a name-changing update committed atomically through host.agents.update, returning real post-write
-//    read-back (not echoed input) and BYPASSING the approval gateway (renames are ordinary
+//  - a displayName update committed atomically through host.agents.update, returning real post-write
+//    read-back (not echoed input) and BYPASSING the approval gateway (ordinary updates are
 //    chat-reviewed mutations, not privileged);
 //  - delete through the pass-through gateway: bound conversations are left unavailable (bindings are
 //    NOT silently cleared);
@@ -40,8 +40,8 @@ import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contra
 //    notification is broadcast;
 //  - a structured DECLINE on a configurable approval gateway returns a non-error result for both
 //    delete and switch, with no mutation/persist/notify;
-//  - optimistic concurrency: a stale revision fails for both an ordinary update and a name-changing
-//    update, without merge or retry.
+//  - optimistic concurrency: a stale revision fails for ordinary updates, including displayName
+//    updates, without merge or retry.
 //
 // Notes on what this milestone ships vs. what is deferred:
 //  - The pass-through approval gateway always approves; it is the milestone substitution seam
@@ -49,8 +49,8 @@ import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contra
 //    structured decline shape, proving the dispatcher honors the gateway seam. The pass-through
 //    gateway itself never declines by design.
 //  - The public `host.agents` SDK exposes first-class `switch()`/`delete()` methods alongside
-//    `update` (which routes name-changing patches through the privileged module). Those SDK methods
-//    are exercised end-to-end below. The `agentsCall` fetch helper is retained for cases that must
+//    ordinary `update`. Those SDK methods are exercised end-to-end below. The `agentsCall` fetch
+//    helper is retained for cases that must
 //    drive the transport BELOW the SDK surface — smuggling forged identity keys to prove the
 //    dispatcher strips reserved keys, and other transport-level assertions.
 //  - Trusted-session capture and forged-identity rejection for ordinary reads are covered end-to-end
@@ -61,7 +61,8 @@ const gate = process.env.RUN_KERNEL ? describe : describe.skip
 const LOOP = join(__dirname, '../../../resources/notebook/repl_loop.js')
 
 const startLoop = (
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  controlInvocationId?: string
 ): {
   child: ChildProcessWithoutNullStreams
   send: (code: string) => Promise<KernelLoopResponse>
@@ -84,7 +85,7 @@ const startLoop = (
     new Promise((resolve) => {
       const reqId = randomUUID()
       waiters.set(reqId, resolve)
-      child.stdin.write(framePythonRequest(reqId, code))
+      child.stdin.write(framePythonRequest(reqId, code, controlInvocationId))
     })
   return { child, send }
 }
@@ -107,7 +108,14 @@ const stubCatalog: AgentsCatalogSource = {
     autoAllowIds: [],
     disabledConnectorIds: [],
     customMcpServers: [
-      { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' }
+      {
+        id: 'cust-1',
+        name: 'my-server',
+        displayName: 'My Server',
+        transport: 'stdio',
+        enabled: true,
+        command: 'run'
+      }
     ]
   })
 }
@@ -126,17 +134,25 @@ const composeService = (opts: {
   durableBindings: Map<string, string | undefined>
   notified: Array<{ sessionId: string; targetName: string | null }>
   invalidateCount: () => number
+  approvalCount: () => number
 } => {
   const profileService = createProfileService(opts.profileStorage)
   const sessionBinding = new SessionBindingService(profileService)
   const durableBindings = new Map<string, string | undefined>()
   const notified: Array<{ sessionId: string; targetName: string | null }> = []
   let invalidated = 0
+  let approvals = 0
+  const approvalGateway = opts.gateway ?? passthroughApprovalGateway
   const agentsService = new AgentsService({
     profileService,
     catalog: stubCatalog,
     sessionBinding,
-    approvalGateway: opts.gateway ?? passthroughApprovalGateway,
+    approvalGateway: {
+      decide: async (request) => {
+        approvals += 1
+        return approvalGateway.decide(request)
+      }
+    },
     switchNotifier: {
       notify: (pending) => {
         notified.push({ sessionId: pending.sessionId, targetName: pending.targetName })
@@ -156,7 +172,8 @@ const composeService = (opts: {
     sessionBinding,
     durableBindings,
     notified,
-    invalidateCount: () => invalidated
+    invalidateCount: () => invalidated,
+    approvalCount: () => approvals
   }
 }
 
@@ -167,19 +184,22 @@ const agentsCallFetch = (
   endpoint: string,
   token: string,
   sessionId: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  controlInvocationId?: string
 ): string => {
   const payload = JSON.stringify({
     method: 'agentsCall',
-    params: { session_id: sessionId, ...params }
+    params: {
+      session_id: sessionId,
+      ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {}),
+      ...params
+    }
   })
   return `const res = await fetch(${JSON.stringify(endpoint)}, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + ${JSON.stringify(token)} }, body: ${JSON.stringify(payload)} }); const body = await res.json(); return JSON.stringify({ ok: res.ok, body })`
 }
 
 gate('host.agents repl privileged integration', () => {
   let rpcServer: NotebookLocalRpcServer
-  let endpoint: string
-  let token: string
   let profileStorage: string
   let runtimeStorage: string
   let agentsService: AgentsService
@@ -187,6 +207,7 @@ gate('host.agents repl privileged integration', () => {
   let durableBindings: Map<string, string | undefined>
   let notified: Array<{ sessionId: string; targetName: string | null }>
   let invalidateCount: () => number
+  let approvalCount: () => number
 
   beforeAll(async () => {
     profileStorage = await mkdtemp(join(tmpdir(), 'os-agents-priv-profile-'))
@@ -197,6 +218,7 @@ gate('host.agents repl privileged integration', () => {
     durableBindings = composed.durableBindings
     notified = composed.notified
     invalidateCount = composed.invalidateCount
+    approvalCount = composed.approvalCount
     void agentsService
     const notebookService = new NotebookRuntimeService({
       configRoot: runtimeStorage,
@@ -220,9 +242,6 @@ gate('host.agents repl privileged integration', () => {
       token: 'integration-token',
       agentsService
     })
-    const connection = await rpcServer.ensureStarted()
-    endpoint = connection.endpoint
-    token = connection.token
   })
 
   afterAll(async () => {
@@ -235,17 +254,38 @@ gate('host.agents repl privileged integration', () => {
   // trusted-session identity and in-memory binding state never bleed across assertions.
   const withLoop = async <T>(
     sessionId: string | undefined,
-    run: (send: (code: string) => Promise<KernelLoopResponse>) => Promise<T>
+    run: (
+      send: (code: string) => Promise<KernelLoopResponse>,
+      connection: { endpoint: string; token: string },
+      controlInvocationId: string
+    ) => Promise<T>
   ): Promise<T> => {
-    const { child, send } = startLoop({
-      OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
-      OPEN_SCIENCE_MCP_RPC_TOKEN: token,
-      ...(sessionId ? { OPEN_SCIENCE_NOTEBOOK_SESSION_ID: sessionId } : {})
+    const boundSessionId = sessionId ?? `agents-privileged-${randomUUID()}`
+    const connection = await rpcServer.issueControlConnection(
+      boundSessionId,
+      'default-project',
+      `root-frame-${boundSessionId}`
+    )
+    const controlInvocationId = randomUUID()
+    const endInvocation = connection.beginControlInvocation({
+      turnId: `turn-${controlInvocationId}`,
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
     })
+    const { child, send } = startLoop(
+      {
+        OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+        OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: boundSessionId
+      },
+      controlInvocationId
+    )
     try {
-      return await run(send)
+      return await run(send, connection, controlInvocationId)
     } finally {
       child.kill()
+      endInvocation()
+      connection.release()
     }
   }
 
@@ -305,6 +345,66 @@ gate('host.agents repl privileged integration', () => {
     })
   })
 
+  it('rejects Specialist switching through a real delegate capability before approval or mutation despite forged Main fields', async () => {
+    await agentsService.dispatch({
+      op: 'create',
+      params: { name: 'DELEGATE_SWITCH_TARGET' }
+    })
+    const approvalsBefore = approvalCount()
+    const notificationsBefore = notified.length
+    const connection = await rpcServer.issueControlConnection(
+      'delegate-switch-session',
+      'project-1',
+      'delegate-frame-1',
+      { role: 'delegate', attemptId: 'delegate-attempt-1' }
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'delegate-turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'delegate-tool-1'
+    })
+    const { child, send } = startLoop(
+      {
+        OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+        OPEN_SCIENCE_MCP_RPC_TOKEN: connection.token,
+        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'delegate-switch-session'
+      },
+      'delegate-tool-1'
+    )
+
+    try {
+      const response = await send(
+        agentsCallFetch(
+          connection.endpoint,
+          connection.token,
+          'forged-session',
+          {
+            op: 'switch',
+            name: 'DELEGATE_SWITCH_TARGET',
+            caller_role: 'main',
+            role: 'main',
+            is_main: true
+          },
+          'delegate-tool-1'
+        )
+      )
+      expect(response.error).toBeNull()
+      const parsed = JSON.parse(response.result ?? '{}')
+      expect(parsed).toEqual({
+        ok: false,
+        body: { error: 'host.agents.switch: Only Main Agent may switch Specialist profile.' }
+      })
+      expect(approvalCount()).toBe(approvalsBefore)
+      expect(sessionBinding.getBinding('delegate-switch-session')).toBeUndefined()
+      expect(durableBindings.has('delegate-switch-session')).toBe(false)
+      expect(notified).toHaveLength(notificationsBefore)
+    } finally {
+      child.kill()
+      endInvocation()
+      connection.release()
+    }
+  })
+
   it('host.agents.delete(name, { revision }) removes the profile via the SDK method and invalidates the catalog', async () => {
     const invalidatedBefore = invalidateCount()
     await withLoop(undefined, async (send) => {
@@ -325,23 +425,24 @@ gate('host.agents repl privileged integration', () => {
     expect(invalidateCount()).toBeGreaterThan(invalidatedBefore)
   })
 
-  it('a name-changing update is an ordinary mutation: no approval gateway, atomic single-profile commit, real read-back', async () => {
+  it('a displayName update is an ordinary mutation: no approval gateway, atomic single-profile commit, real read-back', async () => {
     await withLoop(undefined, async (send) => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'ATOM_PROBE', description: 'before' }))"
+            "return JSON.stringify(await host.agents.create({ name: 'ATOM_PROBE', displayName: 'Atom Probe', description: 'before' }))"
           )
         ).result ?? '{}'
       )
-      // A patch that changes the public `name` applies like any other update field (renames are
-      // chat-reviewed, not privileged): the SDK returns the real camelCase profile read-back.
+      // A displayName patch applies like any other update field: the SDK returns the real camelCase
+      // profile read-back while the invocation name remains immutable.
       const r = await send(
-        `return JSON.stringify(await host.agents.update('ATOM_PROBE', { name: 'ATOM_ANALYZER', description: 'after', revision: ${created.revision} }))`
+        `return JSON.stringify(await host.agents.update('ATOM_PROBE', { displayName: 'Atom Analyzer', description: 'after', revision: ${created.revision} }))`
       )
       expect(r.error).toBeNull()
       const updated = JSON.parse(r.result ?? '{}')
-      expect(updated.name).toBe('ATOM_ANALYZER')
+      expect(updated.name).toBe('ATOM_PROBE')
+      expect(updated.displayName).toBe('Atom Analyzer')
       expect(updated.description).toBe('after')
       // Revision was bumped by the authoritative ProfileService, not echoed.
       expect(updated.revision).toBe(created.revision + 1)
@@ -356,7 +457,7 @@ gate('host.agents repl privileged integration', () => {
   // the structured-decline wire envelope / no-retry dispatch over a custom decline gateway.
 
   it('switch cannot forge a different calling session: reserved identity keys are dropped, only the trusted session is bound', async () => {
-    await withLoop('session-real', async (send) => {
+    await withLoop('session-real', async (send, connection, controlInvocationId) => {
       const created = JSON.parse(
         (await send("return JSON.stringify(await host.agents.create({ name: 'GUARD_TARGET' }))"))
           .result ?? '{}'
@@ -365,14 +466,20 @@ gate('host.agents repl privileged integration', () => {
       // reconfigure flag) alongside the trusted session. The dispatcher strips every reserved key;
       // the switch binds ONLY the trusted calling session.
       const r = await send(
-        agentsCallFetch(endpoint, token, 'session-real', {
-          op: 'switch',
-          name: 'GUARD_TARGET',
-          sessionId: 'forged-camel',
-          specialist_id: 'forged-specialist',
-          target_specialist_id: 'forged-target',
-          reconfigure: true
-        })
+        agentsCallFetch(
+          connection.endpoint,
+          connection.token,
+          'session-real',
+          {
+            op: 'switch',
+            name: 'GUARD_TARGET',
+            sessionId: 'forged-camel',
+            specialist_id: 'forged-specialist',
+            target_specialist_id: 'forged-target',
+            reconfigure: true
+          },
+          controlInvocationId
+        )
       )
       const parsed = JSON.parse(r.result ?? '{}')
       expect(parsed.ok).toBe(true)
@@ -410,44 +517,44 @@ gate('host.agents repl privileged integration', () => {
     expect(invalidateCount()).toBeGreaterThan(invalidatedBefore)
   })
 
-  it('a name-changing update keeps stable conversation bindings: the binding follows the profile (UUID), not the name', async () => {
-    // design.md §4/§10: stable conversation bindings are UUID-based. A rename changes the public name
-    // but NOT the UUID, so an already-bound conversation keeps resolving the SAME profile under its new
-    // name. This is the integration proof of the rename-keeps-binding contract.
+  it('a displayName update keeps stable conversation bindings and the immutable invocation name', async () => {
+    // Stable conversation bindings are UUID-based. A displayName update changes neither the UUID nor
+    // the invocation name, so an already-bound conversation keeps resolving the same profile.
     await withLoop(undefined, async (send) => {
       const created = JSON.parse(
         (
           await send(
-            "return JSON.stringify(await host.agents.create({ name: 'RENAME_OLD', description: 'x' }))"
+            "return JSON.stringify(await host.agents.create({ name: 'RENAME_OLD', displayName: 'Old Label', description: 'x' }))"
           )
         ).result ?? '{}'
       )
       // Simulate an existing conversation bound to this Specialist by its stable UUID.
-      durableBindings.set('session-bound-rename', created.id)
-      sessionBinding.setBinding('session-bound-rename', created.id)
-      // Before the rename, the binding resolves bound under the old name.
-      const before = await sessionBinding.resolve('session-bound-rename')
+      durableBindings.set('session-bound-display', created.id)
+      sessionBinding.setBinding('session-bound-display', created.id)
+      // Before the update, the binding resolves the profile.
+      const before = await sessionBinding.resolve('session-bound-display')
       expect(before.kind).toBe('bound')
 
-      // Name-changing update (ordinary chat-reviewed mutation).
+      // displayName update (ordinary chat-reviewed mutation).
       const r = await send(
-        `return JSON.stringify(await host.agents.update('RENAME_OLD', { name: 'RENAME_NEW', revision: ${created.revision} }))`
+        `return JSON.stringify(await host.agents.update('RENAME_OLD', { displayName: 'New Label', revision: ${created.revision} }))`
       )
       const updated = JSON.parse(r.result ?? '{}')
-      expect(updated.name).toBe('RENAME_NEW')
-      // The UUID is unchanged across the rename.
+      expect(updated.name).toBe('RENAME_OLD')
+      expect(updated.displayName).toBe('New Label')
+      // The UUID is unchanged across the update.
       expect(updated.id).toBe(created.id)
 
-      // The bound conversation STILL resolves the SAME profile (now under its new name) — the binding
-      // follows the profile (UUID), not the public name. No integration code rewrites it.
-      const after = await sessionBinding.resolve('session-bound-rename')
+      // The bound conversation still resolves the same profile. No integration code rewrites it.
+      const after = await sessionBinding.resolve('session-bound-display')
       expect(after.kind).toBe('bound')
       if (after.kind === 'bound') {
         expect(after.profile.id).toBe(created.id)
-        expect(after.profile.name).toBe('RENAME_NEW')
+        expect(after.profile.name).toBe('RENAME_OLD')
+        expect(after.profile.displayName).toBe('New Label')
       }
       // The durable binding record is untouched.
-      expect(durableBindings.get('session-bound-rename')).toBe(created.id)
+      expect(durableBindings.get('session-bound-display')).toBe(created.id)
     })
   })
 
@@ -482,20 +589,36 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'decline-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-decline',
+      'default-project',
+      'root-frame-session-decline'
+    )
+    const controlInvocationId = 'decline-tool'
+    const endInvocation = conn.beginControlInvocation({
+      turnId: 'decline-turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
+    })
     try {
-      const { child, send } = startLoop({
-        OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
-        OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
-        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline'
-      })
+      const { child, send } = startLoop(
+        {
+          OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
+          OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
+          OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline'
+        },
+        controlInvocationId
+      )
       try {
         await send("return JSON.stringify(await host.agents.create({ name: 'DECLINE_TARGET' }))")
         const r = await send(
-          agentsCallFetch(conn.endpoint, conn.token, 'session-decline', {
-            op: 'switch',
-            name: 'DECLINE_TARGET'
-          })
+          agentsCallFetch(
+            conn.endpoint,
+            conn.token,
+            'session-decline',
+            { op: 'switch', name: 'DECLINE_TARGET' },
+            controlInvocationId
+          )
         )
         const parsed = JSON.parse(r.result ?? '{}')
         // Decline is a STRUCTURED non-error result (HTTP 200), not a thrown error.
@@ -508,6 +631,8 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
+      endInvocation()
+      conn.release()
       await declineRpc.close()
     }
   })
@@ -542,13 +667,26 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'decline-del-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-decline-del',
+      'default-project',
+      'root-frame-session-decline-del'
+    )
+    const controlInvocationId = 'decline-delete-tool'
+    const endInvocation = conn.beginControlInvocation({
+      turnId: 'decline-delete-turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
+    })
     try {
-      const { child, send } = startLoop({
-        OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
-        OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
-        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline-del'
-      })
+      const { child, send } = startLoop(
+        {
+          OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
+          OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
+          OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-decline-del'
+        },
+        controlInvocationId
+      )
       try {
         const created = JSON.parse(
           (await send("return JSON.stringify(await host.agents.create({ name: 'DECLINE_DEL' }))"))
@@ -556,11 +694,17 @@ gate('host.agents repl privileged integration', () => {
         )
         const beforeInvalidated = composed.invalidateCount()
         const r = await send(
-          agentsCallFetch(conn.endpoint, conn.token, 'session-decline-del', {
-            op: 'delete',
-            name: 'DECLINE_DEL',
-            revision: created.revision
-          })
+          agentsCallFetch(
+            conn.endpoint,
+            conn.token,
+            'session-decline-del',
+            {
+              op: 'delete',
+              name: 'DECLINE_DEL',
+              revision: created.revision
+            },
+            controlInvocationId
+          )
         )
         const parsed = JSON.parse(r.result ?? '{}')
         expect(parsed.ok).toBe(true)
@@ -578,6 +722,8 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
+      endInvocation()
+      conn.release()
       await declineRpc.close()
     }
   })
@@ -592,18 +738,18 @@ gate('host.agents repl privileged integration', () => {
     })
   })
 
-  it('optimistic concurrency: a stale revision on a name-changing update fails without merge or retry', async () => {
+  it('optimistic concurrency: a stale revision on a displayName update fails without merge or retry', async () => {
     await withLoop(undefined, async (send) => {
       await send("return JSON.stringify(await host.agents.create({ name: 'STALE_PRIV' }))")
       const r = await send(
-        "try { await host.agents.update('STALE_PRIV', { name: 'STALE_PRIV_RENAMED', revision: 999 }); return 'no-throw' } catch (e) { return e.message }"
+        "try { await host.agents.update('STALE_PRIV', { displayName: 'Stale Label', revision: 999 }); return 'no-throw' } catch (e) { return e.message }"
       )
       // The ordinary update path fails closed on revision drift with a sanitized host.agents.update: error.
       expect(r.result).toMatch(/host\.agents\.update:/)
     })
   })
 
-  it('a name-changing update bypasses the approval gateway entirely (renames are not privileged)', async () => {
+  it('a displayName update bypasses the approval gateway entirely', async () => {
     const decide = vi.fn(async (): Promise<ApprovalResult> => ({
       status: 'declined',
       operation: 'delete'
@@ -630,7 +776,11 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'no-approval-upd-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-no-approval-upd',
+      'default-project',
+      'root-frame-session-no-approval-upd'
+    )
     try {
       const { child, send } = startLoop({
         OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
@@ -641,22 +791,24 @@ gate('host.agents repl privileged integration', () => {
         const created = JSON.parse(
           (
             await send(
-              "return JSON.stringify(await host.agents.create({ name: 'ATOMIC_OLD', description: 'keep-me' }))"
+              "return JSON.stringify(await host.agents.create({ name: 'ATOMIC_OLD', displayName: 'Atomic Old', description: 'keep-me' }))"
             )
           ).result ?? '{}'
         )
         const r = await send(
-          `return JSON.stringify(await host.agents.update('ATOMIC_OLD', { name: 'ATOMIC_NEW', description: 'applied', revision: ${created.revision} }))`
+          `return JSON.stringify(await host.agents.update('ATOMIC_OLD', { displayName: 'Atomic New', description: 'applied', revision: ${created.revision} }))`
         )
         const result = JSON.parse(r.result ?? '{}')
-        // Rename applied directly; even a decline-configured gateway is never consulted.
-        expect(result.name).toBe('ATOMIC_NEW')
+        // Ordinary update applied directly; even a decline-configured gateway is never consulted.
+        expect(result.name).toBe('ATOMIC_OLD')
+        expect(result.displayName).toBe('Atomic New')
         expect(result.description).toBe('applied')
         expect(decide).not.toHaveBeenCalled()
       } finally {
         child.kill()
       }
     } finally {
+      conn.release()
       await declineRpc.close()
     }
   })
@@ -690,20 +842,36 @@ gate('host.agents repl privileged integration', () => {
       }),
       { token: 'no-retry-token', agentsService: composed.agentsService }
     )
-    const conn = await declineRpc.ensureStarted()
+    const conn = await declineRpc.issueControlConnection(
+      'session-no-retry',
+      'default-project',
+      'root-frame-session-no-retry'
+    )
+    const controlInvocationId = 'no-retry-tool'
+    const endInvocation = conn.beginControlInvocation({
+      turnId: 'no-retry-turn',
+      controlInvocationGeneration: 1,
+      toolInvocationId: controlInvocationId
+    })
     try {
-      const { child, send } = startLoop({
-        OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
-        OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
-        OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-no-retry'
-      })
+      const { child, send } = startLoop(
+        {
+          OPEN_SCIENCE_MCP_RPC_ENDPOINT: conn.endpoint,
+          OPEN_SCIENCE_MCP_RPC_TOKEN: conn.token,
+          OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-no-retry'
+        },
+        controlInvocationId
+      )
       try {
         await send("return JSON.stringify(await host.agents.create({ name: 'NO_RETRY_T' }))")
         await send(
-          agentsCallFetch(conn.endpoint, conn.token, 'session-no-retry', {
-            op: 'switch',
-            name: 'NO_RETRY_T'
-          })
+          agentsCallFetch(
+            conn.endpoint,
+            conn.token,
+            'session-no-retry',
+            { op: 'switch', name: 'NO_RETRY_T' },
+            controlInvocationId
+          )
         )
         // Exactly one decision, never retried.
         expect(decide).toHaveBeenCalledTimes(1)
@@ -711,6 +879,8 @@ gate('host.agents repl privileged integration', () => {
         child.kill()
       }
     } finally {
+      endInvocation()
+      conn.release()
       await declineRpc.close()
     }
   })

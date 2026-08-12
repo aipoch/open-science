@@ -5,10 +5,12 @@ import { join } from 'node:path'
 import { SettingsRepository } from './repository'
 
 describe('SettingsRepository compute grant persistence', () => {
-  const withRepo = async (fn: (repo: SettingsRepository) => Promise<void>): Promise<void> => {
+  const withRepo = async (
+    fn: (repo: SettingsRepository, storageDir: string) => Promise<void>
+  ): Promise<void> => {
     const dir = await mkdtemp(join(tmpdir(), 'osci-compute-grants-'))
     try {
-      await fn(new SettingsRepository(dir))
+      await fn(new SettingsRepository(dir), dir)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -90,16 +92,13 @@ describe('SettingsRepository compute grant persistence', () => {
   })
 
   it('persists grants to disk and survives a fresh repository read', async () => {
-    await withRepo(async (repo) => {
+    await withRepo(async (repo, storageDir) => {
       await repo.addComputeGrant({
         projectId: 'proj-1',
         operation: 'call_command',
         providerId: 'ssh:biowulf'
       })
-      const raw = await readFile(
-        join((repo as unknown as { storageDir: string }).storageDir, 'settings.json'),
-        'utf8'
-      )
+      const raw = await readFile(join(storageDir, 'settings.json'), 'utf8')
       const parsed = JSON.parse(raw) as { computeGrants?: unknown[] }
       expect(Array.isArray(parsed.computeGrants)).toBe(true)
       expect((parsed.computeGrants ?? []).length).toBeGreaterThan(0)

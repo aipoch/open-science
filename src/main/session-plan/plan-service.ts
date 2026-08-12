@@ -35,8 +35,8 @@ type SessionPlanIdentityOwner = Pick<
 
 type PlanServiceDependencies = Readonly<{
   interactions: SessionPlanIdentityOwner
-  writeArtifactForActiveTurn: (
-    sessionId: string,
+  writeArtifactForExecution: (
+    executionId: string,
     input: { filename: string; content: string; mimeType: string; kind: 'plan' }
   ) => Promise<ArtifactWriteResult>
   readArtifactVersion: (input: {
@@ -52,6 +52,7 @@ type PlanServiceDependencies = Readonly<{
     expectedRevision: number
     plan: SessionPlanRuntimeContext | undefined
     sessionStatus: 'waiting-plan-approval' | 'running' | 'idle'
+    beforePersist?: () => void
   }) => Promise<SessionRuntimeContext>
   isRevisionConflict: (error: unknown) => boolean
   persistUserMessage: (input: {
@@ -59,9 +60,29 @@ type PlanServiceDependencies = Readonly<{
     sessionId: string
     content: string
     interactionId: string
+    beforePersist?: () => void
+    markPlanReview?: Readonly<{
+      expectedRevision: number
+      plan: SessionPlanRuntimeContext
+      commandId: string
+      createdAt: number
+    }>
   }) => Promise<PersistedChatMessage>
   now?: () => number
   createId?: () => string
+  createCommandId?: () => string
+  onApprovalRequested?: (request: {
+    projectId: string
+    sessionId: string
+    artifactVersionId: string
+    summary: string
+  }) => void
+  onApprovalSettled?: (request: {
+    projectId: string
+    sessionId: string
+    artifactVersionId: string
+    state: 'resolved' | 'rejected' | 'expired' | 'cancelled'
+  }) => void
 }>
 
 type PlanIdentityCommand = Readonly<{
@@ -71,13 +92,28 @@ type PlanIdentityCommand = Readonly<{
   expectedRevision: number
 }>
 
-type PlanDecisionResult = { projection: ActivePlanProjection; changed: boolean }
+type PlanDecisionCommitPrecondition = Readonly<{
+  beforeDecisionCommit?: () => boolean
+}>
+
+type PlanFeedbackCommitPrecondition = Readonly<{
+  beforeFeedbackPersist?: () => void
+}>
+
+type PlanDecisionResult = {
+  projection: ActivePlanProjection
+  changed: boolean
+  continuationCommandId?: string
+}
 type PlanFeedbackResult = {
   kind: 'feedback'
   routeToInteractionId: string
   artifactVersionId: string
   text: string
   message: PersistedChatMessage
+  planRevision: number
+  continuationProjection?: ActivePlanProjection
+  continuationCommandId: string
 }
 type PlanResponseResult = PlanDecisionResult | PlanFeedbackResult
 
@@ -92,6 +128,12 @@ const runtimeStatusFor = (
 ): SessionPlanRuntimeContext['stepStatuses'][string] | undefined =>
   Object.hasOwn(plan.stepStatuses, title) ? plan.stepStatuses[title] : undefined
 
+const withoutContinuation = (plan: SessionPlanRuntimeContext): SessionPlanRuntimeContext => {
+  const settled = { ...plan }
+  Reflect.deleteProperty(settled, 'continuation')
+  return settled
+}
+
 const parseDocument = (content: string): PlanDocumentV1 => {
   try {
     return parsePlanDocumentV1(JSON.parse(content))
@@ -103,20 +145,44 @@ const parseDocument = (content: string): PlanDocumentV1 => {
 class PlanService {
   private readonly now: () => number
   private readonly createId: () => string
+  private readonly createCommandId: () => string
   constructor(private readonly dependencies: PlanServiceDependencies) {
     this.now = dependencies.now ?? Date.now
     this.createId = dependencies.createId ?? (() => randomUUID().slice(0, 8))
+    this.createCommandId = dependencies.createCommandId ?? randomUUID
   }
 
   async generate(input: {
     projectId: string
     sessionId: string
+    executionId: string
     interactionId: string
     content: GeneratePlanContent
   }): Promise<{ projection: ActivePlanProjection; pauseInteraction: true }> {
     const document = createPlanDocumentV1(input.content)
     const serialized = JSON.stringify(document, null, 2)
-    const artifact = await this.dependencies.writeArtifactForActiveTurn(input.sessionId, {
+    const checksum = sha256(serialized)
+    const current = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
+    if (current.plan?.approval === 'pending') {
+      if (current.plan.artifactChecksum === checksum) {
+        this.dependencies.interactions.register({
+          sessionId: input.sessionId,
+          artifactVersionId: current.plan.artifactVersionId,
+          interactionId: input.interactionId
+        })
+        return {
+          projection: this.project(document, current.plan, current.revision),
+          pauseInteraction: true
+        }
+      }
+      if (!current.plan.reviewFeedbackMessageId) {
+        throw new PlanCommandError(
+          'plan-review-pending',
+          'The existing Session Plan is still awaiting review.'
+        )
+      }
+    }
+    const artifact = await this.dependencies.writeArtifactForExecution(input.executionId, {
       filename: `plan-${this.createId()}.json`,
       content: serialized,
       mimeType: 'application/json',
@@ -141,12 +207,12 @@ class PlanService {
         'Plan Artifact checksum verification failed.'
       )
     }
-    const current = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
     const plan: SessionPlanRuntimeContext = {
       artifactId: artifact.artifactId,
       artifactVersionId: artifact.versionId,
       artifactChecksum: artifact.checksum,
       originatingPromptMessageId: input.interactionId,
+      materializedAt: this.now(),
       approval: 'pending',
       stepStatuses: {}
     }
@@ -170,21 +236,46 @@ class PlanService {
       artifactVersionId: plan.artifactVersionId,
       interactionId: input.interactionId
     })
+    if (
+      current.plan?.approval === 'pending' &&
+      current.plan.artifactVersionId !== plan.artifactVersionId
+    ) {
+      this.dependencies.onApprovalSettled?.({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: current.plan.artifactVersionId,
+        state: 'cancelled'
+      })
+    }
+    this.dependencies.onApprovalRequested?.({
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      artifactVersionId: plan.artifactVersionId,
+      summary: input.content.task_summary
+    })
     return { projection: this.project(document, plan, next.revision), pauseInteraction: true }
   }
 
   async respond(
     input: PlanIdentityCommand &
-      Readonly<{ decision: 'approved' | 'rejected'; interactionIsLive?: boolean }>
+      Readonly<{ decision: 'approved' | 'rejected'; interactionIsLive?: boolean }> &
+      PlanDecisionCommitPrecondition
   ): Promise<PlanDecisionResult>
   async respond(
-    input: Readonly<{ projectId: string; sessionId: string; feedback: string }>
+    input: Readonly<{ projectId: string; sessionId: string; feedback: string }> &
+      PlanFeedbackCommitPrecondition
   ): Promise<PlanFeedbackResult>
   async respond(
-    input: PlanResponseCommand & Readonly<{ interactionIsLive?: boolean }>
+    input: PlanResponseCommand &
+      Readonly<{ interactionIsLive?: boolean }> &
+      PlanDecisionCommitPrecondition &
+      PlanFeedbackCommitPrecondition
   ): Promise<PlanResponseResult>
   async respond(
-    input: PlanResponseCommand & Readonly<{ interactionIsLive?: boolean }>
+    input: PlanResponseCommand &
+      Readonly<{ interactionIsLive?: boolean }> &
+      PlanDecisionCommitPrecondition &
+      PlanFeedbackCommitPrecondition
   ): Promise<PlanResponseResult> {
     if (input.decision === undefined) {
       const context = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
@@ -205,39 +296,279 @@ class PlanService {
           'The Plan interaction is no longer available for revision feedback.'
         )
       }
+      const document = await this.readDocument(input.projectId, input.sessionId, plan)
+      const continuationCommandId = this.createCommandId()
+      const continuationCreatedAt = this.now()
       const message = await this.dependencies.persistUserMessage({
         projectId: input.projectId,
         sessionId: input.sessionId,
         content: text,
-        interactionId
+        interactionId,
+        ...(input.beforeFeedbackPersist ? { beforePersist: input.beforeFeedbackPersist } : {}),
+        markPlanReview: {
+          expectedRevision: context.revision,
+          plan,
+          commandId: continuationCommandId,
+          createdAt: continuationCreatedAt
+        }
       })
+      const reviewedPlan: SessionPlanRuntimeContext = {
+        ...plan,
+        reviewFeedbackMessageId: message.id,
+        continuation: {
+          commandId: continuationCommandId,
+          kind: 'review-feedback',
+          state: 'queued',
+          originatingPromptMessageId: message.id,
+          createdAt: continuationCreatedAt
+        }
+      }
       this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
+      this.dependencies.onApprovalSettled?.({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: plan.artifactVersionId,
+        state: 'resolved'
+      })
       return {
         kind: 'feedback',
         routeToInteractionId: interactionId,
         artifactVersionId: plan.artifactVersionId,
         text,
-        message
+        message,
+        planRevision: context.revision + 1,
+        continuationCommandId,
+        continuationProjection: this.project(document, reviewedPlan, context.revision + 1)
       }
     }
     const { context, plan, document } = await this.loadActive(input, input.decision)
     if (plan.approval === input.decision) {
+      if (
+        input.decision === 'approved' &&
+        input.interactionIsLive &&
+        plan.continuation?.state === 'interrupted'
+      ) {
+        const rebound = withoutContinuation(plan)
+        const next = await this.patch(input, rebound, 'running')
+        this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
+        this.dependencies.onApprovalSettled?.({
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          artifactVersionId: plan.artifactVersionId,
+          state: 'resolved'
+        })
+        return {
+          projection: this.project(document, rebound, next.revision, true),
+          changed: true
+        }
+      }
       this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
+      this.dependencies.onApprovalSettled?.({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: plan.artifactVersionId,
+        state: input.decision === 'rejected' ? 'rejected' : 'resolved'
+      })
       return {
         projection: this.project(document, plan, context.revision, input.interactionIsLive),
-        changed: false
+        changed: false,
+        ...(plan.continuation ? { continuationCommandId: plan.continuation.commandId } : {})
       }
     }
     if (plan.approval !== 'pending') {
       throw new PlanCommandError('approval-already-decided', 'Plan approval is irreversible.')
     }
-    const updated = { ...plan, approval: input.decision }
-    const next = await this.patch(input, updated, input.interactionIsLive ? 'running' : 'idle')
+    if (!plan.originatingPromptMessageId) {
+      throw new PlanCommandError(
+        'invalid-plan',
+        'The Plan cannot be continued because its originating user Message is unavailable.'
+      )
+    }
+    const settledPlan = { ...plan }
+    const existingContinuation = plan.continuation
+    Reflect.deleteProperty(settledPlan, 'reviewFeedbackMessageId')
+    if (existingContinuation?.kind === 'review-feedback') {
+      Reflect.deleteProperty(settledPlan, 'continuation')
+    }
+    const updated: SessionPlanRuntimeContext = {
+      ...settledPlan,
+      ...(existingContinuation && existingContinuation.kind !== 'review-feedback'
+        ? { continuation: existingContinuation }
+        : {}),
+      approval: input.decision,
+      continuation: {
+        commandId: this.createCommandId(),
+        kind: input.decision === 'approved' ? 'approved-plan' : 'rejected-plan',
+        state: 'queued',
+        originatingPromptMessageId: plan.originatingPromptMessageId,
+        createdAt: this.now()
+      }
+    }
+    const beforePersist = input.beforeDecisionCommit
+      ? (): void => {
+          if (!input.beforeDecisionCommit?.()) {
+            throw new PlanCommandError(
+              'interaction-mismatch',
+              'The Session Plan decision authorization was revoked before commit.'
+            )
+          }
+        }
+      : undefined
+    const next = await this.patch(
+      input,
+      updated,
+      input.interactionIsLive ? 'running' : 'idle',
+      beforePersist
+    )
     this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
+    this.dependencies.onApprovalSettled?.({
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      artifactVersionId: plan.artifactVersionId,
+      state: input.decision === 'rejected' ? 'rejected' : 'resolved'
+    })
     return {
       projection: this.project(document, updated, next.revision, input.interactionIsLive),
-      changed: true
+      changed: true,
+      continuationCommandId: updated.continuation!.commandId
     }
+  }
+
+  async queueSettledDecisionContinuation(
+    input: PlanIdentityCommand & Readonly<{ decision: 'approved' | 'rejected' }>
+  ): Promise<PlanDecisionResult> {
+    const kind = input.decision === 'approved' ? 'approved-plan' : 'rejected-plan'
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const context = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
+      const plan = context.plan
+      if (!plan || plan.artifactVersionId !== input.artifactVersionId) {
+        throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
+      }
+      if (plan.approval !== input.decision) {
+        throw new PlanCommandError(
+          'approval-already-decided',
+          'The Plan decision changed before continuation handoff.'
+        )
+      }
+      if (!plan.originatingPromptMessageId) {
+        throw new PlanCommandError(
+          'invalid-plan',
+          'The Plan cannot be continued because its originating user Message is unavailable.'
+        )
+      }
+      const document = await this.readDocument(input.projectId, input.sessionId, plan)
+      if (plan.continuation) {
+        if (
+          plan.continuation.kind === kind &&
+          plan.continuation.originatingPromptMessageId === plan.originatingPromptMessageId
+        ) {
+          return {
+            projection: this.project(document, plan, context.revision),
+            changed: false
+          }
+        }
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'A different Plan continuation is already active.'
+        )
+      }
+      const queued: SessionPlanRuntimeContext = {
+        ...plan,
+        continuation: {
+          commandId: this.createCommandId(),
+          kind,
+          state: 'queued',
+          originatingPromptMessageId: plan.originatingPromptMessageId,
+          createdAt: this.now()
+        }
+      }
+      try {
+        const next = await this.dependencies.patchRuntimeContext({
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          expectedRevision: context.revision,
+          plan: queued,
+          sessionStatus: 'idle'
+        })
+        return { projection: this.project(document, queued, next.revision), changed: true }
+      } catch (error) {
+        if (!this.dependencies.isRevisionConflict(error) || attempt === 2) {
+          if (this.dependencies.isRevisionConflict(error)) {
+            throw new PlanCommandError(
+              'revision-conflict',
+              'The Plan continuation changed concurrently.'
+            )
+          }
+          throw error
+        }
+      }
+    }
+    throw new PlanCommandError('revision-conflict', 'The Plan continuation changed concurrently.')
+  }
+
+  async queueReviewFeedbackContinuation(
+    input: PlanIdentityCommand & Readonly<{ feedbackMessageId: string }>
+  ): Promise<PlanDecisionResult> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const context = await this.dependencies.readRuntimeContext(input.projectId, input.sessionId)
+      const plan = context.plan
+      if (!plan || plan.artifactVersionId !== input.artifactVersionId) {
+        throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
+      }
+      if (plan.approval !== 'pending' || plan.reviewFeedbackMessageId !== input.feedbackMessageId) {
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'The persisted Plan review feedback changed before continuation handoff.'
+        )
+      }
+      const document = await this.readDocument(input.projectId, input.sessionId, plan)
+      if (plan.continuation) {
+        if (
+          plan.continuation.kind === 'review-feedback' &&
+          plan.continuation.originatingPromptMessageId === input.feedbackMessageId
+        ) {
+          return {
+            projection: this.project(document, plan, context.revision),
+            changed: false
+          }
+        }
+        throw new PlanCommandError(
+          'interaction-mismatch',
+          'A different Plan continuation is already active.'
+        )
+      }
+      const queued: SessionPlanRuntimeContext = {
+        ...plan,
+        continuation: {
+          commandId: this.createCommandId(),
+          kind: 'review-feedback',
+          state: 'queued',
+          originatingPromptMessageId: input.feedbackMessageId,
+          createdAt: this.now()
+        }
+      }
+      try {
+        const next = await this.dependencies.patchRuntimeContext({
+          projectId: input.projectId,
+          sessionId: input.sessionId,
+          expectedRevision: context.revision,
+          plan: queued,
+          sessionStatus: 'idle'
+        })
+        return { projection: this.project(document, queued, next.revision), changed: true }
+      } catch (error) {
+        if (!this.dependencies.isRevisionConflict(error) || attempt === 2) {
+          if (this.dependencies.isRevisionConflict(error)) {
+            throw new PlanCommandError(
+              'revision-conflict',
+              'The Plan continuation changed concurrently.'
+            )
+          }
+          throw error
+        }
+      }
+    }
+    throw new PlanCommandError('revision-conflict', 'The Plan continuation changed concurrently.')
   }
 
   async updateStepStatus(
@@ -276,8 +607,11 @@ class PlanService {
         }
       }
     }
-    const next = await this.patch(input, updated, 'running')
-    return { projection: this.project(document, updated, next.revision, true), changed: true }
+    const settled = isPlanTerminalOutcome(document, updated.stepStatuses)
+      ? withoutContinuation(updated)
+      : updated
+    const next = await this.patch(input, settled, 'running')
+    return { projection: this.project(document, settled, next.revision, true), changed: true }
   }
 
   async getProjection(
@@ -312,6 +646,11 @@ class PlanService {
         'invalid-transition',
         'The Plan has already reached a terminal outcome.'
       )
+    }
+    if (plan.continuation?.state === 'interrupted') {
+      const rebound = withoutContinuation(plan)
+      const next = await this.patch(input, rebound, 'running')
+      return this.project(document, rebound, next.revision, true)
     }
     return this.project(document, plan, context.revision, true)
   }
@@ -364,6 +703,14 @@ class PlanService {
           plan: undefined,
           sessionStatus: 'idle'
         })
+        if (observed.plan?.approval === 'pending') {
+          this.dependencies.onApprovalSettled?.({
+            projectId,
+            sessionId,
+            artifactVersionId: observed.plan.artifactVersionId,
+            state: 'expired'
+          })
+        }
         return
       } catch (error) {
         if (!this.dependencies.isRevisionConflict(error)) throw error
@@ -412,7 +759,8 @@ class PlanService {
   private async patch(
     input: PlanIdentityCommand,
     plan: SessionPlanRuntimeContext,
-    sessionStatus: 'waiting-plan-approval' | 'running' | 'idle'
+    sessionStatus: 'waiting-plan-approval' | 'running' | 'idle',
+    beforePersist?: () => void
   ): Promise<SessionRuntimeContext> {
     try {
       return await this.dependencies.patchRuntimeContext({
@@ -420,7 +768,8 @@ class PlanService {
         sessionId: input.sessionId,
         expectedRevision: input.expectedRevision,
         plan,
-        sessionStatus
+        sessionStatus,
+        ...(beforePersist ? { beforePersist } : {})
       })
     } catch (error) {
       if (this.dependencies.isRevisionConflict(error)) {
@@ -495,12 +844,15 @@ class PlanService {
       ...(plan.originatingPromptMessageId
         ? { originatingPromptMessageId: plan.originatingPromptMessageId }
         : {}),
+      ...(plan.materializedAt !== undefined ? { materializedAt: plan.materializedAt } : {}),
       revision,
       approval: plan.approval,
       lifecycle,
+      ...(plan.continuation ? { continuationState: plan.continuation.state } : {}),
       requiresExplicitContinuation:
         !interactionIsLive &&
         plan.approval === 'approved' &&
+        plan.continuation?.state !== 'queued' &&
         !isPlanTerminalOutcome(document, plan.stepStatuses),
       document,
       stepStatuses: plan.stepStatuses,

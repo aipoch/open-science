@@ -37,7 +37,9 @@ type ArtifactMcpEnvironment = {
 // alias-proof, unlike the static session-creation env which only knows the pre-start alias.
 type ArtifactRunContext = {
   artifactRunId: string
+  executionId?: string
   appSessionId?: string
+  artifactStorageSessionId?: string
   rootFrameId?: string
   agentFrameId?: string
   messageBranchId?: string
@@ -165,7 +167,9 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
 
   return {
     artifactRunId,
+    executionId: optionalString('executionId'),
     appSessionId: optionalString('appSessionId'),
+    artifactStorageSessionId: optionalString('artifactStorageSessionId'),
     rootFrameId: optionalString('rootFrameId'),
     agentFrameId: optionalString('agentFrameId'),
     messageBranchId: optionalString('messageBranchId'),
@@ -318,6 +322,7 @@ const writeArtifactFileForCurrentRun = async (
   invocation: ArtifactWriteInvocation = {}
 ): Promise<ArtifactFile | ArtifactVersionFile> => {
   const context = await readCurrentRunContext(environment.currentRunFile)
+  const artifactStorageSessionId = context.artifactStorageSessionId ?? environment.sessionId
   const source = normalizeArtifactToolWriteInput(
     input,
     Boolean(context.notebookDataDir || environment.allowedImportRoots[0])
@@ -336,7 +341,7 @@ const writeArtifactFileForCurrentRun = async (
     : environment.allowedImportRoots.slice(0, 1)
   const writeRequest = {
     projectName: environment.projectName,
-    sessionId: environment.sessionId,
+    sessionId: artifactStorageSessionId,
     runId: context.artifactRunId,
     filename: input.filename,
     mimeType: input.mimeType,
@@ -403,7 +408,7 @@ const writeArtifactFileForCurrentRun = async (
     const replay = await callArtifactReplayRpc(environment, rpcCapabilityToken, {
       projectId: environment.projectName,
       appSessionId,
-      artifactStorageSessionId: environment.sessionId,
+      artifactStorageSessionId,
       artifactRunId: context.artifactRunId,
       writeOperationId,
       filename: input.filename,
@@ -436,7 +441,7 @@ const writeArtifactFileForCurrentRun = async (
       return callArtifactRpc(environment, rpcCapabilityToken, {
         projectId: environment.projectName,
         appSessionId,
-        artifactStorageSessionId: environment.sessionId,
+        artifactStorageSessionId,
         artifactRunId: context.artifactRunId,
         writeOperationId,
         writeRequestChecksum,

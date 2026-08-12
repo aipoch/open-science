@@ -1,4 +1,4 @@
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { isActivityActive } from './workspace-conversation-items'
 
 type TimelinePosition = {
@@ -6,7 +6,8 @@ type TimelinePosition = {
   sortIndex?: number
 }
 
-type AgentLoadingPhase = 'hidden' | 'thinking' | 'interacting-with-tools'
+type AgentLoadingPhase =
+  'hidden' | 'thinking' | 'interacting-with-tools' | 'waiting-for-approval' | 'waiting-for-response'
 
 const isLaterThan = (candidate: TimelinePosition, reference: TimelinePosition): boolean => {
   if (candidate.updatedAt !== reference.updatedAt) return candidate.updatedAt > reference.updatedAt
@@ -19,31 +20,55 @@ const findLatest = <T extends TimelinePosition>(items: T[]): T | undefined =>
     undefined
   )
 
-// The transient row belongs to the active request, not persisted history. Text output owns the
-// transcript, while tool activity and the silent gaps around it use their own indicator phases.
-const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPhase => {
-  if (!session) return 'hidden'
-
-  const hasLocalRun =
-    Boolean(session.activeRun) &&
-    (session.status === 'running' || session.status === 'waiting-permission')
-  if (!hasLocalRun && !session.agentPromptInFlight) return 'hidden'
-
+const getCurrentRunTimeline = (
+  session: ChatSession
+): { prompt: ChatMessage | undefined; tools: ToolActivity[] } => {
   const latestUserPromptId = session.messages.findLast((message) => message.role === 'user')?.id
   const promptMessageId = session.activeRun?.promptMessageId ?? latestUserPromptId
   const prompt = promptMessageId
     ? session.messages.find((message) => message.id === promptMessageId)
     : undefined
-  const currentRunTools = (session.activities ?? []).filter((activity) => {
+  const tools = (session.activities ?? []).filter((activity) => {
     if (!promptMessageId || !prompt) return false
     return activity.promptMessageId
       ? activity.promptMessageId === promptMessageId
       : isLaterThan(activity, prompt)
   })
 
+  return { prompt, tools }
+}
+
+// Uses timeline-owned timestamps so navigating away from a live Session cannot restart its clock.
+// A terminal tool update begins the next silent thinking span, matching the visible phase change.
+const getAgentThinkingStartedAt = (session: ChatSession | undefined): number | undefined => {
+  if (!session) return undefined
+
+  const { prompt, tools } = getCurrentRunTimeline(session)
+  const latestTool = findLatest(tools)
+  const runStartedAt = session.activeRun?.startedAt ?? prompt?.createdAt
+
+  if (runStartedAt === undefined) return latestTool?.updatedAt
+  return Math.max(runStartedAt, latestTool?.updatedAt ?? runStartedAt)
+}
+
+// The transient row belongs to the active request, not persisted history. User waits stay visible
+// until answered; otherwise text output owns the transcript while tools and silent gaps use their
+// own indicator phases.
+const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPhase => {
+  if (!session) return 'hidden'
+  if (session.status === 'waiting-for-user') return 'waiting-for-response'
+  if (session.status === 'waiting-permission' || session.status === 'waiting-plan-approval') {
+    return 'waiting-for-approval'
+  }
+
+  const hasLocalRun = Boolean(session.activeRun) && session.status === 'running'
+  if (!hasLocalRun && !session.agentPromptInFlight) return 'hidden'
+
+  const { prompt, tools: currentRunTools } = getCurrentRunTimeline(session)
+  const promptMessageId = session.activeRun?.promptMessageId ?? prompt?.id
+
   // Any live tool in the current request takes precedence over the surrounding thinking gaps.
   if (currentRunTools.some(isActivityActive)) return 'interacting-with-tools'
-  if (session.status === 'waiting-permission') return 'interacting-with-tools'
   if (session.awaitingFirstAgentOutput) return 'thinking'
   if (!session.activeRun) return 'hidden'
 
@@ -69,5 +94,5 @@ const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPha
   return latestTool && isLaterThan(latestTool, latestVisibleOutput) ? 'thinking' : 'hidden'
 }
 
-export { getAgentLoadingPhase }
+export { getAgentLoadingPhase, getAgentThinkingStartedAt }
 export type { AgentLoadingPhase }

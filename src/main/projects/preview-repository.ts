@@ -55,9 +55,13 @@ class PreviewStateRepository {
       panelState: normalized.panelState,
       activeItemId: normalized.activeItemId ?? null,
       // Item paths under the data root are stored as portable $DATA sentinels.
-      items: JSON.stringify(
-        normalized.items.map((item) => ({ ...item, path: encodeDataPath(item.path) ?? item.path }))
-      )
+      items: JSON.stringify([
+        ...normalized.items.map((item) => ({
+          ...item,
+          path: encodeDataPath(item.path) ?? item.path
+        })),
+        ...(normalized.subagents ? [normalized.subagents] : [])
+      ])
     }
     const client = await this.getClient()
 

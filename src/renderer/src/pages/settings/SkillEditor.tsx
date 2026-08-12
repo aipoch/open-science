@@ -1,4 +1,5 @@
-import { FileUp, Upload, X } from 'lucide-react'
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
+import { ChevronDown, FileUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { SkillReference } from '../../../../shared/settings'
@@ -17,13 +18,15 @@ export type SkillDraft = {
   description: string
   body: string
   metadata?: Record<string, string>
-  slug?: string
   references?: SkillReference[]
 }
 
-// Reserved id namespaces a user-authored skill may not claim (mirrors the main-process rule):
+const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+const SKILL_NAME_MAX_LENGTH = 64
+
+// Reserved name namespaces a user-authored skill may not claim (mirrors the main-process rule):
 // `os-` is the app's own materialized prefix, `mcp-` is reserved for MCP-provided skills.
-const RESERVED_SLUG_PREFIXES = ['os-', 'mcp-']
+const RESERVED_SKILL_NAME_PREFIXES = ['os-', 'mcp-']
 
 // Reads a File as base64 (for binary-safe reference transport to the main process).
 const fileToBase64 = (file: File): Promise<string> =>
@@ -34,21 +37,13 @@ const fileToBase64 = (file: File): Promise<string> =>
     reader.readAsDataURL(file)
   })
 
-// Renderer-side slug preview mirroring the main-process slug rule (lowercase a–z, 0–9, hyphens).
-const toSlug = (name: string): string =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64)
-
 type SkillEditorProps = {
   initial: SkillDraft
   onCancel: () => void
   onSave: (draft: SkillDraft) => Promise<void>
 }
 
-// Create/edit form for a personal skill: Identity (name/id/description) + Content (SKILL.md body).
+// Create/edit form for a personal skill: Identity (name/description) + Content (SKILL.md body).
 // Pasting a full SKILL.md with a frontmatter block auto-fills name/description.
 const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX.Element => {
   const isCreate = !initial.id
@@ -62,35 +57,33 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const [references, setReferences] = useState<{ path: string; dataBase64?: string }[]>(() =>
     (initial.references ?? []).map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
   )
-  const [slug, setSlug] = useState('')
-  const [slugTouched, setSlugTouched] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState((initial.references?.length ?? 0) > 0)
   const [saving, setSaving] = useState(false)
 
-  // The effective id: the user's typed value once they edit it, otherwise derived from the name.
-  const currentSlug = isCreate && !slugTouched ? toSlug(name) : slug
+  const currentName = name.trim()
 
-  // Validates the chosen id against the same rules the main process enforces, plus a live
+  // Validates the immutable name against the same rules the main process enforces, plus a live
   // collision check against already-loaded personal skills. Only meaningful when creating.
-  const slugError = useMemo((): string | null => {
+  const nameError = useMemo((): string | null => {
     if (!isCreate) return null
-    if (!currentSlug) return 'Skill ID is required.'
-    if (!/^[a-z0-9-]+$/.test(currentSlug)) {
-      return 'Only lowercase letters, numbers, and hyphens.'
+    if (!currentName) return 'Name is required.'
+    if (!SKILL_NAME_PATTERN.test(currentName) || currentName.length > SKILL_NAME_MAX_LENGTH) {
+      return 'Use up to 64 lowercase letters, numbers, and single hyphens.'
     }
-    if (RESERVED_SLUG_PREFIXES.some((prefix) => currentSlug.startsWith(prefix))) {
-      return `Can't start with ${RESERVED_SLUG_PREFIXES.join(' or ')}.`
+    if (RESERVED_SKILL_NAME_PREFIXES.some((prefix) => currentName.startsWith(prefix))) {
+      return `Can't start with ${RESERVED_SKILL_NAME_PREFIXES.join(' or ')}.`
     }
-    if (skills.some((entry) => entry.id === `personal-${currentSlug}`)) {
-      return 'A skill with this ID already exists.'
+    if (skills.some((entry) => entry.id === `personal-${currentName}`)) {
+      return 'A skill with this name already exists.'
     }
     return null
-  }, [isCreate, currentSlug, skills])
+  }, [isCreate, currentName, skills])
 
   const importedContent = frontmatterImportMode ? parseSkillDocument(body) : undefined
   const persistedBody = importedContent?.hasFrontmatter ? importedContent.body : body
   const persistedMetadata = importedContent?.hasFrontmatter ? importedContent.metadata : metadata
   const metadataEntries = Object.entries(persistedMetadata ?? {})
-  const canSave = name.trim().length > 0 && persistedBody.trim().length > 0 && !slugError && !saving
+  const canSave = currentName.length > 0 && persistedBody.trim().length > 0 && !nameError && !saving
 
   // Plain textarea edits are always literal body content and keep the separately displayed metadata.
   // In import mode the visible frontmatter is authoritative, so removing it clears derived metadata.
@@ -98,7 +91,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     if (frontmatterImportMode) {
       const parsed = parseSkillDocument(value)
       if (parsed.hasFrontmatter) {
-        if (parsed.name !== undefined) setName(parsed.name)
+        if (isCreate && parsed.name !== undefined) setName(parsed.name)
         if (parsed.description !== undefined) setDescription(parsed.description)
         setMetadata(parsed.metadata)
       } else {
@@ -114,7 +107,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const importContent = (value: string): void => {
     const parsed = parseSkillDocument(value)
     if (parsed.hasFrontmatter) {
-      if (parsed.name && !name.trim()) setName(parsed.name)
+      if (isCreate && parsed.name && !name.trim()) setName(parsed.name)
       if (parsed.description && !description.trim()) setDescription(parsed.description)
       setMetadata(parsed.metadata)
       setFrontmatterImportMode(true)
@@ -187,11 +180,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     try {
       await onSave({
         id: initial.id,
-        name: name.trim(),
+        name: currentName,
         description: description.trim(),
         body: persistedBody,
         metadata: persistedMetadata,
-        slug: isCreate ? currentSlug : undefined,
         references: references.map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
       })
     } finally {
@@ -202,79 +194,38 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="p-5">
-          <section>
-            <h2 className="text-base font-semibold text-foreground">Identity</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              How this skill appears in the catalog and to the agent.
-            </p>
-            <div className="mt-4 flex flex-col gap-4">
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-foreground">Name</span>
-                <Input
-                  aria-label="Skill name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="e.g. Changelog style"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-foreground">Skill ID</span>
-                <Input
-                  aria-label="Skill ID"
-                  value={isCreate ? currentSlug : (initial.id ?? '').replace(/^personal-/, '')}
-                  onChange={
-                    isCreate
-                      ? (event) => {
-                          setSlugTouched(true)
-                          setSlug(event.target.value.toLowerCase())
-                        }
-                      : undefined
-                  }
-                  readOnly={!isCreate}
-                  aria-invalid={slugError ? true : undefined}
-                  className={`font-mono ${
-                    isCreate
-                      ? slugError
-                        ? 'border-danger-000 text-foreground'
-                        : 'text-foreground'
-                      : 'text-muted-foreground'
-                  }`}
-                />
-                {slugError ? (
-                  <span className="text-xs text-danger-000">{slugError}</span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">
-                    {isCreate
-                      ? 'Used as the folder name — lowercase a–z, 0–9, hyphens. Locked after creation.'
-                      : 'The skill ID is fixed after creation.'}
-                  </span>
-                )}
-              </label>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-sm font-medium text-foreground">Description</span>
-                <Textarea
-                  aria-label="Skill description"
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  rows={2}
-                  placeholder="One sentence — what does this skill teach the agent, and when does it apply?"
-                  className="resize-none text-sm"
-                />
-                <span className="text-xs text-muted-foreground">
-                  This is how the agent decides when to use the skill — be specific.
-                </span>
-              </label>
-            </div>
-          </section>
-
-          <div className="my-6 h-px bg-border" />
-
-          <section>
+        <div className="flex flex-col gap-4 p-5">
+          <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
+            <span className="text-sm font-medium text-foreground">Name</span>
+            <Input
+              aria-label="Skill name"
+              value={name}
+              onChange={isCreate ? (event) => setName(event.target.value) : undefined}
+              disabled={!isCreate}
+              aria-invalid={nameError ? true : undefined}
+              placeholder="e.g. changelog-style"
+            />
+            {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
+          </label>
+          <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
+            <span className="text-sm font-medium text-foreground">Description</span>
+            <Textarea
+              aria-label="Skill description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={2}
+              placeholder="One sentence — what does this skill teach the agent, and when does it apply?"
+              className="resize-none text-sm"
+            />
+            <span className="text-xs text-muted-foreground">
+              This is how the agent decides when to use the skill — be specific.
+            </span>
+          </label>
+          <div data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-foreground">Content</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">
+                <p className="text-sm font-medium text-foreground">Content</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
                   Markdown shown to the agent when the skill is invoked.
                 </p>
               </div>
@@ -321,7 +272,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   onPaste={handleBodyPaste}
                   rows={16}
                   placeholder={'# Instructions\n\nStep-by-step guidance for the agent…'}
-                  className="mt-4 min-h-64 resize-none font-mono text-[13px]"
+                  className="min-h-64 resize-y font-mono text-[13px]"
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   Paste a full SKILL.md — if it has a <code className="font-mono">---</code>{' '}
@@ -359,7 +310,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 type="button"
                 onClick={uploadContent}
                 {...contentDrop.dropZoneProps}
-                className="relative mt-4 flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
+                className="relative flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
               >
                 {contentDrop.isDragging ? (
                   <FileDropOverlay label="Drop to upload" className="rounded-lg" />
@@ -373,60 +324,80 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 </span>
               </button>
             )}
-          </section>
+          </div>
 
-          <div className="my-6 h-px bg-border" />
-
-          <section>
-            <h2 className="text-base font-semibold text-foreground">References</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Supporting files (scripts, templates, data) the skill can read at runtime.
-            </p>
-
-            <label
-              {...referenceDrop.dropZoneProps}
-              className="relative mt-4 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
+          <div>
+            <button
+              type="button"
+              aria-expanded={advancedOpen}
+              aria-controls="skill-advanced-settings"
+              onClick={() => setAdvancedOpen((open) => !open)}
+              className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              {referenceDrop.isDragging ? (
-                <FileDropOverlay label="Drop reference files" className="rounded-lg" />
-              ) : null}
-              <input
-                type="file"
-                multiple
-                aria-label="Add reference files"
-                className="hidden"
-                onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
+              <ChevronDown
+                className={`size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none ${
+                  advancedOpen ? '' : '-rotate-90'
+                }`}
+                aria-hidden="true"
               />
-              <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
-              <span className="text-sm font-medium text-foreground">
-                Drop reference files or click to browse
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Saved under <code className="font-mono">references/</code> in the skill.
-              </span>
-            </label>
+              Advanced settings
+            </button>
 
-            {references.length > 0 ? (
-              <ul className="mt-3 flex flex-col divide-y divide-border">
-                {references.map((ref) => (
-                  <li key={ref.path} className="flex items-center gap-2 py-2 text-sm">
-                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
-                      references/{ref.path}
-                    </span>
-                    <SettingsIconAction
-                      label={`Remove ${ref.path}`}
-                      icon={X}
-                      onClick={() =>
-                        setReferences((prev) => prev.filter((item) => item.path !== ref.path))
-                      }
-                      className="size-6"
-                      danger
-                    />
-                  </li>
-                ))}
-              </ul>
+            {advancedOpen ? (
+              <section id="skill-advanced-settings" className="mt-3">
+                <div>
+                  <h2 className="text-sm font-medium text-foreground">References</h2>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                    Supporting files (scripts, templates, data) the skill can read at runtime.
+                  </p>
+                </div>
+
+                <label
+                  {...referenceDrop.dropZoneProps}
+                  className="relative mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50 focus-within:ring-3 focus-within:ring-ring/50"
+                >
+                  {referenceDrop.isDragging ? (
+                    <FileDropOverlay label="Drop reference files" className="rounded-lg" />
+                  ) : null}
+                  <input
+                    type="file"
+                    multiple
+                    aria-label="Add reference files"
+                    className="sr-only"
+                    onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
+                  />
+                  <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
+                  <span className="text-sm font-medium text-foreground">
+                    Drop reference files or click to browse
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Saved under <code className="font-mono">references/</code> in the skill.
+                  </span>
+                </label>
+
+                {references.length > 0 ? (
+                  <ul className="mt-3 flex flex-col divide-y divide-border">
+                    {references.map((ref) => (
+                      <li key={ref.path} className="flex items-center gap-2 py-2 text-sm">
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                          references/{ref.path}
+                        </span>
+                        <SettingsIconAction
+                          label={`Remove ${ref.path}`}
+                          icon={X}
+                          onClick={() =>
+                            setReferences((prev) => prev.filter((item) => item.path !== ref.path))
+                          }
+                          className="size-6"
+                          danger
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
             ) : null}
-          </section>
+          </div>
         </div>
       </div>
 
@@ -480,7 +451,6 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
       onSave={async (next) => {
         await updateSkill({
           id: next.id ?? skillId,
-          name: next.name,
           description: next.description,
           body: next.body,
           metadata: next.metadata,

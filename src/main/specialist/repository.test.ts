@@ -229,9 +229,10 @@ describe('SpecialistRepository.update', () => {
     const repo = new SpecialistRepository(tmpDir)
     const sp = makeSpecialist({ revision: 1 })
     await repo.insert(sp)
-    await repo.update(sp.id, { name: 'Updated' }, 1)
+    await repo.update(sp.id, { displayName: 'Updated' }, 1)
     const doc = await repo.getAll()
-    expect(doc.specialists[0].name).toBe('Updated')
+    expect(doc.specialists[0].name).toBe(sp.name)
+    expect(doc.specialists[0].displayName).toBe('Updated')
     expect(doc.specialists[0].revision).toBe(2)
   })
 
@@ -251,13 +252,15 @@ describe('SpecialistRepository.update', () => {
     expect(doc.specialists[0].id).toBe('fixed-id')
   })
 
-  it('rejects name change to existing name', async () => {
+  it('rejects any name change', async () => {
     const repo = new SpecialistRepository(tmpDir)
     const sp1 = makeSpecialist({ name: 'NAME_ONE' })
     const sp2 = makeSpecialist({ name: 'NAME_TWO', revision: 1 })
     await repo.insert(sp1)
     await repo.insert(sp2)
-    await expect(repo.update(sp2.id, { name: 'NAME_ONE' }, 1)).rejects.toThrow()
+    await expect(repo.update(sp2.id, { name: 'NAME_ONE' }, 1)).rejects.toThrow(
+      'Specialist name is immutable.'
+    )
   })
 })
 

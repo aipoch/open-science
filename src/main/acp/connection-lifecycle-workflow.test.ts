@@ -37,13 +37,13 @@ describe('AcpConnectionLifecycleWorkflow', () => {
           }),
           fail: vi.fn()
         },
-        initialize: async () => {
+        initialize: vi.fn(async () => {
           actions.push('initialize')
           return {
             protocolVersion: 1,
             agentCapabilities: { sessionCapabilities: { close: true, resume: true } }
           }
-        },
+        }),
         authenticate: async () => {
           actions.push('authenticate')
         },
@@ -91,6 +91,11 @@ describe('AcpConnectionLifecycleWorkflow', () => {
       'connected'
     ])
     expect(candidate.transferTo).toHaveBeenCalledOnce()
+    expect(candidate.transferTo.mock.results[0]?.value.initialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientCapabilities: expect.objectContaining({ elicitation: { form: {} } })
+      })
+    )
     expect(attempt.publish).toHaveBeenCalledWith({ close: true, delete: false, resume: true })
   })
 

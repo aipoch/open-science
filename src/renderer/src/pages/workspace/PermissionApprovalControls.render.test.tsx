@@ -1,8 +1,14 @@
+// @vitest-environment jsdom
+
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { describe, expect, it } from 'vitest'
 
 import { PermissionApprovalControls } from './PermissionApprovalControls'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const longRequestTitle =
   'Bash pwd echo whoami echo list home directory with enough extra words to clip'
@@ -137,13 +143,87 @@ const secondPermissionRequest: AcpPermissionRequest = {
 }
 
 describe('PermissionApprovalControls', () => {
-  it('renders the Allow button with the Session scope by default', () => {
+  it('renders the Allow button with the conversation copy for the session scope by default', () => {
     const html = renderControls()
-    expect(html).toContain('for this session')
+    expect(html).toContain('for this conversation')
     expect(html).not.toContain('for this call only')
     expect(html).toContain('data-testid="allow-primary"')
     expect(html).toContain('data-testid="deny-button"')
     expect(html).toContain('data-testid="scope-chevron"')
+  })
+
+  it('drops standalone card chrome when embedded in the composer interaction lane', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permissionRequest]}
+        onRespond={() => undefined}
+        embedded
+      />
+    )
+
+    expect(html).toContain('data-testid="permission-approval-controls"')
+    expect(html).not.toContain('shadow-dialog')
+    expect(html).not.toContain('motion-safe:slide-in-from-bottom-1')
+  })
+
+  it('renders the scope menu outside the embedded scroll surface and restores trigger focus', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+
+    act(() => {
+      root.render(
+        <div data-testid="permission-composer-scroll">
+          <PermissionApprovalControls
+            requests={[permissionRequest]}
+            onRespond={() => undefined}
+            embedded
+          />
+        </div>
+      )
+    })
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="scope-chevron"]')
+    act(() => trigger?.click())
+
+    const menu = document.body.querySelector('[role="menu"][aria-label="Authorization scope"]')
+    expect(menu).not.toBeNull()
+    expect(host.contains(menu)).toBe(false)
+
+    const once = Array.from(
+      menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []
+    ).find((item) => item.textContent?.includes('Once'))
+    await act(async () => {
+      once?.click()
+      await Promise.resolve()
+    })
+    expect(document.activeElement).toBe(trigger)
+
+    act(() => root.unmount())
+    host.remove()
+  })
+
+  it('pins the approval actions to the bottom while request content scrolls', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permissionRequest]}
+        onRespond={() => undefined}
+        embedded
+      />
+    )
+
+    expect(html).toMatch(/data-testid="permission-actions" class="[^"]*sticky[^"]*bottom-0[^"]*"/)
+  })
+
+  it('pins the permission title banner to the top while request content scrolls', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permissionRequest]}
+        onRespond={() => undefined}
+        embedded
+      />
+    )
+
+    expect(html).toMatch(/data-testid="permission-header" class="[^"]*sticky[^"]*top-0[^"]*"/)
   })
 
   it('does not show the second queued request', () => {

@@ -14,7 +14,8 @@ import {
 import type {
   CloseClassification,
   CloseConfirmChoice,
-  CloseConfirmVariant
+  CloseConfirmVariant,
+  WindowFindAppearance
 } from '../shared/window-controls'
 
 // Menu action callbacks the tray is wired to.
@@ -31,7 +32,23 @@ export type AppLifecycleDeps = {
     classifyClose: () => CloseClassification
     resolveCloseAction: () => Promise<CloseConfirmChoice>
     requestQuit: (confirmed?: boolean) => void
+    onAppearanceChanged?: (appearance: WindowFindAppearance) => void
   }) => BrowserWindow
+  // Rebinds close and appearance behavior when the startup loading shell becomes the normal window.
+  configureMainWindow?: (
+    window: BrowserWindow,
+    opts: {
+      classifyClose: () => CloseClassification
+      resolveCloseAction: () => Promise<CloseConfirmChoice>
+      requestQuit: (confirmed?: boolean) => void
+      onAppearanceChanged?: (appearance: WindowFindAppearance) => void
+    }
+  ) => void
+  // A database-startup shell that the lifecycle adopts instead of creating a second window.
+  initialWindow?: BrowserWindow
+  // Receives the resolved renderer Theme. Optional so headless/tests and older compositions remain
+  // decoupled from platform icon behavior.
+  onAppearanceChanged?: (appearance: WindowFindAppearance) => void
   // Builds the tray; returns undefined on hosts without a tray (e.g. some Linux desktops).
   createTray: (handlers: TrayHandlers) => Tray | undefined
   // Bounded, best-effort backend teardown (agent tree + notebook kernels); never throws.
@@ -116,6 +133,8 @@ export const installAppLifecycle = (
   }
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
+  const detectDelegatedWork = (): ActiveSessionInfo[] =>
+    deps.detectActiveSessions().filter((session) => session.kind === 'delegated')
 
   // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
   // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
@@ -136,27 +155,38 @@ export const installAppLifecycle = (
     if (confirmInFlight) return 'cancel'
     confirmInFlight = true
     try {
-      return await confirmClose('close-to-tray', deps.detectActiveSessions())
+      const choice = await confirmClose('close-to-tray', deps.detectActiveSessions())
+      if (choice !== 'quit') return choice
+      const delegated = detectDelegatedWork()
+      return delegated.length > 0 ? await confirmClose('close-to-tray', delegated) : choice
     } finally {
       confirmInFlight = false
     }
   }
 
-  const openWindow = (): BrowserWindow => {
-    const window = deps.createMainWindow({
-      classifyClose,
-      resolveCloseAction,
-      requestQuit: (confirmed = true) => {
-        quitConfirmed = confirmed
-        deps.quit()
-      }
-    })
+  const mainWindowOptions = (): Parameters<AppLifecycleDeps['createMainWindow']>[0] => ({
+    classifyClose,
+    resolveCloseAction,
+    requestQuit: (confirmed = true) => {
+      quitConfirmed = confirmed
+      deps.quit()
+    },
+    ...(deps.onAppearanceChanged ? { onAppearanceChanged: deps.onAppearanceChanged } : {})
+  })
+
+  const bindWindow = (window: BrowserWindow): BrowserWindow => {
+    deps.configureMainWindow?.(window, mainWindowOptions())
 
     // isVisible() is also false for minimized Windows windows. Track explicit hide/show events so
     // taskbar attention can distinguish a legitimate minimized window from one hidden to the tray.
     window.on('hide', () => hiddenWindows.add(window))
     window.on('show', () => hiddenWindows.delete(window))
     return window
+  }
+
+  const openWindow = (): BrowserWindow => {
+    const window = deps.createMainWindow(mainWindowOptions())
+    return bindWindow(window)
   }
 
   // Surfaces the main window, creating a fresh one when none exists or the last was closed (macOS keeps
@@ -209,6 +239,23 @@ export const installAppLifecycle = (
     }
     const trigger = shutdownTrigger()
 
+    // Final synchronous resource-safety boundary. A delegated Attempt may start after an earlier
+    // confirmation snapshot (or after a saved close preference was read), and requestQuit(true) can
+    // arrive directly from the Windows titlebar path. Never enter preparation/flush/teardown while
+    // such work exists; clear confirmation/trigger state and show the hard-blocking prompt instead.
+    const delegatedAtShutdownBoundary = detectDelegatedWork()
+    if (delegatedAtShutdownBoundary.length > 0) {
+      event.preventDefault()
+      quitConfirmed = false
+      clearApplicationShutdownTrigger()
+      if (confirmInFlight) return
+      confirmInFlight = true
+      void confirmClose('quit', delegatedAtShutdownBoundary).finally(() => {
+        confirmInFlight = false
+      })
+      return
+    }
+
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
     // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
     if (!quitConfirmed && trigger === 'quit') {
@@ -216,8 +263,14 @@ export const installAppLifecycle = (
       if (confirmInFlight) return
       confirmInFlight = true
       void confirmClose('quit', deps.detectActiveSessions())
-        .then((choice) => {
+        .then(async (choice) => {
           if (choice === 'quit') {
+            const delegated = detectDelegatedWork()
+            if (delegated.length > 0) {
+              quitConfirmed = false
+              await confirmClose('quit', delegated)
+              return
+            }
             quitConfirmed = true
             deps.quit()
             return
@@ -325,7 +378,12 @@ export const installAppLifecycle = (
     if (platform !== 'darwin' && !trayBox.current) deps.quit()
   })
 
-  if (deps.createInitialWindow !== false) mainWindow = openWindow()
+  if (deps.createInitialWindow !== false) {
+    mainWindow =
+      deps.initialWindow && !deps.initialWindow.isDestroyed()
+        ? bindWindow(deps.initialWindow)
+        : openWindow()
+  }
 
   return {
     showMainWindow,

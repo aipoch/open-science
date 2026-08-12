@@ -1,4 +1,9 @@
-import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../shared/acp'
+import type {
+  AcpAgentRuntimeUpdate,
+  AcpPermissionRequest,
+  AcpRuntimeEvent,
+  AcpStateSnapshot
+} from '../shared/acp'
 import type { CompletionGateLifecycleEvent } from './agents/completion-gate'
 import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
 import type { DownloadProgress } from '../shared/download-progress'
@@ -9,6 +14,7 @@ import type {
   SessionUpsertEvent
 } from '../shared/lifecycle-events'
 import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
+import type { NotificationInboxChanged } from '../shared/notifications'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
 import type { ProjectFilesChangedEvent } from '../shared/project-files'
 import type {
@@ -19,10 +25,12 @@ import type {
 import type {
   ClaudeInstallEvent,
   ConnectorApprovalRequest,
-  ConversationSkillImportApprovalRequest
+  ConversationSkillImportApprovalRequest,
+  SettingsSnapshot
 } from '../shared/settings'
 import type { CompletionHandoffLifecycleEvent, PendingSwitchBroadcast } from '../shared/specialist'
 import type { MigrationProgress } from '../shared/storage'
+import type { SideChatRelayDeliveredEvent, SideChatRuntimeEvent } from '../shared/side-chat'
 import type { UpdateStatus } from '../shared/update'
 
 // This catalog describes only events that already flow through renderer-broadcast. Window-only
@@ -31,9 +39,13 @@ import type { UpdateStatus } from '../shared/update'
 export type ApplicationEventMap = {
   'acp:state': AcpStateSnapshot
   'acp:event': AcpRuntimeEvent
+  'acp:agent-runtime-update': AcpAgentRuntimeUpdate
   'acp:permission-request': AcpPermissionRequest
+  'side-chat:event': SideChatRuntimeEvent
+  'side-chat:relay-delivered': SideChatRelayDeliveredEvent
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
+  'notifications:changed': NotificationInboxChanged
   'project:created': Project
   'project:updated': Project
   'project:deleted': ProjectDeletedEvent
@@ -51,7 +63,9 @@ export type ApplicationEventMap = {
   'specialist:pending-switch': PendingSwitchBroadcast
   'specialist:handoff-lifecycle-changed': CompletionHandoffLifecycleEvent
   'specialist:handoff-lifecycle': CompletionGateLifecycleEvent
+  'settings:connector-runtime-changed': undefined
   'settings:install-log': ClaudeInstallEvent
+  'settings:changed': SettingsSnapshot
   'storage:migrate-progress': MigrationProgress
   'reviewer:updated': ReviewUpdateEvent
   'reviewer:suppress-next-auto-review': ReviewSuppressionEvent

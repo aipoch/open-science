@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -13,7 +13,8 @@ import {
   listArgv,
   micromambaSpawnEnv,
   normalizeExplicitLock,
-  resolveMicromamba
+  resolveMicromamba,
+  resolveMicromambaLocations
 } from './micromamba'
 
 describe('micromamba argv builders', () => {
@@ -217,6 +218,39 @@ describe('resolveMicromamba', () => {
       })
     ).toBe(join(dir, name))
   })
+
+  it.each([
+    ['win32', ';', 'micromamba.exe'],
+    ['darwin', ':', 'micromamba'],
+    ['linux', ':', 'micromamba']
+  ] as const)(
+    'uses the %s PATH delimiter and preserves candidate order',
+    (platform, separator, name) => {
+      const root = mkdtempSync('os-mm-path-')
+      try {
+        const first = join(root, 'first')
+        const second = join(root, 'second')
+        mkdirSync(first)
+        mkdirSync(second)
+        writeFileSync(join(first, name), 'first')
+        writeFileSync(join(second, name), 'second')
+
+        const paths = resolveMicromambaLocations({
+          platform,
+          env: { PATH: [first, second].join(separator) },
+          resourcesPath: join(root, 'missing-resources'),
+          home: join(root, 'missing-home')
+        })
+
+        expect(paths).toEqual([
+          { kind: 'path', path: join(first, name) },
+          { kind: 'path', path: join(second, name) }
+        ])
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('returns undefined when nothing resolves', () => {
     expect(

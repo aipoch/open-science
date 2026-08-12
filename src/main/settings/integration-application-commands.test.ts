@@ -48,11 +48,13 @@ const expectedConnectorChannels = [
   'settings:remove-custom-server',
   'settings:update-custom-server',
   'settings:authenticate-custom-server',
-  'settings:cancel-custom-server-authentication'
+  'settings:cancel-custom-server-authentication',
+  'settings:retry-custom-server'
 ] as const
 
 const expectedApprovalChannels = [
   'connectors:approval-respond',
+  'connectors:approval-replay',
   'skills:conversation-import-respond',
   'skills:conversation-import-replay-pending'
 ] as const
@@ -116,7 +118,7 @@ const createDependencies = (): Readonly<{
     dependencies: {
       skills: skills.port,
       connectors: connectors.port,
-      connectorApprovals: { respond: vi.fn() },
+      connectorApprovals: { getPending: vi.fn(() => null), respond: vi.fn() },
       skillImportApprovals: { respond: vi.fn(), replayPending: vi.fn() }
     },
     skillMethod: skills.method,
@@ -125,7 +127,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 21-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 23-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -159,7 +161,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(21)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(23)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -168,13 +170,14 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(21)
+    expect(integrationContracts).toHaveLength(23)
     expect(
       integrationContracts
         ?.filter(
           (contract) =>
             contract.channel !== 'settings:authenticate-custom-server' &&
-            contract.channel !== 'settings:cancel-custom-server-authentication'
+            contract.channel !== 'settings:cancel-custom-server-authentication' &&
+            contract.channel !== 'settings:retry-custom-server'
         )
         .every(
           (contract) =>
@@ -188,7 +191,8 @@ describe('Settings integration application commands', () => {
         ?.filter(
           (contract) =>
             contract.channel === 'settings:authenticate-custom-server' ||
-            contract.channel === 'settings:cancel-custom-server-authentication'
+            contract.channel === 'settings:cancel-custom-server-authentication' ||
+            contract.channel === 'settings:retry-custom-server'
         )
         .every(
           (contract) =>
@@ -313,7 +317,9 @@ describe('Settings integration application commands', () => {
     )
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.addCustomServer,
-      invocation([{ name: 'custom', transport: 'stdio', command: 'custom-mcp' }] as const)
+      invocation([
+        { name: 'custom', displayName: 'Custom', transport: 'stdio', command: 'custom-mcp' }
+      ] as const)
     )
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.setCustomServerEnabled,
@@ -353,6 +359,7 @@ describe('Settings integration application commands', () => {
     })
     expect(connectorMethod('addCustomServer')).toHaveBeenCalledWith({
       name: 'custom',
+      displayName: 'Custom',
       transport: 'stdio',
       command: 'custom-mcp'
     })
@@ -369,7 +376,7 @@ describe('Settings integration application commands', () => {
     })
   })
 
-  it('allows OAuth authentication only from the local app', async () => {
+  it('allows authentication and runtime retry only from the local app', async () => {
     const { connectorMethod, dependencies } = createDependencies()
     const router = createApplicationCommandRouter()
     registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
@@ -387,6 +394,12 @@ describe('Settings integration application commands', () => {
     expect(connectorMethod('cancelCustomServerAuthentication')).toHaveBeenCalledWith({
       id: 'server-1'
     })
+
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.retryCustomServer,
+      invocation([{ id: 'server-1' }] as const, createWebCallerContext('local-human'))
+    )
+    expect(connectorMethod('retryCustomServer')).toHaveBeenCalledWith({ id: 'server-1' })
 
     await expect(
       router.dispatcher.invoke(
@@ -411,12 +424,25 @@ describe('Settings integration application commands', () => {
     ).rejects.toThrow(
       'Channel only available from the local app: settings:cancel-custom-server-authentication'
     )
+
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.retryCustomServer,
+        invocation(
+          [{ id: 'server-1' }] as const,
+          createWebCallerContext('remote-human', { location: 'remote' })
+        )
+      )
+    ).rejects.toThrow('Channel only available from the local app: settings:retry-custom-server')
   })
 
   it('allows only current human callers to settle Connector and Skill-import approvals', async () => {
     const { dependencies } = createDependencies()
     const respondConnector = dependencies.connectorApprovals.respond as ReturnType<typeof vi.fn>
     const respondSkill = dependencies.skillImportApprovals.respond as ReturnType<typeof vi.fn>
+    const getPendingConnector = dependencies.connectorApprovals.getPending as ReturnType<
+      typeof vi.fn
+    >
     const router = createApplicationCommandRouter()
     registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
 
@@ -436,12 +462,17 @@ describe('Settings integration application commands', () => {
       settingsIntegrationApplicationCommands.respondConnectorApproval,
       invocation([{ id: 'connector-electron', decision: 'deny' }] as const, electronHuman)
     )
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.replayConnectorApproval,
+      invocation(['connector-pending'] as const, remoteHuman)
+    )
 
     expect(respondConnector.mock.calls).toEqual([
       ['connector-local', 'once'],
       ['connector-electron', 'deny']
     ])
     expect(respondSkill).toHaveBeenCalledWith({ id: 'skill-remote', items: [] })
+    expect(getPendingConnector).toHaveBeenCalledWith('connector-pending')
 
     const deniedCallers = [
       createCallerContext({
@@ -463,6 +494,12 @@ describe('Settings integration application commands', () => {
           invocation([{ id: 'blocked', decision: 'global' }] as const, callerContext)
         )
       ).rejects.toThrow('Only a current human caller can respond to connector approval requests.')
+      await expect(
+        router.dispatcher.invoke(
+          settingsIntegrationApplicationCommands.replayConnectorApproval,
+          invocation(['blocked'] as const, callerContext)
+        )
+      ).rejects.toThrow('Only a current human caller can reopen connector approval requests.')
       await expect(
         router.dispatcher.invoke(
           settingsIntegrationApplicationCommands.respondSkillImportApproval,

@@ -53,11 +53,17 @@ const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {
 // These functions exist on the real Electron preload API but the current AST generator does not
 // recognize their implementation shape or channel constants. T1b must make each omission explicit.
 const GENERATED_SOURCE_OMISSIONS = [
+  'databaseStartup.getState',
+  'databaseStartup.onStateChanged',
+  'databaseStartup.quit',
+  'databaseStartup.retry',
   'diagnostics.reportRendererFailure',
   'getRuntimeVersions',
   'handoff.list',
   'handoff.onChanged',
   'handoff.retry',
+  'network.checkConnectivity',
+  'network.getInfo',
   'notifications.syncViewState',
   'officePreview.attachFrame',
   'officePreview.close',
@@ -67,8 +73,16 @@ const GENERATED_SOURCE_OMISSIONS = [
   'sessions.onFlushRequest',
   'sessions.sendFlushResponse',
   'settings.exportCustomServerTemplate',
+  'settings.exportSkill',
   'settings.previewCustomServerTemplateExport',
   'settings.selectCustomServerTemplate',
+  'sideChat.cancel',
+  'sideChat.close',
+  'sideChat.list',
+  'sideChat.onEvent',
+  'sideChat.onRelayDelivered',
+  'sideChat.send',
+  'sideChat.start',
   'specialist.cancelHandoff',
   'specialist.cancelPackage',
   'specialist.create',
@@ -113,6 +127,7 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 const WEB_UNAVAILABLE_CHANNELS = [
   'file:save-blob',
   'file:save-managed',
+  'file:save-project-artifacts',
   'file:save-session-artifacts',
   'sessions:export-conversation',
   'settings:import-agent-home-skills',
@@ -125,7 +140,17 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   artifacts: ['open-file'],
   cli: ['install', 'uninstall'],
   compute: ['download', 'reveal-in-folder'],
-  'local-fs': ['get-roots', 'list-dir', 'open-path', 'read-preview', 'reveal'],
+  'local-fs': [
+    'get-roots',
+    'grant-root',
+    'granted-roots:list',
+    'granted-roots:remove',
+    'granted-roots:set-access',
+    'list-dir',
+    'open-path',
+    'read-preview',
+    'reveal'
+  ],
   logs: ['open-file', 'reveal-in-folder'],
   'notebook-env': ['cancel', 'provision', 'repair'],
   notebook: ['export-ipynb', 'export-ipynb-all'],
@@ -143,6 +168,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'cancel-codex-login',
     'cancel-custom-server-authentication',
     'cancel-isolated-claude-login',
+    'get-github-token-status',
     'install-claude',
     'install-codex',
     'install-opencode',
@@ -153,10 +179,15 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'logout-isolated-claude',
     'logout-isolated-codex',
     'logout-shared-claude',
+    'remove-github-token',
+    'retry-custom-server',
+    'save-github-token',
     'set-app-icon-variant',
     'set-close-preference',
+    'set-default-permission-profile',
     'set-notifications-enabled',
     'set-package-mirror',
+    'set-project-files-filter',
     'uninstall-claude',
     'uninstall-codex',
     'uninstall-opencode'
@@ -211,13 +242,14 @@ describe('renderer surface inventory', () => {
       ...Object.keys(WEB_EVENT_CHANNELS)
     ])
 
-    expect(electronPaths).toHaveLength(311)
+    expect(electronPaths).toHaveLength(350)
+
     expectSameSet(
       electronPaths,
       RENDERER_CONTRACT_CATALOG.map(({ publicPath }) => publicPath)
     )
-    expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(231)
-    expect(Object.keys(WEB_EVENT_CHANNELS)).toHaveLength(32)
+    expect(Object.keys(WEB_INVOKE_CHANNELS)).toHaveLength(252)
+    expect(Object.keys(WEB_EVENT_CHANNELS)).toHaveLength(36)
     expectSameSet(
       electronPaths.filter((path) => !generatedPaths.has(path)),
       GENERATED_SOURCE_OMISSIONS
@@ -252,7 +284,7 @@ describe('renderer surface inventory', () => {
     const expectedRemoteLocalOnly = expand(REMOTE_LOCAL_ONLY_CHANNELS, ':')
 
     expectSameSet(REMOTE_LOCAL_ONLY_RPC_CHANNELS, expectedRemoteLocalOnly)
-    expect(expectedRemoteLocalOnly).toHaveLength(58)
+    expect(expectedRemoteLocalOnly).toHaveLength(68)
     expect(
       expectedRemoteLocalOnly.every((channel) => WEB_RPC_ALLOWED_CHANNELS.includes(channel))
     ).toBe(true)

@@ -756,6 +756,65 @@ describe('ContextUsageTracker', () => {
     })
   })
 
+  it('freezes the current prompt estimate instead of the previous provider total', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.appendText('s1', 'messages', 'committed history')
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+
+    const turn = tracker.beginTurn('s1')
+    tracker.appendPromptContent('s1', 'new prompt')
+    expect(tracker.refreshUsage('s1', 'preflight', 128_000)).toBe(true)
+
+    expect(turn.captureTerminal()).toMatchObject({
+      source: 'local-estimate',
+      contextWindow: {
+        used: 4,
+        size: 128_000,
+        breakdown: { status: 'preflight', estimatedTokens: 4 }
+      }
+    })
+  })
+
+  it('distinguishes fresh provider updates from terminal provider responses', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+
+    const updated = tracker.beginTurn('s1')
+    tracker.reconcileProviderUsage('s1', { used: 42, size: 128_000 })
+    expect(updated.captureTerminal()).toMatchObject({
+      source: 'provider-update',
+      contextWindow: { used: 42, size: 128_000 }
+    })
+    updated.complete()
+
+    const responded = tracker.beginTurn('s1')
+    expect(tracker.reconcileUsed('s1', 51)).toBe(true)
+    expect(responded.captureTerminal(true)).toMatchObject({
+      source: 'provider-response',
+      contextWindow: { used: 51, size: 128_000 }
+    })
+  })
+
+  it('cannot capture a terminal snapshot after a turn settles or is superseded', () => {
+    const tracker = new ContextUsageTracker(wordCounter)
+    tracker.beginSession('s1', { frameworkId: 'opencode' })
+    tracker.reconcileProviderUsage('s1', { used: 20, size: 128_000 })
+
+    const completed = tracker.beginTurn('s1')
+    completed.complete()
+    expect(completed.captureTerminal()).toBeUndefined()
+
+    const failed = tracker.beginTurn('s1')
+    failed.fail()
+    expect(failed.captureTerminal()).toBeUndefined()
+
+    const superseded = tracker.beginTurn('s1')
+    superseded.supersede()
+    expect(superseded.captureTerminal()).toBeUndefined()
+  })
+
   it('rolls back a turn rejected before provider data to its captured checkpoint', () => {
     const tracker = new ContextUsageTracker(wordCounter)
     tracker.beginSession('s1', { frameworkId: 'opencode', model: 'deepseek-v4' })

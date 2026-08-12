@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { unzipSync } from 'fflate'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -563,6 +564,857 @@ describe('file save IPC handlers', () => {
         defaultPath: join(downloadsPath, 'source-report.csv')
       })
     )
+  })
+
+  it('bundles Project Artifacts and Uploads into one zip archive grouped by source', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-artifacts-'))
+    const artifactPath = join(root, 'managed-report.csv')
+    const uploadPath = join(root, 'managed-upload.csv')
+    const notesPath = join(root, 'managed-notes.txt')
+    await writeFile(artifactPath, 'artifact bytes')
+    await writeFile(uploadPath, 'upload bytes')
+    await writeFile(notesPath, 'notes bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(artifactPath)
+      .mockResolvedValueOnce(notesPath)
+    const resolveManagedFilePath = vi.fn().mockResolvedValue(uploadPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              suggestedName: 'report.csv'
+            },
+            {
+              source: 'upload',
+              sessionId: 'session-2',
+              path: 'upload://data',
+              suggestedName: 'report.csv'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-2',
+              path: 'artifact://notes',
+              suggestedName: 'notes.txt'
+            }
+          ]
+        }
+      )
+
+      expect(resolveSessionArtifactFilePath).toHaveBeenNthCalledWith(
+        1,
+        'project-1',
+        'session-1',
+        'artifact://report'
+      )
+      expect(resolveManagedFilePath).toHaveBeenCalledWith('upload', {
+        path: 'upload://data',
+        projectId: 'project-1',
+        sessionId: 'session-2'
+      })
+      expect(showSaveDialog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultPath: join(downloadsPath, 'Research-artifacts.zip'),
+          title: 'Download project artifacts'
+        })
+      )
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries).sort()).toEqual([
+        'generated/notes.txt',
+        'generated/report.csv',
+        'uploads/report.csv'
+      ])
+      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe('artifact bytes')
+      expect(Buffer.from(entries['uploads/report.csv']!).toString('utf8')).toBe('upload bytes')
+      expect(Buffer.from(entries['generated/notes.txt']!).toString('utf8')).toBe('notes bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('applies collision suffixes within each source category only', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-categories-'))
+    const artifactPathA = join(root, 'managed-a.csv')
+    const artifactPathB = join(root, 'managed-b.csv')
+    const uploadPath = join(root, 'managed-upload.csv')
+    await writeFile(artifactPathA, 'artifact a')
+    await writeFile(artifactPathB, 'artifact b')
+    await writeFile(uploadPath, 'upload bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(artifactPathA)
+      .mockResolvedValueOnce(artifactPathB)
+    const resolveManagedFilePath = vi.fn().mockResolvedValue(uploadPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://a',
+              suggestedName: 'report.csv'
+            },
+            {
+              source: 'upload',
+              sessionId: 'session-1',
+              path: 'upload://data',
+              suggestedName: 'report.csv'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-2',
+              path: 'artifact://b',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries).sort()).toEqual([
+        'generated/report (2).csv',
+        'generated/report.csv',
+        'uploads/report.csv'
+      ])
+      expect(Buffer.from(entries['generated/report.csv']!).toString('utf8')).toBe('artifact a')
+      expect(Buffer.from(entries['generated/report (2).csv']!).toString('utf8')).toBe('artifact b')
+      expect(Buffer.from(entries['uploads/report.csv']!).toString('utf8')).toBe('upload bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reports per-file failures and still archives the resolvable entries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-partial-'))
+    const artifactPath = join(root, 'managed-report.csv')
+    await writeFile(artifactPath, 'artifact bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(artifactPath)
+      .mockRejectedValueOnce(new Error('Artifact bytes are unavailable.'))
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              suggestedName: 'report.csv'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://gone',
+              suggestedName: 'gone.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        filePath: destinationPath,
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://gone',
+            suggestedName: 'gone.csv',
+            message: 'Artifact bytes are unavailable.'
+          }
+        ]
+      })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries)).toEqual(['generated/report.csv'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns saved false when the Project Artifact Save As dialog is canceled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-cancel-'))
+    const artifactPath = join(root, 'managed-report.csv')
+    await writeFile(artifactPath, 'artifact bytes')
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(artifactPath)
+    showSaveDialog.mockResolvedValue({ canceled: true })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              suggestedName: 'report.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: false })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('skips the Save As dialog when no Project Artifact resolves', async () => {
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockRejectedValue(new Error('Artifact bytes are unavailable.'))
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    const result = await handlers.get('file:save-project-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        projectName: 'Research',
+        files: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://gone',
+            suggestedName: 'gone.csv'
+          }
+        ]
+      }
+    )
+
+    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      saved: true,
+      failures: [
+        {
+          source: 'artifact',
+          sessionId: 'session-1',
+          path: 'artifact://gone',
+          suggestedName: 'gone.csv',
+          message: 'Artifact bytes are unavailable.'
+        }
+      ]
+    })
+  })
+
+  it('skips files over the per-file export limit and still archives the rest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-oversized-'))
+    const smallPath = join(root, 'managed-small.txt')
+    const bigPath = join(root, 'managed-big.txt')
+    await writeFile(smallPath, 'small')
+    await writeFile(bigPath, 'this upload is far too large')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(smallPath)
+    const resolveManagedFilePath = vi.fn().mockResolvedValue(bigPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveManagedFilePath,
+      resolveSessionArtifactFilePath,
+      projectArtifactExportLimits: { maxFiles: 5000, maxFileBytes: 10, maxTotalBytes: 1024 }
+    } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://small',
+              suggestedName: 'small.txt'
+            },
+            {
+              source: 'upload',
+              sessionId: 'session-1',
+              path: 'upload://big',
+              suggestedName: 'big.txt'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        filePath: destinationPath,
+        failures: [
+          {
+            source: 'upload',
+            sessionId: 'session-1',
+            path: 'upload://big',
+            suggestedName: 'big.txt',
+            message: 'Project export file exceeds the per-file size limit.'
+          }
+        ]
+      })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries)).toEqual(['generated/small.txt'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('stops archiving once the total export size limit is reached', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-total-'))
+    const firstPath = join(root, 'managed-first.txt')
+    const secondPath = join(root, 'managed-second.txt')
+    await writeFile(firstPath, '12345678')
+    await writeFile(secondPath, '87654321')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(firstPath)
+      .mockResolvedValueOnce(secondPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath,
+      projectArtifactExportLimits: { maxFiles: 5000, maxFileBytes: 100, maxTotalBytes: 12 }
+    } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://first',
+              suggestedName: 'first.txt'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://second',
+              suggestedName: 'second.txt'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        filePath: destinationPath,
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://second',
+            suggestedName: 'second.txt',
+            message: 'Project export exceeds the total size limit.'
+          }
+        ]
+      })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries)).toEqual(['generated/first.txt'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reports files beyond the export file-count limit without archiving them', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-count-'))
+    const firstPath = join(root, 'managed-first.txt')
+    const secondPath = join(root, 'managed-second.txt')
+    await writeFile(firstPath, 'first')
+    await writeFile(secondPath, 'second')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(firstPath)
+      .mockResolvedValueOnce(secondPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath,
+      projectArtifactExportLimits: { maxFiles: 1, maxFileBytes: 1024, maxTotalBytes: 1024 }
+    } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://first',
+              suggestedName: 'first.txt'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://second',
+              suggestedName: 'second.txt'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({
+        saved: true,
+        filePath: destinationPath,
+        failures: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://second',
+            suggestedName: 'second.txt',
+            message: 'Project export exceeds the file-count limit.'
+          }
+        ]
+      })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries)).toEqual(['generated/first.txt'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('strips Windows path separators and directory segments from zip entry names', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-slip-'))
+    const evilPath = join(root, 'managed-evil.exe')
+    const notesPath = join(root, 'managed-notes.txt')
+    await writeFile(evilPath, 'evil bytes')
+    await writeFile(notesPath, 'notes bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(evilPath)
+      .mockResolvedValueOnce(notesPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://evil',
+              suggestedName: '..\\..\\evil.exe'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://notes',
+              suggestedName: 'nested/dir/notes.txt'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries).sort()).toEqual(['generated/evil.exe', 'generated/notes.txt'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects malformed Project Artifact save requests before resolving', async () => {
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath: vi.fn() } as never)
+
+    await expect(
+      handlers.get('file:save-project-artifacts')!({ sender: {} }, null)
+    ).rejects.toThrow('Invalid Project Artifact save request.')
+    await expect(
+      handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        { projectId: 'project-1', projectName: 'Research', files: [] }
+      )
+    ).rejects.toThrow('Invalid Project Artifact save request.')
+
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
+  it('archives a file whose suggestedName is __proto__ under a safe entry name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-proto-'))
+    const sourcePath = join(root, 'managed-proto.txt')
+    await writeFile(sourcePath, 'proto bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(sourcePath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://proto',
+              suggestedName: '__proto__'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      // fflate cannot store an entry literally named __proto__; the file falls back to the
+      // managed source basename and keeps its content.
+      expect(Object.keys(entries)).toEqual(['generated/managed-proto.txt'])
+      expect(Buffer.from(entries['generated/managed-proto.txt']!).toString('utf8')).toBe(
+        'proto bytes'
+      )
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('drops files that outgrow the per-file limit between stat and read', async () => {
+    const close = vi.fn().mockResolvedValue(undefined)
+    const readFileMock = vi.fn().mockResolvedValue(Buffer.from('this grew past the limit'))
+    const openProjectArtifactFile = vi.fn().mockResolvedValue({
+      stat: vi.fn().mockResolvedValue({ isFile: () => true, size: 5 }),
+      readFile: readFileMock,
+      close
+    })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath: vi.fn().mockResolvedValue('/managed/report.csv'),
+      openProjectArtifactFile,
+      projectArtifactExportLimits: { maxFiles: 5000, maxFileBytes: 10, maxTotalBytes: 1024 }
+    } as never)
+
+    const result = await handlers.get('file:save-project-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        projectName: 'Research',
+        files: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://report',
+            suggestedName: 'report.csv'
+          }
+        ]
+      }
+    )
+
+    expect(result).toEqual({
+      saved: true,
+      failures: [
+        {
+          source: 'artifact',
+          sessionId: 'session-1',
+          path: 'artifact://report',
+          suggestedName: 'report.csv',
+          message: 'Project export file exceeds the per-file size limit.'
+        }
+      ]
+    })
+    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports non-file export sources without reading them', async () => {
+    const close = vi.fn().mockResolvedValue(undefined)
+    const readFileMock = vi.fn()
+    const openProjectArtifactFile = vi.fn().mockResolvedValue({
+      stat: vi.fn().mockResolvedValue({ isFile: () => false, size: 0 }),
+      readFile: readFileMock,
+      close
+    })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath: vi.fn().mockResolvedValue('/managed/fifo'),
+      openProjectArtifactFile
+    } as never)
+
+    const result = await handlers.get('file:save-project-artifacts')!(
+      { sender: {} },
+      {
+        projectId: 'project-1',
+        projectName: 'Research',
+        files: [
+          {
+            source: 'artifact',
+            sessionId: 'session-1',
+            path: 'artifact://fifo',
+            suggestedName: 'fifo.csv'
+          }
+        ]
+      }
+    )
+
+    expect(result).toEqual({
+      saved: true,
+      failures: [
+        {
+          source: 'artifact',
+          sessionId: 'session-1',
+          path: 'artifact://fifo',
+          suggestedName: 'fifo.csv',
+          message: 'Project export source is not a regular file.'
+        }
+      ]
+    })
+    expect(readFileMock).not.toHaveBeenCalled()
+    expect(showSaveDialog).not.toHaveBeenCalled()
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects Project Artifact save requests with an unbounded file list', async () => {
+    const resolveSessionArtifactFilePath = vi.fn()
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+    const files = Array.from({ length: 10001 }, (_, index) => ({
+      source: 'artifact',
+      sessionId: 'session-1',
+      path: `artifact://${index}`,
+      suggestedName: `${index}.txt`
+    }))
+
+    await expect(
+      handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        { projectId: 'project-1', projectName: 'Research', files }
+      )
+    ).rejects.toThrow('Invalid Project Artifact save request.')
+
+    expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['Q3: analysis', 'Q3- analysis-artifacts.zip'],
+    ['report\t2024', 'report-2024-artifacts.zip'],
+    ['a/b\\c:d', 'a-b-c-d-artifacts.zip'],
+    ['..', 'project-artifacts.zip'],
+    ['   ', 'project-artifacts.zip'],
+    ['Research', 'Research-artifacts.zip']
+  ])(
+    'sanitizes the project name %p for the zip default path',
+    async (projectName, expectedFileName) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-name-'))
+      const sourcePath = join(root, 'managed-report.csv')
+      await writeFile(sourcePath, 'artifact bytes')
+      const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(sourcePath)
+      showSaveDialog.mockResolvedValue({ canceled: true })
+      registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+      try {
+        await handlers.get('file:save-project-artifacts')!(
+          { sender: {} },
+          {
+            projectId: 'project-1',
+            projectName,
+            files: [
+              {
+                source: 'artifact',
+                sessionId: 'session-1',
+                path: 'artifact://report',
+                suggestedName: 'report.csv'
+              }
+            ]
+          }
+        )
+
+        expect(showSaveDialog).toHaveBeenCalledWith(
+          expect.objectContaining({ defaultPath: join(downloadsPath, expectedFileName) })
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('claims zip entry names case-insensitively so case-only twins cannot overlap on disk', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-case-'))
+    const upperPath = join(root, 'managed-upper.csv')
+    const lowerPath = join(root, 'managed-lower.csv')
+    await writeFile(upperPath, 'upper bytes')
+    await writeFile(lowerPath, 'lower bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi
+      .fn()
+      .mockResolvedValueOnce(upperPath)
+      .mockResolvedValueOnce(lowerPath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://upper',
+              suggestedName: 'A.csv'
+            },
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://lower',
+              suggestedName: 'a.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries).sort()).toEqual(['generated/A.csv', 'generated/a (2).csv'])
+      expect(Buffer.from(entries['generated/A.csv']!).toString('utf8')).toBe('upper bytes')
+      expect(Buffer.from(entries['generated/a (2).csv']!).toString('utf8')).toBe('lower bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('replaces Windows-illegal characters in zip entry file names', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-illegal-'))
+    const sourcePath = join(root, 'managed-report.csv')
+    await writeFile(sourcePath, 'artifact bytes')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(sourcePath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://report',
+              suggestedName: 'a<b>.csv'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries)).toEqual(['generated/a-b-.csv'])
+      expect(Buffer.from(entries['generated/a-b-.csv']!).toString('utf8')).toBe('artifact bytes')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts a file whose size equals the per-file and total export limits', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-save-project-exact-'))
+    const sourcePath = join(root, 'managed-exact.bin')
+    await writeFile(sourcePath, '0123456789')
+    const destinationPath = join(root, 'Research-artifacts.zip')
+    const resolveSessionArtifactFilePath = vi.fn().mockResolvedValue(sourcePath)
+    showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+    registerFileSaveHandlers({
+      resolveSessionArtifactFilePath,
+      projectArtifactExportLimits: { maxFiles: 5000, maxFileBytes: 10, maxTotalBytes: 10 }
+    } as never)
+
+    try {
+      const result = await handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [
+            {
+              source: 'artifact',
+              sessionId: 'session-1',
+              path: 'artifact://exact',
+              suggestedName: 'exact.bin'
+            }
+          ]
+        }
+      )
+
+      expect(result).toEqual({ saved: true, filePath: destinationPath })
+      const entries = unzipSync(new Uint8Array(await readFile(destinationPath)))
+      expect(Object.keys(entries)).toEqual(['generated/exact.bin'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects Project Artifact save requests with invalid per-file fields', async () => {
+    const resolveSessionArtifactFilePath = vi.fn()
+    registerFileSaveHandlers({ resolveSessionArtifactFilePath } as never)
+    const baseFile = {
+      source: 'artifact',
+      sessionId: 'session-1',
+      path: 'artifact://report',
+      suggestedName: 'report.csv'
+    }
+
+    await expect(
+      handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [{ ...baseFile, source: 'notebook-input' }]
+        }
+      )
+    ).rejects.toThrow('Invalid Project Artifact save request.')
+    await expect(
+      handlers.get('file:save-project-artifacts')!(
+        { sender: {} },
+        {
+          projectId: 'project-1',
+          projectName: 'Research',
+          files: [{ ...baseFile, sessionId: '' }]
+        }
+      )
+    ).rejects.toThrow('Invalid Project Artifact save request.')
+
+    expect(resolveSessionArtifactFilePath).not.toHaveBeenCalled()
+    expect(showSaveDialog).not.toHaveBeenCalled()
   })
 })
 

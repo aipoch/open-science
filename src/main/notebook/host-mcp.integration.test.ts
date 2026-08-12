@@ -55,7 +55,11 @@ gate('repl kernel host.mcp', () => {
         call: async (server, method, args, context) => ({ server, method, args, context })
       }
     })
-    const connection = await rpcServer.issueControlConnection('session-42', 'project-1')
+    const connection = await rpcServer.issueControlConnection(
+      'session-42',
+      'project-1',
+      'root-frame-session-42'
+    )
     const exec = makeExecutor()
 
     try {

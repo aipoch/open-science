@@ -250,6 +250,23 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
+  it('captures every base graphics page produced by one run', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-multiple-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const result = await send('plot(1:3, main = "first"); plot(4:6, main = "second")')
+
+      expect(result.error).toBeNull()
+      expect(result.figures).toHaveLength(2)
+      expect(result.figures.every((figure) => existsSync(figure.path))).toBe(true)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('does not return a figure for text-only output when figure capture is enabled', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-text-'))
     const { child, send } = startLoop(rscriptBin(), {
@@ -728,19 +745,98 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
-  it('does not treat plots on another graphics device as notebook output', async () => {
+  it('captures a PDF file-device plot as notebook PNG output', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-external-device-'))
-    const blankPngVector = tinyPngRVector()
     const { child, send } = startLoop(rscriptBin(), {
       OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
     })
     try {
-      const installTrace = await send(
-        installBlankPngMaterializationTrace(blankPngVector, { materializeCapture: true })
+      const r = await send(
+        'grDevices::pdf(tempfile(fileext = ".pdf")); plot(1:3); grDevices::dev.off()'
       )
-      expect(installTrace.error).toBeNull()
+      expect(r.error).toBeNull()
+      expect(r.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
 
-      const r = await send('pdf(tempfile()); plot.new(); grDevices::dev.off()')
+  it('captures one figure when the same plot is saved as PDF and TIFF', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-multi-format-'))
+    const pdfPath = join(figuresDir, 'same-plot.pdf')
+    const tiffPath = join(figuresDir, 'same-plot.tiff')
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send(
+        [
+          `grDevices::pdf(${JSON.stringify(pdfPath)})`,
+          'plot(1:3)',
+          'grDevices::dev.off()',
+          `grDevices::tiff(${JSON.stringify(tiffPath)})`,
+          'plot(1:3)',
+          'grDevices::dev.off()'
+        ].join('; ')
+      )
+      expect(r.error).toBeNull()
+      expect(existsSync(pdfPath)).toBe(true)
+      expect(existsSync(tiffPath)).toBe(true)
+      expect(r.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('does not replay a file-device plot opened by an earlier request', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-cross-request-device-'))
+    const savedPath = join(figuresDir, 'cross-request.tiff')
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const opened = await send(
+        `grDevices::tiff(${JSON.stringify(savedPath)}); ` +
+          'external_device <- grDevices::dev.cur(); plot(1:3)'
+      )
+      expect(opened.error).toBeNull()
+      expect(opened.figures).toEqual([])
+
+      const closed = await send('plot(4:6); grDevices::dev.off(external_device)')
+      expect(closed.error).toBeNull()
+      expect(closed.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('captures a TIFF file-device plot as notebook PNG output', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-tiff-device-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send(
+        'grDevices::tiff(tempfile(fileext = ".tiff")); plot(1:3); grDevices::dev.off()'
+      )
+      expect(r.error).toBeNull()
+      expect(r.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('does not capture an unused TIFF file device', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-unused-tiff-device-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send('grDevices::tiff(tempfile(fileext = ".tiff")); grDevices::dev.off()')
       expect(r.error).toBeNull()
       expect(r.figures).toEqual([])
     } finally {
@@ -806,15 +902,17 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
-  it('captures grid drawing rendered onto the existing capture page', async () => {
+  it('captures grid drawing rendered to a TIFF device', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-grid-existing-page-'))
     const { child, send } = startLoop(rscriptBin(), {
       OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
     })
     try {
-      const r = await send('grid::grid.rect()')
+      const r = await send(
+        'grDevices::tiff(tempfile(fileext = ".tiff")); grid::grid.rect(); grDevices::dev.off()'
+      )
       expect(r.error).toBeNull()
-      expect(r.figures.length).toBeGreaterThan(0)
+      expect(r.figures).toHaveLength(1)
     } finally {
       child.kill()
       rmSync(figuresDir, { recursive: true, force: true })
@@ -883,14 +981,19 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
-  it('captures a ggplot2 figure via autoprint-triggered grid rendering', async () => {
+  it('captures a ggplot2 figure rendered to a TIFF device', async () => {
     const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-gg-'))
     const { child, send } = startLoop(rscriptBin(), {
       OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
     })
     try {
       const r = await send(
-        'library(ggplot2); ggplot(data.frame(x=1:3,y=1:3), aes(x,y)) + geom_point()'
+        [
+          'library(ggplot2)',
+          'grDevices::tiff(tempfile(fileext = ".tiff"))',
+          'ggplot(data.frame(x=1:3,y=1:3), aes(x,y)) + geom_point()',
+          'grDevices::dev.off()'
+        ].join('; ')
       )
       if (r.error && /there is no package called .ggplot2./.test(r.error)) {
         // ggplot2 not installed in this R env; base graphics coverage above already proves
@@ -898,7 +1001,30 @@ gate('r_loop.R', () => {
         return
       }
       expect(r.error).toBeNull()
-      expect(r.figures.length).toBeGreaterThan(0)
+      expect(r.figures).toHaveLength(1)
+    } finally {
+      child.kill()
+      rmSync(figuresDir, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('captures a lattice figure rendered to a TIFF device', async () => {
+    const figuresDir = mkdtempSync(join(tmpdir(), 'os-kernel-figs-r-lattice-'))
+    const { child, send } = startLoop(rscriptBin(), {
+      OPEN_SCIENCE_KERNEL_FIGURES_DIR: figuresDir
+    })
+    try {
+      const r = await send(
+        [
+          'grDevices::tiff(tempfile(fileext = ".tiff"))',
+          'lattice::xyplot(y ~ x, data = data.frame(x = 1:3, y = c(1, 4, 9)))',
+          'grDevices::dev.off()'
+        ].join('; ')
+      )
+      if (r.error && /there is no package called .lattice./.test(r.error)) return
+
+      expect(r.error).toBeNull()
+      expect(r.figures).toHaveLength(1)
     } finally {
       child.kill()
       rmSync(figuresDir, { recursive: true, force: true })

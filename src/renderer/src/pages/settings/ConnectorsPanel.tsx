@@ -6,12 +6,11 @@ import {
   Globe,
   Pencil,
   Plus,
-  Search,
   Terminal,
   Trash2
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import type {
@@ -38,6 +37,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorGlyph } from './connector-icons'
 import { SettingsIconAction, SettingsSection, SettingsToggle } from './SettingsLayout'
+import { SettingsSearchInput } from './SettingsSearchInput'
 
 // The connectors panel sub-view, driven by the settings navigation history. The detail and add pages
 // are separate components owned by SettingsPage; this panel only renders the list + contact-email section.
@@ -64,9 +64,8 @@ const FILTER_LABELS: Record<GroupFilter, string> = {
 
 const specialistNamesUsingConnector = (
   items: SpecialistListItem[],
-  server: Pick<CustomServerView, 'id' | 'name' | 'slug'>
+  server: Pick<CustomServerView, 'name'>
 ): string[] => {
-  const aliases = new Set([server.slug, server.name, server.id])
   return items
     .flatMap((item) => {
       if (item.kind === 'reviewer') return []
@@ -75,13 +74,18 @@ const specialistNamesUsingConnector = (
           ? item.fullAccess.excludedConnectorIds
           : item.selectedCapabilities.connectorIds
       const usesConnector =
-        item.capabilityMode === 'full'
-          ? !ids.some((id) => aliases.has(id))
-          : ids.some((id) => aliases.has(id))
+        item.capabilityMode === 'full' ? !ids.includes(server.name) : ids.includes(server.name)
       return usesConnector ? [item.displayName?.trim() || item.name] : []
     })
     .sort((a, b) => a.localeCompare(b))
 }
+
+const requiresSignInBeforeEnable = (server: CustomServerView): boolean =>
+  Boolean(
+    server.oauth &&
+    (!server.oauth.hasTokens || server.availability === 'unauthenticated') &&
+    !server.enabled
+  )
 
 type ConnectorsPanelProps = {
   onNavigate: (view: ConnectorsView) => void
@@ -94,11 +98,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const loadConnectors = useSettingsStore((state) => state.loadConnectors)
   const setConnectorEnabled = useSettingsStore((state) => state.setConnectorEnabled)
   const setCustomServerEnabled = useSettingsStore((state) => state.setCustomServerEnabled)
+  const retryCustomServer = useSettingsStore((state) => state.retryCustomServer)
   const removeCustomServer = useSettingsStore((state) => state.removeCustomServer)
   const authenticateCustomServer = useSettingsStore((state) => state.authenticateCustomServer)
-  const cancelCustomServerAuthentication = useSettingsStore(
-    (state) => state.cancelCustomServerAuthentication
-  )
   const setNcbiCredentials = useSettingsStore((state) => state.setNcbiCredentials)
 
   const [filter, setFilter] = useState<GroupFilter>('all')
@@ -110,6 +112,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   const [emailField, setEmailField] = useState('')
   const [keyField, setKeyField] = useState('')
   const [authenticatingIds, setAuthenticatingIds] = useState<Set<string>>(() => new Set())
+  const [retryingIds, setRetryingIds] = useState<Set<string>>(() => new Set())
   const [authError, setAuthError] = useState<string | null>(null)
   const [removal, setRemoval] = useState<{
     server: CustomServerView
@@ -117,7 +120,6 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   } | null>(null)
   const [removing, setRemoving] = useState(false)
   const [removalError, setRemovalError] = useState<string | null>(null)
-  const authenticationAttempts = useRef(new Map<string, number>())
 
   useEffect(() => {
     void loadConnectors()
@@ -138,6 +140,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
     if (!term) return customServers
     return customServers.filter(
       (server) =>
+        server.displayName.toLowerCase().includes(term) ||
         server.name.toLowerCase().includes(term) ||
         (server.description?.toLowerCase().includes(term) ?? false)
     )
@@ -163,37 +166,31 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
   }
 
   const signIn = async (id: string): Promise<void> => {
-    const attempt = (authenticationAttempts.current.get(id) ?? 0) + 1
-    authenticationAttempts.current.set(id, attempt)
     setAuthenticatingIds((current) => new Set(current).add(id))
     setAuthError(null)
     try {
       await authenticateCustomServer({ id })
     } catch (error) {
       await loadConnectors().catch(() => undefined)
-      if (attempt === authenticationAttempts.current.get(id)) {
-        setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
-      }
+      setAuthError(error instanceof Error ? error.message : 'OAuth sign-in failed.')
     } finally {
-      if (attempt === authenticationAttempts.current.get(id)) {
-        setAuthenticatingIds((current) => {
-          const next = new Set(current)
-          next.delete(id)
-          return next
-        })
-      }
+      setAuthenticatingIds((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
     }
   }
 
-  const cancelSignIn = async (id: string): Promise<void> => {
-    authenticationAttempts.current.set(id, (authenticationAttempts.current.get(id) ?? 0) + 1)
+  const retry = async (id: string): Promise<void> => {
+    setRetryingIds((current) => new Set(current).add(id))
     setAuthError(null)
     try {
-      await cancelCustomServerAuthentication({ id })
+      await retryCustomServer(id)
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : 'Could not cancel OAuth sign-in.')
+      setAuthError(error instanceof Error ? error.message : 'Could not reconnect this Connector.')
     } finally {
-      setAuthenticatingIds((current) => {
+      setRetryingIds((current) => {
         const next = new Set(current)
         next.delete(id)
         return next
@@ -383,20 +380,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             <SelectItem value="custom">Custom</SelectItem>
           </SelectContent>
         </Select>
-        <div className="relative flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            type="search"
-            aria-label="Search connectors"
-            placeholder="Search connectors…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="pl-8"
-          />
-        </div>
+        <SettingsSearchInput
+          aria-label="Search connectors"
+          placeholder="Search connectors…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="shrink-0">
@@ -501,62 +490,112 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                       <ConnectorGlyph size={24} />
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-sm text-foreground">
-                          {server.name}
+                          {server.displayName}
                         </span>
-                        {server.description ? (
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {server.description}
-                          </span>
-                        ) : null}
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {server.name}
+                          {server.description ? ` · ${server.description}` : ''}
+                        </span>
+                        <span
+                          className={`block truncate text-xs ${
+                            server.availability && !server.checking && !retryingIds.has(server.id)
+                              ? 'text-destructive'
+                              : 'text-muted-foreground'
+                          }`}
+                        >
+                          {retryingIds.has(server.id)
+                            ? 'Checking…'
+                            : server.checking
+                              ? 'Checking…'
+                              : server.availability === 'unavailable'
+                                ? 'Unavailable'
+                                : server.availability === 'unauthenticated'
+                                  ? 'Sign-in required'
+                                  : server.enabled
+                                    ? 'Connected'
+                                    : 'Disabled'}
+                        </span>
                       </div>
                       <SettingsIconAction
-                        label={`Export ${server.name}`}
+                        label={`Export ${server.displayName}`}
                         icon={Download}
                         onClick={() => onNavigate({ kind: 'export', id: server.id })}
                       />
                       <SettingsIconAction
-                        label={`Edit ${server.name}`}
+                        label={`Edit ${server.displayName}`}
                         icon={Pencil}
                         onClick={() => onNavigate({ kind: 'edit', id: server.id })}
                       />
                       <SettingsIconAction
-                        label={`Remove ${server.name}`}
+                        label={`Remove ${server.displayName}`}
                         icon={Trash2}
                         onClick={() => void requestRemoval(server)}
                         danger
                       />
+                      {server.availability === 'unavailable' && server.enabled ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={retryingIds.has(server.id)}
+                          onClick={() => void retry(server.id)}
+                        >
+                          {retryingIds.has(server.id) ? 'Checking…' : 'Retry'}
+                        </Button>
+                      ) : null}
+                      {server.availability === 'unauthenticated' && !server.oauth ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => onNavigate({ kind: 'edit', id: server.id })}
+                        >
+                          Configure
+                        </Button>
+                      ) : null}
                       {server.oauth ? (
                         <Button
                           type="button"
                           size="sm"
                           variant={
-                            authenticatingIds.has(server.id) || server.oauth.hasTokens
+                            authenticatingIds.has(server.id) ||
+                            (server.oauth.hasTokens && server.availability !== 'unauthenticated')
                               ? 'outline'
                               : 'default'
                           }
-                          onClick={() =>
-                            void (authenticatingIds.has(server.id)
-                              ? cancelSignIn(server.id)
-                              : signIn(server.id))
+                          disabled={
+                            authenticatingIds.has(server.id) ||
+                            (server.oauth.hasTokens && server.availability !== 'unauthenticated')
                           }
+                          onClick={() => void signIn(server.id)}
                         >
                           {authenticatingIds.has(server.id)
-                            ? 'Cancel'
-                            : server.oauth.hasTokens
+                            ? 'Connecting…'
+                            : server.oauth.hasTokens && server.availability !== 'unauthenticated'
                               ? 'Connected'
-                              : 'Sign in'}
+                              : server.availability === 'unauthenticated'
+                                ? 'Retry'
+                                : 'Sign in'}
                         </Button>
                       ) : null}
                       <SettingsToggle
                         enabled={server.enabled}
-                        aria-label={server.name}
-                        disabled={Boolean(server.oauth && !server.oauth.hasTokens)}
+                        aria-label={server.displayName}
+                        aria-disabled={requiresSignInBeforeEnable(server) || undefined}
+                        className={
+                          requiresSignInBeforeEnable(server)
+                            ? 'cursor-not-allowed opacity-50'
+                            : undefined
+                        }
                         title={
-                          server.oauth && !server.oauth.hasTokens
+                          requiresSignInBeforeEnable(server)
                             ? 'Sign in before enabling this Connector'
                             : undefined
                         }
-                        onToggle={() => void setCustomServerEnabled(server.id, !server.enabled)}
+                        onToggle={() => {
+                          if (requiresSignInBeforeEnable(server)) return
+                          void setCustomServerEnabled(server.id, !server.enabled)
+                        }}
                       />
                     </li>
                   ))}
@@ -584,7 +623,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
             <AlertDialog.Title className={dialogTitleClassName}>
-              Remove “{removal?.server.name}”?
+              Remove “{removal?.server.displayName}”?
             </AlertDialog.Title>
             <AlertDialog.Description className={dialogDescriptionClassName}>
               This removes the Connector configuration and credentials from this app. Existing

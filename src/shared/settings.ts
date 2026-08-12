@@ -5,6 +5,7 @@
 // only while the user is actively typing one in.
 
 import type { OfficialVendorId } from './provider-registry'
+import type { PermissionProfileId } from './permission-profiles'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
@@ -301,6 +302,22 @@ export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
+// Global routing preference for direct Subagents. Inherited mode intentionally carries no latent
+// provider/model/effort fields; selecting a fixed target commits the compound identity and effort
+// intent as one value so renderers can never observe a torn configuration.
+export type SubagentModelConfiguration =
+  | Readonly<{ mode: 'inherit' }>
+  | Readonly<{
+      mode: 'fixed'
+      providerId: string
+      model: string
+      reasoningEffort: ReasoningEffort
+    }>
+
+export const DEFAULT_SUBAGENT_MODEL_CONFIGURATION: SubagentModelConfiguration = Object.freeze({
+  mode: 'inherit'
+})
+
 // Desktop notifications for finished/failed agent tasks are opt-out: they only fire while the app
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
@@ -323,9 +340,9 @@ export const isReasoningEffort = (value: unknown): value is ReasoningEffort =>
   typeof value === 'string' && (REASONING_EFFORTS as readonly string[]).includes(value)
 
 // The selectable app-icon look. 'light' is the shipped default; 'dark' is its matching dark variant.
-// Both are built-in assets; the choice is applied at runtime to the app window icon (all platforms),
-// the macOS Dock, and the Windows tray glyph (the static installed icon in Finder/Explorer/taskbar is
-// baked into the build and never changes).
+// Both are built-in assets; the independent choice is applied at runtime to non-macOS app windows and
+// the Windows tray glyph. macOS instead uses its Icon Composer asset for the installed app and binds
+// the running Dock icon to General > Theme (the static installed icon in Explorer/taskbar is baked in).
 export type AppIconVariant = 'light' | 'dark'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'light'
@@ -358,6 +375,8 @@ export type AgentFrameworkView = {
   displayName: string
   // Whether this framework materializes app skills; the renderer hides the skills UI when false.
   supportsSkills: boolean
+  // Release-gated app-owned subagent support. Absent legacy snapshots are treated as unavailable.
+  supportsDelegatedWork?: boolean
 }
 
 // Full renderer snapshot of settings state.
@@ -390,14 +409,29 @@ export type SettingsSnapshot = {
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
+  subagentModel?: SubagentModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
   // Whether conversations may detect attached Skill packages and request an app-owned import flow.
   conversationSkillImportEnabled: boolean
   // Saved Windows titlebar-close behavior. Undefined means ask every time.
   closePreference?: CloseActionPreference
-  // The selected built-in app-icon look, applied to the window icon and macOS Dock. Defaults to 'light'.
+  // The selected built-in app-icon look for non-macOS windows and the Windows tray. Defaults to 'light'.
   appIconVariant: AppIconVariant
+  // Last Files-tab source filter. Undefined means the default ("All artifacts").
+  projectFilesFilter?: ProjectFilesFilterPreference
+  // The default permission profile for new sessions. Valid values: 'ask', 'auto', 'full'.
+  // Absent or invalid falls back to 'ask' (the most restrictive mode).
+  defaultPermissionProfile?: PermissionProfileId
+}
+
+// Persisted Files-tab source filter: an artifact collection, the machine's local browser, or a
+// granted folder inside it. `optionId` is the artifact filter id ('all', 'uploads', 'session:<id>');
+// `localRootId` is a GrantedLocalRoot id.
+export type ProjectFilesFilterPreference = {
+  sourceMode: 'artifacts' | 'local'
+  optionId?: string
+  localRootId?: string
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
@@ -409,6 +443,10 @@ export type SetAgentFrameworkRequest = {
 
 export type SetReasoningEffortRequest = {
   effort: ReasoningEffort
+}
+
+export type SetSubagentModelRequest = {
+  configuration: SubagentModelConfiguration
 }
 
 export type SetNotificationsEnabledRequest = {
@@ -423,8 +461,16 @@ export type SetClosePreferenceRequest = {
   preference?: CloseActionPreference
 }
 
+export type SetProjectFilesFilterRequest = {
+  filter?: ProjectFilesFilterPreference
+}
+
 export type SetAppIconVariantRequest = {
   variant: AppIconVariant
+}
+
+export type SetDefaultPermissionProfileRequest = {
+  profile: PermissionProfileId
 }
 
 // A built-in icon variant plus a small preview image (data URL) generated in the main process from the
@@ -784,7 +830,10 @@ export type SkillSource = 'featured' | 'imported' | 'personal'
 // Renderer-safe view of one bundled skill (no file contents).
 export type SkillView = {
   id: string
+  // Stable invocation name from SKILL.md.
   name: string
+  // Presentation label supplied by the catalog source, falling back to name.
+  displayName: string
   description: string
   source: SkillSource
   updatedAt: string
@@ -803,6 +852,10 @@ export type SkillDetailView = SkillView & {
   references: SkillReferenceInfo[]
 }
 
+export type ExportSkillRequest = { id: string }
+
+export type ExportSkillResult = { saved: boolean }
+
 // A reference file's name (basename under `references/`), without its content.
 export type SkillReferenceInfo = {
   path: string
@@ -820,21 +873,19 @@ export type SkillReference = {
   dataBase64?: string
 }
 
-// Create a personal (user-authored) skill from the in-app editor. `slug` is the user-chosen Skill ID
-// (without the `personal-` prefix); when omitted, it is derived from the name.
+// Create a personal (user-authored) skill from the in-app editor. `name` is the immutable invocation
+// identity and the package directory name.
 export type CreateSkillRequest = {
   name: string
   description: string
   body: string
   metadata?: Record<string, string>
-  slug?: string
   references?: SkillReference[]
 }
 
 // Update an existing personal skill in place.
 export type UpdateSkillRequest = {
   id: string
-  name: string
   description: string
   body: string
   metadata?: Record<string, string>
@@ -848,6 +899,16 @@ export type DeleteSkillRequest = {
 // Import a single skill from a public GitHub URL.
 export type ImportSkillRequest = {
   url: string
+}
+
+// Renderer-safe GitHub credential state. Main never returns the plaintext token.
+export type GitHubTokenStatus = {
+  configured: boolean
+  mask?: string
+}
+
+export type SaveGitHubTokenRequest = {
+  token: string
 }
 
 // Import a skill from an uploaded .zip / .skill bundle (base64-encoded archive bytes). When
@@ -1100,16 +1161,18 @@ export type CustomServerTransport = 'stdio' | 'streamable_http' | 'sse'
 // Renderer-safe view of one user-added custom MCP server (no secret env/header values).
 export type CustomServerView = {
   id: string
-  // Immutable agent-facing route used by host.mcp, Specialists, and generated MCP skills.
-  slug: string
-  // User-facing label; spaces and punctuation are allowed.
+  // Immutable agent-facing name used by host.mcp, Specialists, and generated MCP skills.
   name: string
+  // User-facing label; spaces, punctuation, and duplicates are allowed.
+  displayName: string
   description?: string
   transport: CustomServerTransport
   enabled: boolean
   // Physical availability is independent of Main's enabled toggle. An invalid persisted server may
   // remain visible to a Specialist but can never be selected or dispatched.
   availability?: 'unavailable' | 'unauthenticated'
+  // Background discovery is transient and does not make the Connector unavailable by itself.
+  checking?: boolean
   // Display-only config summary (the command that runs, its args, or the remote URL). env/headers
   // are intentionally omitted — they may hold secrets and stay write-only from the UI.
   command?: string
@@ -1139,7 +1202,7 @@ export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
   name: string
-  slug?: string
+  displayName: string
   description?: string
   transport: CustomServerTransport
   command?: string
@@ -1165,7 +1228,7 @@ export type ConnectorTemplateDefinition = {
   schemaVersion: 1
   kind: 'open-science.connector'
   name: string
-  slug: string
+  displayName: string
   description?: string
   transport: CustomServerTransport
   command?: string
@@ -1212,11 +1275,11 @@ export type SelectCustomServerTemplateRequest = {
 export type ExportCustomServerTemplateRequest = { id: string; expectedDigest: string }
 export type ExportCustomServerTemplateResult = { saved: boolean }
 
-// Edit an existing custom MCP server. The name is immutable (it is the server's identity — host.mcp
-// routing, skill-doc name, and per-tool policy keys all depend on it). Omitted env/headers keep the
-// stored values; providing them replaces the set.
+// Edit an existing custom MCP server. `name` is deliberately absent because it is immutable.
+// Omitted env/headers keep the stored values; providing them replaces the set.
 export type UpdateCustomServerRequest = {
   id: string
+  displayName?: string
   description?: string
   transport: CustomServerTransport
   command?: string

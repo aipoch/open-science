@@ -50,7 +50,37 @@ describe('runtime bundle release preflight', () => {
   it('fails closed on an unavailable manifest', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 404 }))
     await expect(
-      verifyRuntimeBundle('https://cdn.example', 1, ['linux-64'], fetchImpl)
+      verifyRuntimeBundle('https://cdn.example', 1, ['linux-64'], { fetchImpl })
     ).rejects.toThrow(/HTTP 404/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a transient HTTP 403 with bounded backoff', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 403 })
+      .mockResolvedValueOnce({ ok: false, status: 403 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => manifest('linux-64') })
+    const sleepImpl = vi.fn(async () => undefined)
+
+    await verifyRuntimeBundle('https://cdn.example', 1, ['linux-64'], {
+      fetchImpl,
+      sleepImpl
+    })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(sleepImpl).toHaveBeenNthCalledWith(1, 1000)
+    expect(sleepImpl).toHaveBeenNthCalledWith(2, 2000)
+  })
+
+  it('fails closed after the transient retry budget is exhausted', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 403 }))
+    const sleepImpl = vi.fn(async () => undefined)
+
+    await expect(
+      verifyRuntimeBundle('https://cdn.example', 1, ['win-64'], { fetchImpl, sleepImpl })
+    ).rejects.toThrow(/HTTP 403 after 3 attempt/)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(sleepImpl).toHaveBeenCalledTimes(2)
   })
 })

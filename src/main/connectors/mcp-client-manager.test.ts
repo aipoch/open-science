@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
+import { delimiter } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -7,9 +8,10 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { z } from 'zod'
-import { McpClientManager, buildTransport } from './mcp-client-manager'
+import { McpClientManager, McpToolCallError, buildTransport } from './mcp-client-manager'
 import type { CustomMcpServerConfig } from './mcp-client-manager'
 import { OAuthCallbackServer, type PersistentOAuthClientProvider } from './oauth-client'
+import { EXTRA_PATH_DIRS } from '../settings/shell-path'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -71,8 +73,12 @@ describe('McpClientManager', () => {
   it('throws when the tool result has isError set', async () => {
     const { createClient } = makeTestServer()
     const manager = new McpClientManager({ createClient: () => createClient() })
+    const failure = manager.call(config, 'boom', {})
 
-    await expect(manager.call(config, 'boom', {})).rejects.toThrow(/kaboom/)
+    await expect(failure).rejects.toEqual(
+      expect.objectContaining({ name: 'McpToolCallError', message: 'kaboom' })
+    )
+    await expect(failure).rejects.toBeInstanceOf(McpToolCallError)
   })
 
   it('dedupes concurrent connects for the same server id', async () => {
@@ -105,6 +111,24 @@ describe('McpClientManager', () => {
     await manager.listTools(config)
 
     expect(connectCount).toBe(2)
+  })
+
+  it('close drops one cached client so a retry reconnects it', async () => {
+    let connectCount = 0
+    const { createClient } = makeTestServer()
+    const manager = new McpClientManager({
+      createClient: async () => {
+        connectCount += 1
+        return createClient()
+      }
+    })
+
+    await manager.listTools(config)
+    await manager.close(config.id)
+    await manager.listTools(config)
+
+    expect(connectCount).toBe(2)
+    await manager.closeAll()
   })
 
   it('completes an interactive OAuth callback, clears PKCE, and reconnects', async () => {
@@ -446,6 +470,18 @@ describe('McpClientManager', () => {
 })
 
 describe('buildTransport', () => {
+  const stdioTransportEnvironment = (env?: Record<string, string>): Record<string, string> => {
+    const transport = buildTransport({
+      id: 'srv-stdio',
+      name: 'stdio-server',
+      transport: 'stdio',
+      command: 'npx',
+      env
+    }) as unknown as { _serverParams: { env?: Record<string, string> } }
+
+    return transport._serverParams.env ?? {}
+  }
+
   it('builds a StdioClientTransport for a stdio config', () => {
     const transport = buildTransport({
       id: 'srv-stdio',
@@ -456,6 +492,33 @@ describe('buildTransport', () => {
     })
 
     expect(transport).toBeInstanceOf(StdioClientTransport)
+  })
+
+  it('augments the stdio PATH while preserving explicitly configured environment values', () => {
+    const childEnv = stdioTransportEnvironment({ CUSTOM_API_KEY: 'configured-secret' })
+    const pathDirs = childEnv?.PATH?.split(delimiter) ?? []
+
+    expect(pathDirs).toEqual(expect.arrayContaining(EXTRA_PATH_DIRS))
+    expect(childEnv?.CUSTOM_API_KEY).toBe('configured-secret')
+  })
+
+  it('keeps an explicitly configured stdio PATH ahead of the augmented directories', () => {
+    const customPath = '/custom/bin'
+    const pathDirs = stdioTransportEnvironment({ PATH: customPath }).PATH?.split(delimiter) ?? []
+
+    expect(pathDirs[0]).toBe(customPath)
+    expect(pathDirs).toEqual(expect.arrayContaining(EXTRA_PATH_DIRS))
+  })
+
+  it('does not expose unrelated host secrets to a custom stdio server', () => {
+    const secretName = 'OPEN_SCIENCE_MCP_TEST_SECRET'
+    vi.stubEnv(secretName, 'host-only-secret')
+
+    try {
+      expect(stdioTransportEnvironment()).not.toHaveProperty(secretName)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('throws when a stdio config is missing a command', () => {

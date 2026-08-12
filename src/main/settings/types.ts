@@ -5,17 +5,21 @@ import type {
   ClaudeInfo,
   CodexSubscriptionAuthMode,
   CodexInfo,
+  ProjectFilesFilterPreference,
   ProviderType,
   ProviderValidationFailure,
-  ReasoningEffort
+  ReasoningEffort,
+  SubagentModelConfiguration
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type {
   CustomReasoningEffortTransport,
   ReasoningEffortPresetSetting
 } from '../../shared/reasoning-effort'
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -95,9 +99,10 @@ export type StoredCustomMcpOAuthState = {
 // the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
   id: string
-  // Added after custom Connectors shipped. Older records derive it from immutable `name` on read.
-  slug?: string
+  // Immutable public invocation name used by host.mcp, Specialists, policy, and generated Skills.
   name: string
+  // Presentation-only label. It may enter context but never participates in identity resolution.
+  displayName: string
   transport: 'stdio' | 'streamable_http' | 'sse'
   command?: string
   args?: string[]
@@ -148,14 +153,21 @@ export type StoredSettings = {
   agentFrameworkId?: AgentFrameworkId
   // Reasoning-effort preference. Absent (or 'default') means the agent keeps its own default.
   reasoningEffort?: ReasoningEffort
+  // Global direct-Subagent model routing. Absence in older documents means dynamic inheritance.
+  subagentModel?: SubagentModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
   // Conversation-driven Skill package import. Absent means enabled.
   conversationSkillImportEnabled?: boolean
   // Windows titlebar-close behavior. Absent means ask every time.
   closePreference?: CloseActionPreference
+  // Last Files-tab source filter (artifact collection, this computer, or a granted folder).
+  // Absent means the default ("All artifacts").
+  projectFilesFilter?: ProjectFilesFilterPreference
   // Selected built-in app-icon look. Absent means the default ('light').
   appIconVariant?: AppIconVariant
+  // Default approval profile for new conversations. Absent means the safe 'ask' default.
+  defaultPermissionProfile?: PermissionProfileId
   // Detected opencode executable path + reported version (for the status card). Absent = detect on PATH.
   opencodePath?: string
   opencodeVersion?: string
@@ -175,6 +187,10 @@ export type StoredSettings = {
   // Ids of bundled skills the user turned OFF. Absent/empty means every bundled skill is enabled
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]
+  // OS-encrypted GitHub token used only for GitHub Skill discovery/import requests. The mask is
+  // display-only; plaintext never reaches settings.json or a renderer snapshot.
+  githubTokenRef?: string
+  githubTokenMask?: string
   connectors?: StoredConnectors
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
   packageMirror?: PackageMirror
@@ -203,6 +219,10 @@ export type StoredSettings = {
   // Pinned bookmark folders for the remote file browser, keyed by provider_id.
   // Each value is an ordered array of absolute paths the user has pinned via Go-to.
   computeBookmarks?: Record<string, string[]>
+  // Legacy settings-persisted granted local roots ("Grant folder access"), read only for one-time
+  // migration into the GrantedLocalRoot SQLite table (see local-fs/granted-roots-repository.ts).
+  // Production never appends to this field; it is removed after a successful import.
+  grantedLocalRoots?: GrantedLocalRoot[]
   // Legacy project-scope compute grants, read only for one-time migration into PermissionGrant.
   // Production authorization never appends to this field; it is removed after a successful import.
   computeGrants?: StoredComputeGrant[]

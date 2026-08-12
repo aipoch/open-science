@@ -7,7 +7,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
-import type { ActiveSessionInfo } from '../../../shared/storage'
+import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../../../shared/storage'
 import type {
   CloseConfirmChoice,
   CloseConfirmRequest,
@@ -61,10 +61,17 @@ export const CloseConfirmModal = ({
 
   const isQuitVariant = dialogRequest.variant === 'quit'
   const hasSessions = dialogRequest.sessions.length > 0
-  const title = isQuitVariant ? 'Quit Open Science?' : 'Minimize or quit?'
-  const description = isQuitVariant
-    ? 'Work is still running and will be interrupted if you quit.'
-    : 'This app can keep running in the tray, or you can quit.'
+  const hasDelegatedWork = hasDelegatedActiveSession(dialogRequest.sessions)
+  const title = hasDelegatedWork
+    ? 'Subagents are still running'
+    : isQuitVariant
+      ? 'Quit Open Science?'
+      : 'Minimize or quit?'
+  const description = hasDelegatedWork
+    ? 'Return to the listed tasks and stop their subagents before quitting Open Science.'
+    : isQuitVariant
+      ? 'Work is still running and will be interrupted if you quit.'
+      : 'This app can keep running in the tray, or you can quit.'
 
   return (
     <AlertDialog.Root
@@ -127,7 +134,11 @@ export const CloseConfirmModal = ({
             </label>
           ) : null}
           <div className="mt-4 flex justify-end gap-2">
-            {isQuitVariant ? (
+            {hasDelegatedWork && isQuitVariant ? (
+              <AlertDialog.Cancel asChild>
+                <Button type="button">Return to tasks</Button>
+              </AlertDialog.Cancel>
+            ) : isQuitVariant ? (
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="ghost">
                   Cancel
@@ -138,9 +149,11 @@ export const CloseConfirmModal = ({
                 Minimize to tray
               </Button>
             )}
-            <Button type="button" onClick={() => reply('quit')}>
-              Quit
-            </Button>
+            {!hasDelegatedWork ? (
+              <Button type="button" onClick={() => reply('quit')}>
+                Quit
+              </Button>
+            ) : null}
           </div>
         </AlertDialog.Content>
       </AlertDialog.Portal>

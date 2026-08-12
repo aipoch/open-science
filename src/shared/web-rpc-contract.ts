@@ -1,8 +1,19 @@
 import { z } from 'zod'
 
+import { APPLICATION_COMMAND_ERROR_CODES } from './application-command-contract'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated'
 
 export const WEB_RPC_PROTOCOL_VERSION = 1 as const
+export const WEB_RPC_TRANSPORT_ERROR_CODES = [
+  'invalid_request',
+  'method_not_found',
+  'handler_error'
+] as const
+export const WEB_RPC_ERROR_CODES = [
+  ...WEB_RPC_TRANSPORT_ERROR_CODES,
+  ...APPLICATION_COMMAND_ERROR_CODES
+] as const
+export type WebRpcErrorCode = (typeof WEB_RPC_ERROR_CODES)[number]
 
 // The preload interface is the positive source for browser-callable methods. These Electron-only
 // methods have browser adapters or require native WebContents/filesystem capabilities and therefore
@@ -12,6 +23,7 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'file:save-managed',
   'sessions:export-conversation',
   'file:save-session-artifacts',
+  'file:save-project-artifacts',
   'uploads:stage-local-file',
   'window:close',
   'settings:list-agent-home-skills',
@@ -72,7 +84,7 @@ export const webRpcResponseSchema = z.discriminatedUnion('ok', [
       ok: z.literal(false),
       error: z
         .object({
-          code: z.enum(['invalid_request', 'method_not_found', 'handler_error']),
+          code: z.enum(WEB_RPC_ERROR_CODES),
           message: z.string()
         })
         .strict()

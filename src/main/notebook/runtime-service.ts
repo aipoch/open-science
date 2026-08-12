@@ -15,11 +15,7 @@ import type {
   ExportNotebookKernelRequest,
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
-  NotebookEnvironmentStatus,
-  NotebookKernelMetadata,
   NotebookLanguage,
-  NotebookRunRecord,
-  NotebookRunSource,
   NotebookRunSummary,
   NotebookSessionRequest,
   NotebookSessionReference,
@@ -38,9 +34,8 @@ import {
   type NotebookEnvironmentManager
 } from './environment-management'
 import { NotebookExportReader } from './export-reader'
-import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
+import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { saveIpynbAll } from './save-ipynb-all'
-import type { KernelProcessKind } from './kernel-executor'
 import type { ProbeDeps } from './mirror-probe'
 import {
   installPackages as installPackagesDefault,
@@ -53,7 +48,7 @@ import {
   type InspectPackagesRequest,
   type InspectPackagesResult
 } from './package-operations'
-import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
+import { NotebookRunRepository, getRuntimeRoot } from './repository'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -76,10 +71,9 @@ import { NotebookRecoveryCoordinator } from './recovery-coordinator'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookEnvironmentOperations, type DefaultEnvProvisioner } from './environment-operations'
+import type { MicromambaRunner } from './windows-micromamba-runner'
 import {
-  NotebookSessionAggregate,
-  type NotebookSessionExecutorGeneration,
-  type NotebookSessionOwnedExecutor,
+  type NotebookSessionAggregate,
   type NotebookSessionExecutionRequest,
   type NotebookSessionExecutionResult,
   type NotebookSessionExecutor,
@@ -99,6 +93,13 @@ import {
   type NotebookControlCompletionInterceptor,
   type NotebookControlResult
 } from './execution-owner'
+import { NotebookSessionReadModel, type NotebookHandoffContext } from './session-read-model'
+import { notebookLaneKey } from './lane-identity'
+import {
+  NotebookSessionLifecycleOwner,
+  type NotebookExecutorLifecycleCallbacks,
+  type NotebookSessionLifecycleCallbacks
+} from './session-lifecycle'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -119,70 +120,24 @@ const EMPTY_NOTEBOOK_RUNTIME_SETTINGS: Pick<NotebookRuntimeSettings, 'getSnapsho
 const dataProcessKey = (language: NotebookLanguage, environment?: string): string =>
   `${language === 'r' ? 'r' : 'python'}:${resolveEnvName(language, environment)}`
 
-// The process key the executor reports through onIdleShutdown/onTerminated(kind, env): `${kind}:${env}`
-// for python/r, bare 'repl' for the env-agnostic control kernel. A missing kind/env (direct callers /
-// tests that omit them) resolves to the DEFAULT env for the kind so run.json stays consistent.
-const kernelProcessKey = (kind: KernelProcessKind | undefined, env: string | undefined): string => {
-  const resolvedKind = kind ?? 'python'
-  if (resolvedKind === 'repl') return 'repl'
-  const resolvedEnv =
-    env && env.length > 0 ? env : resolvedKind === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV
-  return `${resolvedKind}:${resolvedEnv}`
-}
-
-// True when a process key's status is the one persisted into run.json's single kernel.lastKnownStatus:
-// the two DEFAULT data envs and the control repl (backward compat — run.json shape is unchanged).
-// Named-env statuses live only in memory / state() until a later task persists the environments map.
-const persistsToRunJson = (processKey: string): boolean =>
-  processKey === 'repl' ||
-  processKey === `python:${DEFAULT_PY_ENV}` ||
-  processKey === `r:${DEFAULT_R_ENV}`
-
 type ResolvedInterpreter = NotebookSessionResolvedInterpreter
 type NotebookExecutionRequest = NotebookSessionExecutionRequest
 type NotebookExecutionResult = NotebookSessionExecutionResult
 
 type NotebookExecutor = NotebookSessionExecutor
 
-type NotebookExecutorLifecycleCallbacks = {
-  onIdleShutdown: (kind?: KernelProcessKind, env?: string) => Promise<void>
-  onTerminated: (kind: KernelProcessKind, env?: string) => Promise<void>
-}
-
-type NotebookRuntimeServiceCallbacks = {
-  onNotebookAvailable?: (event: NotebookSessionReference) => void
-  onNotebookChanged?: (event: NotebookSessionReference) => void
-}
-
-type NotebookHandoffContext = {
-  activeRunId?: string
-  activeWriteCellId?: string
-  executionCount: number
-  cells: Array<{
-    id: string
-    language: NotebookLanguage
-    status: NotebookCell['status']
-    executionCount?: number
-    latestRunId?: string
-  }>
-  kernels: Array<{
-    kind: NotebookLanguage | 'repl'
-    status: NotebookKernelMetadata['lastKnownStatus']
-  }>
-  runtimes: Array<{
-    language: NotebookLanguage
-    label: string
-    version?: string
-    status?: NotebookRuntimeBinding['status']
-    reason?: NotebookRuntimeBinding['reason']
-  }>
-}
+type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks
 
 // The session-scoped connector RPC capability injected into the persistent control-plane REPL. The
 // service caches it for the RuntimeSession lifetime because the child captures it only when spawned;
 // release revokes that capability when the runtime session is shut down.
 type McpRpcConnection = NotebookSessionMcpRpcConnection
-type McpRpcConnectionBinding = { sessionId: string; projectId: string }
+type McpRpcConnectionBinding = {
+  sessionId: string
+  projectId: string
+  agentFrameId: string
+  attemptId?: string
+}
 
 type NotebookRuntimeServiceOptions = {
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
@@ -227,6 +182,7 @@ type NotebookRuntimeServiceOptions = {
     request: InstallRequest,
     deps?: Partial<InstallDeps>
   ) => Promise<InstallResult>
+  micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   // Structured main-process diagnostics for package operations and interpreter probes. Injectable so
   // tests assert logging without initializing the rotating file sink.
   logger?: RuntimeDiagnosticLogger
@@ -243,13 +199,6 @@ type NotebookRuntimeServiceOptions = {
   saveIpynbAll?: (
     files: Array<{ kernel: 'python' | 'r'; name: string; data: string }>
   ) => Promise<ExportNotebookAllResult>
-  // Resolves app-managed artifact paths with the artifact repository's canonical/symlink checks,
-  // bound to the artifact's declaring project/session subtree.
-  resolveArtifactPath?: (request: {
-    path: string
-    projectName: string
-    sessionId: string
-  }) => Promise<string>
   environmentStateTracker?: Pick<
     EnvironmentStateTracker,
     | 'prepareRun'
@@ -358,7 +307,8 @@ class NotebookRuntimeService {
   private readonly repairPolicy: NotebookRuntimeRepairPolicy
   private readonly runtimeRepair: NotebookRuntimeRepairOwner
   private readonly sessions: NotebookSessionRegistry<RuntimeSession>
-  private readonly announcedAgentSessionIds = new Set<string>()
+  private readonly sessionReadModel: NotebookSessionReadModel<RuntimeSession>
+  private readonly sessionLifecycle: NotebookSessionLifecycleOwner
   // Owns process-global operation admission, provisioning progress, restart recommendations,
   // revocation drains, repair blocks, and installer diagnostics. The service remains the compatibility
   // facade and chooses which execution/package path enters each environment operation.
@@ -389,8 +339,7 @@ class NotebookRuntimeService {
     this.exportReader = new NotebookExportReader({
       repository: this.repository,
       defaultProjectName: options.projectName,
-      appVersion: options.appVersion,
-      resolveArtifactPath: options.resolveArtifactPath
+      appVersion: options.appVersion
     })
     this.sessions = new NotebookSessionRegistry({
       beforeTeardown: async () => {
@@ -419,8 +368,29 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       bindings: this.runtimeBindingOwner,
       sessions: () => this.sessions.values(),
-      notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession),
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession),
       logger: this.runtimeLogger
+    })
+    this.sessionReadModel = new NotebookSessionReadModel({
+      storageRoot: options.dataRoot,
+      defaultProjectName: options.projectName,
+      repository: this.repository,
+      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
+      runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
+      isRestartRecommended: (processKey) =>
+        this.environmentOperations.isRestartRecommended(processKey)
+    })
+    this.sessionLifecycle = new NotebookSessionLifecycleOwner({
+      storageRoot: options.dataRoot,
+      defaultProjectName: options.projectName,
+      repository: this.repository,
+      sessions: this.sessions,
+      runtimeBindings: this.runtimeBindingOwner,
+      executorFactory: options.executorFactory,
+      defaultExecutorOptions: resolveDefaultExecutorOptions,
+      platform: options.platform,
+      callbacks: options.callbacks,
+      toSessionReference: (session) => this.sessionReadModel.toSessionReference(session)
     })
     this.runtimeRepair = new NotebookRuntimeRepairOwner({
       runtimeRoot,
@@ -428,8 +398,8 @@ class NotebookRuntimeService {
       bindings: this.runtimeBindingOwner,
       environmentOperations: this.environmentOperations,
       sessions: () => this.sessions.values(),
-      findSession: (sessionId) => this.sessions.get(sessionId),
-      notifyChanged: (session) => this.notifyNotebookChanged(session)
+      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session)
     })
     this.environmentManagement = new NotebookEnvironmentManagementOwner({
       runtimeRoot,
@@ -454,10 +424,10 @@ class NotebookRuntimeService {
       mirrorProbe: options.mirrorProbe,
       resolvePackageMirror: options.getPackageMirror,
       ensureRecovered: () => this.ensureRecovered(),
-      loadSession: (request) => this.ensureSession(request),
-      findSession: (sessionId) => this.sessions.get(sessionId),
+      loadSession: (request) => this.sessionLifecycle.ensure(request),
+      findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       sessions: () => this.sessions.values(),
-      notifyChanged: (session) => this.notifyNotebookChanged(session),
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session),
       resolveRuntimeEnablement: (language) => this.resolveRuntimeEnablement(language),
       isDefaultEnvironmentDisabled: (language, candidateRuntimeRoot) =>
         this.isDefaultEnvDisabled(language, candidateRuntimeRoot),
@@ -467,6 +437,7 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
       installPackages: options.installPackagesImpl ?? installPackagesDefault,
+      micromambaRunner: options.micromambaRunner,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args)
     })
     this.dataExecutionAdmission = new NotebookDataExecutionAdmissionOwner({
@@ -479,7 +450,7 @@ class NotebookRuntimeService {
     })
     this.runTerminalization = new NotebookRunTerminalizationOwner({
       repository: this.repository,
-      notifyChanged: (session) => this.notifyNotebookChanged(session as RuntimeSession)
+      notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession)
     })
     this.executionOwner = new NotebookExecutionOwner({
       configRoot: options.configRoot,
@@ -489,9 +460,10 @@ class NotebookRuntimeService {
       environmentStateTracker: this.environmentStateTracker,
       createEnvironmentCaptureTarget: (...args) => this.environmentCaptureTarget(...args),
       persistKernelStatus: (session, status, processKey) =>
-        this.persistKernelStatus(session, status, processKey),
+        this.sessionLifecycle.persistKernelStatus(session as RuntimeSession, status, processKey),
       getMcpRpcConnectionResolver: () => this.mcpRpcConnectionResolver,
-      notifyAvailable: (session, source) => this.notifyNotebookAvailable(session, source),
+      notifyAvailable: (session, source) =>
+        this.sessionLifecycle.notifyAvailable(session as RuntimeSession, source),
       platform: options.platform,
       shellProcess: options.shellProcess
     })
@@ -592,7 +564,7 @@ class NotebookRuntimeService {
     runtimes: NotebookRuntimeListing[]
     bindings: NotebookRuntimeBindings
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     return this.runtimeBindingOwner.list(session)
   }
 
@@ -601,10 +573,13 @@ class NotebookRuntimeService {
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
-      const session = await this.ensureSession(request)
-      return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
-    })
+    return this.runtimeBindingOwner.runWrite(
+      notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
+      async () => {
+        const session = await this.sessionLifecycle.ensure(request)
+        return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
+      }
+    )
   }
 
   // notebook_switch_runtime: an EXPLICIT switch — tear down the old kernel + clear that language's
@@ -612,24 +587,27 @@ class NotebookRuntimeService {
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    return this.runtimeBindingOwner.runWrite(request.sessionId, async () => {
-      const session = await this.ensureSession(request)
-      const result = await this.runtimeBindingOwner.switch(
-        session,
-        request.language,
-        request.runtimeId,
-        async () => {
-          // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
-          // new runtime starts fresh and two same-language interpreters never coexist.
-          const oldEnv = this.resolveRunEnv(session, request.language)
-          const kind = request.language === 'r' ? 'r' : 'python'
-          await session.terminateExecutor(kind, oldEnv)
-          this.tearDownLanguageBinding(session, request.language, oldEnv)
-        }
-      )
-      this.notifyNotebookChanged(session)
-      return result
-    })
+    return this.runtimeBindingOwner.runWrite(
+      notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
+      async () => {
+        const session = await this.sessionLifecycle.ensure(request)
+        const result = await this.runtimeBindingOwner.switch(
+          session,
+          request.language,
+          request.runtimeId,
+          async () => {
+            // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
+            // new runtime starts fresh and two same-language interpreters never coexist.
+            const oldEnv = this.resolveRunEnv(session, request.language)
+            const kind = request.language === 'r' ? 'r' : 'python'
+            await session.terminateExecutor(kind, oldEnv)
+            this.tearDownLanguageBinding(session, request.language, oldEnv)
+          }
+        )
+        this.sessionLifecycle.notifyChanged(session)
+        return result
+      }
+    )
   }
 
   // WS11: how many live sessions are bound to a runtime, split by kernel state, so Settings can warn
@@ -689,7 +667,7 @@ class NotebookRuntimeService {
     writeId: string
     status: NotebookCell['status']
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const cellId = request.cellId ?? `cell-${randomUUID()}`
     const writeId = `write-${randomUUID()}`
     const source = request.source ?? 'agent'
@@ -701,8 +679,8 @@ class NotebookRuntimeService {
       startedAt: Date.now()
     })
 
-    this.notifyNotebookAvailable(session, source)
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyAvailable(session, source)
+    this.sessionLifecycle.notifyChanged(session)
 
     return { sessionId: session.sessionId, cellId, writeId, status: cell.status }
   }
@@ -714,9 +692,9 @@ class NotebookRuntimeService {
     writeId: string
     receivedBytes: number
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     return {
       sessionId: session.sessionId,
@@ -733,18 +711,18 @@ class NotebookRuntimeService {
     code: string
     status: NotebookCell['status']
   }> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const cell = session.finishCellWrite(request.cellId, request.writeId)
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
   }
 
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
   async runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     const run = await this.executionOwner.executeDataCell(session, request)
-    return this.toRunSummary(session, run)
+    return this.sessionReadModel.toRunSummary(session, run)
   }
 
   // Convenience path used by the terminal and MCP to write a temporary cell and run it.
@@ -772,14 +750,14 @@ class NotebookRuntimeService {
   // Compatibility facade for the control-plane REPL. Admission, capability lifetime, dispatch,
   // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(request: ExecuteNotebookControlRequest): Promise<NotebookControlResult> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     return this.executionOwner.executeControl(session, request)
   }
 
   // Compatibility facade for stateless shell execution. The owner deliberately admits calls without
   // a per-Session queue while the repository continues to serialize durable run writes.
   async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
     return this.executionOwner.executeShell(session, request)
   }
 
@@ -787,109 +765,15 @@ class NotebookRuntimeService {
   // never used (or was intentionally shut down for a Branch change), so this must not call
   // ensureSession(), load run.json, discover runtimes, or create an executor.
   peekHandoffContext(sessionId: string): NotebookHandoffContext | undefined {
-    const session = this.sessions.get(sessionId)
-    if (!session) return undefined
-
-    const snapshot = session.snapshot()
-    const kernels: NotebookHandoffContext['kernels'] = snapshot.kernelStatuses
-      .filter(([, status]) => status !== 'terminated')
-      .slice(-6)
-      .map(([processKey, status]) => ({
-        kind: processKey === 'repl' ? 'repl' : processKey.startsWith('r:') ? 'r' : 'python',
-        status
-      }))
-    const runtimes = session
-      .runtimeBindingEntries()
-      .slice(-4)
-      .map(([language, binding]) => ({
-        language,
-        label: binding.label,
-        ...(binding.version ? { version: binding.version } : {}),
-        ...(binding.status ? { status: binding.status } : {}),
-        ...(binding.reason ? { reason: binding.reason } : {})
-      }))
-    const cells = snapshot.cells.slice(-6).map((cell) => ({
-      id: cell.id,
-      language: cell.language,
-      status: cell.status,
-      ...(cell.executionCount === undefined ? {} : { executionCount: cell.executionCount }),
-      ...(cell.latestRunId ? { latestRunId: cell.latestRunId } : {})
-    }))
-
-    if (
-      snapshot.executionCount === 0 &&
-      !snapshot.activeRunId &&
-      !snapshot.activeWrite &&
-      cells.length === 0 &&
-      kernels.length === 0 &&
-      runtimes.length === 0
-    ) {
-      return undefined
-    }
-
-    return {
-      executionCount: snapshot.executionCount,
-      ...(snapshot.activeRunId ? { activeRunId: snapshot.activeRunId } : {}),
-      ...(snapshot.activeWrite ? { activeWriteCellId: snapshot.activeWrite.cellId } : {}),
-      cells,
-      kernels,
-      runtimes
-    }
+    return this.sessionReadModel.peekHandoffContext(sessionId)
   }
 
   // Returns the current in-memory cells plus the complete persisted run history.
   async state(
     request: NotebookSessionRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    const session = await this.ensureSession(request)
-    const document = await this.repository.loadOrCreate({
-      projectName: session.projectName,
-      sessionId: session.sessionId,
-      workspaceCwd: session.cwd
-    })
-    const snapshot = session.snapshot()
-
-    return {
-      id: session.id,
-      sessionId: session.sessionId,
-      cwd: session.cwd,
-      notebookSessionRoot: session.notebookSessionRoot,
-      dataRoot: session.dataRoot,
-      runtimeRoot: session.runtimeRoot,
-      pythonPath: document.kernel.pythonPath,
-      kernelStatus: document.kernel.lastKnownStatus,
-      runJsonPath: session.runJsonPath,
-      cells: snapshot.cells.map((cell) => ({ ...cell })),
-      activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
-      activeRunId: snapshot.activeRunId,
-      // run.json retains managed storage keys for later Artifact evidence, but no renderer/agent
-      // state response may expose them.
-      runs: document.runs.map((run) => this.toPublicRunRecord(run)),
-      recentRuns: document.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
-      environments: this.buildEnvironmentStatuses(session),
-      // v4 session runtime bindings (notebook_state surfaces the current python/r bindings).
-      runtimeBindings: this.runtimeBindingOwner.snapshot(session)
-    }
-  }
-
-  // Projects the session's live per-process-key status map into the wire shape state()'s consumers
-  // (the multi-env preview / T8) read: one entry per (kind, env) the session has spawned. The coarse
-  // top-level kernelStatus stays the DEFAULT env's status for backward compat; this is the per-env view.
-  private buildEnvironmentStatuses(session: RuntimeSession): NotebookEnvironmentStatus[] {
-    return session.kernelStatusEntries().map(([processKey, status]) => {
-      if (processKey === 'repl') {
-        return { processKey, kind: 'repl', status }
-      }
-      const separator = processKey.indexOf(':')
-      const kind = processKey.slice(0, separator) === 'r' ? 'r' : 'python'
-      return {
-        processKey,
-        kind,
-        environment: processKey.slice(separator + 1),
-        status,
-        restartRecommended: this.environmentOperations.isRestartRecommended(processKey)
-      }
-    })
+    const session = await this.sessionLifecycle.ensure(request)
+    return this.sessionReadModel.state(session)
   }
 
   // Resolves the durable reference for a session, preferring the live runtime session but falling
@@ -897,29 +781,7 @@ class NotebookRuntimeService {
   async getSessionReference(
     request: NotebookSessionRequest
   ): Promise<NotebookSessionReference | null> {
-    const existing = this.sessions.get(request.sessionId)
-
-    if (existing) {
-      return this.toSessionReference(existing)
-    }
-
-    const projectName = request.projectName ?? this.options.projectName
-    const document = await this.repository.findExisting(projectName, request.sessionId)
-
-    if (!document) {
-      return null
-    }
-
-    // Roots come from run.json normalization so a rehydrated entry matches the live one exactly.
-    return {
-      sessionId: request.sessionId,
-      projectName,
-      workspaceCwd: document.workspaceCwd,
-      notebookSessionRoot: document.notebookSessionRoot,
-      dataRoot: document.dataRoot,
-      runtimeRoot: document.kernel.runtimeRoot,
-      runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId)
-    }
+    return this.sessionReadModel.getSessionReference(request)
   }
 
   // Exports the .ipynb for the kernel the caller is currently viewing (tab = choose language).
@@ -945,7 +807,7 @@ class NotebookRuntimeService {
   // and lazily respawns its loops) and only shuts down + recreates for executors that don't support it.
   // Reports 'restarting' for the duration and settles back to 'idle' once the fresh process is ready.
   async restart(request: NotebookSessionRequest): Promise<NotebookSessionState> {
-    const session = await this.ensureSession(request)
+    const session = await this.sessionLifecycle.ensure(request)
 
     // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
     // is cleared. Snapshot the keys before teardown drops them from kernelStatuses.
@@ -954,23 +816,23 @@ class NotebookRuntimeService {
     await this.repository.updateKernelStatus({
       projectName: session.projectName,
       sessionId: session.sessionId,
+      lane: session.lane,
       status: 'restarting'
     })
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     try {
-      await session.restartExecutor(() =>
-        this.createExecutor(session.sessionId, session.projectName)
-      )
+      await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
       this.environmentOperations.clearRestartRecommendations(envKeys)
     } finally {
       await this.repository.updateKernelStatus({
         projectName: session.projectName,
         sessionId: session.sessionId,
+        lane: session.lane,
         status: 'idle'
       })
     }
-    this.notifyNotebookChanged(session)
+    this.sessionLifecycle.notifyChanged(session)
 
     return this.state(request)
   }
@@ -1005,15 +867,11 @@ class NotebookRuntimeService {
   async shutdown(
     request: NotebookSessionRequest
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
-    return this.shutdownSession(request.sessionId)
+    return this.sessionLifecycle.shutdown(request)
   }
 
   async shutdownSession(sessionId: string): Promise<{ sessionId: string; status: 'shutdown' }> {
-    await this.runtimeBindingOwner.withSessionTeardown(sessionId, async () => {
-      await this.runtimeBindingOwner.waitForWrites(sessionId)
-      await this.sessions.remove(sessionId)
-    })
-    return { sessionId, status: 'shutdown' }
+    return this.sessionLifecycle.shutdownSession(sessionId)
   }
 
   // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight. Run at
@@ -1136,7 +994,7 @@ class NotebookRuntimeService {
   // when every kernel tree was cleanly reaped, so the update-install gate can refuse to trigger the
   // NSIS uninstall while a kernel may still hold file handles under the install dir.
   shutdownAll(): Promise<{ reaped: boolean }> {
-    return this.runtimeBindingOwner.withGlobalTeardown(() => this.sessions.shutdownAll())
+    return this.sessionLifecycle.shutdownAll()
   }
 
   // Permanently closes process-owned recovery work before the final kernel teardown. Unlike
@@ -1153,7 +1011,7 @@ class NotebookRuntimeService {
     // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
     // no recovery work behind once this terminal operation resolves.
     const recoveryDisposal = this.recoveryCoordinator.dispose()
-    const shutdown = this.runtimeBindingOwner.withGlobalTeardown(() => this.sessions.dispose())
+    const shutdown = this.sessionLifecycle.dispose()
     const disposal = Promise.allSettled([shutdown, recoveryDisposal]).then(
       ([shutdownResult, recoveryResult]) => {
         const failures = [shutdownResult, recoveryResult]
@@ -1175,252 +1033,7 @@ class NotebookRuntimeService {
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
   getActiveNotebookSessions(): { projectName: string; sessionId: string }[] {
-    return Array.from(this.sessions.values())
-      .filter((session) => session.hasActiveRun())
-      .map((session) => ({ projectName: session.projectName, sessionId: session.sessionId }))
-  }
-
-  // Creates or returns the runtime session bound to an ACP/chat session id.
-  private async ensureSession(request: NotebookSessionRequest): Promise<RuntimeSession> {
-    const projectName = request.projectName ?? this.options.projectName
-    return this.sessions.getOrCreate(request.sessionId, async () => {
-      let document = await this.repository.loadOrCreate({
-        projectName,
-        sessionId: request.sessionId,
-        workspaceCwd: request.workspaceCwd
-      })
-      // Crash recovery (WS12): the FIRST time this process loads a session, any run still marked
-      // 'running'/'queued' was in flight when a previous process died — its kernel is gone. Reconcile it
-      // to 'interrupted' so history is truthful and the UI/agent see it ended. Only reconcile when such a
-      // stale run exists (avoids rewriting a clean doc), and only here at session creation (never in
-      // state()/loadOrCreate), so a run that is genuinely live in THIS process is never mislabeled.
-      if (document.runs.some((run) => run.status === 'running' || run.status === 'queued')) {
-        document = await this.repository.reconcileInterruptedRuns(projectName, request.sessionId)
-      }
-      // Runtime session roots come from run.json normalization so UI, MCP, and Python agree.
-      const ownedExecutor = this.createExecutor(request.sessionId, projectName)
-      const session: RuntimeSession = new NotebookSessionAggregate({
-        sessionId: request.sessionId,
-        projectName,
-        // Start the interpreter in the session's writable data dir (like a Jupyter notebook's cwd), not
-        // the outer workspace. Relative writes — e.g. plt.savefig("plot.png") — then land in a directory
-        // that is inside the artifact import roots, so the agent never has to guess an absolute path.
-        // dataRoot lives under notebookSessionRoot (an allowed import root) and is created before this.
-        cwd: document.dataRoot,
-        notebookSessionRoot: document.notebookSessionRoot,
-        dataRoot: document.dataRoot,
-        runtimeRoot: document.kernel.runtimeRoot,
-        runJsonPath: getNotebookRunJsonPath(this.options.dataRoot, projectName, request.sessionId),
-        executionCount: document.runs.length,
-        executor: ownedExecutor.executor,
-        executorGeneration: ownedExecutor.generation
-      })
-
-      try {
-        // Rehydrate + revalidate any persisted runtime bindings (WS1-rest/WS12): a still-usable binding
-        // is restored active; one whose runtime is now disabled/missing is kept as unavailable (no
-        // silent fallback). Publish only after this initialization completes so same-ID callers cannot
-        // observe a partially hydrated aggregate.
-        await this.runtimeBindingOwner.reload(session, document.runtimeBindings)
-        return session
-      } catch (error) {
-        // Initialization failures stay retryable. Best-effort cleanup must not replace the repository /
-        // binding error that callers already observe.
-        await session.shutdownExecutor().catch(() => undefined)
-        try {
-          session.releaseMcpRpcConnection()
-        } catch {
-          // Preserve the initialization failure.
-        }
-        throw error
-      }
-    })
-  }
-
-  // Builds the interpreter backend, allowing tests to inject a fake executor. The default (D-B4)
-  // builds a real NotebookKernelExecutor from the storage root's runtime paths, wired so an idle-
-  // shutdown proc (kernel-executor.ts's own idle timer) surfaces as a 'terminated' kernel status; this
-  // branch is not exercised by unit tests (see resolveDefaultExecutorOptions for the tested,
-  // spawn-free portion).
-  private createExecutor(sessionId: string, projectName: string): NotebookSessionOwnedExecutor {
-    const generation = Symbol(`notebook-executor:${sessionId}`)
-    const lifecycle: NotebookExecutorLifecycleCallbacks = {
-      onIdleShutdown: (kind, env) =>
-        this.handleKernelIdleShutdown(sessionId, projectName, kind, env, generation),
-      onTerminated: (kind, env) =>
-        this.handleKernelTerminated(sessionId, projectName, kind, env, generation)
-    }
-
-    if (this.options.executorFactory) {
-      return { executor: this.options.executorFactory(sessionId, lifecycle), generation }
-    }
-
-    const executor = new NotebookKernelExecutor({
-      ...resolveDefaultExecutorOptions(),
-      platform: this.options.platform,
-      onIdleShutdown: (kind, env) => {
-        void lifecycle.onIdleShutdown(kind, env)
-      },
-      onTerminated: (kind, env) => {
-        void lifecycle.onTerminated(kind, env)
-      }
-    })
-    return { executor, generation }
-  }
-
-  // Persists 'terminated' for a proc the executor dropped after its idle window, then notifies the
-  // renderer so a reload picks up the fresh status. Keyed by the (kind, env) the executor reports so a
-  // named env's idle shutdown marks only that env, not the whole session. Never throws: this runs off
-  // an executor-owned timer with nothing waiting on it, so a persistence failure here must not surface
-  // anywhere louder than a swallowed no-op.
-  private async handleKernelIdleShutdown(
-    sessionId: string,
-    projectName: string,
-    kind?: KernelProcessKind,
-    env?: string,
-    generation?: NotebookSessionExecutorGeneration
-  ): Promise<void> {
-    const session = this.sessions.get(sessionId)
-    const processKey = kernelProcessKey(kind, env)
-    if (session) {
-      if (generation) {
-        await session.runExecutorLifecycleCallback(generation, async () => {
-          await this.persistKernelStatus(session, 'terminated', processKey)
-          this.notifyNotebookChanged(session)
-        })
-        return
-      }
-      await this.persistKernelStatus(session, 'terminated', processKey)
-      this.notifyNotebookChanged(session)
-      return
-    }
-    // Executor-owned callbacks are valid only while their Aggregate generation is published. Once
-    // teardown removes that owner, do not fall through to the legacy rehydration path and rewrite the
-    // durable state a same-ID successor will load.
-    if (generation) return
-    // No live session (rehydrated after relaunch): still persist the default env's run.json status.
-    if (!persistsToRunJson(processKey)) return
-    try {
-      await this.repository.updateKernelStatus({ projectName, sessionId, status: 'terminated' })
-    } catch {
-      return
-    }
-  }
-
-  // Persists 'terminated' for a proc lost to a crash or hard-timeout (§4 "crash → [terminated]"),
-  // then notifies. Flags the process key on the session so an in-flight run whose kernel died mid-
-  // execution does not overwrite this back to 'idle' on completion; the next clean run of that key
-  // clears it. Best-effort like handleKernelIdleShutdown: it runs off an executor callback.
-  private async handleKernelTerminated(
-    sessionId: string,
-    projectName: string,
-    kind: KernelProcessKind,
-    env?: string,
-    generation?: NotebookSessionExecutorGeneration
-  ): Promise<void> {
-    const session = this.sessions.get(sessionId)
-    const processKey = kernelProcessKey(kind, env)
-    if (session) {
-      if (generation) {
-        await session.runExecutorLifecycleCallback(generation, async () => {
-          session.markKernelTerminated(processKey)
-          await this.persistKernelStatus(session, 'terminated', processKey)
-          this.notifyNotebookChanged(session)
-        })
-        return
-      }
-      session.markKernelTerminated(processKey)
-      await this.persistKernelStatus(session, 'terminated', processKey)
-      this.notifyNotebookChanged(session)
-      return
-    }
-    if (generation) return
-    if (!persistsToRunJson(processKey)) return
-    try {
-      await this.repository.updateKernelStatus({ projectName, sessionId, status: 'terminated' })
-    } catch {
-      return
-    }
-  }
-
-  // Records a kernel-level lifecycle status for one process key. Always updates the in-memory per-env
-  // map (source for state().environments and the refuse-if-live check); additionally persists into
-  // run.json's single kernel.lastKnownStatus ONLY for the DEFAULT envs / repl (persistsToRunJson), so
-  // run.json's shape stays unchanged — named-env status persistence is a separate later task. Does not
-  // notify: callers persist a status alongside a run record whose own append/update notify already
-  // surfaces the change. A persistence failure must never surface as a run failure.
-  private async persistKernelStatus(
-    session: RuntimeSession,
-    status: NotebookKernelMetadata['lastKnownStatus'],
-    processKey: string
-  ): Promise<void> {
-    session.setKernelStatus(processKey, status)
-    if (!persistsToRunJson(processKey)) return
-    try {
-      await this.repository.updateKernelStatus({
-        projectName: session.projectName,
-        sessionId: session.sessionId,
-        status
-      })
-    } catch {
-      return
-    }
-  }
-
-  // Creates the small event payload used by renderer listeners and preview tabs.
-  private toSessionReference(session: RuntimeSession): NotebookSessionReference {
-    return {
-      sessionId: session.sessionId,
-      projectName: session.projectName,
-      workspaceCwd: session.cwd,
-      notebookSessionRoot: session.notebookSessionRoot,
-      dataRoot: session.dataRoot,
-      runtimeRoot: session.runtimeRoot,
-      runJsonPath: session.runJsonPath
-    }
-  }
-
-  // Announces notebook availability only once per agent-started session.
-  private notifyNotebookAvailable(session: RuntimeSession, source: NotebookRunSource): void {
-    if (source !== 'agent' || this.announcedAgentSessionIds.has(session.sessionId)) return
-
-    this.announcedAgentSessionIds.add(session.sessionId)
-    this.options.callbacks?.onNotebookAvailable?.(this.toSessionReference(session))
-  }
-
-  // Broadcasts state invalidation so the renderer can reload run.json and in-memory cell data.
-  private notifyNotebookChanged(session: RuntimeSession): void {
-    this.options.callbacks?.onNotebookChanged?.(this.toSessionReference(session))
-  }
-
-  // Adds notebook roots and kernel metadata to the run returned to MCP callers.
-  private toRunSummary(session: RuntimeSession, run: NotebookRunRecord): NotebookRunSummary {
-    const publicRun = this.toPublicRunRecord(run)
-    const inputFiles = (run.inputFiles ?? []).map((input) => {
-      const publicInput = { ...input } as Partial<typeof input>
-      delete publicInput.storageKey
-      return publicInput as NotebookRunSummary['inputFiles'][number]
-    })
-    return {
-      ...publicRun,
-      inputFiles,
-      notebookSessionRoot: session.notebookSessionRoot,
-      dataRoot: session.dataRoot,
-      runtimeRoot: getRuntimeRoot(this.options.dataRoot),
-      kernelName: 'python3'
-    }
-  }
-
-  private toPublicRunRecord(run: NotebookRunRecord): NotebookRunRecord {
-    const inputFiles = (run.inputFiles ?? []).map((input) => {
-      const publicInput = { ...input } as Partial<typeof input>
-      delete publicInput.storageKey
-      return publicInput
-    })
-    // NotebookRunRecord is also the legacy renderer shape. The boundary deliberately omits the
-    // internal-only required key while keeping every public input field; persisted records remain
-    // strongly typed and complete inside the repository.
-    return { ...run, inputFiles } as NotebookRunRecord
+    return this.sessionLifecycle.activeSessions()
   }
 }
 

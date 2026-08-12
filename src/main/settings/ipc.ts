@@ -1,4 +1,5 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
+import type { WebContents } from 'electron'
 
 import {
   type AppIconPreview,
@@ -6,10 +7,13 @@ import {
   type CreateSkillRequest,
   type DeleteProviderRequest,
   type DeleteSkillRequest,
+  type ExportSkillRequest,
+  type ExportSkillResult,
   type ImportAgentHomeSkillsRequest,
   type ImportSkillRequest,
   type ImportSkillZipRequest,
   type ImportSkillZipBatchRequest,
+  type SaveGitHubTokenRequest,
   type PreviewAgentHomeSkillRequest,
   type PreviewGitHubSkillRequest,
   type PreviewSkillZipRequest,
@@ -35,9 +39,12 @@ import {
   type SetNcbiCredentialsRequest,
   type SetPackageMirrorRequest,
   type SetClosePreferenceRequest,
+  type SetDefaultPermissionProfileRequest,
   type SetConversationSkillImportEnabledRequest,
   type SetNotificationsEnabledRequest,
+  type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
+  type SetSubagentModelRequest,
   type SetSkillEnabledRequest,
   type SetToolPermissionRequest,
   type UpdateSkillRequest,
@@ -47,14 +54,19 @@ import {
 import { SettingsService } from './service'
 import type { SettingsWorkflows } from './workflows'
 import { createLogger } from '../logger'
+import type { SkillExportArchive } from '../skills/export'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import {
   readAppIconVariant,
   readClosePreference,
+  readDefaultPermissionProfile,
+  readGitHubToken,
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
-  readReasoningEffort
+  readProjectFilesFilter,
+  readReasoningEffort,
+  readSubagentModel
 } from './transport-validation'
 
 const log = createLogger('settings-ipc')
@@ -73,7 +85,10 @@ export type SettingsIpcOptions = {
     select(): Promise<
       { cancelled: true } | { cancelled: false; fileName: string; contents: string }
     >
-    save(suggestedFileName: string, contents: string): Promise<boolean>
+    save(suggestedFileName: string, contents: string, sender: WebContents): Promise<boolean>
+  }
+  skillExportFiles?: {
+    save(archive: SkillExportArchive, sender: WebContents): Promise<ExportSkillResult>
   }
 }
 
@@ -88,7 +103,8 @@ const registerSettingsIpcHandlers = ({
   service,
   workflows,
   listAppIconPreviews,
-  connectorTemplateFiles
+  connectorTemplateFiles,
+  skillExportFiles
 }: SettingsIpcOptions): void => {
   ipcMainHandle('settings:get-preflight', () => service.getPreflight())
   ipcMainHandle('settings:get-settings', () => service.getSettingsView())
@@ -145,6 +161,12 @@ const registerSettingsIpcHandlers = ({
       return workflows.runtime.setReasoningEffort({ effort })
     }
   )
+  ipcMainHandle('settings:set-subagent-model', async (_event, request: SetSubagentModelRequest) => {
+    const configuration = readSubagentModel(request)
+    const snapshot = await service.setSubagentModel(configuration)
+    broadcastToRenderers('settings:changed', snapshot)
+    return snapshot
+  })
   ipcMainHandle(
     'settings:set-notifications-enabled',
     async (_event, request: SetNotificationsEnabledRequest) => {
@@ -167,6 +189,22 @@ const registerSettingsIpcHandlers = ({
       const preference = readClosePreference(request)
       log.info('set close preference requested', { preference: preference ?? 'ask' })
       return service.setClosePreference(preference)
+    }
+  )
+  ipcMainHandle(
+    'settings:set-project-files-filter',
+    async (_event, request: SetProjectFilesFilterRequest) => {
+      const filter = readProjectFilesFilter(request)
+      log.info('set project files filter requested', { filter: filter ?? 'default' })
+      return service.setProjectFilesFilter(filter)
+    }
+  )
+  ipcMainHandle(
+    'settings:set-default-permission-profile',
+    async (_event, request: SetDefaultPermissionProfileRequest) => {
+      const profile = readDefaultPermissionProfile(request)
+      log.info('set default permission profile requested', { profile })
+      return service.setDefaultPermissionProfile(profile)
     }
   )
   ipcMainHandle('settings:list-app-icons', (): AppIconPreview[] => listAppIconPreviews?.() ?? [])
@@ -209,7 +247,16 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-skills', () => service.listSkills())
+  ipcMainHandle('settings:get-github-token-status', () => service.getGitHubTokenStatus())
+  ipcMainHandle('settings:save-github-token', (_event, request: SaveGitHubTokenRequest) =>
+    service.saveGitHubToken(readGitHubToken(request))
+  )
+  ipcMainHandle('settings:remove-github-token', () => service.removeGitHubToken())
   ipcMainHandle('settings:get-skill-detail', (_event, id: string) => service.getSkillDetail(id))
+  ipcMainHandle('settings:export-skill', async (event, request: ExportSkillRequest) => {
+    if (!skillExportFiles) throw new Error('Skill export is unavailable')
+    return skillExportFiles.save(await service.buildSkillExport(request.id), event.sender)
+  })
   ipcMainHandle('settings:set-skill-enabled', (_event, request: SetSkillEnabledRequest) =>
     workflows.skills.setSkillEnabled(request)
   )
@@ -254,6 +301,11 @@ const registerSettingsIpcHandlers = ({
   )
 
   ipcMainHandle('settings:list-connectors', () => service.listConnectors())
+  ipcMainHandle(
+    'settings:retry-custom-server',
+    (_event, request: AuthenticateCustomServerRequest) =>
+      workflows.connectors.retryCustomServer(request)
+  )
   ipcMainHandle('settings:preview-custom-server-template-export', (_event, id: string) =>
     service.previewCustomServerTemplateExport(id)
   )
@@ -283,7 +335,7 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle(
     'settings:export-custom-server-template',
     async (
-      _event,
+      event,
       request: ExportCustomServerTemplateRequest
     ): Promise<ExportCustomServerTemplateResult> => {
       if (!connectorTemplateFiles) throw new Error('Connector configuration files are unavailable')
@@ -300,7 +352,11 @@ const registerSettingsIpcHandlers = ({
         throw new Error('Connector configuration changed after preview; review it again')
       }
       return {
-        saved: await connectorTemplateFiles.save(result.preview.suggestedFileName, result.contents)
+        saved: await connectorTemplateFiles.save(
+          result.preview.suggestedFileName,
+          result.contents,
+          event.sender
+        )
       }
     }
   )

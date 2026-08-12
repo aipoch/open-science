@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest'
 import {
   readClosePreference,
   readConversationSkillImportEnabled,
+  readDefaultPermissionProfile,
   readAppIconVariant,
   readIsolatedClaudeToken,
   readNotificationsEnabled,
-  readReasoningEffort
+  readProjectFilesFilter,
+  readReasoningEffort,
+  readSubagentModel
 } from './transport-validation'
 
 describe('Settings transport validation', () => {
@@ -29,6 +32,43 @@ describe('Settings transport validation', () => {
     expect(() => readReasoningEffort({})).toThrow('Unknown reasoning effort: undefined')
   })
 
+  it('accepts only complete atomic Subagent model configurations', () => {
+    expect(readSubagentModel({ configuration: { mode: 'inherit' } })).toEqual({ mode: 'inherit' })
+    expect(
+      readSubagentModel({
+        configuration: {
+          mode: 'fixed',
+          providerId: 'provider-a',
+          model: 'model-a',
+          reasoningEffort: 'high'
+        }
+      })
+    ).toEqual({
+      mode: 'fixed',
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high'
+    })
+    expect(() =>
+      readSubagentModel({
+        configuration: { mode: 'fixed', providerId: '', model: 'model-a', reasoningEffort: 'high' }
+      })
+    ).toThrow('Invalid Subagent model configuration.')
+    expect(() =>
+      readSubagentModel({
+        configuration: {
+          mode: 'fixed',
+          providerId: 'provider-a',
+          model: 'model-a',
+          reasoningEffort: 'ultra'
+        }
+      })
+    ).toThrow('Invalid Subagent model configuration.')
+    expect(() =>
+      readSubagentModel({ configuration: { mode: 'inherit', providerId: 'stale' } })
+    ).toThrow('Invalid Subagent model configuration.')
+  })
+
   it('accepts only boolean conversation Skill import preferences', () => {
     expect(readConversationSkillImportEnabled({ enabled: true })).toBe(true)
     expect(() => readConversationSkillImportEnabled({ enabled: 'yes' })).toThrow(
@@ -48,12 +88,49 @@ describe('Settings transport validation', () => {
     )
   })
 
+  it('accepts a well-shaped project files filter and rejects the rest', () => {
+    expect(readProjectFilesFilter({})).toBeUndefined()
+    expect(readProjectFilesFilter({ filter: { sourceMode: 'local' } })).toEqual({
+      sourceMode: 'local'
+    })
+    expect(
+      readProjectFilesFilter({
+        filter: { sourceMode: 'local', localRootId: 'root-1' }
+      })
+    ).toEqual({ sourceMode: 'local', localRootId: 'root-1' })
+    expect(
+      readProjectFilesFilter({ filter: { sourceMode: 'artifacts', optionId: 'uploads' } })
+    ).toEqual({ sourceMode: 'artifacts', optionId: 'uploads' })
+    expect(() => readProjectFilesFilter({ filter: 'local' })).toThrow(
+      'Invalid project files filter: local'
+    )
+    expect(() => readProjectFilesFilter({ filter: { sourceMode: 'remote' } })).toThrow(
+      'Invalid project files filter source: remote'
+    )
+    expect(() =>
+      readProjectFilesFilter({ filter: { sourceMode: 'local', localRootId: 7 } })
+    ).toThrow('Invalid project files filter root: 7')
+    expect(() =>
+      readProjectFilesFilter({ filter: { sourceMode: 'artifacts', optionId: 7 } })
+    ).toThrow('Invalid project files filter option: 7')
+  })
+
   it('accepts only known app icon variants with the Electron error contract', () => {
     expect(readAppIconVariant({ variant: 'dark' })).toBe('dark')
     expect(() => readAppIconVariant({ variant: 'sparkle' })).toThrow(
       'Unknown app icon variant: sparkle'
     )
     expect(() => readAppIconVariant({})).toThrow('Unknown app icon variant: undefined')
+  })
+
+  it('accepts only known default permission profiles', () => {
+    expect(readDefaultPermissionProfile({ profile: 'auto' })).toBe('auto')
+    expect(() => readDefaultPermissionProfile({ profile: 'always' })).toThrow(
+      'Unknown default permission profile: always'
+    )
+    expect(() => readDefaultPermissionProfile({})).toThrow(
+      'Unknown default permission profile: undefined'
+    )
   })
 
   it('accepts only a string isolated Claude token', () => {

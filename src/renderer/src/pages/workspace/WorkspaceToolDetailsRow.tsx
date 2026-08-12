@@ -1,6 +1,9 @@
 import type { ToolActivity } from '@/stores/session-store'
+import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { formatNotebookRunFigureMeta } from './notebook-run-figures'
+import { NotebookRunFigureOutputs } from './NotebookRunOutputs'
 import { usePreviewFileContent } from './previews/usePreviewFileContent'
 
 // Byte cap for inline tool-output image previews. Co-located here (rather than in preview-support,
@@ -19,6 +22,7 @@ import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
 type WorkspaceToolDetailsRowProps = {
   activity: ToolActivity
   details: ToolActivityDetails
+  notebookRun?: NotebookRunRecord
   isExpanded: boolean
   onToggle: (activityId: string, nextExpanded: boolean) => void
 }
@@ -128,27 +132,33 @@ const renderSection = (section: ToolDetailSection, index: number): React.JSX.Ele
 const WorkspaceToolDetailsRow = ({
   activity,
   details,
+  notebookRun,
   isExpanded,
   onToggle
-}: WorkspaceToolDetailsRowProps): React.JSX.Element => (
-  <WorkspaceToolActivityRowButton
-    activity={activity}
-    label={details.displayName}
-    subtitle={
-      details.displayName === 'Write file' && details.subtitle ? (
-        <ExtensionPreservingFileName name={details.subtitle} />
-      ) : (
-        details.subtitle
-      )
-    }
-    metaLabel={details.metaLabel}
-    isExpanded={isExpanded}
-    panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"
-    panelTestId="tool-details"
-    onToggle={onToggle}
-  >
-    {details.sections.map(renderSection)}
-  </WorkspaceToolActivityRowButton>
-)
+}: WorkspaceToolDetailsRowProps): React.JSX.Element => {
+  const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun) : undefined
+
+  return (
+    <WorkspaceToolActivityRowButton
+      activity={activity}
+      label={details.displayName}
+      subtitle={
+        details.displayName === 'Write file' && details.subtitle ? (
+          <ExtensionPreservingFileName name={details.subtitle} />
+        ) : (
+          details.subtitle
+        )
+      }
+      metaLabel={notebookFigureMeta ?? details.metaLabel}
+      isExpanded={isExpanded}
+      panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"
+      panelTestId="tool-details"
+      onToggle={onToggle}
+    >
+      {details.sections.map(renderSection)}
+      {notebookRun ? <NotebookRunFigureOutputs run={notebookRun} align="start" /> : null}
+    </WorkspaceToolActivityRowButton>
+  )
+}
 
 export { WorkspaceToolDetailsRow }

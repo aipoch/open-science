@@ -37,7 +37,9 @@ type SettingsApi = {
   setNotificationsEnabled: ReturnType<typeof vi.fn>
   setConversationSkillImportEnabled: ReturnType<typeof vi.fn>
   setClosePreference: ReturnType<typeof vi.fn>
+  setProjectFilesFilter: ReturnType<typeof vi.fn>
   setAppIconVariant: ReturnType<typeof vi.fn>
+  setDefaultPermissionProfile: ReturnType<typeof vi.fn>
   upsertProvider: ReturnType<typeof vi.fn>
   validateProvider: ReturnType<typeof vi.fn>
   cancelCodexLogin: ReturnType<typeof vi.fn>
@@ -65,6 +67,7 @@ type SettingsApi = {
   previewGitHubSkill: ReturnType<typeof vi.fn>
   previewAgentHomeSkill: ReturnType<typeof vi.fn>
   listConnectors: ReturnType<typeof vi.fn>
+  onConnectorRuntimeChanged: ReturnType<typeof vi.fn>
   getConnectorDetail: ReturnType<typeof vi.fn>
   setConnectorEnabled: ReturnType<typeof vi.fn>
   setConnectorAutoAllow: ReturnType<typeof vi.fn>
@@ -116,6 +119,7 @@ const providerView = (id: string): SettingsSnapshot['providers'][number] => ({
 const skillView = (id: string, name: string): SkillView => ({
   id,
   name,
+  displayName: name,
   description: '',
   source: 'personal',
   updatedAt: '',
@@ -186,10 +190,20 @@ beforeEach(() => {
       .mockImplementation((request: { preference?: 'minimize' | 'quit' }) =>
         Promise.resolve({ ...snapshot([]), closePreference: request.preference })
       ),
+    setProjectFilesFilter: vi
+      .fn()
+      .mockImplementation((request: { filter?: SettingsSnapshot['projectFilesFilter'] }) =>
+        Promise.resolve({ ...snapshot([]), projectFilesFilter: request.filter })
+      ),
     setAppIconVariant: vi
       .fn()
       .mockImplementation((request: { variant: 'light' | 'dark' }) =>
         Promise.resolve({ ...snapshot([]), appIconVariant: request.variant })
+      ),
+    setDefaultPermissionProfile: vi
+      .fn()
+      .mockImplementation((request: { profile: 'ask' | 'auto' | 'full' }) =>
+        Promise.resolve({ ...snapshot([]), defaultPermissionProfile: request.profile })
       ),
     upsertProvider: vi.fn(),
     validateProvider: vi.fn(),
@@ -225,6 +239,7 @@ beforeEach(() => {
     listConnectors: vi
       .fn()
       .mockResolvedValue({ connectors: [], customServers: [], ncbi: { hasApiKey: false } }),
+    onConnectorRuntimeChanged: vi.fn(() => vi.fn()),
     getConnectorDetail: vi.fn(),
     setConnectorEnabled: vi
       .fn()
@@ -767,6 +782,14 @@ describe('settings store: onboarding completion', () => {
 
     expect(useSettingsStore.getState().onboardingCompletedAt).toBe(999)
   })
+
+  it('caches the normalized default permission profile', async () => {
+    api.getSettings.mockResolvedValue({ ...snapshot([]), defaultPermissionProfile: 'auto' })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().defaultPermissionProfile).toBe('auto')
+  })
 })
 
 describe('settings store: startup loading', () => {
@@ -1103,7 +1126,7 @@ describe('settings store: refreshProviderModels', () => {
 
     await useSettingsStore
       .getState()
-      .updateSkill({ id: created.id, name: 'Updated demo', description: '', body: '# Demo' })
+      .updateSkill({ id: created.id, description: '', body: '# Demo' })
     expect(useSettingsStore.getState().skills).toEqual([updated])
 
     await useSettingsStore.getState().deleteSkill(created.id)
@@ -1388,11 +1411,15 @@ describe('settings store: connectors slice', () => {
       ncbi: { hasApiKey: false }
     })
 
-    await useSettingsStore
-      .getState()
-      .addCustomServer({ name: 'my-mem', transport: 'stdio', command: 'npx' })
+    await useSettingsStore.getState().addCustomServer({
+      name: 'my-mem',
+      displayName: 'My Memory',
+      transport: 'stdio',
+      command: 'npx'
+    })
     expect(api.addCustomServer).toHaveBeenCalledWith({
       name: 'my-mem',
+      displayName: 'My Memory',
       transport: 'stdio',
       command: 'npx'
     })
@@ -1406,8 +1433,8 @@ describe('settings store: connectors slice', () => {
   it('authenticateCustomServer reconciles the OAuth status from main', async () => {
     const server: CustomServerView = {
       id: 'oauth-1',
-      slug: 'oauth-server',
-      name: 'OAuth server',
+      name: 'oauth-server',
+      displayName: 'OAuth server',
       transport: 'streamable_http',
       enabled: true,
       url: 'https://mcp.example.test',
@@ -1428,8 +1455,8 @@ describe('settings store: connectors slice', () => {
   it('refreshes OAuth status after authenticateCustomServer fails', async () => {
     const server: CustomServerView = {
       id: 'oauth-1',
-      slug: 'oauth-server',
-      name: 'OAuth server',
+      name: 'oauth-server',
+      displayName: 'OAuth server',
       transport: 'streamable_http',
       enabled: true,
       url: 'https://mcp.example.test',
@@ -1980,6 +2007,56 @@ describe('settings store: setClosePreference', () => {
   })
 })
 
+describe('settings store: setProjectFilesFilter', () => {
+  it('forwards a saved filter and can reset to the default', async () => {
+    await useSettingsStore
+      .getState()
+      .setProjectFilesFilter({ sourceMode: 'local', localRootId: 'root-1' })
+    expect(api.setProjectFilesFilter).toHaveBeenCalledWith({
+      filter: { sourceMode: 'local', localRootId: 'root-1' }
+    })
+    expect(useSettingsStore.getState().projectFilesFilter).toEqual({
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+
+    await useSettingsStore.getState().setProjectFilesFilter(undefined)
+    expect(api.setProjectFilesFilter).toHaveBeenLastCalledWith({ filter: undefined })
+    expect(useSettingsStore.getState().projectFilesFilter).toBeUndefined()
+  })
+
+  it('reverts to the previous filter and exposes a visible failure when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    useSettingsStore.setState({ projectFilesFilter: { sourceMode: 'local' } })
+    api.setProjectFilesFilter.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setProjectFilesFilter(undefined)
+
+    expect(useSettingsStore.getState().projectFilesFilter).toEqual({ sourceMode: 'local' })
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save files filter preference. Try again.'
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to set project files filter',
+      expect.any(Error)
+    )
+  })
+
+  it('load() picks up a saved filter from the settings snapshot', async () => {
+    api.getSettings.mockResolvedValue({
+      ...snapshot([]),
+      projectFilesFilter: { sourceMode: 'artifacts', optionId: 'uploads' }
+    })
+
+    await useSettingsStore.getState().load()
+
+    expect(useSettingsStore.getState().projectFilesFilter).toEqual({
+      sourceMode: 'artifacts',
+      optionId: 'uploads'
+    })
+  })
+})
+
 describe('settings store: setAppIconVariant', () => {
   it('forwards the variant to main and caches the returned snapshot', async () => {
     await useSettingsStore.getState().setAppIconVariant('dark')
@@ -2008,5 +2085,31 @@ describe('settings store: setAppIconVariant', () => {
     await useSettingsStore.getState().load()
 
     expect(useSettingsStore.getState().appIconVariant).toBe('dark')
+  })
+})
+
+describe('settings store: setDefaultPermissionProfile', () => {
+  it('forwards the profile and caches the returned snapshot', async () => {
+    await useSettingsStore.getState().setDefaultPermissionProfile('auto')
+
+    expect(api.setDefaultPermissionProfile).toHaveBeenCalledWith({ profile: 'auto' })
+    expect(useSettingsStore.getState().defaultPermissionProfile).toBe('auto')
+  })
+
+  it('reverts and exposes a visible failure when main rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    useSettingsStore.setState({ defaultPermissionProfile: 'ask' })
+    api.setDefaultPermissionProfile.mockRejectedValue(new Error('ipc down'))
+
+    await useSettingsStore.getState().setDefaultPermissionProfile('full')
+
+    expect(useSettingsStore.getState().defaultPermissionProfile).toBe('ask')
+    expect(useSettingsStore.getState().settingsWriteError).toBe(
+      'Could not save the default permission mode. Try again.'
+    )
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to set default permission profile',
+      expect.any(Error)
+    )
   })
 })

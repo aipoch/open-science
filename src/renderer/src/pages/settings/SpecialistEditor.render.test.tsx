@@ -45,6 +45,7 @@ describe('SpecialistEditor', () => {
         {
           id: 'main-disabled',
           name: 'Main disabled',
+          displayName: 'Main disabled',
           description: '',
           source: 'featured',
           enabled: false,
@@ -53,6 +54,7 @@ describe('SpecialistEditor', () => {
         {
           id: 'included',
           name: 'Included',
+          displayName: 'Included',
           description: '',
           source: 'featured',
           enabled: true,
@@ -160,8 +162,8 @@ describe('SpecialistEditor', () => {
       customServers: [
         {
           id: 'broken-server-uuid',
-          slug: 'broken-server',
-          name: 'Broken Server',
+          name: 'broken-server',
+          displayName: 'Broken Server',
           transport: 'stdio',
           enabled: true,
           availability: 'unavailable'
@@ -186,7 +188,7 @@ describe('SpecialistEditor', () => {
             },
             selectedCapabilities: {
               skillIds: [],
-              connectorIds: ['broken-server-uuid'],
+              connectorIds: ['broken-server'],
               connectorTools: []
             },
             revision: 1
@@ -302,6 +304,50 @@ describe('SpecialistEditor', () => {
     )
   })
 
+  it('focuses the open capability search with Cmd/Ctrl+K', async () => {
+    useSettingsStore.setState({
+      skills: [
+        {
+          id: 'literature-review',
+          name: 'Literature Review',
+          displayName: 'Literature Review',
+          description: '',
+          source: 'featured',
+          enabled: true,
+          updatedAt: ''
+        }
+      ],
+      loadSkills: vi.fn().mockResolvedValue(undefined)
+    })
+    await act(async () => {
+      root.render(<SpecialistEditor onCancel={vi.fn()} onSave={vi.fn()} />)
+    })
+    await act(async () => {
+      fireEvent.click(document.body.querySelector<HTMLElement>('[aria-label="Full access"]')!)
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === '＋ Add a skill'
+        )!
+      )
+    })
+
+    const search = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Search skills to add"]'
+    )
+    expect(search).not.toBeNull()
+    search?.blur()
+    const shortcutEvent = new KeyboardEvent('keydown', {
+      key: 'k',
+      ctrlKey: true,
+      cancelable: true
+    })
+    await act(async () => window.dispatchEvent(shortcutEvent))
+
+    expect(shortcutEvent.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(search)
+    expect(search?.getAttribute('aria-keyshortcuts')).toBe('Control+K')
+  })
+
   it('shows a field-level error instead of submitting a duplicate name', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     await act(async () => {
@@ -363,7 +409,7 @@ describe('SpecialistEditor', () => {
       expect.objectContaining({
         id: 'rna-reviewer',
         revision: 3,
-        name: 'RNA Reviewer'
+        displayName: 'RNA Reviewer'
       })
     )
     // Create path is not used in edit mode.

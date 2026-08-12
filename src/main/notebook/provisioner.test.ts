@@ -36,6 +36,7 @@ import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
 import { serializeProvisioner } from './environment-operation-foundation'
 import { withExclusiveCacheLock, withSharedCacheLock } from './pkgs-cache-lock'
+import { validateAndSeedPack } from './pack-content'
 import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
 import {
   operationJournalPath,
@@ -191,6 +192,60 @@ describe('DefaultRuntimeProvisioner.provisionPython', () => {
     await new DefaultRuntimeProvisioner(deps).provisionPython(() => {})
     expect(argvs[0]).toContain('--offline')
     expect(argvs[0]).toContain(lockPath)
+  })
+
+  it('seeds verified pack tarballs into the selected Windows cache before offline create', async () => {
+    const root = makeRoot()
+    const packDir = join(root, 'packs', '1', 'win-64', 'python-3.12')
+    const lockPath = join(packDir, 'python-3.12.lock')
+    const packageFile = 'nomkl-1.0-h5ca1d4c_0.tar.bz2'
+    const selectedCache = join(root, 'short-pkgs')
+    const fetchBundle = vi.fn(async (): Promise<FetchedBundle> => {
+      mkdirSync(packDir, { recursive: true })
+      writeFileSync(
+        lockPath,
+        `@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/noarch/${packageFile}#0cc175b9c0f1b6a831c399e269772661\n`
+      )
+      writeFileSync(join(packDir, packageFile), 'a')
+      await validateAndSeedPack(root, packDir, lockPath)
+      return {
+        lockPath,
+        pathBudget: { maxCacheRelativePath: 1, maxEnvRelativePath: 1 },
+        packageSourceDir: packDir
+      }
+    })
+    const runArgvImpl: ProvisionerDeps['runArgv'] = async (
+      argv,
+      _signal,
+      _onChild,
+      _onBeforeSpawn,
+      cache
+    ) => {
+      expect(argv).toContain('--offline')
+      expect(cache?.path).toBe(selectedCache)
+      if (!existsSync(join(selectedCache, packageFile))) {
+        throw new Error(
+          `critical libmamba Download error (28) Timeout was reached ` +
+            `[https://conda.anaconda.org/conda-forge/noarch/${packageFile}]`
+        )
+      }
+      const prefix = argv[argv.indexOf('-p') + 1]
+      const bin = pythonBin(prefix)
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, 'x')
+    }
+    const runArgv = vi.fn(runArgvImpl)
+    const provisioner = new DefaultRuntimeProvisioner(
+      makeDeps(root, {
+        platform: 'win32',
+        cache: { path: selectedCache, lockKey: selectedCache },
+        fetchBundle,
+        runArgv
+      })
+    )
+
+    await expect(provisioner.provisionPython(() => {})).resolves.toBeUndefined()
+    expect(runArgv).toHaveBeenCalledOnce()
   })
 
   it('enforces fetched pack cache and environment budgets before micromamba runs', async () => {

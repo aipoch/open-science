@@ -280,11 +280,13 @@ const finalizeRunArtifacts = async (
         !claim.promptMessageId
       ) {
         throw new ArtifactFinalizationProofError(
+          'claim-context-missing',
           'Artifact run claim is missing complete provenance context.'
         )
       }
       if (!claim.artifactVersionIds || claim.artifactVersionIds.length === 0) {
         throw new ArtifactFinalizationProofError(
+          'claim-version-ids-missing',
           'Artifact run claim is missing exact Artifact Version ids.'
         )
       }
@@ -347,11 +349,15 @@ const finalizeRunArtifacts = async (
     logger.error('artifact finalization attempt failed', {
       stage,
       failureKind,
+      ...(error instanceof ArtifactFinalizationProofError
+        ? { proofFailureReason: error.reasonCode }
+        : {}),
       durableFinalizationCompleted,
       compatibilityPublicationCompleted,
       claimId: request.claimId,
       artifactRunId: claim.runId,
       messageId: request.messageId,
+      artifactVersionCount: claim.artifactVersionIds?.length ?? 0,
       ...(claim.artifactVersionIds ? { artifactVersionIds: [...claim.artifactVersionIds] } : {}),
       ...(claim.rootFrameId ? { rootFrameId: claim.rootFrameId } : {}),
       ...(claim.agentFrameId ? { agentFrameId: claim.agentFrameId } : {}),

@@ -3,14 +3,8 @@ import { createConnection } from 'node:net'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  ResponsesBridge,
-  completionToResponse,
-  inputToMessages,
-  responsesToChatRequest,
-  toolsToChat,
-  upstreamErrorMessage
-} from './responses-bridge'
+import { ResponsesBridge } from './responses-bridge'
+import { inputToMessages, responsesToChatRequest, toolsToChat } from './responses-request-adapter'
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
@@ -238,167 +232,6 @@ describe('Responses-compatible bridge conversion', () => {
         input: [{ type: 'message', role: 'developer', content: 'Follow the policy.' }]
       })
     ).toEqual([{ role: 'system', content: 'Follow the policy.' }])
-  })
-
-  it('maps Chat Completions output text and tool calls to a Responses response', () => {
-    expect(
-      completionToResponse({
-        id: 'chat-1',
-        model: 'model-a',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: 'done',
-              tool_calls: [
-                {
-                  id: 'call-1',
-                  type: 'function',
-                  function: { name: 'lookup', arguments: '{"id":1}' }
-                }
-              ]
-            }
-          }
-        ],
-        usage: {
-          prompt_tokens: 3,
-          prompt_tokens_details: { cached_tokens: 1 },
-          completion_tokens: 2,
-          completion_tokens_details: { reasoning_tokens: 1 },
-          total_tokens: 5
-        }
-      })
-    ).toMatchObject({
-      id: 'chat-1',
-      model: 'model-a',
-      output: [
-        { type: 'message', content: [{ type: 'output_text', text: 'done' }] },
-        { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{"id":1}' }
-      ],
-      usage: {
-        input_tokens: 3,
-        input_tokens_details: { cached_tokens: 1 },
-        output_tokens: 2,
-        output_tokens_details: { reasoning_tokens: 1 },
-        total_tokens: 5
-      }
-    })
-  })
-
-  it('restores namespace metadata for non-streaming Chat Completions tool calls', () => {
-    expect(
-      completionToResponse(
-        {
-          id: 'chat-mcp-json',
-          model: 'model-a',
-          choices: [
-            {
-              message: {
-                tool_calls: [
-                  {
-                    id: 'call-mcp-json',
-                    type: 'function',
-                    function: {
-                      name: 'mcp__open_science_notebook__notebook_execute',
-                      arguments: '{"code":"print(1)"}'
-                    }
-                  }
-                ]
-              }
-            }
-          ]
-        },
-        [
-          {
-            namespace: 'mcp__open_science_notebook',
-            name: 'notebook_execute',
-            parameters: { type: 'object' }
-          }
-        ]
-      )
-    ).toMatchObject({
-      output: [
-        {
-          type: 'function_call',
-          call_id: 'call-mcp-json',
-          namespace: 'mcp__open_science_notebook',
-          name: 'notebook_execute'
-        }
-      ]
-    })
-  })
-
-  it('drops reasoning_content and keeps the visible answer instead of aborting the turn', () => {
-    expect(
-      completionToResponse({
-        id: 'chat-reasoning',
-        model: 'model-a',
-        choices: [
-          { message: { role: 'assistant', reasoning_content: 'hidden thought', content: '11' } }
-        ]
-      })
-    ).toMatchObject({
-      output: [{ type: 'message', content: [{ type: 'output_text', text: '11' }] }]
-    })
-  })
-
-  it('surfaces a refusal as the visible answer', () => {
-    expect(
-      completionToResponse({
-        id: 'chat-refusal',
-        model: 'model-a',
-        choices: [{ message: { role: 'assistant', refusal: 'I cannot help with that.' } }]
-      })
-    ).toMatchObject({
-      output: [
-        { type: 'message', content: [{ type: 'output_text', text: 'I cannot help with that.' }] }
-      ]
-    })
-  })
-
-  it('rejects upstream image output instead of returning an empty Responses result', () => {
-    expect(() =>
-      completionToResponse({
-        id: 'chat-image',
-        model: 'model-a',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: [
-                {
-                  type: 'image_url',
-                  image_url: { url: 'data:image/png;base64,aGVsbG8=' }
-                }
-              ]
-            }
-          }
-        ]
-      })
-    ).toThrow(/Upstream image output is not supported/)
-    expect(() =>
-      completionToResponse({
-        id: 'chat-images',
-        model: 'model-a',
-        choices: [
-          { message: { role: 'assistant', images: [{ url: 'https://example.test/a.png' }] } }
-        ]
-      })
-    ).toThrow(/Upstream image output is not supported/)
-    expect(() =>
-      completionToResponse({
-        id: 'chat-image-object',
-        model: 'model-a',
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: { type: 'output_image', image_url: 'https://example.test/a.png' }
-            }
-          }
-        ]
-      })
-    ).toThrow(/Upstream image output is not supported/)
   })
 
   it('rejects stateful features and filters non-translatable Codex tools', () => {
@@ -644,13 +477,6 @@ describe('Responses-compatible bridge conversion', () => {
     ).toMatchObject({ stream_options: { include_usage: true } })
   })
 
-  it('surfaces a nested upstream error instead of hiding it behind HTTP status', () => {
-    expect(
-      upstreamErrorMessage('{"error":{"message":"Model deepseek-v4-flash does not exist"}}', 400)
-    ).toBe('Model deepseek-v4-flash does not exist')
-    expect(upstreamErrorMessage('plain upstream failure', 400)).toBe('plain upstream failure')
-  })
-
   it('serves an authenticated Responses SSE stream from a Chat Completions upstream', async () => {
     let upstreamRequest: Record<string, unknown> | undefined
     const upstreamFetch = vi.fn(
@@ -694,6 +520,8 @@ describe('Responses-compatible bridge conversion', () => {
     const connection = await bridge.start()
 
     try {
+      expect(connection.continuityToken).toMatch(/^[0-9a-f]{32}$/)
+      expect((await bridge.start()).continuityToken).toBe(connection.continuityToken)
       const response = await fetch(`${connection.baseUrl}/responses`, {
         method: 'POST',
         headers: {
@@ -1258,6 +1086,131 @@ describe('Responses-compatible bridge conversion', () => {
       expect(JSON.stringify(upstreamRequest)).not.toContain('exec_command')
       expect(JSON.stringify(upstreamRequest)).not.toContain('notebook_execute')
       expect(bridge.unregisterToolLessSession('reconstruction-session')).toBe(true)
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('replaces Codex declarations with the registered host-message-only scope', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      vi.fn(async (_url, init) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return Response.json({
+          id: 'chat-host-message',
+          model: 'model-a',
+          choices: [{ message: { role: 'assistant', content: 'queued' } }]
+        })
+      })
+    )
+    const connection = await bridge.start()
+    const scope = [
+      {
+        namespace: 'mcp__open_science_host_message',
+        name: 'send_message',
+        parameters: { type: 'object' }
+      }
+    ]
+
+    try {
+      bridge.registerHostMessageSession('side-session', scope)
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'send it',
+          prompt_cache_key: 'side-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }]
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequest).toMatchObject({
+        tool_choice: 'auto',
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'mcp__open_science_host_message__send_message' }
+          }
+        ]
+      })
+      expect(JSON.stringify(upstreamRequest)).not.toContain('exec_command')
+
+      const ordinaryResponse = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'ordinary turn',
+          prompt_cache_key: 'ordinary-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }]
+        })
+      })
+      expect(ordinaryResponse.ok).toBe(true)
+      expect(JSON.stringify(upstreamRequest)).toContain('exec_command')
+      expect(bridge.unregisterHostMessageSession('side-session')).toBe(true)
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('removes every tool when a strict host-message boundary sees an unexpected Session key', async () => {
+    let upstreamRequest: Record<string, unknown> | undefined
+    const bridge = new ResponsesBridge(
+      { baseUrl: 'https://vendor.example/v1', model: 'model-a' },
+      vi.fn(async (_url, init) => {
+        upstreamRequest = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return Response.json({
+          id: 'chat-host-message-mismatch',
+          model: 'model-a',
+          choices: [{ message: { role: 'assistant', content: 'safe' } }]
+        })
+      })
+    )
+    const connection = await bridge.start()
+    try {
+      bridge.registerHostMessageSession(
+        'expected-side-session',
+        [
+          {
+            namespace: 'mcp__open_science_host_message',
+            name: 'send_message',
+            parameters: { type: 'object' }
+          }
+        ],
+        { failClosedUnknownKeys: true }
+      )
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'model-a',
+          input: 'send it',
+          prompt_cache_key: 'unexpected-session',
+          stream: false,
+          tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object' } }]
+        })
+      })
+
+      expect(response.ok).toBe(true)
+      expect(upstreamRequest).not.toHaveProperty('tools')
+      expect(upstreamRequest).not.toHaveProperty('tool_choice')
+      expect(JSON.stringify(upstreamRequest)).not.toContain('exec_command')
+      expect(JSON.stringify(upstreamRequest)).not.toContain('send_message')
+      expect(bridge.unregisterHostMessageSession('expected-side-session')).toBe(false)
     } finally {
       await bridge.close()
     }

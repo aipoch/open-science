@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { ArtifactRepository } from '../artifacts/repository'
@@ -305,5 +305,34 @@ describe('AgentMcpHttpHost', () => {
     })
 
     expect(response.status).toBe(401)
+  })
+
+  it('serves one trusted side-chat host-message handler over its bound route', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const sendMessage = vi.fn().mockResolvedValue({
+      status: 'queued',
+      messageId: 'side-chat-message-1',
+      targetState: 'idle',
+      delivery: 'next-user-turn',
+      persisted: true,
+      systemHint: 'Wait for the next user turn.'
+    })
+    host.registerHostMessage('side-routing-1', { sendMessage })
+    const client = new Client({ name: 'host-message-http-test', version: '1.0.0' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(host.urlFor('host-message', 'side-routing-1')), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+
+    const result = await client.callTool({
+      name: 'send_message',
+      arguments: { target: 'main', text: 'Use black.' }
+    })
+
+    expect(sendMessage).toHaveBeenCalledWith({ target: 'main', text: 'Use black.' })
+    expect(result.structuredContent).toMatchObject({ messageId: 'side-chat-message-1' })
+    await client.close()
   })
 })

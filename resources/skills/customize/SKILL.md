@@ -1,30 +1,40 @@
 ---
 name: customize
-description: Use when the user wants to create, inspect, update, delete, reassign capabilities for, or switch the current conversation to a Specialist agent. Covers the conversational `/customize` flow against the JavaScript `host.agents` SDK — clarifying scope, drafting a complete target state, reviewing it, confirming, mutating with read-back, and reporting — plus the confirmation boundaries for ordinary versus privileged operations.
+description: Use when the user wants to create or manage a Specialist agent or create, revise, publish, or delete a Skill through the conversational `/Customize` entry. Routes Skill work to the internal skill-creator and handles Specialist work through the JavaScript host.agents SDK.
 license: Apache-2.0
 ---
 
-# Customize Specialist
+# Customize
 
-This Skill is conversational workflow guidance for managing Specialist agents. It is **not a security
-boundary**: it helps the user draft, review, confirm, and report Specialist changes through the
-JavaScript control-plane SDK. Whether a destructive or identity-affecting operation actually takes
-effect is decided by the application, not by this Skill.
+This Skill routes conversational customization to one of two native composers. It is **not a security
+boundary**: it helps the user draft, review, confirm, and report changes, while the application decides
+whether a destructive or identity-affecting operation actually takes effect.
 
 > Important: this is a framework Skill, not hard isolation. Do not claim that this Skill provides hard
 > security isolation; it is workflow guidance only.
 
-## Runtime
+## Route first
+
+- For creating, revising, publishing, inspecting, or deleting a Skill, call
+  `host.skills.read('skill-creator')` and follow that internal Skill completely. Do not duplicate its
+  authoring workflow here.
+- For creating or managing a Specialist, follow the Specialist workflow below.
+- For a combined request, create or revise the Skill first. After publish and read-back, attach it to
+  the selected Specialist only when the user requested that relationship.
+
+Do not create a plan record for Specialist or Skill CRUD. Ask only about choices that materially change
+behavior, access, or safety. Skills and Specialists are application-managed resources, not Artifacts.
+
+## Specialist runtime
 
 The Skill runs in the **JavaScript control-plane REPL only**. It uses JavaScript exclusively. Do not
-use Python or R here, and do not look for `host.agents` in a data kernel — it is absent there. All
-mutation happens through `host.agents.*` methods.
+use Python or R here, and do not look for `host.agents` or `host.skills` in a data kernel — they are
+absent there. Specialist mutation happens through `host.agents.*`; Skill lifecycle work is delegated
+to the internal Skill Creator above.
 
 The Skill never uses the following, and you must not invent them:
 
 - Do not use a Customize Specialist/Profile (there is no such profile).
-- Do not perform Skill authoring (this Skill does not author Skills).
-- Do not use a `host.skills.*` namespace (use `host.agents` reads instead).
 - Do not use a management MCP tool, and do not route `host.agents` through `host.mcp()`.
 - Do not create per-Specialist environments.
 - Do not perform duplicate operations (no duplicate Specialist or duplicate operation).
@@ -32,22 +42,23 @@ The Skill never uses the following, and you must not invent them:
 
 ## The `host.agents` SDK surface
 
-The SDK is name-first and lives in the trusted calling session. Read methods and returned records use
-camelCase; write-side fields use snake_case. Methods:
+The SDK is name-first and lives in the trusted calling session. JavaScript methods, inputs, and
+returned records all use camelCase. Methods:
 
 - `host.agents.list()` — custom Specialists only.
-- `host.agents.get(name)` — one Specialist by public name (returns stable `id` and `revision`, but you
+- `host.agents.get(name)` — one Specialist by immutable name (returns stable `id` and `revision`, but you
   do not show those to the user).
 - `host.agents.create(input)` — object form (see below).
-- `host.agents.update(name, patch)` — may include a new `name`; renames are ordinary chat-reviewed
-  updates, not privileged.
+- `host.agents.update(name, patch)` — `name` selects the Specialist and is immutable; use
+  `patch.displayName` to change its presentation label.
 - `host.agents.switch(nameOrNull)` — switches the **current conversation** only; `null` returns to Main
   Agent. Does not accept a caller-supplied session id.
 - `host.agents.delete(name, { revision })`.
-- `host.agents.attach_skill(name, skillRef, { revision })` / `host.agents.detach_skill(...)`.
-- `host.agents.attach_connector(name, connectorRef, { revision })` / `host.agents.detach_connector(...)`.
-- `host.agents.list_skills(nameOrId?)` — complete Skill catalog, including Main-disabled Skills.
-- `host.agents.list_connectors(nameOrId?)` — public Connector information; never credentials, headers,
+- `host.agents.attachSkill(name, skillRef, { revision })` / `host.agents.detachSkill(...)`.
+- `host.agents.attachConnector(name, connectorRef, { revision })` /
+  `host.agents.detachConnector(...)`.
+- `host.agents.listSkills(nameOrId?)` — complete Skill catalog, including Main-disabled Skills.
+- `host.agents.listConnectors(nameOrId?)` — public Connector information; never credentials, headers,
   environment values, Connector arguments, or tokens.
 
 `create` takes an object:
@@ -55,22 +66,36 @@ camelCase; write-side fields use snake_case. Methods:
 ```js
 host.agents.create({
   name,
+  displayName,
   description,
-  system_prompt,
-  icon_key,
-  color_key,
+  systemPrompt,
+  iconKey,
+  colorKey,
   enabled,
   unrestricted,
-  skill_names,
-  connector_names
+  skillNames,
+  connectorNames
 })
 ```
 
-Skill/Connector references resolve an exact stable catalog id first, otherwise a unique public name. An
-ambiguous name is rejected — tell the user to use the stable id from `list_skills`/`list_connectors`.
+Skill/Connector references resolve an exact stable catalog id first, otherwise a unique immutable name. An
+ambiguous name is rejected — tell the user to use the stable id from `listSkills`/`listConnectors`.
 
 Errors are sanitized and prefixed `host.agents.<method>:`; they never contain system instructions,
 credentials, headers, environment values, Connector arguments, or the RPC token.
+
+## Specialist identity and composition
+
+Treat `systemPrompt` as the Specialist's identity override while the application's safety, tool, and
+workflow rules remain in force. Lead with `You are {displayName}.`, replacing `{displayName}` with
+the proposed display name. State the Specialist's one focused job, what it handles, and what the
+Specialist does not do. Keep the identity concise; the heavy how-to lives in Skills, not in the system
+prompt. Reuse or create Skills for recurring procedures instead of copying those procedures into the
+identity.
+
+After a newly created Specialist exists and its state has been read back, offer to switch this
+conversation to it with `host.agents.switch(name)`. Do not switch unless the user accepts the offer and
+the application approves the privileged operation.
 
 ## Workflow — every operation
 
@@ -78,7 +103,7 @@ Follow this order for every mutation. Do not skip the live read, and do not snap
 into a profile or session (resolution is always live):
 
 1. **Understand scope.** What does the user want to create/change/delete/switch?
-2. **Live read.** Call `get`/`list` plus `list_skills`/`list_connectors` to read the current state and
+2. **Live read.** Call `get`/`list` plus `listSkills`/`listConnectors` to read the current state and
    the catalogs before proposing anything.
 3. **Complete draft.** Build the full target state, not a partial edit.
 4. **Review.** Show the complete target state to the user.
@@ -95,13 +120,14 @@ request such as "full access" or "same capabilities as Main."
 
 Capability semantics:
 
-- `create` with neither `skill_names` nor `connector_names` → Full access. But only use this after the
+- `create` with neither `skillNames` nor `connectorNames` → Full access. But only use this after the
   user explicitly chose Full.
 - Supplying either array on `create` → Selected; an omitted other array becomes empty.
 - `update({ unrestricted: true })` → Full, preserving the stored Selected configuration.
-- Supplying `skill_names` or `connector_names` to `update` exactly replaces the supplied collection and
+- Supplying `skillNames` or `connectorNames` to `update` exactly replaces the supplied collection and
   switches to Selected; an omitted collection is preserved.
-- `attach_*`/`detach_*` mutate the current mode without changing it (Selected: add/remove an inclusion;
+- `attachSkill`/`detachSkill` and `attachConnector`/`detachConnector` mutate the current mode without
+  changing it (Selected: add/remove an inclusion;
   Full: remove/add an exclusion).
 - Selected mode with zero Skills and zero Connectors is valid.
 
@@ -124,16 +150,17 @@ confirmation before executing. The review must show:
 
 For an update, also identify the changed fields.
 
-For multi-field capability edits, prefer **one atomic `update`** over a loop of `attach_*`/`detach_*`
-calls that could partially succeed. Use `attach_*`/`detach_*` only for a single incremental collection
-move.
+For multi-field capability edits, prefer **one atomic `update`** over a loop of attach/detach calls
+that could partially succeed. Use `attachSkill`/`detachSkill` or
+`attachConnector`/`detachConnector` only for a single incremental collection move.
 
 ## Confirmation boundaries
 
-- **Create and update (including renames):** show the complete target state and wait for the user's
+- **Create and update:** show the complete target state and wait for the user's
   explicit confirmation (for example "yes", "confirm", "ok") before executing. The initial `/customize`
-  entry and the composer prefill are **not** confirmation. A rename is an ordinary update field: the
-  whole patch is applied atomically by the service, and a stale revision fails without merge or retry.
+  entry and the composer prefill are **not** confirmation. `name` is immutable; `displayName` is an
+  ordinary update field. The whole patch is applied atomically, and a stale revision fails without
+  merge or retry.
 - **Delete, switch:** describe the impending action, then execute it directly. These operations are
   privileged and pass through the app's approval card.
 
@@ -147,8 +174,8 @@ When you describe one of these privileged actions, explain:
 
 ## Revision and stale drafts
 
-Carry the reviewed `revision` into `update`/`delete`/`attach_*`/`detach_*`. A stale revision fails
-**without merge or retry**. When it fails, re-read, rebuild the complete draft, and ask for
+Carry the reviewed `revision` into `update`, `delete`, and the attach/detach methods. A stale revision
+fails **without merge or retry**. When it fails, re-read, rebuild the complete draft, and ask for
 confirmation again. A changed draft also invalidates the user's earlier confirmation — re-review after
 the user edits the draft. Do not automatically retry declined or stale privileged operations.
 

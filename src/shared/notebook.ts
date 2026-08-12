@@ -22,6 +22,7 @@ export type NotebookRunProvenanceContext = {
   messageBranchId: string
   runtimeSegmentId: string
   promptMessageId: string
+  originMessageId?: string
 }
 
 // Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
@@ -485,11 +486,15 @@ export type ExportNotebookResult =
 // most recent data run, or rejects the call when no data run has ever occurred.
 export type ExportNotebookKernelRequest = NotebookSessionRequest & {
   kernel: NotebookKernelKind
+  // Undefined exports the All projection; null selects legacy Runs without Frame attribution.
+  agentFrameFilter?: string | null
 }
 
 // "Download all" path: every data kernel that actually has runs gets its own .ipynb in a directory
 // the user picks, with control-plane runs grouped under the data kernel that was active at the time.
-export type ExportNotebookAllRequest = NotebookSessionRequest
+export type ExportNotebookAllRequest = NotebookSessionRequest & {
+  agentFrameFilter?: string | null
+}
 
 export type ExportNotebookAllResult =
   | { saved: false }

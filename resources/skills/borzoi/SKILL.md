@@ -54,7 +54,6 @@ centred on the variant and compare per-track output.
 `(B, T, L)` tensor — `T` tracks × `L` 32-bp bins. Track metadata (assay,
 biosample) is in `borzoi_pytorch.pytorch_borzoi_model.TRACKS_DF` (or `model.tracks_df` when using the `AnnotatedBorzoi` subclass) — the base `Borzoi` model has no `targets` attribute.
 
-
 ## Remote compute
 
 Needs ≥24 GB VRAM and either pre-cached HF weights or egress to
@@ -63,12 +62,12 @@ environment with `borzoi-pytorch`, then:
 
 ```python
 c = host.compute.create(provider)
-job = c.submit_job(
+job = c.submitJob(
     intent="Borzoi track prediction for 1 locus — 1×GPU, ~2 min",
-    inputs=[{"src": "borzoi_run.py", "dst_filename": "borzoi_run.py"}],
+    inputs=[{"src": "borzoi_run.py", "dstFilename": "borzoi_run.py"}],
     command="python3 borzoi_run.py",   # env selection is host-specific — see compute_details for your provider
     outputs=["tracks.npz"],
-    timeout_seconds=1800,
+    timeoutSeconds=1800,
 )
 print(job.job_id)   # cell ends here — kernel never blocks on compute
 ```
@@ -81,20 +80,19 @@ save_artifacts(payload["featured_files"])   # paths under hpc/<job_id>/
 ```
 
 For the full result dict (`output_files`, `remote_workdir`, …), re-enter the
-kernel: `c.attach_job(job_id).result()` then `c.close()`. See the
+kernel: `c.attachJob(job_id).result()` then `c.close()`. See the
 `remote-compute-ssh` / `remote-compute-modal` skill for the orchestration
 details.
 
 If the provider exposes a weight-cache mount, point `HF_HOME` at it inside
 `borzoi_run.py` (path is in `compute_details`).
 
-
 ## Troubleshooting
 
-| Symptom                        | Cause                    | Fix                                  |
-| ------------------------------ | ------------------------ | ------------------------------------ |
-| `module has no __version__`    | Package exposes no attr  | Use `importlib.metadata.version("borzoi-pytorch")` |
-| Shape mismatch on input        | Wrong window length      | Pad/crop to 524288 bp (fixed; not exposed as a model attribute) |
+| Symptom                     | Cause                   | Fix                                                             |
+| --------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `module has no __version__` | Package exposes no attr | Use `importlib.metadata.version("borzoi-pytorch")`              |
+| Shape mismatch on input     | Wrong window length     | Pad/crop to 524288 bp (fixed; not exposed as a model attribute) |
 
 ---
 

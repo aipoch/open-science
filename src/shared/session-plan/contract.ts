@@ -97,9 +97,11 @@ export type ActivePlanProjection = Readonly<{
   artifactVersionId: string
   artifactChecksum: string
   originatingPromptMessageId?: string
+  materializedAt?: number
   revision: number
   approval: SessionPlanApproval
   lifecycle: PlanLifecycle
+  continuationState?: NonNullable<SessionPlanRuntimeContext['continuation']>['state']
   requiresExplicitContinuation: boolean
   document: PlanDocumentV1
   stepStatuses: SessionPlanRuntimeContext['stepStatuses']
@@ -138,6 +140,8 @@ export const formatPlanProtectedContext = (projection: ActivePlanProjection): st
 export const PLAN_COMMAND_ERROR_CODES = [
   'invalid-plan',
   'no-active-plan',
+  'plan-review-pending',
+  'approval-already-pending',
   'approval-already-decided',
   'stale-plan',
   'unknown-step',

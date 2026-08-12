@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
@@ -21,6 +22,8 @@ describe('task CLI', () => {
         'task.md',
         '--session',
         'session-1',
+        '--cwd',
+        'workspace',
         '--approval-profile',
         'auto',
         '--wait',
@@ -36,12 +39,19 @@ describe('task CLI', () => {
         project: 'systematic-review',
         promptFile: 'task.md',
         session: 'session-1',
+        cwd: 'workspace',
         approvalProfile: 'auto'
       }
     })
     expect(parseCliArgs(['run', 'status', 'run-1', '--json'])).toEqual({
       command: 'run',
       subcommand: 'status',
+      positionals: ['run-1'],
+      options: { open: true, json: true, jsonl: false, wait: false }
+    })
+    expect(parseCliArgs(['run', 'cancel', 'run-1', '--json'])).toEqual({
+      command: 'run',
+      subcommand: 'cancel',
       positionals: ['run-1'],
       options: { open: true, json: true, jsonl: false, wait: false }
     })
@@ -62,6 +72,22 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
       '--timeout-ms requires run --wait.'
     )
+    expect(() => parseCliArgs(['run', '--cancel-on-timeout', '--wait'])).toThrow(
+      '--cancel-on-timeout requires --timeout-ms.'
+    )
+    expect(
+      parseCliArgs([
+        'run',
+        '--project',
+        'project-1',
+        '--prompt',
+        'Research this.',
+        '--wait',
+        '--timeout-ms',
+        '1000',
+        '--cancel-on-timeout'
+      ]).options.cancelOnTimeout
+    ).toBe(true)
     expect(
       parseCliArgs([
         'run',
@@ -92,6 +118,10 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--json', '--jsonl', '--wait'])).toThrow(
       'Use only one of --json or --jsonl.'
     )
+    expect(() => parseCliArgs(['run', 'status', 'run-1', '--cwd', '.'])).toThrow(
+      '--cwd requires run.'
+    )
+    expect(() => parseCliArgs(['run', '--cwd', '   '])).toThrow('--cwd requires a non-empty path.')
     expect(() => parseCliArgs(['status', '--unknown'])).toThrow('Unknown option: --unknown')
   })
 
@@ -117,6 +147,7 @@ describe('task CLI', () => {
         options: {
           project: 'project-1',
           promptFile: 'task.md',
+          cwd: 'workspace',
           approvalProfile: 'auto',
           wait: true,
           json: true,
@@ -134,6 +165,7 @@ describe('task CLI', () => {
     expect(client.startRun).toHaveBeenCalledWith({
       project: 'project-1',
       prompt: 'Research this.',
+      cwd: resolve('workspace'),
       permissionProfile: 'auto'
     })
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')
@@ -193,6 +225,7 @@ describe('task CLI', () => {
       createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
       getSession: vi.fn().mockResolvedValue({ id: 'session-1', status: 'idle' }),
       getRun: vi.fn().mockResolvedValue({ id: 'run-1', status: 'completed' }),
+      cancelRun: vi.fn().mockResolvedValue({ id: 'run-1', status: 'cancelled' }),
       listArtifacts: vi.fn().mockResolvedValue([{ id: 'artifact-1', name: 'report.md' }]),
       downloadArtifact: vi.fn().mockResolvedValue(new Response('report'))
     }
@@ -203,6 +236,15 @@ describe('task CLI', () => {
 
     await runTaskCommand(
       { command: 'project', subcommand: 'list', options: { json: true, jsonl: false } },
+      deps
+    )
+    await runTaskCommand(
+      {
+        command: 'run',
+        subcommand: 'cancel',
+        positionals: ['run-1'],
+        options: { json: true, jsonl: false }
+      },
       deps
     )
     await runTaskCommand(
@@ -254,6 +296,7 @@ describe('task CLI', () => {
     expect(client.createProject).toHaveBeenCalledWith({ name: 'Created', description: undefined })
     expect(client.getSession).toHaveBeenCalledWith('session-1')
     expect(client.getRun).toHaveBeenCalledWith('run-1')
+    expect(client.cancelRun).toHaveBeenCalledWith('run-1')
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
     expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
@@ -413,7 +456,66 @@ describe('task CLI', () => {
     )
   })
 
-  it('stops only the CLI event wait when a timeout occurs', async () => {
+  it('prints provider-neutral Run progress and liveness heartbeats while waiting', async () => {
+    const events = async function* (): AsyncGenerator<{
+      type: string
+      data: Record<string, unknown>
+    }> {
+      yield {
+        type: 'run.progress',
+        data: {
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          phase: 'prompt-dispatched',
+          timestamp: 1,
+          elapsedMs: 0,
+          heartbeat: false
+        }
+      }
+      yield {
+        type: 'run.progress',
+        data: {
+          runId: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          phase: 'prompt-dispatched',
+          timestamp: 10_001,
+          elapsedMs: 10_000,
+          heartbeat: true
+        }
+      }
+    }
+    const client = {
+      events,
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'completed',
+        output: 'Done',
+        artifacts: []
+      })
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(
+      parseCliArgs(['run', '--project', 'project-1', '--prompt', 'Research this.', '--wait']),
+      { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true, log }
+    )
+
+    expect(log.mock.calls.map(([line]) => line)).toEqual([
+      'Prompt dispatched to the agent.',
+      'Still waiting for the provider (10s elapsed).',
+      'Done'
+    ])
+  })
+
+  it('stops only the CLI event wait when a timeout occurs by default', async () => {
     const timeout = Object.assign(new Error('Timed out waiting for run run-1.'), {
       code: 'timeout'
     })
@@ -443,7 +545,8 @@ describe('task CLI', () => {
         sessionId: 'session-1',
         status: 'running'
       }),
-      waitForRun: vi.fn().mockRejectedValue(timeout)
+      waitForRun: vi.fn().mockRejectedValue(timeout),
+      cancelRun: vi.fn()
     }
 
     await expect(
@@ -465,7 +568,86 @@ describe('task CLI', () => {
 
     expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 25 })
     expect(eventSignal?.aborted).toBe(true)
-    expect(client).not.toHaveProperty('cancelRun')
+    expect(client.cancelRun).not.toHaveBeenCalled()
+  })
+
+  it('explicitly cancels the server run after a wait timeout and preserves the timeout error', async () => {
+    const timeout = Object.assign(new Error('Timed out waiting for run run-1.'), {
+      code: 'timeout'
+    })
+    const client = {
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockRejectedValue(timeout),
+      cancelRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'cancelled'
+      })
+    }
+
+    await expect(
+      runTaskCommand(
+        {
+          command: 'run',
+          options: {
+            project: 'project-1',
+            prompt: 'Research this.',
+            wait: true,
+            timeoutMs: 25,
+            cancelOnTimeout: true,
+            json: true,
+            jsonl: false
+          }
+        },
+        { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true }
+      )
+    ).rejects.toBe(timeout)
+
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', { timeoutMs: 25 })
+    expect(client.cancelRun).toHaveBeenCalledWith('run-1')
+  })
+
+  it('reports when cancellation after a wait timeout also fails', async () => {
+    const timeout = Object.assign(new Error('Timed out waiting for run run-1.'), {
+      code: 'timeout'
+    })
+    const cancelError = new Error('daemon disconnected')
+    const client = {
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockRejectedValue(timeout),
+      cancelRun: vi.fn().mockRejectedValue(cancelError)
+    }
+
+    await expect(
+      runTaskCommand(
+        {
+          command: 'run',
+          options: {
+            project: 'project-1',
+            prompt: 'Research this.',
+            wait: true,
+            timeoutMs: 25,
+            cancelOnTimeout: true,
+            json: true,
+            jsonl: false
+          }
+        },
+        { connect: vi.fn().mockResolvedValue(client), stdinIsTTY: true }
+      )
+    ).rejects.toMatchObject({
+      code: 'timeout',
+      message:
+        'Timed out waiting for run run-1. Server run cancellation also failed: daemon disconnected',
+      cause: cancelError
+    })
   })
 
   it('keeps capability management surfaces outside the CLI', async () => {
@@ -475,7 +657,9 @@ describe('task CLI', () => {
       'compute',
       'notebook',
       'notebook-env',
-      'runtime'
+      'reviewer',
+      'runtime',
+      'settings'
     ]) {
       await expect(runCli([command])).rejects.toThrow(`Unknown command: ${command}`)
     }

@@ -1,26 +1,46 @@
 import * as acp from '@agentclientprotocol/sdk'
-import type { ActiveSession, ClientConnection, PromptResponse } from '@agentclientprotocol/sdk'
+import type {
+  ActiveSession,
+  ClientConnection,
+  CreateElicitationResponse,
+  PromptResponse
+} from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
-import type {
-  AcpCancelPromptRequest,
-  AcpCompactSessionRequest,
-  AcpConnectRequest,
-  AcpCreateSessionRequest,
-  AcpCreateSessionResponse,
-  AcpRuntimeEvent,
-  AcpDeleteSessionRequest,
-  AcpPermissionRequest,
-  AcpPermissionResponse,
-  AcpPromptRequest,
-  AcpResumeSessionRequest,
-  AcpRevokePermissionGrantRequest,
-  AcpSetPermissionProfileRequest,
-  AcpStateSnapshot
+import {
+  ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+  ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+  type AcpCancelPromptRequest,
+  type AcpCompactSessionRequest,
+  type AcpConnectRequest,
+  type AcpCreateSessionRequest,
+  type AcpCreateSessionResponse,
+  type AcpRuntimeEvent,
+  type AcpDeleteSessionRequest,
+  type AcpPermissionRequest,
+  type AcpPermissionResponse,
+  type AcpPermissionSettlementState,
+  type ElicitationResponse,
+  type AcpPromptRequest,
+  type AcpResumeSessionRequest,
+  type AcpRevokePermissionGrantRequest,
+  type AcpSetPermissionProfileRequest,
+  type AcpStateSnapshot
 } from '../../shared/acp'
 import { type AgentFrameworkId } from '../../shared/settings'
+import {
+  sanitizeAgentUserChoiceRequest,
+  type AgentUserChoiceRequest,
+  type AgentUserChoiceResult,
+  type ElicitationField,
+  type PendingElicitationRequest
+} from '../../shared/elicitation'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import {
@@ -34,6 +54,7 @@ import { ConversationPermissionGrantStore } from './permission-broker'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { AcpPermissionContext } from './permission-context'
 import { AgentMcpHttpHost } from './mcp-http-host'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
@@ -48,8 +69,11 @@ import type { UploadRepository } from '../uploads/repository'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type { ArtifactFile, FileReference } from '../../shared/artifacts'
 import type { ArtifactRpcCapabilityBinding } from '../../shared/artifact-provenance'
+import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
+import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
+import type { AcpElicitationOwner } from './elicitation-owner'
 import type {
   ReviewerSessionOwner,
   ReviewerSessionDisposition,
@@ -88,7 +112,8 @@ import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpTurnSkillHooks, AcpTurnSkillOwner } from './turn-skill-owner'
-import type { PlanResponseResult } from '../session-plan/plan-service'
+import type { PlanResponseResult, PlanServiceDependencies } from '../session-plan/plan-service'
+import { SessionPlanContinuationOwner } from './session-plan-continuation-owner'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
@@ -108,6 +133,7 @@ export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateSnapshot) => void
   onEvent?: (event: AcpRuntimeEvent) => void
   onPermissionRequest?: (request: AcpPermissionRequest) => void
+  onPermissionSettled?: (requestId: string, state: AcpPermissionSettlementState) => void
   onPromptStarted?: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   // Fires after the provider prompt yields its first update/terminal response. Reaching this point
   // proves startup did not reject before the provider accepted the request.
@@ -127,20 +153,58 @@ type AcpRuntimeOptions = {
   callbacks?: AcpRuntimeCallbacks
   permissionGrantStore?: ConversationPermissionGrantStore
   permissionGrantRegistry?: PermissionGrantRegistry
+  permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
+  // Replaces only physical process creation. Backend identity and initialization material still come
+  // from resolveBackend when it is available.
   spawnAgent?: () => ChildProcessWithoutNullStreams
   // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
-  // provider switch takes effect on reconnect. Ignored when an explicit spawnAgent is provided (tests
-  // inject that directly).
+  // provider switch takes effect on reconnect.
   resolveBackend?: (context: {
     forcedSkillIds: string[]
     systemPromptAppends: string[]
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
+  // Resolves a granted local root id to its absolute path (backed by the GrantedLocalRoot table),
+  // enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references stay
+  // unavailable.
+  grantedRoots?: {
+    resolveRootPath: (rootId: string) => Promise<string | undefined>
+  }
   notebook?: AcpRuntimeNotebookOptions
   skillImport?: AcpRuntimeSkillImportOptions
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
+  permissionWait?: {
+    sessions: Pick<
+      SessionPersistenceCoordinator,
+      | 'readSessionRuntimeContext'
+      | 'patchSessionRuntimeContext'
+      | 'containsMessageOnActiveBranch'
+      | 'loadSessionForContinuation'
+    > &
+      Partial<
+        Pick<SessionPersistenceCoordinator, 'appendUserMessageToInteraction' | 'sessionProjectId'>
+      >
+    onSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
+    onContinuationSessionUpdated?: import('./permission-wait-owner').PublishPermissionWaitSession
+  }
+  sideChat?: Readonly<{
+    sendMessage: (
+      routingId: string,
+      request: SideChatSendMessageRequest
+    ) => Promise<SideChatSendMessageResult>
+  }>
+  sideChatRelays?: Readonly<{
+    claim: (parentSessionId: string) =>
+      | Readonly<{
+          historyPreamble: string
+          commit: (promptMessageId?: string) => void | Promise<void>
+          restore: () => void
+        }>
+      | undefined
+  }>
+  sessionCapabilityPolicy?: SessionCapabilityPolicy
   // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
   // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
   framework?: AgentFramework
@@ -171,6 +235,9 @@ type AcpRuntimeOptions = {
   // intentionally separate from Main Agent enablement: a Main-disabled installed Skill remains
   // eligible for a Specialist.
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
+  // projectName carries the Project id. Returns undefined when absent or on lookup failure.
+  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
 }
 
 type AcpRuntimeArtifactOptions = {
@@ -186,6 +253,9 @@ type AcpRuntimeArtifactOptions = {
   getRpcConnection?: () => Promise<NotebookRpcConnection>
   issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
   revokeRpcCapability?: (token: string) => Promise<void> | void
+  // When present, the caller already owns the execution Artifact turn. Runtime only provisions the
+  // MCP transport against this exact handoff and never opens a competing root turn.
+  currentRunFile?: string
   provenance?: Pick<
     import('../artifacts/provenance-repository').ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
@@ -257,7 +327,10 @@ type AcpRuntimePlanOptions = {
     | 'patchSessionRuntimeContext'
     | 'appendUserMessageToInteraction'
     | 'containsMessageOnActiveBranch'
+    | 'loadSessionForContinuation'
   >
+  onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
+  onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }
 // Converts unknown thrown values into user-visible error text. Total AND always returns a string: a
 // hostile message getter or a throwing String() coercion (e.g. a Proxy-wrapped Error) must not escape,
@@ -275,6 +348,15 @@ const errorMessage = (error: unknown): string => {
 }
 
 const log = createLogger('acp')
+
+const PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS = 3
+const PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS = 25
+
+type PlanContinuationClaimRetry = {
+  commandId: string
+  failedAttempts: number
+  timer?: ReturnType<typeof setTimeout>
+}
 
 // Logs an error without ever throwing back into the caller. Used on failure paths where a throwing
 // logger (or a hostile payload) must never mask the original error being handled/re-thrown.
@@ -300,11 +382,31 @@ class AcpRuntime {
   // App-owned MCP construction, routing aliases, and bearer lease ownership are kept behind one
   // explicit role policy. Connection/process lifetime remains with the connection resource owner.
   private readonly sessionInteractions: AcpSessionInteractionOwner
+  private readonly elicitationOwner: AcpElicitationOwner
+  private readonly appContinuations: AcpAppContinuationOwner
+  private readonly userChoiceProvenanceContexts = new Map<
+    string,
+    Readonly<{
+      sessionId: string
+      provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
+    }>
+  >()
+  private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
+  private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
+  private readonly planContinuationOwner: SessionPlanContinuationOwner | undefined
+  private durablePermissionContinuations?: Map<
+    string,
+    { projectId: string; requestId: string; cancellationRequested?: boolean }
+  >
+  private durablePlanContinuations?: Map<string, { projectId: string; commandId: string }>
+  private readonly planContinuationClaimRetries = new Map<string, PlanContinuationClaimRetry>()
+  private restoredContinuationContextResetSessionIds?: Set<string>
   // Ephemeral Reviewer identity, isolation, permission, and resource state lives behind one owner.
   private readonly reviewerSessions: ReviewerSessionOwner
   private readonly turnSkills: AcpTurnSkillOwner
   private readonly handoffContinuity: AcpHandoffContinuityOwner
   private readonly permissionContext: AcpPermissionContext
+  private readonly clientInteractions: AcpRuntimeSessionOwners['clientInteractions']
   private readonly publication: AcpRuntimePublicationOwner
   private readonly sessionEnvironment: AcpSessionEnvironmentPolicy
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
@@ -324,6 +426,10 @@ class AcpRuntime {
   private readonly providerSessionResumer: AcpProviderSessionResumer
   private readonly sessionReplacement: AcpSessionReplacementWorkflow
   private readonly sessionDeletion: AcpSessionDeletionWorkflow
+  private readonly permissionProfileChanges = new Map<
+    string,
+    { revision: number; tail: Promise<void> }
+  >()
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
@@ -349,9 +455,19 @@ class AcpRuntime {
     this.sessionEnvironment = session.sessionEnvironment
     this.publication = session.publication
     this.permissionContext = session.permissionContext
+    this.clientInteractions = session.clientInteractions
+    this.elicitationOwner = session.elicitationOwner
+    this.durableContinuationContext = session.durableContinuationContext
+    this.permissionWaitOwner = session.permissionWaitOwner
+    this.planContinuationOwner = options.plan
+      ? new SessionPlanContinuationOwner(options.plan.sessions)
+      : undefined
+    this.appContinuations = session.appContinuations
     this.reviewerSessions = session.reviewerSessions
     this.sessionUpdateProjector = session.sessionUpdateProjector
-    this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session)
+    this.sessionPlanWorkflow = composeAcpRuntimePlanWorkflow(options, base, session, {
+      continuations: this.planContinuationOwner
+    })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
       plan: this.sessionPlanWorkflow.prompt,
       reload: {
@@ -374,7 +490,11 @@ class AcpRuntime {
       options,
       base,
       session,
-      lifecycle
+      lifecycle,
+      {
+        clearUserChoiceProvenanceForSession: (sessionId) =>
+          this.clearUserChoiceProvenanceForSession(sessionId)
+      }
     )
     this.providerSessionCreator = providerSessions.providerSessionCreator
     this.providerSessionResumer = providerSessions.providerSessionResumer
@@ -433,6 +553,10 @@ class AcpRuntime {
     return this.publication.getSnapshot()
   }
 
+  captureBackend(): AcpBackendGenerationView {
+    return this.backend
+  }
+
   callSessionPlan(input: AcpSessionPlanCall): Promise<unknown> {
     return this.sessionPlanWorkflow.call(input)
   }
@@ -444,8 +568,14 @@ class AcpRuntime {
     return this.sessionPlanWorkflow.projection(projectId, sessionId)
   }
 
-  respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
-    return this.sessionPlanWorkflow.respond(input)
+  async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
+    const result = await this.sessionPlanWorkflow.respond(input)
+    const continuationProjection =
+      'projection' in result ? result.projection : result.continuationProjection
+    if (continuationProjection?.continuationState === 'queued') {
+      this.scheduleQueuedPlanContinuation(input.projectId, input.sessionId)
+    }
+    return result
   }
 
   // Lists sessions with an in-flight prompt, for the pre-migration active-session warning.
@@ -454,6 +584,17 @@ class AcpRuntime {
       projectName: this.resolveSessionProjectName(sessionId),
       sessionId
     }))
+  }
+
+  // A permission-blocked prompt whose authority reached durable storage is quiescent for app quit:
+  // teardown loses only the dead provider RPC, while the card remains actionable after restart.
+  getQuitBlockingPromptSessions(): { projectName: string; sessionId: string }[] {
+    return this.getInFlightSessionIds()
+      .filter((sessionId) => !this.permissionContext.hasDurablePendingForSession(sessionId))
+      .map((sessionId) => ({
+        projectName: this.resolveSessionProjectName(sessionId),
+        sessionId
+      }))
   }
 
   hasLiveSession(projectId: string, sessionId: string): boolean {
@@ -501,14 +642,15 @@ class AcpRuntime {
 
   private getInFlightSessionIds(): string[] {
     const interactions = this.sessionInteractions.snapshot()
-    return [
-      ...interactions.filter(({ kind }) => kind === 'prompt'),
-      ...interactions.filter(({ kind }) => kind === 'compaction')
-    ].map(({ sessionId }) => sessionId)
-  }
-
-  private hasSessionInteractionInFlight(sessionId: string): boolean {
-    return this.sessionInteractions.current(sessionId) !== undefined
+    return Array.from(
+      new Set([
+        ...interactions.filter(({ kind }) => kind === 'prompt').map(({ sessionId }) => sessionId),
+        ...interactions
+          .filter(({ kind }) => kind === 'compaction')
+          .map(({ sessionId }) => sessionId),
+        ...this.appContinuations.sessionIds()
+      ])
+    )
   }
 
   // Run ids of turns currently in flight, from live in-memory state (not the persisted current-run
@@ -551,7 +693,21 @@ class AcpRuntime {
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.providerSessionResumer.resume(request))
+    return this.withOperationLease(async () => {
+      this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
+      const resumed = await this.providerSessionResumer.resume(request)
+      if (resumed.contextReset) {
+        const contextResetSessionIds =
+          this.restoredContinuationContextResetSessionIds ?? new Set<string>()
+        this.restoredContinuationContextResetSessionIds = contextResetSessionIds
+        contextResetSessionIds.add(request.sessionId)
+      }
+      this.scheduleQueuedPlanContinuation(
+        this.sessionEnvironment.projectName(request.sessionId),
+        request.sessionId
+      )
+      return resumed
+    })
   }
 
   // Forcibly drops the agent-side context for a session whose accumulated history can no longer be sent
@@ -592,33 +748,111 @@ class AcpRuntime {
     return this.withOperationLease(() => this.contextCompactionWorkflow.compact(request))
   }
 
-  // Changes approval behavior only while the conversation is idle. Applying the ACP mode before the
-  // next prompt guarantees Full access cannot show a first-tool permission race.
+  // Serializes changes per Session and coalesces queued requests so only the latest selection can
+  // commit or release a pending provider request. The operation lease covers time spent in the queue.
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
-    return this.withOperationLease(() => this.setPermissionProfileOperation(request))
+    return this.withOperationLease(() => this.enqueuePermissionProfileChange(request))
+  }
+
+  private enqueuePermissionProfileChange(
+    request: AcpSetPermissionProfileRequest
+  ): Promise<AcpStateSnapshot> {
+    const state = this.permissionProfileChanges.get(request.sessionId) ?? {
+      revision: 0,
+      tail: Promise.resolve()
+    }
+    const revision = ++state.revision
+    const operation = state.tail.then(() =>
+      this.setPermissionProfileOperation(request, state, revision)
+    )
+    state.tail = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    this.permissionProfileChanges.set(request.sessionId, state)
+    void state.tail.then(() => {
+      if (
+        this.permissionProfileChanges.get(request.sessionId) === state &&
+        state.revision === revision
+      ) {
+        this.permissionProfileChanges.delete(request.sessionId)
+      }
+    })
+
+    return operation
   }
 
   private async setPermissionProfileOperation(
-    request: AcpSetPermissionProfileRequest
+    request: AcpSetPermissionProfileRequest,
+    state: { revision: number },
+    revision: number
   ): Promise<AcpStateSnapshot> {
+    if (state.revision !== revision) return this.getSnapshot()
+
     const session = this.activeSessionFor(request.sessionId)
 
     if (!session) throw new Error(`ACP session not found: ${request.sessionId}`)
-    if (this.hasSessionInteractionInFlight(request.sessionId)) {
-      throw new Error('Permission profile cannot be changed while the Agent is running.')
-    }
-    if (this.permissionContext.hasPendingForSession(request.sessionId)) {
-      throw new Error('Resolve the pending permission request before changing profiles.')
+    if (this.sessionInteractions.current(request.sessionId)?.kind === 'compaction') {
+      throw new Error('Permission profile cannot be changed while the Agent is compacting.')
     }
 
     const connection = this.connection
     if (!connection) throw new Error('ACP connection is not available.')
-    const permissionProfile = await this.sessionConfigurator.configurePermissionProfile({
-      backend: this.backend,
-      connection,
-      session,
-      permissionProfile: request.profile
-    })
+    const backend = this.backend
+    const aggregate = this.sessionRegistry.lookup(request.sessionId)?.aggregate
+    const previousPermissionProfile = aggregate?.snapshot().permissionProfile
+    const requestedPermissionProfile = backend.framework.mapPermissionProfile(
+      request.profile,
+      session.modes
+    ).state
+    const isCurrent = (): boolean =>
+      state.revision === revision &&
+      this.connection === connection &&
+      this.activeSessionFor(request.sessionId) === session
+
+    // Make the requested posture authoritative before the provider mode request can yield. A
+    // downgrade from Full must affect broker decisions immediately, even while setMode is in flight.
+    this.permissionContext.beginPermissionProfileTransition(
+      request.sessionId,
+      requestedPermissionProfile,
+      isCurrent
+    )
+
+    let permissionProfile
+    try {
+      permissionProfile = await this.sessionConfigurator.configurePermissionProfile(
+        {
+          backend,
+          connection,
+          session,
+          permissionProfile: request.profile
+        },
+        true
+      )
+    } catch (error) {
+      if (previousPermissionProfile && isCurrent()) {
+        this.permissionContext.setLivePermissionProfile(
+          request.sessionId,
+          {
+            ...previousPermissionProfile,
+            availableModeIds: [...previousPermissionProfile.availableModeIds]
+          },
+          isCurrent
+        )
+      }
+      throw error
+    }
+    if (state.revision !== revision) return this.getSnapshot()
+    if (this.activeSessionFor(request.sessionId) !== session) {
+      throw new Error('ACP session startup was superseded.')
+    }
+    this.assertCurrentConnectedConnection(connection)
+    await this.permissionContext.applyPermissionProfile(
+      request.sessionId,
+      permissionProfile,
+      () => state.revision === revision
+    )
+    if (state.revision !== revision) return this.getSnapshot()
     if (this.activeSessionFor(request.sessionId) !== session) {
       throw new Error('ACP session startup was superseded.')
     }
@@ -626,6 +860,7 @@ class AcpRuntime {
     this.sessionRegistry
       .lookup(request.sessionId)
       ?.aggregate.setPermissionProfile(structuredClone(permissionProfile))
+    this.permissionContext.setLivePermissionProfile(request.sessionId, permissionProfile)
     this.emitState()
 
     return this.getSnapshot()
@@ -641,7 +876,12 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
-    return this.connectionClose.disconnect(emitClosedStatus)
+    this.clearAllPlanContinuationClaimRetries()
+    try {
+      return await this.connectionClose.disconnect(emitClosedStatus)
+    } finally {
+      this.clearAllPlanContinuationClaimRetries()
+    }
   }
 
   // Synchronously terminates the agent child for app shutdown. Electron's `will-quit` cannot await, so
@@ -649,6 +889,7 @@ class AcpRuntime {
   // the app is gone would be an orphaned process still holding its network connection open. The OS
   // reclaims the remaining connection/session state as the process exits.
   shutdown(): void {
+    this.clearAllPlanContinuationClaimRetries()
     this.connectionClose.shutdown()
   }
 
@@ -658,7 +899,12 @@ class AcpRuntime {
   // remains — assigned, connecting, or mid-spawn. Returns { reaped } so the caller can tell a clean
   // teardown from a degraded one (taskkill fallback left grandchildren) before committing to app.exit.
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
-    return this.connectionClose.shutdownForQuit()
+    this.clearAllPlanContinuationClaimRetries()
+    try {
+      return await this.connectionClose.shutdownForQuit()
+    } finally {
+      this.clearAllPlanContinuationClaimRetries()
+    }
   }
 
   // Teardown for the pre-update-install gate. Reaps the current agent tree (so the NSIS installer can
@@ -672,7 +918,12 @@ class AcpRuntime {
   // signal (so a degraded reap makes the caller refuse the install); if that await is abandoned on
   // timeout the caller refuses on !completed and the stale-generation self-reap still collects the child.
   async shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
-    return this.connectionClose.shutdownForUpdateGate()
+    this.clearAllPlanContinuationClaimRetries()
+    try {
+      return await this.connectionClose.shutdownForUpdateGate()
+    } finally {
+      this.clearAllPlanContinuationClaimRetries()
+    }
   }
 
   // Retires this framework generation without interrupting active turns or background workflows. The
@@ -710,7 +961,8 @@ class AcpRuntime {
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ): Promise<AcpAgentConnectionCandidate> {
     const hooks: AcpAgentConnectionHooks = {
-      requestPermission: (params) => this.permissionContext.handleProviderRequest(params),
+      createElicitation: (params) => this.clientInteractions.createElicitation(params),
+      requestPermission: (params) => this.clientInteractions.requestPermission(params),
       observeSessionUpdate: (notification) =>
         this.permissionContext.observeProviderUpdate(notification),
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
@@ -766,14 +1018,16 @@ class AcpRuntime {
       {
         epoch: identity.epoch,
         resolveBackend: async () => {
-          const backend: ResolvedAgentBackend | undefined = this.spawnAgent
-            ? { framework: this.framework, executablePath: '', env: {} }
-            : await this.options.resolveBackend?.({
+          const backend: ResolvedAgentBackend | undefined = this.options.resolveBackend
+            ? await this.options.resolveBackend({
                 forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
                 systemPromptAppends: [
                   ...(await this.sessionEnvironment.backendSystemPromptAppends())
                 ]
               })
+            : this.spawnAgent
+              ? { framework: this.framework, executablePath: '', env: {} }
+              : undefined
           if (!backend) throw new Error('ACP agent spawn configuration is not available.')
           return backend
         },
@@ -789,12 +1043,10 @@ class AcpRuntime {
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(request: AcpPromptRequest, promptAttemptId?: string): Promise<PromptResponse> {
     return this.withOperationLease(() =>
-      withDataRootWrite(() =>
-        this.promptTurnWorkflow.run(request, {
-          kind: 'user',
-          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
-        })
-      )
+      this.runPromptTurn(request, {
+        kind: 'user',
+        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+      })
     )
   }
 
@@ -805,14 +1057,31 @@ class AcpRuntime {
     request: AcpPromptRequest,
     promptAttemptId?: string
   ): Promise<PromptResponse> {
-    return this.withOperationLease(() =>
-      withDataRootWrite(() =>
-        this.promptTurnWorkflow.run(request, {
-          kind: 'app-continuation',
-          ...(promptAttemptId === undefined ? {} : { promptAttemptId })
-        })
-      )
+    // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
+    // before that barrier is released instead of waiting on the barrier it intentionally holds.
+    return this.generationActivity.withOperation(() =>
+      this.runPromptTurn(request, {
+        kind: 'app-continuation',
+        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+      })
     )
+  }
+
+  private runPromptTurn(
+    request: AcpPromptRequest,
+    intent:
+      | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+      | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
+  ): Promise<PromptResponse> {
+    return withDataRootWrite(async () => {
+      let response: PromptResponse | undefined
+      try {
+        response = await this.promptTurnWorkflow.run(request, intent)
+        return response
+      } finally {
+        this.schedulePendingAppContinuation(request.sessionId, response?.stopReason)
+      }
+    })
   }
 
   // Requests cancellation without clearing in-flight state before the agent stops.
@@ -822,7 +1091,51 @@ class AcpRuntime {
     const cancelPlanInteraction = this.sessionPlanWorkflow.capturePromptCancellation(
       request.sessionId
     )
+    const interactionInFlight = this.sessionInteractions.current(request.sessionId) !== undefined
+    const durablePermission = this.durablePermissionContinuations?.get(request.sessionId)
+    if (durablePermission) durablePermission.cancellationRequested = true
+    const continuationWasPending = this.appContinuations.get(request.sessionId) !== undefined
+    const cancelledContinuation = this.appContinuations.delete(request.sessionId)
 
+    if (continuationWasPending && cancelledContinuation && !interactionInFlight) {
+      await this.settleCancelledDurablePermissionContinuation(request.sessionId)
+      this.emitState()
+      return this.getSnapshot()
+    }
+
+    if (!interactionInFlight && !durablePermission) {
+      try {
+        const permissionRequestId = await this.permissionWaitOwner.cancelPendingSession(
+          request.sessionId
+        )
+        if (permissionRequestId) {
+          this.restoredContinuationContextResetSessionIds?.delete(request.sessionId)
+          this.permissionContext.clearRestoredDecision(request.sessionId)
+          this.pushEvent({
+            kind: 'permission',
+            level: 'info',
+            sessionId: request.sessionId,
+            permissionRequestId,
+            title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+            text: 'cancelled'
+          })
+          this.emitState()
+          return this.getSnapshot()
+        }
+      } catch (error) {
+        this.pushEvent({
+          kind: 'permission',
+          level: 'error',
+          sessionId: request.sessionId,
+          title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+          text: errorMessage(error)
+        })
+        this.emitState()
+        return this.getSnapshot()
+      }
+    }
+
+    let cancellationAccepted = false
     if (connection && activeSession) {
       await this.sessionInteractions.cancelPrompt({
         sessionId: request.sessionId,
@@ -831,6 +1144,7 @@ class AcpRuntime {
             sessionId: activeSession.sessionId
           }),
         onAccepted: () => {
+          cancellationAccepted = true
           cancelPlanInteraction()
           this.cancelPermissionFlowForSession(request.sessionId)
           this.pushEvent({
@@ -853,23 +1167,73 @@ class AcpRuntime {
         }
       })
     }
+    if (cancellationAccepted) {
+      await this.settleCancelledDurablePermissionContinuation(request.sessionId)
+      this.emitState()
+    }
 
     return this.getSnapshot()
   }
 
   // Closes the agent-side session when supported, then removes local routing state.
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
+    this.clearPlanContinuationClaimRetry(request.sessionId)
     this.sessionPlanWorkflow.sessionDeleted(request.sessionId)
-    return this.sessionDeletion.delete(request.sessionId)
+    try {
+      return await this.sessionDeletion.delete(request.sessionId)
+    } finally {
+      this.clearPlanContinuationClaimRetry(request.sessionId)
+    }
   }
 
   // Resolves or cancels one pending permission request from the renderer.
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot> {
+    const permissionRequest = this.permissionContext
+      .getPendingRequests()
+      .find((request) => request.requestId === response.requestId)
+    if (!permissionRequest && response.restored) {
+      return this.respondToRestoredPermission(response)
+    }
+    const selectedOption = permissionRequest?.options.find(
+      (option) => option.optionId === response.optionId
+    )
+    const interaction = permissionRequest
+      ? this.sessionInteractions.current(permissionRequest.sessionId)
+      : undefined
+    const promptInteraction = interaction?.kind === 'prompt' ? interaction : undefined
+    const continueAfterProviderCancellation = Boolean(
+      permissionRequest &&
+      promptInteraction &&
+      this.getSessionFramework(permissionRequest.sessionId) === 'claude-code' &&
+      !response.cancelled &&
+      selectedOption?.kind.toLowerCase().startsWith('reject_')
+    )
+    if (permissionRequest && promptInteraction && continueAfterProviderCancellation) {
+      this.appContinuations.set(permissionRequest.sessionId, {
+        condition: 'provider-cancelled',
+        request: {
+          sessionId: permissionRequest.sessionId,
+          text:
+            'The user denied the requested tool permission. Continue the current task without ' +
+            'that tool call. Use an alternative that does not require the denied permission, or ' +
+            'explain what cannot be completed. Do not request the same permission again unless the ' +
+            'user explicitly asks.',
+          suppressUserMessage: true,
+          ...(promptInteraction.promptMessageId
+            ? { provenanceContext: { promptMessageId: promptInteraction.promptMessageId } }
+            : {})
+        }
+      })
+    }
+
     try {
       const handled = await this.permissionContext.respondToPermission(
         response,
         HUMAN_PERMISSION_ACTION_ORIGIN
       )
+      if (!handled && permissionRequest && continueAfterProviderCancellation) {
+        this.appContinuations.delete(permissionRequest.sessionId)
+      }
       this.pushEvent({
         kind: 'permission',
         level: handled ? 'info' : 'warning',
@@ -877,6 +1241,9 @@ class AcpRuntime {
         text: response.cancelled ? 'cancelled' : response.optionId
       })
     } catch (error) {
+      if (permissionRequest && continueAfterProviderCancellation) {
+        this.appContinuations.delete(permissionRequest.sessionId)
+      }
       this.pushEvent({
         kind: 'permission',
         level: 'error',
@@ -889,6 +1256,773 @@ class AcpRuntime {
     this.emitState()
 
     return this.getSnapshot()
+  }
+
+  private async respondToRestoredPermission(
+    response: AcpPermissionResponse
+  ): Promise<AcpStateSnapshot> {
+    const restored = response.restored!
+    const activeSession = this.activeSessionFor(restored.sessionId)
+    if (!activeSession) throw new Error(`ACP session not found: ${restored.sessionId}`)
+    const projectId = this.sessionEnvironment.projectName(restored.sessionId)
+    const decision = await this.permissionWaitOwner.resolveRestored(
+      response,
+      projectId,
+      restored.sessionId
+    )
+    const continuation = await this.durableContinuationContext.prepare({
+      projectId,
+      sessionId: restored.sessionId,
+      promptMessageId: decision.permission.originatingPromptMessageId,
+      ...(this.restoredContinuationContextResetSessionIds?.has(restored.sessionId)
+        ? {
+            replay: {
+              descriptor: this.durableContinuationHistoryReplayDescriptor(),
+              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+            }
+          }
+        : {})
+    })
+    const durablePermissionContinuations =
+      this.durablePermissionContinuations ??
+      new Map<string, { projectId: string; requestId: string; cancellationRequested?: boolean }>()
+    this.durablePermissionContinuations = durablePermissionContinuations
+    if (durablePermissionContinuations.has(restored.sessionId)) {
+      throw new Error('The restored permission request is already being continued.')
+    }
+    durablePermissionContinuations.set(restored.sessionId, {
+      projectId,
+      requestId: response.requestId
+    })
+    let continuationBegan = false
+    try {
+      // Persist the consumed/non-replayable marker before starting provider work. A process loss or
+      // grant failure must never leave a reusable approval without consuming its authority first.
+      await this.permissionWaitOwner.beginContinuation(
+        projectId,
+        restored.sessionId,
+        response.requestId
+      )
+      continuationBegan = true
+      await this.permissionContext.prepareRestoredDecision(
+        decision.permission,
+        decision.option,
+        projectId
+      )
+    } catch (error) {
+      this.permissionContext.clearRestoredDecision(restored.sessionId)
+      if (continuationBegan) {
+        try {
+          await this.permissionWaitOwner.rearmContinuation(
+            projectId,
+            restored.sessionId,
+            response.requestId
+          )
+          this.pushEvent({
+            kind: 'permission',
+            level: 'info',
+            sessionId: restored.sessionId,
+            permissionRequestId: response.requestId,
+            title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+          })
+        } catch (rearmError) {
+          this.pushEvent({
+            kind: 'permission',
+            level: 'error',
+            sessionId: restored.sessionId,
+            permissionRequestId: response.requestId,
+            title: ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+            text: errorMessage(rearmError)
+          })
+        }
+        this.emitState()
+      }
+      durablePermissionContinuations.delete(restored.sessionId)
+      throw error
+    }
+
+    const scope = decision.option?.scope
+    const text = decision.denied
+      ? 'The user denied the pending tool permission. Continue the current task without that tool ' +
+        'call. Use an alternative that does not require the denied permission, or explain what ' +
+        'cannot be completed. Do not request the same permission again unless the user explicitly asks.'
+      : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
+        'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
+    this.appContinuations.set(restored.sessionId, {
+      condition: 'always',
+      request: {
+        sessionId: restored.sessionId,
+        text,
+        suppressUserMessage: true,
+        provenanceContext: continuation.provenanceContext,
+        ...(continuation.historyReplay?.historyPreamble
+          ? { historyPreamble: continuation.historyReplay.historyPreamble }
+          : {}),
+        ...(continuation.historyReplay?.historyAttachments.length
+          ? { historyAttachments: continuation.historyReplay.historyAttachments }
+          : {}),
+        ...(continuation.historyReplay?.historyImages.length
+          ? { historyImages: continuation.historyReplay.historyImages }
+          : {})
+      }
+    })
+    this.schedulePendingAppContinuation(restored.sessionId)
+    this.options.callbacks?.onPermissionSettled?.(
+      response.requestId,
+      response.cancelled ? 'cancelled' : decision.denied ? 'rejected' : 'resolved'
+    )
+    this.pushEvent({
+      kind: 'permission',
+      level: 'info',
+      sessionId: restored.sessionId,
+      promptMessageId: decision.permission.originatingPromptMessageId,
+      title: 'Restored permission response accepted',
+      text: response.cancelled ? 'cancelled' : response.optionId
+    })
+    this.emitState()
+    return this.getSnapshot()
+  }
+
+  async respondToElicitation(response: ElicitationResponse): Promise<AcpStateSnapshot> {
+    if (response.request && response.request.requestId !== response.requestId) {
+      throw new Error('Restored structured input request id does not match the response')
+    }
+    let restoredContinuation:
+      | Awaited<
+          ReturnType<AcpRuntimeSessionOwners['durableContinuationContext']['prepareElicitation']>
+        >
+      | undefined
+    if (
+      !this.elicitationOwner
+        .getPendingRequests()
+        .some((request) => request.requestId === response.requestId) &&
+      response.request
+    ) {
+      if (!this.activeSessionFor(response.request.sessionId)) {
+        throw new Error(`ACP session not found: ${response.request.sessionId}`)
+      }
+      restoredContinuation = await this.durableContinuationContext.prepareElicitation({
+        projectId: this.sessionEnvironment.projectName(response.request.sessionId),
+        sessionId: response.request.sessionId,
+        requestId: response.request.requestId,
+        toolCallId: response.request.toolCallId,
+        action: response.action,
+        answers: response.answers,
+        replacePreviousAnswer: response.replacePreviousAnswer,
+        ...(this.restoredContinuationContextResetSessionIds?.has(response.request.sessionId)
+          ? {
+              replay: {
+                descriptor: this.durableContinuationHistoryReplayDescriptor(),
+                supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+              }
+            }
+          : {})
+      })
+      if (!this.elicitationOwner.restoreDetached(restoredContinuation.request)) {
+        throw new Error('Invalid restored structured input request')
+      }
+    }
+
+    const liveProvenance = this.userChoiceProvenanceContexts.get(response.requestId)
+    const resolution = this.elicitationOwner.respond(response)
+    this.userChoiceProvenanceContexts.delete(response.requestId)
+    if (resolution.detached) {
+      const continuation = this.userChoiceContinuation(
+        resolution.request,
+        resolution.response,
+        restoredContinuation?.historyReplay,
+        restoredContinuation?.provenanceContext ?? liveProvenance?.provenanceContext
+      )
+      if (continuation) {
+        this.appContinuations.set(resolution.request.sessionId, {
+          request: continuation,
+          condition: 'always'
+        })
+        this.schedulePendingAppContinuation(resolution.request.sessionId)
+      }
+      this.restoredContinuationContextResetSessionIds?.delete(resolution.request.sessionId)
+    }
+    return this.getSnapshot()
+  }
+
+  async requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {
+    const request = sanitizeAgentUserChoiceRequest(input)
+    if (!request) throw new Error('Invalid user choice request.')
+    if (!this.activeSessionFor(request.sessionId)) return { action: 'cancelled' }
+
+    const pendingChoice = this.elicitationOwner
+      .getPendingRequests()
+      .find(
+        (pending) =>
+          pending.sessionId === request.sessionId && pending.durable?.kind === 'agent-user-choice'
+      )
+    if (pendingChoice) {
+      const firstQuestionIndex = pendingChoice.fields.filter((field) =>
+        /^question_\d+$/u.test(field.id)
+      ).length
+      const fields: ElicitationField[] = request.questions.flatMap((question, offset) => {
+        const questionIndex = firstQuestionIndex + offset
+        return [
+          {
+            id: `question_${questionIndex}`,
+            label: question.header ?? `Question ${questionIndex + 1}`,
+            description: question.question,
+            kind: 'single-select' as const,
+            options: question.options.map((option) => ({
+              value: option.label,
+              label: option.label,
+              ...(option.description ? { description: option.description } : {})
+            }))
+          },
+          {
+            id: `question_${questionIndex}_custom`,
+            label: 'Other',
+            description: 'Type your own answer instead of choosing an option above (optional).',
+            kind: 'text' as const
+          }
+        ]
+      })
+      const appended = this.elicitationOwner.appendDetached(pendingChoice.requestId, fields)
+      if (!appended) return { action: 'cancelled' }
+      return { action: 'pending' }
+    }
+
+    const requestId = randomUUID()
+    const promptInteraction = this.sessionInteractions.current(request.sessionId)
+    const properties = Object.fromEntries(
+      request.questions.flatMap((question, questionIndex) => [
+        [
+          `question_${questionIndex}`,
+          {
+            type: 'string',
+            ...(question.header ? { title: question.header } : {}),
+            description: question.question,
+            oneOf: question.options.map((option) => ({
+              const: option.label,
+              title: option.label,
+              ...(option.description ? { description: option.description } : {})
+            }))
+          }
+        ],
+        [
+          `question_${questionIndex}_custom`,
+          {
+            type: 'string',
+            title: 'Other',
+            description: 'Type your own answer instead of choosing an option above (optional).'
+          }
+        ]
+      ])
+    )
+    const pending = this.elicitationOwner.requestDetached(
+      {
+        mode: 'form',
+        sessionId: request.sessionId,
+        toolCallId: `ask-user-question-${randomUUID()}`,
+        message: request.questions[0].question,
+        requestedSchema: {
+          type: 'object',
+          properties
+        }
+      },
+      { sessionId: request.sessionId },
+      {
+        kind: 'agent-user-choice',
+        requestId,
+        ...(promptInteraction?.kind === 'prompt' && promptInteraction.promptMessageId
+          ? { promptMessageId: promptInteraction.promptMessageId }
+          : {}),
+        ...(promptInteraction?.kind === 'prompt' && promptInteraction.provenanceContext
+          ? { provenanceContext: promptInteraction.provenanceContext }
+          : {})
+      }
+    )
+
+    if (!pending) return { action: 'cancelled' }
+    if (promptInteraction?.kind === 'prompt' && promptInteraction.provenanceContext) {
+      this.userChoiceProvenanceContexts.set(requestId, {
+        sessionId: request.sessionId,
+        provenanceContext: promptInteraction.provenanceContext
+      })
+    }
+    return { action: 'pending' }
+  }
+
+  private userChoiceContinuation(
+    request: PendingElicitationRequest,
+    response: CreateElicitationResponse,
+    historyReplay?: ElicitationResponse['historyReplay'],
+    provenanceContext?: AcpPromptRequest['provenanceContext']
+  ): AcpPromptRequest | undefined {
+    if (response.action === 'cancel') return undefined
+    const content =
+      response.action === 'accept'
+        ? (response.content as Record<string, unknown> | undefined)
+        : undefined
+    const answeredQuestions = request.fields.flatMap((field) => {
+      if (!/^question_\d+$/u.test(field.id)) return []
+      const customAnswer = content?.[`${field.id}_custom`]
+      const selectedAnswer = content?.[field.id]
+      const answer =
+        typeof customAnswer === 'string' && customAnswer.trim()
+          ? customAnswer.trim()
+          : typeof selectedAnswer === 'string' && selectedAnswer.trim()
+            ? selectedAnswer.trim()
+            : Array.isArray(selectedAnswer) &&
+                selectedAnswer.every((value): value is string => typeof value === 'string')
+              ? selectedAnswer.join(', ')
+              : undefined
+      return answer
+        ? [
+            {
+              question:
+                field.description ??
+                (request.fields.length === 1 ? request.message : (field.label ?? request.message)),
+              answer
+            }
+          ]
+        : []
+    })
+    const text = (() => {
+      if (response.action === 'decline' || answeredQuestions.length === 0) {
+        return `The user skipped the pending question: ${request.message}\nChoose the best reasonable option and continue the current task without asking the same question again.`
+      }
+      if (answeredQuestions.length === 1) {
+        const [{ question, answer }] = answeredQuestions
+        return `The user answered the pending question: ${question}\nAnswer: ${answer}\nContinue the current task using this answer without asking the same question again.`
+      }
+      const answers = answeredQuestions
+        .map(({ question, answer }, index) => `${index + 1}. ${question}\nAnswer: ${answer}`)
+        .join('\n\n')
+      return `The user answered the pending questions:\n${answers}\nContinue the current task using these answers without asking the same questions again.`
+    })()
+    const continuationProvenance =
+      provenanceContext ??
+      (request.durable?.promptMessageId
+        ? { promptMessageId: request.durable.promptMessageId }
+        : undefined)
+    return {
+      sessionId: request.sessionId,
+      text,
+      suppressUserMessage: true,
+      ...(continuationProvenance ? { provenanceContext: continuationProvenance } : {}),
+      ...(historyReplay?.historyPreamble ? { historyPreamble: historyReplay.historyPreamble } : {}),
+      ...(historyReplay?.historyAttachments?.length
+        ? { historyAttachments: historyReplay.historyAttachments }
+        : {}),
+      ...(historyReplay?.historyImages?.length
+        ? { historyImages: historyReplay.historyImages }
+        : {})
+    }
+  }
+
+  private clearPlanContinuationClaimRetry(sessionId: string, commandId?: string): void {
+    const retry = this.planContinuationClaimRetries.get(sessionId)
+    if (!retry || (commandId && retry.commandId !== commandId)) return
+    if (retry.timer) clearTimeout(retry.timer)
+    this.planContinuationClaimRetries.delete(sessionId)
+  }
+
+  private clearAllPlanContinuationClaimRetries(): void {
+    for (const sessionId of this.planContinuationClaimRetries.keys()) {
+      this.clearPlanContinuationClaimRetry(sessionId)
+    }
+  }
+
+  private retryPlanContinuationClaim(
+    projectId: string,
+    sessionId: string,
+    commandId: string
+  ): void {
+    const current = this.planContinuationClaimRetries.get(sessionId)
+    if (current && current.commandId !== commandId) {
+      this.clearPlanContinuationClaimRetry(sessionId)
+    }
+    const failedAttempts = current?.commandId === commandId ? current.failedAttempts + 1 : 1
+    const retry: PlanContinuationClaimRetry = { commandId, failedAttempts }
+    this.planContinuationClaimRetries.set(sessionId, retry)
+    if (failedAttempts >= PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS) {
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        sessionId,
+        title: 'Could not claim the Plan continuation',
+        text: 'The Plan continuation remained safely queued after concurrent Session updates.'
+      })
+      this.emitState()
+      return
+    }
+    const delay = PLAN_CONTINUATION_CLAIM_RETRY_BASE_DELAY_MS * 2 ** (failedAttempts - 1)
+    retry.timer = setTimeout(() => {
+      const pending = this.planContinuationClaimRetries.get(sessionId)
+      if (pending !== retry) return
+      retry.timer = undefined
+      this.scheduleQueuedPlanContinuation(projectId, sessionId, commandId)
+    }, delay)
+  }
+
+  private scheduleQueuedPlanContinuation(
+    projectId: string,
+    sessionId: string,
+    expectedCommandId?: string
+  ): void {
+    queueMicrotask(() => {
+      void this.queueDurablePlanContinuation(projectId, sessionId, expectedCommandId).catch(
+        (error) => {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not prepare the Plan continuation',
+            text: errorMessage(error)
+          })
+          this.emitState()
+        }
+      )
+    })
+  }
+
+  private async queueDurablePlanContinuation(
+    projectId: string,
+    sessionId: string,
+    expectedCommandId?: string
+  ): Promise<void> {
+    const owner = this.planContinuationOwner
+    const sessions = this.options.plan?.sessions
+    if (
+      !owner ||
+      !sessions ||
+      !this.activeSessionFor(sessionId) ||
+      this.durablePlanContinuations?.has(sessionId)
+    ) {
+      return
+    }
+
+    const observed = await sessions.readSessionRuntimeContext(projectId, sessionId)
+    const plan = observed.plan
+    const command = plan?.continuation
+    const claimRetry = this.planContinuationClaimRetries.get(sessionId)
+    if (expectedCommandId && command?.commandId !== expectedCommandId) {
+      this.clearPlanContinuationClaimRetry(sessionId, expectedCommandId)
+      return
+    }
+    if (claimRetry && claimRetry.commandId !== command?.commandId) {
+      this.clearPlanContinuationClaimRetry(sessionId)
+    } else if (
+      claimRetry?.timer ||
+      claimRetry?.failedAttempts === PLAN_CONTINUATION_CLAIM_MAX_ATTEMPTS
+    ) {
+      return
+    }
+    if (
+      !plan ||
+      command?.state !== 'queued' ||
+      (command.kind === 'approved-plan' && plan.approval !== 'approved') ||
+      (command.kind === 'rejected-plan' && plan.approval !== 'rejected') ||
+      (command.kind === 'review-feedback' &&
+        (plan.approval !== 'pending' ||
+          plan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
+    ) {
+      if (command) this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
+      return
+    }
+
+    const continuation = await this.durableContinuationContext.prepare({
+      projectId,
+      sessionId,
+      promptMessageId: command.originatingPromptMessageId,
+      ...(this.restoredContinuationContextResetSessionIds?.has(sessionId)
+        ? {
+            replay: {
+              descriptor: this.durableContinuationHistoryReplayDescriptor(),
+              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+            }
+          }
+        : {})
+    })
+    const reviewFeedback =
+      command.kind === 'review-feedback'
+        ? (await sessions.loadSessionForContinuation(projectId, sessionId)).messages.find(
+            (message) =>
+              message.id === command.originatingPromptMessageId &&
+              message.role === 'user' &&
+              message.status === 'complete'
+          )
+        : undefined
+    if (command.kind === 'review-feedback' && !reviewFeedback) {
+      throw new Error('The durable Plan review feedback Message is unavailable.')
+    }
+    const durablePlanContinuations =
+      this.durablePlanContinuations ?? new Map<string, { projectId: string; commandId: string }>()
+    this.durablePlanContinuations = durablePlanContinuations
+    durablePlanContinuations.set(sessionId, { projectId, commandId: command.commandId })
+    const rejected = command.kind === 'rejected-plan'
+    const reviewed = command.kind === 'review-feedback'
+    const request: AcpPromptRequest = {
+      sessionId,
+      text: reviewed
+        ? 'The user provided review feedback for the pending Session Plan. Interpret the ' +
+          'feedback, then call generate_plan with decision:"approved", decision:"rejected", ' +
+          'or a revised Plan as appropriate. Do not treat the feedback text itself as a decision.\n\n' +
+          `Review feedback:\n${reviewFeedback?.content}`
+        : rejected
+          ? 'The user rejected the pending Session Plan. Acknowledge that decision and do not ' +
+            `execute that rejected Plan Artifact Version (artifact_version_id=${plan.artifactVersionId}). ` +
+            "Await or follow the user's next request without reviving the rejected Plan."
+          : 'The user approved the pending Session Plan. Continue execution of exactly that ' +
+            `approved Plan Artifact Version (artifact_version_id=${plan.artifactVersionId}). ` +
+            'Do not regenerate, broaden, or reinterpret the approved Plan.',
+      suppressUserMessage: true,
+      provenanceContext: continuation.provenanceContext,
+      planContinuation: {
+        projectId,
+        artifactVersionId: plan.artifactVersionId,
+        expectedRevision: observed.revision,
+        ...(rejected ? { settledAction: 'rejected' as const } : {}),
+        ...(reviewed ? { pendingAction: 'review' as const } : {})
+      },
+      ...(continuation.historyReplay?.historyPreamble
+        ? { historyPreamble: continuation.historyReplay.historyPreamble }
+        : {}),
+      ...(continuation.historyReplay?.historyAttachments.length
+        ? { historyAttachments: continuation.historyReplay.historyAttachments }
+        : {}),
+      ...(continuation.historyReplay?.historyImages.length
+        ? { historyImages: continuation.historyReplay.historyImages }
+        : {})
+    }
+    this.appContinuations.set(sessionId, {
+      condition: 'always',
+      request,
+      beforeSend: async () => {
+        if (!(await owner.begin(projectId, sessionId, command.commandId))) {
+          durablePlanContinuations.delete(sessionId)
+          const latest = await sessions.readSessionRuntimeContext(projectId, sessionId)
+          if (
+            latest.plan?.continuation?.commandId === command.commandId &&
+            latest.plan.continuation.state === 'queued'
+          ) {
+            this.retryPlanContinuationClaim(projectId, sessionId, command.commandId)
+          } else {
+            this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
+          }
+          return undefined
+        }
+        this.clearPlanContinuationClaimRetry(sessionId, command.commandId)
+        let dispatchReady = false
+        try {
+          const claimed = await sessions.readSessionRuntimeContext(projectId, sessionId)
+          const claimedPlan = claimed.plan
+          if (
+            !claimedPlan ||
+            claimedPlan.artifactVersionId !== plan.artifactVersionId ||
+            claimedPlan.continuation?.commandId !== command.commandId ||
+            claimedPlan.continuation.state !== 'continuing' ||
+            claimedPlan.continuation.kind !== command.kind ||
+            (command.kind === 'approved-plan' && claimedPlan.approval !== 'approved') ||
+            (command.kind === 'rejected-plan' && claimedPlan.approval !== 'rejected') ||
+            (command.kind === 'review-feedback' &&
+              (claimedPlan.approval !== 'pending' ||
+                claimedPlan.reviewFeedbackMessageId !== command.originatingPromptMessageId))
+          ) {
+            throw new Error('The Plan continuation changed before dispatch.')
+          }
+          dispatchReady = true
+          return {
+            ...request,
+            planContinuation: {
+              projectId,
+              artifactVersionId: claimedPlan.artifactVersionId,
+              expectedRevision: claimed.revision,
+              ...(command.kind === 'rejected-plan' ? { settledAction: 'rejected' as const } : {}),
+              ...(command.kind === 'review-feedback' ? { pendingAction: 'review' as const } : {})
+            }
+          }
+        } finally {
+          if (!dispatchReady) {
+            durablePlanContinuations.delete(sessionId)
+            await owner.rearmUndispatched(projectId, sessionId, command.commandId)
+          }
+        }
+      }
+    })
+    this.schedulePendingAppContinuation(sessionId)
+  }
+
+  private schedulePendingAppContinuation(sessionId: string, stopReason?: string): void {
+    const pending = this.appContinuations.get(sessionId)
+    if (!pending) return
+    if (pending.condition === 'provider-cancelled' && stopReason !== 'cancelled') {
+      this.appContinuations.delete(sessionId)
+      this.emitState()
+      return
+    }
+    queueMicrotask(() => {
+      void this.flushPendingAppContinuation(sessionId)
+    })
+  }
+
+  private async flushPendingAppContinuation(sessionId: string): Promise<void> {
+    const pending = this.appContinuations.get(sessionId)
+    if (!pending || this.sessionInteractions.current(sessionId)) return
+    const continuation = this.appContinuations.takeAndActivate(sessionId)
+    if (!continuation) return
+    let completed = false
+    let cancelled = false
+    try {
+      const request = continuation.beforeSend
+        ? await continuation.beforeSend()
+        : continuation.request
+      if (!request) return
+      const response = await this.sendAppContinuation(request)
+      cancelled = response.stopReason === 'cancelled'
+      completed = !this.durablePlanContinuations?.has(sessionId) || !cancelled
+    } catch (error) {
+      this.pushEvent({
+        kind: 'error',
+        level: 'error',
+        sessionId,
+        ...(continuation.request.provenanceContext ?? {}),
+        title: 'Could not continue the Agent task',
+        text: errorMessage(error)
+      })
+      this.emitState()
+    } finally {
+      const durablePermission = this.durablePermissionContinuations?.get(sessionId)
+      const durablePlan = this.durablePlanContinuations?.get(sessionId)
+      this.permissionContext.clearRestoredDecision(sessionId)
+      if (durablePermission?.cancellationRequested) {
+        await this.settleCancelledDurablePermissionContinuation(sessionId)
+      } else if (completed && durablePermission) {
+        this.restoredContinuationContextResetSessionIds?.delete(sessionId)
+        try {
+          const cleared = await this.permissionWaitOwner.clearAfterContinuation(
+            durablePermission.projectId,
+            sessionId,
+            durablePermission.requestId
+          )
+          if (cleared) {
+            this.pushEvent({
+              kind: 'permission',
+              level: 'info',
+              sessionId,
+              permissionRequestId: durablePermission.requestId,
+              title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+              text: 'completed'
+            })
+          }
+        } catch (error) {
+          this.pushEvent({
+            kind: 'permission',
+            level: 'error',
+            sessionId,
+            permissionRequestId: durablePermission.requestId,
+            title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+            text: errorMessage(error)
+          })
+        } finally {
+          this.durablePermissionContinuations?.delete(sessionId)
+        }
+      } else if (durablePermission) {
+        try {
+          // A retry is safe only after durable authority returns from consumed to pending. If this
+          // write fails, retain `continuing` as a fail-closed tombstone and do not expose the card.
+          await this.permissionWaitOwner.rearmContinuation(
+            durablePermission.projectId,
+            sessionId,
+            durablePermission.requestId
+          )
+          this.pushEvent({
+            kind: 'permission',
+            level: 'info',
+            sessionId,
+            permissionRequestId: durablePermission.requestId,
+            title: ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE
+          })
+        } catch (error) {
+          this.pushEvent({
+            kind: 'permission',
+            level: 'error',
+            sessionId,
+            permissionRequestId: durablePermission.requestId,
+            title: ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
+            text: errorMessage(error)
+          })
+        } finally {
+          this.durablePermissionContinuations?.delete(sessionId)
+        }
+      }
+      if (cancelled && durablePlan && this.planContinuationOwner) {
+        try {
+          await this.planContinuationOwner.interrupt(
+            durablePlan.projectId,
+            sessionId,
+            durablePlan.commandId
+          )
+        } catch (error) {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not mark the Plan continuation as interrupted',
+            text: errorMessage(error)
+          })
+        }
+      } else if (completed && durablePlan && this.planContinuationOwner) {
+        try {
+          await this.clearSettledPlanContinuation(sessionId, durablePlan)
+        } catch (error) {
+          this.pushEvent({
+            kind: 'error',
+            level: 'error',
+            sessionId,
+            title: 'Could not settle the Plan continuation',
+            text: errorMessage(error)
+          })
+        }
+      }
+      if (durablePlan) await this.publishCurrentPlanProjection(durablePlan.projectId, sessionId)
+      if (durablePlan) this.durablePlanContinuations?.delete(sessionId)
+      this.appContinuations.complete(sessionId)
+      this.emitState()
+    }
+  }
+
+  private async clearSettledPlanContinuation(
+    sessionId: string,
+    durablePlan: Readonly<{ projectId: string; commandId: string }>
+  ): Promise<void> {
+    const owner = this.planContinuationOwner
+    const sessions = this.options.plan?.sessions
+    if (!owner || !sessions) return
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (await owner.clear(durablePlan.projectId, sessionId, durablePlan.commandId)) return
+      const current = await sessions.readSessionRuntimeContext(durablePlan.projectId, sessionId)
+      const continuation = current.plan?.continuation
+      if (!continuation) return
+      if (continuation.commandId !== durablePlan.commandId || continuation.state !== 'continuing') {
+        throw new Error('The Plan continuation changed before settlement.')
+      }
+    }
+    throw new Error('The Plan continuation could not be settled after concurrent updates.')
+  }
+
+  private async publishCurrentPlanProjection(projectId: string, sessionId: string): Promise<void> {
+    try {
+      const projection = await this.sessionPlanWorkflow.projection(projectId, sessionId)
+      if (!projection) return
+      this.pushEvent({
+        id: `session-plan-${projection.artifactVersionId}-${projection.revision}`,
+        timestamp: Date.now(),
+        kind: 'plan',
+        level: 'info',
+        sessionId,
+        title: 'Session Plan updated',
+        planProjection: projection
+      })
+    } catch (error) {
+      safeLogError('Session Plan continuation projection failed', errorLogFields(error))
+    }
   }
 
   // App-owned privileged actions (such as Specialist handoff) share the provider permission card
@@ -956,11 +2090,82 @@ class AcpRuntime {
     if (!this.artifactTurns) {
       throw new Error('No active assistant turn to attach a generated file to.')
     }
-    return this.artifactTurns.writeForActiveTurn(sessionId, input)
+    const execution = this.sessionInteractions.current(sessionId)
+    if (!execution || execution.kind !== 'prompt') {
+      throw new Error('No active assistant turn to attach a generated file to.')
+    }
+    const artifact = this.artifactTurns.handleForExecution(execution.turnToken)
+    if (this.artifactTurns.snapshot(artifact).phase !== 'open') {
+      throw new Error('No active assistant turn to attach a generated file to.')
+    }
+    return this.artifactTurns.write(artifact, input)
   }
 
   private cancelPermissionFlowForSession(sessionId: string): void {
     this.permissionContext.cancelForSession(sessionId)
+    this.clearUserChoiceProvenanceForSession(sessionId)
+    this.elicitationOwner.cancelForSession(sessionId)
+    this.appContinuations.delete(sessionId)
+  }
+
+  private clearUserChoiceProvenanceForSession(sessionId: string): void {
+    const provenanceContexts = this.userChoiceProvenanceContexts
+    if (!provenanceContexts) return
+    for (const [requestId, provenance] of provenanceContexts) {
+      if (provenance.sessionId === sessionId) {
+        provenanceContexts.delete(requestId)
+      }
+    }
+  }
+
+  private async settleCancelledDurablePermissionContinuation(sessionId: string): Promise<void> {
+    const durablePermission = this.durablePermissionContinuations?.get(sessionId)
+    if (!durablePermission) return
+    try {
+      await this.permissionWaitOwner.cancelContinuation(
+        durablePermission.projectId,
+        sessionId,
+        durablePermission.requestId
+      )
+    } catch (error) {
+      this.pushEvent({
+        kind: 'permission',
+        level: 'error',
+        sessionId,
+        permissionRequestId: durablePermission.requestId,
+        title: ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
+        text: errorMessage(error)
+      })
+      return
+    }
+    if (this.durablePermissionContinuations?.get(sessionId) !== durablePermission) return
+    this.durablePermissionContinuations.delete(sessionId)
+    this.restoredContinuationContextResetSessionIds?.delete(sessionId)
+    this.permissionContext.clearRestoredDecision(sessionId)
+    this.pushEvent({
+      kind: 'permission',
+      level: 'info',
+      sessionId,
+      permissionRequestId: durablePermission.requestId,
+      title: ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
+      text: 'cancelled'
+    })
+  }
+
+  private durableContinuationHistoryReplayDescriptor(): HistoryReplayDescriptor {
+    const backend = this.backendGeneration.current
+    const target =
+      backend.framework.id === 'opencode'
+        ? 'opencode'
+        : backend.framework.id === 'codex'
+          ? backend.modelRoute === 'codex-bridge'
+            ? 'codex-bridge'
+            : 'codex-response'
+          : 'claude-code'
+    return {
+      target,
+      ...(backend.context.window ? { contextWindow: backend.context.window } : {})
+    }
   }
 
   private processEventDisposition(

@@ -239,6 +239,15 @@ describe('conversation export service', () => {
       })
     ).rejects.toThrow('finish before exporting')
 
+    loadSession.mockResolvedValueOnce({ ...session, status: 'waiting-for-user' })
+    await expect(
+      createService().exportConversation({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        format: 'markdown'
+      })
+    ).rejects.toThrow('finish before exporting')
+
     await expect(
       createService().exportConversation({
         projectId: '',

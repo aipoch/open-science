@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentHomeSkillView, SkillImportPreviewContent } from '../../../../shared/settings'
 import { SkillsPanel } from './SkillsPanel'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { openRadixMenu } from './test-utils'
 
 let container: HTMLDivElement
@@ -15,6 +17,7 @@ const seedSkills = [
   {
     id: 'a',
     name: 'Alpha',
+    displayName: 'Alpha',
     description: 'First',
     source: 'featured' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -23,6 +26,7 @@ const seedSkills = [
   {
     id: 'b',
     name: 'Beta',
+    displayName: 'Beta',
     description: 'Second',
     source: 'featured' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -31,6 +35,7 @@ const seedSkills = [
   {
     id: 'personal-mine',
     name: 'Mine',
+    displayName: 'Mine',
     description: 'Custom',
     source: 'personal' as const,
     updatedAt: '2026-07-08T00:00:00.000Z',
@@ -39,6 +44,21 @@ const seedSkills = [
 ]
 
 beforeEach(() => {
+  useProjectStore.setState(createInitialProjectState())
+  useNavigationStore.setState({
+    view: 'home',
+    activeProjectId: undefined,
+    userNavigationRevision: 0,
+    explicitNavigationRevision: 0,
+    pendingCustomizePrefill: undefined
+  })
+  ;(window as unknown as { api: unknown }).api = {
+    settings: {
+      getGitHubTokenStatus: vi.fn().mockResolvedValue({ configured: false }),
+      saveGitHubToken: vi.fn(),
+      removeGitHubToken: vi.fn()
+    }
+  }
   useSettingsStore.setState({
     ...createInitialSettingsState(),
     skills: seedSkills,
@@ -140,6 +160,7 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+  delete (window as unknown as { api?: unknown }).api
 })
 
 const setValue = (label: string, value: string): void => {
@@ -275,6 +296,88 @@ describe('SkillsPanel (list view)', () => {
     expect(useSettingsStore.getState().deleteSkill).toHaveBeenCalledWith('personal-mine')
   })
 
+  it('exports imported and personal Skills but never built-in Skills', async () => {
+    const exportSkill = vi.fn().mockResolvedValue({ saved: true })
+    ;(window as unknown as { api: unknown }).api = { settings: { exportSkill } }
+    useSettingsStore.setState({
+      skills: [
+        ...seedSkills,
+        {
+          id: 'imported-shared',
+          name: 'Shared',
+          displayName: 'Shared',
+          description: 'Imported',
+          source: 'imported',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true
+        }
+      ]
+    })
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.querySelector('[aria-label="Export Alpha"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Export Shared"]')).not.toBeNull()
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')?.click()
+    })
+    expect(exportSkill).toHaveBeenCalledWith({ id: 'personal-mine' })
+    const status = document.body.querySelector('[role="status"]')
+    expect(status?.textContent).toContain('Exported Mine.')
+    expect(status?.closest('[data-slot="settings-list-row"]')?.textContent).toContain('Mine')
+  })
+
+  it('re-enables Skill export after the user cancels Save As', async () => {
+    const exportSkill = vi.fn().mockResolvedValue({ saved: false })
+    ;(window as unknown as { api: unknown }).api = { settings: { exportSkill } }
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const exportButton = (): HTMLButtonElement | null =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')
+    await act(async () => exportButton()?.click())
+
+    expect(exportButton()?.disabled).toBe(false)
+    await act(async () => exportButton()?.click())
+    expect(exportSkill).toHaveBeenCalledTimes(2)
+  })
+
+  it('hides Skill export when the desktop bridge is unavailable', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.querySelector('[aria-label="Export Mine"]')).toBeNull()
+  })
+
+  it('shows a Settings error when Skill export fails', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        exportSkill: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              "Error invoking remote method 'settings:export-skill': Error: Archive could not be written."
+            )
+          )
+      }
+    }
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Export Mine"]')?.click()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
+      'Archive could not be written.'
+    )
+  })
+
   it('shows the shared Specialist reference guard when direct deletion is rejected', async () => {
     useSettingsStore.setState({
       deleteSkill: vi.fn().mockRejectedValue(new Error('Skill is referenced by rna-reviewer.'))
@@ -305,6 +408,41 @@ describe('SkillsPanel (list view)', () => {
 
     expect(document.body.textContent).toContain('Import installed skills')
     expect(document.body.textContent).toContain('Scan global skill folders')
+  })
+
+  it('opens a new Skill Creator conversation with the Skill Customize goal', async () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-a',
+          name: 'Project A',
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      isLoaded: true
+    })
+    const closeSettings = vi.spyOn(useSettingsStore.getState(), 'closeSettings')
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+    const addSkill = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Add skill')
+    )
+    openRadixMenu(addSkill)
+    const chat = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (item) => item.textContent?.includes('Chat with agent')
+    )
+    await act(async () => chat?.click())
+
+    expect(closeSettings).toHaveBeenCalledOnce()
+    expect(useNavigationStore.getState().pendingCustomizePrefill).toMatchObject({
+      projectId: 'project-a',
+      goal: 'skill'
+    })
+    closeSettings.mockRestore()
   })
 
   it('hides installed-skill import when the desktop bridge is unavailable', () => {
@@ -350,6 +488,11 @@ describe('SkillsPanel (sub-views)', () => {
       await Promise.resolve()
     })
 
+    expect(
+      document.body.querySelector<HTMLInputElement>('[aria-label="Skill name"]')?.disabled
+    ).toBe(true)
+    expect(document.body.querySelector('[aria-label="Skill ID"]')).toBeNull()
+
     const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Save'
     )
@@ -360,7 +503,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# Body',
       metadata: { author: 'Ada', license: 'MIT', category: 'research' },
@@ -415,7 +557,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Grace', tags: 'analysis, writing' },
@@ -457,7 +598,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# New body',
       metadata: { author: 'Ada', license: 'MIT' },
@@ -506,7 +646,6 @@ describe('SkillsPanel (sub-views)', () => {
 
     expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
       id: 'personal-mine',
-      name: 'Mine',
       description: 'Custom',
       body: '# Plain replacement',
       metadata: { author: 'Old author', license: 'MIT' },
@@ -559,11 +698,11 @@ describe('SkillsPanel (sub-views)', () => {
     })
     pasteValue(
       'Skill body',
-      ['---', 'name: Original', 'description: Before', 'author: Ada', '---', '# Body'].join('\n')
+      ['---', 'name: original', 'description: Before', 'author: Ada', '---', '# Body'].join('\n')
     )
     setValue(
       'Skill body',
-      ['---', 'name: Revised', 'description: After', 'author: Ada', '---', '# Body'].join('\n')
+      ['---', 'name: revised', 'description: After', 'author: Ada', '---', '# Body'].join('\n')
     )
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -572,11 +711,10 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'Revised',
+      name: 'revised',
       description: 'After',
       body: '# Body',
       metadata: { author: 'Ada' },
-      slug: 'revised',
       references: []
     })
   })
@@ -585,7 +723,7 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
     })
-    setValue('Skill name', 'YAML Example')
+    setValue('Skill name', 'yaml-example')
     const body = ['---', 'example: literal documentation', '---', '# Instructions'].join('\n')
     setValue('Skill body', body)
 
@@ -595,11 +733,10 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'YAML Example',
+      name: 'yaml-example',
       description: '',
       body,
       metadata: undefined,
-      slug: 'yaml-example',
       references: []
     })
   })
@@ -610,14 +747,30 @@ describe('SkillsPanel (sub-views)', () => {
       root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={onNavigate} />)
     })
 
-    expect(document.body.textContent).toContain('Identity')
+    const advanced = document.body.querySelector<HTMLButtonElement>(
+      'button[aria-controls="skill-advanced-settings"]'
+    )
+    expect(advanced?.getAttribute('aria-expanded')).toBe('false')
+    expect(document.body.querySelector('[aria-label="Add reference files"]')).toBeNull()
     expect(
       document.body.querySelector('[aria-label="Skill description"]')?.getAttribute('data-slot')
     ).toBe('textarea')
     expect(
       document.body.querySelector('[aria-label="Skill body"]')?.getAttribute('data-slot')
     ).toBe('textarea')
-    setValue('Skill name', 'My New Skill')
+    expect(document.body.querySelector('[aria-label="Skill ID"]')).toBeNull()
+    expect(document.body.querySelectorAll('[data-slot="settings-row"]')).toHaveLength(0)
+    for (const label of ['Skill name', 'Skill description', 'Skill body']) {
+      expect(
+        document.body
+          .querySelector(`[aria-label="${label}"]`)
+          ?.closest('[data-slot="settings-editor-field"]')
+      ).not.toBeNull()
+    }
+    act(() => advanced?.click())
+    expect(advanced?.getAttribute('aria-expanded')).toBe('true')
+    expect(document.body.querySelector('[aria-label="Add reference files"]')).not.toBeNull()
+    setValue('Skill name', 'my-new-skill')
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -626,12 +779,28 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'My New Skill',
+      name: 'my-new-skill',
       description: '',
       body: '# Body',
-      slug: 'my-new-skill',
       references: []
     })
+  })
+
+  it('requires the personal skill name to be the immutable lowercase identity', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+    })
+    setValue('Skill name', 'My New Skill')
+    setValue('Skill body', '# Body')
+
+    const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Publish'
+    )
+    expect(document.body.textContent).toContain(
+      'Use up to 64 lowercase letters, numbers, and single hyphens.'
+    )
+    expect(publish?.disabled).toBe(true)
+    expect(useSettingsStore.getState().createSkill).not.toHaveBeenCalled()
   })
 
   it('preserves frontmatter metadata pasted into the create editor', () => {
@@ -641,7 +810,7 @@ describe('SkillsPanel (sub-views)', () => {
 
     const pasted = [
       '---',
-      'name: Pasted Skill',
+      'name: pasted-skill',
       'description: Pasted description',
       'author: Ada',
       'category: research',
@@ -658,11 +827,10 @@ describe('SkillsPanel (sub-views)', () => {
     act(() => publish?.click())
 
     expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'Pasted Skill',
+      name: 'pasted-skill',
       description: 'Pasted description',
       body: '# Body',
       metadata: { author: 'Ada', category: 'research' },
-      slug: 'pasted-skill',
       references: []
     })
   })
@@ -681,9 +849,32 @@ describe('SkillsPanel (sub-views)', () => {
       (heading) => heading.textContent?.trim() === 'Imported skills'
     )
     expect(importedHeading?.className).toContain('border-t')
+    const importedSection = importedHeading?.closest('section')
+    expect(importedSection?.textContent).toContain('No imported skills yet')
+    expect(importedSection?.textContent).toContain('Repos you import from will appear here.')
+    expect(importedSection?.querySelector('svg')).not.toBeNull()
+    expect(importedHeading?.nextElementSibling?.className).toContain('items-center')
   })
 
-  it('collapses repository results after scanning while keeping them available', async () => {
+  it('shows row-level scan progress, then collapses repository results after scanning', async () => {
+    let finishScan: (result: {
+      skills: Array<{
+        name: string
+        path: string
+        url: string
+        alreadyImported: boolean
+      }>
+    }) => void = () => undefined
+    const pendingScan = new Promise<{
+      skills: Array<{
+        name: string
+        path: string
+        url: string
+        alreadyImported: boolean
+      }>
+    }>((resolve) => {
+      finishScan = resolve
+    })
     useSettingsStore.setState({
       scanRepoSkills: vi
         .fn()
@@ -698,16 +889,7 @@ describe('SkillsPanel (sub-views)', () => {
             }
           ]
         })
-        .mockResolvedValueOnce({
-          skills: [
-            {
-              name: 'ppt-master',
-              path: 'skills/ppt-master',
-              url: 'https://github.com/hugohe3/ppt-master/tree/main/skills/ppt-master',
-              alreadyImported: false
-            }
-          ]
-        })
+        .mockReturnValueOnce(pendingScan)
     })
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
@@ -734,13 +916,29 @@ describe('SkillsPanel (sub-views)', () => {
       '[aria-label="Scan hugohe3/ppt-master for skills"]'
     )
     act(() => scanRepository?.click())
+    const scanningButton = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Scan hugohe3/ppt-master for skills"]'
+    )
+    expect(scanningButton?.textContent).toContain('Scanning…')
+    expect(scanningButton?.querySelector('.animate-spin')).not.toBeNull()
     expect(
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Show repositories"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Hide repositories"]')
         ?.getAttribute('aria-expanded')
-    ).toBe('false')
+    ).toBe('true')
 
     await act(async () => {
+      finishScan({
+        skills: [
+          {
+            name: 'ppt-master',
+            path: 'skills/ppt-master',
+            url: 'https://github.com/hugohe3/ppt-master/tree/main/skills/ppt-master',
+            alreadyImported: false
+          }
+        ]
+      })
+      await pendingScan
       await Promise.resolve()
     })
 
@@ -913,9 +1111,10 @@ describe('SkillsPanel (sub-views)', () => {
       (button) => button.textContent?.trim() === 'Find skills'
     )
     act(() => runSearch?.click())
-    expect(document.body.querySelector('[aria-busy="true"]')?.textContent).toContain(
-      'Working with GitHub…'
-    )
+    const findingButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Finding…')
+    expect(findingButton?.querySelector('.animate-spin')).not.toBeNull()
     setValue('GitHub keyword or repository', 'presentations')
 
     await act(async () => {
@@ -983,6 +1182,45 @@ describe('SkillsPanel (sub-views)', () => {
     expect(useSettingsStore.getState().importSkill).toHaveBeenCalledWith(
       'https://github.com/acme/skills/tree/main/pack/foo'
     )
+  })
+
+  it('shows import progress in the batch action instead of a page-level loader', async () => {
+    let finishImport: (result: { status: 'imported'; id: string; skills: [] }) => void = () =>
+      undefined
+    const pendingImport = new Promise<{ status: 'imported'; id: string; skills: [] }>((resolve) => {
+      finishImport = resolve
+    })
+    useSettingsStore.setState({ importSkill: vi.fn().mockReturnValue(pendingImport) })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'import' }} onNavigate={vi.fn()} />)
+    })
+
+    setValue('GitHub keyword or repository', 'acme/skills')
+    const find = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Find skills'
+    )
+    await act(async () => {
+      find?.click()
+      await Promise.resolve()
+    })
+
+    const importSelected = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Import selected (1)')
+    act(() => importSelected?.click())
+
+    const importing = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Importing…'
+    )
+    expect(importing?.querySelector('.animate-spin')).not.toBeNull()
+    expect(document.body.textContent).not.toContain('Working with GitHub…')
+
+    await act(async () => {
+      finishImport({ status: 'imported', id: 'imported-foo', skills: [] })
+      await pendingImport
+      await Promise.resolve()
+    })
+    expect(document.body.textContent).toContain('Imported 1 skill.')
   })
 
   it('opens and closes a GitHub candidate preview without changing its selection', async () => {

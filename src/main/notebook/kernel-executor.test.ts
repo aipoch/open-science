@@ -801,6 +801,149 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
 })
 
 describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (real R loop)', () => {
+  it.each([
+    {
+      name: 'base graphics through a PNG device',
+      fileName: 'base-only.png',
+      code: (path: string) =>
+        'if (!isTRUE(capabilities("png"))) stop("png unavailable"); ' +
+        `grDevices::png(${JSON.stringify(path)}); graphics::plot(1:3); grDevices::dev.off()`,
+      unavailable: /png unavailable/u,
+      verifySignature: (bytes: Buffer) => expect(bytes.subarray(1, 4).toString('ascii')).toBe('PNG')
+    },
+    {
+      name: 'ggplot2 through ggsave to TIFF',
+      fileName: 'ggsave-only.tiff',
+      code: (path: string) =>
+        'if (!requireNamespace("ggplot2", quietly = TRUE)) stop("ggplot2 unavailable"); ' +
+        'if (!isTRUE(capabilities("tiff"))) stop("tiff unavailable"); ' +
+        'p <- ggplot2::ggplot(data.frame(x = 1:3, y = 1:3), ggplot2::aes(x, y)) + ' +
+        'ggplot2::geom_point(); ' +
+        `ggplot2::ggsave(${JSON.stringify(path)}, plot = p, device = "tiff")`,
+      unavailable: /ggplot2 unavailable|tiff unavailable/u,
+      verifySignature: (bytes: Buffer) =>
+        expect(bytes.subarray(0, 2).toString('ascii')).toMatch(/^(II|MM)$/u)
+    },
+    {
+      name: 'grid graphics through a PDF device',
+      fileName: 'grid-only.pdf',
+      code: (path: string) =>
+        `grDevices::pdf(${JSON.stringify(path)}); ` +
+        'grid::grid.newpage(); grid::grid.rect(); grDevices::dev.off()',
+      unavailable: undefined,
+      verifySignature: (bytes: Buffer) =>
+        expect(bytes.subarray(0, 5).toString('ascii')).toBe('%PDF-')
+    },
+    {
+      name: 'lattice through a PNG device',
+      fileName: 'lattice-only.png',
+      code: (path: string) =>
+        'if (!requireNamespace("lattice", quietly = TRUE)) stop("lattice unavailable"); ' +
+        'if (!isTRUE(capabilities("png"))) stop("png unavailable"); ' +
+        'p <- lattice::xyplot(y ~ x, data = data.frame(x = 1:3, y = 1:3)); ' +
+        `grDevices::png(${JSON.stringify(path)}, width = 800, height = 600); ` +
+        'print(p); grDevices::dev.off()',
+      unavailable: /lattice unavailable|png unavailable/u,
+      verifySignature: (bytes: Buffer) => expect(bytes.subarray(1, 4).toString('ascii')).toBe('PNG')
+    }
+  ])('records $name as a working file and captured PNG', async (savedCase) => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-saved-image-'))
+    const request = baseRequest(cwdDir)
+    await mkdir(request.dataRoot, { recursive: true })
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const savedPath = join(request.dataRoot, savedCase.fileName)
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        code: savedCase.code(savedPath),
+        language: 'r'
+      })
+
+      if (savedCase.unavailable?.test(result.traceback)) return
+
+      expect(result.status).toBe('completed')
+      expect(
+        result.outputs.filter(
+          (output) => output.type === 'display' && typeof output.data['image/png'] === 'string'
+        )
+      ).toHaveLength(1)
+      expect(result.workingFiles).toEqual([
+        expect.objectContaining({
+          path: savedPath,
+          relativePath: `data/${savedCase.fileName}`,
+          size: expect.any(Number)
+        })
+      ])
+      savedCase.verifySignature(await readFile(savedPath))
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
+  it('records and captures every saved image when one R run mixes graphics systems', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-mixed-saved-images-'))
+    const request = baseRequest(cwdDir)
+    await mkdir(request.dataRoot, { recursive: true })
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const paths = {
+      base: join(request.dataRoot, '01-base.png'),
+      ggplot: join(request.dataRoot, '02-ggplot.tiff'),
+      grid: join(request.dataRoot, '03-grid.pdf'),
+      lattice: join(request.dataRoot, '04-lattice.png')
+    }
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const result = await executor.execute({
+        ...request,
+        code: [
+          'if (!requireNamespace("ggplot2", quietly = TRUE)) stop("ggplot2 unavailable")',
+          'if (!requireNamespace("lattice", quietly = TRUE)) stop("lattice unavailable")',
+          'if (!isTRUE(capabilities("png"))) stop("png unavailable")',
+          'if (!isTRUE(capabilities("tiff"))) stop("tiff unavailable")',
+          `grDevices::png(${JSON.stringify(paths.base)}); graphics::plot(1:3); grDevices::dev.off()`,
+          'gg <- ggplot2::ggplot(data.frame(x = 1:3, y = 1:3), ggplot2::aes(x, y)) + ggplot2::geom_point()',
+          `ggplot2::ggsave(${JSON.stringify(paths.ggplot)}, plot = gg, device = "tiff")`,
+          `grDevices::pdf(${JSON.stringify(paths.grid)}); grid::grid.newpage(); grid::grid.circle(); grDevices::dev.off()`,
+          'trellis <- lattice::xyplot(y ~ x, data = data.frame(x = 1:3, y = 1:3))',
+          `grDevices::png(${JSON.stringify(paths.lattice)}, width = 800, height = 600); print(trellis); grDevices::dev.off()`
+        ].join('; '),
+        language: 'r'
+      })
+
+      if (
+        /ggplot2 unavailable|lattice unavailable|png unavailable|tiff unavailable/u.test(
+          result.traceback
+        )
+      ) {
+        return
+      }
+
+      const workingFiles = result.workingFiles ?? []
+      expect(result.status).toBe('completed')
+      expect(
+        result.outputs.filter(
+          (output) => output.type === 'display' && typeof output.data['image/png'] === 'string'
+        )
+      ).toHaveLength(4)
+      expect(workingFiles).toHaveLength(4)
+      expect(workingFiles.map((file) => file.path)).toEqual(
+        expect.arrayContaining(Object.values(paths))
+      )
+      expect(workingFiles.every((file) => (file.size ?? 0) > 0)).toBe(true)
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('rejects a package installer even when the main-process guard is bypassed', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-package-guard-'))
     const request = baseRequest(cwdDir)

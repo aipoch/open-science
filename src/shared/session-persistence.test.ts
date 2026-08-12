@@ -3,15 +3,28 @@ import { describe, expect, it } from 'vitest'
 import { MAX_ACP_SESSION_IMAGE_BYTES } from './acp'
 
 import {
+  SESSION_FILE_VERSION,
   createSessionFile,
+  ConversationGraphMaterializationError,
+  materializeSessionConversationGraph,
   sanitizeActivityGroup,
   normalizeSessionFile,
   sanitizeMessageImages,
+  sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
   type PersistedChatSession,
+  type PersistedSideChat,
+  type PersistedToolActivity,
+  type SessionPermissionRuntimeContext,
   type SessionPlanRuntimeContext
 } from './session-persistence'
-import { createLinearConversationGraph } from './conversation-graph'
+import {
+  activateConversationBranch,
+  createLinearConversationGraph,
+  forkConversationAfterActivity,
+  resolveActiveConversationActivities,
+  synchronizeActiveConversationActivities
+} from './conversation-graph'
 import type { ActivePlanProjection } from './session-plan/contract'
 
 const createSessionWithActivity = (activity: unknown): Record<string, unknown> => ({
@@ -28,6 +41,62 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
 
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
   normalizeSessionFile(session)?.activities
+
+const createOpenToolActivity = (
+  id = 'tool-1',
+  overrides: Partial<PersistedToolActivity> = {}
+): PersistedToolActivity => ({
+  id,
+  kind: 'tool',
+  title: 'Run npm test',
+  status: 'in_progress',
+  sortIndex: 1,
+  eventIds: [`${id}-started`],
+  promptMessageId: 'prompt-1',
+  createdAt: 2,
+  updatedAt: 2,
+  ...overrides
+})
+
+const createContinuingPermissionFile = (
+  activities: PersistedToolActivity[],
+  originatingPromptMessageId = 'prompt-1'
+): ReturnType<typeof createSessionFile> =>
+  createSessionFile({
+    ...(createSessionWithActivity(undefined) as PersistedChatSession),
+    activities,
+    status: 'running',
+    activeRun: { promptMessageId: 'prompt-1', startedAt: 2 },
+    messages: [
+      {
+        id: 'prompt-1',
+        role: 'user',
+        content: 'Run the tests',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    runtimeContext: {
+      version: 1,
+      revision: 4,
+      permission: {
+        state: 'continuing',
+        request: {
+          requestId: 'permission-1',
+          sessionId: 'session-1',
+          toolCallId: 'tool-1',
+          title: 'Run npm test',
+          isMcp: true,
+          options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+        },
+        originatingPromptMessageId,
+        fingerprint: 'a'.repeat(64),
+        createdAt: 2
+      }
+    }
+  })
 
 const createRuntimePlan = (): SessionPlanRuntimeContext => ({
   artifactId: 'plan-1',
@@ -67,6 +136,36 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
   stepStatuses: { 'Analyze data': { status: 'completed', updatedAt: 4 } },
   stepStates: { 'Analyze data': { status: 'completed' } },
   counts: { phases: 1, delegations: 1, steps: 1, completed: 1, inProgress: 0 }
+})
+
+describe('conversation graph materialization diagnostics', () => {
+  it('identifies message synchronization failures without exposing the raw graph error', () => {
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    session.conversationGraph!.activeFrameId = 'missing-private-frame-id'
+
+    expect(() => materializeSessionConversationGraph(session)).toThrowError(
+      expect.objectContaining<Partial<ConversationGraphMaterializationError>>({
+        name: 'ConversationGraphMaterializationError',
+        phase: 'messages',
+        message: 'Conversation graph materialization failed.'
+      })
+    )
+  })
 })
 
 describe('branch Plan history persistence', () => {
@@ -169,6 +268,91 @@ describe('message part persistence', () => {
         rootId: 'root-1',
         relativePath: 'data/study.csv'
       }
+    ])
+  })
+})
+
+describe('interrupted turn intent persistence', () => {
+  it('preserves only the closed Plan-first intent on user messages', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'user-plan',
+          role: 'user',
+          content: 'Plan the analysis',
+          turnIntent: 'plan-first',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'user-unknown',
+          role: 'user',
+          content: 'Do not restore arbitrary intent',
+          turnIntent: 'hidden-injection',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'agent-plan',
+          role: 'agent',
+          content: 'No user intent here',
+          turnIntent: 'plan-first',
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ]
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({ id: 'user-plan', turnIntent: 'plan-first' }),
+      expect.not.objectContaining({ turnIntent: expect.anything() }),
+      expect.not.objectContaining({ turnIntent: expect.anything() })
+    ])
+  })
+})
+
+describe('side chat relay persistence', () => {
+  it('preserves only the closed side-chat advisory marker on user messages', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'side-chat-advisory',
+          role: 'user',
+          content: 'Please use a black line.',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'unknown-relay',
+          role: 'user',
+          content: 'Do not restore arbitrary routing metadata.',
+          relayedFrom: { kind: 'external-agent', direction: 'to-main' },
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'agent-relay',
+          role: 'agent',
+          content: 'No relay marker on agent messages.',
+          relayedFrom: { kind: 'side-chat', direction: 'to-main' },
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ]
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({
+        id: 'side-chat-advisory',
+        relayedFrom: { kind: 'side-chat', direction: 'to-main' }
+      }),
+      expect.not.objectContaining({ relayedFrom: expect.anything() }),
+      expect.not.objectContaining({ relayedFrom: expect.anything() })
     ])
   })
 })
@@ -467,6 +651,119 @@ describe('message image persistence', () => {
   })
 })
 
+describe('conversation Activity fork persistence', () => {
+  it('round-trips the Activity cutoff that separates revised answer Branches', () => {
+    const messages = [
+      {
+        id: 'user-1',
+        role: 'user' as const,
+        content: 'Build something',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'agent-1',
+        role: 'agent' as const,
+        content: 'Choose one',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'agent-2',
+        role: 'agent' as const,
+        content: 'Old answer path',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 4,
+        updatedAt: 4
+      }
+    ]
+    const graph = synchronizeActiveConversationActivities(
+      createLinearConversationGraph({
+        sessionId: 'session-1',
+        messages,
+        createdAt: 1,
+        updatedAt: 4
+      }),
+      [
+        {
+          id: 'before-choice',
+          kind: 'tool',
+          title: 'Inspect context',
+          status: 'completed',
+          sortIndex: 0,
+          eventIds: [],
+          promptMessageId: 'user-1',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'choice-1',
+          kind: 'tool',
+          title: 'Choose one',
+          status: 'completed',
+          sortIndex: 1,
+          eventIds: [],
+          promptMessageId: 'user-1',
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      []
+    )
+    const forked = forkConversationAfterActivity(graph, 'agent-1', 'choice-1', 'revised-choice', 5)
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        id: 'session-1',
+        projectId: 'project-a',
+        title: 'Choice revision',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: messages.slice(0, 2),
+        activities: [
+          {
+            id: 'before-choice',
+            kind: 'tool',
+            title: 'Inspect context',
+            status: 'completed',
+            sortIndex: 0,
+            eventIds: [],
+            createdAt: 2,
+            updatedAt: 5
+          }
+        ],
+        conversationGraph: forked,
+        createdAt: 1,
+        updatedAt: 5
+      })
+    )
+
+    expect(
+      restored?.conversationGraph?.branches.find((branch) => branch.id === 'revised-choice')
+        ?.forkActivityId
+    ).toBe('choice-1')
+    expect(
+      restored?.conversationGraph?.activities.find((item) => item.id === 'before-choice')
+    ).toMatchObject({
+      messageBranchId: graph.branches[0].id
+    })
+    expect(
+      resolveActiveConversationActivities(restored!.conversationGraph!).activities.map(
+        (item) => item.id
+      )
+    ).toEqual(['before-choice'])
+    expect(
+      resolveActiveConversationActivities(
+        activateConversationBranch(restored!.conversationGraph!, graph.branches[0].id)
+      ).activities.map((item) => item.id)
+    ).toEqual(['before-choice', 'choice-1'])
+  })
+})
+
 describe('turn token usage persistence', () => {
   it('round-trips valid totals and drops invalid usage fields', () => {
     const restored = normalizeSessionFile({
@@ -581,9 +878,138 @@ describe('context usage persistence', () => {
     expect(malformed?.contextUsage).toBeUndefined()
     expect(unsafeBreakdown?.contextUsage).toEqual({ used: 100 })
   })
+
+  it('round-trips valid context-window samples and drops malformed or agent-owned samples', () => {
+    const stopReasons = [
+      'end_turn',
+      'max_tokens',
+      'max_turn_requests',
+      'refusal',
+      'cancelled'
+    ] as const
+    const validSamples = [
+      ...stopReasons.map((stopReason, index) => ({
+        id: `event-${index}`,
+        timestamp: index + 1,
+        termination: { kind: 'stop', stopReason },
+        runtimeSegmentId: 'segment-1',
+        contextWindow: { used: 30_000 + index, size: 168_000 },
+        modelStepUsage: {
+          inputTokens: 20_000,
+          cacheTokens: 10_000,
+          cachedReadTokens: 10_000,
+          cachedWriteTokens: 0,
+          outputTokens: 100
+        },
+        source: 'provider-response'
+      })),
+      {
+        id: 'event-error',
+        timestamp: 10,
+        termination: { kind: 'error' },
+        contextWindow: { used: 31_000 },
+        source: 'local-estimate'
+      }
+    ]
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      activities: undefined,
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Prompt',
+          status: 'complete',
+          eventIds: [],
+          contextWindowSamples: [
+            ...validSamples,
+            {
+              id: 'bad-reason',
+              timestamp: 11,
+              termination: { kind: 'stop', stopReason: 'unknown' },
+              contextWindow: { used: 1 },
+              source: 'provider-response'
+            },
+            {
+              id: 'bad-context',
+              timestamp: 12,
+              termination: { kind: 'error' },
+              contextWindow: { used: -1 },
+              source: 'local-estimate'
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'agent-1',
+          role: 'agent',
+          content: 'Done',
+          status: 'complete',
+          eventIds: [],
+          contextWindowSamples: validSamples,
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(restored?.messages[0].contextWindowSamples).toEqual(validSamples)
+    expect(restored?.messages[1].contextWindowSamples).toBeUndefined()
+  })
 })
 
 describe('sanitizeToolActivity', () => {
+  it('keeps a valid structured-input projection on the tool activity', () => {
+    const activity = sanitizeToolActivity({
+      id: 'tool-ask-1',
+      status: 'in_progress',
+      elicitation: {
+        message: 'Which approach should I use?',
+        fields: [
+          {
+            id: 'question_0',
+            label: 'Approach',
+            kind: 'single-select',
+            required: true,
+            options: [
+              {
+                value: 'minimal',
+                label: 'Minimal change',
+                description: 'Reuse the existing activity model.'
+              }
+            ]
+          }
+        ],
+        state: 'answered',
+        answers: [{ fieldId: 'question_0', value: 'minimal' }],
+        respondedAt: 42
+      }
+    })
+
+    expect(activity?.elicitation).toEqual({
+      message: 'Which approach should I use?',
+      fields: [
+        {
+          id: 'question_0',
+          label: 'Approach',
+          kind: 'single-select',
+          required: true,
+          options: [
+            {
+              value: 'minimal',
+              label: 'Minimal change',
+              description: 'Reuse the existing activity model.'
+            }
+          ]
+        }
+      ],
+      state: 'answered',
+      answers: [{ fieldId: 'question_0', value: 'minimal' }],
+      respondedAt: 42
+    })
+  })
+
   it('keeps identity fields and known text/diff content', () => {
     const activity = sanitizeToolActivity({
       id: 'tool-1',
@@ -679,6 +1105,252 @@ describe('sanitizeActivityGroup', () => {
 })
 
 describe('normalizeSessionFile with activities', () => {
+  it('normalizes delegated caller identity as one value and fails closed on legacy half-state', () => {
+    const baseMessage = {
+      id: 'child-prompt',
+      role: 'user',
+      content: 'work',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const paired = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          ...baseMessage,
+          delegatedCallerMessageId: 'root-prompt',
+          delegatedToolInvocationId: 'delegate-call'
+        }
+      ]
+    })
+    const half = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [{ ...baseMessage, delegatedCallerMessageId: 'root-prompt' }]
+    })
+
+    expect(paired?.messages[0]).toMatchObject({
+      delegatedCallerSource: {
+        rootMessageId: 'root-prompt',
+        toolInvocationId: 'delegate-call'
+      }
+    })
+    expect(paired?.messages[0]).not.toHaveProperty('delegatedCallerMessageId')
+    expect(half?.messages[0]).not.toHaveProperty('delegatedCallerSource')
+  })
+
+  it('quarantines the removed pendingMessages prototype instead of migrating it', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-frame',
+              attempts: [
+                {
+                  id: 'attempt-1',
+                  status: 'running',
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: [],
+                  startedAt: 1
+                }
+              ],
+              pendingMessages: [
+                {
+                  id: 'pending-1',
+                  sourceFrameId: 'root-frame',
+                  targetFrameId: 'child-frame',
+                  text: 'continue',
+                  kind: 'info',
+                  callerMessageId: 'root-prompt',
+                  createdAt: 2
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    expect(restored?.runtimeContext?.delegatedWork).toMatchObject({
+      records: [],
+      recordsQuarantine: [
+        expect.objectContaining({
+          agentFrameId: 'child-frame',
+          pendingMessages: [expect.objectContaining({ id: 'pending-1' })]
+        })
+      ]
+    })
+  })
+
+  it('quarantines corrupt delegated-work records without discarding sibling runtime owners', () => {
+    const corruptRecords = [{ agentFrameId: 'child-frame', attempts: 'not-an-array' }]
+    const restored = normalizeSessionFile(
+      {
+        ...createSessionWithActivity(undefined),
+        runtimeContext: {
+          version: 1,
+          revision: 7,
+          plan: createRuntimePlan(),
+          delegatedWork: {
+            records: corruptRecords,
+            messageCommands: []
+          },
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run tests',
+              options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+            },
+            originatingPromptMessageId: 'message-1',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 2
+          },
+          sideChat: {
+            version: 1,
+            id: 'side-chat-1',
+            lifecycle: 'open',
+            frameworkId: 'codex',
+            historyPreamble: 'Preserved context',
+            entries: [],
+            createdAt: 2,
+            updatedAt: 2
+          }
+        }
+      },
+      { preserveRuntimeState: true }
+    )
+
+    expect(restored?.runtimeContext).toMatchObject({
+      revision: 7,
+      plan: createRuntimePlan(),
+      permission: { originatingPromptMessageId: 'message-1' },
+      sideChat: { id: 'side-chat-1' },
+      delegatedWork: {
+        records: [],
+        recordsQuarantine: corruptRecords,
+        messageCommands: []
+      }
+    })
+  })
+
+  it('retains existing records quarantine when a later records generation is also corrupt', () => {
+    const previous = [{ agentFrameId: 'previous-child', attempts: 'previous-corruption' }]
+    const current = [{ agentFrameId: 'current-child', attempts: 'current-corruption' }]
+
+    const sanitized = sanitizeSessionRuntimeContext({
+      version: 1,
+      revision: 8,
+      delegatedWork: {
+        records: current,
+        recordsQuarantine: previous,
+        messageCommands: []
+      }
+    })
+
+    expect(sanitized?.delegatedWork).toEqual({
+      records: [],
+      recordsQuarantine: {
+        previous,
+        current
+      },
+      messageCommands: []
+    })
+  })
+
+  it('reads legacy terminal Attempts without inventing an initiating Turn association', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'legacy-child',
+              attempts: [
+                {
+                  id: 'legacy-attempt',
+                  status: 'cancelled',
+                  resolvedAgent: { kind: 'main' },
+                  runtimeSegmentIds: [],
+                  startedAt: 1,
+                  endedAt: 2,
+                  cancellationReason: 'runtime_interrupted'
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    expect(restored?.runtimeContext?.delegatedWork?.records[0].attempts[0]).toEqual({
+      id: 'legacy-attempt',
+      status: 'cancelled',
+      resolvedAgent: { kind: 'main' },
+      runtimeSegmentIds: [],
+      startedAt: 1,
+      endedAt: 2,
+      cancellationReason: 'runtime_interrupted'
+    })
+  })
+
+  it('round-trips a resolved Subagent model snapshot without backfilling legacy Attempts', () => {
+    const baseAttempt = {
+      id: 'attempt-with-model',
+      status: 'cancelled',
+      resolvedAgent: { kind: 'main' },
+      runtimeSegmentIds: [],
+      startedAt: 1,
+      endedAt: 2,
+      cancellationReason: 'runtime_interrupted'
+    }
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      runtimeContext: {
+        version: 1,
+        revision: 1,
+        delegatedWork: {
+          records: [
+            {
+              agentFrameId: 'child-frame',
+              attempts: [
+                {
+                  ...baseAttempt,
+                  executionModel: {
+                    frameworkId: 'opencode',
+                    providerId: 'provider-b',
+                    backendId: 'opencode:provider-b',
+                    modelRoute: 'opencode-openai',
+                    model: 'model-b',
+                    reasoningEffort: 'high'
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+
+    expect(restored?.runtimeContext?.delegatedWork?.records[0].attempts[0].executionModel).toEqual({
+      frameworkId: 'opencode',
+      providerId: 'provider-b',
+      backendId: 'opencode:provider-b',
+      modelRoute: 'opencode-openai',
+      model: 'model-b',
+      reasoningEffort: 'high'
+    })
+  })
+
   it('preserves a valid archive timestamp across a file round-trip', () => {
     const persisted = createSessionFile({
       ...(createSessionWithActivity(undefined) as PersistedChatSession),
@@ -712,6 +1384,580 @@ describe('normalizeSessionFile with activities', () => {
       }
     })
     expect(restored?.error).toBeUndefined()
+  })
+
+  it('preserves the Plan materialization boundary across restart', () => {
+    const plan = { ...createRuntimePlan(), materializedAt: 42 }
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'waiting-plan-approval',
+        runtimeContext: { version: 1, revision: 3, plan }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan?.materializedAt).toBe(42)
+  })
+
+  it('restores a queued approved-Plan continuation command for durable dispatch', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      status: 'idle',
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        plan: {
+          ...createRuntimePlan(),
+          approval: 'approved',
+          continuation: {
+            commandId: 'continuation-1',
+            kind: 'approved-plan',
+            state: 'queued',
+            originatingPromptMessageId: 'prompt-plan-1',
+            createdAt: 42
+          }
+        }
+      }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual({
+      commandId: 'continuation-1',
+      kind: 'approved-plan',
+      state: 'queued',
+      originatingPromptMessageId: 'prompt-plan-1',
+      createdAt: 42
+    })
+  })
+
+  it('preserves neutral Plan review feedback across restart while approval remains pending', () => {
+    const plan = {
+      ...createRuntimePlan(),
+      reviewFeedbackMessageId: 'feedback-message-1'
+    }
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        status: 'waiting-plan-approval',
+        runtimeContext: { version: 1, revision: 4, plan }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan).toEqual(plan)
+  })
+
+  it.each([
+    { approval: 'approved', kind: 'approved-plan' },
+    { approval: 'rejected', kind: 'rejected-plan' }
+  ] as const)(
+    'restores a queued $kind continuation paired to its $approval Plan',
+    ({ approval, kind }) => {
+      const continuation = {
+        commandId: `continuation-${approval}`,
+        kind,
+        state: 'queued' as const,
+        originatingPromptMessageId: 'prompt-plan-1',
+        createdAt: 42
+      }
+      const restored = normalizeSessionFile(
+        createSessionFile({
+          ...(createSessionWithActivity(undefined) as PersistedChatSession),
+          activities: undefined,
+          runtimeContext: {
+            version: 1,
+            revision: 4,
+            plan: { ...createRuntimePlan(), approval, continuation }
+          }
+        })
+      )
+
+      expect(restored?.runtimeContext?.plan?.continuation).toEqual(continuation)
+    }
+  )
+
+  it('restores a queued review-feedback continuation paired to its pending Plan marker', () => {
+    const continuation = {
+      commandId: 'continuation-feedback',
+      kind: 'review-feedback' as const,
+      state: 'queued' as const,
+      originatingPromptMessageId: 'feedback-message-1',
+      createdAt: 42
+    }
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 4,
+          plan: {
+            ...createRuntimePlan(),
+            reviewFeedbackMessageId: 'feedback-message-1',
+            continuation
+          }
+        }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan?.continuation).toEqual(continuation)
+  })
+
+  it.each([
+    {
+      name: 'review marker on an approved Plan',
+      plan: {
+        ...createRuntimePlan(),
+        approval: 'approved' as const,
+        reviewFeedbackMessageId: 'feedback-message-1'
+      },
+      missing: 'reviewFeedbackMessageId'
+    },
+    {
+      name: 'review continuation whose origin differs from its marker',
+      plan: {
+        ...createRuntimePlan(),
+        reviewFeedbackMessageId: 'feedback-message-1',
+        continuation: {
+          commandId: 'continuation-feedback',
+          kind: 'review-feedback' as const,
+          state: 'queued' as const,
+          originatingPromptMessageId: 'different-message',
+          createdAt: 42
+        }
+      },
+      missing: 'continuation'
+    },
+    {
+      name: 'rejected continuation whose origin differs from the Plan origin',
+      plan: {
+        ...createRuntimePlan(),
+        approval: 'rejected' as const,
+        continuation: {
+          commandId: 'continuation-rejected',
+          kind: 'rejected-plan' as const,
+          state: 'queued' as const,
+          originatingPromptMessageId: 'different-message',
+          createdAt: 42
+        }
+      },
+      missing: 'continuation'
+    }
+  ])('drops an invalid $name without losing the Plan', ({ plan, missing }) => {
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: { version: 1, revision: 4, plan }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan).toBeDefined()
+    expect(restored?.runtimeContext?.plan).not.toHaveProperty(missing)
+  })
+
+  it('preserves a continuing approved-Plan command as a fail-closed dispatch tombstone', () => {
+    const plan = {
+      ...createRuntimePlan(),
+      approval: 'approved' as const,
+      continuation: {
+        commandId: 'continuation-1',
+        kind: 'approved-plan' as const,
+        state: 'continuing' as const,
+        originatingPromptMessageId: 'prompt-plan-1',
+        createdAt: 42
+      }
+    }
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: { version: 1, revision: 5, plan }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual(
+      plan.continuation
+    )
+  })
+
+  it('restores an interrupted approved-Plan command without making it dispatchable', () => {
+    const plan = {
+      ...createRuntimePlan(),
+      approval: 'approved' as const,
+      continuation: {
+        commandId: 'continuation-1',
+        kind: 'approved-plan' as const,
+        state: 'interrupted' as const,
+        originatingPromptMessageId: 'prompt-plan-1',
+        createdAt: 42
+      }
+    }
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: { version: 1, revision: 6, plan }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext?.plan?.continuation).toEqual(
+      plan.continuation
+    )
+  })
+
+  it('drops a malformed continuation command without losing the approved Plan', () => {
+    const restored = normalizeSessionFile(
+      createSessionFile({
+        ...(createSessionWithActivity(undefined) as PersistedChatSession),
+        activities: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 5,
+          plan: {
+            ...createRuntimePlan(),
+            approval: 'approved',
+            continuation: {
+              commandId: 'continuation-1',
+              kind: 'approved-plan',
+              state: 'unknown' as never,
+              originatingPromptMessageId: 'prompt-plan-1',
+              createdAt: 42
+            }
+          }
+        }
+      })
+    )
+
+    expect(restored?.runtimeContext?.plan).toMatchObject({ approval: 'approved' })
+    expect(restored?.runtimeContext?.plan).not.toHaveProperty('continuation')
+  })
+
+  it('normalizes legacy permission authority to pending and accepts only known lifecycle states', () => {
+    const permission = {
+      request: {
+        requestId: 'permission-1',
+        sessionId: 'session-1',
+        toolCallId: 'tool-1',
+        title: 'Run npm test',
+        options: [{ optionId: 'deny', name: 'Deny', kind: 'reject_once' }]
+      },
+      originatingPromptMessageId: 'prompt-1',
+      fingerprint: 'a'.repeat(64),
+      createdAt: 1
+    }
+    const normalizePermission = (
+      candidate: Record<string, unknown>
+    ): SessionPermissionRuntimeContext | undefined =>
+      normalizeSessionFile(
+        {
+          ...createSessionWithActivity(undefined),
+          activities: undefined,
+          runtimeContext: { version: 1, revision: 1, permission: candidate }
+        },
+        { preserveRuntimeState: true }
+      )?.runtimeContext?.permission
+
+    expect(normalizePermission(permission)?.state).toBe('pending')
+    expect(normalizePermission({ ...permission, state: 'continuing' })?.state).toBe('continuing')
+    expect(normalizePermission({ ...permission, state: 'unknown' })).toBeUndefined()
+  })
+
+  it.each(['pending', 'in_progress'] as const)(
+    'rearms a prompt-bound continuing MCP permission without failing its %s tool activity',
+    (status) => {
+      const restored = normalizeSessionFile(
+        createContinuingPermissionFile([
+          createOpenToolActivity('tool-1', { status }),
+          createOpenToolActivity('unrelated-tool', {
+            title: 'Read another file',
+            sortIndex: 2,
+            createdAt: 3,
+            updatedAt: 3
+          })
+        ])
+      )
+
+      expect(restored).toMatchObject({
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 4,
+          permission: {
+            state: 'pending',
+            originatingPromptMessageId: 'prompt-1'
+          }
+        }
+      })
+      expect(restored?.activeRun).toBeUndefined()
+      expect(restored?.resumeRecovery).toBeUndefined()
+      expect(restored?.error).toBeUndefined()
+      expect(restored?.messages[0]?.interrupted).toBeUndefined()
+      expect(restored?.activities?.[0]?.status).toBe(status)
+      expect(restored?.conversationGraph?.activities[0]?.status).toBe(status)
+      expect(restored?.activities?.[1]?.status).toBe('failed')
+      expect(restored?.conversationGraph?.activities[1]?.status).toBe('failed')
+    }
+  )
+
+  it('fails a permission tool activity hidden by the active conversation branch', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    expect(persisted.session.conversationGraph).toBeDefined()
+    const conversationGraph = forkConversationAfterActivity(
+      persisted.session.conversationGraph!,
+      'prompt-1',
+      'tool-1',
+      'revised-branch',
+      3
+    )
+
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: { ...persisted.session, conversationGraph }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases a non-MCP permission instead of preserving its open tool activity', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    persisted.session.runtimeContext!.permission!.request.isMcp = false
+
+    const restored = normalizeSessionFile(persisted)
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases a permission whose exact tool activity is missing', () => {
+    const restored = normalizeSessionFile(
+      createContinuingPermissionFile([createOpenToolActivity('unrelated-tool')])
+    )
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases a permission whose exact tool activity is already terminal', () => {
+    const restored = normalizeSessionFile(
+      createContinuingPermissionFile([
+        createOpenToolActivity('tool-1', { status: 'completed', updatedAt: 3 })
+      ])
+    )
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('completed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('completed')
+  })
+
+  it('releases pending permission authority attached to a non-waiting Session', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const permission = persisted.session.runtimeContext!.permission!
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: {
+        ...persisted.session,
+        runtimeContext: {
+          ...persisted.session.runtimeContext!,
+          permission: { ...permission, state: 'pending' }
+        }
+      }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases continuing permission authority attached to a non-running Session', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: { ...persisted.session, status: 'idle' }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases permission authority with duplicated flat tool call correlation', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const activity = persisted.session.activities![0]
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: {
+        ...persisted.session,
+        activities: [activity, { ...activity, title: 'Duplicate tool projection' }]
+      }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.map((candidate) => candidate.status)).toEqual(['failed', 'failed'])
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('fails a mismatched flat permission activity instead of trusting its tool call id', () => {
+    const persisted = createContinuingPermissionFile([createOpenToolActivity()])
+    const restored = normalizeSessionFile({
+      ...persisted,
+      session: {
+        ...persisted.session,
+        activities: persisted.session.activities?.map((activity) => ({
+          ...activity,
+          promptMessageId: 'stale-prompt'
+        }))
+      }
+    })
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+  })
+
+  it('releases an invalid continuing permission before generic restart recovery', () => {
+    const restored = normalizeSessionFile(
+      createContinuingPermissionFile([createOpenToolActivity()], 'missing-prompt')
+    )
+
+    expect(restored?.status).toBe('error')
+    expect(restored?.runtimeContext?.permission).toBeUndefined()
+    expect(restored?.activities?.[0]?.status).toBe('failed')
+    expect(restored?.conversationGraph?.activities[0]?.status).toBe('failed')
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'prompt-1'
+    })
+  })
+
+  it('hoists legacy Side chat relays without changing the Session envelope version', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: {
+        version: 1,
+        revision: 7,
+        sideChat: {
+          version: 1,
+          id: 'side-chat-123',
+          lifecycle: 'interrupted',
+          frameworkId: 'codex',
+          backendId: 'codex-responses',
+          providerSessionId: 'provider-session-1',
+          providerContinuityToken: 'bridge-token-1',
+          model: 'gpt-5.6-sol',
+          historyPreamble: 'Main context',
+          entries: [
+            { id: 'user-1', kind: 'message', role: 'user', text: 'Question' },
+            { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Answer' },
+            { id: 'tool-1', kind: 'tool', title: 'send_message', status: 'completed' }
+          ],
+          pendingRelays: [{ id: 'side-chat-message-1', text: 'Tell Main', createdAt: 10 }],
+          createdAt: 1,
+          updatedAt: 10
+        } as unknown as PersistedSideChat
+      }
+    })
+
+    expect(persisted.version).toBe(SESSION_FILE_VERSION)
+    expect(normalizeSessionFile(persisted)?.runtimeContext).toEqual({
+      version: 1,
+      revision: 7,
+      sideChat: {
+        version: 1,
+        id: 'side-chat-123',
+        lifecycle: 'interrupted',
+        frameworkId: 'codex',
+        backendId: 'codex-responses',
+        providerSessionId: 'provider-session-1',
+        providerContinuityToken: 'bridge-token-1',
+        model: 'gpt-5.6-sol',
+        historyPreamble: 'Main context',
+        entries: [
+          { id: 'user-1', kind: 'message', role: 'user', text: 'Question' },
+          { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Answer' },
+          { id: 'tool-1', kind: 'tool', title: 'send_message', status: 'completed' }
+        ],
+        createdAt: 1,
+        updatedAt: 10
+      },
+      sideChatRelays: [
+        {
+          id: 'side-chat-message-1',
+          sideChatId: 'side-chat-123',
+          text: 'Tell Main',
+          createdAt: 10
+        }
+      ]
+    })
+  })
+
+  it('round-trips parent-owned Side chat relays without an open Side chat', () => {
+    const persisted = createSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: {
+        version: 1,
+        revision: 8,
+        sideChatRelays: [
+          {
+            id: 'side-chat-message-closed',
+            sideChatId: 'side-chat-closed',
+            text: 'Still deliver this',
+            createdAt: 11
+          }
+        ]
+      }
+    })
+
+    expect(normalizeSessionFile(persisted)?.runtimeContext).toEqual({
+      version: 1,
+      revision: 8,
+      sideChatRelays: [
+        {
+          id: 'side-chat-message-closed',
+          sideChatId: 'side-chat-closed',
+          text: 'Still deliver this',
+          createdAt: 11
+        }
+      ]
+    })
+  })
+
+  it('drops a malformed Side chat while retaining valid Plan authority', () => {
+    const plan = createRuntimePlan()
+    const restored = normalizeSessionFile({
+      ...(createSessionWithActivity(undefined) as PersistedChatSession),
+      activities: undefined,
+      runtimeContext: {
+        version: 1,
+        revision: 8,
+        plan,
+        sideChat: {
+          version: 1,
+          id: '../unsafe-profile',
+          lifecycle: 'open',
+          frameworkId: 'codex',
+          historyPreamble: '',
+          entries: [],
+          pendingRelays: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      }
+    })
+
+    expect(restored?.runtimeContext).toEqual({ version: 1, revision: 8, plan })
   })
 
   it('round-trips special Plan step titles without changing object prototypes', () => {
@@ -843,6 +2089,102 @@ describe('normalizeSessionFile with activities', () => {
     expect(activities?.[0]?.status).toBe('failed')
   })
 
+  it('restores a durable pending agent choice as actionable', () => {
+    const activities = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'Waiting for an answer',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        elicitation: {
+          message: 'Choose one',
+          fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+          state: 'pending',
+          durable: {
+            kind: 'agent-user-choice',
+            requestId: 'choice-1'
+          },
+          draftAnswers: [{ fieldId: 'choice', value: 'First step' }]
+        },
+        createdAt: 1,
+        updatedAt: 1
+      })
+    )
+
+    expect(activities?.[0]).toMatchObject({
+      status: 'in_progress',
+      elicitation: {
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' },
+        draftAnswers: [{ fieldId: 'choice', value: 'First step' }]
+      }
+    })
+  })
+
+  it('restores waiting-for-user only with a durable pending question', () => {
+    const durableQuestion = createSessionWithActivity({
+      id: 'activity-1',
+      kind: 'tool',
+      title: 'Waiting for an answer',
+      status: 'in_progress',
+      sortIndex: 1,
+      eventIds: [],
+      elicitation: {
+        message: 'Choose one',
+        fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+        state: 'pending',
+        durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
+      },
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(
+      normalizeSessionFile(
+        createSessionFile({
+          ...(durableQuestion as PersistedChatSession),
+          status: 'waiting-for-user'
+        })
+      )?.status
+    ).toBe('waiting-for-user')
+    expect(
+      normalizeSessionFile(
+        createSessionFile({
+          ...(createSessionWithActivity(undefined) as PersistedChatSession),
+          activities: undefined,
+          status: 'waiting-for-user'
+        })
+      )?.status
+    ).toBe('idle')
+  })
+
+  it('still cancels a non-durable pending protocol elicitation on restore', () => {
+    const activities = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'Waiting for an answer',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        elicitation: {
+          message: 'Choose one',
+          fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+          state: 'pending'
+        },
+        createdAt: 1,
+        updatedAt: 1
+      })
+    )
+
+    expect(activities?.[0]).toMatchObject({
+      status: 'failed',
+      elicitation: { state: 'cancelled' }
+    })
+  })
+
   it('restores open conversation graph activities as failed', () => {
     const persisted = createSessionFile({
       ...(createSessionWithActivity({
@@ -900,6 +2242,117 @@ describe('normalizeSessionFile with activities', () => {
     expect(restored?.conversationGraph?.messages[0]?.failedAt).toBe(7)
   })
 
+  it('restores an active user turn as one durable interrupted message', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-1', startedAt: 5 },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Continue the analysis',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 5,
+          updatedAt: 5
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 5
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({ id: 'prompt-1', interrupted: true })
+    ])
+    expect(restored?.conversationGraph?.messages).toEqual([
+      expect.objectContaining({ id: 'prompt-1', interrupted: true })
+    ])
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'prompt-1'
+    })
+  })
+
+  it('preserves a cancelled turn as resumable state', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Cancelled session',
+      cwd: '/workspace',
+      status: 'error',
+      interrupted: true,
+      resumeRecovery: {
+        kind: 'resume-required',
+        cause: 'cancelled',
+        promptMessageId: 'prompt-1'
+      },
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Continue the analysis',
+          status: 'complete',
+          interrupted: true,
+          eventIds: [],
+          createdAt: 5,
+          updatedAt: 5
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 5
+    })
+
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'cancelled',
+      promptMessageId: 'prompt-1'
+    })
+  })
+
+  it('restores explicit full and cutoff history replay scopes', () => {
+    const base = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Replay state',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Earlier prompt',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    expect(
+      normalizeSessionFile({ ...base, pendingHistoryReplay: { kind: 'all' } })?.pendingHistoryReplay
+    ).toEqual({ kind: 'all' })
+    expect(
+      normalizeSessionFile({
+        ...base,
+        pendingHistoryReplay: { kind: 'before-message', messageId: 'prompt-1' }
+      })?.pendingHistoryReplay
+    ).toEqual({ kind: 'before-message', messageId: 'prompt-1' })
+    expect(
+      normalizeSessionFile({
+        ...base,
+        pendingHistoryReplayBeforeMessageId: 'prompt-1'
+      })?.pendingHistoryReplay
+    ).toEqual({ kind: 'before-message', messageId: 'prompt-1' })
+  })
+
   it('loads sessions that predate persisted activities', () => {
     const session = normalizeSessionFile({
       id: 'session-1',
@@ -932,17 +2385,21 @@ describe('normalizeSessionFile with activities', () => {
     expect(malformed?.filesRevision).toBeUndefined()
   })
 
-  it('round-trips the agent backend identity and run model used for diagnostics', () => {
+  it('round-trips agent, provider, backend, and model identity', () => {
     const session = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
       agentFrameworkId: 'codex',
       agentBackendId: 'codex:codex-isolated',
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      providerContinuityToken: 'bridge-generation-1',
       agentModel: 'gpt-5.6-sol'
     })
 
     expect(session?.agentFrameworkId).toBe('codex')
     expect(session?.agentBackendId).toBe('codex:codex-isolated')
+    expect(session?.providerSessionId).toBe('019fb8c8-6c66-7f22-9653-17b5b287dbbb')
+    expect(session?.providerContinuityToken).toBe('bridge-generation-1')
     expect(session?.agentModel).toBe('gpt-5.6-sol')
   })
 
@@ -1016,6 +2473,207 @@ describe('normalizeSessionFile with activities', () => {
     expect(legacy?.enabledComputeHosts).toBeUndefined()
     expect(mixedValid?.enabledComputeHosts).toEqual(['ssh:valid'])
     expect(allInvalid?.enabledComputeHosts).toBeUndefined()
+  })
+
+  it.each([
+    ['invalid route', { direction: 'to_parent', disposition: 'continued' }],
+    ['missing running target', { omitTargetAttemptId: true }],
+    ['receipt shape', { receipt: { status: 'accepted', acceptedAt: 2, evidence: 'unknown' } }]
+  ])(
+    'quarantines only the reliable-message owner for an exhaustive %s violation',
+    (_label, patch) => {
+      const commandPatch: Record<string, unknown> = { ...patch }
+      delete commandPatch.omitTargetAttemptId
+      const command: Record<string, unknown> = {
+        messageId: 'message-1',
+        requestId: 'request-1',
+        sourcePrincipal: 'root-frame',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: 'root-frame',
+        targetFrameId: 'child-frame',
+        targetAttemptId: 'attempt-1',
+        rootOriginMessageId: 'root-prompt',
+        callerRootMessageId: 'root-prompt',
+        rootBranchId: 'root-branch',
+        rootBranchRevision: 'root-prompt',
+        direction: 'to_child',
+        disposition: 'message',
+        text: 'evidence',
+        kind: 'info',
+        laneSequence: 1,
+        queuedAt: 1,
+        receipt: { status: 'queued' },
+        ...commandPatch
+      }
+      if ('omitTargetAttemptId' in patch) delete command.targetAttemptId
+      const sanitized = sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 7,
+        plan: createRuntimePlan(),
+        delegatedWork: { records: [], messageCommands: [command] }
+      })
+
+      expect(sanitized?.plan).toEqual(createRuntimePlan())
+      expect(sanitized?.delegatedWork).toEqual({
+        records: [],
+        messageCommandsQuarantine: [command]
+      })
+    }
+  )
+
+  it('treats missing delegated questions as empty and quarantines only a corrupt question owner', () => {
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 1,
+        delegatedWork: { records: [] }
+      })?.delegatedWork
+    ).toEqual({ records: [] })
+
+    const corrupt = [{ requestId: 'question-1', status: 'pending' }]
+    const sanitized = sanitizeSessionRuntimeContext({
+      version: 1,
+      revision: 2,
+      plan: createRuntimePlan(),
+      delegatedWork: { records: [], questionRequests: corrupt }
+    })
+    expect(sanitized?.plan).toEqual(createRuntimePlan())
+    expect(sanitized?.delegatedWork).toEqual({
+      records: [],
+      questionRequestsQuarantine: corrupt
+    })
+
+    const validQuestion = {
+      requestId: 'question-valid',
+      canonicalDigest: 'a'.repeat(64),
+      sourceFrameId: 'child-1',
+      sourceAttemptId: 'attempt-1',
+      sourceRuntimeSegmentId: 'runtime-1',
+      sourceMessageBranchId: 'child-branch',
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: 'Researcher',
+      questions: [{ question: 'Scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }],
+      sequence: 1,
+      askedAt: 1,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    }
+    const isolated = sanitizeSessionRuntimeContext({
+      version: 1,
+      revision: 3,
+      delegatedWork: {
+        records: [],
+        messageCommandsQuarantine: [{ unrelated: 'corruption' }],
+        questionRequests: [validQuestion]
+      }
+    })
+    expect(isolated?.delegatedWork).toEqual({
+      records: [],
+      messageCommandsQuarantine: [{ unrelated: 'corruption' }],
+      questionRequests: [validQuestion]
+    })
+  })
+
+  it('accepts equal or missing question sequences and narrowly recovers a wholly valid quarantine', () => {
+    const question = (
+      requestId: string,
+      askedAt: number,
+      sequence?: number
+    ): Record<string, unknown> => ({
+      requestId,
+      canonicalDigest: requestId.charAt(requestId.length - 1).repeat(64),
+      sourceFrameId: `child-${requestId}`,
+      sourceAttemptId: `attempt-${requestId}`,
+      sourceRuntimeSegmentId: `runtime-${requestId}`,
+      sourceMessageBranchId: `branch-${requestId}`,
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: requestId,
+      questions: [{ question: 'Scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }],
+      ...(sequence === undefined ? {} : { sequence }),
+      askedAt,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    })
+    const fallbackOrdered = [
+      question('question-a', 2, 1),
+      question('question-b', 3, 1),
+      question('question-c', 1)
+    ]
+
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 4,
+        delegatedWork: { records: [], questionRequests: fallbackOrdered }
+      })?.delegatedWork
+    ).toEqual({ records: [], questionRequests: fallbackOrdered })
+
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 5,
+        delegatedWork: { records: [], questionRequestsQuarantine: fallbackOrdered }
+      })?.delegatedWork
+    ).toEqual({ records: [], questionRequests: fallbackOrdered })
+
+    const corrupt = [...fallbackOrdered, { requestId: 'question-invalid', status: 'pending' }]
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 6,
+        delegatedWork: { records: [], questionRequestsQuarantine: corrupt }
+      })?.delegatedWork
+    ).toEqual({ records: [], questionRequestsQuarantine: corrupt })
+  })
+
+  it('keeps a contradictory active and quarantined question owner fail-closed', () => {
+    const quarantinedQuestion = {
+      requestId: 'quarantined-question',
+      canonicalDigest: 'a'.repeat(64),
+      sourceFrameId: 'child-quarantined',
+      sourceAttemptId: 'attempt-quarantined',
+      sourceRuntimeSegmentId: 'runtime-quarantined',
+      sourceMessageBranchId: 'branch-quarantined',
+      rootOriginMessageId: 'root-prompt',
+      rootBranchId: 'root-branch',
+      sourceName: 'Quarantined child',
+      questions: [{ question: 'Scope?', options: [{ label: 'Narrow' }, { label: 'Broad' }] }],
+      sequence: 1,
+      askedAt: 1,
+      status: 'pending',
+      draftAnswers: [],
+      draftQuestionIndex: 0
+    }
+    const quarantine = [quarantinedQuestion]
+    const active = [
+      {
+        ...quarantinedQuestion,
+        requestId: 'active-question',
+        canonicalDigest: 'b'.repeat(64),
+        sourceFrameId: 'child-active',
+        sourceName: 'Active child',
+        sequence: 2
+      }
+    ]
+
+    expect(
+      sanitizeSessionRuntimeContext({
+        version: 1,
+        revision: 7,
+        delegatedWork: {
+          records: [],
+          questionRequests: active,
+          questionRequestsQuarantine: quarantine
+        }
+      })?.delegatedWork
+    ).toEqual({
+      records: [],
+      questionRequestsQuarantine: { active, quarantine }
+    })
   })
 
   it('persists errorReportable only when a model-provider error marked it false', () => {

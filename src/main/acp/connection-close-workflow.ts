@@ -10,6 +10,8 @@ type DisconnectCurrent = (...args: [boolean, number]) => Promise<AcpStateSnapsho
 type CloseState = Readonly<{
   invalidatePendingSessionStartups: () => void
   disposePermissionContext: () => void
+  disposeElicitationOwner: () => void
+  clearPendingAppContinuations: () => void
   clearReviewerState: () => void
   clearPlanInteractions: () => void
   settleActivePrompts: () => readonly unknown[]
@@ -27,6 +29,7 @@ type CloseState = Readonly<{
   clearHttpRoutes: () => void
   selectSession: () => void
   publishInterruptedPromptFailures: (prompts: readonly unknown[]) => void
+  cancelPendingStatePublication: () => void
   setStatus: (status: CloseStatus) => void
   transitionStatus: (status: CloseStatus) => void
   emitState: () => void
@@ -66,19 +69,23 @@ class AcpConnectionCloseWorkflow {
   constructor(private readonly options: AcpConnectionCloseWorkflowOptions) {}
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
     this.options.modelChanges.cancel()
-    return this.options.transitions.settleTeardown(async () => {
-      const teardownGeneration = this.options.resources.supersede()
-      this.options.state.invalidatePendingSessionStartups()
-      try {
-        return await (this.options.disconnectCurrent?.(emitClosedStatus, teardownGeneration) ??
-          this.disconnectCurrent(emitClosedStatus, teardownGeneration))
-      } catch (error) {
-        this.options.resources.restorePublished(teardownGeneration)
-        throw error
-      } finally {
-        await this.options.resources.closeMcp(teardownGeneration)
-      }
-    })
+    try {
+      return await this.options.transitions.settleTeardown(async () => {
+        const teardownGeneration = this.options.resources.supersede()
+        this.options.state.invalidatePendingSessionStartups()
+        try {
+          return await (this.options.disconnectCurrent?.(emitClosedStatus, teardownGeneration) ??
+            this.disconnectCurrent(emitClosedStatus, teardownGeneration))
+        } catch (error) {
+          this.options.resources.restorePublished(teardownGeneration)
+          throw error
+        } finally {
+          await this.options.resources.closeMcp(teardownGeneration)
+        }
+      })
+    } finally {
+      this.options.state.cancelPendingStatePublication()
+    }
   }
   async disconnectCurrent(
     emitClosedStatus = true,
@@ -102,6 +109,8 @@ class AcpConnectionCloseWorkflow {
       }
     }
     runCleanup('permission-context', this.options.state.disposePermissionContext)
+    runCleanup('elicitation-owner', this.options.state.disposeElicitationOwner)
+    this.options.state.clearPendingAppContinuations()
     runCleanup('reviewer-state', this.options.state.clearReviewerState)
     runCleanup('plan-interactions', this.options.state.clearPlanInteractions)
     this.options.state.supersedeInteractions()
@@ -130,11 +139,14 @@ class AcpConnectionCloseWorkflow {
     ) {
       return
     }
+    this.options.state.cancelPendingStatePublication()
     this.options.modelChanges.cancel()
     const teardownGeneration = this.options.currentGeneration()
     const interruptedPrompts = this.options.state.settleActivePrompts()
     this.options.state.invalidatePendingSessionStartups()
     this.options.state.disposePermissionContext()
+    this.options.state.disposeElicitationOwner()
+    this.options.state.clearPendingAppContinuations()
     this.options.state.clearReviewerState()
     this.options.state.clearPlanInteractions()
     this.options.resources.cleanupUnexpectedClose(teardownGeneration)
@@ -158,6 +170,7 @@ class AcpConnectionCloseWorkflow {
     }
   }
   shutdown(): void {
+    this.options.state.cancelPendingStatePublication()
     this.options.modelChanges.cancel()
     this.options.resources.shutdownSynchronously(() => {
       this.options.state.invalidatePendingSessionStartups()

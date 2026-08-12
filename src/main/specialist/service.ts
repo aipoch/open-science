@@ -21,7 +21,6 @@ import type {
 import {
   validateCreateSpecialistInput,
   validateUpdateSpecialistInput,
-  validateSpecialistPublicName,
   emptyFullAccessConfig,
   emptySelectedConfig
 } from '../../shared/specialist'
@@ -86,6 +85,29 @@ const assertCapabilityConfigShape = (
 }
 
 const log = createLogger('specialist.service')
+const MAX_AVAILABLE_SPECIALIST_NAMES = 8
+
+const specialistReferenceError = (
+  reason: 'unknown' | 'ambiguous' | 'unavailable',
+  profiles: readonly SpecialistProfileView[]
+): Error => {
+  const names = [
+    ...new Set(
+      profiles
+        .filter((profile) => profile.enabled && profile.setupPending !== true)
+        .map((profile) => profile.name.trim())
+        .filter(Boolean)
+    )
+  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+  const listed = names.slice(0, MAX_AVAILABLE_SPECIALIST_NAMES)
+  const availability =
+    listed.length === 0
+      ? 'No enabled Specialists are available.'
+      : `Available Specialists: ${listed.join(', ')}${
+          names.length > listed.length ? ' (list truncated).' : '.'
+        }`
+  return new Error(`Requested Specialist is ${reason}. ${availability}`)
+}
 
 export class SpecialistReadonlyError extends Error {
   readonly code = 'SPECIALIST_READ_ONLY' as const
@@ -261,6 +283,28 @@ export class ProfileService {
     throw new Error(`Runnable Specialist "${name}" not found.`)
   }
 
+  async resolveRunnableByReference(reference: string): Promise<SpecialistProfileView> {
+    const profiles = [
+      ...(await this.list()),
+      ...(await this.builtinEntries()).map((entry) => this.toBuiltinView(entry))
+    ]
+    const byId = profiles.find((profile) => profile.id === reference)
+    if (byId) {
+      if (!byId.enabled || byId.setupPending === true) {
+        throw specialistReferenceError('unavailable', profiles)
+      }
+      return byId
+    }
+    const byName = profiles.filter((profile) => profile.name === reference)
+    if (byName.length === 0) throw specialistReferenceError('unknown', profiles)
+    if (byName.length > 1) throw specialistReferenceError('ambiguous', profiles)
+    const selected = byName[0]
+    if (!selected.enabled || selected.setupPending === true) {
+      throw specialistReferenceError('unavailable', profiles)
+    }
+    return selected
+  }
+
   async getById(id: string): Promise<SpecialistProfileView> {
     const doc = await this.repo.getAll()
     const found = doc.specialists.find((s) => s.id === id)
@@ -343,16 +387,15 @@ export class ProfileService {
     return toView(found)
   }
 
-  // Atomically patches identity/instructions fields on an existing specialist.
-  // Re-validates display name and public name (uniqueness skips the record's own
-  // id so self-rename is allowed). `revision` must match the stored record
+  // Atomically patches presentation/instructions fields on an existing specialist.
+  // The stable name is immutable. `revision` must match the stored record
   // (optimistic concurrency); the repository bumps it and rejects stale writes.
   async update(input: UpdateSpecialistInput): Promise<SpecialistProfileView> {
     if (!input || typeof input.id !== 'string' || typeof input.revision !== 'number') {
       throw new Error('Update requires id and revision.')
     }
-    if (input.name !== undefined && typeof input.name !== 'string') {
-      throw new Error('Name must be a string.')
+    if ('name' in input) {
+      throw new Error('Specialist name is immutable.')
     }
     if (input.enabled !== undefined && typeof input.enabled !== 'boolean') {
       throw new Error('Enabled must be a boolean.')
@@ -365,10 +408,7 @@ export class ProfileService {
     assertCapabilityConfigShape(input)
 
     const doc = await this.repo.getAll()
-    const existingNames = doc.specialists.map((s) => s.name)
-    const existingIds = new Map(doc.specialists.map((s) => [s.name, s.id]))
-
-    const errors = validateUpdateSpecialistInput(input, existingNames, existingIds)
+    const errors = validateUpdateSpecialistInput(input)
     if (errors.length > 0) {
       throw new Error(errors.map((e) => e.message).join('; '))
     }
@@ -382,22 +422,8 @@ export class ProfileService {
       throw new Error('Complete Specialist setup before enabling it.')
     }
     if (input.packageVersion !== undefined) patch.packageVersion = input.packageVersion
-    if (input.name !== undefined) patch.name = input.name
-    // A rename that leaves displayName unset keeps a CUSTOM display name (the settings list shows
-    // displayName ?? name), but an UNcustomized one (snapshotted to the old name at create) must
-    // follow the rename — otherwise the settings list keeps showing the old name after a
-    // host.agents.update rename. Mirrors create()'s `displayName ?? name` defaulting.
     if (input.displayName !== undefined) {
       patch.displayName = input.displayName
-    } else if (input.name !== undefined) {
-      const current = doc.specialists.find((s) => s.id === input.id)
-      if (
-        current &&
-        (current.displayName ?? current.name) === current.name &&
-        current.name !== input.name
-      ) {
-        patch.displayName = input.name
-      }
     }
     if (input.description !== undefined) patch.description = input.description
     if (input.systemPrompt !== undefined) patch.systemPrompt = input.systemPrompt
@@ -414,29 +440,13 @@ export class ProfileService {
       patch.selectedCapabilities = input.selectedCapabilities
     }
 
-    log.info('updating specialist', { id: input.id, name: patch.name })
+    log.info('updating specialist', { id: input.id })
 
     const updatedDoc = await this.repo.update(input.id, patch, input.revision)
     this.notify()
     const updated = updatedDoc.specialists.find((s) => s.id === input.id)
     if (!updated) throw new Error(`Specialist ${input.id} not found after update.`)
     return toView(updated)
-  }
-
-  // Naming is kept as a separate lifecycle mutation so SDK approval flows can
-  // re-check the exact record and revision immediately before committing.
-  async rename(input: {
-    id: string
-    name: string
-    expectedRevision?: number
-  }): Promise<SpecialistProfileView> {
-    await this.assertMutableId(input.id)
-    // Use the same relaxed public-name validator as create() for consistency.
-    const nameError = validateSpecialistPublicName(input.name)
-    if (nameError) throw new Error(nameError)
-    const current = await this.getById(input.id)
-    const revision = input.expectedRevision ?? current.revision
-    return this.update({ id: input.id, name: input.name, revision })
   }
 
   async delete(id: string, expectedRevision?: number): Promise<void> {
@@ -458,7 +468,7 @@ export class ProfileService {
     await this.assertMutableId(id)
     const source = await this.getById(id)
     const names = new Set((await this.list()).map((profile) => profile.name))
-    // Use the display name (which equals name in the single-name model) as the base.
+    // Use the current display label as the base for the new Specialist's identity.
     const sourceName = source.displayName ?? source.name
     const base = `${sourceName} Copy`
     let name = base.slice(0, 80)

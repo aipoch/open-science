@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import {
@@ -13,7 +13,11 @@ import {
   pythonBin,
   writeReadyMarker
 } from './runtime-paths'
-import { createProductionProvisioner, planStartupAction } from './provisioner'
+import {
+  createProductionProvisioner,
+  planStartupAction,
+  type ProductionProvisionerDeps
+} from './provisioner'
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), 'os-start-'))
 const touchBin = (path: string): void => {
@@ -137,5 +141,97 @@ describe('createProductionProvisioner', () => {
         micromamba: { env: {} } // no override, no bundled bin here, no PATH
       })
     ).toThrow(/micromamba binary not found/)
+  })
+
+  it('preflights the Windows runner before fetching a runtime bundle', async () => {
+    const root = makeRoot()
+    const mmPath = join(root, 'bin', 'micromamba.exe')
+    touchBin(mmPath)
+    const events: string[] = []
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: 'conda-forge',
+        cdnBase: 'https://runtime.invalid',
+        micromamba: {
+          env: { OPEN_SCIENCE_MICROMAMBA_BIN: mmPath, LOCALAPPDATA: join(root, 'local') },
+          platform: 'win32',
+          preflight: async () => {
+            events.push('preflight')
+          }
+        }
+      },
+      {
+        fetchBundle: async () => {
+          events.push('fetch')
+          throw new Error('stop after observing fetch')
+        }
+      }
+    )
+
+    await expect(provisioner.provisionPython(() => undefined)).rejects.toThrow(
+      /stop after observing fetch/
+    )
+    expect(events).toEqual(['preflight', 'fetch'])
+  })
+
+  it('does not fetch a runtime bundle when every Windows runner fails preflight', async () => {
+    const root = makeRoot()
+    const mmPath = join(root, 'bin', 'micromamba.exe')
+    touchBin(mmPath)
+    const fetch = vi.fn(async () => {
+      throw new Error('bundle fetched before runner preflight')
+    })
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: 'conda-forge',
+        cdnBase: 'https://runtime.invalid',
+        micromamba: {
+          env: { OPEN_SCIENCE_MICROMAMBA_BIN: mmPath, LOCALAPPDATA: join(root, 'local') },
+          platform: 'win32',
+          preflight: async () => {
+            throw new Error('runner preflight failed')
+          }
+        }
+      },
+      {
+        fetchBundle: fetch
+      }
+    )
+
+    await expect(provisioner.provisionPython(() => undefined)).rejects.toThrow(
+      /runner preflight failed/
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('uses the runner selected during preparation for the micromamba subprocess', async () => {
+    const root = makeRoot()
+    const primary = join(root, 'bin', 'micromamba.exe')
+    const compatibility = join(root, 'bin', 'micromamba-compat.exe')
+    const lockPath = join(root, 'python.lock')
+    touchBin(primary)
+    touchBin(compatibility)
+    writeFileSync(lockPath, '@EXPLICIT\n')
+    const runArgv = vi.fn<NonNullable<ProductionProvisionerDeps['runArgv']>>(async () => undefined)
+    const provisioner = createProductionProvisioner(
+      {
+        root,
+        channel: 'conda-forge',
+        micromamba: { env: { OPEN_SCIENCE_MICROMAMBA_BIN: primary } }
+      },
+      {
+        runner: { initialPath: primary, resolve: async () => compatibility },
+        fetchBundle: async () => ({ lockPath }),
+        runArgv,
+        verify: async () => undefined
+      }
+    )
+
+    await provisioner.provisionPython(() => undefined)
+
+    expect(runArgv).toHaveBeenCalledOnce()
+    expect(runArgv.mock.calls[0]?.[0]?.[0]).toBe(compatibility)
   })
 })

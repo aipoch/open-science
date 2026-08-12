@@ -1,0 +1,263 @@
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { ComputeApprovalRequest } from '../../../shared/compute'
+import type { ConnectorApprovalRequest } from '../../../shared/settings'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { NotificationBell } from './NotificationBell'
+
+let container: HTMLDivElement
+let root: Root
+
+beforeEach(() => {
+  window.api = {
+    settings: { replayConnectorApproval: vi.fn(async () => null) },
+    compute: { replayApproval: vi.fn(async () => null) }
+  } as unknown as Window['api']
+  useNotificationInboxStore.setState({
+    revision: 1,
+    unreadCount: 1,
+    latestSequence: 7,
+    status: 'ready',
+    error: undefined,
+    items: [
+      {
+        id: 'message-1',
+        sequence: 7,
+        dedupeKey: 'authorization:connector:request-1',
+        kind: 'authorization.required',
+        source: 'connector',
+        originId: 'request-1',
+        title: 'Approval needed',
+        summary: 'A connector call needs your approval.',
+        createdAt: Date.now(),
+        actionState: 'pending'
+      }
+    ]
+  })
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+})
+
+afterEach(() => {
+  act(() => root.unmount())
+  container.remove()
+  vi.unstubAllGlobals()
+})
+
+const stubMobileViewport = (): void => {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn((query: string) => ({
+      matches: query === '(max-width: 47.999rem)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }))
+  )
+}
+
+describe('NotificationBell', () => {
+  it('renders a red-dot entry point with an accessible unread count and pending state', async () => {
+    await act(async () => root.render(<NotificationBell />))
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Messages, 1 unread"]')
+    expect(trigger).not.toBeNull()
+    expect(container.querySelector('.bg-destructive')).not.toBeNull()
+    await act(async () => trigger?.click())
+    expect(document.body.textContent).toContain('Approval needed')
+    expect(document.body.textContent).toContain('Needs approval')
+    expect(
+      document.body.querySelector('[aria-label="Message center"]')?.classList.contains('fixed')
+    ).toBe(true)
+  })
+
+  it('uses the success color for completed task icons', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item
+        ? [
+            {
+              ...item,
+              kind: 'task.completed',
+              title: 'Task completed',
+              actionState: undefined
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const icon = document.body.querySelector('.lucide-circle-check')
+    expect(icon?.parentElement?.classList.contains('text-success-000')).toBe(true)
+  })
+
+  it('distinguishes a rejected approval from a resolved one', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item ? [{ ...item, actionState: 'rejected' }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    expect(document.body.textContent).toContain('Rejected')
+    expect(document.body.textContent).not.toContain('Resolved')
+  })
+
+  it('labels pending agent questions as responses instead of approvals', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item
+        ? [
+            {
+              ...item,
+              kind: 'task.needs-attention',
+              source: 'agent-question',
+              title: 'Response needed'
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    expect(document.body.textContent).toContain('Needs response')
+    expect(document.body.textContent).not.toContain('Needs approval')
+  })
+
+  it('keeps opening passive and marks messages only through explicit actions', async () => {
+    const markRead = vi.fn(async () => undefined)
+    const markAllRead = vi.fn(async () => undefined)
+    useNotificationInboxStore.setState({ markRead, markAllRead })
+    await act(async () => root.render(<NotificationBell />))
+
+    expect(markRead).not.toHaveBeenCalled()
+    expect(markAllRead).not.toHaveBeenCalled()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    const item = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    await act(async () => item?.click())
+    expect(markRead).toHaveBeenCalledWith(['message-1'])
+
+    const markAll = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Mark all read')
+    )
+    await act(async () => markAll?.click())
+    expect(markAllRead).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['connector', undefined],
+    ['compute', undefined],
+    ['connector', 'session-1'],
+    ['compute', 'session-1']
+  ] as const)(
+    'reopens a pending %s approval with session %s from its in-memory broker request',
+    async (source, sessionId) => {
+      const connectorRequest = {
+        id: 'request-1',
+        connector: 'pubchem',
+        method: 'search',
+        argsPreview: '{}',
+        availableScopes: ['once']
+      } satisfies ConnectorApprovalRequest
+      const computeRequest = {
+        id: 'request-1',
+        provider_id: 'ssh:cluster',
+        provider_name: 'Cluster',
+        shape: 'direct_ssh',
+        intent: 'Run a command',
+        command_preview: 'pwd',
+        command_full: 'pwd'
+      } satisfies ComputeApprovalRequest
+      const replayConnectorApproval = vi.fn(async () => connectorRequest)
+      const replayApproval = vi.fn(async () => computeRequest)
+      const enqueueConnector = vi.fn()
+      const enqueueCompute = vi.fn()
+      const openSessionById = vi.fn()
+      window.api.settings.replayConnectorApproval = replayConnectorApproval
+      window.api.compute.replayApproval = replayApproval
+      useSettingsStore.setState({ enqueueApproval: enqueueConnector })
+      useComputeStore.setState({ enqueueApproval: enqueueCompute })
+      useNavigationStore.setState({ openSessionById })
+      const item = useNotificationInboxStore.getState().items[0]
+      useNotificationInboxStore.setState({
+        markRead: vi.fn(async () => undefined),
+        items: item ? [{ ...item, source, sessionId }] : []
+      })
+      await act(async () => root.render(<NotificationBell />))
+
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+      )
+      const message = [...document.body.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes('Approval needed')
+      )
+      await act(async () => message?.click())
+
+      if (source === 'connector') {
+        expect(replayConnectorApproval).toHaveBeenCalledWith('request-1')
+        expect(enqueueConnector).toHaveBeenCalledWith(connectorRequest)
+      } else {
+        expect(replayApproval).toHaveBeenCalledWith('request-1')
+        expect(enqueueCompute).toHaveBeenCalledWith(computeRequest)
+      }
+      if (sessionId) {
+        expect(openSessionById).toHaveBeenCalledWith(sessionId, 'notification')
+      } else {
+        expect(openSessionById).not.toHaveBeenCalled()
+      }
+      expect(container.querySelector('[aria-label="Message center"]')).toBeNull()
+    }
+  )
+
+  it('uses a bottom drawer on mobile and notifies its host when opening', async () => {
+    stubMobileViewport()
+    const onOpen = vi.fn()
+    await act(async () =>
+      root.render(<NotificationBell side="top" align="start" onOpen={onOpen} />)
+    )
+
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')
+    await act(async () => trigger?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[aria-label="Message center"]')
+    expect(dialog?.getAttribute('aria-modal')).toBe('true')
+    expect(dialog?.classList.contains('inset-x-0')).toBe(true)
+    expect(dialog?.classList.contains('bottom-0')).toBe(true)
+    expect(dialog?.classList.contains('h-[min(82dvh,760px)]')).toBe(true)
+    expect(dialog?.classList.contains('rounded-t-2xl')).toBe(true)
+    expect(dialog?.classList.contains('inset-0')).toBe(false)
+    expect(dialog?.hasAttribute('style')).toBe(false)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+
+    const close = document.body.querySelector<HTMLButtonElement>('[aria-label="Close messages"]')
+    expect(close).not.toBeNull()
+    await act(async () => close?.click())
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false')
+  })
+})

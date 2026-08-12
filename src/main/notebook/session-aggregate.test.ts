@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { NotebookCell } from '../../shared/notebook'
 
+import { createRootNotebookLane } from './lane-identity'
 import { NotebookSessionAggregate } from './session-aggregate'
 
 describe('NotebookSessionAggregate', () => {
@@ -14,6 +15,7 @@ describe('NotebookSessionAggregate', () => {
     const session = new NotebookSessionAggregate({
       sessionId: 'session-1',
       projectName: 'default-project',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       cwd: '/workspace/data',
       notebookSessionRoot: '/workspace',
       dataRoot: '/workspace/data',
@@ -60,6 +62,7 @@ describe('NotebookSessionAggregate', () => {
     const session = new NotebookSessionAggregate({
       sessionId: 'session-1',
       projectName: 'default-project',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       cwd: '/workspace/data',
       notebookSessionRoot: '/workspace',
       dataRoot: '/workspace/data',

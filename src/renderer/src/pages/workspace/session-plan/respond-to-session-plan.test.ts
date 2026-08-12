@@ -7,16 +7,49 @@ import { useSessionStore } from '@/stores/session-store'
 
 import { respondToSessionPlan } from './respond-to-session-plan'
 
-const projection = {
+const projection: ActivePlanProjection = {
+  artifactId: 'artifact-1',
   artifactVersionId: 'version-1',
-  revision: 3
-} as ActivePlanProjection
+  artifactChecksum: 'a'.repeat(64),
+  originatingPromptMessageId: 'prompt-1',
+  materializedAt: 2,
+  revision: 3,
+  approval: 'pending',
+  lifecycle: 'awaiting_approval',
+  requiresExplicitContinuation: false,
+  document: {
+    schema_version: 1,
+    task_summary: 'Prepare the publication package',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Evidence',
+            steps: [{ title: 'Inspect sources', description: 'Check every primary source.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['PDF report'],
+    feasibility: { confidence: 'high', rationale: 'All inputs are available.' }
+  },
+  stepStatuses: {},
+  stepStates: { 'Inspect sources': { status: 'not_started' } },
+  counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+}
 
 const approvedProjection = {
   ...projection,
   revision: 4,
   approval: 'approved',
   lifecycle: 'approved'
+} as ActivePlanProjection
+
+const queuedFeedbackProjection = {
+  ...projection,
+  revision: 4,
+  continuationState: 'queued'
 } as ActivePlanProjection
 
 const respondPlan = vi.fn()
@@ -71,6 +104,18 @@ describe('respondToSessionPlan', () => {
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(approvedProjection)
   })
 
+  it('preserves the authoritative response projection when refresh returns an older revision', async () => {
+    respondPlan.mockResolvedValue({ changed: true, projection: approvedProjection })
+    getPlanProjection.mockResolvedValue(projection)
+
+    await respondToSessionPlan(
+      { projectId: 'project-1', sessionId: 'session-1', projection },
+      'approved'
+    )
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(approvedProjection)
+  })
+
   it('projects returned feedback immediately as a standard user Message', async () => {
     respondPlan.mockResolvedValue({
       kind: 'feedback',
@@ -98,6 +143,46 @@ describe('respondToSessionPlan', () => {
         content: feedbackMessage.content
       })
     ])
+  })
+
+  it('projects returned feedback authority immediately without a projection refresh', async () => {
+    respondPlan.mockResolvedValue({
+      kind: 'feedback',
+      routeToInteractionId: 'interaction-1',
+      artifactVersionId: 'version-1',
+      text: feedbackMessage.content,
+      message: feedbackMessage,
+      continuationProjection: queuedFeedbackProjection
+    })
+
+    await respondToSessionPlan(
+      { projectId: 'project-1', sessionId: 'session-1', projection },
+      { feedback: feedbackMessage.content }
+    )
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(
+      queuedFeedbackProjection
+    )
+    expect(getPlanProjection).not.toHaveBeenCalled()
+  })
+
+  it('ignores incomplete feedback continuation projections with valid identity and revision', async () => {
+    respondPlan.mockResolvedValue({
+      kind: 'feedback',
+      routeToInteractionId: 'interaction-1',
+      artifactVersionId: 'version-1',
+      text: feedbackMessage.content,
+      message: feedbackMessage,
+      continuationProjection: { artifactVersionId: 'version-1', revision: 4 }
+    })
+
+    await respondToSessionPlan(
+      { projectId: 'project-1', sessionId: 'session-1', projection },
+      { feedback: feedbackMessage.content }
+    )
+
+    expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
+    expect(getPlanProjection).not.toHaveBeenCalled()
   })
 
   it('projects feedback optimistically when the adapter omits its Message payload', async () => {

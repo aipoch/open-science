@@ -32,6 +32,7 @@ export type SettingsConnectorsActions = {
   updateCustomServer: (request: UpdateCustomServerRequest) => Promise<void>
   authenticateCustomServer: (request: AuthenticateCustomServerRequest) => Promise<void>
   cancelCustomServerAuthentication: (request: AuthenticateCustomServerRequest) => Promise<void>
+  retryCustomServer: (id: string) => Promise<void>
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   removeCustomServer: (id: string) => Promise<void>
   enqueueApproval: (request: ConnectorApprovalRequest) => void
@@ -49,6 +50,8 @@ type SettingsConnectorsCommands = Pick<
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'retryCustomServer'
+  | 'onConnectorRuntimeChanged'
   | 'setCustomServerEnabled'
   | 'removeCustomServer'
   | 'respondConnectorApproval'
@@ -76,19 +79,54 @@ export const createSettingsConnectorsSlice = ({
   setState,
   getCommands
 }: SettingsConnectorsSliceOptions): SettingsConnectorsActions => {
+  let reconcileGeneration = 0
   const reconcile = async (command: () => Promise<SettingsConnectorsProjection>): Promise<void> => {
-    setState(await command())
+    const generation = ++reconcileGeneration
+    const projection = await command()
+    if (generation === reconcileGeneration) setState(projection)
+  }
+  let mutationsInFlight = 0
+  let runtimeRefreshPending = false
+  const reconcileRuntimeChange = (): void => {
+    if (mutationsInFlight > 0) {
+      runtimeRefreshPending = true
+      return
+    }
+    void reconcile(() => getCommands().listConnectors()).catch(() => undefined)
+  }
+  const runMutation = async (mutation: () => Promise<void>): Promise<void> => {
+    mutationsInFlight += 1
+    try {
+      await mutation()
+    } finally {
+      mutationsInFlight -= 1
+      if (mutationsInFlight === 0 && runtimeRefreshPending) {
+        runtimeRefreshPending = false
+        reconcileRuntimeChange()
+      }
+    }
+  }
+  const reconcileMutation = (command: () => Promise<SettingsConnectorsProjection>): Promise<void> =>
+    runMutation(() => reconcile(command))
+  let removeRuntimeChangedListener: (() => void) | undefined
+  const subscribeToRuntimeChanges = (): void => {
+    removeRuntimeChangedListener ??= getCommands().onConnectorRuntimeChanged(() => {
+      reconcileRuntimeChange()
+    })
   }
 
   return {
-    loadConnectors: () => reconcile(() => getCommands().listConnectors()),
+    loadConnectors: () => {
+      subscribeToRuntimeChanges()
+      return reconcile(() => getCommands().listConnectors())
+    },
     setConnectorEnabled: async (id, enabled) => {
       setState((state) => ({
         connectors: state.connectors.map((connector) =>
           connector.id === id ? { ...connector, enabled } : connector
         )
       }))
-      await reconcile(() => getCommands().setConnectorEnabled({ id, enabled }))
+      await reconcileMutation(() => getCommands().setConnectorEnabled({ id, enabled }))
     },
     setConnectorAutoAllow: async (id, autoAllow) => {
       setState((state) => ({
@@ -96,34 +134,38 @@ export const createSettingsConnectorsSlice = ({
           connector.id === id ? { ...connector, autoAllow } : connector
         )
       }))
-      await reconcile(() => getCommands().setConnectorAutoAllow({ id, autoAllow }))
+      await reconcileMutation(() => getCommands().setConnectorAutoAllow({ id, autoAllow }))
     },
     setToolPermission: async (toolId, permission) =>
       getCommands().setToolPermission({ toolId, permission }),
-    setNcbiCredentials: (request) => reconcile(() => getCommands().setNcbiCredentials(request)),
-    addCustomServer: (request) => reconcile(() => getCommands().addCustomServer(request)),
-    updateCustomServer: (request) => reconcile(() => getCommands().updateCustomServer(request)),
-    authenticateCustomServer: async (request) => {
-      try {
-        await reconcile(() => getCommands().authenticateCustomServer(request))
-      } catch (error) {
-        // Authentication can invalidate stale tokens before failing. Refresh the projection so the
-        // connector does not remain visibly "Connected" after main has cleared its credentials.
-        await reconcile(() => getCommands().listConnectors()).catch(() => undefined)
-        throw error
-      }
-    },
+    setNcbiCredentials: (request) =>
+      reconcileMutation(() => getCommands().setNcbiCredentials(request)),
+    addCustomServer: (request) => reconcileMutation(() => getCommands().addCustomServer(request)),
+    updateCustomServer: (request) =>
+      reconcileMutation(() => getCommands().updateCustomServer(request)),
+    authenticateCustomServer: (request) =>
+      runMutation(async () => {
+        try {
+          await reconcile(() => getCommands().authenticateCustomServer(request))
+        } catch (error) {
+          // Authentication can invalidate stale tokens before failing. Refresh the projection so the
+          // connector does not remain visibly "Connected" after main has cleared its credentials.
+          await reconcile(() => getCommands().listConnectors()).catch(() => undefined)
+          throw error
+        }
+      }),
     cancelCustomServerAuthentication: (request) =>
       getCommands().cancelCustomServerAuthentication(request),
+    retryCustomServer: (id) => reconcileMutation(() => getCommands().retryCustomServer({ id })),
     setCustomServerEnabled: async (id, enabled) => {
       setState((state) => ({
         customServers: state.customServers.map((server) =>
           server.id === id ? { ...server, enabled } : server
         )
       }))
-      await reconcile(() => getCommands().setCustomServerEnabled({ id, enabled }))
+      await reconcileMutation(() => getCommands().setCustomServerEnabled({ id, enabled }))
     },
-    removeCustomServer: (id) => reconcile(() => getCommands().removeCustomServer({ id })),
+    removeCustomServer: (id) => reconcileMutation(() => getCommands().removeCustomServer({ id })),
     enqueueApproval: (request) => {
       setState((state) =>
         state.pendingApprovals.some(({ id }) => id === request.id)

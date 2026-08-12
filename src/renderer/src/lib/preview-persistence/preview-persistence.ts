@@ -17,12 +17,29 @@ const reportPersistenceError = (error: unknown): void => {
   console.warn('Preview persistence failed', error)
 }
 
-// Projects the live store slice down to its durable subset: panel state + opened file previews.
-// Runtime-only tool tabs (notebook, the Files tab) are dropped; they re-appear on demand.
+// Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
+// Subagents selection. Other tool tabs remain runtime-only and re-appear from their existing owners.
 const toPersistedPreviewState = (state: PreviewStoreState): PersistedPreviewState => ({
   version: PREVIEW_STATE_VERSION,
   panelState: state.panelState,
   activeItemId: state.activeItemId,
+  ...(() => {
+    const item = state.items.find(
+      (candidate) => candidate.type === 'tool' && candidate.toolKind === 'subagents'
+    )
+    return item?.type === 'tool' && item.selectedAgentFrameId
+      ? {
+          subagents: {
+            id: item.id,
+            sessionId: item.sessionId,
+            title: item.title,
+            type: 'tool' as const,
+            toolKind: 'subagents' as const,
+            selectedAgentFrameId: item.selectedAgentFrameId
+          }
+        }
+      : {}
+  })(),
   items: state.items
     .filter((item) => item.type === 'file')
     .map((item) => ({
@@ -68,32 +85,43 @@ const toRestoredSlice = (
   return {
     panelState: persisted.panelState,
     activeItemId: persisted.activeItemId,
-    items: persisted.items.map((item) => {
-      const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
-      const mimeType = upload?.mimeType ?? item.mimeType
-      const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
+    items: [
+      ...persisted.items.map((item) => {
+        const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
+        const mimeType = upload?.mimeType ?? item.mimeType
+        const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
 
-      return {
-        id: item.id,
-        sessionId: upload?.sessionId ?? item.sessionId,
-        title: item.title,
-        type: 'file' as const,
-        source: item.source as PreviewFileSource | undefined,
-        path: upload?.path ?? item.path,
-        // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
-        format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
-        name: item.name,
-        ...(mimeType ? { mimeType } : {}),
-        ...(upload?.size !== undefined || item.size !== undefined
-          ? { size: upload?.size ?? item.size }
-          : {}),
-        ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
-        ...(item.artifactId ? { artifactId: item.artifactId } : {}),
-        ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
-        ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
-        ...(item.originSession ? { originSession: item.originSession } : {})
-      }
-    })
+        return {
+          id: item.id,
+          sessionId: upload?.sessionId ?? item.sessionId,
+          title: item.title,
+          type: 'file' as const,
+          source: item.source as PreviewFileSource | undefined,
+          path: upload?.path ?? item.path,
+          // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
+          format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
+          name: item.name,
+          ...(mimeType ? { mimeType } : {}),
+          ...(upload?.size !== undefined || item.size !== undefined
+            ? { size: upload?.size ?? item.size }
+            : {}),
+          ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
+          ...(item.artifactId ? { artifactId: item.artifactId } : {}),
+          ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
+          ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
+          ...(item.originSession ? { originSession: item.originSession } : {})
+        }
+      }),
+      ...(persisted.subagents
+        ? [
+            {
+              ...persisted.subagents,
+              type: 'tool' as const,
+              toolKind: 'subagents' as const
+            }
+          ]
+        : [])
+    ]
   }
 }
 
@@ -157,20 +185,30 @@ export const usePreviewPersistence = (
     }
   }, [activeProjectId, isSessionPersistenceReady])
 
-  // Flush the active project and close its transient dialog when the workspace unmounts.
-  useEffect(
-    () => () => {
-      const state = usePreviewWorkbenchStore.getState()
+  // Write through workbench changes so a process-level restart cannot lose the selected Subagent
+  // Frame (or another durable preview change) before React gets an unmount opportunity.
+  useEffect(() => {
+    const unsubscribe = usePreviewWorkbenchStore.subscribe((state) => {
+      if (!state.activeProjectId) return
+      void window.api.preview
+        .save({
+          projectId: state.activeProjectId,
+          state: toPersistedPreviewState(state)
+        })
+        .catch(reportPersistenceError)
+    })
 
+    return () => {
+      unsubscribe()
+      const state = usePreviewWorkbenchStore.getState()
       if (state.activeProjectId) {
         void window.api.preview
           .save({ projectId: state.activeProjectId, state: toPersistedPreviewState(state) })
           .catch(reportPersistenceError)
       }
       state.closeFileDialog()
-    },
-    []
-  )
+    }
+  }, [])
 }
 
 export { toPersistedPreviewState, toRestoredSlice }

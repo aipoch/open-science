@@ -56,8 +56,8 @@ const seedConnectors = [
 const seedCustomServers = [
   {
     id: 'custom-server-uuid',
-    slug: 'my-mcp',
-    name: 'My MCP',
+    name: 'my-mcp',
+    displayName: 'My MCP',
     description: 'A local tool server',
     transport: 'stdio' as const,
     enabled: true,
@@ -79,6 +79,7 @@ beforeEach(() => {
     addCustomServer: vi.fn().mockResolvedValue(undefined),
     authenticateCustomServer: vi.fn().mockResolvedValue(undefined),
     cancelCustomServerAuthentication: vi.fn().mockResolvedValue(undefined),
+    retryCustomServer: vi.fn().mockResolvedValue(undefined),
     setCustomServerEnabled: vi.fn().mockResolvedValue(undefined),
     removeCustomServer: vi.fn().mockResolvedValue(undefined)
   })
@@ -294,10 +295,8 @@ describe('ConnectorsPanel (groups)', () => {
       await Promise.resolve()
     })
     expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('This Connector is used by 4 Specialists')
-    expect(document.body.textContent).toContain('Selected by legacy UUID')
+    expect(document.body.textContent).toContain('This Connector is used by 2 Specialists')
     expect(document.body.textContent).toContain('Selected by ID')
-    expect(document.body.textContent).toContain('Selected by legacy name')
     expect(document.body.textContent).toContain('Full access')
 
     const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -329,8 +328,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
-          slug: 'oauth-mcp',
-          name: 'OAuth MCP',
+          name: 'oauth-mcp',
+          displayName: 'OAuth MCP',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://mcp.example.test',
@@ -342,8 +341,12 @@ describe('ConnectorsPanel (groups)', () => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
     const waitingToggle = document.body.querySelector<HTMLButtonElement>('[aria-label="OAuth MCP"]')
-    expect(waitingToggle?.disabled).toBe(true)
+    expect(waitingToggle?.disabled).toBe(false)
+    expect(waitingToggle?.getAttribute('aria-disabled')).toBe('true')
+    expect(waitingToggle?.className).toContain('cursor-not-allowed')
     expect(waitingToggle?.getAttribute('data-state')).toBe('unchecked')
+    act(() => waitingToggle?.click())
+    expect(useSettingsStore.getState().setCustomServerEnabled).not.toHaveBeenCalled()
 
     await act(async () => {
       clickButtonByText('Sign in')
@@ -357,8 +360,8 @@ describe('ConnectorsPanel (groups)', () => {
         customServers: [
           {
             id: 'oauth-mcp',
-            slug: 'oauth-mcp',
-            name: 'OAuth MCP',
+            name: 'oauth-mcp',
+            displayName: 'OAuth MCP',
             transport: 'streamable_http',
             enabled: true,
             url: 'https://mcp.example.test',
@@ -372,15 +375,159 @@ describe('ConnectorsPanel (groups)', () => {
       '[aria-label="OAuth MCP"]'
     )
     expect(connectedToggle?.disabled).toBe(false)
+    expect(connectedToggle?.getAttribute('aria-disabled')).toBeNull()
     expect(connectedToggle?.getAttribute('data-state')).toBe('checked')
+
+    const connectedStatus = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.trim() === 'Connected')
+    expect(connectedStatus?.disabled).toBe(true)
+    act(() => connectedStatus?.click())
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledTimes(1)
   })
 
-  it('cancels a waiting OAuth sign-in and allows retry', async () => {
-    const rejectAuthentications: Array<(error: Error) => void> = []
+  it('shows an unavailable custom Connector and retries it in place', async () => {
+    let finishRetry!: () => void
+    const retryCustomServer = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRetry = resolve
+        })
+    )
+    useSettingsStore.setState({
+      retryCustomServer,
+      customServers: [
+        {
+          id: 'offline-mcp',
+          name: 'offline-mcp',
+          displayName: 'Offline MCP',
+          transport: 'stdio',
+          enabled: true,
+          command: 'mcp',
+          availability: 'unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    expect(document.body.textContent).toContain('Unavailable')
+    const unavailableStatus = Array.from(document.body.querySelectorAll('span')).find(
+      (candidate) => candidate.textContent === 'Unavailable'
+    )
+    expect(unavailableStatus?.className).toContain('text-destructive')
+    act(() => clickButtonByText('Retry'))
+    expect(retryCustomServer).toHaveBeenCalledWith('offline-mcp')
+    expect(document.body.textContent).toContain('Checking…')
+
+    await act(async () => finishRetry())
+  })
+
+  it('directs invalid custom Connector configurations to Edit without offering Retry', () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'invalid-mcp',
+          name: 'invalid-mcp',
+          displayName: 'Invalid MCP',
+          transport: 'stdio',
+          enabled: false,
+          availability: 'unavailable'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+
+    expect(document.body.textContent).toContain('Unavailable')
+    expect(
+      Array.from(document.body.querySelectorAll('button')).some(
+        (button) => button.textContent === 'Retry'
+      )
+    ).toBe(false)
+
+    const edit = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit Invalid MCP"]')
+    act(() => edit?.click())
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'invalid-mcp' })
+  })
+
+  it('shows checking while background discovery is still pending', () => {
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'checking-mcp',
+          name: 'checking-mcp',
+          displayName: 'Checking MCP',
+          transport: 'stdio',
+          enabled: true,
+          command: 'mcp',
+          checking: true
+        }
+      ]
+    })
+
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    expect(document.body.textContent).toContain('Checking…')
+    expect(document.body.textContent).not.toContain('Connected')
+  })
+
+  it('offers sign-in again when a stored OAuth token is rejected at runtime', async () => {
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'expired-oauth',
+          name: 'expired-oauth',
+          displayName: 'Expired OAuth',
+          transport: 'streamable_http',
+          enabled: true,
+          url: 'https://mcp.example.test',
+          oauth: { hasTokens: true },
+          availability: 'unauthenticated'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+
+    expect(document.body.textContent).toContain('Sign-in required')
+    const expiredToggle = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Expired OAuth"]'
+    )
+    expect(expiredToggle?.getAttribute('data-state')).toBe('checked')
+    expect(expiredToggle?.getAttribute('aria-disabled')).toBeNull()
+    await act(async () => clickButtonByText('Retry'))
+    expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
+      id: 'expired-oauth'
+    })
+  })
+
+  it('offers authentication setup when a remote Connector has no OAuth configuration', () => {
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({
+      customServers: [
+        {
+          id: 'anonymous-remote',
+          name: 'anonymous-remote',
+          displayName: 'Anonymous Remote',
+          transport: 'streamable_http',
+          enabled: true,
+          url: 'https://mcp.example.test',
+          availability: 'unauthenticated'
+        }
+      ]
+    })
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+
+    expect(document.body.textContent).toContain('Sign-in required')
+    act(() => clickButtonByText('Configure'))
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'anonymous-remote' })
+  })
+
+  it('keeps a waiting OAuth sign-in disabled until it settles', async () => {
+    let finishAuthentication!: () => void
     const authenticateCustomServer = vi.fn(
       () =>
-        new Promise<void>((_resolve, reject) => {
-          rejectAuthentications.push(reject)
+        new Promise<void>((resolve) => {
+          finishAuthentication = resolve
         })
     )
     useSettingsStore.setState({
@@ -389,8 +536,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
-          slug: 'oauth-mcp',
-          name: 'OAuth MCP',
+          name: 'oauth-mcp',
+          displayName: 'OAuth MCP',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://mcp.example.test',
@@ -403,40 +550,33 @@ describe('ConnectorsPanel (groups)', () => {
     })
 
     clickButtonByText('Sign in')
-    expect(document.body.textContent).toContain('Cancel')
+    const connecting = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Connecting…'
+    )
+    expect(connecting?.disabled).toBe(true)
+    expect(document.body.textContent).not.toContain('Cancel')
+    act(() => connecting?.click())
+    expect(authenticateCustomServer).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().cancelCustomServerAuthentication).not.toHaveBeenCalled()
 
-    await act(async () => clickButtonByText('Cancel'))
-
-    expect(useSettingsStore.getState().cancelCustomServerAuthentication).toHaveBeenCalledWith({
-      id: 'oauth-mcp'
-    })
-    expect(document.body.textContent).toContain('Sign in')
-
-    clickButtonByText('Sign in')
-    expect(authenticateCustomServer).toHaveBeenCalledTimes(2)
-
-    await act(async () => rejectAuthentications[0](new Error('Authorization denied')))
-    expect(document.body.textContent).not.toContain('Authorization denied')
-    expect(useSettingsStore.getState().loadConnectors).toHaveBeenCalledTimes(2)
+    await act(async () => finishAuthentication())
   })
 
-  it('keeps independent cancel controls for concurrent OAuth sign-ins', async () => {
-    const rejectAuthentications = new Map<string, (error: Error) => void>()
+  it('keeps concurrent OAuth sign-ins independently disabled', async () => {
+    const finishAuthentications = new Map<string, () => void>()
     const authenticateCustomServer = vi.fn(
       ({ id }: { id: string }) =>
-        new Promise<void>((_resolve, reject) => {
-          rejectAuthentications.set(id, reject)
+        new Promise<void>((resolve) => {
+          finishAuthentications.set(id, resolve)
         })
     )
-    const cancelCustomServerAuthentication = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
       authenticateCustomServer,
-      cancelCustomServerAuthentication,
       customServers: [
         {
           id: 'oauth-a',
-          slug: 'oauth-a',
-          name: 'OAuth A',
+          name: 'oauth-a',
+          displayName: 'OAuth A',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://a.example.test',
@@ -444,8 +584,8 @@ describe('ConnectorsPanel (groups)', () => {
         },
         {
           id: 'oauth-b',
-          slug: 'oauth-b',
-          name: 'OAuth B',
+          name: 'oauth-b',
+          displayName: 'OAuth B',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://b.example.test',
@@ -467,17 +607,14 @@ describe('ConnectorsPanel (groups)', () => {
 
     act(() => clickRowAction('OAuth A', 'Sign in'))
     act(() => clickRowAction('OAuth B', 'Sign in'))
-    expect(row('OAuth A')?.textContent).toContain('Cancel')
-    expect(row('OAuth B')?.textContent).toContain('Cancel')
+    expect(row('OAuth A')?.textContent).toContain('Connecting…')
+    expect(row('OAuth B')?.textContent).toContain('Connecting…')
 
-    await act(async () => clickRowAction('OAuth A', 'Cancel'))
-    expect(cancelCustomServerAuthentication).toHaveBeenCalledWith({ id: 'oauth-a' })
+    await act(async () => finishAuthentications.get('oauth-a')?.())
     expect(row('OAuth A')?.textContent).toContain('Sign in')
-    expect(row('OAuth B')?.textContent).toContain('Cancel')
+    expect(row('OAuth B')?.textContent).toContain('Connecting…')
 
-    await act(async () => rejectAuthentications.get('oauth-a')?.(new Error('cancelled')))
-    await act(async () => clickRowAction('OAuth B', 'Cancel'))
-    await act(async () => rejectAuthentications.get('oauth-b')?.(new Error('cancelled')))
+    await act(async () => finishAuthentications.get('oauth-b')?.())
   })
 
   it('uses the Settings danger banner for OAuth errors', async () => {
@@ -486,8 +623,8 @@ describe('ConnectorsPanel (groups)', () => {
       customServers: [
         {
           id: 'oauth-mcp',
-          slug: 'oauth-mcp',
-          name: 'OAuth MCP',
+          name: 'oauth-mcp',
+          displayName: 'OAuth MCP',
           transport: 'streamable_http',
           enabled: false,
           url: 'https://mcp.example.test',

@@ -1,6 +1,6 @@
 import { readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
   AgentHomeSkillRef,
@@ -15,6 +15,7 @@ import type {
   ImportSkillZipBatchRequest,
   ImportSkillZipBatchResult,
   ImportSkillZipRequest,
+  GitHubTokenStatus,
   PreviewGitHubSkillRequest,
   PreviewAgentHomeSkillRequest,
   PreviewSkillZipRequest,
@@ -31,15 +32,19 @@ import type {
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
+  createAuthenticatedGitHubFetch,
+  isGitHubRateLimitResponse,
   parseGitHubRepo,
   parseGitHubSkillUrl,
-  searchGitHubSkillRepositories
+  searchGitHubSkillRepositories,
+  type FetchLike
 } from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
 import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { readSkillFile } from '../skills/skill-files'
+import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import {
   provisionAppClaudeConfigDir,
@@ -47,6 +52,7 @@ import {
 } from './claude-config-provision'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
+import { encryptKey, maskKey, tryDecryptKey } from './crypto'
 
 type SkillCatalogEntry = {
   name: string
@@ -54,7 +60,10 @@ type SkillCatalogEntry = {
   path: string
   source?: 'connector'
 }
-type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path'> & { directory: string }
+type AdditionalSkillCatalogEntry = Omit<SkillCatalogEntry, 'path' | 'description'> & {
+  directory: string
+  description?: string
+}
 type AdditionalSkillCatalogEntries =
   | readonly AdditionalSkillCatalogEntry[]
   | ((
@@ -77,6 +86,7 @@ type SkillCatalogModuleOptions = {
   userAgentsDir?: string
   skillRegistry?: SkillRegistry
   userSkills?: UserSkillRepository
+  githubFetch?: FetchLike
 }
 
 // Owns the installed Skill catalog and its filesystem rules. SettingsService remains a compatibility
@@ -84,10 +94,57 @@ type SkillCatalogModuleOptions = {
 class SkillCatalogModule {
   private readonly skillRegistry: SkillRegistry
   private readonly userSkills: UserSkillRepository
+  private readonly githubFetch: FetchLike
 
   constructor(private readonly options: SkillCatalogModuleOptions) {
     this.skillRegistry = options.skillRegistry ?? new SkillRegistry()
     this.userSkills = options.userSkills ?? new UserSkillRepository(options.storageRoot)
+    this.githubFetch = options.githubFetch ?? netFetch
+  }
+
+  private async authenticatedGitHubFetch(): Promise<FetchLike> {
+    const settings = await this.options.repository.getSettings()
+    return createAuthenticatedGitHubFetch(this.githubFetch, tryDecryptKey(settings.githubTokenRef))
+  }
+
+  async getGitHubTokenStatus(): Promise<GitHubTokenStatus> {
+    const settings = await this.options.repository.getSettings()
+    const configured = Boolean(settings.githubTokenRef && tryDecryptKey(settings.githubTokenRef))
+    return {
+      configured,
+      ...(configured && settings.githubTokenMask ? { mask: settings.githubTokenMask } : {})
+    }
+  }
+
+  async saveGitHubToken(token: string): Promise<GitHubTokenStatus> {
+    const trimmed = token.trim()
+    const response = await createAuthenticatedGitHubFetch(this.githubFetch, trimmed)(
+      'https://api.github.com/rate_limit',
+      { headers: { 'User-Agent': 'open-science', Accept: 'application/vnd.github+json' } }
+    )
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('GitHub rejected this token. Check that it is valid and try again.')
+      }
+      if (isGitHubRateLimitResponse(response)) {
+        throw new Error('GitHub token verification was rate-limited. Wait a moment and try again.')
+      }
+      if (response.status === 403) {
+        throw new Error(
+          'GitHub forbids this token from accessing the API. Check its permissions and organization access, then try again.'
+        )
+      }
+      throw new Error(`GitHub token verification failed (${response.status}). Try again.`)
+    }
+
+    await this.options.repository.setGitHubToken(encryptKey(trimmed), maskKey(trimmed))
+    return this.getGitHubTokenStatus()
+  }
+
+  async removeGitHubToken(): Promise<GitHubTokenStatus> {
+    await this.options.repository.setGitHubToken(undefined, undefined)
+    return { configured: false }
   }
 
   private async catalog(): Promise<BundledSkill[]> {
@@ -95,9 +152,31 @@ class SkillCatalogModule {
     return [...featured, ...user]
   }
 
+  private async managedCatalog(): Promise<BundledSkill[]> {
+    return (await this.catalog()).filter((skill) => skill.exposure !== 'internal')
+  }
+
+  // Main-process adapter for host.skills. This intentionally includes internal bundled Skills so
+  // /Customize can load skill-creator, while user-facing projections below use managedCatalog().
+  async listHostSkills(): Promise<BundledSkill[]> {
+    return this.catalog()
+  }
+
+  async withHostSkillRead<T>(
+    id: string,
+    read: (skill: BundledSkill) => Promise<T>
+  ): Promise<T | undefined> {
+    const bundled = (await this.skillRegistry.list()).find((skill) => skill.id === id)
+    return bundled ? read(bundled) : this.userSkills.withSkillReadLock(id, read)
+  }
+
+  async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {
+    return this.userSkills.publishPersonalDirectory(name, sourcePath, overwrite)
+  }
+
   async listSkills(): Promise<SkillView[]> {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
@@ -116,14 +195,14 @@ class SkillCatalogModule {
     }>
   > {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const disabled = new Set(settings.disabledSkillIds ?? [])
     return skills.map((skill) => ({
       id: skill.id,
-      frameworkName: skill.source === 'featured' ? skill.id : skill.name,
-      displayName: skill.name,
+      frameworkName: skill.name,
+      displayName: skill.displayName,
       source: skill.source,
       mainEnabled: !disabled.has(skill.id),
       // Catalog entries are installed skills, so they resolve to a present entry at dispatch time.
@@ -134,16 +213,12 @@ class SkillCatalogModule {
 
   async skillsNeedingForceLoad(ids: string[]): Promise<string[]> {
     const disabled = new Set((await this.options.repository.getSettings()).disabledSkillIds ?? [])
-    return ids.filter((id) => disabled.has(id))
+    const managedIds = new Set((await this.managedCatalog()).map((skill) => skill.id))
+    return ids.filter((id) => managedIds.has(id) && disabled.has(id))
   }
 
   async skillNudgeNamesForIds(ids: string[]): Promise<string[]> {
-    const nameById = new Map(
-      (await this.catalog()).map((skill) => [
-        skill.id,
-        skill.source === 'featured' ? skill.id : skill.name
-      ])
-    )
+    const nameById = new Map((await this.managedCatalog()).map((skill) => [skill.id, skill.name]))
     return ids.map((id) => nameById.get(id)).filter((name): name is string => name !== undefined)
   }
 
@@ -157,7 +232,7 @@ class SkillCatalogModule {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
     const rootWithSep = realRoot.endsWith(sep) ? realRoot : `${realRoot}${sep}`
-    const byId = new Map((await this.catalog()).map((skill) => [skill.id, skill] as const))
+    const byId = new Map((await this.managedCatalog()).map((skill) => [skill.id, skill] as const))
     const descriptors: Array<{ name: string; path: string }> = []
     for (const id of [...new Set(ids)]) {
       const skill = byId.get(id)
@@ -166,7 +241,7 @@ class SkillCatalogModule {
       const realFile = await realpath(filePath).catch(() => undefined)
       if (!realFile || !realFile.startsWith(rootWithSep)) continue
       descriptors.push({
-        name: skill.source === 'featured' ? skill.id : skill.name,
+        name: skill.name,
         path: filePath
       })
     }
@@ -194,10 +269,10 @@ class SkillCatalogModule {
     const disabled = new Set(settings.disabledSkillIds ?? [])
     const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
-        .filter((skill) => !disabled.has(skill.id))
+        .filter((skill) => skill.exposure === 'internal' || !disabled.has(skill.id))
         .map((skill) => ({
           directory: `${OS_SKILL_PREFIX}${skill.id}`,
-          name: skill.source === 'featured' ? skill.id : skill.name,
+          name: skill.name,
           description: skill.description
         })),
       ...extensions
@@ -210,9 +285,22 @@ class SkillCatalogModule {
       const filePath = join(skillsRoot, item.directory, 'SKILL.md')
       const realFile = await realpath(filePath).catch(() => undefined)
       if (!realFile || !realFile.startsWith(rootWithSep)) continue
+      let description = item.description?.trim()
+      if (!description) {
+        const parsed = await readSkillFile(dirname(realFile)).catch(() => undefined)
+        if (
+          !parsed ||
+          parsed.fields.name !== item.name ||
+          (item.source !== undefined && parsed.fields.source !== item.source)
+        ) {
+          continue
+        }
+        description = parsed.fields.description?.trim()
+      }
+      if (!description) continue
       result.push({
         name: item.name,
-        description: item.description,
+        description,
         path: filePath,
         ...(item.source ? { source: item.source } : {})
       })
@@ -222,7 +310,7 @@ class SkillCatalogModule {
 
   async getSkillDetail(id: string): Promise<SkillDetailView> {
     const [skills, settings] = await Promise.all([
-      this.catalog(),
+      this.managedCatalog(),
       this.options.repository.getSettings()
     ])
     const skill = skills.find((entry) => entry.id === id)
@@ -238,19 +326,33 @@ class SkillCatalogModule {
     }
   }
 
+  async buildSkillExport(id: string): Promise<SkillExportArchive> {
+    if ((await this.skillRegistry.list()).some((entry) => entry.id === id)) {
+      throw new Error('Built-in Skills cannot be exported.')
+    }
+    const archive = await this.userSkills.withSkillReadLock(id, buildSkillExportArchive)
+    if (!archive) throw new Error(`Unknown skill: ${id}`)
+    return archive
+  }
+
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {
     await this.options.repository.setSkillEnabled(request.id, request.enabled)
     return this.listSkills()
   }
 
   async createSkill(request: CreateSkillRequest): Promise<SkillView[]> {
-    await this.userSkills.createPersonal(request, request.slug)
+    await this.userSkills.createPersonal(request)
     return this.listSkills()
   }
 
   async updateSkill(request: UpdateSkillRequest): Promise<SkillView[]> {
+    if ('name' in request) throw new Error('Skill name is immutable.')
+    const skill = (await this.managedCatalog()).find((entry) => entry.id === request.id)
+    if (!skill || skill.source !== 'personal') {
+      throw new Error(`Not a personal skill id: ${request.id}`)
+    }
     await this.userSkills.updatePersonal(request.id, {
-      name: request.name,
+      name: skill.name,
       description: request.description,
       body: request.body,
       metadata: request.metadata,
@@ -269,7 +371,10 @@ class SkillCatalogModule {
   }
 
   async importSkill(request: ImportSkillRequest): Promise<ImportSkillResult> {
-    const outcome = await this.userSkills.importFromGitHub(request.url, netFetch)
+    const outcome = await this.userSkills.importFromGitHub(
+      request.url,
+      await this.authenticatedGitHubFetch()
+    )
     return { ...outcome, skills: await this.listSkills() }
   }
 
@@ -317,7 +422,10 @@ class SkillCatalogModule {
   async previewGitHubSkill(request: PreviewGitHubSkillRequest): Promise<SkillImportPreviewContent> {
     const location = parseGitHubSkillUrl(request.url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
-    const preview = await this.userSkills.previewGitHubSkill(request.url, netFetch)
+    const preview = await this.userSkills.previewGitHubSkill(
+      request.url,
+      await this.authenticatedGitHubFetch()
+    )
     const suffix = location.path ? `/${location.path}` : ''
     const revision = location.ref ? `@${location.ref}` : ''
     return {
@@ -328,11 +436,16 @@ class SkillCatalogModule {
 
   async scanRepoSkills(request: ScanRepoRequest): Promise<ScanRepoResult> {
     if (parseGitHubRepo(request.repo)) {
-      return { skills: await this.userSkills.scanRepo(request.repo, netFetch) }
+      return {
+        skills: await this.userSkills.scanRepo(request.repo, await this.authenticatedGitHubFetch())
+      }
     }
     return {
       skills: [],
-      repositories: await searchGitHubSkillRepositories(request.repo, netFetch)
+      repositories: await searchGitHubSkillRepositories(
+        request.repo,
+        await this.authenticatedGitHubFetch()
+      )
     }
   }
 
@@ -657,7 +770,9 @@ class SkillCatalogModule {
     const disabled = new Set(disabledIds.filter((id) => !forcedIds.has(id)))
     await new ClaudeCodeSkillMaterializer().sync(
       configRoot,
-      (await this.catalog()).filter((skill) => !disabled.has(skill.id))
+      (await this.catalog()).filter(
+        (skill) => skill.exposure === 'internal' || !disabled.has(skill.id)
+      )
     )
   }
 
@@ -666,9 +781,13 @@ class SkillCatalogModule {
     disabledSkillIds: string[],
     modelConfig?: ClaudeRuntimeModelConfig | null
   ): Promise<void> {
+    const skills = await this.catalog()
+    const internalIds = new Set(
+      skills.filter((skill) => skill.exposure === 'internal').map((skill) => skill.id)
+    )
     await provisionAppClaudeConfigDir(configDir, {
-      skills: await this.catalog(),
-      disabledSkillIds,
+      skills,
+      disabledSkillIds: disabledSkillIds.filter((id) => !internalIds.has(id)),
       ...(modelConfig === undefined ? {} : { modelConfig })
     })
   }
@@ -697,6 +816,7 @@ class SkillCatalogModule {
     return {
       id: skill.id,
       name: skill.name,
+      displayName: skill.displayName,
       description: skill.description,
       source: skill.source,
       updatedAt: skill.updatedAt,

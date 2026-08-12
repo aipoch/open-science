@@ -89,8 +89,20 @@ Provide a prompt directly, read it from a UTF-8 file, or pipe it through stdin:
 ```bash
 open-science run --project "Systematic review" --prompt "Summarize the evidence" --wait
 open-science run --project "Systematic review" --prompt-file ./task.md --wait --json
+open-science run --project "Systematic review" --cwd ./research --prompt-file ./task.md --wait --json
 printf '%s\n' "Summarize the evidence" | open-science run --project "Systematic review" --wait --json
 ```
+
+`--cwd <path>` selects an externally owned working directory for the Session. The CLI resolves a
+relative path from the directory where the command is invoked. Open Science then resolves the real
+path, verifies that it exists, is a directory, and is readable and writable, and persists that
+canonical path on a newly created Session. Open Science does not take ownership of or remove an
+external working directory. Without `--cwd`, Open Science allocates its usual managed workspace.
+
+The working directory is a Session boundary, not a per-Run override. When `--session` and `--cwd`
+are used together, the requested path must resolve to the Session's recorded working directory. A
+different, missing, or otherwise invalid recorded directory is rejected; it is not migrated,
+replaced, or repaired by the Run request.
 
 Without `--wait`, the command returns as soon as the run starts. Use the returned `id` and `sessionId`
 to poll its state:
@@ -98,13 +110,17 @@ to poll its state:
 ```bash
 open-science run --project "Systematic review" --prompt-file ./task.md --json
 open-science run status <run-id> --json
+open-science run cancel <run-id> --json
 open-science session status <session-id> --json
 ```
 
 Use `--timeout-ms <milliseconds>` with `--wait` to bound how long the client waits. A timeout stops the
 CLI wait and returns exit code `1`; it does not cancel the run, which can still be inspected with
-`open-science run status <run-id>`. When the `ask` approval profile needs permission, human-readable
-output directs the user to approve the request in Open Science Desktop or the Web UI.
+`open-science run status <run-id>`. Add `--cancel-on-timeout` to explicitly cancel the server run after
+the timeout; the command still reports the original timeout and returns exit code `1`. Explicit
+cancellation waits for provider work and application finalization to drain, and preserves partial
+output and successfully finalized artifacts. When the `ask` approval profile needs permission,
+human-readable output directs the user to approve the request in Open Science Desktop or the Web UI.
 
 Pass an existing session ID to continue a conversation. Approval profiles are `ask`, `auto`, and
 `full`; `--skill` is repeatable:
@@ -128,6 +144,14 @@ The default approval profile is `ask`. Unattended workflows must explicitly use
 
 Use `--json` to emit one result. `--jsonl` requires `run --wait` and emits progress events followed by
 the final run object, one JSON value per line:
+
+Every Run object includes its effective `cwd`; progress events and Session summaries do not.
+
+The event stream includes `run.progress` phase changes and ten-second liveness heartbeats before the
+first visible provider output. Each progress payload includes `runId`, `sessionId`, `projectId`,
+`phase`, `timestamp`, `elapsedMs`, and `heartbeat`. Its timer starts after Task has prepared the
+Session and registered its Run; Session creation or resume time before registration is outside this
+stream.
 
 ```bash
 open-science run \

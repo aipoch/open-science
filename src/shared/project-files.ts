@@ -112,3 +112,44 @@ export type ProjectFilesChangedEvent = {
   sources: ProjectFileSource[]
   kind: 'upsert' | 'delete' | 'reset'
 }
+
+// Main-only read projection used by the session-bound JavaScript host API. Latest reads come from
+// ManagedFile; exact Version reads use the same source tables without exposing storage keys.
+export type HostArtifactCatalogItem = {
+  source: ProjectFileSource
+  sourceFileId: string
+  versionId: string
+  versionNumber?: number
+  checksum?: string
+  projectId: string
+  sessionId: string
+  filename: string
+  contentType?: string
+  sizeBytes: number
+  sortAtMs: number
+  createdAt?: string
+  sourceCreatedAt?: string
+  rootFrameId: string | null
+  agentFrameId?: string | null
+}
+
+export type HostArtifact = {
+  id: string
+  filename: string
+  content_type?: string
+  size_bytes: number
+  latest_version_id: string
+  checksum?: string
+  session_id: string
+  root_frame_id: string | null
+  is_user_upload: boolean
+  latest_version_created_at: string
+}
+
+export type HostArtifactsResult = {
+  count: number
+  project_id: string
+  truncated: boolean
+  next_cursor?: string
+  artifacts: HostArtifact[]
+}

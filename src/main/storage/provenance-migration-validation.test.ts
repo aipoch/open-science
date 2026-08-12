@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { validateProvenanceMigrationState } from './provenance-migration-validation'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
 let root: string
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex')
@@ -131,7 +131,7 @@ describe('validateProvenanceMigrationState', () => {
 
   it('accepts an internally consistent SQLite authority store', async () => {
     const client = createProjectDbClient(root)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.$disconnect()
 
     await expect(validateProvenanceMigrationState(root)).resolves.toBeUndefined()
@@ -145,7 +145,7 @@ describe('validateProvenanceMigrationState', () => {
       mkdir(dataRoot, { recursive: true })
     ])
     const client = createProjectDbClient(authorityRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.$disconnect()
     // A stray database under dataRoot is not authoritative and must never be copied or selected.
     await writeFile(join(dataRoot, 'open-science.db'), 'not the authority database')
@@ -155,7 +155,7 @@ describe('validateProvenanceMigrationState', () => {
 
   it('accepts an Upload input whose frozen name is the original pre-sanitized filename', async () => {
     const client = createProjectDbClient(root)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -270,7 +270,7 @@ describe('validateProvenanceMigrationState', () => {
       mkdir(dataRoot, { recursive: true })
     ])
     const client = createProjectDbClient(authorityRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -323,7 +323,7 @@ describe('validateProvenanceMigrationState', () => {
       mkdir(dataRoot, { recursive: true })
     ])
     const client = createProjectDbClient(authorityRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -371,7 +371,7 @@ describe('validateProvenanceMigrationState', () => {
       mkdir(dataRoot, { recursive: true })
     ])
     const client = createProjectDbClient(authorityRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     await client.fileOriginSession.create({
       data: { projectId: 'project-1', sessionId: 'session-1' }
     })
@@ -427,7 +427,7 @@ describe('validateProvenanceMigrationState', () => {
       mkdir(dataRoot, { recursive: true })
     ])
     const client = createProjectDbClient(authorityRoot)
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
     const scope = {
       turnMessageId: 'message-1',
       agentFrameId: 'agent-1',

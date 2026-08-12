@@ -39,6 +39,7 @@ type ConnectorIntegrationWorkflows = Pick<
   | 'updateCustomServer'
   | 'authenticateCustomServer'
   | 'cancelCustomServerAuthentication'
+  | 'retryCustomServer'
 >
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -150,11 +151,21 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>,
     OwnerResult<ConnectorIntegrationWorkflows, 'cancelCustomServerAuthentication'>
   >('settings:cancel-custom-server-authentication'),
+  retryCustomServer: defineApplicationCommand<
+    'settings:retry-custom-server',
+    OwnerArgs<ConnectorIntegrationWorkflows, 'retryCustomServer'>,
+    OwnerResult<ConnectorIntegrationWorkflows, 'retryCustomServer'>
+  >('settings:retry-custom-server'),
   respondConnectorApproval: defineApplicationCommand<
     'connectors:approval-respond',
     readonly [request: RespondApprovalRequest],
     ReturnType<ApprovalBroker['respond']>
   >('connectors:approval-respond'),
+  replayConnectorApproval: defineApplicationCommand<
+    'connectors:approval-replay',
+    readonly [id: string],
+    ReturnType<ApprovalBroker['getPending']>
+  >('connectors:approval-replay'),
   respondSkillImportApproval: defineApplicationCommand<
     'skills:conversation-import-respond',
     readonly [response: ConversationSkillImportApprovalResponse],
@@ -190,7 +201,8 @@ const settingsConnectorApplicationCommandGroup = defineApplicationCommandGroup(
     settingsIntegrationApplicationCommands.removeCustomServer,
     settingsIntegrationApplicationCommands.updateCustomServer,
     settingsIntegrationApplicationCommands.authenticateCustomServer,
-    settingsIntegrationApplicationCommands.cancelCustomServerAuthentication
+    settingsIntegrationApplicationCommands.cancelCustomServerAuthentication,
+    settingsIntegrationApplicationCommands.retryCustomServer
   ] as const
 )
 
@@ -198,6 +210,7 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
   'settings-approvals',
   [
     settingsIntegrationApplicationCommands.respondConnectorApproval,
+    settingsIntegrationApplicationCommands.replayConnectorApproval,
     settingsIntegrationApplicationCommands.respondSkillImportApproval,
     settingsIntegrationApplicationCommands.replayPendingSkillImportApprovals
   ] as const
@@ -206,7 +219,7 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
 type IntegrationSettingsApplicationCommandDependencies = Readonly<{
   skills: SkillIntegrationWorkflows
   connectors: ConnectorIntegrationWorkflows
-  connectorApprovals: Pick<ApprovalBroker, 'respond'>
+  connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'respond'>
   skillImportApprovals: Pick<SkillImportApprovalBroker, 'respond' | 'replayPending'>
 }>
 
@@ -254,6 +267,10 @@ const registerIntegrationSettingsApplicationCommands = (
       'settings:cancel-custom-server-authentication': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-custom-server-authentication')
         return dependencies.connectors.cancelCustomServerAuthentication(args[0])
+      },
+      'settings:retry-custom-server': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:retry-custom-server')
+        return dependencies.connectors.retryCustomServer(args[0])
       }
     })
     scope.registerGroup(settingsApprovalApplicationCommandGroup, {
@@ -262,6 +279,12 @@ const registerIntegrationSettingsApplicationCommands = (
           throw new Error('Only a current human caller can respond to connector approval requests.')
         }
         return dependencies.connectorApprovals.respond(args[0].id, args[0].decision)
+      },
+      'connectors:approval-replay': ({ args, callerContext }) => {
+        if (!canSatisfyHumanApproval(callerContext)) {
+          throw new Error('Only a current human caller can reopen connector approval requests.')
+        }
+        return dependencies.connectorApprovals.getPending(args[0])
       },
       'skills:conversation-import-respond': ({ args, callerContext }) => {
         if (!canSatisfyHumanApproval(callerContext)) {

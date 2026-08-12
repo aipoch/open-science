@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { NotebookRunRecord } from '../../shared/notebook'
 import { NotebookRunRepository, getNotebookSessionRoot } from './repository'
+import { createFrameNotebookLane, createRootNotebookLane } from './lane-identity'
 
 let storageRoot: string | undefined
 
@@ -20,6 +22,129 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('fails closed when a new run write omits its Frame lane', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+
+    await expect(
+      repository.loadOrCreate({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      } as never)
+    ).rejects.toThrow('Notebook writes require an explicit Frame lane.')
+  })
+
+  it('persists the explicit lane as the owner of every new Run', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane
+    })
+
+    const document = await repository.appendRun({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      run: {
+        runId: 'new-run',
+        cellId: 'cell-new-run',
+        source: 'agent',
+        kernelKind: 'python',
+        script: '1',
+        status: 'completed',
+        startedAt: 1,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [],
+        workingFiles: []
+      }
+    })
+
+    expect(document.runs[0]?.agentFrameId).toBe('root-frame-session-1')
+  })
+
+  it('isolates Frame workspaces while root keeps the legacy Session work surface', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const rootLane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const childLane = createFrameNotebookLane('default-project', 'session-1', 'child-frame-1')
+
+    const rootDocument = await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane: rootLane
+    })
+    const childDocument = await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane: childLane
+    })
+
+    expect(rootDocument.notebookSessionRoot).toBe(
+      join(root, 'notebooks', 'default-project', 'session-1')
+    )
+    expect(childDocument.notebookSessionRoot).toBe(
+      join(root, 'notebooks', 'default-project', 'session-1', 'frames', 'child-frame-1')
+    )
+    expect(childDocument.dataRoot).not.toBe(rootDocument.dataRoot)
+  })
+
+  it('aggregates attributed Frame runs with legacy Unattributed Session runs', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const childLane = createFrameNotebookLane('default-project', 'session-1', 'child-frame-1')
+    const run = (runId: string, agentFrameId?: string): NotebookRunRecord => ({
+      runId,
+      cellId: `cell-${runId}`,
+      source: 'agent' as const,
+      kernelKind: 'python' as const,
+      script: '1',
+      status: 'completed' as const,
+      startedAt: runId === 'legacy' ? 1 : 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: [],
+      ...(agentFrameId ? { agentFrameId, runtimeSegmentId: 'runtime-child' } : {})
+    })
+
+    await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      workspaceCwd: '/workspace'
+    })
+    const legacyPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
+    const legacyDocument = JSON.parse(await readFile(legacyPath, 'utf8'))
+    legacyDocument.runs = [run('legacy')]
+    await writeFile(legacyPath, JSON.stringify(legacyDocument, null, 2), 'utf8')
+    await repository.loadOrCreate({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      lane: childLane
+    })
+    await repository.appendRun({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane: childLane,
+      run: run('child', 'child-frame-1')
+    })
+
+    const runs = await repository.readSessionRuns('default-project', 'session-1')
+    expect(runs.map(({ runId, agentFrameId }) => ({ runId, agentFrameId }))).toEqual([
+      { runId: 'legacy', agentFrameId: undefined },
+      { runId: 'child', agentFrameId: 'child-frame-1' }
+    ])
+  })
+
   it('creates run.json under the notebook session workspace with runtime and data roots', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
@@ -27,6 +152,7 @@ describe('notebook run repository', () => {
     const document = await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace',
       pythonPath: '/usr/bin/python3',
       kernelName: 'python3'
@@ -60,11 +186,13 @@ describe('notebook run repository', () => {
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace'
     })
     await repository.appendRun({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       run: {
         runId: 'run-1',
         cellId: 'cell-1',
@@ -129,11 +257,13 @@ describe('notebook run repository', () => {
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace'
     })
     await repository.appendRun({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       run: {
         runId: 'run-1',
         cellId: 'cell-1',
@@ -156,6 +286,7 @@ describe('notebook run repository', () => {
     const document = await repository.updateRun({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       run: {
         runId: 'run-1',
         cellId: 'cell-1',
@@ -196,6 +327,7 @@ describe('notebook run repository', () => {
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace'
     })
 
@@ -210,11 +342,13 @@ describe('notebook run repository', () => {
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace'
     })
     await repository.appendRun({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       run: {
         runId: 'run-1',
         cellId: 'cell-1',
@@ -234,6 +368,7 @@ describe('notebook run repository', () => {
     const restarting = await repository.updateKernelStatus({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       status: 'restarting'
     })
     expect(restarting.kernel.lastKnownStatus).toBe('restarting')
@@ -242,6 +377,7 @@ describe('notebook run repository', () => {
     const terminated = await repository.updateKernelStatus({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       status: 'terminated'
     })
     expect(terminated.kernel.lastKnownStatus).toBe('terminated')
@@ -255,6 +391,7 @@ describe('notebook run repository', () => {
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace'
     })
 
@@ -290,6 +427,7 @@ describe('notebook run repository', () => {
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace'
     })
 
@@ -329,6 +467,7 @@ describe('notebook run repository', () => {
       repository.loadOrCreate({
         projectName: 'default-project',
         sessionId: 'session/1',
+        lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
         workspaceCwd: '/workspace'
       })
     ).rejects.toThrow(/Invalid notebook path segment/)
@@ -341,12 +480,14 @@ describe('notebook run repository', () => {
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: '/workspace'
     })
     // A run left 'running' when the previous process died (no endedAt).
     await repository.appendRun({
       projectName: 'default-project',
       sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       run: {
         runId: 'run-1',
         cellId: 'cell-1',
@@ -362,7 +503,12 @@ describe('notebook run repository', () => {
       }
     })
 
-    const reconciled = await repository.reconcileInterruptedRuns('default-project', 'session-1')
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    const reconciled = await repository.reconcileInterruptedRuns(
+      'default-project',
+      'session-1',
+      lane
+    )
     expect(reconciled.runs[0]).toMatchObject({
       runId: 'run-1',
       status: 'interrupted',
@@ -374,7 +520,7 @@ describe('notebook run repository', () => {
     })
     expect(reconciled.runs[0].endedAt).toBeGreaterThanOrEqual(100)
     // A subsequent reconcile is a no-op (already interrupted).
-    const again = await repository.reconcileInterruptedRuns('default-project', 'session-1')
+    const again = await repository.reconcileInterruptedRuns('default-project', 'session-1', lane)
     expect(again.runs[0].status).toBe('interrupted')
   })
 })

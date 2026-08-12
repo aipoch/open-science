@@ -16,6 +16,7 @@ import { GlobalSearchDialog } from './GlobalSearchDialog'
 
 let container: HTMLDivElement
 let root: Root
+let scrollIntoView: ReturnType<typeof vi.fn>
 
 const artifact = {
   id: 'artifact-1',
@@ -32,6 +33,11 @@ const artifact = {
 }
 
 beforeEach(() => {
+  scrollIntoView = vi.fn()
+  Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -122,6 +128,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  Reflect.deleteProperty(window.HTMLElement.prototype, 'scrollIntoView')
   vi.restoreAllMocks()
 })
 
@@ -196,6 +203,85 @@ describe('GlobalSearchDialog', () => {
       artifactId: 'artifact-1',
       projectId: 'project-a'
     })
+  })
+
+  it('waits for Artifact search before showing a complete keyword result set', async () => {
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+
+    const delayedResult = {
+      primary: { items: [artifact], totalCount: 1 },
+      other: [],
+      isIndexComplete: true
+    }
+    let resolveSearch!: (value: typeof delayedResult) => void
+    const pendingSearch = new Promise<typeof delayedResult>((resolve) => {
+      resolveSearch = resolve
+    })
+    vi.mocked(window.api.projectFiles.searchArtifacts).mockImplementationOnce(() => pendingSearch)
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value'
+    )?.set
+
+    await act(async () => {
+      valueSetter?.call(input, 'sin')
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Searching…')
+    expect(document.body.querySelector('[role="group"][aria-label="Sessions"]')).toBeNull()
+    expect(
+      document.body.querySelector('[role="option"][aria-selected="true"]')?.textContent
+    ).toContain('New session')
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 170))
+    })
+
+    expect(document.body.textContent).toContain('Searching…')
+    expect(document.body.querySelector('[role="group"][aria-label="Sessions"]')).toBeNull()
+    expect(
+      document.body.querySelector('[role="option"][aria-selected="true"]')?.textContent
+    ).toContain('New session')
+
+    await act(async () => {
+      resolveSearch(delayedResult)
+      await pendingSearch
+    })
+
+    const groupHeadings = [...document.body.querySelectorAll('[role="group"] h2')].map(
+      (heading) => heading.textContent
+    )
+    expect(groupHeadings.slice(0, 2)).toEqual(['Artifacts', 'Sessions'])
+  })
+
+  it('scrolls active results for keyboard navigation but not pointer hover', async () => {
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+    scrollIntoView.mockClear()
+
+    const sessionRow = document.body.querySelector<HTMLElement>(
+      '[role="group"][aria-label="Recent sessions"] [role="option"]'
+    )
+    act(() => sessionRow?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })))
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    const input = document.body.querySelector<HTMLInputElement>('input[role="combobox"]')
+    act(() =>
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+      )
+    )
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
   })
 
   it('keeps the result list scrollable and the shortcut footer outside the scroll viewport', async () => {
@@ -578,6 +664,41 @@ describe('GlobalSearchDialog', () => {
       view: 'home',
       pendingProjectCreation: true
     })
+  })
+
+  it('does not reload artifacts while terminal output streams', async () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'session-a'
+          ? {
+              ...session,
+              status: 'running',
+              activeRun: { promptMessageId: 'prompt-a', startedAt: 1 }
+            }
+          : session
+      )
+    }))
+    await act(async () => {
+      root.render(<GlobalSearchDialog open onOpenChange={vi.fn()} isSessionPersistenceReady />)
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+    })
+    const searchArtifacts = vi.mocked(window.api.projectFiles.searchArtifacts)
+    const initialCallCount = searchArtifacts.mock.calls.length
+
+    await act(async () => {
+      useSessionStore.getState().upsertToolActivity({
+        sessionId: 'session-a',
+        toolCallId: 'terminal-a',
+        eventId: 'terminal-output-a',
+        title: 'python analysis.py',
+        status: 'in_progress',
+        terminalOutput: 'processing row 1\n'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(searchArtifacts).toHaveBeenCalledTimes(initialCallCount)
   })
 
   it('excludes individually archived sessions from artifact queries', async () => {

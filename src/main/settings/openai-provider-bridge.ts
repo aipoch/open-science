@@ -1,9 +1,14 @@
-import { randomBytes } from 'node:crypto'
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-const MAX_REQUEST_BYTES = 64 * 1024 * 1024
+import {
+  ProviderLoopbackHttpHost,
+  ProviderLoopbackRequestError,
+  writeProviderLoopbackJson as json,
+  type ProviderLoopbackHttpRequest
+} from './provider-loopback-http-host'
+
 const WIRE_PATH = {
   'chat-completions': '/v1/chat/completions',
   responses: '/v1/responses'
@@ -35,31 +40,7 @@ export type OpenAiProviderBridgeConnection = Readonly<{
   token: string
 }>
 
-const json = (response: ServerResponse, status: number, body: unknown): void => {
-  response.writeHead(status, { 'content-type': 'application/json' })
-  response.end(JSON.stringify(body))
-}
-
-const readBody = (request: IncomingMessage): Promise<Buffer> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    let size = 0
-    request.on('data', (chunk: Buffer | string) => {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      size += buffer.length
-      if (size > MAX_REQUEST_BYTES) {
-        reject(new Error('OpenAI bridge request exceeds the size limit.'))
-        request.destroy()
-        return
-      }
-      chunks.push(buffer)
-    })
-    request.once('end', () => resolve(Buffer.concat(chunks)))
-    request.once('error', reject)
-    request.once('aborted', () => reject(new Error('OpenAI bridge request was aborted.')))
-  })
-
-const requestHeaders = (request: IncomingMessage, key?: string): Headers => {
+const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Headers => {
   const headers = new Headers()
   for (const [name, value] of Object.entries(request.headers)) {
     const normalized = name.toLowerCase()
@@ -91,9 +72,8 @@ const copyResponseHeaders = (source: Headers, response: ServerResponse): void =>
 export class OpenAiProviderBridge {
   private readonly targets: ReadonlyMap<string, OpenAiProviderBridgeTarget>
   private readonly wire: OpenAiProviderBridgeTarget['wire']
+  private readonly host: ProviderLoopbackHttpHost<OpenAiProviderBridgeConnection>
   private target: OpenAiProviderBridgeTarget
-  private server: Server | undefined
-  private connection: OpenAiProviderBridgeConnection | undefined
 
   constructor(targets: readonly OpenAiProviderBridgeTarget[], initialTargetId: string) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
@@ -101,6 +81,28 @@ export class OpenAiProviderBridge {
     if (!initial) throw new Error('The initial OpenAI bridge target is not registered.')
     this.target = initial
     this.wire = initial.wire
+    this.host = new ProviderLoopbackHttpHost({
+      credentialMode: 'bearer-or-api-key',
+      createConnection: (origin, token) => Object.freeze({ baseUrl: origin, token }),
+      onUnauthorized: (response) =>
+        json(response, 401, {
+          error: { type: 'authentication_error', message: 'Unauthorized' }
+        }),
+      onError: (error, response) => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+        const requestError = error instanceof ProviderLoopbackRequestError
+        json(response, requestError ? 400 : 502, {
+          error: {
+            type: requestError ? 'invalid_request_error' : 'api_error',
+            message: error instanceof Error ? error.message : 'OpenAI provider request failed.'
+          }
+        })
+      },
+      handle: (request, response) => this.handle(request, response)
+    })
   }
 
   setTarget(targetId: string): boolean {
@@ -111,68 +113,17 @@ export class OpenAiProviderBridge {
   }
 
   async start(): Promise<OpenAiProviderBridgeConnection> {
-    if (this.connection) return this.connection
-    const token = randomBytes(24).toString('hex')
-    const server = createServer((request, response) => {
-      void this.handle(request, response, token).catch((error: unknown) => {
-        if (response.destroyed || response.writableEnded) return
-        if (response.headersSent) {
-          response.destroy(error instanceof Error ? error : undefined)
-          return
-        }
-        json(response, 502, {
-          error: {
-            type: 'api_error',
-            message: error instanceof Error ? error.message : 'OpenAI provider request failed.'
-          }
-        })
-      })
-    })
-    this.server = server
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once('error', reject)
-        server.listen(0, '127.0.0.1', resolve)
-      })
-      server.unref()
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        throw new Error('OpenAI provider bridge did not bind a port.')
-      }
-      this.connection = Object.freeze({
-        baseUrl: `http://127.0.0.1:${address.port}`,
-        token
-      })
-      return this.connection
-    } catch (error) {
-      await this.close().catch(() => undefined)
-      throw error
-    }
+    return this.host.start()
   }
 
   async close(): Promise<void> {
-    const server = this.server
-    this.server = undefined
-    this.connection = undefined
-    if (!server) return
-    const closing = new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve()))
-    )
-    server.closeAllConnections()
-    await closing
+    await this.host.close()
   }
 
   private async handle(
-    request: IncomingMessage,
-    response: ServerResponse,
-    token: string
+    request: ProviderLoopbackHttpRequest,
+    response: ServerResponse
   ): Promise<void> {
-    const authorization = request.headers.authorization
-    const apiKey = request.headers['x-api-key']
-    if (authorization !== `Bearer ${token}` && apiKey !== token) {
-      json(response, 401, { error: { type: 'authentication_error', message: 'Unauthorized' } })
-      return
-    }
     if (request.method !== 'POST') {
       json(response, 405, {
         error: { type: 'invalid_request_error', message: 'Method not allowed' }
@@ -180,38 +131,27 @@ export class OpenAiProviderBridge {
       return
     }
 
-    const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
+    const requestUrl = request.url
     if (requestUrl.pathname !== WIRE_PATH[this.wire]) {
       json(response, 404, { error: { type: 'not_found_error', message: 'Not found' } })
       return
     }
 
-    const rawBody = await readBody(request)
-    const parsed = JSON.parse(rawBody.toString('utf8')) as unknown
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      json(response, 400, {
-        error: { type: 'invalid_request_error', message: 'Expected a JSON object request body.' }
-      })
-      return
-    }
+    const parsed = await request.readJsonObject()
 
     const target = this.target
     const endpoint = new URL(target.endpoint)
     if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
       throw new Error('The OpenAI provider target has no valid endpoint URL.')
     }
-    const body = JSON.stringify({ ...(parsed as Record<string, unknown>), model: target.model })
-    const controller = new AbortController()
-    response.once('close', () => {
-      if (!response.writableEnded) controller.abort()
-    })
+    const body = JSON.stringify({ ...parsed, model: target.model })
 
     const upstream = await fetch(endpoint, {
       method: 'POST',
       headers: requestHeaders(request, target.key),
       body,
       redirect: 'manual',
-      signal: controller.signal
+      signal: request.signal
     })
     response.statusCode = upstream.status
     response.statusMessage = upstream.statusText

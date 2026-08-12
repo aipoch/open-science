@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
+import { createRootNotebookLane } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
@@ -40,6 +41,7 @@ const session = (
   const value = new NotebookSessionAggregate({
     sessionId,
     projectName: 'project',
+    lane: createRootNotebookLane('project', sessionId, 'root-frame-' + sessionId),
     cwd: '/workspace',
     notebookSessionRoot: '/workspace',
     dataRoot: '/data',

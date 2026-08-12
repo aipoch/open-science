@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { NotebookPackageAdmittedTarget } from './package-admission'
+import { createRootNotebookLane } from './lane-identity'
 import {
   addRepairRequired,
   managedRepairRegistryKey,
@@ -50,6 +51,7 @@ const session = (
   const value = new NotebookSessionAggregate({
     sessionId,
     projectName: 'project',
+    lane: createRootNotebookLane('project', sessionId, 'root-frame-' + sessionId),
     cwd: '/workspace',
     notebookSessionRoot: '/workspace',
     dataRoot: '/data',

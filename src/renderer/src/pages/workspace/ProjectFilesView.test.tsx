@@ -9,6 +9,10 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import type { ComputeHost } from '../../../../shared/compute'
 import {
@@ -310,6 +314,10 @@ describe('ProjectFilesView', () => {
 
   beforeEach(() => {
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      setProjectFilesFilter: vi.fn()
+    } as unknown as typeof useSettingsStore extends { getState: () => infer S } ? S : never)
     projectFilesChangedListener = undefined
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -484,6 +492,55 @@ describe('ProjectFilesView', () => {
 
     expect(container.querySelector('[data-testid="files-view"]')).not.toBeNull()
     expect(container.textContent).toContain('No files yet')
+  })
+
+  it('keeps the files index stable while terminal output streams', async () => {
+    await renderView([
+      createSession({
+        id: 'session-1',
+        messages: [createMessage({ id: 'prompt-1', role: 'user' })],
+        activeRun: { promptMessageId: 'prompt-1', startedAt: 1710000001000 },
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: '/workspace/result.txt',
+            name: 'result.txt'
+          }
+        ]
+      })
+    ])
+    const { useSessionStore } = await import('@/stores/session-store')
+    const getOverview = vi.mocked(window.api.projectFiles.getOverview)
+    const listFiles = vi.mocked(window.api.projectFiles.listFiles)
+    const listArtifactGroups = vi.mocked(window.api.projectFiles.listArtifactGroups)
+    const initialCallCounts = {
+      overview: getOverview.mock.calls.length,
+      files: listFiles.mock.calls.length,
+      groups: listArtifactGroups.mock.calls.length
+    }
+
+    await act(async () => {
+      useSessionStore.getState().upsertToolActivity({
+        sessionId: 'session-1',
+        toolCallId: 'terminal-1',
+        eventId: 'terminal-output-1',
+        title: 'python analysis.py',
+        status: 'in_progress',
+        terminalOutput: 'processing row 1\n'
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect({
+      overview: getOverview.mock.calls.length,
+      files: listFiles.mock.calls.length,
+      groups: listArtifactGroups.mock.calls.length
+    }).toEqual(initialCallCounts)
+    expect(
+      container.querySelector('[aria-label="Preview generated file result.txt"]')
+    ).not.toBeNull()
   })
 
   it('hides archived session artifacts and their filter option', async () => {
@@ -1483,6 +1540,170 @@ describe('ProjectFilesView', () => {
     expect(container.querySelectorAll('[data-testid="project-files-end"]')).toHaveLength(1)
   })
 
+  it('advances group headers without loading their artifact pages until each section intersects', async () => {
+    const intersections = new Map<string, () => void>()
+    const observerOptions = new Map<string, IntersectionObserverInit | undefined>()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        private readonly callback: IntersectionObserverCallback
+        private readonly options: IntersectionObserverInit | undefined
+
+        constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+          this.callback = callback
+          this.options = options
+        }
+
+        observe = (target: Element): void => {
+          const testId = target.getAttribute('data-testid')
+          if (!testId) return
+
+          const observer = this as unknown as IntersectionObserver
+          intersections.set(testId, () =>
+            this.callback([{ isIntersecting: true } as IntersectionObserverEntry], observer)
+          )
+          observerOptions.set(testId, this.options)
+        }
+        disconnect = vi.fn()
+        unobserve = vi.fn()
+        takeRecords = (): IntersectionObserverEntry[] => []
+      }
+    )
+    const sessions = createArtifactSessions(11)
+    await renderView(sessions, false, () => {
+      vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
+        totalCount: 11,
+        uploadCount: 0,
+        artifactCount: 11,
+        artifactGroupCount: 11,
+        isIndexComplete: true
+      })
+      vi.mocked(window.api.projectFiles.listArtifactGroups).mockImplementation(async (request) => ({
+        items: (request.cursor ? sessions.slice(10) : sessions.slice(0, 10)).map((session) => ({
+          sessionId: session.id,
+          artifactCount: 1
+        })),
+        nextCursor: request.cursor ? undefined : 'groups-page-2',
+        totalCount: 11
+      }))
+      vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => ({
+        items:
+          request.collection.kind === 'sessionArtifacts'
+            ? [
+                {
+                  id: `artifact:${request.collection.sessionId}`,
+                  source: 'artifact',
+                  sourceFileId: `artifact:${request.collection.sessionId}`,
+                  projectId: request.projectId,
+                  sessionId: request.collection.sessionId,
+                  name: `${request.collection.sessionId}.txt`,
+                  path: `managed/${request.collection.sessionId}.txt`,
+                  mimeType: 'text/plain',
+                  size: 10,
+                  sortAtMs: 10
+                }
+              ]
+            : [],
+        totalCount: request.collection.kind === 'sessionArtifacts' ? 1 : 0
+      }))
+    })
+
+    expect(intersections.has('group-page-sentinel')).toBe(true)
+    expect(observerOptions.get('group-page-sentinel')).toEqual({ rootMargin: '160px 0px' })
+    expect(window.api.projectFiles.listFiles).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-11' }
+      })
+    )
+
+    await act(async () => {
+      intersections.get('group-page-sentinel')?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.textContent).toContain('Session 11')
+    expect(intersections.has('artifact-page-sentinel:session-11')).toBe(true)
+    expect(observerOptions.get('artifact-page-sentinel:session-11')).toEqual({
+      rootMargin: '160px 0px'
+    })
+    expect(window.api.projectFiles.listFiles).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        collection: { kind: 'sessionArtifacts', sessionId: 'session-11' }
+      })
+    )
+
+    await act(async () => {
+      intersections.get('artifact-page-sentinel:session-11')?.()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(window.api.projectFiles.listFiles).toHaveBeenCalledWith({
+      projectId: 'default',
+      collection: { kind: 'sessionArtifacts', sessionId: 'session-11' },
+      limit: 20
+    })
+    expect(container.textContent).toContain('session-11.txt')
+  })
+
+  it('shows a failed upload page and retries it from the visible error state', async () => {
+    const upload = createUpload({
+      id: 'retry-upload',
+      name: 'retry.txt',
+      originalName: 'retry.txt',
+      mimeType: 'text/plain'
+    })
+    await renderView([
+      createSession({
+        messages: [createMessage({ uploads: [upload] })]
+      })
+    ])
+    const uploadItem: ProjectFileItem = {
+      id: 'upload:retry-upload',
+      source: 'upload',
+      sourceFileId: 'retry-upload',
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: 'retry.txt',
+      path: 'managed/retry.txt',
+      mimeType: 'text/plain',
+      size: 10,
+      sortAtMs: 10
+    }
+    let attempts = 0
+    vi.mocked(window.api.projectFiles.listFiles).mockImplementation(async (request) => {
+      if (request.collection.kind !== 'uploads') return { items: [], totalCount: 0 }
+
+      attempts += 1
+      if (attempts === 1) throw new Error('Upload page unavailable')
+      return { items: [uploadItem], totalCount: 1 }
+    })
+
+    await act(async () => {
+      projectFilesChangedListener?.({
+        projectId: 'default',
+        sessionId: 'session-1',
+        sources: ['upload'],
+        kind: 'upsert'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(container.textContent).toContain('Upload page unavailable')
+    const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+
+    await act(async () => {
+      retry?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(attempts).toBe(2)
+    expect(container.textContent).not.toContain('Upload page unavailable')
+    expect(container.textContent).toContain('retry.txt')
+  })
+
   it('opens a filter menu with a "this computer" entry', async () => {
     await renderView([
       createSession({
@@ -1521,6 +1742,50 @@ describe('ProjectFilesView', () => {
     // localFs is absent in this environment, so the entry falls back to its default label.
     expect(document.body.textContent).toContain('This computer')
     expect(document.body.querySelector('[data-filter-id="all"] .lucide-boxes')).not.toBeNull()
+  })
+
+  it('selects an artifact source from the filter menu with the keyboard', async () => {
+    await renderView([
+      createSession({
+        title: 'Session A',
+        messages: [createMessage({ uploads: [createUpload({ originalName: 'keyboard.txt' })] })],
+        artifacts: [
+          {
+            id: 'artifact-1',
+            kind: 'managed-file',
+            path: 'managed/generated.txt',
+            name: 'generated.txt',
+            mimeType: 'text/plain'
+          }
+        ]
+      })
+    ])
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+
+    await act(async () => {
+      filterButton?.focus()
+      filterButton?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })
+      )
+      await Promise.resolve()
+    })
+
+    const uploadsOption = document.body.querySelector<HTMLElement>('[data-filter-id="uploads"]')
+    expect(uploadsOption).not.toBeNull()
+    await act(async () => {
+      uploadsOption?.focus()
+      uploadsOption?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(filterButton?.textContent).toContain('Your uploads')
+    expect(container.textContent).toContain('keyboard.txt')
+    expect(container.textContent).not.toContain('generated.txt')
+    expect(filterButton?.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('uses the global semantic menu surface and hover feedback for filter items', async () => {
@@ -3541,7 +3806,8 @@ describe('ProjectFilesView — Remote section in source dropdown', () => {
     useSettingsStore.setState({
       ...createInitialSettingsState(),
       openSettings: vi.fn(),
-      openSettingsToCompute: vi.fn()
+      openSettingsToCompute: vi.fn(),
+      setProjectFilesFilter: vi.fn()
     } as unknown as typeof useSettingsStore extends { getState: () => infer S } ? S : never)
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -3860,5 +4126,402 @@ describe('ProjectFilesView — Remote section in source dropdown', () => {
     })
 
     expect(openSettingsToCompute).toHaveBeenCalled()
+  })
+})
+
+describe('ProjectFilesView — granted local folders', () => {
+  let container: HTMLDivElement
+  let root: Root
+  let listDir: ReturnType<typeof vi.fn>
+  let grantRoot: ReturnType<typeof vi.fn>
+  let setGrantedRootAccess: ReturnType<typeof vi.fn>
+  let removeGrantedRoot: ReturnType<typeof vi.fn>
+  let setProjectFilesFilter: ReturnType<typeof vi.fn>
+
+  const grantedRoot = {
+    id: 'root-1',
+    path: '/Users/roxi/Projects',
+    name: 'Projects',
+    access: 'ro' as const
+  }
+
+  beforeEach(() => {
+    setProjectFilesFilter = vi.fn()
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useComputeStore.setState({ ...createInitialComputeState(), isLoaded: true })
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      openSettings: vi.fn(),
+      openSettingsToCompute: vi.fn(),
+      setProjectFilesFilter
+    } as unknown as typeof useSettingsStore extends { getState: () => infer S } ? S : never)
+    useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    listDir = vi.fn(async (path: string) => ({
+      entries:
+        path === '/Users/roxi'
+          ? [
+              { name: 'Projects', isDirectory: true, size: 0, mtimeMs: 1710000000000 },
+              { name: 'notes.md', isDirectory: false, size: 2048, mtimeMs: 1710000001000 }
+            ]
+          : [],
+      resolvedPath: path,
+      truncated: false
+    }))
+    grantRoot = vi.fn().mockResolvedValue([grantedRoot])
+    setGrantedRootAccess = vi.fn().mockResolvedValue([{ ...grantedRoot, access: 'rw' }])
+    removeGrantedRoot = vi.fn().mockResolvedValue([])
+    window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
+      previewResources: {
+        acquire: vi.fn().mockResolvedValue({
+          id: 'resource:test',
+          url: 'open-science-preview://resource/test',
+          size: 100,
+          mimeType: 'text/plain',
+          version: 1
+        }),
+        readRange: vi.fn(),
+        release: vi.fn().mockResolvedValue(undefined)
+      },
+      artifacts: {
+        readPreview: vi.fn().mockResolvedValue({
+          content: 'dGVzdA==',
+          encoding: 'base64',
+          size: 4,
+          truncated: false
+        })
+      },
+      uploads: {
+        readPreview: vi.fn().mockResolvedValue({
+          content: 'dGVzdA==',
+          encoding: 'base64',
+          size: 4,
+          truncated: false
+        })
+      },
+      compute: {
+        bookmarksGet: vi.fn().mockResolvedValue([]),
+        bookmarksSet: vi.fn().mockResolvedValue(undefined)
+      },
+      localFs: {
+        getRoots: vi.fn().mockResolvedValue({ home: '/Users/roxi', machineName: 'TychoStation' }),
+        listDir,
+        listGrantedRoots: vi.fn().mockResolvedValue([grantedRoot]),
+        grantRoot,
+        setGrantedRootAccess,
+        removeGrantedRoot
+      },
+      projectFiles: {
+        getOverview: vi.fn().mockResolvedValue({
+          totalCount: 0,
+          uploadCount: 0,
+          artifactCount: 0,
+          artifactGroupCount: 0,
+          isIndexComplete: true
+        }),
+        listFiles: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
+        listArtifactGroups: vi.fn().mockResolvedValue({ items: [], totalCount: 0 }),
+        repairIndex: vi.fn().mockResolvedValue(undefined),
+        onChanged: vi.fn(() => vi.fn())
+      }
+    } as unknown as Window['api']
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  const renderFilesView = async (): Promise<void> => {
+    const { useSessionStore } = await import('@/stores/session-store')
+    const { useNavigationStore } = await import('@/stores/navigation-store')
+    const { createInitialSessionState } = await import('@/stores/session-store')
+    const { ProjectFilesView } = await import('./ProjectFilesView')
+
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [] })
+    useNavigationStore.setState({ view: 'workspace', activeProjectId: 'default' })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<ProjectFilesView />)
+      await flushEffects()
+    })
+  }
+
+  // Lets in-flight API mock resolutions (roots fetch, granted-roots refresh) settle inside act.
+  const flushEffects = async (): Promise<void> => {
+    for (let index = 0; index < 6; index += 1) await Promise.resolve()
+  }
+
+  const openFilterMenu = async (): Promise<void> => {
+    const filterButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Filter project files"]'
+    )
+    await act(async () => {
+      filterButton?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      filterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushEffects()
+    })
+  }
+
+  const clickElement = async (element: Element | null | undefined): Promise<void> => {
+    await act(async () => {
+      element?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushEffects()
+    })
+  }
+
+  // Radix's submenu trigger opens on pointermove only when pointerType is 'mouse' (whenMouse
+  // guard); jsdom has no PointerEvent, so forge one from a MouseEvent.
+  const hoverElement = async (element: Element | null | undefined): Promise<void> => {
+    await act(async () => {
+      const event = new MouseEvent('pointermove', { bubbles: true })
+      Object.defineProperty(event, 'pointerType', { value: 'mouse' })
+      element?.dispatchEvent(event)
+      await flushEffects()
+    })
+  }
+
+  it('renders granted roots with an access badge and an enabled Add folder item', async () => {
+    await renderFilesView()
+    await openFilterMenu()
+
+    const row = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    expect(row?.textContent).toContain('Projects')
+    expect(row?.textContent).toContain('/Users/roxi/Projects')
+    expect(row?.textContent).toContain('ro')
+
+    const addItem = document.body.querySelector('[data-testid="add-local-folder"]')
+    expect(addItem?.textContent).toContain('Add folder…')
+    expect(addItem?.getAttribute('data-disabled')).toBeNull()
+    expect(document.body.textContent).not.toContain('Soon')
+  })
+
+  it('offers Allow writes and Remove access in the manage submenu', async () => {
+    await renderFilesView()
+    await openFilterMenu()
+
+    // The row itself is the trigger: hovering it opens the manage submenu.
+    const row = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    await hoverElement(row)
+    await vi.waitFor(
+      () => {
+        expect(document.body.textContent).toContain('Allow writes')
+      },
+      { timeout: 1000 }
+    )
+    expect(document.body.textContent).toContain('Remove access')
+
+    await clickElement(
+      document.body.querySelector('[data-testid="granted-root-allow-writes-root-1"]')
+    )
+    expect(setGrantedRootAccess).toHaveBeenCalledWith({ id: 'root-1', access: 'rw' })
+    expect(useGrantedFoldersStore.getState().roots[0]?.access).toBe('rw')
+
+    // The toggle flips to "Make read-only" once the root is rw.
+    await openFilterMenu()
+    const rowAgain = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    await hoverElement(rowAgain)
+    await vi.waitFor(
+      () => {
+        expect(document.body.textContent).toContain('Make read-only')
+      },
+      { timeout: 1000 }
+    )
+
+    await clickElement(document.body.querySelector('[data-testid="granted-root-remove-root-1"]'))
+    expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })
+    expect(useGrantedFoldersStore.getState().roots).toEqual([])
+  })
+
+  it('opens the manage submenu when the row itself is hovered', async () => {
+    await renderFilesView()
+    await openFilterMenu()
+
+    const row = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    await hoverElement(row)
+
+    // The submenu opens after the hover-intent delay, without touching the manage button.
+    await vi.waitFor(
+      () => {
+        expect(document.body.textContent).toContain('Allow writes')
+      },
+      { timeout: 1000 }
+    )
+  })
+
+  it('switches to the local browser at the granted path when a folder row is clicked', async () => {
+    await renderFilesView()
+    await openFilterMenu()
+
+    await clickElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+
+    expect(container.querySelector('[aria-label="Local file browser"]')).not.toBeNull()
+    expect(listDir).toHaveBeenCalledWith('/Users/roxi/Projects')
+    const address = container.querySelector<HTMLInputElement>('[aria-label="Directory path"]')
+    expect(address?.value).toBe('/Users/roxi/Projects')
+  })
+
+  it('grants a folder through the dialog and browses it', async () => {
+    useGrantedFoldersStore.setState({ roots: [], loaded: true })
+    vi.mocked(window.api.localFs.listGrantedRoots).mockResolvedValue([])
+
+    await renderFilesView()
+    await openFilterMenu()
+    await clickElement(document.body.querySelector('[data-testid="add-local-folder"]'))
+
+    // The dialog opens at home: subfolders listed, Grant disabled with the home hint.
+    expect(document.body.textContent).toContain('Grant folder access')
+    expect(document.body.textContent).toContain(
+      "Your home folder itself can't be granted — pick a subfolder."
+    )
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[data-testid="grant-access-grant"]')?.disabled
+    ).toBe(true)
+
+    await clickElement(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    await clickElement(document.body.querySelector('[data-testid="grant-access-grant"]'))
+
+    expect(grantRoot).toHaveBeenCalledWith({ path: '/Users/roxi/Projects', access: 'ro' })
+    // Dialog closed; the new root is selected in the local browser.
+    expect(document.body.textContent).not.toContain('Grant folder access')
+    expect(container.querySelector('[aria-label="Local file browser"]')).not.toBeNull()
+    expect(listDir).toHaveBeenCalledWith('/Users/roxi/Projects')
+    // And the store picked it up for the next menu open.
+    expect(useGrantedFoldersStore.getState().roots).toEqual([grantedRoot])
+  })
+
+  const filterButton = (): HTMLButtonElement | null =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Filter project files"]')
+
+  const machineRow = (): HTMLElement | undefined =>
+    Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')).find((el) =>
+      el.textContent?.includes('TychoStation')
+    )
+
+  it('moves the selected check between the machine row and a picked folder row', async () => {
+    await renderFilesView()
+    await openFilterMenu()
+
+    // Artifacts mode: neither local row is checked.
+    expect(machineRow()?.getAttribute('aria-checked')).toBe('false')
+    expect(document.body.querySelector('[data-testid="granted-root-check-root-1"]')).toBeNull()
+
+    // Picking the folder checks its row, unchecks the machine, and persists the choice.
+    await clickElement(document.body.querySelector('[data-testid="granted-root-root-1"]'))
+    expect(setProjectFilesFilter).toHaveBeenLastCalledWith({
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+    expect(filterButton()?.textContent).toContain('Projects')
+
+    await openFilterMenu()
+    const rootRow = document.body.querySelector('[data-testid="granted-root-root-1"]')
+    expect(rootRow?.getAttribute('aria-checked')).toBe('true')
+    expect(document.body.querySelector('[data-testid="granted-root-check-root-1"]')).not.toBeNull()
+    expect(machineRow()?.getAttribute('aria-checked')).toBe('false')
+
+    // Picking the machine moves the check back and persists the plain local mode.
+    await clickElement(machineRow())
+    expect(setProjectFilesFilter).toHaveBeenLastCalledWith({ sourceMode: 'local' })
+    expect(filterButton()?.textContent).toContain('TychoStation')
+
+    await openFilterMenu()
+    expect(machineRow()?.getAttribute('aria-checked')).toBe('true')
+    expect(document.body.querySelector('[data-testid="granted-root-check-root-1"]')).toBeNull()
+    expect(
+      document.body
+        .querySelector('[data-testid="granted-root-root-1"]')
+        ?.getAttribute('aria-checked')
+    ).toBe('false')
+
+    // Picking an artifact filter clears the local selection entirely.
+    await clickElement(document.body.querySelector('[data-filter-id="all"]'))
+    expect(setProjectFilesFilter).toHaveBeenLastCalledWith({
+      sourceMode: 'artifacts',
+      optionId: 'all'
+    })
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).not.toBeNull()
+
+    await openFilterMenu()
+    expect(machineRow()?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('restores a persisted artifact filter on mount without writing it back', async () => {
+    useSettingsStore.setState({
+      projectFilesFilter: { sourceMode: 'artifacts', optionId: 'uploads' }
+    })
+
+    await renderFilesView()
+
+    expect(filterButton()?.textContent).toContain('Your uploads')
+    expect(container.querySelector('[aria-label="Local file browser"]')).toBeNull()
+    expect(setProjectFilesFilter).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the default when a persisted artifact option no longer exists', async () => {
+    useSettingsStore.setState({
+      projectFilesFilter: { sourceMode: 'artifacts', optionId: 'session:gone' }
+    })
+
+    await renderFilesView()
+
+    expect(filterButton()?.textContent).toContain('Artifacts')
+    expect(container.querySelector('[data-testid="project-files-scroll"]')).not.toBeNull()
+  })
+
+  it('restores a persisted machine local mode on mount', async () => {
+    useSettingsStore.setState({
+      projectFilesFilter: { sourceMode: 'local' }
+    })
+
+    await renderFilesView()
+
+    expect(container.querySelector('[aria-label="Local file browser"]')).not.toBeNull()
+    expect(listDir).toHaveBeenLastCalledWith('/Users/roxi')
+    expect(filterButton()?.textContent).toContain('TychoStation')
+
+    await openFilterMenu()
+    expect(machineRow()?.getAttribute('aria-checked')).toBe('true')
+    expect(document.body.querySelector('[data-testid="granted-root-check-root-1"]')).toBeNull()
+  })
+
+  it('restores a persisted granted folder once the roots refresh confirms it', async () => {
+    useSettingsStore.setState({
+      projectFilesFilter: { sourceMode: 'local', localRootId: 'root-1' }
+    })
+
+    await renderFilesView()
+
+    expect(container.querySelector('[aria-label="Local file browser"]')).not.toBeNull()
+    expect(listDir).toHaveBeenLastCalledWith('/Users/roxi/Projects')
+    const address = container.querySelector<HTMLInputElement>('[aria-label="Directory path"]')
+    expect(address?.value).toBe('/Users/roxi/Projects')
+    expect(filterButton()?.textContent).toContain('Projects')
+
+    await openFilterMenu()
+    expect(document.body.querySelector('[data-testid="granted-root-check-root-1"]')).not.toBeNull()
+    expect(machineRow()?.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('degrades a revoked persisted folder to plain machine local mode', async () => {
+    useSettingsStore.setState({
+      projectFilesFilter: { sourceMode: 'local', localRootId: 'root-revoked' }
+    })
+
+    await renderFilesView()
+
+    expect(container.querySelector('[aria-label="Local file browser"]')).not.toBeNull()
+    expect(listDir).toHaveBeenLastCalledWith('/Users/roxi')
+    expect(filterButton()?.textContent).toContain('TychoStation')
+
+    await openFilterMenu()
+    expect(machineRow()?.getAttribute('aria-checked')).toBe('true')
+    expect(document.body.querySelector('[data-testid="granted-root-check-root-1"]')).toBeNull()
   })
 })

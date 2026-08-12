@@ -62,6 +62,39 @@ describe('ApprovalBroker', () => {
     await expect(decision).resolves.toBe('deny')
   })
 
+  it('pauses a Session timeout while Side chat owns the composer', async () => {
+    let now = 0
+    const timers: Array<{ fn: () => void; ms: number }> = []
+    const clearTimer = vi.fn()
+    const broker = new ApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      timeoutMs: 1_000,
+      now: () => now,
+      setTimer: (fn, ms) => {
+        timers.push({ fn, ms })
+        return timers.length as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer
+    })
+
+    const decision = broker.request({
+      connector: 'biomart',
+      method: 'get_data',
+      argsPreview: '{}',
+      sessionId: 'session-1'
+    })
+    now = 250
+    broker.pauseSession('session-1')
+    now = 5_000
+    broker.resumeSession('session-1')
+
+    expect(clearTimer).toHaveBeenCalledWith(1)
+    expect(timers.map(({ ms }) => ms)).toEqual([1_000, 750])
+    timers[1]?.fn()
+    await expect(decision).resolves.toBe('deny')
+  })
+
   it('ignores a response for an unknown or already-settled id', async () => {
     const timer = makeTimer()
     const broker = new ApprovalBroker({
@@ -76,6 +109,29 @@ describe('ApprovalBroker', () => {
     broker.respond('id-1', 'once') // no-op: already settled
     await expect(decision).resolves.toBe('deny')
     expect(() => broker.respond('nope', 'once')).not.toThrow()
+  })
+
+  it('exposes a pending request until it settles', async () => {
+    const timer = makeTimer()
+    const broker = new ApprovalBroker({
+      generateId: () => 'id-1',
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear
+    })
+
+    const decision = broker.request({ connector: 'biomart', method: 'get_data', argsPreview: '{}' })
+    expect(broker.getPending('id-1')).toEqual({
+      id: 'id-1',
+      connector: 'biomart',
+      method: 'get_data',
+      argsPreview: '{}',
+      availableScopes: ['once']
+    })
+
+    broker.respond('id-1', 'deny')
+    await decision
+    expect(broker.getPending('id-1')).toBeNull()
   })
 
   it('runs concurrent requests independently', async () => {
@@ -131,5 +187,32 @@ describe('ApprovalBroker', () => {
 
     broker.respond('id-1', 'global')
     await expect(decision).resolves.toBe('global')
+  })
+
+  it('reports allowed, denied, and timeout settlement states to durable notification adapters', async () => {
+    const timer = makeTimer()
+    const onSettled = vi.fn()
+    let sequence = 0
+    const broker = new ApprovalBroker({
+      generateId: () => `id-${++sequence}`,
+      broadcast: () => undefined,
+      setTimer: timer.set,
+      clearTimer: timer.clear,
+      onSettled
+    })
+
+    const responded = broker.request({ connector: 'x', method: 'one', argsPreview: '{}' })
+    broker.respond('id-1', 'once')
+    await responded
+    const denied = broker.request({ connector: 'x', method: 'two', argsPreview: '{}' })
+    broker.respond('id-2', 'deny')
+    await denied
+    const expired = broker.request({ connector: 'x', method: 'three', argsPreview: '{}' })
+    timer.fire()
+    await expired
+
+    expect(onSettled).toHaveBeenNthCalledWith(1, 'id-1', 'resolved')
+    expect(onSettled).toHaveBeenNthCalledWith(2, 'id-2', 'rejected')
+    expect(onSettled).toHaveBeenNthCalledWith(3, 'id-3', 'expired')
   })
 })

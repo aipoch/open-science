@@ -186,6 +186,7 @@ describe('session persistence IPC handlers', () => {
     const loadResult = { sessions: [session], manifest: { version: 1 as const } }
     const repository = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
+      loadOne: vi.fn().mockResolvedValue(session),
       saveSession: vi.fn().mockResolvedValue({ created: false, session }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -196,6 +197,13 @@ describe('session persistence IPC handlers', () => {
     expect(handlers).not.toHaveProperty('deleteProjectSessions')
 
     await expect(handlers.loadAll()).resolves.toBe(loadResult)
+    await expect(
+      handlers.loadOne({ projectId: 'project-a', sessionId: 'session-1' })
+    ).resolves.toBe(session)
+    expect(repository.loadOne).toHaveBeenCalledWith({
+      projectId: 'project-a',
+      sessionId: 'session-1'
+    })
 
     await handlers.saveSession(session)
     expect(repository.saveSession).toHaveBeenCalledWith(session)
@@ -219,6 +227,7 @@ describe('session persistence IPC handlers', () => {
   it('does not report a successful session deletion when the repository fails', async () => {
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
       saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn().mockRejectedValueOnce(new Error('repository failed')),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -239,6 +248,7 @@ describe('session persistence IPC handlers', () => {
     const order: string[] = []
     const repository = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
       saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn(async () => {
         order.push('session')
@@ -288,6 +298,7 @@ describe('session persistence IPC handlers', () => {
     const loadResult = { sessions: [session], manifest: { version: 1 as const } }
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
+      loadOne: vi.fn().mockResolvedValue(durableSession),
       saveSession: vi
         .fn()
         .mockResolvedValueOnce({ created: true, session: durableSession })
@@ -301,6 +312,7 @@ describe('session persistence IPC handlers', () => {
 
     expect([...ipcHandlers.keys()]).toEqual([
       'sessions:load-all',
+      'sessions:load-one',
       'sessions:save-session',
       'sessions:update-archive',
       'sessions:delete-session',
@@ -317,6 +329,9 @@ describe('session persistence IPC handlers', () => {
     const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
     const event = { sender: { id: 2 } }
     await expect(ipcHandlers.get('sessions:load-all')?.()).resolves.toBe(loadResult)
+    await expect(ipcHandlers.get('sessions:load-one')?.(event, deleteRequest)).resolves.toBe(
+      durableSession
+    )
     await expect(ipcHandlers.get('sessions:save-session')?.(event, session)).resolves.toBe(
       durableSession
     )
@@ -327,6 +342,7 @@ describe('session persistence IPC handlers', () => {
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
+    expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
     expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
     expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
@@ -350,12 +366,14 @@ describe('session persistence IPC handlers', () => {
     const loadResult = { sessions: [createSession()], manifest: { version: 1 as const } }
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
+      loadOne: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue(loadResult),
+      loadOne: vi.fn(),
       saveSession: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
@@ -369,16 +387,50 @@ describe('session persistence IPC handlers', () => {
     expect(repository.loadAll).not.toHaveBeenCalled()
   })
 
+  it('wakes Session-owned work only after the durable save boundary completes', async () => {
+    const session = createSession()
+    const order: string[] = []
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const injected: SessionPersistenceHandlers = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(async () => {
+        order.push('saved')
+        return { created: false, session }
+      }),
+      updateArchive: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const wake = vi.fn(async () => {
+      order.push('woken')
+    })
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), injected, wake)
+
+    await ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, session)
+
+    await vi.waitFor(() => expect(order).toEqual(['saved', 'woken']))
+    expect(wake).toHaveBeenCalledWith(session)
+  })
+
   it('preserves an injected handler identity when registration fails', async () => {
     const failure = new Error('registration failed')
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn(),
+      loadOne: vi.fn(),
       saveSession: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
       saveSession: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
@@ -401,6 +453,7 @@ describe('session persistence IPC handlers', () => {
   it('rejects session persistence while a data-root migration is pending', async () => {
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
       saveSession: vi.fn().mockResolvedValue({ created: false, session: createSession() }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -421,6 +474,7 @@ describe('session persistence IPC handlers', () => {
     const failure = new Error('durable projection unavailable')
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
       saveSession: vi.fn().mockRejectedValue(failure),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
@@ -441,6 +495,7 @@ describe('session persistence IPC handlers', () => {
     })
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
       saveSession: vi.fn(async () => {
         await savePending
         return { created: false, session }
@@ -463,6 +518,7 @@ describe('session persistence IPC handlers', () => {
     let durableReadable = false
     const repository: SessionPersistenceBackend = {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
+      loadOne: vi.fn(),
       saveSession: vi.fn(async () => {
         durableReadable = true
         return { created: true, session }

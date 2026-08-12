@@ -1,8 +1,21 @@
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
 import type { CliLauncherStatus } from '../shared/cli'
-import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
+import type {
+  GrantLocalRootRequest,
+  GrantedLocalRoot,
+  LocalDirListing,
+  LocalRoots,
+  RemoveGrantedLocalRootRequest,
+  SetGrantedLocalRootAccessRequest
+} from '../shared/local-fs'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
-import type { OpenSessionFromNotificationRequest } from '../shared/notifications'
+import type {
+  NotificationInboxSnapshot,
+  NotificationMarkAllReadRequest,
+  NotificationMarkReadRequest,
+  NotificationMarkSessionCompletionsReadRequest,
+  OpenSessionFromNotificationRequest
+} from '../shared/notifications'
 import type {
   ApproveRemotePairingRequest,
   RemoteAccessSnapshot,
@@ -37,6 +50,11 @@ import type { GithubCommandOwner } from './github-ipc'
 import type { LocalFsService } from './local-fs/service'
 import type { LogsCommandOwner } from './logs-ipc'
 import {
+  requireNotificationMarkAllReadRequest,
+  requireNotificationMarkReadRequest,
+  requireNotificationMarkSessionCompletionsReadRequest
+} from './notifications/notification-inbox-requests'
+import {
   canManagePairing,
   isDesktopCaller,
   requireDesktopCaller,
@@ -69,9 +87,19 @@ const localFsCommands = Object.freeze({
   getRoots: defineApplicationCommand<'local-fs:get-roots', readonly [], LocalRoots>(
     'local-fs:get-roots'
   ),
+  grantRoot: defineApplicationCommand<
+    'local-fs:grant-root',
+    readonly [request: GrantLocalRootRequest],
+    GrantedLocalRoot[]
+  >('local-fs:grant-root'),
   listDir: defineApplicationCommand<'local-fs:list-dir', readonly [path: string], LocalDirListing>(
     'local-fs:list-dir'
   ),
+  listGrantedRoots: defineApplicationCommand<
+    'local-fs:granted-roots:list',
+    readonly [],
+    GrantedLocalRoot[]
+  >('local-fs:granted-roots:list'),
   openPath: defineApplicationCommand<'local-fs:open-path', readonly [path: string], string>(
     'local-fs:open-path'
   ),
@@ -80,9 +108,19 @@ const localFsCommands = Object.freeze({
     readonly [request: ReadArtifactPreviewRequest],
     ArtifactPreviewResult
   >('local-fs:read-preview'),
+  removeGrantedRoot: defineApplicationCommand<
+    'local-fs:granted-roots:remove',
+    readonly [request: RemoveGrantedLocalRootRequest],
+    GrantedLocalRoot[]
+  >('local-fs:granted-roots:remove'),
   reveal: defineApplicationCommand<'local-fs:reveal', readonly [path: string], void>(
     'local-fs:reveal'
-  )
+  ),
+  setGrantedRootAccess: defineApplicationCommand<
+    'local-fs:granted-roots:set-access',
+    readonly [request: SetGrantedLocalRootAccessRequest],
+    GrantedLocalRoot[]
+  >('local-fs:granted-roots:set-access')
 })
 
 const logsCommands = Object.freeze({
@@ -98,6 +136,26 @@ const logsCommands = Object.freeze({
 })
 
 const notificationCommands = Object.freeze({
+  getSnapshot: defineApplicationCommand<
+    'notifications:get-snapshot',
+    readonly [],
+    NotificationInboxSnapshot
+  >('notifications:get-snapshot'),
+  markAllRead: defineApplicationCommand<
+    'notifications:mark-all-read',
+    readonly [request: NotificationMarkAllReadRequest],
+    void
+  >('notifications:mark-all-read'),
+  markRead: defineApplicationCommand<
+    'notifications:mark-read',
+    readonly [request: NotificationMarkReadRequest],
+    void
+  >('notifications:mark-read'),
+  markSessionCompletionsRead: defineApplicationCommand<
+    'notifications:mark-session-completions-read',
+    readonly [request: NotificationMarkSessionCompletionsReadRequest],
+    void
+  >('notifications:mark-session-completions-read'),
   peekPendingOpenSession: defineApplicationCommand<
     'notifications:peek-pending-open-session',
     readonly [],
@@ -261,10 +319,24 @@ type HostApplicationCommandDependencies = Readonly<{
   github: GithubCommandOwner
   localFs: Pick<
     LocalFsService,
-    'getRoots' | 'listDir' | 'openPath' | 'readPreview' | 'revealInFolder'
+    | 'getRoots'
+    | 'grantRoot'
+    | 'listDir'
+    | 'listGrantedRoots'
+    | 'openPath'
+    | 'readPreview'
+    | 'removeGrantedRoot'
+    | 'revealInFolder'
+    | 'setGrantedRootAccess'
   >
   logs: LogsCommandOwner
   notifications: Readonly<{
+    getSnapshot: () => Promise<NotificationInboxSnapshot>
+    markAllRead: (request: NotificationMarkAllReadRequest) => Promise<void>
+    markRead: (request: NotificationMarkReadRequest) => Promise<void>
+    markSessionCompletionsRead: (
+      request: NotificationMarkSessionCompletionsReadRequest
+    ) => Promise<void>
     peekPendingOpenSession: () => OpenSessionFromNotificationRequest | null
     takePendingOpenSession: (expectedToken: number) => OpenSessionFromNotificationRequest | null
   }>
@@ -322,9 +394,17 @@ const registerHostApplicationCommands = (
     scope.registerGroup(hostApplicationCommandGroups[2], {
       'local-fs:get-roots': ({ callerContext }) =>
         localCommand(callerContext, 'local-fs:get-roots', () => dependencies.localFs.getRoots()),
+      'local-fs:grant-root': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:grant-root', () =>
+          dependencies.localFs.grantRoot(args[0])
+        ),
       'local-fs:list-dir': ({ args, callerContext }) =>
         localCommand(callerContext, 'local-fs:list-dir', () =>
           dependencies.localFs.listDir(args[0])
+        ),
+      'local-fs:granted-roots:list': ({ callerContext }) =>
+        localCommand(callerContext, 'local-fs:granted-roots:list', () =>
+          dependencies.localFs.listGrantedRoots()
         ),
       'local-fs:open-path': ({ args, callerContext }) =>
         localCommand(callerContext, 'local-fs:open-path', () =>
@@ -334,9 +414,17 @@ const registerHostApplicationCommands = (
         localCommand(callerContext, 'local-fs:read-preview', () =>
           dependencies.localFs.readPreview(args[0])
         ),
+      'local-fs:granted-roots:remove': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:granted-roots:remove', () =>
+          dependencies.localFs.removeGrantedRoot(args[0])
+        ),
       'local-fs:reveal': ({ args, callerContext }) =>
         localCommand(callerContext, 'local-fs:reveal', () =>
           dependencies.localFs.revealInFolder(args[0])
+        ),
+      'local-fs:granted-roots:set-access': ({ args, callerContext }) =>
+        localCommand(callerContext, 'local-fs:granted-roots:set-access', () =>
+          dependencies.localFs.setGrantedRootAccess(args[0])
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[3], {
@@ -349,6 +437,15 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[4], {
+      'notifications:get-snapshot': () => dependencies.notifications.getSnapshot(),
+      'notifications:mark-all-read': ({ args }) =>
+        dependencies.notifications.markAllRead(requireNotificationMarkAllReadRequest(args[0])),
+      'notifications:mark-read': ({ args }) =>
+        dependencies.notifications.markRead(requireNotificationMarkReadRequest(args[0])),
+      'notifications:mark-session-completions-read': ({ args }) =>
+        dependencies.notifications.markSessionCompletionsRead(
+          requireNotificationMarkSessionCompletionsReadRequest(args[0])
+        ),
       'notifications:peek-pending-open-session': () =>
         dependencies.notifications.peekPendingOpenSession(),
       'notifications:take-pending-open-session': ({ args }) =>

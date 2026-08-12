@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ComputeHost } from '../../shared/compute'
 import { decodeRemoteFsError } from '../../shared/remote-fs'
 import { RENDERER_CONTRACT_GROUPS } from '../../shared/renderer-contract-catalog'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   createApplicationCommandRouter,
   type ApplicationCallerLease,
@@ -24,6 +25,18 @@ import {
 } from './application-commands'
 
 const host = { providerId: 'ssh:cluster', displayName: 'Cluster' } as ComputeHost
+const session: PersistedChatSession = {
+  id: 'session-1',
+  projectId: 'project-1',
+  title: 'Session',
+  cwd: '/workspace',
+  status: 'idle',
+  messages: [],
+  filesRevision: 1,
+  enabledComputeHosts: ['ssh:cluster'],
+  createdAt: 1,
+  updatedAt: 2
+}
 
 const createDependencies = (): ComputeApplicationCommandDependencies => ({
   compute: {
@@ -41,6 +54,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     download: vi.fn(async () => ({ path: '/tmp/result.csv', name: 'result.csv', size: 10 })),
     revealInFolder: vi.fn(() => undefined),
     approvalRespond: vi.fn(() => undefined),
+    approvalReplay: vi.fn(() => null),
     jobsList: vi.fn(async () => []),
     jobsPendingNotification: vi.fn(async () => []),
     jobsMarkConsumed: vi.fn(async () => undefined)
@@ -51,8 +65,9 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
   },
   enabledHosts: {
     get: vi.fn(() => ['ssh:cluster']),
-    set: vi.fn(() => undefined)
-  }
+    set: vi.fn(async () => session)
+  },
+  events: { publish: vi.fn() }
 })
 
 const invocation = <Args extends readonly unknown[]>(
@@ -69,14 +84,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 21 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 22 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(21)
+    expect(publicComputeChannels).toHaveLength(22)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -135,6 +150,10 @@ describe('Compute application commands', () => {
       computeApplicationCommands.approvalRespond,
       invocation([{ id: 'approval-1', decision: 'once' }])
     )
+    await router.dispatcher.invoke(
+      computeApplicationCommands.approvalReplay,
+      invocation(['approval-1'])
+    )
     const filter = { sessionId: 'session-1', status: ['done'] }
     await router.dispatcher.invoke(computeApplicationCommands.jobsList, invocation([filter]))
     await router.dispatcher.invoke(
@@ -149,7 +168,7 @@ describe('Compute application commands', () => {
       computeApplicationCommands.enabledHostsGet,
       invocation(['session-1'])
     )
-    await router.dispatcher.invoke(
+    const enabledHostsResult = await router.dispatcher.invoke(
       computeApplicationCommands.enabledHostsSet,
       invocation(['session-1', ['ssh:cluster']])
     )
@@ -176,9 +195,15 @@ describe('Compute application commands', () => {
       destination
     )
     expect(dependencies.compute.approvalRespond).toHaveBeenCalledWith('approval-1', 'once')
+    expect(dependencies.compute.approvalReplay).toHaveBeenCalledWith('approval-1')
     expect(dependencies.compute.jobsList).toHaveBeenCalledWith(filter)
     expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
     expect(dependencies.enabledHosts.set).toHaveBeenCalledWith('session-1', ['ssh:cluster'])
+    expect(enabledHostsResult).toEqual(session)
+    expect(dependencies.events.publish).toHaveBeenCalledWith('session:updated', {
+      session,
+      originClientId: 'main:enabled-compute-hosts'
+    })
     expect(dependencies.bookmarks.set).toHaveBeenCalledWith('ssh:cluster', ['/work'])
   })
 
@@ -268,6 +293,12 @@ describe('Compute application commands', () => {
           invocation(args, callerContext)
         )
       ).resolves.toBeUndefined()
+      await expect(
+        router.dispatcher.invoke(
+          computeApplicationCommands.approvalReplay,
+          invocation(['approval-1'], callerContext)
+        )
+      ).resolves.toBeNull()
     }
 
     const deniedCallers = [
@@ -290,6 +321,12 @@ describe('Compute application commands', () => {
           invocation(args, callerContext)
         )
       ).rejects.toThrow('Only a current human caller can respond to compute approval requests.')
+      await expect(
+        router.dispatcher.invoke(
+          computeApplicationCommands.approvalReplay,
+          invocation(['approval-1'], callerContext)
+        )
+      ).rejects.toThrow('Only a current human caller can reopen compute approval requests.')
     }
     await expect(
       router.dispatcher.invoke(
@@ -299,5 +336,6 @@ describe('Compute application commands', () => {
     ).rejects.toThrow('Caller authorization is no longer current.')
 
     expect(dependencies.compute.approvalRespond).toHaveBeenCalledTimes(allowedCallers.length)
+    expect(dependencies.compute.approvalReplay).toHaveBeenCalledTimes(allowedCallers.length)
   })
 })

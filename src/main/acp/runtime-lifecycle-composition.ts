@@ -61,6 +61,8 @@ const composeAcpRuntimeLifecycleOwners = (
   const closeState: CloseState = {
     invalidatePendingSessionStartups,
     disposePermissionContext: () => session.permissionContext.dispose(),
+    disposeElicitationOwner: () => session.elicitationOwner.dispose(),
+    clearPendingAppContinuations: () => session.appContinuations.clear(),
     clearReviewerState: () => session.reviewerSessions.clear(),
     clearPlanInteractions: () =>
       base.planInteractions.clearAll('The Session Plan interaction was disconnected.'),
@@ -113,6 +115,7 @@ const composeAcpRuntimeLifecycleOwners = (
         }
       }
     },
+    cancelPendingStatePublication: () => session.publication.cancelPendingStatePublication(),
     setStatus,
     transitionStatus: (status) => base.snapshotOwner.transitionStatus(status),
     emitState: () => session.publication.emitState(),

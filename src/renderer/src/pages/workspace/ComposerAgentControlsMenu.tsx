@@ -74,6 +74,8 @@ type ComposerAgentControlsMenuProps = {
   // Read-only while a session is running: the menu stays openable and the permission
   // submenu still expands on hover, but profiles, auto-review, and compute stay immutable.
   readOnly?: boolean
+  // Permission mode remains independently editable during a running prompt.
+  permissionProfileReadOnly?: boolean
   // Grant revocation remains independently available while a turn is running.
   grantActionsReadOnly?: boolean
   autoReviewDisabled?: boolean
@@ -140,6 +142,7 @@ const ComposerAgentControlsMenu = ({
   grants,
   autoReviewEnabled,
   readOnly = false,
+  permissionProfileReadOnly = readOnly,
   grantActionsReadOnly = readOnly,
   autoReviewDisabled = false,
   onProfileChange,
@@ -209,7 +212,7 @@ const ComposerAgentControlsMenu = ({
         return (
           <DropdownMenuItem
             key={candidate.id}
-            disabled={readOnly || isDisabled}
+            disabled={permissionProfileReadOnly || isDisabled}
             className="items-center gap-2 px-2 py-1.5"
             onSelect={() => selectProfile(candidate.id)}
           >
@@ -262,7 +265,7 @@ const ComposerAgentControlsMenu = ({
       <span className="min-w-0 flex-1">
         <span className="block text-[13px] font-medium leading-5">Permission mode</span>
         <span className="block text-[11px] leading-4 text-text-300">
-          How much the agent can do without asking first.
+          Applies to future actions; completed actions are unchanged.
         </span>
       </span>
       <span
@@ -362,35 +365,6 @@ const ComposerAgentControlsMenu = ({
                 </DropdownMenuSub>
               )}
 
-              {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
-              <DropdownMenuItem
-                disabled={readOnly || autoReviewDisabled}
-                className="items-center gap-2 px-2 py-1.5"
-                onSelect={(event) => {
-                  event.preventDefault()
-                  onAutoReviewChange(!autoReviewEnabled)
-                }}
-              >
-                <ScanEye
-                  className="size-4 shrink-0 text-text-200"
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium leading-5">Auto-review</span>
-                  <span className="block text-[11px] leading-4 text-text-300">
-                    A reviewer agent checks every change before it lands.
-                  </span>
-                </span>
-                <Switch
-                  size="sm"
-                  checked={autoReviewEnabled}
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  className="pointer-events-none"
-                />
-              </DropdownMenuItem>
-
               {hasGrants ? (
                 <div className="mt-1 border-t border-border-200 pt-1">
                   <div className="flex items-center justify-between px-2 pb-0.5">
@@ -441,6 +415,37 @@ const ComposerAgentControlsMenu = ({
                   </div>
                 </div>
               ) : null}
+
+              <DropdownMenuSeparator />
+
+              {/* The whole row toggles auto-review; the Switch is a visual indicator only. */}
+              <DropdownMenuItem
+                disabled={readOnly || autoReviewDisabled}
+                className="items-center gap-2 px-2 py-1.5"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  onAutoReviewChange(!autoReviewEnabled)
+                }}
+              >
+                <ScanEye
+                  className="size-4 shrink-0 text-text-200"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium leading-5">Auto-review</span>
+                  <span className="block text-[11px] leading-4 text-text-300">
+                    A reviewer agent checks every change before it lands.
+                  </span>
+                </span>
+                <Switch
+                  size="sm"
+                  checked={autoReviewEnabled}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  className="pointer-events-none"
+                />
+              </DropdownMenuItem>
 
               {/* Specialist + Compute are one resource-selection group: a single divider leads
                   the group (above Specialist when present, above Compute otherwise), so the two
@@ -597,6 +602,7 @@ const ComposerAgentControlsMenu = ({
               <AlertDialog.Action asChild>
                 <Button
                   type="button"
+                  disabled={permissionProfileReadOnly || fullAccessUnavailable}
                   className="bg-amber-600 text-white hover:bg-amber-700"
                   onClick={() => onProfileChange('full')}
                 >

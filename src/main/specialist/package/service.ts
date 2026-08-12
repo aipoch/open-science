@@ -97,7 +97,7 @@ const normalizeExportedSkillDocument = (
   const document = parseSkillDocument(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
   if (!document.hasFrontmatter) throw new Error(`Skill ${id} has no frontmatter.`)
   const metadata = Object.entries(document.metadata)
-    .filter(([key]) => key !== 'version')
+    .filter(([key]) => key !== 'displayname' && key !== 'version')
     .sort(([left], [right]) => left.localeCompare(right))
   const fields = [
     `name: ${JSON.stringify(id)}`,

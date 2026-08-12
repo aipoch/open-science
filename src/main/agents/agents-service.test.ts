@@ -109,17 +109,26 @@ describe('AgentsService read surface', () => {
       autoAllowIds: [],
       disabledConnectorIds: ['chemistry'],
       customMcpServers: [
-        { id: 'cust-1', name: 'My Server', transport: 'stdio', enabled: true, command: 'run' },
+        {
+          id: 'cust-1',
+          name: 'my-server',
+          displayName: 'My Server',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run'
+        },
         {
           id: 'cust-reserved',
-          name: 'Chemistry!',
+          name: 'chemistry',
+          displayName: 'Chemistry!',
           transport: 'stdio',
           enabled: true,
           command: 'run'
         },
         {
           id: 'oauth-1',
-          name: 'OAuth Server',
+          name: 'oauth-server',
+          displayName: 'OAuth Server',
           transport: 'streamable_http',
           enabled: true,
           url: 'https://mcp.example.test',
@@ -237,6 +246,43 @@ const mutatingProfileService = (profiles: SpecialistProfileView[]): ProfileServi
   return service
 }
 
+describe('AgentsService connector runtime availability', () => {
+  it('reports a runtime-unavailable custom connector and rejects a new attachment', async () => {
+    const stored: StoredConnectors = {
+      enabledIds: [],
+      autoAllowIds: [],
+      customMcpServers: [
+        {
+          id: 'cust-1',
+          name: 'my-server',
+          displayName: 'My Server',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run'
+        }
+      ]
+    }
+    const profiles = mutatingProfileService([profile()])
+    const attachConnector = vi.fn(async () => profile())
+    profiles.attachConnector = attachConnector
+    const service = new AgentsService({
+      profileService: profiles,
+      catalog: catalog({ getConnectors: vi.fn(async () => stored) }),
+      customServerAvailability: (id) => (id === 'cust-1' ? 'unavailable' : undefined)
+    })
+
+    const connector = (await service.listConnectors({})).find((item) => item.id === 'my-server')
+    expect(connector).toMatchObject({ availability: 'unavailable', mainEnabled: true })
+    await expect(
+      service.dispatch({
+        op: 'attach_connector',
+        params: { name: 'Bio Expert', connector_ref: 'my-server', revision: 3 }
+      })
+    ).rejects.toThrow(/host\.agents\.attach_connector:.*unavailable/)
+    expect(attachConnector).not.toHaveBeenCalled()
+  })
+})
+
 describe('AgentsService privileged dispatch — trusted session threading', () => {
   it('threads the trusted calling session into the delete approval request', async () => {
     const seenSessions: unknown[] = []
@@ -260,7 +306,7 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
     expect(seenSessions).toEqual([{ sessionId: 'trusted-session-1' }])
   })
 
-  it('applies a rename as an ordinary mutation without consulting the approval gateway', async () => {
+  it('updates displayName without changing immutable name or consulting approval', async () => {
     const decided: unknown[] = []
     const service = new AgentsService({
       profileService: mutatingProfileService([profile()]),
@@ -277,13 +323,14 @@ describe('AgentsService privileged dispatch — trusted session threading', () =
         op: 'update',
         params: {
           name: 'Bio Expert',
-          patch: { name: 'Chem Expert', revision: 3 }
+          patch: { display_name: 'Chem Expert', revision: 3 }
         }
       },
       { sessionId: 'trusted-session-2' }
     )
-    // Renames are ordinary chat-reviewed updates: the rename lands and no approval card is parked.
-    expect(result).toEqual<SpecialistProfileView>(expect.objectContaining({ name: 'Chem Expert' }))
+    expect(result).toEqual<SpecialistProfileView>(
+      expect.objectContaining({ name: 'Bio Expert', displayName: 'Chem Expert' })
+    )
     expect(decided).toHaveLength(0)
   })
 

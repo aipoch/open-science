@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
 
 import type { PersistedPreviewState } from '../../shared/preview-state'
 import { PreviewStateRepository } from './preview-repository'
-import { createProjectDbClient, ensureProjectSchema } from './prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from './prisma-client'
 
 // Matches the mocked app.getPath('home') + isPackaged resolution in storage-root.ts: with no
 // legacy config-root data present, computeDefaultDataRoot() is `<home>/OpenScience`.
@@ -57,7 +57,7 @@ describe('preview state repository (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
 
@@ -92,7 +92,7 @@ describe('preview state repository (integration)', () => {
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
 
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
     const absolutePath = join(DATA_ROOT, 'artifacts/p/s/m/plot.png')

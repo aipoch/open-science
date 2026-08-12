@@ -97,9 +97,11 @@ describe('permission grant renderer projection', () => {
     const snapshot = projectPermissionGrantSnapshot(records, {
       connectorPolicy: {
         bundledConnectorIds: ['chemistry'],
-        customMcpServers: [{ id: 'custom-1', name: 'renamed', enabled: true }],
-        blockedToolIds: ['renamed/write'],
-        askToolIds: ['renamed/write']
+        customMcpServers: [
+          { id: 'custom-1', name: 'stable', displayName: 'Renamed', enabled: true }
+        ],
+        blockedToolIds: ['stable/write'],
+        askToolIds: ['stable/write']
       }
     })
 

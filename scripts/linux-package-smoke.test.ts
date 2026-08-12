@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
 import {
+  authenticatePackagedAppEndpoint,
   appImageVersion,
   assertPackagedResources,
   findOne,
@@ -24,20 +25,26 @@ describe('Linux package smoke', () => {
     await expect(findOne(root, /\.AppImage$/, 'AppImage')).rejects.toThrow(/exactly one/)
   })
 
-  it('parses only the authenticated packaged-app endpoint', () => {
-    expect(
-      parsePackagedAppEndpoint('Open Science Web: http://127.0.0.1:44001/?token=linux_smoke-token')
-    ).toEqual({
+  it('authenticates the token-free readiness endpoint through the service state contract', async () => {
+    const output = 'Open Science Web: http://127.0.0.1:44001/'
+    expect(parsePackagedAppEndpoint(output)).toEqual({ endpoint: 'http://127.0.0.1:44001' })
+    await expect(
+      authenticatePackagedAppEndpoint(output, ['/config'], {
+        readText: async (path: string) =>
+          path.endsWith('web-service.json')
+            ? JSON.stringify({ port: 44001 })
+            : 'linux_smoke_token_12345678901234567890\n'
+      })
+    ).resolves.toEqual({
       endpoint: 'http://127.0.0.1:44001',
-      auth: 'token=linux_smoke-token'
+      auth: 'token=linux_smoke_token_12345678901234567890'
     })
-    expect(parsePackagedAppEndpoint('Open Science Web: http://127.0.0.1:44001/')).toBeUndefined()
   })
 
   it('requires explicit package and installed executable paths', () => {
     expect(
       parseArguments(['--artifact-dir', 'dist', '--installed-executable', '/usr/bin/open-science'])
-    ).toMatchObject({ installedExecutable: '/usr/bin/open-science' })
+    ).toMatchObject({ installedExecutable: resolve('/usr/bin/open-science') })
     expect(() => parseArguments([])).toThrow(/Usage:/)
   })
 
@@ -49,5 +56,23 @@ describe('Linux package smoke', () => {
     await writeFile(join(appRoot, 'resources', 'app.asar'), '')
 
     await expect(assertPackagedResources(executable)).rejects.toThrow(/micromamba/)
+  })
+
+  it('requires exactly one native Linux Prisma engine', async () => {
+    const appRoot = await mkdtemp(join(tmpdir(), 'open-science-linux-engine-'))
+    const executable = join(appRoot, 'open-science')
+    const resources = join(appRoot, 'resources')
+    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    await mkdir(prismaClient, { recursive: true })
+    await Promise.all([
+      writeFile(executable, ''),
+      writeFile(join(resources, 'app.asar'), ''),
+      writeFile(join(resources, 'micromamba'), ''),
+      writeFile(join(prismaClient, 'libquery_engine-debian-openssl-3.0.x.so.node'), '')
+    ])
+
+    await expect(assertPackagedResources(executable)).resolves.toBeUndefined()
+    await writeFile(join(prismaClient, 'libquery_engine-rhel-openssl-3.0.x.so.node'), '')
+    await expect(assertPackagedResources(executable)).rejects.toThrow(/exactly one Prisma engine/)
   })
 })

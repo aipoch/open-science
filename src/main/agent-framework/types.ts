@@ -14,6 +14,7 @@ import type { ResolvedProvider } from '../settings/provider-env'
 import type {
   ResponsesBridgeConnection,
   ResponsesBridgeModelTarget,
+  ResponsesBridgeNamespacedTool,
   ResponsesBridgeSkillCandidate,
   ResponsesBridgeSkillInput
 } from '../settings/responses-bridge'
@@ -222,6 +223,10 @@ export interface AgentFramework {
   // Config-dir-materialized skills (Claude). Absent ⇒ the app hides the skills UI + force-load path.
   readonly supportsSkills: boolean
 
+  // Release gate for the app-owned Delegated Work Module. A framework stays false until its own
+  // certification ticket passes every shared journey and closes native delegation bypasses.
+  readonly supportsDelegatedWork: boolean
+
   // Whether the framework accepts stdio MCP servers via ACP session mcpServers. opencode advertises
   // http/sse only, so stdio servers must not be handed to it — the app's artifact/notebook tooling
   // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.
@@ -247,6 +252,7 @@ export type ResolvedAgentBackend = {
   // framework while keeping incompatible session stores (for example Codex shared vs isolated login).
   backendId?: string
   modelRoute?: AgentModelRoute
+  providerContinuityToken?: string
   executablePath: string
   env: Record<string, string>
   args?: string[]
@@ -298,6 +304,12 @@ export type ResolvedAgentBackend = {
     unregisterReviewerSession: (promptCacheKey: string) => boolean
     registerToolLessSession?: (promptCacheKey: string) => void
     unregisterToolLessSession?: (promptCacheKey: string) => boolean
+    registerHostMessageSession?: (
+      promptCacheKey: string,
+      namespacedTools: ResponsesBridgeNamespacedTool[],
+      options?: Readonly<{ failClosedUnknownKeys?: boolean }>
+    ) => void
+    unregisterHostMessageSession?: (promptCacheKey: string) => boolean
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void

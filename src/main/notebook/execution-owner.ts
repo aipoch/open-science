@@ -23,6 +23,7 @@ import {
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import type { NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
+import { notebookLaneScope } from './lane-identity'
 import type {
   NotebookSessionAggregate,
   NotebookSessionExecutionResult,
@@ -65,7 +66,12 @@ class NotebookControlCompletionCapturedError extends Error {
   }
 }
 
-type McpRpcConnectionBinding = { sessionId: string; projectId: string }
+type McpRpcConnectionBinding = {
+  sessionId: string
+  projectId: string
+  agentFrameId: string
+  attemptId?: string
+}
 type McpRpcConnectionResolver = (
   binding: McpRpcConnectionBinding
 ) => Promise<NotebookSessionMcpRpcConnection>
@@ -166,6 +172,7 @@ class NotebookExecutionOwner {
       executionCount,
       environment,
       ...request.provenanceContext,
+      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
@@ -301,7 +308,9 @@ class NotebookExecutionOwner {
         ...(request.provenanceContext
           ? {
               originatingTurnId: request.provenanceContext.promptMessageId,
-              originatingUserMessageId: request.provenanceContext.promptMessageId
+              originatingUserMessageId:
+                request.provenanceContext.originMessageId ??
+                request.provenanceContext.promptMessageId
             }
           : {}),
         attachmentIds:
@@ -337,6 +346,7 @@ class NotebookExecutionOwner {
       startedAt: Date.now(),
       cwdBefore: session.cwd,
       ...request.provenanceContext,
+      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
@@ -374,7 +384,23 @@ class NotebookExecutionOwner {
               const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
                 turnId: runId,
                 controlInvocationGeneration,
-                toolInvocationId: runId
+                toolInvocationId: runId,
+                ...(request.provenanceContext
+                  ? {
+                      originatingTurnId: request.provenanceContext.promptMessageId,
+                      originatingUserMessageId:
+                        request.provenanceContext.originMessageId ??
+                        request.provenanceContext.promptMessageId
+                    }
+                  : {}),
+                attachmentIds:
+                  request.registeredInputFiles
+                    ?.filter((input) => input.sourceKind === 'upload-version')
+                    .map((input) => input.sourceFileId) ?? [],
+                artifactIds:
+                  request.registeredInputFiles
+                    ?.filter((input) => input.sourceKind === 'artifact-version')
+                    .map((input) => input.sourceFileId) ?? []
               })
               return session
                 .execute({
@@ -432,6 +458,7 @@ class NotebookExecutionOwner {
       startedAt: Date.now(),
       cwdBefore: session.cwd,
       ...request.provenanceContext,
+      agentFrameId: notebookLaneScope(session.lane).agentFrameId,
       text: { stdout: '', stderr: '', traceback: '', plain: [] },
       outputs: [],
       artifacts: [],
@@ -509,6 +536,7 @@ class NotebookExecutionOwner {
       await this.options.repository.updateKernelStatus({
         projectName: session.projectName,
         sessionId: session.sessionId,
+        lane: session.lane,
         status
       })
     } catch {

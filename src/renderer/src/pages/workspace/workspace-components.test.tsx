@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const workspacePagePath = resolve(__dirname, 'WorkspacePage.tsx')
+const workspacePanelLayoutPath = resolve(__dirname, 'workspace-panel-layout.tsx')
 const workspaceSidebarPath = resolve(__dirname, 'WorkspaceSidebar.tsx')
 const conversationPanelPath = resolve(__dirname, 'ConversationPanel.tsx')
 const permissionApprovalControlsPath = resolve(__dirname, 'PermissionApprovalControls.tsx')
@@ -12,11 +13,15 @@ const workspaceMessageScrollerPath = resolve(__dirname, 'WorkspaceMessageScrolle
 const workspaceActivityGroupPath = resolve(__dirname, 'WorkspaceActivityGroup.tsx')
 const workspaceAgentLoadingRowPath = resolve(__dirname, 'WorkspaceAgentLoadingRow.tsx')
 const workspaceMessageItemPath = resolve(__dirname, 'WorkspaceMessageItem.tsx')
+const workspaceArtifactVisibilityPath = resolve(__dirname, 'WorkspaceArtifactVisibility.tsx')
 const workspaceToolActivityGroupsPath = resolve(__dirname, 'workspace-tool-activity-groups.ts')
 const workspaceToolActivityStylePath = resolve(__dirname, 'workspace-tool-activity-style.ts')
 const workspaceWebSearchActivityRowPath = resolve(__dirname, 'WorkspaceWebSearchActivityRow.tsx')
 const workspaceWebSearchDetailsPath = resolve(__dirname, 'workspace-web-search-details.ts')
 const agentMarkdownPath = resolve(__dirname, '../../components/streamdown/AgentMarkdown.tsx')
+const projectFilesFacadePath = resolve(__dirname, 'ProjectFilesView.tsx')
+const projectFilesPresentationOwnerPath = resolve(__dirname, 'project-files-presentation-owner.tsx')
+const rawLineCount = (source: string): number => source.trimEnd().split(/\r?\n/).length
 const componentFileNames = [
   'WorkspaceSidebar.tsx',
   'ConversationPanel.tsx',
@@ -29,16 +34,53 @@ describe('workspace page component boundaries', () => {
   // Guards the page-level extraction without relying on Vitest alias resolution.
   it('keeps workspace regions in page-private component files', () => {
     const workspacePageSource = readFileSync(workspacePagePath, 'utf8')
+    const workspacePanelLayoutSource = readFileSync(workspacePanelLayoutPath, 'utf8')
 
     for (const fileName of componentFileNames) {
       const componentName = fileName.replace('.tsx', '')
       const componentSource = readFileSync(resolve(__dirname, fileName), 'utf8')
+      const ownerSource =
+        componentName === 'PreviewPanel' ? workspacePanelLayoutSource : workspacePageSource
 
       expect(componentSource).toContain(`const ${componentName}`)
       expect(componentSource).toContain(`export { ${componentName} }`)
-      expect(workspacePageSource).toContain(`import { ${componentName} } from './${componentName}'`)
-      expect(workspacePageSource).toContain(`<${componentName}`)
+      expect(ownerSource).toContain(`import { ${componentName} } from './${componentName}'`)
+      expect(ownerSource).toContain(`<${componentName}`)
     }
+
+    expect(workspacePageSource).toContain(
+      "import { WorkspacePanelLayout } from './workspace-panel-layout'"
+    )
+    expect(workspacePageSource).toContain('<WorkspacePanelLayout')
+    expect(workspacePanelLayoutSource).toContain('const WorkspacePanelLayout')
+    expect(workspacePanelLayoutSource).toContain('export { WorkspacePanelLayout }')
+    expect(workspacePageSource).not.toContain("from './PreviewPanel'")
+  })
+
+  it('keeps project file presentation behind its private owner module', () => {
+    const facadeSource = readFileSync(projectFilesFacadePath, 'utf8')
+    const presentationSource = readFileSync(projectFilesPresentationOwnerPath, 'utf8')
+    const previewToolSource = readFileSync(
+      resolve(__dirname, 'previews/PreviewToolContent.tsx'),
+      'utf8'
+    )
+    const moduleImpact = JSON.parse(
+      readFileSync(resolve(__dirname, '../../../../../scripts/ci/module-impact.json'), 'utf8')
+    ) as {
+      modules: { project_files_view: { ownerPaths: string[] } }
+    }
+
+    expect(rawLineCount(facadeSource)).toBeLessThanOrEqual(900)
+    // The granted-roots menu rows (access badge, manage submenu) added 90 presentation lines.
+    expect(rawLineCount(presentationSource)).toBeLessThanOrEqual(750)
+    expect(facadeSource).toContain("from './project-files-presentation-owner'")
+    expect(presentationSource).not.toContain("from './ProjectFilesView'")
+    expect(facadeSource.match(/export \{ ProjectFilesView \}/g)).toHaveLength(1)
+    expect(previewToolSource).toContain("from '../ProjectFilesView'")
+    expect(previewToolSource).not.toContain('project-files-presentation-owner')
+    expect(moduleImpact.modules.project_files_view.ownerPaths).toContain(
+      'src/renderer/src/pages/workspace/project-files-presentation-owner.tsx'
+    )
   })
 
   it('starts session persistence from the app shell and passes readiness into the workspace', () => {
@@ -176,6 +218,22 @@ describe('workspace page component boundaries', () => {
     expect(mainCssSource).toContain('--always-black:')
   })
 
+  it('uses one theme-aware fade treatment for horizontal workspace scrollers', () => {
+    const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const horizontalScrollerSources = [
+      'PreviewPanel.tsx',
+      'NotebookPreview.tsx',
+      'NotebookInputDataStrip.tsx',
+      'ArtifactProvenancePanel.tsx'
+    ].map((fileName) => readFileSync(resolve(__dirname, fileName), 'utf8'))
+
+    expect(mainCssSource).toContain('.scroll-fade-x')
+    expect(mainCssSource).toContain(".scroll-fade-x[data-scroll-fade='both']")
+    expect(mainCssSource).toContain('-webkit-mask-image: var(--scroll-fade-x-mask, none)')
+    expect(mainCssSource).toContain('hsl(var(--always-black))')
+    for (const source of horizontalScrollerSources) expect(source).toContain('scroll-fade-x')
+  })
+
   it('registers the semantic chart tokens used by the response Usage breakdown', () => {
     const mainCssSource = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     const messageItemSource = readFileSync(workspaceMessageItemPath, 'utf8')
@@ -193,7 +251,8 @@ describe('workspace page component boundaries', () => {
       workspaceActivityGroupPath,
       resolve(__dirname, 'ComposerModelPicker.tsx'),
       resolve(__dirname, 'NotebookPreview.tsx'),
-      resolve(__dirname, 'ProjectFilesView.tsx'),
+      projectFilesFacadePath,
+      projectFilesPresentationOwnerPath,
       resolve(__dirname, '../../components/FileDropOverlay.tsx'),
       resolve(__dirname, 'previews/renderers/PdbPreview.tsx')
     ]
@@ -271,8 +330,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceMessageItem')
     expect(workspaceMessageItemSource).toContain("scrollAnchor={message.role === 'user'}")
     expect(workspaceMessageItemSource).toContain('messageId={message.id}')
-    expect(workspaceMessageItemSource).toContain('<AgentMarkdown')
-    expect(workspaceMessageItemSource).toContain('content={message.content}')
+    expect(workspaceMessageItemSource).toContain('<PresentedAgentMarkdown')
+    expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
+    expect(workspaceMessageItemSource).toContain('useSmoothStreamingContent(')
     expect(workspaceMessageItemSource).toContain('sessionLinks')
   })
 
@@ -338,20 +398,26 @@ describe('conversation message scroller integration', () => {
   it('keeps permission prompts constrained to the conversation content width', () => {
     const permissionApprovalControlsSource = readFileSync(permissionApprovalControlsPath, 'utf8')
 
-    // Outer container maintains width constraints (overflow-visible so the scope dropdown is not clipped)
+    // Common content stays width-constrained; standalone chrome is omitted by embedded callers.
     expect(permissionApprovalControlsSource).toContain(
-      'className="mb-2 flex w-full max-w-full flex-col gap-3 rounded-xl border border-border bg-card'
+      "'flex w-full max-w-full flex-col gap-3 bg-card"
     )
-    // Header maintains min-w-0 for text truncation
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex min-w-0 items-center gap-2"'
+      "'mb-2 rounded-xl border border-border shadow-dialog"
+    )
+    expect(permissionApprovalControlsSource).toContain('!embedded &&')
+    // Header maintains min-w-0 for text truncation
+    expect(permissionApprovalControlsSource).toContain("'flex min-w-0 items-center gap-2'")
+    expect(permissionApprovalControlsSource).toContain(
+      "'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card"
     )
     // Code block uses WorkspaceToolCodeBlock with max-height constraint
     expect(permissionApprovalControlsSource).toContain('WorkspaceToolCodeBlock')
     // Button row maintains layout constraints
     expect(permissionApprovalControlsSource).toContain(
-      'className="flex flex-wrap items-center justify-end gap-2"'
+      "'flex flex-wrap items-center justify-end gap-2'"
     )
+    expect(permissionApprovalControlsSource).toContain("'sticky bottom-0 z-10 -mx-4 -mb-4 bg-card")
   })
 
   it('keeps composer attachment UI inline with the composer', () => {
@@ -400,6 +466,7 @@ describe('conversation message scroller integration', () => {
 
   it('keeps transcript rendering modules focused by responsibility', () => {
     expect(existsSync(workspaceMessageItemPath)).toBe(true)
+    expect(existsSync(workspaceArtifactVisibilityPath)).toBe(true)
     expect(existsSync(workspaceActivityGroupPath)).toBe(true)
     expect(existsSync(workspaceWebSearchActivityRowPath)).toBe(true)
     expect(existsSync(workspaceAgentLoadingRowPath)).toBe(true)
@@ -418,6 +485,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain(
       "import { WorkspaceMessageItem } from './WorkspaceMessageItem'"
     )
+    expect(workspaceMessageScrollerSource).toContain("from './WorkspaceArtifactVisibility'")
+    expect(workspaceMessageScrollerSource).not.toContain('projectRootArtifactVisibility')
+    expect(workspaceMessageScrollerSource).not.toContain('resolveVersionDescriptors')
     expect(workspaceMessageScrollerSource).toContain(
       "import { WorkspaceActivityGroup } from './WorkspaceActivityGroup'"
     )
@@ -442,8 +512,8 @@ describe('conversation message scroller integration', () => {
       'canExpand={Boolean(details.query || details.resultCount)}'
     )
     expect(workspaceMessageItemSource).toContain('const WorkspaceMessageItem')
-    expect(workspaceMessageItemSource).toContain('<AgentMarkdown')
-    expect(workspaceMessageItemSource).toContain('content={message.content}')
+    expect(workspaceMessageItemSource).toContain('<PresentedAgentMarkdown')
+    expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
     expect(workspaceAgentLoadingRowSource).toContain('const WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
   })
@@ -524,7 +594,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceAgentLoadingRowSource).toContain('role="status"')
     expect(workspaceAgentLoadingRowSource).toContain('aria-live="polite"')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
-    expect(workspaceMessageItemSource).toContain("isAnimating={message.status === 'streaming'}")
+    expect(workspaceMessageItemSource).toContain('isAnimating={isAssistantPresenting}')
   })
 })
 

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    />
+    <title>Review __SKILL_NAME_PLACEHOLDER__ trigger cases</title>
+    <style>
+      body {
+        font: 14px system-ui;
+        margin: 2rem auto;
+        max-width: 72rem;
+        padding: 0 1rem;
+        color: #222;
+      }
+      header {
+        margin-bottom: 1.5rem;
+      }
+      article {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        margin: 0.75rem 0;
+        padding: 1rem;
+      }
+      textarea {
+        box-sizing: border-box;
+        min-height: 5rem;
+        width: 100%;
+      }
+      button {
+        margin: 0.4rem 0.4rem 0.4rem 0;
+        padding: 0.5rem 0.8rem;
+      }
+      .row {
+        align-items: center;
+        display: flex;
+        gap: 0.6rem;
+      }
+      .muted {
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Review trigger cases for __SKILL_NAME_PLACEHOLDER__</h1>
+      <p class="muted">__SKILL_DESCRIPTION_PLACEHOLDER__</p>
+    </header>
+    <main id="cases"></main>
+    <button id="add" type="button">Add case</button
+    ><button id="export" type="button">Export eval set</button>
+    <script>
+      let items = __EVAL_DATA_PLACEHOLDER__
+      const root = document.querySelector('#cases')
+      const render = () => {
+        root.replaceChildren()
+        items.forEach((item, index) => {
+          const article = document.createElement('article')
+          const textarea = document.createElement('textarea')
+          textarea.value = item.query || ''
+          textarea.addEventListener('input', () => {
+            items[index].query = textarea.value
+          })
+          const label = document.createElement('label')
+          const check = document.createElement('input')
+          check.type = 'checkbox'
+          check.checked = Boolean(item.should_trigger)
+          check.addEventListener('change', () => {
+            items[index].should_trigger = check.checked
+          })
+          label.append(check, ' should trigger')
+          const remove = document.createElement('button')
+          remove.type = 'button'
+          remove.textContent = 'Remove'
+          remove.addEventListener('click', () => {
+            items.splice(index, 1)
+            render()
+          })
+          const row = document.createElement('div')
+          row.className = 'row'
+          row.append(label, remove)
+          article.append(textarea, row)
+          root.append(article)
+        })
+      }
+      document.querySelector('#add').addEventListener('click', () => {
+        items.push({ query: '', should_trigger: true })
+        render()
+      })
+      document.querySelector('#export').addEventListener('click', () => {
+        const triggerEvals = {
+          schema_version: 1,
+          kind: 'trigger',
+          cases: items.map((item, index) => ({
+            id: item.id || `trigger-${index + 1}`,
+            query: item.query || '',
+            should_trigger: Boolean(item.should_trigger)
+          }))
+        }
+        const blob = new Blob([JSON.stringify(triggerEvals, null, 2)], {
+          type: 'application/json'
+        })
+        const link = document.createElement('a')
+        link.href = URL.createObjectURL(blob)
+        link.download = 'trigger-evals.json'
+        link.click()
+        URL.revokeObjectURL(link.href)
+      })
+      render()
+    </script>
+  </body>
+</html>

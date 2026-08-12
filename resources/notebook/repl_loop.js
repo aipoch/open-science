@@ -43,6 +43,7 @@ delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 // running. It is never exposed to sandbox code; host.agents forwards it as server context so an
 // approved switch can capture only this invocation's outer completion.
 let ACTIVE_CONTROL_INVOCATION_ID
+let DELEGATE_CALL_SEQUENCE = 0
 
 // Private references to the RPC clients, captured before user code runs. host.mcp MUST use these, not
 // the global `fetch`: a vm sandbox is not a security boundary, so sandbox code can reach the outer
@@ -976,6 +977,1304 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
   return body.result
 }
 
+const HOST_CAPABILITY_NAMES = [
+  'mcp',
+  'compute',
+  'agents',
+  'skills',
+  'artifacts',
+  'lineage',
+  'frames',
+  'llm'
+]
+
+async function hostCapabilities(...args) {
+  if (args.length !== 0) throw new TypeError('host.capabilities accepts no arguments')
+  if (!RPC_ENDPOINT) throw new Error('host.capabilities is unavailable: RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'capabilitiesCall', params: {} })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(body.error || 'host.capabilities HTTP ' + res.status)
+  }
+  const result = body.result
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    Object.keys(result).length !== HOST_CAPABILITY_NAMES.length ||
+    HOST_CAPABILITY_NAMES.some((name) => typeof result[name] !== 'boolean')
+  ) {
+    throw new Error('host.capabilities returned an invalid capability projection')
+  }
+  return Object.freeze(
+    Object.fromEntries(HOST_CAPABILITY_NAMES.map((name) => [name, result[name]]))
+  )
+}
+
+const HOST_LLM_STOP_REASONS = new Set([
+  'end_turn',
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled'
+])
+
+const validatedHostLlmUsage = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('host.llm returned invalid usage')
+  }
+  const required = ['input_tokens', 'cache_tokens', 'output_tokens']
+  const optional = ['cached_read_tokens', 'cached_write_tokens', 'turn_count']
+  const keys = Object.keys(value)
+  if (
+    required.some((key) => !keys.includes(key)) ||
+    keys.some((key) => !required.includes(key) && !optional.includes(key)) ||
+    [...required, ...optional].some(
+      (key) =>
+        value[key] !== undefined &&
+        (typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || value[key] < 0)
+    ) ||
+    (value.turn_count !== undefined && value.turn_count < 1)
+  ) {
+    throw new Error('host.llm returned invalid usage')
+  }
+  return Object.freeze(Object.fromEntries(keys.map((key) => [key, value[key]])))
+}
+
+const validatedHostLlmResult = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('host.llm returned an invalid result')
+  }
+  const keys = Object.keys(value)
+  if (
+    !['text', 'model', 'stop_reason'].every((key) => keys.includes(key)) ||
+    keys.some((key) => !['text', 'model', 'stop_reason', 'usage'].includes(key)) ||
+    typeof value.text !== 'string' ||
+    typeof value.model !== 'string' ||
+    !HOST_LLM_STOP_REASONS.has(value.stop_reason)
+  ) {
+    throw new Error('host.llm returned an invalid result')
+  }
+  return Object.freeze({
+    text: value.text,
+    model: value.model,
+    stop_reason: value.stop_reason,
+    ...(value.usage === undefined ? {} : { usage: validatedHostLlmUsage(value.usage) })
+  })
+}
+
+const normalizedHostLlmRequest = (value) => {
+  if (typeof value === 'string') return value
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+    const keys = Reflect.ownKeys(value)
+    const prompt = value.prompt
+    if (keys.length !== 1 || keys[0] !== 'prompt' || typeof prompt !== 'string') {
+      return undefined
+    }
+    return { prompt }
+  } catch {
+    return undefined
+  }
+}
+
+const remappedHostObject = (value, label, keyMap) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object.`)
+  }
+  const keys = Reflect.ownKeys(value)
+  const unknown = keys.find(
+    (key) => typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(keyMap, key)
+  )
+  if (unknown !== undefined) throw new TypeError(`${label} unknown option: ${String(unknown)}`)
+  return Object.fromEntries(keys.map((key) => [keyMap[key], value[key]]))
+}
+
+const normalizedHostLlmOptions = (value) => {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('host.llm batch options only accept maxConcurrency.')
+  }
+  let keys
+  try {
+    keys = Reflect.ownKeys(value)
+  } catch {
+    throw new TypeError('host.llm batch options only accept maxConcurrency.')
+  }
+  const unknown = keys.find((key) => key !== 'maxConcurrency')
+  if (unknown !== undefined) {
+    throw new TypeError(`host.llm batch options unknown option: ${String(unknown)}`)
+  }
+  if (keys.length === 0) return {}
+  let concurrency
+  try {
+    concurrency = value.maxConcurrency
+  } catch {
+    throw new TypeError('host.llm batch options only accept maxConcurrency.')
+  }
+  if (
+    typeof concurrency !== 'number' ||
+    !Number.isInteger(concurrency) ||
+    concurrency < 1 ||
+    concurrency > 4
+  ) {
+    throw new TypeError('host.llm maxConcurrency must be an integer from 1 through 4.')
+  }
+  return { max_concurrency: concurrency }
+}
+
+async function hostLlm(request, options = undefined) {
+  if (arguments.length < 1 || arguments.length > 2) {
+    throw new TypeError('host.llm accepts a request and optional batch options')
+  }
+  const batch = Array.isArray(request)
+  if (!batch && arguments.length > 1) {
+    throw new TypeError('host.llm options are only accepted for batch calls')
+  }
+  const normalizedRequest = batch
+    ? request.map((item) => normalizedHostLlmRequest(item) ?? null)
+    : normalizedHostLlmRequest(request)
+  if (!batch && normalizedRequest === undefined) {
+    throw new TypeError('host.llm requests must be a prompt string or an exact { prompt } object.')
+  }
+  const normalizedOptions =
+    batch && arguments.length > 1 ? normalizedHostLlmOptions(options) : undefined
+  if (!RPC_ENDPOINT) throw new Error('host.llm is unavailable: RPC endpoint not set')
+  const params = batch
+    ? {
+        requests: normalizedRequest,
+        ...(arguments.length > 1 ? { options: normalizedOptions } : {})
+      }
+    : { request: normalizedRequest }
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'llmCall', params })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) throw new Error(body.error || 'host.llm HTTP ' + res.status)
+  if (!batch) return validatedHostLlmResult(body.result)
+  if (!Array.isArray(body.result) || body.result.length !== request.length) {
+    throw new Error('host.llm returned an invalid batch result')
+  }
+  return Object.freeze(
+    body.result.map((item) => {
+      if (
+        item &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        Object.keys(item).length === 1 &&
+        typeof item.error === 'string'
+      ) {
+        return Object.freeze({ error: item.error })
+      }
+      return validatedHostLlmResult(item)
+    })
+  )
+}
+
+async function artifactsRpc(op, params) {
+  if (!RPC_ENDPOINT)
+    throw new Error(
+      `host.${op === 'list' ? 'artifacts' : 'artifactPath'} is unavailable: RPC endpoint not set`
+    )
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'artifactsCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(
+      `host.${op === 'list' ? 'artifacts' : 'artifactPath'}: ${body.error || 'HTTP ' + res.status}`
+    )
+  }
+  return body.result
+}
+
+const HOST_ARTIFACT_REQUIRED_KEYS = [
+  'id',
+  'filename',
+  'size_bytes',
+  'latest_version_id',
+  'session_id',
+  'root_frame_id',
+  'is_user_upload',
+  'latest_version_created_at'
+]
+const HOST_ARTIFACT_OPTIONAL_KEYS = ['content_type', 'checksum']
+const HOST_ARTIFACT_INPUT_KEYS = {
+  versionId: 'version_id',
+  sessionId: 'session_id',
+  filename: 'filename',
+  exact: 'exact',
+  search: 'search',
+  contentType: 'content_type',
+  after: 'after',
+  before: 'before',
+  cursor: 'cursor',
+  limit: 'limit'
+}
+
+const validatedHostArtifact = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('host.artifacts returned an invalid Artifact')
+  }
+  const keys = Object.keys(value)
+  if (
+    HOST_ARTIFACT_REQUIRED_KEYS.some((key) => !keys.includes(key)) ||
+    keys.some(
+      (key) =>
+        !HOST_ARTIFACT_REQUIRED_KEYS.includes(key) && !HOST_ARTIFACT_OPTIONAL_KEYS.includes(key)
+    ) ||
+    typeof value.id !== 'string' ||
+    typeof value.filename !== 'string' ||
+    typeof value.size_bytes !== 'number' ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    typeof value.latest_version_id !== 'string' ||
+    typeof value.session_id !== 'string' ||
+    (value.root_frame_id !== null && typeof value.root_frame_id !== 'string') ||
+    typeof value.is_user_upload !== 'boolean' ||
+    typeof value.latest_version_created_at !== 'string' ||
+    (value.content_type !== undefined && typeof value.content_type !== 'string') ||
+    (value.checksum !== undefined && typeof value.checksum !== 'string')
+  ) {
+    throw new Error('host.artifacts returned an invalid Artifact')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...HOST_ARTIFACT_REQUIRED_KEYS, ...HOST_ARTIFACT_OPTIONAL_KEYS]
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+async function hostArtifacts(options = {}) {
+  if (arguments.length > 1) throw new TypeError('host.artifacts accepts at most one options object')
+  const result = await artifactsRpc('list', {
+    options: remappedHostObject(options, 'host.artifacts options', HOST_ARTIFACT_INPUT_KEYS)
+  })
+  if (
+    !result ||
+    typeof result !== 'object' ||
+    Array.isArray(result) ||
+    !Number.isSafeInteger(result.count) ||
+    typeof result.project_id !== 'string' ||
+    typeof result.truncated !== 'boolean' ||
+    (result.next_cursor !== undefined && typeof result.next_cursor !== 'string') ||
+    !Array.isArray(result.artifacts) ||
+    result.count !== result.artifacts.length ||
+    result.truncated !== (result.next_cursor !== undefined) ||
+    Object.keys(result).some(
+      (key) => !['count', 'project_id', 'truncated', 'next_cursor', 'artifacts'].includes(key)
+    )
+  ) {
+    throw new Error('host.artifacts returned an invalid result')
+  }
+  const artifacts = Object.freeze(result.artifacts.map(validatedHostArtifact))
+  return Object.freeze({
+    count: result.count,
+    project_id: result.project_id,
+    truncated: result.truncated,
+    ...(result.next_cursor !== undefined ? { next_cursor: result.next_cursor } : {}),
+    artifacts
+  })
+}
+
+async function hostArtifactPath(versionId) {
+  if (arguments.length !== 1) throw new TypeError('host.artifactPath accepts one versionId')
+  const result = await artifactsRpc('path', { version_id: versionId })
+  if (typeof result !== 'string' || !path.isAbsolute(result)) {
+    throw new Error('host.artifactPath returned an invalid path')
+  }
+  return result
+}
+
+async function lineageRpc(op, params) {
+  if (!RPC_ENDPOINT) throw new Error('host.lineage is unavailable: RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'lineageCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.lineage.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+const exactObject = (value, requiredKeys, optionalKeys = []) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const keys = Object.keys(value)
+  return (
+    requiredKeys.every((key) => keys.includes(key)) &&
+    keys.every((key) => requiredKeys.includes(key) || optionalKeys.includes(key))
+  )
+}
+
+const hostFrameString = (value) => typeof value === 'string'
+const hostFrameCount = (value) => Number.isSafeInteger(value) && value >= 0
+const hostFrameOptionalString = (value) => value === undefined || hostFrameString(value)
+const frozenProjection = (value, keys) =>
+  Object.freeze(
+    Object.fromEntries(
+      keys.filter((key) => value[key] !== undefined).map((key) => [key, value[key]])
+    )
+  )
+
+const HOST_FRAME_REQUIRED_KEYS = [
+  'frame_id',
+  'session_id',
+  'session_title',
+  'kind',
+  'recorded_frame_status',
+  'session_status',
+  'created_at',
+  'session_updated_at',
+  'message_count',
+  'child_count'
+]
+const HOST_FRAME_OPTIONAL_KEYS = [
+  'parent_frame_id',
+  'origin_message_id',
+  'agent_name',
+  'delegate_name',
+  'linked_review_id',
+  'completed_at',
+  'archived_at'
+]
+const HOST_FRAME_KINDS = ['root', 'reviewer', 'delegate', 'compatibility']
+const HOST_FRAME_STATUSES = ['running', 'completed', 'cancelled', 'error']
+const HOST_SESSION_STATUSES = [
+  'idle',
+  'running',
+  'waiting-for-user',
+  'waiting-permission',
+  'waiting-plan-approval',
+  'error'
+]
+
+const validatedHostFrame = (value) => {
+  if (
+    !exactObject(value, HOST_FRAME_REQUIRED_KEYS, HOST_FRAME_OPTIONAL_KEYS) ||
+    !hostFrameString(value.frame_id) ||
+    !hostFrameString(value.session_id) ||
+    !hostFrameString(value.session_title) ||
+    !HOST_FRAME_KINDS.includes(value.kind) ||
+    !HOST_FRAME_STATUSES.includes(value.recorded_frame_status) ||
+    !HOST_SESSION_STATUSES.includes(value.session_status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.session_updated_at) ||
+    !hostFrameCount(value.message_count) ||
+    !hostFrameCount(value.child_count) ||
+    HOST_FRAME_OPTIONAL_KEYS.some((key) => !hostFrameOptionalString(value[key]))
+  ) {
+    throw new Error('host.frames returned an invalid Frame')
+  }
+  return frozenProjection(value, [...HOST_FRAME_REQUIRED_KEYS, ...HOST_FRAME_OPTIONAL_KEYS])
+}
+
+const validatedHostFrameSession = (value) => {
+  const required = ['session_id', 'session_title', 'session_status', 'created_at', 'updated_at']
+  const optional = ['archived_at']
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.session_id) ||
+    !hostFrameString(value.session_title) ||
+    !HOST_SESSION_STATUSES.includes(value.session_status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.updated_at) ||
+    !hostFrameOptionalString(value.archived_at)
+  ) {
+    throw new Error('host.frames.get returned an invalid Session')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+const validatedHostFrameBranch = (value) => {
+  const keys = ['branch_id', 'created_at', 'updated_at']
+  if (!exactObject(value, keys) || keys.some((key) => !hostFrameString(value[key]))) {
+    throw new Error('host.frames.get returned an invalid Branch')
+  }
+  return frozenProjection(value, keys)
+}
+
+const validatedHostFrameTurnUsage = (value) => {
+  const required = ['input_tokens', 'cache_tokens', 'output_tokens']
+  const optional = ['cached_read_tokens', 'cached_write_tokens', 'turn_count']
+  if (
+    !exactObject(value, required, optional) ||
+    [...required, ...optional].some(
+      (key) => value[key] !== undefined && !hostFrameCount(value[key])
+    )
+  ) {
+    throw new Error('host.frames.get returned invalid turn usage')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+const validatedHostFrameAttachment = (value) => {
+  const required = ['kind', 'attachment_id']
+  const optional = ['version_id', 'name', 'mime_type', 'size_bytes']
+  if (
+    !exactObject(value, required, optional) ||
+    !['upload', 'artifact', 'image'].includes(value.kind) ||
+    !hostFrameString(value.attachment_id) ||
+    ['version_id', 'name', 'mime_type'].some((key) => !hostFrameOptionalString(value[key])) ||
+    (value.size_bytes !== undefined && !hostFrameCount(value.size_bytes))
+  ) {
+    throw new Error('host.frames.get returned an invalid attachment')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+const validatedHostFrameMessage = (value) => {
+  const required = ['message_id', 'role', 'content', 'status', 'created_at', 'updated_at']
+  const optional = [
+    'response_to_message_id',
+    'runtime_segment_id',
+    'completed_at',
+    'failed_at',
+    'turn_usage',
+    'attachments'
+  ]
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.message_id) ||
+    !['user', 'agent'].includes(value.role) ||
+    !hostFrameString(value.content) ||
+    !['complete', 'streaming', 'error'].includes(value.status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.updated_at) ||
+    ['response_to_message_id', 'runtime_segment_id', 'completed_at', 'failed_at'].some(
+      (key) => !hostFrameOptionalString(value[key])
+    ) ||
+    (value.turn_usage !== undefined &&
+      (!value.turn_usage ||
+        typeof value.turn_usage !== 'object' ||
+        Array.isArray(value.turn_usage))) ||
+    (value.attachments !== undefined && !Array.isArray(value.attachments))
+  ) {
+    throw new Error('host.frames.get returned an invalid Message')
+  }
+  return Object.freeze({
+    ...frozenProjection(
+      value,
+      [...required, ...optional].filter((key) => !['turn_usage', 'attachments'].includes(key))
+    ),
+    ...(value.turn_usage ? { turn_usage: validatedHostFrameTurnUsage(value.turn_usage) } : {}),
+    ...(value.attachments
+      ? { attachments: Object.freeze(value.attachments.map(validatedHostFrameAttachment)) }
+      : {})
+  })
+}
+
+const validatedHostFrameTranscript = (value) => {
+  const required = ['messages', 'has_more_before']
+  const optional = ['previous_cursor']
+  if (
+    !exactObject(value, required, optional) ||
+    !Array.isArray(value.messages) ||
+    typeof value.has_more_before !== 'boolean' ||
+    !hostFrameOptionalString(value.previous_cursor) ||
+    value.has_more_before !== (value.previous_cursor !== undefined)
+  ) {
+    throw new Error('host.frames.get returned an invalid transcript')
+  }
+  return Object.freeze({
+    messages: Object.freeze(value.messages.map(validatedHostFrameMessage)),
+    ...(value.previous_cursor !== undefined ? { previous_cursor: value.previous_cursor } : {}),
+    has_more_before: value.has_more_before
+  })
+}
+
+const validatedHostRuntimeSegment = (value) => {
+  const required = ['runtime_segment_id', 'started_at']
+  const optional = ['agent_name', 'ended_at']
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.runtime_segment_id) ||
+    !hostFrameString(value.started_at) ||
+    optional.some((key) => !hostFrameOptionalString(value[key]))
+  ) {
+    throw new Error('host.frames.get returned an invalid runtime segment')
+  }
+  return frozenProjection(value, [...required, ...optional])
+}
+
+async function framesRpc(op, params) {
+  if (!RPC_ENDPOINT) throw new Error(`host.frames.${op} is unavailable: RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'framesCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.frames.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+const isHostLineageRecord = (value) =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+
+const hasHostLineageKeys = (value, required, optional = []) => {
+  if (!isHostLineageRecord(value)) return false
+  const allowed = new Set([...required, ...optional])
+  const keys = Object.keys(value)
+  return required.every((key) => keys.includes(key)) && keys.every((key) => allowed.has(key))
+}
+
+const validatedHostLineageNode = (value) => {
+  const required = [
+    'file_id',
+    'version_id',
+    'filename',
+    'version_number',
+    'session_id',
+    'root_frame_id',
+    'agent_frame_id',
+    'created_at',
+    'size_bytes',
+    'checksum',
+    'is_user_upload'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, ['content_type']) ||
+    ![
+      value.file_id,
+      value.version_id,
+      value.filename,
+      value.session_id,
+      value.created_at,
+      value.checksum
+    ].every((entry) => typeof entry === 'string' && entry.length > 0) ||
+    !Number.isSafeInteger(value.version_number) ||
+    value.version_number < 1 ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    value.size_bytes < 0 ||
+    (value.root_frame_id !== null && typeof value.root_frame_id !== 'string') ||
+    (value.agent_frame_id !== null && typeof value.agent_frame_id !== 'string') ||
+    (value.content_type !== undefined && typeof value.content_type !== 'string') ||
+    typeof value.is_user_upload !== 'boolean'
+  ) {
+    throw new Error('host.lineage.graph returned an invalid node')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...required, 'content_type']
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+const validatedHostLineageEdge = (value) => {
+  const required = [
+    'version_id',
+    'depends_on_version_id',
+    'ordinal',
+    'source_kind',
+    'input_filename',
+    'association'
+  ]
+  if (
+    !hasHostLineageKeys(value, required) ||
+    ![value.version_id, value.depends_on_version_id, value.input_filename].every(
+      (entry) => typeof entry === 'string' && entry.length > 0
+    ) ||
+    !Number.isSafeInteger(value.ordinal) ||
+    value.ordinal < 0 ||
+    !['artifact-version', 'upload-version'].includes(value.source_kind) ||
+    !['turn-attached', 'resolver-accessed'].includes(value.association)
+  ) {
+    throw new Error('host.lineage.graph returned an invalid edge')
+  }
+  return Object.freeze(Object.fromEntries(required.map((key) => [key, value[key]])))
+}
+
+const validatedHostLineageGraph = (value) => {
+  const required = ['project_id', 'root_version_id', 'direction', 'truncated', 'nodes', 'edges']
+  const optional = ['truncation_reason', 'frontier_version_ids']
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    typeof value.project_id !== 'string' ||
+    typeof value.root_version_id !== 'string' ||
+    !['up', 'down'].includes(value.direction) ||
+    typeof value.truncated !== 'boolean' ||
+    !Array.isArray(value.nodes) ||
+    !Array.isArray(value.edges) ||
+    (value.truncated
+      ? !['max_depth', 'max_nodes'].includes(value.truncation_reason) ||
+        !Array.isArray(value.frontier_version_ids) ||
+        value.frontier_version_ids.length === 0 ||
+        value.frontier_version_ids.some((entry) => typeof entry !== 'string' || !entry)
+      : value.truncation_reason !== undefined || value.frontier_version_ids !== undefined)
+  ) {
+    throw new Error('host.lineage.graph returned an invalid result')
+  }
+  const nodes = Object.freeze(value.nodes.map(validatedHostLineageNode))
+  const edges = Object.freeze(value.edges.map(validatedHostLineageEdge))
+  const frontier = value.frontier_version_ids
+    ? Object.freeze([...value.frontier_version_ids])
+    : undefined
+  return Object.freeze({
+    project_id: value.project_id,
+    root_version_id: value.root_version_id,
+    direction: value.direction,
+    truncated: value.truncated,
+    ...(value.truncation_reason ? { truncation_reason: value.truncation_reason } : {}),
+    ...(frontier ? { frontier_version_ids: frontier } : {}),
+    nodes,
+    edges
+  })
+}
+
+const HOST_LINEAGE_UNAVAILABLE_REASONS = [
+  'producer-not-supplied',
+  'producer-source-unverifiable',
+  'environment-not-supported',
+  'environment-capture-failed',
+  'environment-manifest-publication-failed',
+  'legacy-environment-reference-unavailable'
+]
+const HOST_LINEAGE_ATTEMPT_REASONS = [
+  'package-not-found',
+  'solver-failed',
+  'installer-unavailable',
+  'permission',
+  'network',
+  'authentication',
+  'tls-policy',
+  'validation',
+  'cancelled',
+  'process-unconfirmed',
+  'recovery-blocked',
+  'unknown'
+]
+
+const validatedHostLineageAvailability = (value) => {
+  if (
+    !isHostLineageRecord(value) ||
+    (value.state === 'unavailable'
+      ? !hasHostLineageKeys(value, ['state', 'reason']) ||
+        !HOST_LINEAGE_UNAVAILABLE_REASONS.includes(value.reason)
+      : !hasHostLineageKeys(value, ['state']) || !['available', 'partial'].includes(value.state))
+  ) {
+    throw new Error('host.lineage.get returned an invalid availability projection')
+  }
+  return Object.freeze(
+    value.state === 'unavailable'
+      ? { state: value.state, reason: value.reason }
+      : { state: value.state }
+  )
+}
+
+const validatedHostLineageProducer = (value) => {
+  if (value?.state === 'unavailable') {
+    if (
+      !hasHostLineageKeys(value, ['state', 'reason']) ||
+      !['producer-not-supplied', 'producer-source-unverifiable'].includes(value.reason)
+    ) {
+      throw new Error('host.lineage.get returned an invalid producer projection')
+    }
+    return Object.freeze({ state: value.state, reason: value.reason })
+  }
+  const required = [
+    'state',
+    'notebook_session_id',
+    'producer_run_id',
+    'run_index',
+    'kernel_kind',
+    'association_method'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, ['environment_manifest_checksum']) ||
+    value.state !== 'available' ||
+    typeof value.notebook_session_id !== 'string' ||
+    typeof value.producer_run_id !== 'string' ||
+    !Number.isSafeInteger(value.run_index) ||
+    value.run_index < 0 ||
+    !['python', 'r', 'repl', 'bash'].includes(value.kernel_kind) ||
+    !['agent-declared-and-session-validated', 'server-inferred-file-observation'].includes(
+      value.association_method
+    ) ||
+    (value.environment_manifest_checksum !== undefined &&
+      typeof value.environment_manifest_checksum !== 'string')
+  ) {
+    throw new Error('host.lineage.get returned an invalid producer projection')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...required, 'environment_manifest_checksum']
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+const validatedHostLineageEnvironment = (value) => {
+  const required = [
+    'capture_kind',
+    'environment_name',
+    'kernel_kind',
+    'runtime_source',
+    'packages',
+    'inventory_sources',
+    'installed_inventory',
+    'captured_at',
+    'source_manifest_checksum',
+    'complete',
+    'capture_status'
+  ]
+  const optional = [
+    'runtime_version',
+    'platform',
+    'architecture',
+    'python_version',
+    'r_version',
+    'op_log',
+    'op_log_truncation',
+    'warnings'
+  ]
+  const optionalStrings = [
+    'runtime_version',
+    'platform',
+    'architecture',
+    'python_version',
+    'r_version'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    value.capture_kind !== 'completed-run' ||
+    typeof value.environment_name !== 'string' ||
+    !['python', 'r'].includes(value.kernel_kind) ||
+    !['managed', 'external'].includes(value.runtime_source) ||
+    optionalStrings.some((key) => value[key] !== undefined && typeof value[key] !== 'string') ||
+    !Array.isArray(value.packages) ||
+    !Array.isArray(value.inventory_sources) ||
+    value.inventory_sources.some(
+      (entry) => !['kernel-native', 'interpreter-native', 'operation-log'].includes(entry)
+    ) ||
+    !hasHostLineageKeys(value.installed_inventory, ['captured_at', 'source', 'validation']) ||
+    typeof value.installed_inventory.captured_at !== 'string' ||
+    !['full-scan', 'cache-reused'].includes(value.installed_inventory.source) ||
+    !['full-scan', 'best-effort'].includes(value.installed_inventory.validation) ||
+    typeof value.captured_at !== 'string' ||
+    typeof value.source_manifest_checksum !== 'string' ||
+    typeof value.complete !== 'boolean' ||
+    !['complete', 'partial'].includes(value.capture_status) ||
+    (value.warnings !== undefined &&
+      (!Array.isArray(value.warnings) || value.warnings.some((entry) => typeof entry !== 'string')))
+  ) {
+    throw new Error('host.lineage.get returned an invalid environment projection')
+  }
+  const packages = Object.freeze(
+    value.packages.map((entry) => {
+      const packageRequired = [
+        'name',
+        'version_status',
+        'ecosystem',
+        'evidence_sources',
+        'loaded_state'
+      ]
+      const packageOptional = [
+        'version',
+        'library_rank',
+        'library_scope',
+        'built_for_runtime',
+        'priority'
+      ]
+      if (
+        !hasHostLineageKeys(entry, packageRequired, packageOptional) ||
+        typeof entry.name !== 'string' ||
+        (entry.version !== undefined && typeof entry.version !== 'string') ||
+        !['known', 'unavailable'].includes(entry.version_status) ||
+        !['python', 'r', 'native', 'unknown'].includes(entry.ecosystem) ||
+        !Array.isArray(entry.evidence_sources) ||
+        entry.evidence_sources.some(
+          (source) =>
+            ![
+              'python-importlib-metadata',
+              'python-kernel-modules',
+              'r-installed-packages',
+              'r-session-info'
+            ].includes(source)
+        ) ||
+        !['attached', 'loaded', 'installed-only', 'unknown'].includes(entry.loaded_state) ||
+        (entry.library_rank !== undefined && !Number.isSafeInteger(entry.library_rank)) ||
+        (entry.library_scope !== undefined &&
+          !['environment', 'user', 'system', 'unknown'].includes(entry.library_scope)) ||
+        (entry.built_for_runtime !== undefined && typeof entry.built_for_runtime !== 'string') ||
+        (entry.priority !== undefined && !['base', 'recommended', 'other'].includes(entry.priority))
+      ) {
+        throw new Error('host.lineage.get returned an invalid environment package')
+      }
+      return Object.freeze({
+        name: entry.name,
+        ...(entry.version !== undefined ? { version: entry.version } : {}),
+        version_status: entry.version_status,
+        ecosystem: entry.ecosystem,
+        evidence_sources: Object.freeze([...entry.evidence_sources]),
+        loaded_state: entry.loaded_state,
+        ...(entry.library_rank !== undefined ? { library_rank: entry.library_rank } : {}),
+        ...(entry.library_scope !== undefined ? { library_scope: entry.library_scope } : {}),
+        ...(entry.built_for_runtime !== undefined
+          ? { built_for_runtime: entry.built_for_runtime }
+          : {}),
+        ...(entry.priority !== undefined ? { priority: entry.priority } : {})
+      })
+    })
+  )
+  if (value.op_log !== undefined && !Array.isArray(value.op_log)) {
+    throw new Error('host.lineage.get returned an invalid environment operation log')
+  }
+  const opLog = value.op_log
+    ? Object.freeze(
+        value.op_log.map((entry) => {
+          const operationRequired = [
+            'operation_id',
+            'timestamp',
+            'operation',
+            'packages',
+            'result',
+            'attempts',
+            'fallback_used',
+            'inventory_refresh',
+            'inventory_refresh_attempts'
+          ]
+          if (
+            !hasHostLineageKeys(entry, operationRequired, ['package_changes']) ||
+            typeof entry.operation_id !== 'string' ||
+            typeof entry.timestamp !== 'string' ||
+            !['create', 'install', 'uninstall', 'update'].includes(entry.operation) ||
+            !Array.isArray(entry.packages) ||
+            entry.packages.some((item) => typeof item !== 'string') ||
+            !['success', 'failure'].includes(entry.result) ||
+            !Array.isArray(entry.attempts) ||
+            typeof entry.fallback_used !== 'boolean' ||
+            !['published', 'unchanged', 'failed'].includes(entry.inventory_refresh) ||
+            !Array.isArray(entry.inventory_refresh_attempts) ||
+            (entry.package_changes !== undefined && !Array.isArray(entry.package_changes))
+          ) {
+            throw new Error('host.lineage.get returned an invalid environment operation')
+          }
+          const attempts = Object.freeze(
+            entry.attempts.map((attempt) => {
+              const attemptRequired = [
+                'group_ordinal',
+                'installer',
+                'packages',
+                'status',
+                'mutation_risk'
+              ]
+              if (
+                !hasHostLineageKeys(attempt, attemptRequired, ['reason']) ||
+                !Number.isSafeInteger(attempt.group_ordinal) ||
+                ![
+                  'conda',
+                  'pip',
+                  'uv',
+                  'poetry',
+                  'r-install-packages',
+                  'renv',
+                  'pak',
+                  'biocmanager',
+                  'unknown'
+                ].includes(attempt.installer) ||
+                !Array.isArray(attempt.packages) ||
+                attempt.packages.some((item) => typeof item !== 'string') ||
+                !['succeeded', 'failed', 'skipped'].includes(attempt.status) ||
+                !['none', 'possible', 'confirmed', 'unknown'].includes(attempt.mutation_risk) ||
+                (attempt.reason !== undefined &&
+                  !HOST_LINEAGE_ATTEMPT_REASONS.includes(attempt.reason))
+              ) {
+                throw new Error('host.lineage.get returned an invalid environment attempt')
+              }
+              return Object.freeze({
+                group_ordinal: attempt.group_ordinal,
+                installer: attempt.installer,
+                packages: Object.freeze([...attempt.packages]),
+                status: attempt.status,
+                mutation_risk: attempt.mutation_risk,
+                ...(attempt.reason !== undefined ? { reason: attempt.reason } : {})
+              })
+            })
+          )
+          const refreshAttempts = Object.freeze(
+            entry.inventory_refresh_attempts.map((attempt) => {
+              if (
+                !hasHostLineageKeys(
+                  attempt,
+                  ['attempt', 'trigger', 'timestamp', 'result'],
+                  ['error']
+                ) ||
+                !Number.isSafeInteger(attempt.attempt) ||
+                !['terminal', 'recovery'].includes(attempt.trigger) ||
+                typeof attempt.timestamp !== 'string' ||
+                !['published', 'unchanged', 'failed'].includes(attempt.result) ||
+                (attempt.error !== undefined && typeof attempt.error !== 'string')
+              ) {
+                throw new Error('host.lineage.get returned an invalid inventory refresh attempt')
+              }
+              return Object.freeze({
+                attempt: attempt.attempt,
+                trigger: attempt.trigger,
+                timestamp: attempt.timestamp,
+                result: attempt.result,
+                ...(attempt.error !== undefined ? { error: attempt.error } : {})
+              })
+            })
+          )
+          const packageChanges = entry.package_changes
+            ? Object.freeze(
+                entry.package_changes.map((change) => {
+                  const changeRequired = ['name', 'ecosystem', 'relationship', 'change']
+                  const changeOptional = [
+                    'before_version',
+                    'after_version',
+                    'library_rank',
+                    'library_scope'
+                  ]
+                  if (
+                    !hasHostLineageKeys(change, changeRequired, changeOptional) ||
+                    typeof change.name !== 'string' ||
+                    !['python', 'r', 'native', 'unknown'].includes(change.ecosystem) ||
+                    !['requested', 'dependency', 'unattributed'].includes(change.relationship) ||
+                    !['installed', 'updated', 'removed', 'unchanged', 'observed'].includes(
+                      change.change
+                    ) ||
+                    (change.before_version !== undefined &&
+                      typeof change.before_version !== 'string') ||
+                    (change.after_version !== undefined &&
+                      typeof change.after_version !== 'string') ||
+                    (change.library_rank !== undefined &&
+                      !Number.isSafeInteger(change.library_rank)) ||
+                    (change.library_scope !== undefined &&
+                      !['environment', 'user', 'system', 'unknown'].includes(change.library_scope))
+                  ) {
+                    throw new Error('host.lineage.get returned an invalid package change')
+                  }
+                  return Object.freeze(
+                    Object.fromEntries(
+                      [...changeRequired, ...changeOptional]
+                        .filter((key) => change[key] !== undefined)
+                        .map((key) => [key, change[key]])
+                    )
+                  )
+                })
+              )
+            : undefined
+          return Object.freeze({
+            operation_id: entry.operation_id,
+            timestamp: entry.timestamp,
+            operation: entry.operation,
+            packages: Object.freeze([...entry.packages]),
+            result: entry.result,
+            attempts,
+            fallback_used: entry.fallback_used,
+            inventory_refresh: entry.inventory_refresh,
+            inventory_refresh_attempts: refreshAttempts,
+            ...(packageChanges ? { package_changes: packageChanges } : {})
+          })
+        })
+      )
+    : undefined
+  let opLogTruncation
+  if (value.op_log_truncation !== undefined) {
+    if (
+      !hasHostLineageKeys(value.op_log_truncation, ['omitted_count'], ['earliest_retained_at']) ||
+      !Number.isSafeInteger(value.op_log_truncation.omitted_count) ||
+      value.op_log_truncation.omitted_count <= 0 ||
+      (value.op_log_truncation.earliest_retained_at !== undefined &&
+        typeof value.op_log_truncation.earliest_retained_at !== 'string')
+    ) {
+      throw new Error('host.lineage.get returned an invalid operation-log truncation')
+    }
+    opLogTruncation = Object.freeze({
+      omitted_count: value.op_log_truncation.omitted_count,
+      ...(value.op_log_truncation.earliest_retained_at
+        ? { earliest_retained_at: value.op_log_truncation.earliest_retained_at }
+        : {})
+    })
+  }
+  return Object.freeze({
+    capture_kind: value.capture_kind,
+    environment_name: value.environment_name,
+    kernel_kind: value.kernel_kind,
+    runtime_source: value.runtime_source,
+    ...Object.fromEntries(
+      optionalStrings.filter((key) => value[key] !== undefined).map((key) => [key, value[key]])
+    ),
+    packages,
+    inventory_sources: Object.freeze([...value.inventory_sources]),
+    installed_inventory: Object.freeze({
+      captured_at: value.installed_inventory.captured_at,
+      source: value.installed_inventory.source,
+      validation: value.installed_inventory.validation
+    }),
+    ...(opLog ? { op_log: opLog } : {}),
+    ...(opLogTruncation ? { op_log_truncation: opLogTruncation } : {}),
+    captured_at: value.captured_at,
+    source_manifest_checksum: value.source_manifest_checksum,
+    complete: value.complete,
+    capture_status: value.capture_status,
+    ...(value.warnings ? { warnings: Object.freeze([...value.warnings]) } : {})
+  })
+}
+
+const validatedHostLineageInput = (value) => {
+  const required = [
+    'ordinal',
+    'version_id',
+    'file_id',
+    'source_kind',
+    'session_id',
+    'filename',
+    'size_bytes',
+    'checksum',
+    'association'
+  ]
+  const optional = ['version_number', 'created_at', 'content_type']
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    !Number.isSafeInteger(value.ordinal) ||
+    value.ordinal < 0 ||
+    ![value.version_id, value.file_id, value.session_id, value.filename, value.checksum].every(
+      (entry) => typeof entry === 'string' && entry.length > 0
+    ) ||
+    !['artifact-version', 'upload-version'].includes(value.source_kind) ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    value.size_bytes < 0 ||
+    !['turn-attached', 'resolver-accessed'].includes(value.association) ||
+    (value.version_number !== undefined &&
+      (!Number.isSafeInteger(value.version_number) || value.version_number < 1)) ||
+    (value.created_at !== undefined && typeof value.created_at !== 'string') ||
+    (value.content_type !== undefined && typeof value.content_type !== 'string')
+  ) {
+    throw new Error('host.lineage.get returned an invalid input')
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      [...required, ...optional]
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    )
+  )
+}
+
+const validatedHostLineageVersion = (value) => {
+  const required = [
+    'project_id',
+    'artifact_id',
+    'version_id',
+    'filename',
+    'version_number',
+    'session_id',
+    'root_frame_id',
+    'agent_frame_id',
+    'message_branch_id',
+    'runtime_segment_id',
+    'prompt_message_id',
+    'created_at',
+    'size_bytes',
+    'checksum',
+    'content_status',
+    'execution_status',
+    'producer',
+    'environment_status',
+    'inputs'
+  ]
+  const optional = ['content_type', 'agent_name', 'reproduction_code', 'environment']
+  const stringKeys = [
+    'project_id',
+    'artifact_id',
+    'version_id',
+    'filename',
+    'session_id',
+    'root_frame_id',
+    'agent_frame_id',
+    'message_branch_id',
+    'runtime_segment_id',
+    'prompt_message_id',
+    'created_at',
+    'checksum'
+  ]
+  if (
+    !hasHostLineageKeys(value, required, optional) ||
+    stringKeys.some((key) => typeof value[key] !== 'string' || !value[key]) ||
+    !Number.isSafeInteger(value.version_number) ||
+    value.version_number < 1 ||
+    !Number.isSafeInteger(value.size_bytes) ||
+    value.size_bytes < 0 ||
+    ['content_type', 'agent_name', 'reproduction_code'].some(
+      (key) => value[key] !== undefined && typeof value[key] !== 'string'
+    ) ||
+    !Array.isArray(value.inputs)
+  ) {
+    throw new Error('host.lineage.get returned an invalid result')
+  }
+  let contentStatus
+  if (
+    value.content_status?.state === 'available' &&
+    hasHostLineageKeys(value.content_status, ['state'])
+  ) {
+    contentStatus = Object.freeze({ state: 'available' })
+  } else if (
+    value.content_status?.state === 'unavailable' &&
+    hasHostLineageKeys(value.content_status, ['state', 'reason']) &&
+    ['missing', 'checksum-mismatch'].includes(value.content_status.reason)
+  ) {
+    contentStatus = Object.freeze({
+      state: 'unavailable',
+      reason: value.content_status.reason
+    })
+  } else {
+    throw new Error('host.lineage.get returned an invalid content status')
+  }
+  const inputs = Object.freeze(value.inputs.map(validatedHostLineageInput))
+  const environment = value.environment
+    ? validatedHostLineageEnvironment(value.environment)
+    : undefined
+  return Object.freeze({
+    ...Object.fromEntries(
+      [
+        'project_id',
+        'artifact_id',
+        'version_id',
+        'filename',
+        'version_number',
+        'session_id',
+        'root_frame_id',
+        'agent_frame_id',
+        'message_branch_id',
+        'runtime_segment_id',
+        'prompt_message_id',
+        'created_at',
+        'content_type',
+        'size_bytes',
+        'checksum',
+        'agent_name'
+      ]
+        .filter((key) => value[key] !== undefined)
+        .map((key) => [key, value[key]])
+    ),
+    content_status: contentStatus,
+    ...(value.reproduction_code !== undefined
+      ? { reproduction_code: value.reproduction_code }
+      : {}),
+    execution_status: validatedHostLineageAvailability(value.execution_status),
+    producer: validatedHostLineageProducer(value.producer),
+    environment_status: validatedHostLineageAvailability(value.environment_status),
+    ...(environment ? { environment } : {}),
+    inputs
+  })
+}
+
+async function hostLineageGraph(versionId, options = {}) {
+  if (arguments.length < 1 || arguments.length > 2) {
+    throw new TypeError('host.lineage.graph accepts versionId and at most one options object')
+  }
+  return validatedHostLineageGraph(
+    await lineageRpc('graph', {
+      version_id: versionId,
+      options: remappedHostObject(options, 'host.lineage.graph options', {
+        direction: 'direction',
+        maxDepth: 'max_depth',
+        maxNodes: 'max_nodes'
+      })
+    })
+  )
+}
+
+async function hostLineageGet(versionId) {
+  if (arguments.length !== 1) throw new TypeError('host.lineage.get accepts one versionId')
+  return validatedHostLineageVersion(await lineageRpc('get', { version_id: versionId }))
+}
+
+const hostLineage = Object.freeze({ graph: hostLineageGraph, get: hostLineageGet })
+
+async function hostFramesList(options = {}) {
+  if (arguments.length > 1)
+    throw new TypeError('host.frames.list accepts at most one options object')
+  const result = await framesRpc('list', {
+    options: remappedHostObject(options, 'host.frames.list options', {
+      sessionId: 'session_id',
+      rootsOnly: 'roots_only',
+      kind: 'kind',
+      archived: 'archived',
+      search: 'search',
+      after: 'after',
+      before: 'before',
+      limit: 'limit',
+      cursor: 'cursor'
+    })
+  })
+  const required = ['project_id', 'frames', 'total_count']
+  const optional = ['next_cursor']
+  if (
+    !exactObject(result, required, optional) ||
+    !hostFrameString(result.project_id) ||
+    !Array.isArray(result.frames) ||
+    !hostFrameCount(result.total_count) ||
+    result.total_count < result.frames.length ||
+    !hostFrameOptionalString(result.next_cursor)
+  ) {
+    throw new Error('host.frames.list returned an invalid result')
+  }
+  return Object.freeze({
+    project_id: result.project_id,
+    frames: Object.freeze(result.frames.map(validatedHostFrame)),
+    total_count: result.total_count,
+    ...(result.next_cursor !== undefined ? { next_cursor: result.next_cursor } : {})
+  })
+}
+
+async function hostFramesGet(frameId, options = {}) {
+  if (arguments.length < 1 || arguments.length > 2) {
+    throw new TypeError('host.frames.get accepts frameId and at most one options object')
+  }
+  const result = await framesRpc('get', {
+    frame_id: frameId,
+    options: remappedHostObject(options, 'host.frames.get options', {
+      sessionId: 'session_id',
+      branchId: 'branch_id',
+      before: 'before',
+      limit: 'limit'
+    })
+  })
+  const keys = ['project_id', 'session', 'frame', 'branch', 'transcript', 'runtime_segments']
+  if (
+    !exactObject(result, keys) ||
+    !hostFrameString(result.project_id) ||
+    !Array.isArray(result.runtime_segments)
+  ) {
+    throw new Error('host.frames.get returned an invalid result')
+  }
+  const session = validatedHostFrameSession(result.session)
+  const frame = validatedHostFrame(result.frame)
+  if (frame.frame_id !== frameId || frame.session_id !== session.session_id) {
+    throw new Error('host.frames.get returned an invalid result')
+  }
+  return Object.freeze({
+    project_id: result.project_id,
+    session,
+    frame,
+    branch: validatedHostFrameBranch(result.branch),
+    transcript: validatedHostFrameTranscript(result.transcript),
+    runtime_segments: Object.freeze(result.runtime_segments.map(validatedHostRuntimeSegment))
+  })
+}
+
+const hostFrames = Object.freeze({ list: hostFramesList, get: hostFramesGet })
+
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
@@ -995,8 +2294,8 @@ async function computeRpc(params) {
   return body.result
 }
 
-// host.agents: control-plane Specialist management SDK (issue 02). Read-only in this slice
-// (list/get/list_skills/list_connectors); mutation/switch land in later issues. Routed over the SAME
+// host.agents: control-plane Specialist management SDK. Reads, ordinary mutations, and privileged
+// delete/switch operations are routed over the SAME
 // app-local RPC endpoint as host.mcp/host.compute but as its own `agentsCall` method — never through
 // host.mcp(). Uses the captured RPC endpoint/token + client for the same token-isolation reasons. The
 // trusted calling session identity is the COMPUTE_SESSION_ID captured at spawn time
@@ -1024,17 +2323,220 @@ async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
     // (auth, unknown method) are not method-scoped, so prefix them with the op the caller invoked so
     // the agent always sees a host.agents.* namespaced, secret-free message.
     const serverMessage = body.error || 'host.agents HTTP ' + res.status
-    const prefixed = /^host\.agents\./.test(serverMessage)
-      ? serverMessage
-      : `host.agents.${op}: ${serverMessage}`
-    throw new Error(prefixed)
+    const publicMethod =
+      {
+        list_skills: 'listSkills',
+        list_connectors: 'listConnectors',
+        attach_skill: 'attachSkill',
+        detach_skill: 'detachSkill',
+        attach_connector: 'attachConnector',
+        detach_connector: 'detachConnector'
+      }[op] || op
+    const detail = String(serverMessage).replace(/^host\.agents\.[^:]+:\s*/, '')
+    throw new Error(`host.agents.${publicMethod}: ${detail}`)
   }
   return body.result
 }
 
-// host.agents namespace. Methods and filter/write fields are snake_case; returned records are
-// camelCase. list_skills/list_connectors accept an optional stable id or unique public name.
-// create/update/attach_*/detach_* are the ordinary-mutation surface (issue 03); they return a real
+async function delegateRpc(request, options = {}) {
+  if (!RPC_ENDPOINT) throw new Error('host.delegate is unavailable: control RPC endpoint not set')
+  const delegationCallId = String(++DELEGATE_CALL_SEQUENCE)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: { request, options, delegation_call_id: delegationCallId }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.delegate: ${body.error || 'HTTP ' + res.status}`)
+  }
+  const outcome = body.result || {}
+  return {
+    kind: outcome.kind,
+    children: (outcome.children || []).map((child) => ({
+      frame_id: child.frameId,
+      attempt_id: child.attemptId,
+      ...(child.name !== undefined ? { name: child.name } : {}),
+      ...(child.agentName !== undefined ? { agent_name: child.agentName } : {}),
+      status: child.status,
+      ...(child.terminalMessageId ? { terminal_message_id: child.terminalMessageId } : {}),
+      ...(child.response !== undefined ? { response: child.response } : {}),
+      ...(child.status !== 'running' ? { artifacts_created: child.artifactsCreated || [] } : {}),
+      ...(child.cancellationReason ? { cancellation_reason: child.cancellationReason } : {}),
+      ...(child.error ? { error: child.error } : {}),
+      ...(child.structuredOutputUnsatisfied !== undefined
+        ? { structured_output_unsatisfied: child.structuredOutputUnsatisfied }
+        : {}),
+      ...(child.structuredOutput !== undefined ? { structured_output: child.structuredOutput } : {})
+    }))
+  }
+}
+
+async function hostHelp(query = undefined) {
+  if (!RPC_ENDPOINT) throw new Error('host.help is unavailable: control RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'hostSdkHelp',
+      params: { ...(query !== undefined ? { query } : {}) }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.help: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+async function hostDelegate(request, options = {}) {
+  return delegateRpc(request, options)
+}
+
+async function hostStopChild(frameIds) {
+  if (!RPC_ENDPOINT) throw new Error('host.stop_child is unavailable: control RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: { operation: 'stop_children', frame_ids: frameIds }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.stop_child: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return (body.result || []).map((child) => ({
+    frame_id: child.frameId,
+    status: child.status
+  }))
+}
+
+async function delegatedObservationRpc(op, selectors = undefined, options = undefined) {
+  if (!RPC_ENDPOINT) throw new Error(`host.${op} is unavailable: control RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: {
+        op,
+        ...(selectors !== undefined
+          ? op === 'collect'
+            ? { selectors }
+            : { frame_ids: selectors }
+          : {}),
+        ...(options !== undefined ? { options } : {})
+      }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return (body.result || []).map((child) => ({
+    frame_id: child.frameId,
+    attempt_id: child.attemptId,
+    ...(child.title !== undefined ? { title: child.title } : {}),
+    ...(child.name !== undefined ? { name: child.name } : {}),
+    ...(child.agentName !== undefined ? { agent_name: child.agentName } : {}),
+    status: child.status,
+    ...(child.terminalMessageId ? { terminal_message_id: child.terminalMessageId } : {}),
+    ...(child.response !== undefined ? { response: child.response } : {}),
+    ...(op === 'collect' && child.status !== 'running'
+      ? { artifacts_created: child.artifactsCreated || [] }
+      : {}),
+    ...(child.cancellationReason ? { cancellation_reason: child.cancellationReason } : {}),
+    ...(child.error ? { error: child.error } : {}),
+    ...(child.structuredOutputUnsatisfied !== undefined
+      ? { structured_output_unsatisfied: child.structuredOutputUnsatisfied }
+      : {}),
+    ...(child.structuredOutput !== undefined ? { structured_output: child.structuredOutput } : {})
+  }))
+}
+
+async function hostSubmitOutput(value) {
+  if (!RPC_ENDPOINT)
+    throw new Error('host.submit_output is unavailable: control RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'delegatedOutputCall', params: { value } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    const detail =
+      body.error && typeof body.error === 'object'
+        ? JSON.stringify(body.error)
+        : body.error || 'HTTP ' + res.status
+    throw new Error(`host.submit_output: ${detail}`)
+  }
+  return body.result
+}
+
+async function hostChildren(frameIds = undefined) {
+  return delegatedObservationRpc('children', frameIds)
+}
+
+async function hostCollect(selectors, options = undefined) {
+  return delegatedObservationRpc('collect', selectors, options)
+}
+
+async function hostSendFrameMessage(target, message, options = undefined) {
+  if (!RPC_ENDPOINT) {
+    throw new Error('host.send_frame_message is unavailable: control RPC endpoint not set')
+  }
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'delegatedWorkCall',
+      params: {
+        op: 'send_message',
+        target,
+        message,
+        ...(options !== undefined ? { options } : {})
+      }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.send_frame_message: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+async function hostMessageReceipt(selector, options = undefined) {
+  return delegatedMessageRpc('message_receipt', { selector, options })
+}
+
+async function hostResolveMessage(messageId, options) {
+  return delegatedMessageRpc('resolve_message', {
+    message_id: messageId,
+    action: options && options.action
+  })
+}
+
+async function delegatedMessageRpc(op, params) {
+  if (!RPC_ENDPOINT) throw new Error(`host.${op} is unavailable: control RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'delegatedWorkCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) throw new Error(`host.${op}: ${body.error || 'HTTP ' + res.status}`)
+  return body.result
+}
+
+// host.agents namespace. JavaScript methods, inputs, and returned records use camelCase. The private
+// RPC operation names remain transport details.
+// create/update/attachSkill/detachSkill/attachConnector/detachConnector are the ordinary-mutation
+// surface (issue 03); they return a real
 // post-write camelCase Profile read-back and never echo requested input. switch/delete are the
 // privileged surface (issue 04/05): authorized this milestone by the /customize Skill's chat-text
 // confirmation + the pass-through SDK approval gateway (design.md §7/§14), not the standard card.
@@ -1045,30 +2547,56 @@ const hostAgents = {
   async get(name) {
     return agentsRpc('get', { name })
   },
-  async list_skills(nameOrId = undefined) {
+  async listSkills(nameOrId = undefined) {
     return agentsRpc('list_skills', nameOrId !== undefined ? { name_or_id: nameOrId } : {})
   },
-  async list_connectors(nameOrId = undefined) {
+  async listConnectors(nameOrId = undefined) {
     return agentsRpc('list_connectors', nameOrId !== undefined ? { name_or_id: nameOrId } : {})
   },
   async create(input) {
-    return agentsRpc('create', input || {})
+    return agentsRpc(
+      'create',
+      remappedHostObject(input || {}, 'host.agents.create input', {
+        name: 'name',
+        displayName: 'display_name',
+        description: 'description',
+        systemPrompt: 'system_prompt',
+        iconKey: 'icon_key',
+        colorKey: 'color_key',
+        enabled: 'enabled',
+        unrestricted: 'unrestricted',
+        skillNames: 'skill_names',
+        connectorNames: 'connector_names'
+      })
+    )
   },
   async update(name, patch) {
-    // Nest the patch so a rename (patch.name) never collides with the lookup name on the wire —
-    // design.md §4 / customize-skill.md: update(name, patch) where patch may carry a new `name`.
-    return agentsRpc('update', { name, patch: patch || {} })
+    return agentsRpc('update', {
+      name,
+      patch: remappedHostObject(patch || {}, 'host.agents.update patch', {
+        displayName: 'display_name',
+        revision: 'revision',
+        description: 'description',
+        systemPrompt: 'system_prompt',
+        iconKey: 'icon_key',
+        colorKey: 'color_key',
+        enabled: 'enabled',
+        unrestricted: 'unrestricted',
+        skillNames: 'skill_names',
+        connectorNames: 'connector_names'
+      })
+    })
   },
-  async attach_skill(name, skillRef, options) {
+  async attachSkill(name, skillRef, options) {
     return agentsRpc('attach_skill', { name, skill_ref: skillRef, ...(options || {}) })
   },
-  async detach_skill(name, skillRef, options) {
+  async detachSkill(name, skillRef, options) {
     return agentsRpc('detach_skill', { name, skill_ref: skillRef, ...(options || {}) })
   },
-  async attach_connector(name, connectorRef, options) {
+  async attachConnector(name, connectorRef, options) {
     return agentsRpc('attach_connector', { name, connector_ref: connectorRef, ...(options || {}) })
   },
-  async detach_connector(name, connectorRef, options) {
+  async detachConnector(name, connectorRef, options) {
     return agentsRpc('detach_connector', { name, connector_ref: connectorRef, ...(options || {}) })
   },
   // Privileged: switch binds only the trusted calling session (server-captured). After approval the
@@ -1079,6 +2607,59 @@ const hostAgents = {
   // Privileged and revision-guarded: bound conversations become unavailable (not Main) after delete.
   async delete(name, options) {
     return agentsRpc('delete', { name, ...(options || {}) })
+  }
+}
+
+// host.skills: application-native Skill authoring. Draft files live in the app-managed Skill store;
+// publish promotes a complete package directly into Personal Skills. This intentionally never routes
+// through Artifact or conversation-import APIs.
+async function skillsRpc(op, params = {}) {
+  if (!RPC_ENDPOINT) throw new Error('host.skills is unavailable: connector RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'skillsCall',
+      params: {
+        op,
+        ...(COMPUTE_SESSION_ID ? { session_id: COMPUTE_SESSION_ID } : {}),
+        ...(params || {})
+      }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    const serverMessage = body.error || 'host.skills HTTP ' + res.status
+    throw new Error(
+      /^host\.skills\./.test(serverMessage) ? serverMessage : `host.skills.${op}: ${serverMessage}`
+    )
+  }
+  return body.result
+}
+
+const hostSkills = {
+  async list() {
+    return skillsRpc('list')
+  },
+  async read(name, path = 'SKILL.md') {
+    return skillsRpc('read', { name, path })
+  },
+  async validate(name) {
+    return skillsRpc('validate', { name })
+  },
+  async edit(name, path, content, oldString = undefined) {
+    return skillsRpc('edit', {
+      name,
+      path,
+      content,
+      ...(oldString !== undefined ? { old_string: oldString } : {})
+    })
+  },
+  async publish(name, overwrite = false) {
+    return skillsRpc('publish', { name, overwrite })
+  },
+  async delete(name) {
+    return skillsRpc('delete', { name })
   }
 }
 
@@ -1101,8 +2682,8 @@ function computeError(raw) {
   return new Error(String(raw))
 }
 
-// host.compute namespace mirroring the spec's Python API surface (kept snake_case on purpose — a JS
-// camelCase pass is a deferred one-shot rename once the whole compute feature lands; see roadmap §8).
+// host.compute namespace. Public methods and input keys are camelCase; the adapter immediately maps
+// them to the existing snake_case computeCall RPC contract.
 const hostCompute = {
   // Enumerate registered compute hosts for discovery. No approval, no session context.
   async list() {
@@ -1111,52 +2692,82 @@ const hostCompute = {
 
   // Returns session-enabled compute hosts (≠ list() which returns all registered hosts).
   // Uses COMPUTE_SESSION_ID from spawn env so the registry lookup is always session-scoped.
-  async list_compute() {
+  async listCompute() {
     return computeRpc({ op: 'list_compute', session_id: COMPUTE_SESSION_ID })
   },
-  // Bind a thin handle to one provider (no network call). call_command runs one short remote command;
-  // login_shell defaults to true (runs login profiles, then attempts a readable ~/.bashrc, before the
+  // Bind a thin handle to one provider (no network call). callCommand runs one short remote command;
+  // loginShell defaults to true (runs login profiles, then attempts a readable ~/.bashrc, before the
   // command). A .bashrc can deliberately return early for non-interactive shells. false performs no
   // shell initialization.
-  // timeout_seconds
+  // timeoutSeconds
   // is optional (the service applies its own default when omitted). Session/project context is threaded
   // from the spawn env so the approval broker can remember a grant for this conversation/project.
   //
-  // submit_job: non-blocking job submission — returns {job_id, provider_id, status:'submitted',
+  // submitJob: non-blocking job submission — returns {job_id, provider_id, status:'submitted',
   // remote_workdir} immediately, before any SSH. Background dispatch runs the job detached.
-  // attach_job: returns a handle with .status() to read job state from DB without SSH.
+  // attachJob: returns a handle with .status() to read job state from DB without SSH.
   create(providerId) {
     return {
       provider_id: providerId,
-      async call_command(cmd, intent, options = {}) {
+      async callCommand(cmd, intent, options = {}) {
+        const normalized = remappedHostObject(options, 'host.compute.callCommand options', {
+          loginShell: 'login_shell',
+          timeoutSeconds: 'timeout_seconds'
+        })
         return computeRpc({
           op: 'call_command',
           provider_id: providerId,
           cmd,
           intent,
-          login_shell: options.login_shell !== undefined ? options.login_shell : true,
-          timeout_seconds: options.timeout_seconds,
+          login_shell: normalized.login_shell !== undefined ? normalized.login_shell : true,
+          timeout_seconds: normalized.timeout_seconds,
           session_id: COMPUTE_SESSION_ID,
           project_id: COMPUTE_PROJECT_NAME
         })
       },
 
       // Non-blocking job submission. Returns immediately with job_id + remote_workdir.
-      // options: { environment?, resources?, inputs?, outputs?, timeout_seconds?, harvest? }
+      // options: { environment?, resources?, inputs?, outputs?, timeoutSeconds?, harvest? }
       // Session/project context is always threaded from spawn env for grant-scope memory.
       // workspace_cwd is captured at spawn time so the main process can resolve workspace paths.
-      async submit_job(intent, command, options = {}) {
+      async submitJob(intent, command, options = {}) {
+        const normalized = remappedHostObject(options, 'host.compute.submitJob options', {
+          environment: 'environment',
+          resources: 'resources',
+          inputs: 'inputs',
+          outputs: 'outputs',
+          timeoutSeconds: 'timeout_seconds',
+          harvest: 'harvest'
+        })
+        if (normalized.inputs !== undefined && !Array.isArray(normalized.inputs)) {
+          throw new TypeError('host.compute.submitJob inputs must be an array.')
+        }
+        const inputs = normalized.inputs?.map((input) =>
+          remappedHostObject(input, 'host.compute.submitJob input', {
+            src: 'src',
+            dstFilename: 'dst_filename',
+            remotePath: 'remote_path'
+          })
+        )
+        const harvest =
+          normalized.harvest === undefined
+            ? undefined
+            : remappedHostObject(normalized.harvest, 'host.compute.submitJob harvest', {
+                exclude: 'exclude',
+                maxFileMb: 'max_file_mb',
+                maxTotalMb: 'max_total_mb'
+              })
         return computeRpc({
           op: 'submit_job',
           provider_id: providerId,
           intent,
           command,
-          environment: options.environment,
-          resources: options.resources,
-          inputs: options.inputs,
-          outputs: options.outputs,
-          timeout_seconds: options.timeout_seconds,
-          harvest: options.harvest,
+          environment: normalized.environment,
+          resources: normalized.resources,
+          inputs,
+          outputs: normalized.outputs,
+          timeout_seconds: normalized.timeout_seconds,
+          harvest,
           session_id: COMPUTE_SESSION_ID,
           project_id: COMPUTE_PROJECT_NAME,
           workspace_cwd: process.cwd()
@@ -1166,7 +2777,7 @@ const hostCompute = {
       // Attaches to an existing job by job_id. .status() reads from DB only (no SSH).
       // .result() returns the full JobResult (spec §11.4): scans the local harvest directory,
       // returns workspace-relative file paths, never triggers harvest or SSH (design §9).
-      attach_job(jobId) {
+      attachJob(jobId) {
         return {
           job_id: jobId,
           async status() {
@@ -1181,9 +2792,9 @@ const hostCompute = {
       // Set session-level concurrency limit (Phase 3c). Limits the number of non-terminal jobs
       // that can run simultaneously across all providers in this session. Jobs exceeding the limit
       // enter 'queued' state and auto-dispatch when slots free up.
-      async set_concurrency_limit(k) {
+      async setConcurrencyLimit(k) {
         if (typeof k !== 'number' || k <= 0 || k > 500 || !Number.isInteger(k)) {
-          throw new Error('set_concurrency_limit: k must be a positive integer between 1 and 500')
+          throw new Error('setConcurrencyLimit: k must be a positive integer between 1 and 500')
         }
         return computeRpc({
           op: 'set_concurrency_limit',
@@ -1204,22 +2815,53 @@ const hostCompute = {
     }
   },
   // Read/append/replace the host knowledge doc. mode defaults to 'read'; append needs `text`; replace
-  // needs `text` + `old_text` (old_text must match the current doc exactly, guarding against clobbering
-  // a concurrent edit). Snake_case option keys mirror the RPC contract and the spec's Python surface.
+  // needs `text` + `oldText` (oldText must match the current doc exactly, guarding against clobbering
+  // a concurrent edit).
   async details(providerId, options = {}) {
+    const normalized = remappedHostObject(options, 'host.compute.details options', {
+      mode: 'mode',
+      text: 'text',
+      oldText: 'old_text'
+    })
     return computeRpc({
       op: 'details',
       provider_id: providerId,
-      mode: options.mode || 'read',
-      text: options.text,
-      old_text: options.old_text
+      mode: normalized.mode || 'read',
+      text: normalized.text,
+      old_text: normalized.old_text
     })
   }
 }
 
+// Keep this explicit object in sync with HostSdkHelpRegistry. Its keys are the published Subagent
+// Host SDK surface and are checked by src/main/host-sdk/help.test.ts.
+const subagentHostOperations = Object.freeze({
+  delegate: hostDelegate,
+  children: hostChildren,
+  collect: hostCollect,
+  stop_child: hostStopChild,
+  send_frame_message: hostSendFrameMessage,
+  message_receipt: hostMessageReceipt,
+  resolve_message: hostResolveMessage,
+  submit_output: hostSubmitOutput
+})
+
 // Persistent sandbox: user-declared globals persist across requests (assign to `globalThis`/bare).
 const sandbox = {
-  host: { mcp: hostMcp, compute: hostCompute, agents: hostAgents },
+  host: {
+    help: hostHelp,
+    capabilities: hostCapabilities,
+    llm: hostLlm,
+    artifacts: hostArtifacts,
+    artifactPath: hostArtifactPath,
+    lineage: hostLineage,
+    frames: hostFrames,
+    mcp: hostMcp,
+    compute: hostCompute,
+    agents: hostAgents,
+    skills: hostSkills,
+    ...subagentHostOperations
+  },
   console,
   process,
   require,
@@ -1239,27 +2881,35 @@ function wrapForRun(code) {
   const plain = '(async () => {\n' + code + '\n})()'
   const trimmed = code.replace(/[\s;]+$/, '')
   if (!trimmed) return plain
-  // Split at the rightmost top-level statement boundary (newline or ';'); the tail is the candidate
-  // trailing expression. A ';' inside a string/for-header just yields a tail that won't compile below.
-  const split = Math.max(trimmed.lastIndexOf('\n'), trimmed.lastIndexOf(';'))
-  const head = split >= 0 ? trimmed.slice(0, split + 1) : ''
-  const tail = trimmed.slice(split + 1).trim()
-  // Only echo something that can start an expression — never a declaration/control statement.
-  if (
-    !tail ||
-    /^(const|let|var|if|for|while|function|class|switch|try|throw|return|do|else|import|export)\b/.test(
-      tail
-    )
-  ) {
-    return plain
+  // Try candidate statement boundaries from right to left. A newline or semicolon may be nested
+  // inside a multiline call, string, or for-header; compile-checking progressively wider tails finds
+  // the complete final expression without needing a second JavaScript parser in the runtime bundle.
+  const boundaries = []
+  for (let index = trimmed.length - 1; index >= 0; index -= 1) {
+    if (trimmed[index] === '\n' || trimmed[index] === ';') boundaries.push(index)
   }
-  const echo = '(async () => {\n' + head + '\nreturn (\n' + tail + '\n)\n})()'
-  try {
-    new vm.Script(echo, { filename: '<repl>' })
-    return echo
-  } catch {
-    return plain
+  boundaries.push(-1)
+  for (const split of boundaries) {
+    const head = split >= 0 ? trimmed.slice(0, split + 1) : ''
+    const tail = trimmed.slice(split + 1).trim()
+    // Only echo something that can start an expression — never a declaration/control statement.
+    if (
+      !tail ||
+      /^(const|let|var|if|for|while|function|class|switch|try|throw|return|do|else|import|export)\b/.test(
+        tail
+      )
+    ) {
+      continue
+    }
+    const echo = '(async () => {\n' + head + '\nreturn (\n' + tail + '\n)\n})()'
+    try {
+      new vm.Script(echo, { filename: '<repl>' })
+      return echo
+    } catch {
+      // This boundary was inside the final expression; retry with a wider candidate.
+    }
   }
+  return plain
 }
 
 // Runs one request against the persistent context. console is redirected into strings and restored in
@@ -1311,6 +2961,7 @@ rl.on('line', (line) => {
   }
   chain = chain.then(async () => {
     ACTIVE_CONTROL_INVOCATION_ID = request.control_invocation_id
+    DELEGATE_CALL_SEQUENCE = 0
     try {
       const resp = await run(request.code || '')
       resp.req_id = request.req_id

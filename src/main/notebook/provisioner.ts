@@ -27,6 +27,7 @@ import { chainFetchBundle, createLocalBundleAdapter, resolveBundleDir } from './
 import { createFetchBundleAdapter } from './language-pack-fetch'
 import { DEFAULT_MAX_ENV_RELATIVE_PATH, type PackPathBudget } from './bundle-manifest'
 import { withExclusiveCacheLocks, withSharedCacheLocks } from './pkgs-cache-lock'
+import { validateAndSeedPackIntoCache } from './pack-content'
 import {
   recoverWindowsMaxPathPackage,
   removeOverBudgetUrlPackages,
@@ -44,10 +45,13 @@ import {
   createFromLockArgv,
   createFromPackagesArgv,
   installFromLockArgv,
-  micromambaSpawnEnv,
-  resolveMicromamba,
-  type MicromambaDeps
+  micromambaSpawnEnv
 } from './micromamba'
+import {
+  createProductionMicromambaRunner,
+  type MicromambaRunner,
+  type MicromambaRunnerDeps
+} from './windows-micromamba-runner'
 import { defaultOperationChildLiveness, readProcessStartToken } from './operation-recovery'
 import {
   isChildUnconfirmedError,
@@ -82,8 +86,13 @@ import {
 // both main and renderer); re-export here so IPC-adjacent code can import them from the provisioner.
 export type { ProvisionProgress, ProvisionStatus }
 
-// A resolved bundle on disk: the local @EXPLICIT lock whose tarballs are already in the pkgs cache.
-export type FetchedBundle = { lockPath: string; pathBudget?: PackPathBudget }
+// A resolved bundle on disk. Production adapters retain the verified tarballs in packageSourceDir so
+// Windows can seed the short cache selected from the pack's path budget before offline materialization.
+export type FetchedBundle = {
+  lockPath: string
+  pathBudget?: PackPathBudget
+  packageSourceDir?: string
+}
 
 // One default environment specification (A-internal). `version` is the curated interpreter version
 // (e.g. "3.12" / "4.4") — it identifies the staged offline pack via packId(language, version) (see
@@ -317,6 +326,19 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
       cache.lockKey,
       micromambaCacheLockKey(pkgsCache(this.deps.root), { platform: this.deps.platform })
     ]
+  }
+
+  private async seedBundleCache(bundle: FetchedBundle, cache: MicromambaCache): Promise<void> {
+    if (!bundle.packageSourceDir) return
+    const legacyCache = pkgsCache(this.deps.root)
+    const legacyLockKey = micromambaCacheLockKey(legacyCache, {
+      platform: this.deps.platform
+    })
+    const selectedLockKey = micromambaCacheLockKey(cache.path, {
+      platform: this.deps.platform
+    })
+    if (legacyLockKey === selectedLockKey) return
+    await validateAndSeedPackIntoCache(bundle.packageSourceDir, bundle.lockPath, cache)
   }
 
   private cacheForBundle(
@@ -1203,6 +1225,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // must not delete an incomplete extraction mid-upgrade, and a Windows path-limit failure is retried
     // once after a short cache recovery.
     const selected = this.cacheForBundle(spec, bundle)
+    await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     await this.withJournaledPrefixWrite(
       'upgrade',
@@ -1298,6 +1321,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
     // Select the cache scoped to this bundle (Windows budget) and clear any legacy over-budget URL
     // packages before the create, so a Windows path-limit blocker doesn't fail the first attempt.
     const selected = this.cacheForBundle(spec, bundle)
+    await this.seedBundleCache(bundle, selected.cache)
     await this.cleanLegacyWindowsUrlCache(selected.cache, onProgress)
     // Journal the create (child PID + prefix) so a process death mid-materialize is reconciled at next
     // startup: the recorded child is killed if it survived and, if liveness is unconfirmed, the prefix
@@ -1390,6 +1414,7 @@ export class DefaultRuntimeProvisioner implements RuntimeProvisioner {
           )
           if (!reseeded) throw error
           const retrySelected = this.cacheForBundle(spec, reseeded)
+          await this.seedBundleCache(reseeded, retrySelected.cache)
           await runCreate(reseeded.lockPath, retrySelected.cache, retrySelected.budget)
         }
       }
@@ -1503,7 +1528,7 @@ export const planStartupAction = (root: string, expectedVersion: number): Startu
 export type ProductionProvisionerOptions = {
   root: string
   channel: string
-  micromamba?: MicromambaDeps
+  micromamba?: MicromambaRunnerDeps
   // PEM CA bundle path (enterprise TLS proxy) exported into micromamba's env so an ONLINE provision /
   // named-env create verifies HTTPS against it. Offline bundle creates need no network, so this only
   // matters on the online paths.
@@ -1531,11 +1556,19 @@ export type ProductionProvisionerOptions = {
   withPrefixLock?: <T>(envName: string, fn: () => Promise<T>) => Promise<T>
 }
 
+export type ProductionProvisionerDeps = {
+  runner?: MicromambaRunner
+  fetchBundle?: ProvisionerDeps['fetchBundle']
+  runArgv?: ProvisionerDeps['runArgv']
+  verify?: ProvisionerDeps['verify']
+}
+
 // Wires the real micromamba binary, CDN fetch, subprocess runner and interpreter verification into a
 // DefaultRuntimeProvisioner. Not unit-tested for real I/O (network/subprocess-bound); the orchestration
 // it drives is already covered via injected deps in provisioner.test.ts / provisioner.upgrade.test.ts.
 export const createProductionProvisioner = (
-  opts: ProductionProvisionerOptions
+  opts: ProductionProvisionerOptions,
+  deps: ProductionProvisionerDeps = {}
 ): RuntimeProvisioner => {
   // `root` is `<storageRoot>/runtime`; derive the real home dir from it (storageRoot's parent) as a
   // robust fallback for resolveMicromamba's storage-root branch, instead of leaving it to fall back to
@@ -1543,8 +1576,9 @@ export const createProductionProvisioner = (
   // launched outside a shell. This is dev/prod-agnostic (pure path arithmetic on the caller-resolved
   // root, no directory-name guessing). Caller-supplied opts.micromamba.home still wins when provided.
   const derivedHome = dirname(dirname(opts.root))
-  const mm = resolveMicromamba({ home: derivedHome, ...opts.micromamba })
-  if (!mm) {
+  const runner =
+    deps.runner ?? createProductionMicromambaRunner({ home: derivedHome, ...opts.micromamba })
+  if (!runner) {
     throw new Error(
       'micromamba binary not found (set OPEN_SCIENCE_MICROMAMBA_BIN or ship it as a resource)'
     )
@@ -1563,18 +1597,36 @@ export const createProductionProvisioner = (
   // CA-bundle vars injected into every provisioning subprocess (no-op when unset), so an online
   // create/verify behind an enterprise TLS proxy trusts the custom CA.
   const caEnv = caBundleEnv(opts.caBundle)
-  return new DefaultRuntimeProvisioner({
-    root: opts.root,
-    mm,
-    channel: opts.channel,
-    bundleSource,
-    fetchBundle: chainFetchBundle([
+  const fetchBundle =
+    deps.fetchBundle ??
+    chainFetchBundle([
       createLocalBundleAdapter(opts.root, bundleDir),
       createFetchBundleAdapter(opts.root, cdnBase)
-    ]),
-    runArgv: (argv, signal, onChild, onBeforeSpawn, runCache, maxCacheRelativePath) =>
-      runMicromamba(
-        argv,
+    ])
+  return new DefaultRuntimeProvisioner({
+    root: opts.root,
+    mm: runner.initialPath,
+    channel: opts.channel,
+    bundleSource,
+    fetchBundle: async (...args) => {
+      await runner.resolve()
+      return fetchBundle(...args)
+    },
+    runArgv: async (argv, signal, onChild, onBeforeSpawn, runCache, maxCacheRelativePath) => {
+      const selected = await runner.resolve()
+      const selectedArgv = [selected, ...argv.slice(1)]
+      if (deps.runArgv) {
+        return deps.runArgv(
+          selectedArgv,
+          signal,
+          onChild,
+          onBeforeSpawn,
+          runCache,
+          maxCacheRelativePath
+        )
+      }
+      return runMicromamba(
+        selectedArgv,
         micromambaSpawnEnv(
           opts.root,
           opts.caBundle,
@@ -1591,8 +1643,9 @@ export const createProductionProvisioner = (
         signal,
         onChild,
         onBeforeSpawn
-      ),
-    verify: (bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv }),
+      )
+    },
+    verify: deps.verify ?? ((bin, prefix) => verifyExecutable(bin, { prefix, env: caEnv })),
     isPrefixBlocked: opts.isPrefixBlocked,
     clearPrefixBlock: opts.clearPrefixBlock,
     clearRuntimeBlock: opts.clearRuntimeBlock,

@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  canBrowseGrantedPath,
   describeLocalListingError,
   isLocalPathRoot,
+  isPathWithin,
   isSensitiveLocalPath,
   parentLocalPath,
   resolveLocalPath,
   sameLocalDirectory,
   sortLocalEntries,
+  validateGrantCandidate,
   validateLocalPath,
+  type GrantedLocalRoot,
   type LocalDirEntry
 } from './local-fs'
 
@@ -196,5 +200,97 @@ describe('describeLocalListingError', () => {
 
   it('falls back to a generic sentence when there is no message', () => {
     expect(describeLocalListingError('', '/a')).toEqual({ summary: 'Could not open that folder.' })
+  })
+})
+
+describe('isPathWithin', () => {
+  it('matches the root itself and descendants', () => {
+    expect(isPathWithin('/data', '/data')).toBe(true)
+    expect(isPathWithin('/data/x/y', '/data')).toBe(true)
+  })
+
+  it('does not match siblings sharing a prefix', () => {
+    expect(isPathWithin('/data2/x', '/data')).toBe(false)
+    expect(isPathWithin('/data', '/data/x')).toBe(false)
+  })
+
+  it('tolerates trailing separators on the root', () => {
+    expect(isPathWithin('/data/x', '/data/')).toBe(true)
+    expect(isPathWithin('/data', '/data/')).toBe(true)
+  })
+
+  it('treats Windows separators as separators', () => {
+    expect(isPathWithin('C:\\data\\x', 'C:\\data')).toBe(true)
+    expect(isPathWithin('C:\\data2\\x', 'C:\\data')).toBe(false)
+    // Mixed forms of the same path still match after separator normalization.
+    expect(isPathWithin('C:/data/x', 'C:\\data')).toBe(true)
+  })
+})
+
+describe('canBrowseGrantedPath', () => {
+  const roots: GrantedLocalRoot[] = [
+    { id: '1', path: '/mnt/data', name: 'data', access: 'ro' },
+    { id: '2', path: '/Volumes/external', name: 'external', access: 'rw' }
+  ]
+
+  it('allows anything inside home', () => {
+    expect(canBrowseGrantedPath('/Users/roxi/Documents', '/Users/roxi', [])).toBe(true)
+    expect(canBrowseGrantedPath('/Users/roxi', '/Users/roxi', [])).toBe(true)
+  })
+
+  it('allows paths inside any granted root', () => {
+    expect(canBrowseGrantedPath('/mnt/data/raw', '/Users/roxi', roots)).toBe(true)
+    expect(canBrowseGrantedPath('/Volumes/external', '/Users/roxi', roots)).toBe(true)
+  })
+
+  it('rejects paths outside home and all roots', () => {
+    expect(canBrowseGrantedPath('/etc', '/Users/roxi', roots)).toBe(false)
+    expect(canBrowseGrantedPath('/mnt/data2', '/Users/roxi', roots)).toBe(false)
+  })
+})
+
+describe('validateGrantCandidate', () => {
+  const home = '/Users/roxi'
+  const roots: GrantedLocalRoot[] = [{ id: '1', path: '/mnt/data', name: 'data', access: 'ro' }]
+
+  it('accepts a folder inside home', () => {
+    expect(validateGrantCandidate('/Users/roxi/Documents', home, [], 'linux')).toEqual({ ok: true })
+  })
+
+  it('accepts a folder inside an already-granted root', () => {
+    expect(validateGrantCandidate('/mnt/data/raw', home, roots, 'linux')).toEqual({ ok: true })
+  })
+
+  it('rejects non-absolute input', () => {
+    expect(validateGrantCandidate('relative/path', home, roots, 'linux')).toEqual({
+      ok: false,
+      reason: 'not-absolute'
+    })
+    expect(validateGrantCandidate('/Users/roxi/\x00x', home, roots, 'linux')).toEqual({
+      ok: false,
+      reason: 'not-absolute'
+    })
+  })
+
+  it('rejects home itself', () => {
+    expect(validateGrantCandidate(home, home, roots, 'linux')).toEqual({
+      ok: false,
+      reason: 'is-home'
+    })
+    expect(validateGrantCandidate(`${home}/`, home, roots, 'linux')).toEqual({
+      ok: false,
+      reason: 'is-home'
+    })
+  })
+
+  it('rejects folders outside home and all granted roots', () => {
+    expect(validateGrantCandidate('/etc', home, roots, 'linux')).toEqual({
+      ok: false,
+      reason: 'out-of-scope'
+    })
+    expect(validateGrantCandidate('/mnt/data2', home, roots, 'linux')).toEqual({
+      ok: false,
+      reason: 'out-of-scope'
+    })
   })
 })

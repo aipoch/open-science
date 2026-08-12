@@ -1,11 +1,20 @@
 import type { AcpPermissionRequest, AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { ComputeApprovalRequest } from '../../shared/compute'
-import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
+import type {
+  NotificationActionState,
+  NotificationKind,
+  NotificationSource,
+  OpenSessionFromNotificationRequest
+} from '../../shared/notifications'
 import type {
   ConnectorApprovalRequest,
   ConversationSkillImportApprovalRequest
 } from '../../shared/settings'
+import {
+  agentQuestionDedupeKey,
+  type NotificationInboxController
+} from './notification-inbox-controller'
 
 export type TaskNotification = {
   title: string
@@ -30,17 +39,16 @@ export type TaskNotificationServiceDeps = {
   onDeliveryError?: (error: unknown) => void
   // Native Dock/taskbar calls are isolated from OS banner delivery and reported separately.
   onAttentionError?: (error: unknown) => void
-  // Unread persistence is independent from both delivery channels and must never disturb the
-  // runtime event stream.
-  onUnreadError?: (error: unknown) => void
+  // Durable inbox recording is shared by desktop, Web, and headless clients. Failures are reported
+  // without changing the underlying task or approval lifecycle.
+  inbox?: Pick<NotificationInboxController, 'record' | 'settleAction' | 'settleAuthorization'>
+  onInboxError?: (error: unknown) => void
 }
 
 export type TaskNotificationAttentionHandlers = {
   request: () => void
   clear: () => void
 }
-
-export type TaskNotificationUnreadHandler = (sessionId: string) => Promise<void>
 
 const reportTaskNotificationError = (
   reporter: ((error: unknown) => void) | undefined,
@@ -105,6 +113,25 @@ const EARLY_STOP_BODY: Record<string, (taskName?: string) => string> = {
   refusal: (taskName) =>
     taskName ? `${taskName} was declined by the agent.` : 'The agent declined the request.'
 }
+
+// Inbox rows cross surface and process boundaries and outlive the originating request. Keep their
+// presentation text fixed so prompts, provider errors, connector arguments, and approval payloads
+// remain confined to the transient native notification and the live approval UI.
+const TASK_INBOX_SUMMARY = {
+  'task.completed': 'A task completed.',
+  'task.needs-attention': 'A task needs attention. Open the conversation for details.',
+  'task.failed': 'A task failed. Open the conversation for details.'
+} as const satisfies Record<Exclude<NotificationKind, 'authorization.required'>, string>
+
+const AUTHORIZATION_INBOX_SUMMARY = {
+  'agent-tool': 'A tool request needs your approval.',
+  connector: 'A connector request needs your approval.',
+  compute: 'A compute request needs your approval.',
+  'skill-import': 'A Skill import needs your approval.',
+  'session-plan': 'A plan needs your approval.'
+} as const satisfies Record<Exclude<NotificationSource, 'agent-question'>, string>
+
+const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
 
 // Strips control characters, folds whitespace, and turns underscores into spaces so an arbitrary
 // stop-reason text (or one from a future ACP extension) reads naturally and can't smuggle newlines
@@ -210,6 +237,14 @@ export const describePermissionNotification = (
   promptSnippet?: string
 ): TaskNotification => describeApprovalNotification(request.title, promptSnippet)
 
+const describeAgentQuestionNotification = (promptSnippet?: string): TaskNotification => ({
+  title: 'Response needed',
+  body: promptSnippet
+    ? `${quoteSnippet(promptSnippet)} needs your response.`
+    : 'The agent needs your response.',
+  attention: true
+})
+
 // Maps a parked connector approval (the external data-egress gate) to the notification to show.
 // The tool call blocks for up to five minutes waiting on the user, so this is the same "requires
 // attention" case as an ACP permission request, over a separate mechanism.
@@ -231,15 +266,15 @@ export type TrackedPrompt = {
 // are monotonic per service instance.
 type ChainEntry = { token: number; snippet?: string }
 
-// Watches agent-turn lifecycle events and posts an OS notification when a turn ends while the app
-// is unfocused. Kept free of Electron imports (delivery is injected) so the filtering rules are
+// Watches agent-turn lifecycle and structured-input events and posts an OS notification when the
+// app is unfocused. Kept free of Electron imports (delivery is injected) so the filtering rules are
 // unit-testable; wiring lives in main/ipc.ts.
 export class TaskNotificationService {
   private readonly tracks = new Map<string, ChainEntry[]>()
+  private readonly pendingAgentQuestions = new Map<string, Set<string>>()
   private trackCounter = 0
   private activationHandler: ((sessionId?: string) => void) | undefined
   private attentionHandlers: TaskNotificationAttentionHandlers | undefined
-  private unreadHandler: TaskNotificationUnreadHandler | undefined
   // Click target held for the renderer to pull: a push sent before the renderer's listener exists
   // (window just recreated, React not mounted yet) is lost, so the payload lives here until the
   // renderer — once its sessions are hydrated — takes it. Consume-once.
@@ -278,12 +313,6 @@ export class TaskNotificationService {
   // service remain Electron-free while attention can still inspect the current native window.
   setAttentionHandlers(handlers: TaskNotificationAttentionHandlers): void {
     this.attentionHandlers = handlers
-  }
-
-  // Bound by the unread controller in index.ts. Terminal task results call this before notification
-  // preference/focus gates, because native unread state is an independent product signal.
-  setUnreadHandler(handler: TaskNotificationUnreadHandler): void {
-    this.unreadHandler = handler
   }
 
   // Records the conversation a notification click should open, so a renderer that misses the push
@@ -348,14 +377,28 @@ export class TaskNotificationService {
     }
   }
 
-  // Observes every runtime event (wired next to the 'acp:event' broadcast); only terminal events
-  // for a session can produce a notification, and never while the user is looking at the app.
+  // Observes every runtime event (wired next to the 'acp:event' broadcast); terminal events and
+  // pending questions can produce a notification, never while the user is looking at the app.
   handleRuntimeEvent = async (event: AcpRuntimeEvent): Promise<void> => {
+    if (event.elicitation && event.sessionId) {
+      await this.handleElicitationEvent(event)
+      return
+    }
     if (event.kind !== 'stop' && event.kind !== 'error') return
 
     const { sessionId } = event
 
     if (!sessionId) return
+
+    // App-owned choice turns finish normally while the durable card waits. Keep the original prompt
+    // tracked so the post-answer continuation owns the eventual completion notification.
+    if (
+      event.kind === 'stop' &&
+      event.text === 'end_turn' &&
+      (this.pendingAgentQuestions.get(sessionId)?.size ?? 0) > 0
+    ) {
+      return
+    }
 
     const tracked = this.trackedFor(sessionId)
     const snippet = tracked?.snippet
@@ -376,20 +419,70 @@ export class TaskNotificationService {
 
     if (!notification) return
 
-    let unreadUpdate: Promise<void> | undefined
-
-    try {
-      // Attach rejection handling immediately, but do not await disk persistence before delivering
-      // the banner/attention channels. The controller updates its in-memory count synchronously.
-      unreadUpdate = this.unreadHandler?.(sessionId).catch((error) => {
-        reportTaskNotificationError(this.deps.onUnreadError, error)
-      })
-    } catch (error) {
-      reportTaskNotificationError(this.deps.onUnreadError, error)
-    }
+    const kind =
+      notification.title === 'Task completed'
+        ? 'task.completed'
+        : notification.title === 'Task failed'
+          ? 'task.failed'
+          : 'task.needs-attention'
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `task:${event.id}`,
+      kind,
+      sessionId,
+      originId: event.id,
+      title: notification.title,
+      summary: TASK_INBOX_SUMMARY[kind],
+      createdAt: event.timestamp
+    })
 
     await this.deliver(notification, sessionId)
-    await unreadUpdate
+    await inboxUpdate
+  }
+
+  private async handleElicitationEvent(event: AcpRuntimeEvent): Promise<void> {
+    const { elicitation, sessionId } = event
+    if (!elicitation || !sessionId) return
+    const originId = elicitation.durable?.requestId ?? event.toolCallId ?? event.id
+    const dedupeKey = agentQuestionDedupeKey(originId)
+
+    if (elicitation.state !== 'pending') {
+      const pending = this.pendingAgentQuestions.get(sessionId)
+      pending?.delete(originId)
+      if (pending?.size === 0) this.pendingAgentQuestions.delete(sessionId)
+      const state: NotificationActionState =
+        elicitation.state === 'answered'
+          ? 'resolved'
+          : elicitation.state === 'declined'
+            ? 'rejected'
+            : 'cancelled'
+      try {
+        await this.deps.inbox?.settleAction(dedupeKey, state)
+      } catch (error) {
+        reportTaskNotificationError(this.deps.onInboxError, error)
+      }
+      return
+    }
+
+    const tracked = this.trackedFor(sessionId)
+    if (!tracked) return
+    const pending = this.pendingAgentQuestions.get(sessionId) ?? new Set<string>()
+    if (pending.has(originId)) return
+    pending.add(originId)
+    this.pendingAgentQuestions.set(sessionId, pending)
+
+    const notification = describeAgentQuestionNotification(tracked.snippet)
+    const inboxUpdate = this.recordInbox({
+      dedupeKey,
+      kind: 'task.needs-attention',
+      source: 'agent-question',
+      sessionId,
+      originId,
+      title: notification.title,
+      summary: AGENT_QUESTION_INBOX_SUMMARY,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, sessionId)
+    await inboxUpdate
   }
 
   // Observes permission requests (wired next to the 'acp:permission-request' broadcast): a pending
@@ -400,7 +493,19 @@ export class TaskNotificationService {
 
     if (!tracked) return
 
-    await this.deliver(describePermissionNotification(request, tracked.snippet), request.sessionId)
+    const notification = describePermissionNotification(request, tracked.snippet)
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:agent-tool:${request.requestId}`,
+      kind: 'authorization.required',
+      source: 'agent-tool',
+      sessionId: request.sessionId,
+      originId: request.requestId,
+      title: notification.title,
+      summary: AUTHORIZATION_INBOX_SUMMARY['agent-tool'],
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
+    await inboxUpdate
   }
 
   // Observes connector approvals (wired next to the 'connectors:approval-request' broadcast): the
@@ -408,7 +513,8 @@ export class TaskNotificationService {
   // user-turn eligibility gate so internal work stays silent; a sessionless approval still needs a
   // notification because it can independently block a call. A tracked session names and targets it.
   handleConnectorApproval = async (
-    request: Pick<ConnectorApprovalRequest, 'connector' | 'method'>,
+    request: Pick<ConnectorApprovalRequest, 'connector' | 'method'> &
+      Partial<Pick<ConnectorApprovalRequest, 'id'>>,
     sessionId?: string
   ): Promise<void> => {
     const tracked = sessionId ? this.trackedFor(sessionId) : undefined
@@ -417,7 +523,21 @@ export class TaskNotificationService {
     // sessionless connector approvals visible because they can still block an independent tool call.
     if (sessionId && !tracked) return
 
-    await this.deliver(describeConnectorApprovalNotification(request, tracked?.snippet), sessionId)
+    const notification = describeConnectorApprovalNotification(request, tracked?.snippet)
+    const inboxUpdate = request.id
+      ? this.recordInbox({
+          dedupeKey: `authorization:connector:${request.id}`,
+          kind: 'authorization.required',
+          source: 'connector',
+          ...(sessionId ? { sessionId } : {}),
+          originId: request.id,
+          title: notification.title,
+          summary: AUTHORIZATION_INBOX_SUMMARY.connector,
+          actionState: 'pending'
+        })
+      : Promise.resolve()
+    await this.deliver(notification, sessionId)
+    await inboxUpdate
   }
 
   // Compute approvals carry their conversation separately from the renderer payload. Keep the same
@@ -430,13 +550,22 @@ export class TaskNotificationService {
 
     if (sessionId && !tracked) return
 
-    await this.deliver(
-      describeApprovalNotification(
-        `${request.provider_name} — ${request.intent}`,
-        tracked?.snippet
-      ),
-      sessionId
+    const notification = describeApprovalNotification(
+      `${request.provider_name} — ${request.intent}`,
+      tracked?.snippet
     )
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:compute:${request.id}`,
+      kind: 'authorization.required',
+      source: 'compute',
+      ...(sessionId ? { sessionId } : {}),
+      originId: request.id,
+      title: notification.title,
+      summary: AUTHORIZATION_INBOX_SUMMARY.compute,
+      actionState: 'pending'
+    })
+    await this.deliver(notification, sessionId)
+    await inboxUpdate
   }
 
   // Conversation Skill imports always belong to an active user turn and can target that same
@@ -448,10 +577,77 @@ export class TaskNotificationService {
 
     if (!tracked) return
 
-    await this.deliver(
-      describeApprovalNotification(`Import ${request.source.label}`, tracked.snippet),
-      request.sessionId
+    const notification = describeApprovalNotification(
+      `Import ${request.source.label}`,
+      tracked.snippet
     )
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:skill-import:${request.id}`,
+      kind: 'authorization.required',
+      source: 'skill-import',
+      sessionId: request.sessionId,
+      originId: request.id,
+      title: notification.title,
+      summary: AUTHORIZATION_INBOX_SUMMARY['skill-import'],
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
+    await inboxUpdate
+  }
+
+  handlePlanApproval = async (request: {
+    projectId: string
+    sessionId: string
+    artifactVersionId: string
+    summary: string
+  }): Promise<void> => {
+    const tracked = this.trackedFor(request.sessionId)
+    if (!tracked) return
+    const notification: TaskNotification = {
+      title: 'Plan approval needed',
+      body: truncate(
+        tracked.snippet
+          ? `${quoteSnippet(tracked.snippet)} has a plan ready for review.`
+          : `Review the proposed plan: ${request.summary}`,
+        MAX_BODY_LENGTH
+      ),
+      attention: true
+    }
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `authorization:session-plan:${request.artifactVersionId}`,
+      kind: 'authorization.required',
+      source: 'session-plan',
+      projectId: request.projectId,
+      sessionId: request.sessionId,
+      originId: request.artifactVersionId,
+      title: notification.title,
+      summary: AUTHORIZATION_INBOX_SUMMARY['session-plan'],
+      actionState: 'pending'
+    })
+    await this.deliver(notification, request.sessionId)
+    await inboxUpdate
+  }
+
+  settleAuthorization = async (
+    source: NotificationSource,
+    originId: string,
+    state: NotificationActionState
+  ): Promise<void> => {
+    try {
+      await this.deps.inbox?.settleAuthorization(source, originId, state)
+    } catch (error) {
+      reportTaskNotificationError(this.deps.onInboxError, error)
+    }
+  }
+
+  private async recordInbox(
+    input: Parameters<NonNullable<TaskNotificationServiceDeps['inbox']>['record']>[0]
+  ): Promise<void> {
+    try {
+      await this.deps.inbox?.record(input)
+    } catch (error) {
+      reportTaskNotificationError(this.deps.onInboxError, error)
+    }
   }
 
   // Shared gates and delivery: a focused app and a disabled preference stay silent (and a settings

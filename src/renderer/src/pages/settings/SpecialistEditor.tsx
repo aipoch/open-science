@@ -11,6 +11,7 @@ import {
   SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH,
   validateCreateSpecialistInput,
   validateSpecialistPackageVersion,
+  validateUpdateSpecialistInput,
   type CreateSpecialistInput,
   type UpdateSpecialistInput,
   type SpecialistFieldError,
@@ -20,6 +21,10 @@ import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, AVATAR_ICONS } from './specialist-icons'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SettingsIconAction } from './SettingsLayout'
+import {
+  getSettingsSearchKeyShortcuts,
+  useSettingsSearchShortcut
+} from './settings-search-shortcut'
 
 type SpecialistEditorProps = {
   onCancel: () => void
@@ -108,7 +113,7 @@ const SpecialistEditor = ({
   const [form, setForm] = useState<FormState>(() =>
     editSpecialist
       ? {
-          name: editSpecialist.name,
+          name: editSpecialist.displayName ?? editSpecialist.name,
           packageVersion: editSpecialist.packageVersion ?? '0.1.0',
           description: editSpecialist.description,
           systemPrompt: editSpecialist.systemPrompt,
@@ -153,6 +158,8 @@ const SpecialistEditor = ({
   const [connectorPopoverOpen, setConnectorPopoverOpen] = useState(false)
   const skillDropdownRef = useRef<HTMLDivElement>(null)
   const connectorDropdownRef = useRef<HTMLDivElement>(null)
+  useSettingsSearchShortcut(skillSearchRef, skillPopoverOpen)
+  useSettingsSearchShortcut(connectorSearchRef, connectorPopoverOpen)
   const skillTriggerRef = useRef<HTMLButtonElement>(null)
   const connectorTriggerRef = useRef<HTMLButtonElement>(null)
 
@@ -205,12 +212,9 @@ const SpecialistEditor = ({
         available: true
       })),
       ...customServers.map((server) => ({
-        id:
-          [server.id, server.name].find((alias) =>
-            [...form.excludedConnectorIds, ...form.connectorIds].includes(alias)
-          ) ?? server.slug,
-        name: server.name,
-        description: server.description,
+        id: server.name,
+        name: server.displayName,
+        description: server.description ? `${server.name} · ${server.description}` : server.name,
         mainEnabled: server.enabled,
         available: server.availability === undefined,
         availability: server.availability
@@ -285,11 +289,9 @@ const SpecialistEditor = ({
         available: true
       })),
       ...customServers.map((server) => ({
-        id:
-          [server.id, server.name].find((alias) => form.connectorIds.includes(alias)) ??
-          server.slug,
-        name: server.name,
-        description: server.description,
+        id: server.name,
+        name: server.displayName,
+        description: server.description ? `${server.name} · ${server.description}` : server.name,
         mainEnabled: server.enabled,
         available: server.availability === undefined,
         availability: server.availability
@@ -348,12 +350,23 @@ const SpecialistEditor = ({
 
   const validate = (): boolean => {
     // Client-side validation using the shared validator.
-    const input: CreateSpecialistInput = {
-      name: form.name,
-      description: form.description || undefined,
-      systemPrompt: form.systemPrompt || undefined
-    }
-    const errors = validateCreateSpecialistInput(input, existingNames)
+    const errors = isEdit
+      ? validateUpdateSpecialistInput({
+          id: editSpecialist.id,
+          revision: form.baseRevision,
+          displayName: form.name,
+          description: form.description || undefined,
+          systemPrompt: form.systemPrompt || undefined
+        })
+      : validateCreateSpecialistInput(
+          {
+            name: form.name,
+            displayName: form.name,
+            description: form.description || undefined,
+            systemPrompt: form.systemPrompt || undefined
+          },
+          existingNames
+        )
     if (isEdit) {
       const packageVersionError = validateSpecialistPackageVersion(form.packageVersion)
       if (packageVersionError) {
@@ -372,7 +385,6 @@ const SpecialistEditor = ({
     setHasConflict(false)
     try {
       const trimmed = {
-        name: form.name.trim(),
         displayName: form.name.trim(),
         description: form.description.trim() || undefined,
         systemPrompt: form.systemPrompt.trim() || undefined,
@@ -412,7 +424,7 @@ const SpecialistEditor = ({
         // Advance the base revision only after a confirmed save.
         setForm((prev) => ({ ...prev, baseRevision: prev.baseRevision + 1 }))
       } else {
-        await onSave(trimmed)
+        await onSave({ name: form.name.trim(), ...trimmed })
       }
     } catch (error) {
       const message =
@@ -444,7 +456,7 @@ const SpecialistEditor = ({
       const fresh = await onReload()
       if (fresh) {
         setForm({
-          name: fresh.name,
+          name: fresh.displayName ?? fresh.name,
           packageVersion: fresh.packageVersion ?? '0.1.0',
           description: fresh.description,
           systemPrompt: fresh.systemPrompt,
@@ -494,7 +506,7 @@ const SpecialistEditor = ({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[15px] font-semibold text-foreground">
-                  {editSpecialist.name}
+                  {editSpecialist.displayName ?? editSpecialist.name}
                 </span>
                 <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   {editSpecialist.setupPending ? 'Setup incomplete' : 'Saved'}
@@ -617,7 +629,7 @@ const SpecialistEditor = ({
           {/* Name */}
           <div className="mb-4">
             <label htmlFor="sp-name" className="mb-1.5 flex items-baseline justify-between text-xs">
-              <span>Name</span>
+              <span>{isEdit ? 'Display name' : 'Name'}</span>
               <span className="text-[11px] tabular-nums text-muted-foreground">
                 {form.name.length} / {SPECIALIST_NAME_MAX_LENGTH}
               </span>
@@ -704,6 +716,13 @@ const SpecialistEditor = ({
                     {getFieldError('packageVersion')}
                   </p>
                 ) : null}
+              </div>
+              <div>
+                <label htmlFor="sp-specialist-name" className="mb-1.5 block text-xs font-semibold">
+                  Specialist name
+                </label>
+                <Input id="sp-specialist-name" value={editSpecialist.name} readOnly />
+                <p className="mt-1 text-xs text-muted-foreground">Fixed after creation.</p>
               </div>
               <div>
                 <label htmlFor="sp-specialist-id" className="mb-1.5 block text-xs font-semibold">
@@ -870,6 +889,8 @@ const SpecialistEditor = ({
                           <input
                             ref={skillSearchRef}
                             type="search"
+                            aria-label="Search skills to add"
+                            aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
                             placeholder="Search skills…"
                             value={skillSearchQuery}
                             onChange={(e) => setSkillSearchQuery(e.target.value)}
@@ -922,6 +943,8 @@ const SpecialistEditor = ({
                           <input
                             ref={connectorSearchRef}
                             type="search"
+                            aria-label="Search connectors to add"
+                            aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
                             placeholder="Search connectors…"
                             value={connectorSearchQuery}
                             onChange={(e) => setConnectorSearchQuery(e.target.value)}

@@ -54,6 +54,7 @@ describe('notebook local RPC adapter', () => {
       'mcpCall',
       'computeCall',
       'agentsCall',
+      'reviewerCall',
       'skillImport',
       'artifactCreateVersion',
       'artifactReplayVersion',
@@ -122,7 +123,7 @@ describe('notebook local RPC adapter', () => {
   it('rejects unknown methods after validating common routing fields', () => {
     const capability = createCapability()
 
-    for (const method of ['unknown', 'listPackages', 'listPackageCounts']) {
+    for (const method of ['unknown', 'listPackages', 'listPackageCounts', 'reviewerCall']) {
       expect(() => resolveNotebookLocalRpcHandler(capability, method, request)).toThrow(
         `Unknown notebook RPC method: ${method}`
       )

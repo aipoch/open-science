@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
 
 import { useDeepLinkNavigation } from '@/lib/deep-link'
+import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { useSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { CloseConfirmModal } from '@/components/CloseConfirmModal'
 import { DataRootMissingDialog } from '@/components/DataRootMissingDialog'
@@ -24,6 +25,10 @@ import { SkillImportApprovalDialog } from '@/pages/settings/SkillImportApprovalD
 import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
+import {
+  SideChatProvider,
+  useOpenSideChatParentSessionIds
+} from '@/pages/workspace/use-side-chat-controller'
 import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
@@ -40,16 +45,33 @@ import { useSkillImportStore } from '@/stores/skill-import-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 
 type NotificationOpenIntent = {
   generation: number
   userNavigationRevision: number
 }
 
-const App = (): React.JSX.Element | null => {
+const AppContent = (): React.JSX.Element | null => {
+  const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   // Persistence is started once at the top so sessions stay loaded for both Home and Workspace.
   const sessionPersistence = useSessionPersistence()
   useQuitPersistenceFlush()
+  useEffect(() => {
+    const api = window.api?.sideChat
+    if (!api) return
+    return api.onRelayDelivered(({ parentSessionId, message }) => {
+      useSessionStore.getState().appendRoutedUserMessage({
+        sessionId: parentSessionId,
+        messageId: message.id,
+        eventId: `side-chat-delivered:${message.id}`,
+        content: message.content,
+        createdAt: message.createdAt,
+        responseToMessageId: message.responseToMessageId,
+        relayedFrom: message.relayedFrom
+      })
+    })
+  }, [])
   const isSessionPersistenceHydrated = sessionPersistence.isHydrated
   const isSessionPersistenceLoading = sessionPersistence.isLoading
   const isSessionPersistenceReady = sessionPersistence.isReady
@@ -89,6 +111,7 @@ const App = (): React.JSX.Element | null => {
   const initEnv = useNotebookEnvStore((state) => state.init)
   const envUi = useNotebookEnvStore((state) => state.ui)
   const listenForPermissionChanges = usePermissionGrantsStore((state) => state.listen)
+  const listenForNotificationChanges = useNotificationInboxStore((state) => state.listen)
   const retryEnv = useNotebookEnvStore((state) => state.retry)
   const openPermissionSession = useCallback(
     (sessionId: string): void => {
@@ -126,6 +149,15 @@ const App = (): React.JSX.Element | null => {
     }
     if (isGlobalSearchOpen) {
       setIsGlobalSearchOpen(false)
+      return true
+    }
+    const contextWindowDialog = document.querySelector<HTMLElement>(
+      '[data-slot="context-window-dialog"][data-state="open"]'
+    )
+    if (contextWindowDialog) {
+      contextWindowDialog.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
       return true
     }
     return settingsPageRef.current?.closeActivePane() ?? false
@@ -253,6 +285,7 @@ const App = (): React.JSX.Element | null => {
   }, [initUpdates])
 
   useEffect(() => listenForPermissionChanges(), [listenForPermissionChanges])
+  useEffect(() => listenForNotificationChanges(), [listenForNotificationChanges])
 
   // Mirrors the main-process provisioner once at launch (Plan A auto-runs upgradeIfNeeded and
   // broadcasts progress); the returned `ui` drives the top-level upgrade/error banner below.
@@ -289,6 +322,13 @@ const App = (): React.JSX.Element | null => {
   useEffect(
     () => window.api.settings.onSkillImportApprovalSettled(dismissSkillImport),
     [dismissSkillImport]
+  )
+  useEffect(
+    () =>
+      window.api.settings.onChanged?.((snapshot) => {
+        useSettingsStore.getState().acceptCommittedSnapshot(snapshot)
+      }),
+    []
   )
   // Main retains approval payloads while the agent tool call is parked. Ask it to replay after both
   // listeners are attached so a recreated window can recover requests emitted while no renderer
@@ -488,7 +528,10 @@ const App = (): React.JSX.Element | null => {
         role="status"
         className="flex min-h-svh items-center justify-center bg-background text-foreground"
       >
-        <span className="text-sm text-muted-foreground">Loading saved conversations…</span>
+        <div className="flex flex-col items-center gap-14">
+          <OpenScienceLogoLoader />
+          <span className="text-sm text-muted-foreground">Loading saved conversations…</span>
+        </div>
       </main>
     )
   }
@@ -534,41 +577,45 @@ const App = (): React.JSX.Element | null => {
           onDismiss={sessionPersistence.dismissLoadWarning}
         />
       ) : null}
-      {view === 'home' ? (
-        <HomePage
-          canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
-          hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
-        />
-      ) : (
-        <WorkspacePage
-          isSessionPersistenceHydrated={isSessionPersistenceHydrated}
-          isSessionPersistenceReady={isSessionPersistenceReady}
-          canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
-        />
-      )}
+      <WorkspaceAgentRuntimeProvider>
+        {view === 'home' ? (
+          <HomePage
+            canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
+            hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+            onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
+          />
+        ) : (
+          <WorkspacePage
+            isSessionPersistenceHydrated={isSessionPersistenceHydrated}
+            isSessionPersistenceReady={isSessionPersistenceReady}
+            canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
+          />
+        )}
+      </WorkspaceAgentRuntimeProvider>
       <SettingsPage
         ref={settingsPageRef}
         open={isSettingsOpen}
         onClose={closeSettings}
         onOpenSession={openPermissionSession}
       />
-      <ConnectorApprovalDialog />
-      <SkillImportApprovalDialog />
+      <ConnectorApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
+      <SkillImportApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
       <LifecycleToast
         notice={lifecycleSync.notice}
         onDismiss={lifecycleSync.dismissNotice}
         onView={lifecycleSync.viewNotice}
       />
       <PermissionUndoSnackbar />
-      <ComputeApprovalDialog />
+      <ComputeApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
       <UpdateDialog />
       <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />
-      <GlobalSearchDialog
-        key={String(isGlobalSearchOpen)}
-        open={isGlobalSearchOpen}
-        onOpenChange={setIsGlobalSearchOpen}
-        isSessionPersistenceReady={isSessionPersistenceReady}
-      />
+      {isGlobalSearchOpen ? (
+        <GlobalSearchDialog
+          open
+          onOpenChange={setIsGlobalSearchOpen}
+          isSessionPersistenceReady={isSessionPersistenceReady}
+        />
+      ) : null}
       <DataRootMissingDialog
         open={missingDataRoot !== undefined}
         dataRoot={missingDataRoot ?? ''}
@@ -584,5 +631,11 @@ const App = (): React.JSX.Element | null => {
     </>
   )
 }
+
+const App = (): React.JSX.Element => (
+  <SideChatProvider>
+    <AppContent />
+  </SideChatProvider>
+)
 
 export default App

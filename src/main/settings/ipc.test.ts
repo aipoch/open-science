@@ -42,11 +42,14 @@ type FakeSettingsService = Record<
   | 'uninstallCodex'
   | 'setAgentFramework'
   | 'setReasoningEffort'
+  | 'setSubagentModel'
   | 'resolveActiveReasoningEffort'
   | 'resolveActiveModelChangeTarget'
   | 'setNotificationsEnabled'
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
+  | 'setProjectFilesFilter'
+  | 'setDefaultPermissionProfile'
   | 'setAppIconVariant'
   | 'upsertProvider'
   | 'deleteProvider'
@@ -65,6 +68,7 @@ type FakeSettingsService = Record<
   | 'markOnboardingComplete'
   | 'listSkills'
   | 'getSkillDetail'
+  | 'buildSkillExport'
   | 'setSkillEnabled'
   | 'createSkill'
   | 'updateSkill'
@@ -115,6 +119,9 @@ const createFakeService = (): FakeSettingsService => ({
   setReasoningEffort: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], reasoningEffort: 'high' }),
+  setSubagentModel: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], subagentModel: { mode: 'inherit' } }),
   resolveActiveReasoningEffort: vi.fn().mockResolvedValue('high'),
   resolveActiveModelChangeTarget: vi.fn().mockResolvedValue(undefined),
   setNotificationsEnabled: vi
@@ -126,6 +133,15 @@ const createFakeService = (): FakeSettingsService => ({
   setClosePreference: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], closePreference: 'quit' }),
+  setProjectFilesFilter: vi.fn().mockResolvedValue({
+    claude: {},
+    providers: [],
+    projectFilesFilter: { sourceMode: 'local' }
+  }),
+  setDefaultPermissionProfile: vi
+    .fn()
+    .mockResolvedValue({ claude: {}, providers: [], defaultPermissionProfile: 'auto' }),
+
   setAppIconVariant: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], appIconVariant: 'dark' }),
@@ -155,6 +171,10 @@ const createFakeService = (): FakeSettingsService => ({
     updatedAt: '',
     enabled: true,
     body: 'b'
+  }),
+  buildSkillExport: vi.fn().mockResolvedValue({
+    fileName: 'my-skill.zip',
+    archiveBytes: new Uint8Array([1, 2, 3])
   }),
   setSkillEnabled: vi.fn().mockResolvedValue([]),
   createSkill: vi.fn().mockResolvedValue([]),
@@ -214,6 +234,7 @@ type TestSettingsIpcOptions = {
   onAppIconVariantChanged?: SettingsWorkflowEffects['appearance']['applyAppIconVariant']
   listAppIconPreviews?: SettingsIpcOptions['listAppIconPreviews']
   connectorTemplateFiles?: SettingsIpcOptions['connectorTemplateFiles']
+  skillExportFiles?: SettingsIpcOptions['skillExportFiles']
 }
 
 // Keeps the adapter tests concise while routing every mutation through the real workflow owner.
@@ -228,7 +249,8 @@ const registerTestSettingsIpcHandlers = ({
   onCustomServerSecurityChanged,
   onAppIconVariantChanged,
   listAppIconPreviews,
-  connectorTemplateFiles
+  connectorTemplateFiles,
+  skillExportFiles
 }: TestSettingsIpcOptions): void => {
   registerSettingsIpcHandlers({
     service,
@@ -252,19 +274,22 @@ const registerTestSettingsIpcHandlers = ({
               }
             : async () => undefined),
         beginCustomServerSecurityChange: () => undefined,
-        clearCustomServerFailure: () => undefined
+        clearCustomServerFailure: () => undefined,
+        resetCustomServerClient: async () => undefined
       },
       appearance: {
         applyAppIconVariant: onAppIconVariantChanged ?? (() => undefined)
       }
     }),
     listAppIconPreviews,
-    connectorTemplateFiles
+    connectorTemplateFiles,
+    skillExportFiles
   })
 }
 
+const ipcSender = { id: 42 }
 const invoke = (channel: string, payload?: unknown): unknown =>
-  handlers.get(channel)!(undefined, payload)
+  handlers.get(channel)!({ sender: ipcSender }, payload)
 
 describe('settings IPC handlers', () => {
   it('registers every settings channel', () => {
@@ -282,6 +307,7 @@ describe('settings IPC handlers', () => {
       'settings:upsert-provider',
       'settings:delete-provider',
       'settings:set-active-provider',
+      'settings:set-subagent-model',
       'settings:set-conversation-skill-import-enabled',
       'settings:validate-provider',
       'settings:cancel-codex-login',
@@ -295,6 +321,7 @@ describe('settings IPC handlers', () => {
       'settings:cancel-isolated-claude-login',
       'settings:logout-isolated-claude',
       'settings:mark-onboarding-complete',
+      'settings:export-skill',
       'settings:preview-custom-server-template-export',
       'settings:select-custom-server-template',
       'settings:export-custom-server-template'
@@ -349,7 +376,8 @@ describe('settings IPC handlers', () => {
     ).resolves.toEqual({ saved: true })
     expect(connectorTemplateFiles.save).toHaveBeenCalledWith(
       'open-science-connector-example.json',
-      '{"schemaVersion":1}\n'
+      '{"schemaVersion":1}\n',
+      ipcSender
     )
 
     await expect(
@@ -749,6 +777,28 @@ describe('settings IPC handlers', () => {
     expect(onSkillsChanged).toHaveBeenCalledTimes(1)
   })
 
+  it('builds and saves an eligible Skill export through the desktop adapter', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const skillExportFiles = { save: vi.fn().mockResolvedValue({ saved: true }) }
+    registerTestSettingsIpcHandlers({
+      service: asService(service),
+      skillExportFiles
+    })
+
+    await expect(invoke('settings:export-skill', { id: 'personal-my-skill' })).resolves.toEqual({
+      saved: true
+    })
+    expect(service.buildSkillExport).toHaveBeenCalledWith('personal-my-skill')
+    expect(skillExportFiles.save).toHaveBeenCalledWith(
+      {
+        fileName: 'my-skill.zip',
+        archiveBytes: new Uint8Array([1, 2, 3])
+      },
+      ipcSender
+    )
+  })
+
   it('routes create/update/delete skill channels and fires onSkillsChanged', async () => {
     handlers.clear()
     const service = createFakeService()
@@ -1034,6 +1084,30 @@ describe('settings IPC handlers', () => {
     expect(onActiveProviderChanged).not.toHaveBeenCalled()
   })
 
+  it('validates and forwards one complete Subagent model mutation', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const configuration = {
+      mode: 'fixed' as const,
+      providerId: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high' as const
+    }
+    const snapshot = { claude: {}, providers: [], subagentModel: configuration }
+    service.setSubagentModel.mockResolvedValue(snapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await expect(invoke('settings:set-subagent-model', { configuration })).resolves.toBe(snapshot)
+    expect(service.setSubagentModel).toHaveBeenCalledWith(configuration)
+
+    await expect(
+      invoke('settings:set-subagent-model', {
+        configuration: { ...configuration, providerId: '' }
+      })
+    ).rejects.toThrow('Invalid Subagent model configuration.')
+    expect(service.setSubagentModel).toHaveBeenCalledOnce()
+  })
+
   it('persists the notifications preference on set-notifications-enabled', async () => {
     handlers.clear()
     const service = createFakeService()
@@ -1111,6 +1185,26 @@ describe('settings IPC handlers', () => {
     )
   })
 
+  it('persists valid project files filters and rejects malformed ones', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await invoke('settings:set-project-files-filter', {
+      filter: { sourceMode: 'local', localRootId: 'root-1' }
+    })
+    await invoke('settings:set-project-files-filter', {})
+
+    expect(service.setProjectFilesFilter).toHaveBeenNthCalledWith(1, {
+      sourceMode: 'local',
+      localRootId: 'root-1'
+    })
+    expect(service.setProjectFilesFilter).toHaveBeenNthCalledWith(2, undefined)
+    await expect(
+      invoke('settings:set-project-files-filter', { filter: { sourceMode: 'remote' } })
+    ).rejects.toThrow('Invalid project files filter source')
+  })
+
   it('persists the app icon variant and applies it live on set-app-icon-variant', async () => {
     handlers.clear()
     const service = createFakeService()
@@ -1125,6 +1219,21 @@ describe('settings IPC handlers', () => {
     expect(service.setAppIconVariant).toHaveBeenCalledWith('dark')
     expect(onAppIconVariantChanged).toHaveBeenCalledWith('dark')
     expect(result).toBe(snapshot)
+  })
+
+  it('persists valid default permission profiles and rejects unknown values', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    const result = await invoke('settings:set-default-permission-profile', { profile: 'auto' })
+
+    expect(service.setDefaultPermissionProfile).toHaveBeenCalledWith('auto')
+    expect(result).toMatchObject({ defaultPermissionProfile: 'auto' })
+    await expect(
+      invoke('settings:set-default-permission-profile', { profile: 'always' })
+    ).rejects.toThrow('Unknown default permission profile')
+    expect(service.setDefaultPermissionProfile).toHaveBeenCalledTimes(1)
   })
 
   it('rejects an unknown app icon variant without touching the service', async () => {

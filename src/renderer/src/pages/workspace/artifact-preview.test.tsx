@@ -70,6 +70,7 @@ describe('artifact preview rendering', () => {
 
     expect(html).not.toContain('file:///Users/example/private-image.png')
     expect(html).not.toContain('<img')
+    expect(html).toContain('text-[10px] font-semibold text-text-000')
     expect(html).toContain('PNG')
   })
 

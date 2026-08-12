@@ -9,8 +9,8 @@ import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
-  CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
   type AcpSessionCapabilityOwner,
+  type SessionCapabilityPolicy,
   type SessionCapabilityProvision
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
@@ -43,12 +43,17 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
     sessionIds: string[]
   ) => AcpPrimarySessionIdentityReservationResult
   capabilities: Pick<AcpSessionCapabilityOwner, 'provision'>
+  capabilityPolicy: SessionCapabilityPolicy
   configurator: Pick<AcpSessionConfigurator, 'configure'>
   resolveSpecialistIdentity?: (
     specialistId: string,
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  // The ACP projectName carries the Project id (see workspace-conversation-controller). Returns
+  // undefined when the project has no Agent Context or the lookup fails; failures never block
+  // session adoption.
+  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
   peekClaudeReplay: (sessionId: string) => string | undefined
   commitClaudeReplay: (sessionId: string) => void
   updateCwd: (cwd: string) => void
@@ -67,6 +72,7 @@ export class AcpProviderSessionAdopter {
   ): Promise<AcpCreateSessionResponse> {
     let capability: SessionCapabilityProvision | undefined
     let provisionalSession: ActiveSession | undefined
+    let adoptedProviderSessionId: string | undefined
     let identity = request.identity
     try {
       const startupBackend = this.deps.currentBackend()
@@ -75,7 +81,7 @@ export class AcpProviderSessionAdopter {
         framework: startupBackend.framework,
         nativeMcpEnabled: startupBackend.adapter.nativeMcpEnabled,
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+        policy: this.deps.capabilityPolicy,
         sessionCwd: request.cwd,
         projectName: request.projectName
       })
@@ -87,6 +93,7 @@ export class AcpProviderSessionAdopter {
         this.resolveSpecialistSkills(specialistId)
       ])
       const handoffAppend = this.deps.peekClaudeReplay(stableAppSessionId)
+      const projectContextAppend = await this.resolveProjectAgentContext(request.projectName)
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
         tooling: {
@@ -95,9 +102,11 @@ export class AcpProviderSessionAdopter {
           skillImport: capability.descriptor.capabilities.includes('skill-import')
         },
         backendSystemPromptAppends: startupBackend.prompt.systemPromptAppends,
-        extraSystemPromptAppends: [specialistIdentity?.append, handoffAppend].filter(
-          (append): append is string => Boolean(append)
-        ),
+        extraSystemPromptAppends: [
+          specialistIdentity?.append,
+          handoffAppend,
+          projectContextAppend
+        ].filter((append): append is string => Boolean(append)),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
         sessionOptions: startupBackend.session.options,
         specialistSkills
@@ -105,6 +114,7 @@ export class AcpProviderSessionAdopter {
       provisionalSession = await request.connection.agent
         .buildSession({ cwd: request.cwd, mcpServers: capability.mcpServers, ...setup.metaArg })
         .start()
+      adoptedProviderSessionId = provisionalSession.sessionId
 
       const reserved = this.deps.reserveIdentity(identity, [
         stableAppSessionId,
@@ -150,6 +160,7 @@ export class AcpProviderSessionAdopter {
           appliedModel: configuration.appliedModel,
           configOptions: structuredClone(configuration.configOptions)
         })
+        aggregate.setSessionSetupPromptPrefix(setup.promptPrefix)
         this.deps.updateCwd(request.cwd)
         if (specialistIdentity) {
           aggregate.setSpecialistPrefix(specialistIdentity.prefix || undefined)
@@ -172,6 +183,10 @@ export class AcpProviderSessionAdopter {
       }
       return {
         sessionId: stableAppSessionId,
+        ...(adoptedProviderSessionId ? { providerSessionId: adoptedProviderSessionId } : {}),
+        ...(backend.providerContinuityToken
+          ? { providerContinuityToken: backend.providerContinuityToken }
+          : {}),
         cwd: request.cwd,
         frameworkId: backend.framework.id,
         ...(backend.backendId ? { backendId: backend.backendId } : {}),
@@ -197,6 +212,18 @@ export class AcpProviderSessionAdopter {
       throw startupError
     } finally {
       identity.release()
+    }
+  }
+
+  private async resolveProjectAgentContext(projectName: string): Promise<string | undefined> {
+    if (!this.deps.resolveProjectAgentContext) return undefined
+    try {
+      const context = await this.deps.resolveProjectAgentContext(projectName)
+      const trimmed = context?.trim()
+      return trimmed ? trimmed : undefined
+    } catch (error) {
+      log.warn('project Agent Context resolution failed', diagnosticErrorFields(error))
+      return undefined
     }
   }
 

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import { NotebookPackageAdmissionOwner } from './package-admission'
-import { managedRepairRegistryKey, repairRegistryPath } from './runtime-paths'
+import { envPrefix, managedRepairRegistryKey, repairRegistryPath } from './runtime-paths'
 import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 
@@ -98,7 +98,7 @@ describe('NotebookPackageAdmissionOwner', () => {
         }),
         repairRuntimeId: 'default-python',
         repairMarkerKey: managedRepairRegistryKey('default-python', 'python'),
-        journalTarget: '/runtime/envs/default-python'
+        journalTarget: envPrefix('/runtime', 'default-python')
       })
     })
   })
@@ -129,7 +129,7 @@ describe('NotebookPackageAdmissionOwner', () => {
         binding: { runtimeId: binding.runtimeId },
         repairRuntimeId: 'analysis',
         repairMarkerKey: managedRepairRegistryKey('analysis', 'python'),
-        journalTarget: '/runtime/envs/analysis'
+        journalTarget: envPrefix('/runtime', 'analysis')
       }
     })
   })

@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
-import { act, useCallback, useEffect } from 'react'
+import { act, forwardRef, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
-import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
+import {
+  useSessionStore,
+  type ChatMessage,
+  type ChatSession,
+  type ToolActivity
+} from '@/stores/session-store'
 import {
   createInitialReviewState,
   selectProjectSessionReviews,
@@ -17,6 +22,16 @@ import type {
   HandoffLifecycleEventSource
 } from '../../../../shared/handoff-lifecycle'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import {
+  createLinearConversationGraph,
+  projectConversationMessage,
+  resolveActiveConversationMessages
+} from '../../../../shared/conversation-graph'
+import { normalizeSessionFile } from '../../../../shared/session-persistence'
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -54,24 +69,65 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => {
     agentMarkdownRenderMock(content)
     return <div>{content}</div>
-  }
+  },
+  PresentedAgentMarkdown: ({
+    content,
+    isAnimating
+  }: {
+    content: string
+    isAnimating?: boolean
+  }) => (
+    <div data-testid="presented-agent-markdown" data-animating={isAnimating || undefined}>
+      {content}
+    </div>
+  )
 }))
 
 vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
+  const Viewport = forwardRef<
+    HTMLDivElement,
+    PropsWithChildren<React.HTMLAttributes<HTMLDivElement>>
+  >(function MockMessageScrollerViewport({ children, ...props }, ref) {
+    return (
+      <div ref={ref} data-testid="message-scroller-viewport" {...props}>
+        {children}
+      </div>
+    )
+  })
+  const Content = forwardRef<
+    HTMLDivElement,
+    PropsWithChildren<React.HTMLAttributes<HTMLDivElement>>
+  >(function MockMessageScrollerContent({ children, ...props }, ref) {
+    return (
+      <div ref={ref} {...props}>
+        {children}
+      </div>
+    )
+  })
   const Item = ({
     children,
     messageId
   }: PropsWithChildren<{ messageId?: string }>): React.JSX.Element => (
     <div data-message-id={messageId}>{children}</div>
   )
-  const Button = (): React.JSX.Element => <button type="button">Scroll to end</button>
+  const Button = ({
+    children,
+    direction = 'end',
+    ...props
+  }: PropsWithChildren<
+    React.ButtonHTMLAttributes<HTMLButtonElement> & { direction?: 'start' | 'end' }
+  >): React.JSX.Element => (
+    <button type="button" data-direction={direction} {...props}>
+      {children ?? `Scroll to ${direction}`}
+    </button>
+  )
 
   return {
     MessageScrollerProvider: Wrapper,
     MessageScroller: Wrapper,
-    MessageScrollerViewport: Wrapper,
-    MessageScrollerContent: Wrapper,
+    MessageScrollerViewport: Viewport,
+    MessageScrollerContent: Content,
     MessageScrollerItem: Item,
     MessageScrollerButton: Button
   }
@@ -84,6 +140,7 @@ vi.mock('@/lib/utils', () => ({
 }))
 
 const upsertAndActivateItem = vi.fn()
+const listGrantedRoots = vi.fn()
 const createSessionPlanPreviewItem = vi.fn((sessionId: string, projectId: string) => ({
   id: `tool:${sessionId}:plan`,
   sessionId,
@@ -92,13 +149,25 @@ const createSessionPlanPreviewItem = vi.fn((sessionId: string, projectId: string
   toolKind: 'plan' as const,
   title: 'Plan'
 }))
+const createSessionSubagentsPreviewItem = vi.fn(
+  (sessionId: string, projectId: string | undefined, selectedAgentFrameId: string) => ({
+    id: `tool:${sessionId}:subagents`,
+    sessionId,
+    ...(projectId ? { projectId } : {}),
+    type: 'tool' as const,
+    toolKind: 'subagents' as const,
+    title: 'Subagents',
+    selectedAgentFrameId
+  })
+)
 const announceWindowFindReady = vi.fn(() => () => undefined)
 
 vi.mock('@/stores/preview-workbench-store', () => ({
   usePreviewWorkbenchStore: {
     getState: () => ({ upsertAndActivateItem })
   },
-  createSessionPlanPreviewItem
+  createSessionPlanPreviewItem,
+  createSessionSubagentsPreviewItem
 }))
 
 const createMessage = (overrides: Partial<ChatMessage>): ChatMessage => ({
@@ -121,6 +190,18 @@ const createSession = (overrides: Partial<ChatSession>): ChatSession => ({
   messages: [],
   createdAt: 1710000000000,
   updatedAt: 1710000000000,
+  ...overrides
+})
+
+const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
+  id: 'tool-1',
+  kind: 'tool',
+  title: 'Tool',
+  status: 'in_progress',
+  eventIds: ['event-1'],
+  sortIndex: 1,
+  createdAt: 1710000000001,
+  updatedAt: 1710000000001,
   ...overrides
 })
 
@@ -191,12 +272,19 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
   beforeEach(() => {
     upsertAndActivateItem.mockClear()
+    listGrantedRoots.mockReset().mockResolvedValue([])
+    useGrantedFoldersStore.setState(createInitialGrantedFoldersState())
+    createSessionSubagentsPreviewItem.mockClear()
     announceWindowFindReady.mockClear()
     flushSessionPersistenceMock.mockReset().mockResolvedValue(undefined)
     useReviewStore.setState(createInitialReviewState())
     container = document.createElement('div')
     document.body.appendChild(container)
     window.api = {
+      platform: 'darwin',
+      localFs: {
+        listGrantedRoots
+      },
       previewResources: {
         acquire: vi.fn(({ path }: { path: string }) =>
           Promise.resolve({
@@ -235,7 +323,611 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await act(async () => {
       root.unmount()
     })
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
     container.remove()
+  })
+
+  it('keeps later tools behind the visible assistant prefix', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-stream', sortIndex: 1, createdAt: 100 })
+    const reply = createMessage({
+      id: 'reply-stream',
+      role: 'agent',
+      content: 'Flow',
+      status: 'streaming',
+      streamId: 'stream-1',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt]
+      })
+    )
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, reply]
+      })
+    )
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      ''
+    )
+
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      'F'
+    )
+
+    const tool = createActivity({
+      id: 'tool-after-stream',
+      title: 'Tool after buffered text',
+      promptMessageId: prompt.id,
+      sortIndex: 3,
+      createdAt: 102
+    })
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, reply],
+        activities: [tool]
+      })
+    )
+    expect(
+      container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
+    ).toBeNull()
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('Flow')
+    expect(
+      container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
+    ).not.toBeNull()
+  })
+
+  it('keeps terminal metadata behind the final visible assistant prefix', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-terminal', sortIndex: 1, createdAt: 100 })
+    const reply = createMessage({
+      id: 'reply-terminal',
+      role: 'agent',
+      content: 'Done',
+      status: 'streaming',
+      streamId: 'stream-terminal',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt]
+      })
+    )
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, reply]
+      })
+    )
+    await render(
+      createSession({
+        status: 'idle',
+        messages: [
+          prompt,
+          {
+            ...reply,
+            status: 'complete',
+            completedAt: 200,
+            updatedAt: 200
+          }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain('Completed')
+    expect(container.textContent).not.toContain('Done')
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('Done')
+    expect(container.textContent).toContain('Completed')
+  })
+
+  it('does not replay a buffered assistant message after switching sessions', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-session-a', sortIndex: 1, createdAt: 100 })
+    const reply = createMessage({
+      id: 'reply-session-a',
+      role: 'agent',
+      content: 'Resume without replay after switching sessions',
+      status: 'streaming',
+      streamId: 'stream-session-a',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const sessionA = createSession({
+      id: 'session-a',
+      activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+      messages: [prompt, reply]
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        id: sessionA.id,
+        activeRun: sessionA.activeRun,
+        messages: [prompt]
+      })
+    )
+    await render(sessionA)
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      'R'
+    )
+
+    await render(
+      createSession({
+        id: 'session-b',
+        messages: [createMessage({ id: 'prompt-session-b' })]
+      })
+    )
+    await render(sessionA)
+
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      reply.content
+    )
+
+    const continuedReply = { ...reply, content: `${reply.content} plus more` }
+    await render({ ...sessionA, messages: [prompt, continuedReply] })
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      reply.content
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      `${reply.content} `
+    )
+  })
+
+  it('does not replay an assistant fragment after the turn advances to a tool', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-before-tool', sortIndex: 1, createdAt: 100 })
+    const reply = createMessage({
+      id: 'reply-before-tool',
+      role: 'agent',
+      content: 'Fixed before tool',
+      status: 'streaming',
+      streamId: 'stream-before-tool',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const tool = createActivity({
+      id: 'tool-after-fixed-fragment',
+      title: 'Tool after fixed fragment',
+      promptMessageId: prompt.id,
+      sortIndex: 3,
+      createdAt: 102
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+            messages: [prompt, reply],
+            activities: [tool]
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      reply.content
+    )
+    expect(
+      container.querySelector('[data-message-id="activity-group-tool-after-fixed-fragment"]')
+    ).not.toBeNull()
+  })
+
+  it('paces a new assistant fragment that arrives after a tool', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-around-tool', sortIndex: 1, createdAt: 100 })
+    const beforeTool = createMessage({
+      id: 'reply-before-live-tool',
+      role: 'agent',
+      content: 'Before tool',
+      status: 'streaming',
+      streamId: 'stream-around-tool',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const tool = createActivity({
+      id: 'tool-between-fragments',
+      title: 'Tool between fragments',
+      promptMessageId: prompt.id,
+      sortIndex: 3,
+      createdAt: 102
+    })
+    const afterTool = createMessage({
+      id: 'reply-after-live-tool',
+      role: 'agent',
+      content: 'After tool',
+      status: 'streaming',
+      streamId: 'stream-around-tool',
+      responseToMessageId: prompt.id,
+      sortIndex: 4,
+      createdAt: 103
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt]
+      })
+    )
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, beforeTool]
+      })
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, beforeTool, afterTool],
+        activities: [tool]
+      })
+    )
+    expect(
+      container.querySelector('[data-message-id="activity-group-tool-between-fragments"]')
+    ).toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(160))
+
+    const assistantSurfaces = container.querySelectorAll('[data-testid="presented-agent-markdown"]')
+    expect(assistantSurfaces).toHaveLength(2)
+    expect(assistantSurfaces[0]?.textContent).toBe(beforeTool.content)
+    expect(assistantSurfaces[1]?.textContent).toBe('')
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(assistantSurfaces[1]?.textContent).toBe('A')
+  })
+
+  it('does not replay a buffered assistant message after switching active branches', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const promptA = createMessage({ id: 'prompt-branch-a', sortIndex: 1, createdAt: 100 })
+    const replyA = createMessage({
+      id: 'reply-branch-a',
+      role: 'agent',
+      content: 'Resume without replay on the original branch',
+      status: 'streaming',
+      streamId: 'stream-branch-a',
+      responseToMessageId: promptA.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const createGraph = (
+      messages: ChatMessage[]
+    ): ReturnType<typeof createLinearConversationGraph> =>
+      createLinearConversationGraph({
+        sessionId: 'branched-stream-session',
+        messages,
+        frameworkId: 'codex',
+        createdAt: 100,
+        updatedAt: 101
+      })
+    const initialGraphA = createGraph([promptA])
+    const streamingGraphA = createGraph([promptA, replyA])
+    const branchBGraph = structuredClone(streamingGraphA)
+    branchBGraph.branches.push({
+      ...branchBGraph.branches[0],
+      id: 'branch-b',
+      parentBranchId: branchBGraph.branches[0].id,
+      createdAt: 102,
+      updatedAt: 102
+    })
+    branchBGraph.frames[0].activeBranchId = 'branch-b'
+    const sessionFromGraph = (graph: typeof streamingGraphA): ChatSession =>
+      createSession({
+        id: 'branched-stream-session',
+        activeRun: { promptMessageId: promptA.id, startedAt: 100 },
+        conversationGraph: graph,
+        messages: resolveActiveConversationMessages(graph).map((message, index) => ({
+          ...projectConversationMessage(message),
+          sortIndex: index + 1
+        }))
+      })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(sessionFromGraph(initialGraphA))
+    await render(sessionFromGraph(streamingGraphA))
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      'R'
+    )
+
+    await render(sessionFromGraph(branchBGraph))
+
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      replyA.content
+    )
+  })
+
+  it('opens the exact durable source Frame from an inline upward message', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const rootPrompt = createMessage({
+      id: 'root-prompt',
+      content: 'Gather evidence',
+      createdAt: 100,
+      updatedAt: 100
+    })
+    const session = createSession({
+      id: 'session-inline',
+      projectId: 'project-inline',
+      messages: [rootPrompt]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 100,
+      updatedAt: 100
+    })
+    const graph = session.conversationGraph
+    const rootFrame = graph.frames.find(({ id }) => id === graph.rootFrameId)!
+    graph.frames.push({
+      id: 'source-child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      delegateName: 'Evidence mapper',
+      status: 'running',
+      activeBranchId: 'source-child-branch',
+      createdAt: 110
+    })
+    session.runtimeContext = {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [],
+        messageCommands: [
+          {
+            messageId: 'upward-message',
+            requestId: 'request-upward',
+            sourcePrincipal: 'child',
+            canonicalDigest: 'digest-upward',
+            sourceFrameId: 'source-child-frame',
+            targetFrameId: graph.rootFrameId,
+            rootOriginMessageId: rootPrompt.id,
+            callerRootMessageId: rootPrompt.id,
+            rootBranchId: rootFrame.activeBranchId,
+            rootBranchRevision: 'revision-1',
+            direction: 'to_parent',
+            disposition: 'message',
+            text: 'Should I include the preprint evidence?',
+            kind: 'question',
+            laneSequence: 1,
+            queuedAt: 120,
+            receipt: {
+              status: 'accepted',
+              acceptedAt: 130,
+              evidence: 'provider_prompt_accepted'
+            }
+          }
+        ]
+      }
+    }
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    const source = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open Subagent preview for Evidence mapper"]'
+    )
+    expect(source).not.toBeNull()
+    await act(async () => source?.click())
+
+    expect(createSessionSubagentsPreviewItem).toHaveBeenCalledWith(
+      'session-inline',
+      'project-inline',
+      'source-child-frame'
+    )
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'tool:session-inline:subagents',
+        selectedAgentFrameId: 'source-child-frame'
+      })
+    )
+  })
+
+  it('reserves a read-only transcript card while structured input waits below', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const projection = {
+      message: 'Choose an approach',
+      fields: [
+        {
+          id: 'approach',
+          label: 'Approach',
+          kind: 'single-select' as const,
+          required: true,
+          options: [
+            { value: 'minimal', label: 'Minimal change', description: 'Reuse the activity.' },
+            { value: 'expanded', label: 'Expanded model' }
+          ]
+        }
+      ],
+      state: 'pending' as const
+    }
+    const session = createSession({
+      activities: [createActivity({ id: 'tool-ask-1', elicitation: projection })]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={session}
+          onSendEditedMessage={vi.fn()}
+          pendingElicitations={[
+            {
+              requestId: 'elicitation-1',
+              sessionId: session.id,
+              toolCallId: 'tool-ask-1',
+              message: projection.message,
+              fields: projection.fields
+            }
+          ]}
+        />
+      )
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-card"]')).not.toBeNull()
+    expect(container.textContent).toContain('Choose an approach')
+    expect(container.textContent).toContain('Awaiting your answer…')
+    expect(
+      container.querySelector('[data-testid="elicitation-pending-placeholder"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-option-minimal"]')).toBeNull()
+  })
+
+  it('rehydrates a durable answered question as a read-only message review', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const projection = {
+      message: 'Choose an approach',
+      fields: [
+        {
+          id: 'question_0',
+          label: 'Approach',
+          kind: 'single-select' as const,
+          options: [
+            { value: 'Minimal', label: 'Minimal change' },
+            { value: 'Expanded', label: 'Expanded model' }
+          ]
+        },
+        { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+      ],
+      state: 'answered' as const,
+      durable: {
+        kind: 'agent-user-choice' as const,
+        requestId: 'elicitation-answered',
+        promptMessageId: 'message-1'
+      },
+      answers: [{ fieldId: 'question_0', value: 'Minimal' }]
+    }
+    const session = createSession({
+      status: 'idle',
+      activities: [createActivity({ id: 'tool-ask-answered', elicitation: projection })]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    expect(container.textContent).toContain('Minimal change')
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-summary"]')
+        ?.click()
+    })
+    expect(container.querySelector('[data-testid="elicitation-choice-review"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="elicitation-option-Expanded"]')).not.toBeNull()
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(container.textContent).not.toContain('Submit')
+    expect(container.textContent).not.toContain('Finish')
   })
 
   it('updates the visible message-branch review card when a running review completes', async () => {
@@ -559,6 +1251,629 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     })
   })
 
+  it('renders a child-owned Version at its restored Notebook delegate invocation without copying root ownership', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'child-version',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact',
+      versionId: 'child-version',
+      versionNumber: 1,
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 }),
+        createMessage({
+          id: 'root-answer',
+          role: 'agent',
+          content: 'Done',
+          responseToMessageId: 'root-prompt',
+          createdAt: 6,
+          updatedAt: 6
+        })
+      ]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const nestedDelegateInvocationId = 'notebook-run-42-1\u0000delegate\u00001'
+    const invocation = {
+      id: 'provider-repl-call',
+      kind: 'tool' as const,
+      title: 'repl_execute',
+      status: 'completed' as const,
+      sortIndex: 1,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2,
+      promptMessageId: 'root-prompt'
+    }
+    session.activities = [invocation]
+    graph.activities.push({
+      ...invocation,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: rootBranch.id,
+      runtimeSegmentId: rootRuntime.id,
+      promptMessageId: 'root-prompt'
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 3,
+      completedAt: 5
+    })
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 3,
+      updatedAt: 5
+    })
+    graph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'work',
+        status: 'complete',
+        eventIds: [],
+        delegatedCallerSource: {
+          rootMessageId: 'root-prompt',
+          toolInvocationId: nestedDelegateInvocationId
+        },
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        revisionRootMessageId: 'child-prompt',
+        createdAt: 3,
+        updatedAt: 3
+      },
+      {
+        id: 'child-answer',
+        role: 'agent',
+        content: 'done',
+        status: 'complete',
+        eventIds: [],
+        artifactIds: ['child-version'],
+        responseToMessageId: 'child-prompt',
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        parentMessageId: 'child-prompt',
+        createdAt: 5,
+        updatedAt: 5
+      }
+    )
+    const rootBefore = structuredClone(graph.messages.find(({ id }) => id === 'root-prompt'))
+    const answerBefore = structuredClone(graph.messages.find(({ id }) => id === 'root-answer'))
+
+    const normalized = normalizeSessionFile(session)!
+    expect(
+      normalized.conversationGraph?.activities.find(({ id }) => id === nestedDelegateInvocationId)
+    ).toMatchObject({
+      title: 'Delegate subagent',
+      promptMessageId: 'root-prompt'
+    })
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The projected child Version renders on the root turn terminal agent message (turn-end),
+    // never as an inline placement under the delegate invocation.
+    expect(container.querySelector('[data-message-id^="artifact-placement-"]')).toBeNull()
+    const cards = container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Preview generated file child.md"]'
+    )
+    expect(cards).toHaveLength(1)
+    const card = cards[0]
+    expect(graph.messages.find(({ id }) => id === 'root-prompt')).toEqual(rootBefore)
+    expect(graph.messages.find(({ id }) => id === 'root-prompt')?.artifactIds).toBeUndefined()
+    expect(graph.messages.find(({ id }) => id === 'root-answer')).toEqual(answerBefore)
+    expect(graph.messages.find(({ id }) => id === 'root-answer')?.artifactIds).toBeUndefined()
+    await act(async () => card?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    const rootInvocationPreview = upsertAndActivateItem.mock.calls.at(-1)?.[0]
+    expect(rootInvocationPreview).toEqual(
+      expect.objectContaining({
+        artifactId: 'child-artifact',
+        selectedVersionId: 'child-version',
+        path: 'artifact-version:default/session-42/child-artifact/child-version'
+      })
+    )
+
+    const childGraph = structuredClone(normalized.conversationGraph)!
+    childGraph.activeFrameId = 'child-frame'
+    const childSession: ChatSession = {
+      ...rootSession,
+      conversationGraph: childGraph,
+      messages: resolveActiveConversationMessages(childGraph).map((message, index) => ({
+        ...projectConversationMessage(message),
+        sortIndex: index + 1
+      }))
+    }
+    upsertAndActivateItem.mockClear()
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={childSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const childOwnerCard = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Preview generated file child.md"]'
+    )
+    expect(childOwnerCard).not.toBeNull()
+    await act(async () => childOwnerCard?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(rootInvocationPreview)
+  })
+
+  it('hides a projected child Version while the root turn has no terminal agent message yet', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'child-version',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact',
+      versionId: 'child-version',
+      versionNumber: 1,
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
+    const session = createSession({
+      id: 'session-42',
+      status: 'running',
+      messages: [createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 })]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const nestedDelegateInvocationId = 'notebook-run-42-1\u0000delegate\u00001'
+    const invocation = {
+      id: 'provider-repl-call',
+      kind: 'tool' as const,
+      title: 'repl_execute',
+      status: 'completed' as const,
+      sortIndex: 1,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2,
+      promptMessageId: 'root-prompt'
+    }
+    session.activities = [invocation]
+    graph.activities.push({
+      ...invocation,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: rootBranch.id,
+      runtimeSegmentId: rootRuntime.id,
+      promptMessageId: 'root-prompt'
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 3,
+      completedAt: 5
+    })
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 3,
+      updatedAt: 5
+    })
+    graph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'work',
+        status: 'complete',
+        eventIds: [],
+        delegatedCallerSource: {
+          rootMessageId: 'root-prompt',
+          toolInvocationId: nestedDelegateInvocationId
+        },
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        revisionRootMessageId: 'child-prompt',
+        createdAt: 3,
+        updatedAt: 3
+      },
+      {
+        id: 'child-answer',
+        role: 'agent',
+        content: 'done',
+        status: 'complete',
+        eventIds: [],
+        artifactIds: ['child-version'],
+        responseToMessageId: 'child-prompt',
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        parentMessageId: 'child-prompt',
+        createdAt: 5,
+        updatedAt: 5
+      }
+    )
+    const normalized = normalizeSessionFile(session)!
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The root turn has not produced a terminal agent message yet, so the projected child Version
+    // stays hidden instead of rendering inline under the delegate invocation.
+    expect(container.querySelector('[aria-label="Preview generated file child.md"]')).toBeNull()
+    expect(container.querySelector('[data-message-id^="artifact-placement-"]')).toBeNull()
+  })
+
+  it('renders a projected child Version only on the terminal fragment of a multi-fragment root turn', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptor: ArtifactVersionDescriptor = {
+      id: 'child-version',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact',
+      versionId: 'child-version',
+      versionNumber: 1,
+      checksum: 'b'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi.fn().mockResolvedValue([descriptor])
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 }),
+        createMessage({
+          id: 'root-answer-1',
+          role: 'agent',
+          content: 'First fragment',
+          responseToMessageId: 'root-prompt',
+          createdAt: 4,
+          updatedAt: 4
+        }),
+        createMessage({
+          id: 'root-answer-2',
+          role: 'agent',
+          content: 'Final fragment',
+          responseToMessageId: 'root-prompt',
+          createdAt: 8,
+          updatedAt: 8
+        })
+      ]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const nestedDelegateInvocationId = 'notebook-run-42-1\u0000delegate\u00001'
+    const invocation = {
+      id: 'provider-repl-call',
+      kind: 'tool' as const,
+      title: 'repl_execute',
+      status: 'completed' as const,
+      sortIndex: 1,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2,
+      promptMessageId: 'root-prompt'
+    }
+    session.activities = [invocation]
+    graph.activities.push({
+      ...invocation,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: rootBranch.id,
+      runtimeSegmentId: rootRuntime.id,
+      promptMessageId: 'root-prompt'
+    })
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'root-prompt',
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'completed',
+      activeBranchId: 'child-branch',
+      createdAt: 3,
+      completedAt: 5
+    })
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      headMessageId: 'child-answer',
+      createdAt: 3,
+      updatedAt: 5
+    })
+    graph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'work',
+        status: 'complete',
+        eventIds: [],
+        delegatedCallerSource: {
+          rootMessageId: 'root-prompt',
+          toolInvocationId: nestedDelegateInvocationId
+        },
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        revisionRootMessageId: 'child-prompt',
+        createdAt: 3,
+        updatedAt: 3
+      },
+      {
+        id: 'child-answer',
+        role: 'agent',
+        content: 'done',
+        status: 'complete',
+        eventIds: [],
+        artifactIds: ['child-version'],
+        responseToMessageId: 'child-prompt',
+        agentFrameId: 'child-frame',
+        introducedOnBranchId: 'child-branch',
+        parentMessageId: 'child-prompt',
+        createdAt: 5,
+        updatedAt: 5
+      }
+    )
+    const normalized = normalizeSessionFile(session)!
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // The projected child Version renders once, on the terminal root fragment only.
+    const cards = container.querySelectorAll('[aria-label="Preview generated file child.md"]')
+    expect(cards).toHaveLength(1)
+    const footerSurface = container.querySelector(
+      '[data-slot="assistant-message-footer"]'
+    )?.parentElement
+    expect(
+      footerSurface?.querySelector('[aria-label="Preview generated file child.md"]')
+    ).not.toBeNull()
+  })
+
+  it('aggregates projected child Versions from parallel delegates onto the terminal root message', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const descriptorA: ArtifactVersionDescriptor = {
+      id: 'version-1',
+      projectName: 'default',
+      sessionId: 'session-42',
+      name: 'child-1.md',
+      mimeType: 'text/markdown',
+      size: 12,
+      mtimeMs: 10,
+      artifactId: 'child-artifact-1',
+      versionId: 'version-1',
+      versionNumber: 1,
+      checksum: 'a'.repeat(64),
+      createdAt: '2026-08-08T00:00:00.000Z',
+      state: 'finalized'
+    }
+    const descriptorB: ArtifactVersionDescriptor = {
+      ...descriptorA,
+      id: 'version-2',
+      name: 'child-2.md',
+      artifactId: 'child-artifact-2',
+      versionId: 'version-2',
+      checksum: 'b'.repeat(64)
+    }
+    window.api.artifacts.resolveVersionDescriptors = vi
+      .fn()
+      .mockResolvedValue([descriptorA, descriptorB])
+    const session = createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'root-prompt', createdAt: 1, updatedAt: 1 }),
+        createMessage({
+          id: 'root-answer',
+          role: 'agent',
+          content: 'Done',
+          responseToMessageId: 'root-prompt',
+          createdAt: 9,
+          updatedAt: 9
+        })
+      ]
+    })
+    session.conversationGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: session.messages,
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const graph = session.conversationGraph!
+    const rootBranch = graph.branches[0]
+    const rootRuntime = graph.runtimeSegments[0]
+    const invocations = [
+      {
+        id: 'invoke-1',
+        kind: 'tool' as const,
+        title: 'repl_execute',
+        status: 'completed' as const,
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2,
+        promptMessageId: 'root-prompt'
+      },
+      {
+        id: 'invoke-2',
+        kind: 'tool' as const,
+        title: 'repl_execute',
+        status: 'completed' as const,
+        sortIndex: 2,
+        eventIds: [],
+        createdAt: 5,
+        updatedAt: 5,
+        promptMessageId: 'root-prompt'
+      }
+    ]
+    session.activities = invocations
+    for (const activity of invocations) {
+      graph.activities.push({
+        ...activity,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: rootBranch.id,
+        runtimeSegmentId: rootRuntime.id,
+        promptMessageId: 'root-prompt'
+      })
+    }
+    const delegates = [
+      {
+        invocationId: 'invoke-1',
+        frameId: 'child-frame-1',
+        branchId: 'child-branch-1',
+        promptId: 'child-prompt-1',
+        answerId: 'child-answer-1',
+        artifactIds: ['version-1', 'version-1'],
+        startedAt: 3,
+        completedAt: 4
+      },
+      {
+        invocationId: 'invoke-2',
+        frameId: 'child-frame-2',
+        branchId: 'child-branch-2',
+        promptId: 'child-prompt-2',
+        answerId: 'child-answer-2',
+        artifactIds: ['version-2'],
+        startedAt: 6,
+        completedAt: 7
+      }
+    ]
+    for (const delegate of delegates) {
+      graph.frames.push({
+        id: delegate.frameId,
+        parentFrameId: graph.rootFrameId,
+        originMessageId: 'root-prompt',
+        originBindingState: 'validated',
+        kind: 'delegate',
+        status: 'completed',
+        activeBranchId: delegate.branchId,
+        createdAt: delegate.startedAt,
+        completedAt: delegate.completedAt
+      })
+      graph.branches.push({
+        id: delegate.branchId,
+        agentFrameId: delegate.frameId,
+        headMessageId: delegate.answerId,
+        createdAt: delegate.startedAt,
+        updatedAt: delegate.completedAt
+      })
+      graph.messages.push(
+        {
+          id: delegate.promptId,
+          role: 'user',
+          content: 'work',
+          status: 'complete',
+          eventIds: [],
+          delegatedCallerSource: {
+            rootMessageId: 'root-prompt',
+            toolInvocationId: delegate.invocationId
+          },
+          agentFrameId: delegate.frameId,
+          introducedOnBranchId: delegate.branchId,
+          revisionRootMessageId: delegate.promptId,
+          createdAt: delegate.startedAt,
+          updatedAt: delegate.startedAt
+        },
+        {
+          id: delegate.answerId,
+          role: 'agent',
+          content: 'done',
+          status: 'complete',
+          eventIds: [],
+          artifactIds: delegate.artifactIds,
+          responseToMessageId: delegate.promptId,
+          agentFrameId: delegate.frameId,
+          introducedOnBranchId: delegate.branchId,
+          parentMessageId: delegate.promptId,
+          createdAt: delegate.completedAt,
+          updatedAt: delegate.completedAt
+        }
+      )
+    }
+    const normalized = normalizeSessionFile(session)!
+    const rootSession = { ...session, ...normalized } as ChatSession
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={rootSession} onSendEditedMessage={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    // Both parallel delegates aggregate onto the terminal root message, with exact duplicate
+    // Versions deduplicated.
+    expect(container.querySelector('[data-message-id^="artifact-placement-"]')).toBeNull()
+    expect(
+      container.querySelectorAll('[aria-label="Preview generated file child-1.md"]')
+    ).toHaveLength(1)
+    expect(
+      container.querySelectorAll('[aria-label="Preview generated file child-2.md"]')
+    ).toHaveLength(1)
+  })
+
   it('shows a resolved copied generated card after the active Session updates during lookup', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
@@ -771,6 +2086,92 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
   })
 
+  it('offers scrolling to the first message only for long, sufficiently scrolled idle Sessions', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = [
+      createMessage({ id: 'prompt-1' }),
+      createMessage({ id: 'reply-1', role: 'agent' }),
+      createMessage({ id: 'prompt-2' }),
+      createMessage({ id: 'reply-2', role: 'agent' })
+    ]
+    const render = async (
+      status: ChatSession['status'],
+      sessionMessages: ChatMessage[] = messages,
+      overrides: Partial<ChatSession> = {}
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status, messages: sessionMessages, ...overrides })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+    }
+    const scrollTo = async (
+      scrollTop: number,
+      { clientHeight = 400, scrollHeight = 1000 } = {}
+    ): Promise<void> => {
+      const viewport = container.querySelector<HTMLElement>(
+        '[data-testid="message-scroller-viewport"]'
+      )
+      Object.defineProperties(viewport, {
+        clientHeight: { configurable: true, value: clientHeight },
+        scrollHeight: { configurable: true, value: scrollHeight },
+        scrollTop: { configurable: true, writable: true, value: scrollTop }
+      })
+      await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    }
+
+    root = createRoot(container)
+    await render('idle')
+    await scrollTo(0, { clientHeight: 400, scrollHeight: 400 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await scrollTo(59)
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await scrollTo(60)
+    const firstMessageButton = container.querySelector('[aria-label="Scroll to first message"]')
+    const lastMessageButton = container.querySelector('[data-direction="end"]')
+    expect(firstMessageButton).not.toBeNull()
+    expect(lastMessageButton).not.toBeNull()
+    for (const button of [firstMessageButton, lastMessageButton]) {
+      expect(button?.classList.contains('border-transparent')).toBe(true)
+      expect(button?.classList.contains('shadow-card')).toBe(true)
+      expect(button?.classList.contains('border-border-200')).toBe(false)
+    }
+
+    await scrollTo(400, { clientHeight: 400, scrollHeight: 10_000 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+
+    await render('idle', messages.slice(0, 2))
+    await scrollTo(200, { clientHeight: 400, scrollHeight: 700 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await scrollTo(40, { clientHeight: 400, scrollHeight: 800 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+
+    await render('idle', messages, { compacting: true })
+    await scrollTo(400)
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    for (const status of [
+      'running',
+      'waiting-for-user',
+      'waiting-permission',
+      'waiting-plan-approval'
+    ] as const) {
+      await render(status)
+      await scrollTo(400)
+      expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+    }
+
+    await render('error')
+    await scrollTo(60)
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+  })
+
   it('does not write to the preview store for non-managed-file artifacts', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({
@@ -913,6 +2314,92 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       encoding: 'utf8'
     })
     expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+  })
+
+  const linkedFolderSession = (): ChatSession =>
+    createSession({
+      id: 'session-42',
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'prompt-1',
+          content: 'analyze @path:charts/sin.png',
+          parts: [
+            { type: 'text', text: 'analyze ' },
+            {
+              type: 'artifact',
+              id: 'linked-1',
+              name: 'sin.png',
+              source: 'linked-folder',
+              rootId: 'root-1',
+              relativePath: 'charts/sin.png'
+            }
+          ]
+        })
+      ]
+    })
+
+  const renderAndClickLinkedPill = async (session: ChatSession): Promise<void> => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+    const pill = container.querySelector<HTMLButtonElement>('[aria-label="Preview sin.png"]')
+    expect(pill).not.toBeNull()
+    await act(async () => {
+      pill?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('opens a linked-folder mention at the granted root path in the preview store', async () => {
+    useGrantedFoldersStore.setState({
+      roots: [{ id: 'root-1', path: '/Users/roxi/data', name: 'data', access: 'ro' }],
+      loaded: true
+    })
+
+    await renderAndClickLinkedPill(linkedFolderSession())
+
+    expect(listGrantedRoots).not.toHaveBeenCalled()
+    expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith({
+      id: 'local:/Users/roxi/data/charts/sin.png',
+      sessionId: 'session-42',
+      title: 'sin.png',
+      type: 'file',
+      source: 'local',
+      path: '/Users/roxi/data/charts/sin.png',
+      name: 'sin.png',
+      format: 'image'
+    })
+  })
+
+  it('refreshes the granted-roots store when a linked-folder mention arrives before it loaded', async () => {
+    listGrantedRoots.mockResolvedValue([
+      { id: 'root-1', path: '/Users/roxi/data', name: 'data', access: 'ro' }
+    ])
+
+    await renderAndClickLinkedPill(linkedFolderSession())
+
+    expect(listGrantedRoots).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/Users/roxi/data/charts/sin.png' })
+    )
+  })
+
+  it('keeps the not-available notice when the linked-folder root was revoked', async () => {
+    useGrantedFoldersStore.setState({ roots: [], loaded: true })
+
+    await renderAndClickLinkedPill(linkedFolderSession())
+
+    expect(upsertAndActivateItem).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(
+      'Linked-folder files are not available until the folder is connected.'
+    )
   })
 
   it('does not read a generated text thumbnail until its card approaches the viewport', async () => {

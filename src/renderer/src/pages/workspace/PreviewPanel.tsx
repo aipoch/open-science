@@ -16,23 +16,29 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { PreviewFileSurface } from './PreviewFileSurface'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { PreviewToolContent } from './previews/PreviewToolContent'
+import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
+import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 type PreviewPanelProps = {
   panelRef: React.Ref<PanelImperativeHandle>
   defaultSize: string
   minSize: string
   onResize: (panelSize: PanelSize, previousPanelSize: PanelSize | undefined) => void
+  restoredPlanResponder?: RestoredPlanResponder
 }
 
 type PreviewPanelSurfaceProps = {
   className?: string
+  restoredPlanResponder?: RestoredPlanResponder
 }
 
 // Renders the active tab's content, or an empty state when nothing is previewed yet.
 const PreviewActiveContent = ({
-  item
+  item,
+  restoredPlanResponder
 }: {
   item: PreviewItem | undefined
+  restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
   if (!item) {
     return (
@@ -42,7 +48,9 @@ const PreviewActiveContent = ({
     )
   }
 
-  if (item.type === 'tool') return <PreviewToolContent item={item} />
+  if (item.type === 'tool') {
+    return <PreviewToolContent item={item} restoredPlanResponder={restoredPlanResponder} />
+  }
 
   return <PreviewFileContent item={item} />
 }
@@ -110,9 +118,16 @@ const PreviewTab = ({
       id={getPreviewTabId(tab.id)}
       aria-controls={getPreviewPanelId(tab.id)}
       aria-selected={isActive}
+      aria-keyshortcuts="Delete Backspace"
       tabIndex={isActive ? 0 : -1}
-      className="flex min-w-0 flex-1 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-      onClick={() => onActivate(tab.id)}
+      className="flex min-w-0 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+      onClick={(event) => {
+        if (event.target instanceof Element && event.target.closest('[data-preview-close]')) {
+          onClose(tab.id)
+          return
+        }
+        onActivate(tab.id)
+      }}
       onKeyDown={onKeyDown}
       title={tab.title}
     >
@@ -124,22 +139,21 @@ const PreviewTab = ({
         <BookOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
       ) : null}
       {tab.type === 'file' ? (
-        <ExtensionPreservingFileName name={tab.name} className="flex-1" />
+        <ExtensionPreservingFileName name={tab.name} />
       ) : (
         <span className="min-w-0 truncate">{tab.title}</span>
       )}
-    </button>
-    <button
-      type="button"
-      tabIndex={-1}
-      className={cn(
-        'shrink-0 rounded-sm p-0.5 outline-none hover:bg-bg-000/60 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50',
-        isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-      )}
-      onClick={() => onClose(tab.id)}
-      aria-label={`Close preview of ${tab.title}`}
-    >
-      <X className="size-3.5" aria-hidden="true" />
+      <span
+        data-preview-close={tab.title}
+        aria-hidden="true"
+        title={`Close preview of ${tab.title}`}
+        className={cn(
+          'shrink-0 rounded-sm p-0.5 hover:bg-bg-000/60',
+          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        )}
+      >
+        <X className="size-3.5" />
+      </span>
     </button>
   </div>
 )
@@ -156,7 +170,7 @@ const PreviewTabBar = ({
   onActivate: (id: string) => void
   onClose: (id: string) => void
 }): React.JSX.Element => {
-  const tabListRef = useRef<HTMLDivElement | null>(null)
+  const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
@@ -169,7 +183,7 @@ const PreviewTabBar = ({
       const activeTab = activeIndex === -1 ? null : tabContainerRefs.current[activeIndex]
       if (activeTab) scrollPreviewTabIntoView(tabList, activeTab, behavior)
     },
-    [activeItemId, tabs]
+    [activeItemId, tabListRef, tabs]
   )
 
   // External activation keeps the selected tab visible without moving keyboard focus.
@@ -194,7 +208,7 @@ const PreviewTabBar = ({
     observer.observe(tabList)
 
     return () => observer.disconnect()
-  }, [scrollActiveTabIntoView])
+  }, [scrollActiveTabIntoView, tabListRef])
 
   const moveToTab = (index: number): void => {
     const tab = tabs[index]
@@ -235,7 +249,7 @@ const PreviewTabBar = ({
       role="tablist"
       aria-label="Open previews"
       aria-orientation="horizontal"
-      className="flex min-w-0 flex-1 basis-0 shrink-0 items-center gap-1 overflow-x-auto pb-2"
+      className="scroll-fade-x flex min-w-0 flex-1 basis-0 shrink-0 items-center gap-1 overflow-x-auto pb-2"
     >
       {tabs.map((tab, index) => (
         <PreviewTab
@@ -405,10 +419,12 @@ const PreviewFilePanel = ({
 // returning a different element from this map position would let React unmount the subtree.
 const PreviewToolPanel = ({
   item,
-  isActive
+  isActive,
+  restoredPlanResponder
 }: {
   item: PreviewToolItem
   isActive: boolean
+  restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element => {
   const isExpanded = usePreviewWorkbenchStore(
     (state) => state.expandedToolItemId === item.id && isActive
@@ -455,7 +471,7 @@ const PreviewToolPanel = ({
             : 'h-full min-h-0 w-full overflow-y-auto'
         }
       >
-        <PreviewActiveContent item={item} />
+        <PreviewActiveContent item={item} restoredPlanResponder={restoredPlanResponder} />
       </section>
     </>
   )
@@ -463,7 +479,10 @@ const PreviewToolPanel = ({
 
 // Shared workbench surface. Desktop wraps it in a resizable panel; mobile presents the exact same
 // tabs and active content inside a bottom sheet.
-const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX.Element => {
+const PreviewPanelSurface = ({
+  className,
+  restoredPlanResponder
+}: PreviewPanelSurfaceProps): React.JSX.Element => {
   const items = usePreviewWorkbenchStore((state) => state.items)
   const activeItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const panelState = usePreviewWorkbenchStore((state) => state.panelState)
@@ -505,14 +524,27 @@ const PreviewPanelSurface = ({ className }: PreviewPanelSurfaceProps): React.JSX
         </div>
       ) : null}
       <div className={cn('min-h-0 flex-1', activeItem?.type === 'file' && 'pl-2 pr-1')}>
-        {!activeItem ? <PreviewActiveContent key={activeContentKey} item={activeItem} /> : null}
+        {!activeItem ? (
+          <PreviewActiveContent
+            key={activeContentKey}
+            item={activeItem}
+            restoredPlanResponder={restoredPlanResponder}
+          />
+        ) : null}
         {items.map((item) => {
           const isActivePanel = item.id === activeItemId && panelState === 'open'
           // Tool panels render at this map position whether active or not, so React keeps the
           // subtree mounted across tab switches. File panels re-create on activation anyway
           // (contentKey encodes path+mtime), so an inactive one collapses to an empty region.
           if (item.type === 'tool') {
-            return <PreviewToolPanel key={item.id} item={item} isActive={isActivePanel} />
+            return (
+              <PreviewToolPanel
+                key={item.id}
+                item={item}
+                isActive={isActivePanel}
+                restoredPlanResponder={restoredPlanResponder}
+              />
+            )
           }
 
           return isActivePanel ? (
@@ -542,7 +574,8 @@ const PreviewPanel = ({
   panelRef,
   defaultSize,
   minSize,
-  onResize
+  onResize,
+  restoredPlanResponder
 }: PreviewPanelProps): React.JSX.Element => {
   const handleResize = (
     panelSize: PanelSize,
@@ -563,7 +596,7 @@ const PreviewPanel = ({
       collapsedSize="0%"
       onResize={handleResize}
     >
-      <PreviewPanelSurface />
+      <PreviewPanelSurface restoredPlanResponder={restoredPlanResponder} />
     </ResizablePanel>
   )
 }

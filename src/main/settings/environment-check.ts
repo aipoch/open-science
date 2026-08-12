@@ -33,7 +33,7 @@ const REGISTRY_PROBE_PATHS: Record<AgentFrameworkId, string> = {
 }
 const REGISTRY_PROBE_TIMEOUT_MS = 5_000
 
-type RegistryProbe = (registry: ManagedClaudeRegistry, packagePath: string) => Promise<number>
+type RegistryProbe = (registry: ManagedClaudeRegistry, packagePath?: string) => Promise<number>
 
 export type EnvironmentCheckDeps = {
   platform?: NodeJS.Platform
@@ -72,8 +72,9 @@ const verifyStorageAccess = async (storageRoot: string): Promise<void> => {
 }
 
 // Uses the same direct HTTPS route as the managed downloader and follows a small number of redirects.
-// A HEAD request keeps the required basic source check lightweight on every startup.
-const probeRegistryReachability: RegistryProbe = (registry, packagePath) => {
+// A HEAD request keeps the required basic source check lightweight on every startup. Omitting
+// packagePath probes the registry root, which answers plain internet reachability.
+const probeRegistryReachability: RegistryProbe = (registry, packagePath = '') => {
   const startedAt = Date.now()
 
   return new Promise<number>((resolve, reject) => {

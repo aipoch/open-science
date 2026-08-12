@@ -1,14 +1,33 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { TaskRunProgressEvent } from '../../shared/task-api'
 import type { ApplicationEvent } from '../application-events'
 import {
   projectPublicTaskEvent,
+  projectPublicTaskProgressEvent,
   projectTaskRuntimeEvent,
   projectWebRendererEvent
 } from './application-event-projections'
 
 describe('application event projections', () => {
+  it('projects Task-owned progress without routing it through renderer events', () => {
+    const progress: TaskRunProgressEvent = {
+      runId: 'run-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      phase: 'provider-accepted',
+      timestamp: 1_700_000_000_000,
+      elapsedMs: 250,
+      heartbeat: false
+    }
+
+    expect(projectPublicTaskProgressEvent(progress)).toEqual({
+      type: 'run.progress',
+      data: progress
+    })
+  })
+
   it('passes terminal usage metadata through every eligible surface without recomputation', () => {
     const payload: AcpRuntimeEvent = {
       id: 'event-1',
@@ -49,6 +68,34 @@ describe('application event projections', () => {
 
     for (const event of [catalogChanged, pendingSwitch]) {
       expect(projectWebRendererEvent(event)).toBeUndefined()
+      expect(projectPublicTaskEvent(event)).toBeUndefined()
+      expect(projectTaskRuntimeEvent(event)).toBeUndefined()
+    }
+  })
+
+  it('projects Reviewer events to Web while keeping them out of public Task', () => {
+    const events: ApplicationEvent[] = [
+      { channel: 'reviewer:updated', payload: { review: {} as never } },
+      {
+        channel: 'reviewer:suppress-next-auto-review',
+        payload: { projectId: 'project-1', appSessionId: 'session-1' }
+      },
+      {
+        channel: 'reviewer:fix-loop-start',
+        payload: { projectId: 'project-1', appSessionId: 'session-1' }
+      },
+      {
+        channel: 'reviewer:fix-loop-end',
+        payload: { projectId: 'project-1', appSessionId: 'session-1' }
+      }
+    ]
+
+    for (const event of events) {
+      expect(projectWebRendererEvent(event)).toEqual({
+        protocolVersion: 1,
+        channel: event.channel,
+        payload: event.payload
+      })
       expect(projectPublicTaskEvent(event)).toBeUndefined()
       expect(projectTaskRuntimeEvent(event)).toBeUndefined()
     }

@@ -24,7 +24,7 @@ describe('driveReviewerToStop', () => {
     const session = { nextUpdate: (): Promise<FakeUpdate> => new Promise<FakeUpdate>(() => {}) }
 
     await expect(driveReviewerToStop(session, { timeoutMs: 20, maxUpdates: 100 })).rejects.toThrow(
-      /timed out/i
+      'reviewer session timed out before stopping'
     )
   })
 
@@ -38,7 +38,7 @@ describe('driveReviewerToStop', () => {
     }
 
     await expect(driveReviewerToStop(session, { timeoutMs: 5000, maxUpdates: 5 })).rejects.toThrow(
-      /max updates|too many updates/i
+      'reviewer session exceeded max updates (5)'
     )
   })
 

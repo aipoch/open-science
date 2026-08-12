@@ -201,6 +201,17 @@ export const resolveReasoningEffortValue = (
 const effortLabel = (value: ModelReasoningEffort): string =>
   value === 'xhigh' ? 'XHigh' : value.charAt(0).toUpperCase() + value.slice(1)
 
+const EFFORT_STRENGTH: readonly ModelReasoningEffort[] = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra'
+]
+
 export const resolveReasoningEffortControl = (
   intent: ReasoningEffort,
   profile: ReasoningEffortProfile
@@ -225,4 +236,23 @@ export const resolveReasoningEffortControl = (
     options,
     selectedValue: selectedValue === 'default' ? undefined : selectedValue
   }
+}
+
+export const projectReasoningEffortIntent = (
+  intent: ReasoningEffort,
+  sourceProfile: ReasoningEffortProfile,
+  targetProfile: ReasoningEffortProfile
+): ReasoningEffort => {
+  if (intent === 'default' || !sourceProfile.supported || !targetProfile.supported) return 'default'
+  const sourceValue = resolveReasoningEffortValue(intent, sourceProfile)
+  if (sourceValue === 'default') return 'default'
+  const sourceStrength = EFFORT_STRENGTH.indexOf(sourceValue)
+  const options = resolveReasoningEffortControl(intent, targetProfile).options
+  const nearest = options.reduce<ReasoningEffortOption | undefined>((selected, option) => {
+    if (!selected) return option
+    const selectedDistance = Math.abs(EFFORT_STRENGTH.indexOf(selected.value) - sourceStrength)
+    const optionDistance = Math.abs(EFFORT_STRENGTH.indexOf(option.value) - sourceStrength)
+    return optionDistance < selectedDistance ? option : selected
+  }, undefined)
+  return nearest?.intent ?? 'default'
 }

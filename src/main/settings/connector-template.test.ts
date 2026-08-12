@@ -9,7 +9,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-research',
-        slug: 'example-research',
+        displayName: 'Example Research',
         transport: 'stdio',
         command: 'npx',
         args: ['-y', '@example/research-mcp'],
@@ -24,7 +24,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-research',
-        slug: 'example-research',
+        displayName: 'Example Research',
         transport: 'stdio',
         command: 'npx',
         args: ['-y', '@example/research-mcp'],
@@ -39,6 +39,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-remote',
+        displayName: 'example-remote',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp',
         oauth: { authorizationServerUrl: 'https://auth.example.test', scopes: ['openid'] }
@@ -52,30 +53,34 @@ describe('Connector configuration templates', () => {
     })
   })
 
-  it('derives a safe Connector ID from a display name and accepts an explicit portable ID', () => {
-    const derived = parseConnectorTemplate(
+  it('requires an explicit stable name separate from the display name', () => {
+    const valid = parseConnectorTemplate(
       JSON.stringify({
         schemaVersion: 1,
         kind: 'open-science.connector',
-        name: 'Example OAuth E2E',
+        name: 'example-oauth-e2e',
+        displayName: 'Example OAuth E2E',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp',
         oauth: {}
       })
     )
-    expect(derived.definition?.slug).toBe('example-oauth-e2e')
+    expect(valid.definition).toMatchObject({
+      name: 'example-oauth-e2e',
+      displayName: 'Example OAuth E2E'
+    })
 
-    const explicit = parseConnectorTemplate(
+    const invalid = parseConnectorTemplate(
       JSON.stringify({
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'Example OAuth E2E',
-        slug: 'example-e2e',
+        displayName: 'Example OAuth E2E',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp'
       })
     )
-    expect(explicit.definition?.slug).toBe('example-e2e')
+    expect(invalid.diagnostics.map((item) => item.code)).toContain('connector-template.name')
   })
 
   it.each([
@@ -89,6 +94,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-server',
+        displayName: 'example-server',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp',
         ...extra
@@ -105,6 +111,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-secret-query',
+        displayName: 'example-secret-query',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp?token_key=secret'
       })
@@ -118,6 +125,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-ordinary-query',
+        displayName: 'example-ordinary-query',
         transport: 'streamable_http',
         url: 'https://mcp.example.test/mcp?monkey=capuchin&postcode=100000'
       })
@@ -131,6 +139,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-server',
+        displayName: 'example-server',
         transport: 'stdio',
         command: 'node',
         args: ['/Users/example/bin/server.mjs', '--stdio']
@@ -150,6 +159,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-command',
+        displayName: 'example-command',
         transport: 'stdio',
         command: '/opt/example/bin/server'
       })
@@ -170,6 +180,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-remote',
+        displayName: 'example-remote',
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
         oauth: { scopes: ['openid'] },
@@ -185,6 +196,7 @@ describe('Connector configuration templates', () => {
         schemaVersion: 1,
         kind: 'open-science.connector',
         name: 'example-remote',
+        displayName: 'example-remote',
         transport: 'streamable_http',
         url: 'https://mcp.example.test',
         requiredSecrets: { environment: ['API_TOKEN'] }
@@ -198,67 +210,36 @@ describe('Connector configuration templates', () => {
       JSON.stringify({
         schemaVersion: 1,
         kind: 'open-science.connector',
-        name: 'Example Server',
+        name: 'example-server',
+        displayName: 'Another display label',
         transport: 'stdio',
         command: 'example-mcp'
       }),
-      { existingNames: ['example server'] }
+      { existingNames: ['example-server'] }
     )
     expect(duplicate.diagnostics.map((item) => item.code)).toContain(
       'connector-template.duplicate-name'
     )
 
-    const duplicateSlug = parseConnectorTemplate(
+    const reusedDisplayName = parseConnectorTemplate(
       JSON.stringify({
         schemaVersion: 1,
         kind: 'open-science.connector',
-        name: 'Different display name',
-        slug: 'example-server',
+        name: 'different-route',
+        displayName: 'example-server',
         transport: 'stdio',
         command: 'example-mcp'
       }),
-      { existingSlugs: ['example-server'] }
+      { existingNames: ['example-server'] }
     )
-    expect(duplicateSlug.diagnostics.map((item) => item.code)).toContain(
-      'connector-template.duplicate-slug'
-    )
-
-    const legacyAliasCollision = parseConnectorTemplate(
-      JSON.stringify({
-        schemaVersion: 1,
-        kind: 'open-science.connector',
-        name: 'Different display name',
-        slug: 'legacy-route',
-        transport: 'stdio',
-        command: 'example-mcp'
-      }),
-      { existingIds: ['installed-uuid'], existingNames: ['legacy-route'] }
-    )
-    expect(legacyAliasCollision.diagnostics.map((item) => item.code)).toContain(
-      'connector-template.identity-conflict'
-    )
-
-    const uuidAliasCollision = parseConnectorTemplate(
-      JSON.stringify({
-        schemaVersion: 1,
-        kind: 'open-science.connector',
-        name: 'Different display name',
-        slug: 'installed-uuid',
-        transport: 'stdio',
-        command: 'example-mcp'
-      }),
-      { existingIds: ['installed-uuid'] }
-    )
-    expect(uuidAliasCollision.diagnostics.map((item) => item.code)).toContain(
-      'connector-template.identity-conflict'
-    )
+    expect(reusedDisplayName.ready).toBe(true)
   })
 
   it('exports only secret names and produces a stable digest', () => {
     const result = buildConnectorTemplateExport({
       id: 'local-id',
-      slug: 'example-server',
       name: 'example-server',
+      displayName: 'Example Server',
       transport: 'stdio',
       command: 'npx',
       args: ['-y', '@example/mcp'],

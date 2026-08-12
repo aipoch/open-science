@@ -9,7 +9,8 @@ import type {
   AcpContextUsage,
   AcpContextUsageBreakdown,
   AcpContextUsageCategory,
-  AcpContextUsageCategoryKey
+  AcpContextUsageCategoryKey,
+  AcpContextWindowSampleSource
 } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { isNativeSkillToolUpdate } from './runtime-events'
@@ -57,15 +58,21 @@ type SessionUpdateObservation = {
   skillFilePath?: string
 }
 
-const contextUsageTurnHandleKey = Symbol('context-usage-turn-handle')
+const contextWindowTurnHandleKey = Symbol('context-window-turn-handle')
 
-type ContextUsageTurnHandle = Readonly<{
-  readonly [contextUsageTurnHandleKey]: symbol
+type ContextWindowTurnHandle = Readonly<{
+  readonly [contextWindowTurnHandleKey]: symbol
+  captureTerminal: (providerResponseObserved?: boolean) => ContextWindowTerminalCapture | undefined
   // Completion reports whether the transient preflight usage projection was restored, so the caller
   // can publish that one observable change. Other terminal operations are state-owner cleanup only.
   complete: () => boolean
   fail: () => void
   supersede: () => void
+}>
+
+type ContextWindowTerminalCapture = Readonly<{
+  contextWindow: AcpContextUsage
+  source: AcpContextWindowSampleSource
 }>
 
 type ContextUsageTurnOutcome =
@@ -76,6 +83,7 @@ type ContextUsageTurn = {
   readonly revision: number
   readonly checkpoint: SessionEstimateCheckpoint
   providerDataObserved: boolean
+  providerUsageObserved: boolean
   outcome?: ContextUsageTurnOutcome
 }
 
@@ -344,21 +352,55 @@ class ContextUsageTracker {
 
   constructor(private readonly counter: TokenCounter = defaultTokenCounter) {}
 
-  beginTurn(sessionId: string): ContextUsageTurnHandle {
+  beginTurn(sessionId: string): ContextWindowTurnHandle {
     this.supersedeActiveTurn(sessionId)
     const turn: ContextUsageTurn = {
       sessionId,
       revision: ++this.nextTurnRevision,
       checkpoint: this.checkpointSession(sessionId),
-      providerDataObserved: false
+      providerDataObserved: false,
+      providerUsageObserved: false
     }
     this.activeTurnsBySession.set(sessionId, turn)
     return Object.freeze({
-      [contextUsageTurnHandleKey]: Symbol(),
+      [contextWindowTurnHandleKey]: Symbol(),
+      captureTerminal: (providerResponseObserved = false) =>
+        this.captureTerminal(turn, providerResponseObserved),
       complete: () => this.completeTurn(turn),
       fail: () => this.failTurn(turn),
       supersede: () => this.supersedeTurn(turn)
     })
+  }
+
+  private captureTerminal(
+    turn: ContextUsageTurn,
+    providerResponseObserved: boolean
+  ): ContextWindowTerminalCapture | undefined {
+    if (turn.outcome || this.activeTurnsBySession.get(turn.sessionId)?.revision !== turn.revision) {
+      return undefined
+    }
+    const current = this.usageBySession.get(turn.sessionId)
+    if (!current) return undefined
+
+    if (providerResponseObserved || turn.providerUsageObserved) {
+      return {
+        contextWindow: this.cloneUsage(current),
+        source: providerResponseObserved ? 'provider-response' : 'provider-update'
+      }
+    }
+
+    if (current.breakdown?.status !== 'preflight') return undefined
+    return {
+      contextWindow: {
+        used: current.breakdown.estimatedTokens,
+        ...(current.size === undefined ? {} : { size: current.size }),
+        breakdown: {
+          ...current.breakdown,
+          categories: current.breakdown.categories.map((category) => ({ ...category }))
+        }
+      },
+      source: 'local-estimate'
+    }
   }
 
   private completeTurn(turn: ContextUsageTurn): boolean {
@@ -484,6 +526,8 @@ class ContextUsageTracker {
     selectedContextWindow?: number
   ): void {
     this.observeActiveTurn(sessionId)
+    const activeTurn = this.activeTurnsBySession.get(sessionId)
+    if (activeTurn && !activeTurn.outcome) activeTurn.providerUsageObserved = true
     const breakdown = this.compare(sessionId, usage.used, 'reconciled')
     this.replaceUsage(sessionId, {
       ...usage,
@@ -496,6 +540,8 @@ class ContextUsageTracker {
     const current = this.usageBySession.get(sessionId)
     if (!current || !Number.isSafeInteger(used)) return false
     this.observeActiveTurn(sessionId)
+    const activeTurn = this.activeTurnsBySession.get(sessionId)
+    if (activeTurn && !activeTurn.outcome) activeTurn.providerUsageObserved = true
     if (current.used === used && current.breakdown?.status === 'reconciled') return false
 
     this.replaceUsage(sessionId, {
@@ -881,7 +927,8 @@ class ContextUsageTracker {
 
 export { ContextUsageTracker, MAX_TOOL_ESTIMATE_CHARS, tokenizerProfileFor }
 export type {
-  ContextUsageTurnHandle,
+  ContextWindowTerminalCapture,
+  ContextWindowTurnHandle,
   EstimatedCategoryKey,
   SessionEstimateInput,
   SessionUpdateObservation,

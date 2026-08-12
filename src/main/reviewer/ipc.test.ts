@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewRunRequest } from '../../shared/reviewer'
@@ -5,8 +8,10 @@ import { REVIEWER_IPC } from '../../shared/reviewer'
 import type { AcpRuntime } from '../acp/runtime'
 
 // Distinct roots so a config-vs-data mix-up is unambiguous: artifacts must read from the data root.
-const CONFIG_ROOT = '/tmp/open-science-config-root'
-const DATA_ROOT = '/tmp/open-science-data-root'
+const CONFIG_ROOT = join(tmpdir(), 'open-science-config-root')
+const DATA_ROOT = join(tmpdir(), 'open-science-data-root')
+const INJECTED_CONFIG_ROOT = join(tmpdir(), 'injected-config')
+const INJECTED_DATA_ROOT = join(tmpdir(), 'injected-data')
 
 // Capture every ipcMain.handle registration so handlers can be invoked directly in the test.
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
@@ -173,8 +178,8 @@ describe('reviewer IPC handlers', () => {
     getProjectDbClient.mockReset()
     registerReviewerIpcHandlers({
       acpRuntime,
-      storageRoot: '/tmp/injected-config',
-      dataRoot: '/tmp/injected-data'
+      storageRoot: INJECTED_CONFIG_ROOT,
+      dataRoot: INJECTED_DATA_ROOT
     })
 
     const runHandler = handlers.get(REVIEWER_IPC.RUN)
@@ -183,16 +188,16 @@ describe('reviewer IPC handlers', () => {
     await vi.waitFor(() => expect(runReview).toHaveBeenCalledTimes(1))
 
     const passed = runReview.mock.calls[0][0] as { artifactStorageRoot: string }
-    expect(passed.artifactStorageRoot).toBe('/tmp/injected-data')
+    expect(passed.artifactStorageRoot).toBe(INJECTED_DATA_ROOT)
     // ReviewRepository is constructed against the injected config root, not the resolveStorageRoot()
     // default. The repository captures a thunk `() => getProjectDbClient(storageRoot)`; invoke it
     // and assert the captured storageRoot surfaces through the getProjectDbClient spy.
     expect(reviewRepositoryThunks).toHaveLength(1)
     reviewRepositoryThunks[0]?.()
-    expect(getProjectDbClient).toHaveBeenCalledWith('/tmp/injected-config')
+    expect(getProjectDbClient).toHaveBeenCalledWith(INJECTED_CONFIG_ROOT)
     expect(getProjectDbClient).not.toHaveBeenCalledWith(CONFIG_ROOT)
     // SessionRepository takes a plain root string, captured by the mock constructor.
-    expect(sessionRepositoryRoots).toEqual(['/tmp/injected-config'])
+    expect(sessionRepositoryRoots).toEqual([INJECTED_CONFIG_ROOT])
   })
 
   it('forwards scopeTurnMessageId so a re-run audits the scope turn, grouped under turnMessageId', async () => {

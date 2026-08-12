@@ -6,7 +6,6 @@ import type {
   PermissionGrantSnapshot,
   PermissionGrantView
 } from '../../shared/permission-grants'
-import { customConnectorSlug } from '../../shared/custom-connector'
 
 type PermissionGrantNames = {
   projects?: ReadonlyMap<string, string>
@@ -27,8 +26,8 @@ type ConnectorPolicySnapshot = {
   disabledConnectorIds?: readonly string[]
   customMcpServers?: ReadonlyArray<{
     id: string
-    slug?: string
     name: string
+    displayName: string
     enabled: boolean
     oauth?: unknown
     oauthState?: { tokens?: { access_token?: string } }
@@ -138,7 +137,7 @@ const connectorProjection = (
   const custom = policy?.customMcpServers?.find((server) => server.id === serverId)
   const isBundled = policy?.bundledConnectorIds?.includes(serverId) ?? false
   if (!custom && !isBundled) return {}
-  const aliases = custom ? [custom.id, customConnectorSlug(custom), custom.name] : [serverId]
+  const aliases = custom ? [custom.name] : [serverId]
   const hasToolPolicy = (entries: readonly string[] | undefined): boolean =>
     aliases.some((alias) => entries?.includes(`${alias}/${toolName}`)) ?? false
   const disabled = custom

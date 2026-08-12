@@ -73,6 +73,7 @@ export type TrustedControlInvocationIdentity = {
 
 export type TrustedCallingSession = {
   sessionId?: string
+  callerRole?: 'main' | 'delegate'
 } & Partial<TrustedControlInvocationIdentity>
 
 // ---------------------------------------------------------------------------
@@ -280,6 +281,8 @@ export const AGENTS_RESERVED_PARAM_KEYS = [
   'generation',
   'control_invocation_generation',
   'controlInvocationGeneration',
+  'caller_role',
+  'callerRole',
   'tool_invocation_id',
   'toolInvocationId',
   'project_id',

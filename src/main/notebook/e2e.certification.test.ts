@@ -101,8 +101,6 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
     runnable: true
   }
 
-  // executorFactory runs lazily (first ensureSession), never during construction, so the closure can
-  // safely reference `service` even though it is declared in this same statement.
   const service: NotebookRuntimeService = new NotebookRuntimeService({
     configRoot: storageRoot,
     dataRoot: storageRoot,
@@ -128,7 +126,7 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
     // the MANAGED path with its prefix symlinked to the system R (see makeHarness). This certifies both
     // the external-interpreter seam and the managed launch path end-to-end. (The pythonBin/rEnvPrefix
     // constructor options are legacy no-ops kept for signature parity with the default createExecutor.)
-    executorFactory: (sessionId) =>
+    executorFactory: (_sessionId, lifecycle) =>
       new NotebookKernelExecutor({
         pythonBin: pyBin,
         rEnvPrefix,
@@ -136,13 +134,8 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
         rLoopPath: loops.rLoopPath,
         replLoopPath: loops.replLoopPath,
         idleTimeoutMs: opts.idleTimeoutMs,
-        onIdleShutdown: () => {
-          void (
-            service as unknown as {
-              handleKernelIdleShutdown: (sessionId: string, projectName: string) => Promise<void>
-            }
-          ).handleKernelIdleShutdown(sessionId, PROJECT)
-        }
+        onIdleShutdown: (kind, env) => void lifecycle.onIdleShutdown(kind, env),
+        onTerminated: (kind, env) => void lifecycle.onTerminated(kind, env)
       })
   })
 
@@ -160,9 +153,9 @@ const makeHarness = async (opts: { idleTimeoutMs?: number } = {}): Promise<Harne
   // Same wiring order as main/ipc.ts: the Agent-facing MCP and persistent control REPL receive
   // separate session-bound capabilities, so rotating one cannot invalidate the other.
   service.setMcpRpcConnectionResolver(({ sessionId, projectId }) =>
-    rpcServer.issueControlConnection(sessionId, projectId)
+    rpcServer.issueControlConnection(sessionId, projectId, 'root-frame-' + sessionId)
   )
-  const conn = await rpcServer.issueSessionConnection(SESSION, PROJECT)
+  const conn = await rpcServer.issueSessionConnection(SESSION, PROJECT, `root-frame-${SESSION}`)
 
   const env: NotebookMcpEnvironment = {
     endpoint: conn.endpoint,

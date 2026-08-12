@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { pkgsCache } from './runtime-paths'
 import { md5File } from './provisioner-runtime'
-import { micromambaCacheLockKey } from './micromamba-cache'
+import { micromambaCacheLockKey, type MicromambaCache } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 
 export type LockPackage = { file: string; md5: string }
@@ -30,18 +30,17 @@ export const lockPackages = (lockText: string): LockPackage[] => {
   return packages
 }
 
-export const validateAndSeedPack = async (
-  root: string,
+export const validateAndSeedPackIntoCache = async (
   packDir: string,
   lockPath: string,
+  cache: MicromambaCache,
   onProgress?: (completed: number, total: number) => void
 ): Promise<LockPackage[]> => {
   const entries = lockPackages(await readFile(lockPath, 'utf8'))
   const present = new Set(await readdir(packDir))
-  const cache = pkgsCache(root)
-  await mkdir(cache, { recursive: true })
+  await mkdir(cache.path, { recursive: true })
 
-  await withExclusiveCacheLock(micromambaCacheLockKey(cache), async () => {
+  await withExclusiveCacheLock(cache.lockKey, async () => {
     for (const [index, entry] of entries.entries()) {
       if (!present.has(entry.file)) {
         throw new Error(`runtime pack is missing lock tarball ${entry.file}`)
@@ -55,7 +54,7 @@ export const validateAndSeedPack = async (
         throw new Error(`runtime pack tarball failed md5 verification: ${entry.file}`)
       }
 
-      const destination = join(cache, entry.file)
+      const destination = join(cache.path, entry.file)
       let destinationValid = false
       try {
         const destinationStat = await stat(destination)
@@ -70,4 +69,19 @@ export const validateAndSeedPack = async (
     }
   })
   return entries
+}
+
+export const validateAndSeedPack = async (
+  root: string,
+  packDir: string,
+  lockPath: string,
+  onProgress?: (completed: number, total: number) => void
+): Promise<LockPackage[]> => {
+  const path = pkgsCache(root)
+  return validateAndSeedPackIntoCache(
+    packDir,
+    lockPath,
+    { path, lockKey: micromambaCacheLockKey(path) },
+    onProgress
+  )
 }

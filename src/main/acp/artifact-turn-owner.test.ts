@@ -1,15 +1,17 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactFile } from '../../shared/artifacts'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
 import { ArtifactTurnOwner } from './artifact-turn-owner'
 
 const roots: string[] = []
+let executionSequence = 0
 
 const createRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'artifact-turn-owner-'))
@@ -46,11 +48,308 @@ const artifactVersion = (overrides: Partial<ArtifactFile> = {}): ArtifactFile =>
   ...overrides
 })
 
+const openRootExecution = (
+  owner: ArtifactTurnOwner,
+  request: Omit<Parameters<ArtifactTurnOwner['openRootExecution']>[0], 'executionId'>
+): ReturnType<ArtifactTurnOwner['openRootExecution']> =>
+  owner.openRootExecution({ ...request, executionId: `root-execution-${++executionSequence}` })
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('ArtifactTurnOwner', () => {
+  it('exposes no Session-current production write authority', () => {
+    expect(Object.getOwnPropertyNames(ArtifactTurnOwner.prototype)).not.toEqual(
+      expect.arrayContaining(['open', 'promptMessageIdFor', 'writeForActiveTurn'])
+    )
+  })
+
+  it('does not grant Notebook source scope to an owner that did not opt in', async () => {
+    const dataRoot = await createRoot()
+    const issuedBindings: Array<Record<string, unknown>> = []
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      issueRpcCapability: (binding) => {
+        issuedBindings.push(binding)
+        return 'artifact-only-capability'
+      }
+    })
+
+    const turn = await owner.openExecution({
+      executionId: 'artifact-only-execution',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Artifact-only Agent'
+    })
+    const handoff = JSON.parse(await readFile(owner.handoffFile(turn), 'utf8')) as Record<
+      string,
+      unknown
+    >
+
+    expect(handoff).not.toHaveProperty('notebookSessionId')
+    expect(handoff).not.toHaveProperty('notebookDataDir')
+    expect(handoff).not.toHaveProperty('notebookSessionRoot')
+    expect(issuedBindings[0]).not.toHaveProperty('notebookSessionId')
+
+    await owner.dispose(turn)
+  })
+
+  it('uses provenance frame identity for Notebook scope even on the root transport', async () => {
+    const dataRoot = await createRoot()
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot)
+    })
+
+    const turn = await owner.openRootExecution({
+      executionId: 'root-transport-child-frame',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Child Agent',
+      provenanceContext: {
+        rootFrameId: 'root-frame-session-1',
+        agentFrameId: 'child-frame-1'
+      }
+    })
+    const handoff = JSON.parse(await readFile(owner.handoffFile(turn), 'utf8')) as Record<
+      string,
+      unknown
+    >
+
+    expect(handoff).toMatchObject({
+      notebookDataDir: join(
+        dataRoot,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'child-frame-1',
+        'data'
+      ),
+      notebookSessionRoot: join(
+        dataRoot,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'child-frame-1'
+      )
+    })
+
+    await owner.dispose(turn)
+  })
+
+  it('keeps concurrent executions in one Session independently addressable through opaque handles', async () => {
+    const dataRoot = await createRoot()
+    const writes: Array<Record<string, unknown>> = []
+    const issuedBindings: Array<Record<string, unknown>> = []
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      now: () => 100,
+      issueRpcCapability: (binding) => {
+        issuedBindings.push(binding)
+        return `capability-${binding.executionId}`
+      },
+      provenance: {
+        listRunVersions: async () => [],
+        writeAppGeneratedVersion: async (request) => {
+          writes.push(request)
+          return artifactVersion({
+            id: `version-${request.artifactRunId}`,
+            versionId: `version-${request.artifactRunId}`,
+            runId: request.artifactRunId,
+            name: request.filename
+          })
+        }
+      }
+    })
+
+    const root = await owner.openExecution({
+      executionId: 'root-execution',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex',
+      provenanceContext: {
+        rootFrameId: 'root-frame',
+        agentFrameId: 'root-frame',
+        messageBranchId: 'root-branch',
+        runtimeSegmentId: 'root-segment',
+        promptMessageId: 'root-prompt'
+      }
+    })
+    const parallel = await owner.openExecution({
+      executionId: 'parallel-execution',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex',
+      provenanceContext: {
+        rootFrameId: 'root-frame',
+        agentFrameId: 'parallel-frame',
+        messageBranchId: 'parallel-branch',
+        runtimeSegmentId: 'parallel-segment',
+        promptMessageId: 'parallel-prompt'
+      }
+    })
+
+    await Promise.all([
+      owner.write(root, { filename: 'root.txt', content: 'root' }),
+      owner.write(parallel, { filename: 'parallel.txt', content: 'parallel' })
+    ])
+    await owner.finalize(root)
+    await owner.dispose(root)
+
+    expect(owner.snapshot(root)).toMatchObject({
+      executionId: 'root-execution',
+      agentFrameId: 'root-frame',
+      runtimeSegmentId: 'root-segment',
+      promptMessageId: 'root-prompt',
+      phase: 'disposed'
+    })
+    expect(owner.snapshot(parallel)).toMatchObject({
+      executionId: 'parallel-execution',
+      agentFrameId: 'parallel-frame',
+      runtimeSegmentId: 'parallel-segment',
+      promptMessageId: 'parallel-prompt',
+      phase: 'open'
+    })
+    expect(owner.handleForExecution('parallel-execution')).toBe(parallel)
+    expect(writes).toEqual([
+      expect.objectContaining({
+        artifactRunId: 'artifact-run-100-1',
+        agentFrameId: 'root-frame',
+        runtimeSegmentId: 'root-segment',
+        promptMessageId: 'root-prompt'
+      }),
+      expect.objectContaining({
+        artifactRunId: 'artifact-run-100-2',
+        agentFrameId: 'parallel-frame',
+        runtimeSegmentId: 'parallel-segment',
+        promptMessageId: 'parallel-prompt'
+      })
+    ])
+    expect(issuedBindings).toEqual([
+      expect.objectContaining({
+        executionId: 'root-execution',
+        artifactRunId: 'artifact-run-100-1',
+        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+      }),
+      expect.objectContaining({
+        executionId: 'parallel-execution',
+        artifactRunId: 'artifact-run-100-2',
+        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+      })
+    ])
+    expect(owner.activeRunIds()).toEqual(['artifact-run-100-2'])
+
+    await owner.dispose(parallel)
+    expect(owner.activeRunIds()).toEqual([])
+    expect(() => owner.handleForExecution('parallel-execution')).toThrow(/No active Artifact turn/)
+  })
+
+  it('leaves no pending Artifact marker after empty Child Attempts in two Sessions are disposed', async () => {
+    const dataRoot = await createRoot()
+    const repository = new ArtifactRepository(dataRoot)
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository,
+      runRegistry: new ArtifactRunRegistry(),
+      now: () => 100
+    })
+
+    const children = await Promise.all(
+      [1, 2].map((index) =>
+        owner.openExecution({
+          executionId: `child-attempt-${index}`,
+          appSessionId: `session-${index}`,
+          artifactStorageSessionId: `artifact-session-${index}`,
+          projectId: 'project-1',
+          agentName: 'Main Agent'
+        })
+      )
+    )
+    const handoffFiles = children.map((child) => owner.handoffFile(child))
+    expect(handoffFiles).toEqual([
+      expect.stringMatching(/artifact-session-1\/\.execution-handoffs\/artifact-run-100-1\.json$/),
+      expect.stringMatching(/artifact-session-2\/\.execution-handoffs\/artifact-run-100-2\.json$/)
+    ])
+
+    await Promise.all(children.map((child) => owner.dispose(child)))
+
+    for (const handoffFile of handoffFiles) {
+      await expect(readFile(handoffFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readdir(dirname(handoffFile))).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+    await expect(repository.listPendingRunPublications('project-1')).resolves.toEqual([])
+  })
+
+  it('isolates a root execution handoff and cleanup from a parallel child execution', async () => {
+    const dataRoot = await createRoot()
+    const notebookContexts: unknown[] = []
+    const revoked: string[] = []
+    const owner = new ArtifactTurnOwner({
+      dataRoot,
+      repository: new ArtifactRepository(dataRoot),
+      runRegistry: new ArtifactRunRegistry(),
+      issueRpcCapability: ({ executionId }) => `capability-${executionId}`,
+      revokeRpcCapability: (token) => {
+        revoked.push(token)
+      },
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
+      notebook: {
+        setArtifactProvenanceContext: (_sessionId, context) => notebookContexts.push(context)
+      }
+    })
+    const root = await owner.openRootExecution({
+      executionId: 'root-execution',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex',
+      provenanceContext: {
+        agentFrameId: 'root-frame',
+        runtimeSegmentId: 'root-segment',
+        promptMessageId: 'root-prompt'
+      }
+    })
+    const child = await owner.openExecution({
+      executionId: 'child-attempt',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      projectId: 'project-1',
+      agentName: 'Codex',
+      provenanceContext: {
+        agentFrameId: 'child-frame',
+        runtimeSegmentId: 'child-segment',
+        promptMessageId: 'child-prompt'
+      }
+    })
+
+    expect(owner.handoffFile(root)).not.toBe(owner.handoffFile(child))
+    expect(notebookContexts).toEqual([
+      expect.objectContaining({ agentFrameId: 'root-frame', promptMessageId: 'root-prompt' })
+    ])
+
+    await owner.dispose(child)
+    await expect(readFile(owner.handoffFile(root), 'utf8')).resolves.toContain('root-execution')
+    expect(notebookContexts).toHaveLength(1)
+    expect(revoked).toEqual(['capability-child-attempt'])
+
+    await owner.dispose(root)
+    expect(notebookContexts.at(-1)).toBeUndefined()
+    expect(revoked).toEqual(['capability-child-attempt', 'capability-root-execution'])
+  })
+
   it('opens a turn-scoped handoff without exposing its capability or local path in snapshots', async () => {
     const dataRoot = await createRoot()
     const issuedBindings: unknown[] = []
@@ -65,12 +364,13 @@ describe('ArtifactTurnOwner', () => {
         issuedBindings.push(binding)
         return 'secret-capability'
       },
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
       notebook: {
         setArtifactProvenanceContext: (_sessionId, context) => notebookContexts.push(context)
       }
     })
 
-    const turn = await owner.open({
+    const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
@@ -87,7 +387,6 @@ describe('ArtifactTurnOwner', () => {
     })
 
     expect(owner.activeRunIds()).toEqual(['artifact-run-123-1'])
-    expect(owner.promptMessageIdFor('session-1')).toBe('prompt-1')
     expect(issuedBindings).toEqual([
       expect.objectContaining({
         projectId: 'project-1',
@@ -118,14 +417,34 @@ describe('ArtifactTurnOwner', () => {
       artifactRunId: 'artifact-run-123-1',
       rpcCapabilityToken: 'secret-capability',
       notebookSessionId: 'session-1',
-      notebookDataDir: join(dataRoot, 'notebooks', 'project-1', 'session-1', 'data'),
-      notebookSessionRoot: join(dataRoot, 'notebooks', 'project-1', 'session-1')
+      notebookDataDir: join(
+        dataRoot,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'agent-1',
+        'data'
+      ),
+      notebookSessionRoot: join(
+        dataRoot,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'agent-1'
+      )
     })
 
     const snapshot = owner.snapshot(turn)
     expect(snapshot).toEqual({
+      executionId: expect.stringMatching(/^root-execution-/),
       appSessionId: 'session-1',
       runId: 'artifact-run-123-1',
+      agentFrameId: 'agent-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'segment-1',
+      promptMessageId: 'prompt-1',
       phase: 'open',
       outstandingWrites: 0
     })
@@ -145,24 +464,24 @@ describe('ArtifactTurnOwner', () => {
       now: () => 456
     })
 
-    await owner.open({
+    const firstTurn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
       agentName: 'Codex'
     })
-    await owner.open({
+    const secondTurn = await openRootExecution(owner, {
       appSessionId: 'session-2',
       artifactStorageSessionId: 'artifact-session-2',
       projectId: 'project-1',
       agentName: 'Codex'
     })
 
-    const first = await owner.writeForActiveTurn('session-1', {
+    const first = await owner.write(firstTurn, {
       filename: 'first.txt',
       content: 'first'
     })
-    const second = await owner.writeForActiveTurn('session-2', {
+    const second = await owner.write(secondTurn, {
       filename: 'second.txt',
       content: 'second'
     })
@@ -170,9 +489,10 @@ describe('ArtifactTurnOwner', () => {
     expect(first.sessionId).toBe('artifact-session-1')
     expect(second.sessionId).toBe('artifact-session-2')
     expect(first.runId).not.toBe(second.runId)
-    await expect(
-      owner.writeForActiveTurn('unknown-session', { filename: 'x.txt', content: 'x' })
-    ).rejects.toThrow(/No active assistant turn/i)
+    await owner.dispose(firstTurn)
+    await expect(owner.write(firstTurn, { filename: 'x.txt', content: 'x' })).rejects.toThrow(
+      /not open/i
+    )
   })
 
   it('seals synchronously, drains accepted app and RPC writes, and prepares one claim exactly once', async () => {
@@ -201,13 +521,13 @@ describe('ArtifactTurnOwner', () => {
       revokeRpcCapability,
       now: () => 789
     })
-    const turn = await owner.open({
+    const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
       agentName: 'OpenCode'
     })
-    const acceptedWrite = owner.writeForActiveTurn('session-1', {
+    const acceptedWrite = owner.write(turn, {
       filename: 'result.txt',
       content: 'result'
     })
@@ -216,9 +536,9 @@ describe('ArtifactTurnOwner', () => {
     const firstFinalization = owner.finalize(turn)
     const repeatedFinalization = owner.finalize(turn)
     expect(firstFinalization).toBe(repeatedFinalization)
-    await expect(
-      owner.writeForActiveTurn('session-1', { filename: 'late.txt', content: 'late' })
-    ).rejects.toThrow(/No active assistant turn/i)
+    await expect(owner.write(turn, { filename: 'late.txt', content: 'late' })).rejects.toThrow(
+      /not open/i
+    )
     expect(listRunVersions).not.toHaveBeenCalled()
 
     releaseRpc.resolve()
@@ -254,7 +574,7 @@ describe('ArtifactTurnOwner', () => {
       runRegistry,
       now: () => 900
     })
-    const turn = await owner.open({
+    const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
@@ -265,7 +585,7 @@ describe('ArtifactTurnOwner', () => {
     await expect(owner.finalize(turn)).resolves.toBeUndefined()
     expect(listPendingRunFiles).toHaveBeenCalledOnce()
     expect(register).not.toHaveBeenCalled()
-    expect(owner.snapshot(turn)).toEqual({
+    expect(owner.snapshot(turn)).toMatchObject({
       appSessionId: 'session-1',
       runId: 'artifact-run-900-1',
       phase: 'finalized',
@@ -289,20 +609,21 @@ describe('ArtifactTurnOwner', () => {
       revokeRpcCapability: (token) => {
         revoked.push(token)
       },
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
       notebook: {
         setArtifactProvenanceContext: (sessionId, context) => {
           notebookContexts.push({ sessionId, context })
         }
       }
     })
-    const first = await owner.open({
+    const first = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
       agentName: 'Codex'
     })
     now = 1_001
-    const replacement = await owner.open({
+    const replacement = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
@@ -340,7 +661,7 @@ describe('ArtifactTurnOwner', () => {
         await writeFile(filePath, content, 'utf8')
       }
     })
-    const first = await owner.open({
+    const first = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
@@ -349,7 +670,7 @@ describe('ArtifactTurnOwner', () => {
 
     const staleDisposal = owner.dispose(first)
     await cleanupWriteStarted.promise
-    const replacementOpening = owner.open({
+    const replacementOpening = openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
@@ -367,7 +688,7 @@ describe('ArtifactTurnOwner', () => {
     await owner.dispose(replacement)
   })
 
-  it('clears active ownership even when capability revocation fails', async () => {
+  it('keeps active ownership retryable when capability revocation fails', async () => {
     const dataRoot = await createRoot()
     const notebookContexts: unknown[] = []
     const writeStarted = createDeferred()
@@ -385,20 +706,22 @@ describe('ArtifactTurnOwner', () => {
         }
       },
       issueRpcCapability: () => 'capability-1',
-      revokeRpcCapability: async () => {
-        throw new Error('revoke failed')
-      },
+      revokeRpcCapability: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('revoke failed'))
+        .mockResolvedValue(undefined),
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
       notebook: {
         setArtifactProvenanceContext: (_sessionId, context) => notebookContexts.push(context)
       }
     })
-    const turn = await owner.open({
+    const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
       agentName: 'Codex'
     })
-    const acceptedWrite = owner.writeForActiveTurn('session-1', {
+    const acceptedWrite = owner.write(turn, {
       filename: 'accepted.txt',
       content: 'accepted'
     })
@@ -427,9 +750,13 @@ describe('ArtifactTurnOwner', () => {
     await expect(disposal).rejects.toThrow('revoke failed')
 
     expect(disposalSettled).toBe(true)
-    expect(owner.activeRunIds()).toEqual([])
+    expect(owner.activeRunIds()).toEqual([owner.snapshot(turn).runId])
     await expect(readFile(currentRunFile, 'utf8')).resolves.toBe('{}\n')
     expect(notebookContexts.at(-1)).toBeUndefined()
+
+    await owner.dispose(owner.handleForExecution(owner.snapshot(turn).executionId as string))
+    expect(owner.activeRunIds()).toEqual([])
+    expect(owner.snapshot(turn).phase).toBe('disposed')
   })
 
   it('clears a stale turn handoff when its replacement uses a different storage Session', async () => {
@@ -439,13 +766,13 @@ describe('ArtifactTurnOwner', () => {
       repository: new ArtifactRepository(dataRoot),
       runRegistry: new ArtifactRunRegistry()
     })
-    const first = await owner.open({
+    const first = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-provisional',
       projectId: 'project-1',
       agentName: 'Codex'
     })
-    const replacement = await owner.open({
+    const replacement = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'session-1',
       projectId: 'project-1',
@@ -484,7 +811,7 @@ describe('ArtifactTurnOwner', () => {
         writeAppGeneratedVersion: async () => artifactVersion()
       }
     })
-    const turn = await owner.open({
+    const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
@@ -518,7 +845,7 @@ describe('ArtifactTurnOwner', () => {
         writeAppGeneratedVersion: async () => artifactVersion()
       }
     })
-    const turn = await owner.open({
+    const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
@@ -542,7 +869,7 @@ describe('ArtifactTurnOwner', () => {
     await expect(owner.finalize(turn)).resolves.toBe(publication)
     expect(owner.snapshot(turn).phase).toBe('disposed')
 
-    const disposedWithoutFinalization = await owner.open({
+    const disposedWithoutFinalization = await openRootExecution(owner, {
       appSessionId: 'session-2',
       artifactStorageSessionId: 'artifact-session-2',
       projectId: 'project-1',
@@ -565,6 +892,7 @@ describe('ArtifactTurnOwner', () => {
         revoked.push(token)
         throw new Error('cleanup revoke failed')
       },
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
       notebook: {
         setArtifactProvenanceContext: (_sessionId, context) => {
           contexts.push(context)
@@ -579,7 +907,7 @@ describe('ArtifactTurnOwner', () => {
     )
 
     await expect(
-      owner.open({
+      openRootExecution(owner, {
         appSessionId: 'session-1',
         artifactStorageSessionId: 'artifact-session-1',
         projectId: 'project-1',
@@ -593,18 +921,19 @@ describe('ArtifactTurnOwner', () => {
     expect(owner.activeRunIds()).toEqual([])
   })
 
-  it('clears Notebook context and ownership when handoff cleanup fails', async () => {
+  it('keeps a failed disposal retryable without reopening a successfully disposed turn', async () => {
     const dataRoot = await createRoot()
     const contexts: unknown[] = []
     const owner = new ArtifactTurnOwner({
       dataRoot,
       repository: new ArtifactRepository(dataRoot),
       runRegistry: new ArtifactRunRegistry(),
+      notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
       notebook: {
         setArtifactProvenanceContext: (_sessionId, context) => contexts.push(context)
       }
     })
-    const turn = await owner.open({
+    const turn = await openRootExecution(owner, {
       appSessionId: 'session-1',
       artifactStorageSessionId: 'artifact-session-1',
       projectId: 'project-1',
@@ -618,11 +947,31 @@ describe('ArtifactTurnOwner', () => {
     await rm(currentRunFile)
     await mkdir(currentRunFile)
 
-    await expect(owner.dispose(turn)).rejects.toThrow()
+    const firstDisposal = owner.dispose(turn)
+    expect(owner.dispose(turn)).toBe(firstDisposal)
+    await expect(firstDisposal).rejects.toThrow()
 
     expect(contexts.at(-1)).toBeUndefined()
+    expect(owner.activeRunIds()).toEqual([owner.snapshot(turn).runId])
+    expect(owner.handleForExecution(owner.snapshot(turn).executionId as string)).toBe(turn)
+    expect(owner.snapshot(turn).phase).toBe('sealing')
+    await expect(owner.finalize(turn)).rejects.toThrow(/disposing or disposed/i)
+
+    await rm(currentRunFile, { recursive: true })
+    const retry = owner.dispose(
+      owner.handleForExecution(owner.snapshot(turn).executionId as string)
+    )
+    expect(owner.dispose(turn)).toBe(retry)
+    await retry
+
     expect(owner.activeRunIds()).toEqual([])
+    expect(() => owner.handleForExecution(owner.snapshot(turn).executionId as string)).toThrow(
+      /No active Artifact turn/
+    )
     expect(owner.snapshot(turn).phase).toBe('disposed')
+    expect(owner.dispose(turn)).toBe(retry)
+    await expect(owner.dispose(turn)).resolves.toBeUndefined()
+    await expect(owner.finalize(turn)).rejects.toThrow(/disposing or disposed/i)
   })
 
   it('revokes a capability and publishes no active state when opening the handoff fails', async () => {
@@ -651,7 +1000,7 @@ describe('ArtifactTurnOwner', () => {
     })
 
     await expect(
-      failingOwner.open({
+      openRootExecution(failingOwner, {
         appSessionId: 'session-1',
         artifactStorageSessionId: 'artifact-session-1',
         projectId: 'project-1',

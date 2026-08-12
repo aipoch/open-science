@@ -12,3 +12,52 @@ export type UnreadTaskViewState = {
   challengeId?: number
   visibleSessionId?: string
 }
+
+// Closed user-attention taxonomy for the message center. Application lifecycle facts such as
+// Project/Session create, update, archive, restore, and delete belong to a separate activity or
+// audit projection; adding them here would incorrectly give management history unread semantics.
+export type NotificationKind =
+  'task.completed' | 'task.needs-attention' | 'task.failed' | 'authorization.required'
+
+export type NotificationSource =
+  'agent-tool' | 'agent-question' | 'connector' | 'compute' | 'skill-import' | 'session-plan'
+
+export type NotificationActionState = 'pending' | 'resolved' | 'rejected' | 'expired' | 'cancelled'
+
+export type NotificationInboxItem = Readonly<{
+  id: string
+  sequence: number
+  dedupeKey: string
+  kind: NotificationKind
+  source?: NotificationSource
+  projectId?: string
+  sessionId?: string
+  originId: string
+  title: string
+  summary: string
+  createdAt: number
+  readAt?: number
+  actionState?: NotificationActionState
+  settledAt?: number
+}>
+
+export type NotificationInboxSnapshot = Readonly<{
+  revision: number
+  unreadCount: number
+  latestSequence: number
+  items: readonly NotificationInboxItem[]
+}>
+
+export type NotificationInboxChanged = Readonly<{
+  revision: number
+  unreadCount: number
+  latestSequence: number
+}>
+
+export type NotificationMarkReadRequest = Readonly<{ ids: readonly string[] }>
+
+export type NotificationMarkAllReadRequest = Readonly<{ throughSequence: number }>
+
+export type NotificationMarkSessionCompletionsReadRequest = Readonly<{
+  sessionIds: readonly string[]
+}>

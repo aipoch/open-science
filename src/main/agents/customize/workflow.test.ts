@@ -17,7 +17,6 @@ import {
   buildReviewedTarget,
   draftChangedSinceConfirmation,
   explainDelete,
-  explainNameChange,
   explainSwitch,
   isExplicitConfirmation,
   isStaleRevision,
@@ -39,6 +38,7 @@ import {
 const demoProfile = (overrides: Partial<FakeProfileRecord> = {}): FakeProfileRecord => ({
   id: 'sp-1',
   name: 'Bio Expert',
+  displayName: 'Bio Expert',
   description: 'a specialist',
   systemPrompt: 'You are a bio expert.',
   iconKey: 'beaker',
@@ -73,6 +73,7 @@ const skills = [
 const connectors: ConnectorReadModel[] = [
   {
     id: 'conn-a',
+    name: 'conn-a',
     displayName: 'Chemistry',
     description: 'chemistry connector',
     mainEnabled: true,
@@ -87,7 +88,7 @@ const recordingGateway = (
   decision: 'approved' | 'declined'
 ): {
   decide: (request: {
-    operation: 'update' | 'delete' | 'switch'
+    operation: 'delete' | 'switch'
     summary: { name?: string; newName?: string; target?: string | null }
   }) => Promise<ApprovalResult>
   decisions: Array<Record<string, unknown>>
@@ -95,7 +96,7 @@ const recordingGateway = (
   const decisions: Array<Record<string, unknown>> = []
   const decide = async (
     request: {
-      operation: 'update' | 'delete' | 'switch'
+      operation: 'delete' | 'switch'
       summary: { name?: string; newName?: string; target?: string | null }
     } & Record<string, unknown>
   ): Promise<ApprovalResult> => {
@@ -156,11 +157,38 @@ describe('customize Skill: bundled source', () => {
       'host.agents.update(',
       'host.agents.switch(',
       'host.agents.delete(',
-      'host.agents.list_skills(',
-      'host.agents.list_connectors('
+      'host.agents.listSkills(',
+      'host.agents.listConnectors(',
+      'host.agents.attachSkill(',
+      'host.agents.detachSkill(',
+      'host.agents.attachConnector(',
+      'host.agents.detachConnector('
     ]) {
       expect(raw).toContain(method)
     }
+    expect(raw).toContain('systemPrompt')
+    expect(raw).toContain('iconKey')
+    expect(raw).toContain('colorKey')
+    expect(raw).toContain('skillNames')
+    expect(raw).toContain('connectorNames')
+    expect(raw).not.toMatch(
+      /host\.agents\.(?:list_skills|list_connectors|attach_skill|detach_skill|attach_connector|detach_connector)|\b(?:system_prompt|icon_key|color_key|skill_names|connector_names)\b/
+    )
+  })
+
+  it('routes Skill requests to the internal native Skill Creator without using Artifacts', async () => {
+    const raw = await readFile(skillPath, 'utf8')
+    expect(raw).toContain("host.skills.read('skill-creator')")
+    expect(raw).toContain('not Artifacts')
+    expect(raw).toContain('create or revise the Skill first')
+  })
+
+  it('documents identity-first, bounded, composable Specialist authoring and offers switching', async () => {
+    const raw = await readFile(skillPath, 'utf8')
+    expect(raw).toContain('You are {displayName}')
+    expect(raw).toMatch(/what\s+(?:the\s+)?Specialist\s+does not do/i)
+    expect(raw).toMatch(/heavy how-to.*Skills/i)
+    expect(raw).toMatch(/after.*exists.*offer.*switch/is)
   })
 
   it('is activated in the Featured manifest (issue 08 turns on the live journey)', async () => {
@@ -198,11 +226,6 @@ describe('customize Skill: static rejection of forbidden architecture', () => {
       except: /do not use python/i
     },
     {
-      label: 'host.skills namespace',
-      needle: /\bhost\.skills\./,
-      except: /do not (use|call).*host\.skills|never.*host\.skills/i
-    },
-    {
       label: 'management MCP',
       needle: /management mcp|host\.mcp\(\).*agents/i,
       except: /do not.*management mcp|never.*host\.mcp/i
@@ -211,11 +234,6 @@ describe('customize Skill: static rejection of forbidden architecture', () => {
       label: 'Customize Profile',
       needle: /customize (specialist\/)?profile/i,
       except: /do not.*customize profile|no customize profile/i
-    },
-    {
-      label: 'Skill authoring',
-      needle: /\bauthor (a |skills|new skills)\b/i,
-      except: /do not.*author skills|no skill authoring/i
     },
     {
       label: 'duplicate operations',
@@ -278,8 +296,8 @@ describe('customize Skill: scope clarification', () => {
 
   it('treats explicit full or supplied arrays as decided', () => {
     expect(resolveCreateScope({ unrestricted: true })).toBe('full')
-    expect(resolveCreateScope({ skill_names: ['skill-a'] })).toBe('selected')
-    expect(resolveCreateScope({ connector_names: ['conn-a'] })).toBe('selected')
+    expect(resolveCreateScope({ skillNames: ['skill-a'] })).toBe('selected')
+    expect(resolveCreateScope({ connectorNames: ['conn-a'] })).toBe('selected')
   })
 })
 
@@ -287,8 +305,8 @@ describe('customize Skill: live read + complete draft', () => {
   it('reads live Profiles plus Skill/Connector catalogs before proposing a target state', async () => {
     const sdk = makeSdk()
     const [profile] = await sdk.list()
-    const skillCatalog = await sdk.list_skills()
-    const connectorCatalog = await sdk.list_connectors()
+    const skillCatalog = await sdk.listSkills()
+    const connectorCatalog = await sdk.listConnectors()
     expect(profile.name).toBe('Bio Expert')
     expect(skillCatalog.map((entry) => entry.id)).toContain('skill-a')
     expect(connectorCatalog.map((entry) => entry.id)).toContain('conn-a')
@@ -376,10 +394,10 @@ describe('customize Skill: atomic update preference', () => {
     const plan = preferAtomicUpdate(target, live)
     expect(plan.kind).toBe('atomic-update')
     expect(plan.patch.description).toBe('new')
-    expect(plan.patch.system_prompt).toBe('new prompt')
-    expect(plan.patch.skill_names).toEqual(['skill-a', 'skill-b'])
+    expect(plan.patch.systemPrompt).toBe('new prompt')
+    expect(plan.patch.skillNames).toEqual(['skill-a', 'skill-b'])
     // connector unchanged => not present in patch
-    expect(plan.patch.connector_names).toBeUndefined()
+    expect(plan.patch.connectorNames).toBeUndefined()
   })
 
   it('applies the atomic patch in a single update call that returns read-back', async () => {
@@ -403,11 +421,9 @@ describe('customize Skill: confirmation boundaries', () => {
     expect(requiresSystemPermissionCard('ordinary-update')).toBe(false)
   })
 
-  it('name-changing update, delete, switch use the system card as the only authorization point', () => {
-    expect(requiresSystemPermissionCard('name-changing-update')).toBe(true)
+  it('delete and switch use the system card as the only authorization point', () => {
     expect(requiresSystemPermissionCard('delete')).toBe(true)
     expect(requiresSystemPermissionCard('switch')).toBe(true)
-    expect(requiresTextualConfirmation('name-changing-update')).toBe(false)
     expect(requiresTextualConfirmation('delete')).toBe(false)
     expect(requiresTextualConfirmation('switch')).toBe(false)
   })
@@ -425,9 +441,9 @@ describe('customize Skill: create read-back', () => {
     const created = await sdk.create({
       name: 'New',
       description: 'd',
-      system_prompt: 'p',
-      skill_names: ['skill-a'],
-      connector_names: ['conn-a']
+      systemPrompt: 'p',
+      skillNames: ['skill-a'],
+      connectorNames: ['conn-a']
     })
     expect(created.capabilityMode).toBe('selected')
     expect(created.selectedCapabilities.skillIds).toEqual(['skill-a'])
@@ -446,7 +462,7 @@ describe('customize Skill: capability update read-back', () => {
     expect(toFull.capabilityMode).toBe('full')
     // switching back to Selected with a new skill set
     const toSelected = await sdk.update('Bio Expert', {
-      skill_names: ['skill-b'],
+      skillNames: ['skill-b'],
       revision: toFull.revision
     })
     expect(toSelected.capabilityMode).toBe('selected')
@@ -470,24 +486,22 @@ describe('customize Skill: stale re-review', () => {
   })
 })
 
-describe('customize Skill: approved privileged operations', () => {
-  it('approved name-changing update applies atomically via the system card', async () => {
-    const gateway = recordingGateway('approved')
-    const sdk = makeSdk({ approvalGateway: gateway })
+describe('customize Skill: display-name updates', () => {
+  it('changes displayName as an ordinary update without changing name', async () => {
+    const sdk = makeSdk()
     const before = await sdk.get('Bio Expert')
     const result = await sdk.update('Bio Expert', {
-      name: 'Renamed',
+      displayName: 'Renamed label',
       description: 'new desc',
       revision: before.revision
     })
-    expect(result.name).toBe('Renamed')
+    expect(result.name).toBe('Bio Expert')
+    expect(result.displayName).toBe('Renamed label')
     expect(result.description).toBe('new desc')
-    expect(gateway.decisions[0]).toMatchObject({ operation: 'update' })
-    expect(gateway.decisions[0].summary).toMatchObject({ name: 'Bio Expert', newName: 'Renamed' })
-    // old name no longer resolves
-    await expect(sdk.get('Bio Expert')).rejects.toThrow(/not found/i)
   })
+})
 
+describe('customize Skill: approved privileged operations', () => {
   it('approved delete removes the profile', async () => {
     const gateway = recordingGateway('approved')
     const sdk = makeSdk({ approvalGateway: gateway })
@@ -528,22 +542,6 @@ describe('customize Skill: approved privileged operations', () => {
 })
 
 describe('customize Skill: declined privileged operations', () => {
-  it('declined name-changing update leaves every field unchanged and is not retried', async () => {
-    const gateway = recordingGateway('declined')
-    const sdk = makeSdk({ approvalGateway: gateway })
-    const before = await sdk.get('Bio Expert')
-    const result = (await sdk.update('Bio Expert', {
-      name: 'Renamed',
-      revision: before.revision
-    })) as unknown as { status: string; operation: string }
-    expect(result.status).toBe('declined')
-    expect(result.operation).toBe('update')
-    // nothing changed
-    const unchanged = await sdk.get('Bio Expert')
-    expect(unchanged.revision).toBe(before.revision)
-    expect(gateway.decisions).toHaveLength(1) // not retried
-  })
-
   it('declined delete is reported as a user decision and not retried', async () => {
     const gateway = recordingGateway('declined')
     const sdk = makeSdk({ approvalGateway: gateway })
@@ -591,7 +589,6 @@ describe('customize Skill: reporting', () => {
 
   it('privileged explanations name the impending action', () => {
     expect(explainSwitch('Bio Expert', 'Other')).toMatch(/continues automatically/i)
-    expect(explainNameChange('A', 'B')).toMatch(/rename.*A.*B/i)
     expect(explainDelete('A')).toMatch(/delete.*A/i)
     expect(explainDelete('A')).toMatch(/unavailable/i)
   })
@@ -621,7 +618,7 @@ describe('customize Skill: catalog resolution + sanitized errors', () => {
       ],
       connectors: []
     })
-    await expect(sdk.list_skills('dup')).rejects.toThrow(/host\.agents\.list_skills:.*multiple/i)
+    await expect(sdk.listSkills('dup')).rejects.toThrow(/host\.agents\.listSkills:.*multiple/i)
   })
 
   it('errors are sanitized and prefixed host.agents.<method>:', async () => {
@@ -631,7 +628,7 @@ describe('customize Skill: catalog resolution + sanitized errors', () => {
 
   it('never returns secret material from the connector catalog', async () => {
     const sdk = makeSdk()
-    const catalog = await sdk.list_connectors()
+    const catalog = await sdk.listConnectors()
     const serialized = JSON.stringify(catalog)
     expect(serialized).not.toMatch(/secret|token|apiKey|password/i)
   })

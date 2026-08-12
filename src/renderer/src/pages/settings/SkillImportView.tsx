@@ -1,7 +1,15 @@
 /* Hallmark · macrostructure: Workbench · tone: utilitarian · palette: existing warm paper + teal */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, ChevronUp, SearchX, Star } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  LoaderCircle,
+  ScrollText,
+  SearchX,
+  Star
+} from 'lucide-react'
 
 import type {
   GitHubRepositorySearchView,
@@ -13,11 +21,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
+import { GitHubTokenControl } from './GitHubTokenControl'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportViewProps = {
   onImported: () => void
 }
+
+type BusyOperation =
+  { kind: 'find' } | { kind: 'scan'; repositoryName: string } | { kind: 'import' }
 
 // Full-page GitHub import. Keywords discover repositories; direct references and chosen search
 // results reuse the commit-pinned scan and batch-import flow.
@@ -28,7 +40,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   const previewGitHubSkill = useSettingsStore((state) => state.previewGitHubSkill)
   const [input, setInput] = useState('')
   const inputRef = useRef('')
-  const [busy, setBusy] = useState(false)
+  const [operation, setOperation] = useState<BusyOperation | null>(null)
   const [message, setMessage] = useState<{ kind: 'error' | 'status'; text: string } | null>(null)
   const [repositories, setRepositories] = useState<GitHubRepositorySearchView[] | null>(null)
   const [repositoriesExpanded, setRepositoriesExpanded] = useState(true)
@@ -36,6 +48,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   const [scannedRepo, setScannedRepo] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const candidatePreview = useSkillImportCandidatePreview()
+  const busy = operation !== null
 
   const imported = skills.filter((skill: SkillView) => skill.source === 'imported')
 
@@ -47,7 +60,11 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
     if (!value || busy) return
     const visibleInputAtStart = inputRef.current
     candidatePreview.invalidatePreview()
-    setBusy(true)
+    setOperation(
+      options.repositoryName
+        ? { kind: 'scan', repositoryName: options.repositoryName }
+        : { kind: 'find' }
+    )
     setMessage(null)
     setScanned(null)
     setScannedRepo(null)
@@ -73,6 +90,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
       setScanned(result.skills)
       setScannedRepo(options.repositoryName ?? value)
+      if (options.repositoryName) setRepositoriesExpanded(false)
       // Pre-select every skill that isn't already imported.
       setSelected(
         new Set(result.skills.filter((skill) => !skill.alreadyImported).map((skill) => skill.url))
@@ -87,7 +105,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         text: error instanceof Error ? error.message : 'GitHub request failed.'
       })
     } finally {
-      setBusy(false)
+      setOperation(null)
     }
   }
 
@@ -106,7 +124,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
   const importSelected = async (): Promise<void> => {
     if (busy || selected.size === 0) return
     candidatePreview.invalidatePreview()
-    setBusy(true)
+    setOperation({ kind: 'import' })
     setMessage(null)
     let done = 0
     try {
@@ -124,7 +142,7 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         text: error instanceof Error ? error.message : `Imported ${done}, then failed.`
       })
     } finally {
-      setBusy(false)
+      setOperation(null)
     }
   }
 
@@ -154,10 +172,15 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
 
   return (
     <div className="p-5">
-      <h2 className="text-base font-semibold text-foreground">Import from GitHub</h2>
-      <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Search repositories by keyword, or scan a GitHub repository for Skill folders to import.
-      </p>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-foreground">Import from GitHub</h2>
+          <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
+            Search repositories by keyword, or scan a GitHub repository for Skill folders to import.
+          </p>
+        </div>
+        <GitHubTokenControl />
+      </div>
 
       <div className="mt-4">
         <label
@@ -190,16 +213,21 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
             disabled={busy || input.trim().length === 0}
             className="shrink-0 [@media(pointer:coarse)]:min-h-11"
           >
-            {busy ? 'Working…' : 'Find skills'}
+            {operation?.kind === 'find' ? (
+              <>
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+                Finding…
+              </>
+            ) : (
+              'Find skills'
+            )}
           </Button>
         </div>
       </div>
-      <div className="min-h-5" aria-busy={busy}>
-        {busy ? (
-          <p role="status" className="mt-2 text-xs text-muted-foreground">
-            Working with GitHub…
-          </p>
-        ) : null}
+      <div aria-busy={busy}>
         {message?.kind === 'error' ? (
           <div
             role="alert"
@@ -266,20 +294,36 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                             aria-label={`Scan ${repository.fullName} for skills`}
                             aria-pressed={scannedRepo === repository.fullName}
                             disabled={busy}
+                            aria-busy={
+                              operation?.kind === 'scan' &&
+                              operation.repositoryName === repository.fullName
+                            }
                             className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
                             onClick={() => {
-                              setRepositoriesExpanded(false)
                               void runPreview(repository.fullName, {
                                 preserveRepositories: true,
                                 repositoryName: repository.fullName
                               })
                             }}
                           >
-                            {scannedRepo === repository.fullName
-                              ? scanned && scanned.length > 0
-                                ? 'Scanned'
-                                : 'No skills found'
-                              : 'Scan for skills'}
+                            {operation?.kind === 'scan' &&
+                            operation.repositoryName === repository.fullName ? (
+                              <>
+                                <LoaderCircle
+                                  className="size-4 animate-spin motion-reduce:animate-none"
+                                  aria-hidden="true"
+                                />
+                                Scanning…
+                              </>
+                            ) : scannedRepo === repository.fullName ? (
+                              scanned && scanned.length > 0 ? (
+                                'Scanned'
+                              ) : (
+                                'No skills found'
+                              )
+                            ) : (
+                              'Scan for skills'
+                            )}
                           </Button>
                         </div>
                       </li>
@@ -318,7 +362,17 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
                 disabled={busy || selected.size === 0}
                 className="self-start [@media(pointer:coarse)]:min-h-11 sm:self-auto"
               >
-                Import selected ({selected.size})
+                {operation?.kind === 'import' ? (
+                  <>
+                    <LoaderCircle
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                      aria-hidden="true"
+                    />
+                    Importing…
+                  </>
+                ) : (
+                  `Import selected (${selected.size})`
+                )}
               </Button>
             </div>
 
@@ -387,23 +441,36 @@ const SkillImportView = ({ onImported }: SkillImportViewProps): React.JSX.Elemen
         ) : null}
       </div>
 
-      <h3 className="mt-8 border-t border-border pt-5 text-sm font-semibold text-foreground">
-        Imported skills
-      </h3>
-      {imported.length > 0 ? (
-        <ul className="mt-2 flex flex-col divide-y divide-border">
-          {imported.map((skill) => (
-            <li key={skill.id} className="flex items-center gap-2 py-2.5">
-              <span className="min-w-0 flex-1 truncate text-sm text-foreground">{skill.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{skill.id}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-2 py-2 text-xs text-muted-foreground">
-          No imported skills yet. Repos you import from will appear here.
-        </p>
-      )}
+      <section aria-labelledby="imported-skills-heading">
+        <h3
+          id="imported-skills-heading"
+          className="mt-8 border-t border-border pt-5 text-sm font-semibold text-foreground"
+        >
+          Imported skills
+        </h3>
+        {imported.length > 0 ? (
+          <ul className="mt-2 flex flex-col divide-y divide-border">
+            {imported.map((skill) => (
+              <li key={skill.id} className="flex items-center gap-2 py-2.5">
+                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                  {skill.name}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">{skill.id}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="flex min-h-64 flex-col items-center justify-center px-4 py-8 text-center">
+            <span className="inline-flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <ScrollText className="size-5" aria-hidden="true" />
+            </span>
+            <p className="mt-3 text-sm font-medium text-foreground">No imported skills yet</p>
+            <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
+              Repos you import from will appear here.
+            </p>
+          </div>
+        )}
+      </section>
 
       <SkillImportCandidatePreview {...candidatePreview.previewProps} />
     </div>

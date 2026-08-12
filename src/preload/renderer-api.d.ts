@@ -1,13 +1,16 @@
 import type {
   AcpCancelPromptRequest,
+  AcpAgentRuntimeUpdate,
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
+  AcpContinueInterruptedTurnRequest,
   AcpCreateSessionResponse,
   AcpRuntimeEvent,
   AcpDeleteSessionRequest,
   AcpPermissionRequest,
   AcpPermissionResponse,
+  ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -15,6 +18,16 @@ import type {
   AcpStateSnapshot
 } from '../shared/acp'
 import type { ActivePlanProjection, PlanResponseCommand } from '../shared/session-plan/contract'
+import type {
+  SideChatCloseRequest,
+  SideChatPromptRequest,
+  SideChatRelayDeliveredEvent,
+  SideChatRuntimeEvent,
+  SideChatSessionRequest,
+  SideChatSnapshotList,
+  SideChatStartRequest,
+  SideChatStartResponse
+} from '../shared/side-chat'
 import type {
   ArtifactFile,
   ArtifactPreviewResult,
@@ -46,6 +59,8 @@ import type {
   SaveBlobFileResult,
   SaveManagedFileRequest,
   SaveManagedFileResult,
+  SaveProjectArtifactsRequest,
+  SaveProjectArtifactsResult,
   SaveSessionArtifactsRequest,
   SaveSessionArtifactsResult
 } from '../shared/file-save'
@@ -67,10 +82,22 @@ import type {
   ProbeResult
 } from '../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../shared/remote-fs'
-import type { LocalDirListing, LocalRoots } from '../shared/local-fs'
+import type {
+  GrantLocalRootRequest,
+  GrantedLocalRoot,
+  LocalDirListing,
+  LocalRoots,
+  RemoveGrantedLocalRootRequest,
+  SetGrantedLocalRootAccessRequest
+} from '../shared/local-fs'
 import type { RendererFailureReport } from '../shared/diagnostics'
 import type { OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
+  NotificationInboxChanged,
+  NotificationInboxSnapshot,
+  NotificationMarkAllReadRequest,
+  NotificationMarkReadRequest,
+  NotificationMarkSessionCompletionsReadRequest,
   OpenSessionFromNotificationRequest,
   UnreadTaskViewState
 } from '../shared/notifications'
@@ -161,6 +188,7 @@ import type {
 import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
+  LoadSessionRequest,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
@@ -192,8 +220,11 @@ import type {
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
   SetClosePreferenceRequest,
+  SetProjectFilesFilterRequest,
+  SetDefaultPermissionProfileRequest,
   SetAppIconVariantRequest,
   SetReasoningEffortRequest,
+  SetSubagentModelRequest,
   SetSkillEnabledRequest,
   SettingsSnapshot,
   AppIconPreview,
@@ -202,7 +233,11 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   DeleteSkillRequest,
+  ExportSkillRequest,
+  ExportSkillResult,
   ImportSkillRequest,
+  GitHubTokenStatus,
+  SaveGitHubTokenRequest,
   ImportSkillResult,
   ImportSkillZipRequest,
   ImportSkillZipBatchRequest,
@@ -242,6 +277,7 @@ import type {
   ValidateProviderResult
 } from '../shared/settings'
 import type { PackageMirror } from '../shared/mirror'
+import type { NetworkInfo } from '../shared/network'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -309,6 +345,7 @@ import type {
   WindowFindRequest,
   WindowFindResult
 } from '../shared/window-controls'
+import type { DatabaseStartupState } from '../shared/database-startup'
 
 type RemoveListener = () => void
 type AcpListener<Payload> = (payload: Payload) => void
@@ -317,6 +354,7 @@ export interface OpenScienceAPI {
   saveBlobFile(request: SaveBlobFileRequest): Promise<SaveBlobFileResult>
   saveManagedFile(request: SaveManagedFileRequest): Promise<SaveManagedFileResult>
   saveSessionArtifacts(request: SaveSessionArtifactsRequest): Promise<SaveSessionArtifactsResult>
+  saveProjectArtifacts(request: SaveProjectArtifactsRequest): Promise<SaveProjectArtifactsResult>
   // Host platform (process.platform), e.g. 'win32' | 'darwin' | 'linux'.
   platform: string
   getRuntimeVersions(): {
@@ -326,6 +364,12 @@ export interface OpenScienceAPI {
   }
   lifecycle: {
     getClientId(): Promise<string>
+  }
+  databaseStartup: {
+    getState(): Promise<DatabaseStartupState>
+    retry(): Promise<DatabaseStartupState>
+    quit(): Promise<void>
+    onStateChanged(listener: AcpListener<DatabaseStartupState>): RemoveListener
   }
   diagnostics?: {
     reportRendererFailure(report: RendererFailureReport): void
@@ -338,17 +382,29 @@ export interface OpenScienceAPI {
     disconnect(): Promise<AcpStateSnapshot>
     createSession(request?: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
     resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
+    continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
     resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
     compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot>
     cancel(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot>
     deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot>
     respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot>
+    respondToElicitation(response: ElicitationResponse): Promise<AcpStateSnapshot>
     setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot>
     revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot>
     onState(listener: AcpListener<AcpStateSnapshot>): RemoveListener
+    onAgentRuntimeUpdate(listener: AcpListener<AcpAgentRuntimeUpdate>): RemoveListener
     onEvent(listener: AcpListener<AcpRuntimeEvent>): RemoveListener
     onPermissionRequest(listener: AcpListener<AcpPermissionRequest>): RemoveListener
+  }
+  sideChat: {
+    list(): Promise<SideChatSnapshotList>
+    start(request: SideChatStartRequest): Promise<SideChatStartResponse>
+    send(request: SideChatPromptRequest): Promise<void>
+    cancel(request: SideChatSessionRequest): Promise<void>
+    close(request: SideChatCloseRequest): Promise<void>
+    onEvent(listener: AcpListener<SideChatRuntimeEvent>): RemoveListener
+    onRelayDelivered(listener: AcpListener<SideChatRelayDeliveredEvent>): RemoveListener
   }
   permissions: {
     list(): Promise<PermissionGrantSnapshot>
@@ -361,6 +417,7 @@ export interface OpenScienceAPI {
   }
   sessions: {
     loadAll(): Promise<LoadAllSessionsResult>
+    loadOne(request: LoadSessionRequest): Promise<PersistedChatSession | undefined>
     saveSession(
       session: PersistedChatSession,
       options?: SaveSessionOptions
@@ -395,11 +452,18 @@ export interface OpenScienceAPI {
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
+    setSubagentModel(request: SetSubagentModelRequest): Promise<SettingsSnapshot>
+    onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
     setConversationSkillImportEnabled(
       request: SetConversationSkillImportEnabledRequest
     ): Promise<SettingsSnapshot>
     setClosePreference(request: SetClosePreferenceRequest): Promise<SettingsSnapshot>
+    setProjectFilesFilter(request: SetProjectFilesFilterRequest): Promise<SettingsSnapshot>
+    setDefaultPermissionProfile(
+      request: SetDefaultPermissionProfileRequest
+    ): Promise<SettingsSnapshot>
+
     setAppIconVariant(request: SetAppIconVariantRequest): Promise<SettingsSnapshot>
     listAppIcons(): Promise<AppIconPreview[]>
     validateProvider(request: ValidateProviderRequest): Promise<ValidateProviderResult>
@@ -420,7 +484,11 @@ export interface OpenScienceAPI {
     getPackageMirror(): Promise<PackageMirror>
     setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
     listSkills(): Promise<SkillView[]>
+    getGitHubTokenStatus(): Promise<GitHubTokenStatus>
+    saveGitHubToken(request: SaveGitHubTokenRequest): Promise<GitHubTokenStatus>
+    removeGitHubToken(): Promise<GitHubTokenStatus>
     getSkillDetail(id: string): Promise<SkillDetailView>
+    exportSkill(request: ExportSkillRequest): Promise<ExportSkillResult>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
     createSkill(request: CreateSkillRequest): Promise<SkillView[]>
     updateSkill(request: UpdateSkillRequest): Promise<SkillView[]>
@@ -455,12 +523,15 @@ export interface OpenScienceAPI {
     updateCustomServer(request: UpdateCustomServerRequest): Promise<ConnectorsSnapshot>
     authenticateCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
     cancelCustomServerAuthentication(request: AuthenticateCustomServerRequest): Promise<void>
+    retryCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
+    onConnectorRuntimeChanged(listener: AcpListener<undefined>): RemoveListener
     onSkillImportApprovalRequest(
       listener: AcpListener<ConversationSkillImportApprovalRequest>
     ): RemoveListener
     onSkillImportApprovalSettled(listener: AcpListener<string>): RemoveListener
     replayPendingSkillImportApprovals(): Promise<void>
+    replayConnectorApproval(id: string): Promise<ConnectorApprovalRequest | null>
     respondSkillImportApproval(response: ConversationSkillImportApprovalResponse): Promise<void>
     respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallEvent>): RemoveListener
@@ -520,6 +591,13 @@ export interface OpenScienceAPI {
     revealInFolder(): Promise<RevealLogFileResult>
   }
   notifications: {
+    getSnapshot(): Promise<NotificationInboxSnapshot>
+    markAllRead(request: NotificationMarkAllReadRequest): Promise<void>
+    markRead(request: NotificationMarkReadRequest): Promise<void>
+    markSessionCompletionsRead(
+      request: NotificationMarkSessionCompletionsReadRequest
+    ): Promise<void>
+    onChanged(listener: AcpListener<NotificationInboxChanged>): RemoveListener
     onOpenSession(listener: () => void): RemoveListener
     peekPendingOpenSession(): Promise<OpenSessionFromNotificationRequest | null>
     takePendingOpenSession(
@@ -531,6 +609,10 @@ export interface OpenScienceAPI {
   }
   github: {
     getStars(): Promise<number | null>
+  }
+  network: {
+    getInfo(): Promise<NetworkInfo>
+    checkConnectivity(): Promise<boolean>
   }
   cli: {
     getStatus(): Promise<CliLauncherStatus>
@@ -592,6 +674,7 @@ export interface OpenScienceAPI {
     onApprovalRequest(listener: (request: ComputeApprovalRequest) => void): () => void
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval(request: { id: string; decision: ComputeApprovalDecision }): Promise<void>
+    replayApproval(id: string): Promise<ComputeApprovalRequest | null>
     // Lists a remote directory (browse experience).
     listDir(providerId: string, path: string): Promise<DirListing>
     // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.
@@ -609,10 +692,9 @@ export interface OpenScienceAPI {
     jobsMarkConsumed(sessionId: string, jobIds: string[]): Promise<void>
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated(listener: (job: JobSummary) => void): () => void
-    // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session JSON);
-    // the main-process registry is the runtime cache for list_compute RPC ops.
+    // Per-session enabled Compute Hosts. Main owns durable Session JSON and projects the runtime cache.
     enabledHostsGet(sessionId: string): Promise<string[]>
-    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<void>
+    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<PersistedChatSession>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>
@@ -694,6 +776,11 @@ export interface OpenScienceAPI {
     reveal(path: string): Promise<void>
     // Opens a local file with the OS default application; resolves to '' on success.
     openPath(path: string): Promise<string>
+    // Folders the user granted the app access to; mutations resolve to the updated list.
+    listGrantedRoots(): Promise<GrantedLocalRoot[]>
+    grantRoot(request: GrantLocalRootRequest): Promise<GrantedLocalRoot[]>
+    setGrantedRootAccess(request: SetGrantedLocalRootAccessRequest): Promise<GrantedLocalRoot[]>
+    removeGrantedRoot(request: RemoveGrantedLocalRootRequest): Promise<GrantedLocalRoot[]>
   }
   notebook: {
     state(request: NotebookSessionRequest): Promise<NotebookSessionState>

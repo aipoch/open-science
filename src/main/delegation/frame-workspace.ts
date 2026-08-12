@@ -1,0 +1,146 @@
+import { randomUUID } from 'node:crypto'
+import { chmod, copyFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { basename, join } from 'node:path'
+
+import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { parseUploadVersionReference } from '../../shared/uploads'
+import type { SessionKey } from './session-records'
+
+type ResolvedImmutableInput = Readonly<{ path: string; filename?: string }>
+
+type ProductionFrameWorkspaceOptions = Readonly<{
+  root: string
+  resolveInput(identity: string, session: SessionKey): Promise<ResolvedImmutableInput>
+}>
+
+type ProductionFrameWorkspace = Readonly<{
+  validateInput(identity: string, session: SessionKey): Promise<boolean>
+  prepare(session: SessionKey, frameId: string, inputs: readonly string[]): Promise<{ cwd: string }>
+  deleteSession(session: SessionKey): Promise<void>
+}>
+
+const safeSegment = (value: string, label: string): string => {
+  if (
+    !value ||
+    value === '.' ||
+    value === '..' ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes('\0')
+  ) {
+    throw new Error(`Unsafe delegated ${label}: ${JSON.stringify(value)}`)
+  }
+  return value
+}
+
+const safeFilename = (value: string): string => {
+  const name = basename(value)
+    .replaceAll(/[^\p{L}\p{N}._ -]/gu, '_')
+    .trim()
+  return name && name !== '.' && name !== '..' ? name : 'input'
+}
+
+const assertVersionIdentityScope = (identity: string, session: SessionKey): void => {
+  const upload = parseUploadVersionReference(identity)
+  if (upload) {
+    if (upload.projectId && upload.projectId !== session.projectId) {
+      throw new Error('Upload Version belongs to a different Project.')
+    }
+    if (upload.sessionId && upload.sessionId !== session.sessionId) {
+      throw new Error('Upload Version belongs to a different Session.')
+    }
+    return
+  }
+  const artifact = parseArtifactVersionLocator(identity)
+  if (
+    !artifact ||
+    artifact.projectId !== session.projectId ||
+    artifact.appSessionId !== session.sessionId
+  ) {
+    throw new Error('Input is not an immutable Upload or Artifact Version in this Session.')
+  }
+}
+
+const makeTreeRemovable = async (path: string): Promise<void> => {
+  const entry = await stat(path).catch(() => undefined)
+  if (!entry) return
+  if (!entry.isDirectory()) {
+    await chmod(path, 0o644)
+    return
+  }
+  await chmod(path, 0o755)
+  for (const child of await readdir(path)) await makeTreeRemovable(join(path, child))
+}
+
+const createProductionFrameWorkspace = (
+  options: ProductionFrameWorkspaceOptions
+): ProductionFrameWorkspace => {
+  const sessionRoot = (session: SessionKey): string =>
+    join(
+      options.root,
+      safeSegment(session.projectId, 'Project id'),
+      safeSegment(session.sessionId, 'Session id')
+    )
+
+  const resolve = async (
+    identity: string,
+    session: SessionKey
+  ): Promise<ResolvedImmutableInput> => {
+    assertVersionIdentityScope(identity, session)
+    return options.resolveInput(identity, session)
+  }
+
+  return Object.freeze({
+    async validateInput(identity: string, session: SessionKey): Promise<boolean> {
+      try {
+        await resolve(identity, session)
+        return true
+      } catch {
+        return false
+      }
+    },
+    async prepare(
+      session: SessionKey,
+      frameId: string,
+      inputs: readonly string[]
+    ): Promise<{ cwd: string }> {
+      const root = sessionRoot(session)
+      const cwd = join(root, 'frames', safeSegment(frameId, 'Frame id'))
+      const staging = join(root, '.staging', `${frameId}-${randomUUID()}`)
+      const stagedInputs = join(staging, 'inputs')
+      await mkdir(stagedInputs, { recursive: true })
+      try {
+        const resolved = await Promise.all(inputs.map((identity) => resolve(identity, session)))
+        const inputsDir = join(cwd, 'inputs')
+        const alreadyPrepared = await stat(inputsDir)
+          .then((entry) => entry.isDirectory())
+          .catch(() => false)
+        if (alreadyPrepared) return { cwd }
+        for (const [index, input] of resolved.entries()) {
+          const ordinal = String(index + 1).padStart(2, '0')
+          const target = join(
+            stagedInputs,
+            `${ordinal}-${safeFilename(input.filename ?? input.path)}`
+          )
+          await copyFile(input.path, target)
+          await chmod(target, 0o444)
+        }
+        await mkdir(cwd, { recursive: true })
+        await rename(stagedInputs, inputsDir)
+        await chmod(inputsDir, 0o555)
+        return { cwd }
+      } finally {
+        await chmod(stagedInputs, 0o755).catch(() => undefined)
+        await rm(staging, { recursive: true, force: true }).catch(() => undefined)
+      }
+    },
+    async deleteSession(session: SessionKey): Promise<void> {
+      const root = sessionRoot(session)
+      await makeTreeRemovable(root)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
+export { createProductionFrameWorkspace }
+export type { ProductionFrameWorkspace, ProductionFrameWorkspaceOptions, ResolvedImmutableInput }

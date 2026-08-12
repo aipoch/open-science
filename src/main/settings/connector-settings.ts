@@ -20,11 +20,8 @@ import type {
   UpdateCustomServerRequest
 } from '../../shared/settings'
 import {
-  customConnectorAliasKey,
-  customConnectorAliases,
-  customConnectorSlug,
-  isCustomConnectorSlug,
-  toCustomConnectorSlug
+  customConnectorNameFromSkillName,
+  isCustomConnectorName
 } from '../../shared/custom-connector'
 import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import { isCustomMcpServerRouteSafe } from '../connectors/custom-mcp-bootstrap'
@@ -37,6 +34,12 @@ import { buildConnectorTemplateExport, parseConnectorTemplate } from './connecto
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
   rollback(): void
+}
+
+type CustomServerRuntimeProjectionProvider = {
+  materializedSkillNames: () => readonly string[]
+  availability: (id: string) => CustomServerView['availability']
+  isRefreshing: (id: string) => boolean
 }
 
 const normalizeOAuthConfig = (
@@ -54,7 +57,17 @@ const normalizeOAuthConfig = (
 // Owns durable Connector policy, secret migration/projection, and custom-server mutation. Live MCP
 // clients, approval decisions, Specialist bindings, and refresh workflows remain outside this module.
 class ConnectorSettingsModule {
+  private customServerRuntimeProjectionProvider: CustomServerRuntimeProjectionProvider = {
+    materializedSkillNames: () => [],
+    availability: () => undefined,
+    isRefreshing: () => false
+  }
+
   constructor(private readonly repository: SettingsRepository) {}
+
+  setCustomServerRuntimeProjectionProvider(provider: CustomServerRuntimeProjectionProvider): void {
+    this.customServerRuntimeProjectionProvider = provider
+  }
 
   // Bundled connectors are default-on. Keep this projection on the durable owner so runtime
   // configuration, Skill provisioning, and renderer views all apply the same opt-out rule.
@@ -62,6 +75,46 @@ class ConnectorSettingsModule {
     const disabled = new Set(connectors?.disabledConnectorIds ?? [])
 
     return CONNECTOR_CATALOG.map((meta) => meta.id).filter((id) => !disabled.has(id))
+  }
+
+  materializedCustomSkillNames(): string[] {
+    const bundled = new Set(CONNECTOR_CATALOG.map((connector) => connector.id))
+    return [
+      ...new Set(
+        this.customServerRuntimeProjectionProvider.materializedSkillNames().filter((skillName) => {
+          const name = customConnectorNameFromSkillName(skillName)
+          return name !== undefined && !bundled.has(name)
+        })
+      )
+    ]
+  }
+
+  connectorSkillNames(connectors: StoredConnectors | undefined): string[] {
+    const bundled = this.enabledConnectorIds(connectors).map((id) => `mcp-${id}`)
+    return [...new Set([...bundled, ...this.materializedCustomSkillNames()])]
+  }
+
+  connectorSkillCatalogEntries(connectors: StoredConnectors | undefined): Array<{
+    directory: string
+    name: string
+    description?: string
+    source: 'connector'
+  }> {
+    const bundled = this.enabledConnectorIds(connectors).map((id) => {
+      const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)!
+      return {
+        directory: `mcp-${id}`,
+        name: `mcp-${id}`,
+        description: connector.useWhen,
+        source: 'connector' as const
+      }
+    })
+    const custom = this.materializedCustomSkillNames().map((name) => ({
+      directory: name,
+      name,
+      source: 'connector' as const
+    }))
+    return [...bundled, ...custom]
   }
 
   // Called from SettingsService's existing whole-settings migration path so the trigger timing and
@@ -114,18 +167,7 @@ class ConnectorSettingsModule {
 
   async provisionedConnectorSkillNames(): Promise<string[]> {
     const connectors = await this.getConnectors()
-    const bundled = this.enabledConnectorIds(connectors)
-    const customServers = connectors?.customMcpServers ?? []
-    const custom = customServers
-      .filter(
-        (server) =>
-          server.enabled &&
-          isCustomMcpServerRouteSafe(server, customServers) &&
-          (!server.oauth || Boolean(server.oauthState?.tokens?.access_token))
-      )
-      .map(customConnectorSlug)
-
-    return Array.from(new Set([...bundled, ...custom].map((id) => `mcp-${id}`)))
+    return this.connectorSkillNames(connectors)
   }
 
   async listConnectors(): Promise<ConnectorsSnapshot> {
@@ -143,8 +185,8 @@ class ConnectorSettingsModule {
 
     return buildConnectorTemplateExport({
       id: server.id,
-      slug: customConnectorSlug(server),
       name: server.name,
+      displayName: server.displayName,
       transport: server.transport,
       ...(server.description ? { description: server.description } : {}),
       ...(server.command ? { command: server.command } : {}),
@@ -163,9 +205,7 @@ class ConnectorSettingsModule {
   async previewCustomServerTemplateImport(contents: string): Promise<ConnectorTemplatePreview> {
     const customServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
     return parseConnectorTemplate(contents, {
-      existingIds: customServers.map((server) => server.id),
       existingNames: customServers.map((server) => server.name),
-      existingSlugs: customServers.map(customConnectorSlug),
       bundledIds: CONNECTOR_CATALOG.map((connector) => connector.id)
     })
   }
@@ -234,32 +274,17 @@ class ConnectorSettingsModule {
 
   async addCustomServer(request: AddCustomServerRequest): Promise<ConnectorsSnapshot> {
     const name = request.name.trim()
-    const normalizedName = name.toLowerCase()
-    const slug = request.slug?.trim() || toCustomConnectorSlug(name)
+    const displayName = request.displayName.trim()
     const existingServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
-    const existingAliasKeys = new Set(
-      existingServers.flatMap(customConnectorAliases).map(customConnectorAliasKey)
-    )
-    if (CONNECTOR_CATALOG.some((connector) => connector.id.toLowerCase() === normalizedName)) {
-      throw new Error(`Connector name "${name}" is reserved by a built-in connector`)
-    }
-    if (existingServers.some((server) => server.name.toLowerCase() === normalizedName)) {
-      throw new Error(`A custom connector named "${name}" already exists`)
-    }
-    if (existingAliasKeys.has(normalizedName)) {
-      throw new Error(`Connector name "${name}" conflicts with an existing Connector identity`)
-    }
-    if (!isCustomConnectorSlug(slug)) {
+    if (!displayName) throw new Error('Display name is required')
+    if (!isCustomConnectorName(name)) {
       throw new Error('Connector ID must use only lowercase letters, numbers, and hyphens')
     }
-    if (CONNECTOR_CATALOG.some((connector) => connector.id === slug)) {
-      throw new Error(`Connector ID "${slug}" is reserved by a built-in connector`)
+    if (CONNECTOR_CATALOG.some((connector) => connector.id === name)) {
+      throw new Error(`Connector ID "${name}" is reserved by a built-in connector`)
     }
-    if (existingServers.some((server) => customConnectorSlug(server) === slug)) {
-      throw new Error(`A custom connector with ID "${slug}" already exists`)
-    }
-    if (existingAliasKeys.has(customConnectorAliasKey(slug))) {
-      throw new Error(`Connector ID "${slug}" conflicts with an existing Connector alias`)
+    if (existingServers.some((server) => server.name === name)) {
+      throw new Error(`A custom connector with ID "${name}" already exists`)
     }
     if (request.transport === 'stdio' && request.oauth) {
       throw new Error('OAuth is only supported for remote custom connectors')
@@ -269,8 +294,8 @@ class ConnectorSettingsModule {
     }
     const candidate: StoredCustomMcpServer = {
       id: randomUUID(),
-      slug,
       name,
+      displayName,
       transport: request.transport,
       enabled: !request.oauth,
       trustedAt: Date.now(),
@@ -306,7 +331,7 @@ class ConnectorSettingsModule {
       )
       if (!server) throw new Error(`Unknown custom connector: ${request.id}`)
       if (server.oauth && !server.oauthState?.tokens?.access_token) {
-        throw new Error(`Sign in to "${server.name}" before enabling it`)
+        throw new Error(`Sign in to "${server.displayName}" before enabling it`)
       }
     }
     await this.repository.setCustomServerEnabled(request.id, request.enabled)
@@ -333,6 +358,8 @@ class ConnectorSettingsModule {
     )
 
     if (!existing) throw new Error(`Unknown custom connector: ${request.id}`)
+    const displayName = request.displayName?.trim() ?? existing.displayName
+    if (!displayName) throw new Error('Display name is required')
 
     const envRefs = request.env ? this.encryptSecretRecord(request.env) : existing.envRefs
     // Preserve legacy plaintext only when the caller leaves it untouched and safeStorage is still
@@ -369,8 +396,8 @@ class ConnectorSettingsModule {
       existing.url !== request.url?.trim()
     const merged: StoredCustomMcpServer = {
       id: existing.id,
-      slug: customConnectorSlug(existing),
       name: existing.name,
+      displayName,
       transport: request.transport,
       enabled: nextOAuth && oauthCredentialsChanged ? false : existing.enabled,
       ...(existing.trustedAt !== undefined ? { trustedAt: existing.trustedAt } : {}),
@@ -490,10 +517,25 @@ class ConnectorSettingsModule {
           (server.transport === 'stdio' && !server.command) ||
           (server.transport !== 'stdio' && !server.url)
         const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
+        const configurationAvailability = unavailable
+          ? ('unavailable' as const)
+          : unauthenticated
+            ? ('unauthenticated' as const)
+            : undefined
+        const runtimeAvailability = server.enabled
+          ? this.customServerRuntimeProjectionProvider.availability(server.id)
+          : undefined
+        const availability = configurationAvailability ?? runtimeAvailability
+        const checking = Boolean(
+          server.enabled &&
+          !configurationAvailability &&
+          !runtimeAvailability &&
+          this.customServerRuntimeProjectionProvider.isRefreshing(server.id)
+        )
         return {
           id: server.id,
-          slug: customConnectorSlug(server),
           name: server.name,
+          displayName: server.displayName,
           description: server.description,
           transport: server.transport,
           enabled: server.enabled && !unavailable && !unauthenticated,
@@ -519,14 +561,11 @@ class ConnectorSettingsModule {
                 }
               }
             : {}),
-          ...(unavailable
-            ? { availability: 'unavailable' as const }
-            : unauthenticated
-              ? { availability: 'unauthenticated' as const }
-              : {})
+          ...(availability ? { availability } : {}),
+          ...(checking ? { checking: true } : {})
         }
       })
-      .sort((a, b) => a.name.localeCompare(b.name))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
   }
 
   private async connectorsSnapshot(): Promise<ConnectorsSnapshot> {
@@ -541,4 +580,4 @@ class ConnectorSettingsModule {
 }
 
 export { ConnectorSettingsModule }
-export type { CustomServerSecurityChangeGuard }
+export type { CustomServerRuntimeProjectionProvider, CustomServerSecurityChangeGuard }

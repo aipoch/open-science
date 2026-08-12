@@ -1,7 +1,8 @@
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
-// Only lightweight, Electron-free diagnostics and argv flags are imported statically here. The MCP
-// server modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
+// Only lightweight, Electron-free bootstrap modules are imported statically here. The MCP server
+// modules (and their heavy SDK graph) remain lazy inside the matching execution branch.
 import {
   ARTIFACT_MCP_SERVER_ARG,
   NOTEBOOK_MCP_SERVER_ARG,
@@ -17,6 +18,8 @@ import {
   reportApplicationStartupFailure
 } from './diagnostics/startup'
 import { createLogger, diagnosticErrorFields, flushLogs } from './logger'
+import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
+import { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG } from './office-preview/office-preview-runtime-protocol'
 import {
   createRendererFailureReporter,
   registerRendererDiagnosticsIpc
@@ -83,15 +86,29 @@ if (shouldRunArtifactMcpServer) {
 
 // Boots the Electron app only in normal UI mode, keeping artifact MCP mode free of Electron imports.
 async function startElectronApp(mainEntryPath: string): Promise<void> {
-  const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, protocol } =
-    await import('electron')
+  const { app, BrowserWindow, crashReporter, ipcMain, nativeImage, nativeTheme, protocol } =
+    createRequire(import.meta.url)('electron') as typeof import('electron')
+
+  // Electron accepts privileged schemes only before app ready. Keep this in the synchronous UI
+  // bootstrap before any awaited import can yield to the ready event.
+  protocol.registerSchemesAsPrivileged([
+    MANAGED_PREVIEW_SCHEME,
+    OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
+  ])
 
   // Establish identity and single-writer ownership before opening main.log. A secondary launch must
   // never rotate or append to the primary process's file sink. These two modules are lightweight; all
   // backend imports remain behind the lock.
   app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
-  const [{ acquireSingleInstanceLock }, { createSecondInstanceRelay, orchestrateAppStartup }] =
-    await Promise.all([import('./single-instance'), import('./app-startup')])
+  const [
+    { acquireSingleInstanceLock },
+    {
+      createSecondInstanceRelay,
+      createStartupWindowCloseOptions,
+      createStartupWindowSecondInstanceHandler,
+      orchestrateAppStartup
+    }
+  ] = await Promise.all([import('./single-instance'), import('./app-startup')])
   const preStartupSecondInstanceRelay = createSecondInstanceRelay()
   if (
     !acquireSingleInstanceLock({
@@ -154,8 +171,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     import('../../resources/tray.png?asset')
   ])
 
-  // Windows gets multi-resolution ICOs for title-bar and Alt-Tab fidelity; macOS Dock and Linux use
-  // lossless 1024px PNGs. The settings preview is built from the same platform-specific source.
+  // Windows gets multi-resolution ICOs for title-bar and Alt-Tab fidelity; the macOS runtime Dock
+  // Theme override and Linux use matching lossless 1024px PNGs. The installed macOS icon itself is
+  // build/icon.icon (electron-builder.yml), not either runtime PNG.
   const iconVariantPaths =
     process.platform === 'win32'
       ? { light: iconWindows, dark: iconDarkWindows }
@@ -175,11 +193,13 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
   // returns the handles the migration guard and lifecycle need; the guard is installed before the
   // lifecycle so its before-quit runs first. A second launch that arrives mid-startup is recorded by the
   // relay and surfaced once the window exists.
+  let forwardSecondInstanceDuringStartup: ((argv: string[]) => void) | undefined
   await orchestrateAppStartup({
     diagnostics: startupDiagnostics,
     // The OS lock is already held. Bind the orchestrator's relay to the pre-logger relay so any
     // second-instance signal received during bootstrap is preserved until the lifecycle is ready.
     acquireSingleInstanceLock: ({ onSecondInstance }) => {
+      forwardSecondInstanceDuringStartup = onSecondInstance
       preStartupSecondInstanceRelay.bind(onSecondInstance)
       return true
     },
@@ -201,9 +221,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       startupDiagnostics?.phase('load-application-modules')
       const [
         { registerIpcHandlers },
-        { createMainWindow },
-        { MANAGED_PREVIEW_SCHEME },
-        { OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG },
+        { createManagedPreviewProtocolBridge },
+        { configureMainWindow, createMainWindow },
         { installMigrationQuitGuard, isMigrationInProgress },
         { createAppTray, setTrayIconVariant },
         { installAppLifecycle },
@@ -217,17 +236,17 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { RemoteAccessService, registerRemoteAccessIpcHandlers },
         { createDesktopAttentionController, wireDesktopAttention },
         { createDesktopBadgeAdapter, createWindowsBadgeBitmap },
-        { UnreadTaskDbRepository },
-        { createUnreadTaskController, wireUnreadTaskController },
-        { bindUnreadTaskDeletionRuntime },
+        { wireNotificationInboxController },
         { registerUnreadTaskIpc },
+        { createDatabaseStartupLogging },
+        { createDatabaseStartupOwner },
+        { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
         { getProjectDbClient },
         { resolveStorageRoot }
       ] = await Promise.all([
         import('./ipc'),
+        import('./managed-preview-protocol'),
         import('./windows'),
-        import('./managed-preview-resources'),
-        import('./office-preview/office-preview-runtime-protocol'),
         import('./storage/migration-state'),
         import('./tray'),
         import('./app-lifecycle'),
@@ -241,22 +260,19 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./remote-access'),
         import('./notifications/desktop-attention'),
         import('./notifications/desktop-badge'),
-        import('./notifications/unread-task-repository'),
-        import('./notifications/unread-task-controller'),
-        import('./notifications/task-notification-runtime'),
+        import('./notifications/notification-inbox-controller'),
         import('./notifications/unread-task-ipc'),
+        import('./database/database-startup-logging'),
+        import('./database/database-startup-owner'),
+        import('./database/database-startup-ipc'),
         import('./projects/prisma-client'),
         import('./storage-root')
       ])
 
-      protocol.registerSchemesAsPrivileged([
-        MANAGED_PREVIEW_SCHEME,
-        OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
-      ])
-
       startupDiagnostics?.phase('electron-ready')
       await app.whenReady()
-      startupDiagnostics?.phase('compose-runtime')
+      startupDiagnostics?.phase('prepare-shell')
+      const managedPreviewProtocolBridge = createManagedPreviewProtocolBridge(protocol)
 
       // Set app user model id for windows
       electronApp.setAppUserModelId(APP_USER_MODEL_ID)
@@ -268,168 +284,224 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // preventDefault() on Cmd+- and Cmd+= and silently disables zoom out / reset (issue #336).
       installWindowShortcuts(app)
 
-      // Held in a box (not a bare let) so the settings IPC callback registered below can reach the icon
-      // controller, which itself needs the persisted variant that only exists once settingsService is
-      // constructed. The change callback only fires on a user action (well after startup), so the
-      // controller is always set by then. Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
-      const appIconControllerBox: {
-        current: ReturnType<typeof createAppIconController> | undefined
-      } = { current: undefined }
-      // Late-bound tray handle so the settings IPC below can restyle the tray when the user switches
-      // the app icon variant — the tray only exists once the lifecycle is installed (assigned in the
-      // createTray callback). Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
-      const appTrayBox: { current: ReturnType<typeof createAppTray> } = { current: undefined }
-      // Unread state restores before the main-window lifecycle is installed. Late-bind its getter so
-      // restoration remains window-independent while later badge/probe calls always target the live window.
-      const mainWindowGetterBox: {
-        current: (() => InstanceType<typeof BrowserWindow> | undefined) | undefined
-      } = { current: undefined }
-
       const webMode = parseWebModeOptions(process.argv)
-      // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
-      const {
-        applicationCommands,
-        applicationEvents,
-        bindRemoteAccess,
-        taskNotifications,
-        settingsService,
-        taskAgent,
-        sessionDeletionCapability,
-        archiveCapability,
-        detectActiveSessions,
-        prepareForQuit,
-        dispose: disposeApplicationRuntime
-      } = await registerIpcHandlers({
-        mainEntryPath,
-        handoffRuntime: 'production',
-        headless: webMode.headless,
-        onAppIconVariantChanged: (variant) => {
-          appIconControllerBox.current?.setVariant(variant)
-          // Keep the tray glyph on the same variant as the window icon. No-op before the lifecycle
-          // installs the tray, or off Windows (single static tray asset there).
-          if (appTrayBox.current && trayVariantIconPaths) {
-            setTrayIconVariant(appTrayBox.current, trayVariantIconPaths, variant)
+      const databaseStartupLogging = createDatabaseStartupLogging(log, app.getVersion())
+      const databaseStartupOwner = createDatabaseStartupOwner({
+        reportBlocked: databaseStartupLogging.reportBlocked,
+        verifyDatabase: async (onProgress) => {
+          await getProjectDbClient(
+            resolveStorageRoot(),
+            databaseStartupLogging.migrationOptions(onProgress)
+          )
+        }
+      })
+      const startupWindowCloseOptions = createStartupWindowCloseOptions(() => app.quit())
+      const disposeDatabaseStartupIpc = registerDatabaseStartupIpc({
+        ipcMain,
+        owner: databaseStartupOwner,
+        quit: startupWindowCloseOptions.requestQuit,
+        getWindows: () => BrowserWindow.getAllWindows()
+      })
+      const databaseStartupQuitGuard = installDatabaseStartupQuitGuard({
+        app,
+        owner: databaseStartupOwner
+      })
+      const startupWindow = webMode.headless
+        ? undefined
+        : createMainWindow(startupWindowCloseOptions)
+      if (startupWindow) {
+        if (!forwardSecondInstanceDuringStartup) {
+          throw new Error('Second-instance startup relay is not initialized.')
+        }
+        preStartupSecondInstanceRelay.bind(
+          createStartupWindowSecondInstanceHandler(
+            startupWindow,
+            forwardSecondInstanceDuringStartup
+          )
+        )
+      }
+
+      try {
+        startupDiagnostics?.phase('database-startup')
+        const initialDatabaseAttempt = databaseStartupOwner.start()
+        if (webMode.headless) {
+          const state = await initialDatabaseAttempt
+          if (state.phase === 'blocked') {
+            databaseStartupQuitGuard.dispose()
+            disposeDatabaseStartupIpc()
+            throw Object.assign(new Error(state.error.message), state.error)
           }
-        },
-        listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
-      })
+        } else {
+          await Promise.race([
+            databaseStartupOwner.whenVerified(),
+            initialDatabaseAttempt.then((state) =>
+              state.phase === 'blocked' ? new Promise<void>(() => undefined) : undefined
+            )
+          ])
+        }
+        startupDiagnostics?.phase('compose-runtime')
 
-      // The controller must exist before its IPC responder, while the responder calls back into the
-      // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
-      const visibilityProbeBox: {
-        current: ReturnType<typeof registerUnreadTaskIpc> | undefined
-      } = { current: undefined }
-      const unreadTaskRepository = new UnreadTaskDbRepository(() =>
-        getProjectDbClient(resolveStorageRoot())
-      )
-      const unreadTaskController = createUnreadTaskController({
-        headless: webMode.headless,
-        // Only the main conversation window can acknowledge a visible session. A focused preview
-        // window must not clear unread state for the conversation underneath it.
-        isAppFocused: () => mainWindowGetterBox.current?.()?.isFocused() ?? false,
-        repository: unreadTaskRepository,
-        confirmSessionVisible: (sessionId) =>
-          visibilityProbeBox.current?.confirmSessionVisible(sessionId) ?? Promise.resolve(false),
-        canMarkUnread: (sessionId) => archiveCapability.isSessionAvailableById(sessionId),
-        badge: createDesktopBadgeAdapter({
-          platform: process.platform,
-          setBadgeCount: (count) => app.setBadgeCount(count),
-          isUnityRunning: () => app.isUnityRunning(),
-          getMainWindow: () => mainWindowGetterBox.current?.(),
-          createWindowsOverlay: (label) =>
-            nativeImage.createFromBitmap(createWindowsBadgeBitmap(label), {
-              width: 16,
-              height: 16,
-              scaleFactor: 1
-            }),
-          onError: (error) => log.warn('desktop unread badge failed', error)
-        }),
-        onError: (error) => log.warn('unread task state failed', error)
-      })
-      await unreadTaskController.restore()
-      archiveCapability.setMarkReadSessions((sessionIds) =>
-        unreadTaskController.markReadSessions(sessionIds)
-      )
-      // Bind deletion recovery before a window can load Sessions. A complete main-process scan is
-      // the sole authority for pruning unread rows; renderer hydration never projects its catalog.
-      bindUnreadTaskDeletionRuntime({
-        headless: webMode.headless,
-        unreadController: unreadTaskController,
-        unreadTaskRepository,
-        sessionPersistenceCoordinator: sessionDeletionCapability
-      })
-      visibilityProbeBox.current = registerUnreadTaskIpc({
-        getMainWindow: () => mainWindowGetterBox.current?.(),
-        controller: unreadTaskController,
-        onError: (error) => log.warn('unread task IPC failed', error)
-      })
-      // Apply the persisted icon variant now and keep it in sync as windows come and go. Created
-      // unconditionally — even a headless launch can later surface a desktop window on a plain second
-      // launch (routeSecondInstance -> showMainWindow), and that window plus any live icon-setting
-      // change must still pick up the variant. Construction is safe headless: the dock is set on macOS
-      // (as the pre-existing startup code did unconditionally) and the window loop is a no-op until the
-      // browser-window-created listener sees the first window. The controller owns the macOS dock icon.
-      const initialVariant = await settingsService.getAppIconVariant()
-      appIconControllerBox.current = createAppIconController({
-        electron: { app, getAllWindows: () => BrowserWindow.getAllWindows(), nativeImage },
-        variantPaths: iconVariantPaths,
-        initialVariant
-      })
-      const remoteAccess = await RemoteAccessService.create()
-      bindRemoteAccess(remoteAccess)
-      const webController = createWebServiceController({
-        applicationCommands,
-        requestQuit: () => app.quit(),
-        externalAccess: remoteAccess.webAccess,
-        applicationEvents,
-        taskAgent
-      })
-      remoteAccess.attachWebController(webController)
-      registerRemoteAccessIpcHandlers(remoteAccess)
-      // A launch that itself requested serving (a dedicated headless daemon, or an explicit --serve) is
-      // not attached: stopping it quits the process. On-demand starts for a running instance are attached.
-      if (webMode.enabled) await webController.ensureStarted(webMode.port, { attached: false })
-      // Restore a persisted remote-access preference only after the normal IPC/web surfaces exist.
-      // A missing or signed-out third-party remote-access installation must never delay the desktop window.
-      void remoteAccess.restore()
+        // Held in a box (not a bare let) so the settings IPC callback registered below can reach the icon
+        // controller, which itself needs the persisted variant that only exists once settingsService is
+        // constructed. The change callback only fires on a user action (well after startup), so the
+        // controller is always set by then. Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
+        const appIconControllerBox: {
+          current: ReturnType<typeof createAppIconController> | undefined
+        } = { current: undefined }
+        // Late-bound tray handle so the settings IPC below can restyle the tray when the user switches
+        // the app icon variant — the tray only exists once the lifecycle is installed (assigned in the
+        // createTray callback). Mirrors the trayBox late-binding pattern in app-lifecycle.ts.
+        const appTrayBox: { current: ReturnType<typeof createAppTray> } = { current: undefined }
+        // Unread state restores before the main-window lifecycle is installed. Late-bind its getter so
+        // restoration remains window-independent while later badge/probe calls always target the live window.
+        const mainWindowGetterBox: {
+          current: (() => InstanceType<typeof BrowserWindow> | undefined) | undefined
+        } = { current: undefined }
 
-      return {
-        installMigrationQuitGuard,
-        isMigrationInProgress,
-        createMainWindow,
-        createAppTray,
-        buildAuthenticatedWebUrl,
-        routeSecondInstance,
-        taskNotifications,
-        unreadTaskController,
-        mainWindowGetterBox,
-        settingsService,
-        appTrayBox,
-        // Read through the controller (not a snapshot) so a tray created after a settings change —
-        // e.g. a headless web client flipping the variant mid-startup — starts on the live value.
-        getAppIconVariant: () => appIconControllerBox.current?.getVariant() ?? initialVariant,
-        disposeApplicationRuntime,
-        detectActiveSessions,
-        prepareForQuit,
-        createSessionPersistenceFlush: (
-          getWindow: () => InstanceType<typeof BrowserWindow> | undefined
-        ) => createElectronSessionPersistenceFlush(getWindow),
-        createConfirmClose: (getWindow: () => InstanceType<typeof BrowserWindow> | undefined) =>
-          createElectronCloseConfirm(getWindow, {
-            get: () => settingsService.getClosePreference(),
-            set: async (preference) => {
-              await settingsService.setClosePreference(preference)
+        // Pass the concrete main entry path so ACP can launch the artifact MCP server from the same bundle.
+        const {
+          applicationCommands,
+          applicationEvents,
+          bindRemoteAccess,
+          taskNotifications,
+          notificationInbox,
+          settingsService,
+          taskAgent,
+          detectActiveSessions,
+          prepareForQuit,
+          dispose: disposeApplicationRuntime
+        } = await registerIpcHandlers({
+          mainEntryPath,
+          managedPreviewProtocol: managedPreviewProtocolBridge.registrar,
+          handoffRuntime: 'production',
+          headless: webMode.headless,
+          onAppIconVariantChanged: (variant) => {
+            appIconControllerBox.current?.setVariant(variant)
+            // Keep the tray glyph on the same variant as the window icon. No-op before the lifecycle
+            // installs the tray, or off Windows (single static tray asset there).
+            if (appTrayBox.current && trayVariantIconPaths) {
+              setTrayIconVariant(appTrayBox.current, trayVariantIconPaths, variant)
             }
-          }),
-        installAppLifecycle,
-        createDesktopAttentionController,
-        wireDesktopAttention,
-        wireUnreadTaskController,
-        log,
-        webMode,
-        webController,
-        remoteAccess,
-        disposeIpcHandlerRegistry
+          },
+          listAppIconPreviews: () => buildAppIconPreviews(nativeImage, iconVariantPaths)
+        })
+
+        // The controller must exist before its IPC responder, while the responder calls back into the
+        // controller. This box breaks that startup cycle without exposing unread ownership to renderer.
+        const visibilityProbeBox: {
+          current: ReturnType<typeof registerUnreadTaskIpc> | undefined
+        } = { current: undefined }
+        notificationInbox.configureDesktop({
+          // Only the main conversation window can acknowledge a visible session. A focused preview
+          // window must not clear unread state for the conversation underneath it.
+          isAppFocused: () => mainWindowGetterBox.current?.()?.isFocused() ?? false,
+          confirmSessionVisible: (sessionId) =>
+            visibilityProbeBox.current?.confirmSessionVisible(sessionId) ?? Promise.resolve(false),
+          badge: createDesktopBadgeAdapter({
+            platform: process.platform,
+            setBadgeCount: (count) => app.setBadgeCount(count),
+            isUnityRunning: () => app.isUnityRunning(),
+            getMainWindow: () => mainWindowGetterBox.current?.(),
+            createWindowsOverlay: (label) =>
+              nativeImage.createFromBitmap(createWindowsBadgeBitmap(label), {
+                width: 16,
+                height: 16,
+                scaleFactor: 1
+              }),
+            onError: (error) => log.warn('desktop unread badge failed', error)
+          })
+        })
+        visibilityProbeBox.current = registerUnreadTaskIpc({
+          getMainWindow: () => mainWindowGetterBox.current?.(),
+          controller: notificationInbox,
+          onError: (error) => log.warn('message center visibility IPC failed', error)
+        })
+        // Restore the independent icon variant off macOS and create the macOS Theme/Dock controller.
+        // macOS deliberately leaves the packaged Icon Composer icon untouched until a renderer announces
+        // its Theme; after that, nativeTheme keeps System mode live even with no BrowserWindow open.
+        const initialVariant = await settingsService.getAppIconVariant()
+        appIconControllerBox.current = createAppIconController({
+          electron: {
+            app,
+            getAllWindows: () => BrowserWindow.getAllWindows(),
+            nativeImage,
+            nativeTheme
+          },
+          variantPaths: iconVariantPaths,
+          initialVariant
+        })
+        const remoteAccess = await RemoteAccessService.create()
+        bindRemoteAccess(remoteAccess)
+        const webController = createWebServiceController({
+          applicationCommands,
+          requestQuit: () => app.quit(),
+          externalAccess: remoteAccess.webAccess,
+          applicationEvents,
+          taskAgent
+        })
+        remoteAccess.attachWebController(webController)
+        registerRemoteAccessIpcHandlers(remoteAccess)
+        // A launch that itself requested serving (a dedicated headless daemon, or an explicit --serve) is
+        // not attached: stopping it quits the process. On-demand starts for a running instance are attached.
+        if (webMode.enabled) await webController.ensureStarted(webMode.port, { attached: false })
+        // Restore a persisted remote-access preference only after the normal IPC/web surfaces exist.
+        // A missing or signed-out third-party remote-access installation must never delay the desktop window.
+        void remoteAccess.restore()
+
+        return {
+          installMigrationQuitGuard,
+          isMigrationInProgress,
+          createMainWindow,
+          configureMainWindow,
+          startupWindow,
+          createAppTray,
+          buildAuthenticatedWebUrl,
+          routeSecondInstance,
+          taskNotifications,
+          notificationInbox,
+          mainWindowGetterBox,
+          settingsService,
+          appIconControllerBox,
+          appTrayBox,
+          // Read through the controller (not a snapshot) so a tray created after a settings change —
+          // e.g. a headless web client flipping the variant mid-startup — starts on the live value.
+          getAppIconVariant: () => appIconControllerBox.current?.getVariant() ?? initialVariant,
+          disposeApplicationRuntime,
+          detectActiveSessions,
+          prepareForQuit,
+          createSessionPersistenceFlush: (
+            getWindow: () => InstanceType<typeof BrowserWindow> | undefined
+          ) => createElectronSessionPersistenceFlush(getWindow),
+          createConfirmClose: (getWindow: () => InstanceType<typeof BrowserWindow> | undefined) =>
+            createElectronCloseConfirm(getWindow, {
+              get: () => settingsService.getClosePreference(),
+              set: async (preference) => {
+                await settingsService.setClosePreference(preference)
+              }
+            }),
+          installAppLifecycle,
+          createDesktopAttentionController,
+          wireDesktopAttention,
+          wireNotificationInboxController,
+          log,
+          webMode,
+          webController,
+          remoteAccess,
+          databaseStartupOwner,
+          databaseStartupQuitGuard,
+          disposeIpcHandlerRegistry: () => {
+            managedPreviewProtocolBridge.dispose()
+            disposeDatabaseStartupIpc()
+            disposeIpcHandlerRegistry()
+          }
+        }
+      } catch (error) {
+        databaseStartupQuitGuard.dispose()
+        managedPreviewProtocolBridge.dispose()
+        disposeDatabaseStartupIpc()
+        if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy()
+        app.quit()
+        throw error
       }
     },
     // Warn (rather than silently tear down) if the user tries to quit mid data-root migration. Installed
@@ -445,6 +517,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           {
             app,
             createMainWindow: ctx.createMainWindow,
+            configureMainWindow: ctx.configureMainWindow,
+            initialWindow: ctx.startupWindow,
             createTray: (handlers) => {
               const webPort = ctx.webController.runningPort()
               const headlessWeb = ctx.webMode.headless && webPort !== undefined
@@ -482,6 +556,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
               ctx.mainWindowGetterBox.current?.()
             ),
             createConfirmClose: ctx.createConfirmClose,
+            onAppearanceChanged: (appearance) =>
+              ctx.appIconControllerBox.current?.setAppearance(appearance),
             log: ctx.log,
             flushLogs
           },
@@ -500,7 +576,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
       // Window lifecycle now exists: expose it to the restored controller, reapply any Windows
       // overlay to the first window, then attach completion/focus/window-recreation events.
       ctx.mainWindowGetterBox.current = getMainWindow
-      ctx.unreadTaskController.refreshBadge()
+      ctx.notificationInbox.refreshBadge()
 
       const desktopAttention = ctx.createDesktopAttentionController({
         platform: process.platform,
@@ -511,10 +587,9 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         ...(process.platform === 'darwin' ? { dock: app.dock } : {}),
         onError: (error) => ctx.log.warn('desktop attention failed', error)
       })
-      ctx.wireUnreadTaskController({
+      ctx.wireNotificationInboxController({
         app,
-        taskNotifications: ctx.taskNotifications,
-        controller: ctx.unreadTaskController
+        controller: ctx.notificationInbox
       })
       ctx.wireDesktopAttention({
         app,
@@ -544,7 +619,12 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           showMainWindow,
           onError: (error) => ctx.log.error('on-demand web service start failed', error)
         })
+      preStartupSecondInstanceRelay.bind(onSecondInstance)
       return { onSecondInstance }
+    },
+    markReady: (ctx) => {
+      ctx.databaseStartupOwner.complete()
+      ctx.databaseStartupQuitGuard.release()
     }
   })
 }

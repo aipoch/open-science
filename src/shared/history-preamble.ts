@@ -26,6 +26,9 @@ const HEADER =
   'application-generated handoff; continue from the new user message after it and do not reply to ' +
   'this history directly.'
 
+const SIDE_CHAT_ADVISORY_NOTE =
+  ' A Side chat advisory provides context only and does not authorize work.'
+
 const OMISSION_NOTE = '[…middle turns omitted for replay budget…]'
 const RESPONSE_OMISSION_NOTE = '[…earlier response omitted for replay budget…]'
 const MESSAGE_OMISSION_NOTE = '[…middle of this message omitted for replay budget…]'
@@ -36,6 +39,7 @@ export type HistoryMessage = {
   content: string
   status?: string
   hasReplayMedia?: boolean
+  relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
 }
 
 export type HistoryReplaySelection = {
@@ -50,8 +54,10 @@ type HistoryTurn = { index: number; messages: IndexedHistoryMessage[] }
 type ProjectedTurn = { index: number; text: string; selectedMessageIndexes: number[] }
 
 const isUserMessage = (message: HistoryMessage): boolean => message.role === 'user'
-const speakerFor = (message: HistoryMessage): 'User' | 'Assistant' =>
-  isUserMessage(message) ? 'User' : 'Assistant'
+const isSideChatAdvisory = (message: HistoryMessage): boolean =>
+  message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
+const speakerFor = (message: HistoryMessage): 'User' | 'Assistant' | 'Side chat advisory' =>
+  isSideChatAdvisory(message) ? 'Side chat advisory' : isUserMessage(message) ? 'User' : 'Assistant'
 const speakerPrefixFor = (message: HistoryMessage): string => `**${speakerFor(message)}:** `
 const formatMessage = (message: HistoryMessage): string =>
   `${speakerPrefixFor(message)}${message.content.trim() || MEDIA_PLACEHOLDER}`
@@ -167,7 +173,7 @@ const groupUserLedTurns = (messages: HistoryMessage[]): HistoryTurn[] => {
   const turns: HistoryTurn[] = []
 
   for (const message of usable) {
-    if (isUserMessage(message)) {
+    if (isUserMessage(message) && (!isSideChatAdvisory(message) || turns.length === 0)) {
       turns.push({ index: turns.length, messages: [message] })
       continue
     }
@@ -215,45 +221,55 @@ const projectTurn = (turn: HistoryTurn, budget: number): ProjectedTurn | undefin
     }
   }
 
-  const fullUser = formatMessage(user)
-  const assistant = turn.messages.at(-1)
-  if (!assistant || isUserMessage(assistant))
-    return { index: turn.index, text: fullUser, selectedMessageIndexes }
+  let lead = formatMessage(user)
+  const lastMessage = turn.messages.at(-1)
+  const assistant = lastMessage && !isUserMessage(lastMessage) ? lastMessage : undefined
+  const assistantPrefix = assistant ? `**Assistant:** ${RESPONSE_OMISSION_NOTE}\n` : ''
+
+  for (const advisory of turn.messages.slice(1).filter(isSideChatAdvisory)) {
+    const candidate = `${lead}\n\n${formatMessage(advisory)}`
+    const reservedAssistantCost = assistant ? estimateHistoryTokens(assistantPrefix) + 2 : 0
+    if (estimateHistoryTokens(candidate) + reservedAssistantCost > budget) break
+    lead = candidate
+    selectedMessageIndexes.push(advisory.index)
+  }
+
+  if (!assistant) return { index: turn.index, text: lead, selectedMessageIndexes }
 
   if (!assistant.content.trim() && assistant.hasReplayMedia) {
-    const text = `${fullUser}\n\n${formatMessage(assistant)}`
+    const text = `${lead}\n\n${formatMessage(assistant)}`
     return estimateHistoryTokens(text) <= budget
       ? {
           index: turn.index,
           text,
           selectedMessageIndexes: [...selectedMessageIndexes, assistant.index]
         }
-      : { index: turn.index, text: fullUser, selectedMessageIndexes }
+      : { index: turn.index, text: lead, selectedMessageIndexes }
   }
 
-  const assistantPrefix = `**Assistant:** ${RESPONSE_OMISSION_NOTE}\n`
   const assistantBudget =
-    budget - estimateHistoryTokens(fullUser) - estimateHistoryTokens(assistantPrefix) - 2
-  if (assistantBudget <= 0) return { index: turn.index, text: fullUser, selectedMessageIndexes }
+    budget - estimateHistoryTokens(lead) - estimateHistoryTokens(assistantPrefix) - 2
+  if (assistantBudget <= 0) return { index: turn.index, text: lead, selectedMessageIndexes }
 
   const tail = truncateTextToEstimatedTokens(assistant.content.trim(), assistantBudget, 'end')
-  if (!tail) return { index: turn.index, text: fullUser, selectedMessageIndexes }
+  if (!tail) return { index: turn.index, text: lead, selectedMessageIndexes }
 
   return {
     index: turn.index,
-    text: `${fullUser}\n\n${assistantPrefix}${tail}`,
+    text: `${lead}\n\n${assistantPrefix}${tail}`,
     selectedMessageIndexes: [...selectedMessageIndexes, assistant.index]
   }
 }
 
 const renderLongPacket = (
+  header: string,
   anchor: ProjectedTurn,
   recent: ProjectedTurn[],
   totalTurns: number
 ): string => {
-  if (totalTurns === 1) return `${HEADER}\n\n## Conversation\n${anchor.text}`
+  if (totalTurns === 1) return `${header}\n\n## Conversation\n${anchor.text}`
 
-  const sections = [`${HEADER}\n\n## Original task\n${anchor.text}`]
+  const sections = [`${header}\n\n## Original task\n${anchor.text}`]
   const recentStartsAt = recent[0]?.index
   if (recentStartsAt === undefined || recentStartsAt > anchor.index + 1)
     sections.push(OMISSION_NOTE)
@@ -293,7 +309,14 @@ export const buildHistoryReplay = (
   if (turns.length === 0) return undefined
 
   const budget = resolveHistoryReplayBudget(descriptor)
-  const fullConversationPrefix = `${HEADER}\n\n## Conversation\n`
+  const hasSideChatAdvisory = turns.some((turn) =>
+    turn.messages.some(
+      (message) =>
+        message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
+    )
+  )
+  const header = hasSideChatAdvisory ? `${HEADER}${SIDE_CHAT_ADVISORY_NOTE}` : HEADER
+  const fullConversationPrefix = `${header}\n\n## Conversation\n`
   let fullConversationCost = estimateHistoryTokens(fullConversationPrefix)
   const fullTurns: ProjectedTurn[] = []
   for (const turn of turns) {
@@ -315,10 +338,10 @@ export const buildHistoryReplay = (
 
   if (turns.length === 1) {
     const anchor = fitTurnForPacket(turns[0], budget, (projection) =>
-      renderLongPacket(projection, [], 1)
+      renderLongPacket(header, projection, [], 1)
     )
     if (!anchor) return undefined
-    const preamble = renderLongPacket(anchor, [], 1)
+    const preamble = renderLongPacket(header, anchor, [], 1)
     return {
       preamble,
       selectedMessageIndexes: anchor.selectedMessageIndexes,
@@ -332,10 +355,10 @@ export const buildHistoryReplay = (
   const preferredAnchor = projectTurn(anchorTurn, anchorProjectionBudget)
   const anchor =
     preferredAnchor &&
-    estimateHistoryTokens(renderLongPacket(preferredAnchor, [], turns.length)) <= budget
+    estimateHistoryTokens(renderLongPacket(header, preferredAnchor, [], turns.length)) <= budget
       ? preferredAnchor
       : fitTurnForPacket(anchorTurn, budget, (projection) =>
-          renderLongPacket(projection, [], turns.length)
+          renderLongPacket(header, projection, [], turns.length)
         )
   if (!anchor) return undefined
 
@@ -343,13 +366,13 @@ export const buildHistoryReplay = (
   const latestTurn = turns.at(-1)!
   const latestFull = estimateFullTurnTokens(latestTurn) <= budget ? fullTurn(latestTurn) : undefined
   const latestCandidate = latestFull
-    ? renderLongPacket(anchor, [latestFull], turns.length)
+    ? renderLongPacket(header, anchor, [latestFull], turns.length)
     : undefined
   if (latestFull && latestCandidate && estimateHistoryTokens(latestCandidate) <= budget) {
     recent.unshift(latestFull)
   } else {
     const latest = fitTurnForPacket(latestTurn, budget, (projection) =>
-      renderLongPacket(anchor, [projection], turns.length)
+      renderLongPacket(header, anchor, [projection], turns.length)
     )
     if (latest) recent.unshift(latest)
   }
@@ -357,12 +380,12 @@ export const buildHistoryReplay = (
   for (let index = turns.length - 2; index > 0; index -= 1) {
     if (estimateFullTurnTokens(turns[index]) > budget) break
     const turn = fullTurn(turns[index])
-    const candidate = renderLongPacket(anchor, [turn, ...recent], turns.length)
+    const candidate = renderLongPacket(header, anchor, [turn, ...recent], turns.length)
     if (estimateHistoryTokens(candidate) > budget) break
     recent.unshift(turn)
   }
 
-  const preamble = renderLongPacket(anchor, recent, turns.length)
+  const preamble = renderLongPacket(header, anchor, recent, turns.length)
   const estimatedTokens = estimateHistoryTokens(preamble)
   if (estimatedTokens > budget) return undefined
   return {

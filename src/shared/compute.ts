@@ -108,6 +108,9 @@ export type ComputeApprovalDecision = ComputeApprovalScope | 'deny'
 // For submit_job (Phase 3a): command_preview + command_full + submit_job-specific fields are set.
 export type ComputeApprovalRequest = {
   id: string
+  // Renderer-only ownership hint used to defer this dialog while its Session has Side chat open.
+  // Main's approval broker remains authoritative and keeps the request pending.
+  session_id?: string
   provider_id: string
   provider_name: string
   shape: string

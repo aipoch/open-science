@@ -410,7 +410,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Item: `h-8 rounded-lg px-2 py-1.5 text-sm`.
 - Shared item hover / keyboard highlight: `bg-muted text-foreground`; disabled items are non-interactive at `opacity-50`.
 - Session action menu content: `z-modal min-w-[9rem] rounded-xl border-[0.5px] border-border-200 bg-bg-000 p-1.5 shadow-menu`.
-- Session action trigger uses `MoreVertical`, opacity reveal on row hover/focus/menu-open, and an `aria-label` that includes the session title.
+- Session action trigger uses `MoreVertical`, stays hidden at rest even on the selected row, reveals on row hover, keyboard focus, or menu-open, and has an `aria-label` that includes the session title. Keep it visible in the mobile navigation drawer so touch users do not depend on hover.
 - Session action items: `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-100 data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000`.
 - Destructive session item: `text-danger-000 data-[highlighted]:bg-danger-900`.
 - Group the Session action menu as: `Pin`/`Unpin` and `Rename…`; separator; `Download all artifacts` and `View notebook`; separator; destructive `Delete`.
@@ -439,11 +439,34 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Workspace sidebar outer slot: `z-10 flex h-full w-[220px] min-w-0 shrink-0 flex-col`.
 - Workspace rail card: `m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card`.
 - Workspace brand title uses `text-text-000`; beta and section labels use `text-text-100`.
+- `Cmd+B` on macOS and `Ctrl+B` on Windows/Linux toggle the Workspace sidebar. At mobile widths, the same shortcut toggles the navigation drawer.
 - Sessions nav uses `aria-label="Sessions"` and a scroll body `min-h-0 flex-1 overflow-y-auto py-1`.
+- Holding `Cmd` on macOS or `Ctrl` on Windows/Linux reveals numbered shortcut pills beside the first nine Sessions in their current visual order. `Cmd+1`–`Cmd+9` or `Ctrl+1`–`Ctrl+9` opens the matching Session; modal dialogs and modified Alt/Shift chords retain priority.
 - Session row wrapper owns hover/active visuals only: `group mx-1.5 rounded-md px-2.5 py-1.5 text-sm text-text-000 hover:bg-bg-300 select-none`; active adds `bg-bg-300`.
 - Session title button is the row click target: `flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left`.
+- Session titles stay on one line and clip without an ellipsis. A right-edge gradient from transparent to the current row surface covers overflowing text and leaves the Session action trigger legible; it ends in `rail-card-bg` at rest and `bg-bg-300` on hovered or selected rows.
+- In the `Active` group, running and user-waiting Session titles use `font-semibold`; recently completed idle Sessions keep the regular title weight.
 - Session status dots are decorative and `aria-hidden`; provide adjacent `sr-only` text such as `Session status: Running`.
+- Session groups appear in `Pinned`, `Active`, `Today`, `Yesterday`, `This week`, `Older` order and omit empty headings. Pinning has priority over every activity or date group. `Active` includes running and user-waiting Sessions plus idle Sessions for 15 minutes after their latest activity; selection and Side chat activity alone do not make a Session active. Date groups use the device's local calendar, with `This week` beginning Monday at 00:00, and refresh at local midnight.
 - Footer settings area uses a top fade `bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0` and a `h-8 w-8` icon button.
+
+### Message Center
+
+- Treat the bell as a user-attention surface, not a general activity feed or audit viewer. Items are
+  limited to user-initiated task outcomes and requests that need a decision; ordinary Project and
+  Session create, rename, archive, restore, and delete operations do not generate unread items.
+- Place the shared bell before Settings on Home, beside Settings in the desktop Workspace footer,
+  and in the always-visible mobile conversation header when the sidebar is hidden.
+- Show a red dot when unread items exist. Opening the panel does not mark items read; opening one
+  item marks that item read, and the header provides an explicit mark-all action.
+- Show authorization lifecycle state separately from read state. Resolving, rejecting, expiring, or
+  cancelling a request does not imply that the user has read its notification.
+- Use the same backend-owned list and unread state on Electron, local Web, and remote Web. Native OS
+  banners, Dock/taskbar attention, and native badges are optional desktop delivery adapters and must
+  not affect whether an inbox item is recorded.
+- Keep summaries safe for persistent display: never include secrets, raw connector arguments,
+  command bodies, credentials, or full approval payloads. Navigation targets are structured Project
+  and Session ids rather than stored UI URLs.
 
 ### Input / Textarea / Field
 
@@ -462,9 +485,14 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - User bubble: `ml-auto max-w-[90%] md:max-w-[min(85%,56rem)] rounded-2xl bg-bg-300 px-3.5 py-2 md:px-4 md:py-2.5 text-sm md:text-[15px] text-message-user-text`.
 - Assistant wrapper: `w-full max-w-[56rem] text-sm md:text-[15px] leading-relaxed text-text-000`.
 - Message metadata uses `text-[11px] text-text-000/70 tabular-nums` below the content so timestamps and elapsed status meet WCAG contrast on workspace surfaces. The visible timestamp format is fixed to English `MMM D, h:mm AM/PM`: User Messages show `Sent ...`, completed Agent Messages show `Completed ...`, and failed Agent Messages show `Failed ...`. Terminal timestamps are persisted separately from mutable record update times. Agent footers keep terminal time, elapsed time, and `Usage` on one line without a separator (`Completed ... Elapsed 2m 5s Usage`). `Usage` uses a dashed underline and reveals a compact Context-window-style popover on pointer hover or keyboard focus. The popover has a proportional color bar above its token rows and a divided `Total` row below them. When an adapter reports a reliable agentic model-turn count, show `1 turn` or `N turns` as smaller muted text aligned to the right of the popover title; omit it rather than estimating when unavailable. Show Input, Cache, and Output when only aggregate cache data is available; split Cache into Cache read and Cache write, with distinct colors and bar segments, only when the agent reports both categories. The displayed categories are mutually exclusive and `Total` is their sum.
-- Agent loading surface is transparent and keeps `px-3 py-2` for stable transcript geometry; elapsed and status text use `text-text-000/70`, while the brand indicator uses `text-text-300`. A silent foreground prompt shows `[indicator] · thinking` with elapsed time and the existing slow-response hint. Active tools and permission waits show `[indicator] · interacting with tools` without a timer. Visible assistant text or images hide the indicator; when the current tool transitions to a terminal state, Thinking returns with a fresh timer until the next visible output. Runtime stop, failure, disconnect, and compaction clear the transient indicator state. Historical, duplicate, and late tool events must not revive it or reorder the activity timeline.
+- Agent loading surface is transparent and keeps `px-3 py-2` for stable transcript geometry; elapsed and status text use `text-text-000/70`, while the brand indicator uses `text-text-300`. A silent foreground prompt shows `[indicator] · Thinking` with elapsed time and the existing slow-response hint. Active tools show `[indicator] · Interacting with tools` without a timer. Permission and Plan approval waits show `[indicator] · Waiting for your approval`; pending ask-user elicitation shows `[indicator] · Waiting for your response`. User waits take precedence over visible assistant output and remain untimed until resolved. Outside those waits, visible assistant text or images hide the indicator; when the current tool transitions to a terminal state, Thinking returns with a fresh timer until the next visible output. Runtime stop, failure, disconnect, and compaction clear the transient indicator state. Historical, duplicate, and late tool events must not revive it or reorder the activity timeline.
 - User Message copy and edit actions sit immediately left of the bubble and use the standard inline-action opacity transition on row hover or keyboard focus. When editing creates multiple Branches, keep the Branch navigation persistently visible at the right end of the metadata footer below the bubble, after the sent time, with previous/next controls around a Branch icon and the current/total count. Let the footer wrap on narrow surfaces so the navigation remains the final bottom row without colliding with the sent time.
 - Tool row: `h-8 rounded-lg px-2 text-[13px] hover:bg-foreground/[0.04]`.
+- Context compaction is a standalone, non-interactive activity row rather than a generic Tool group.
+  Keep the existing Tool-row geometry inside a quiet `bg-bg-200/70` surface. Show a spinner with
+  `Compacting context` while active, a check with `Context compacted` when complete, the standard
+  failure icon on error, and a neutral cancelled state. Persist the row on its originating Message
+  Branch and do not let duplicate, replayed, or late lifecycle events reopen a terminal row.
 - Tool row metadata: `text-[12.5px] text-muted-foreground tabular-nums`.
 - Link: `text-primary underline-offset-4 hover:underline`.
 - Inline code / resource reference: `rounded-md bg-accent/50 px-1.5 py-0.5 font-mono text-sm text-primary`.
@@ -490,6 +518,27 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Icon buttons: `Button variant="ghost" size="icon"`, `size-8`.
 - Workspace composer shell: `px-4 pb-2`; center content in `mx-auto w-full max-w-4xl`, then use `px-1 md:px-3` so the composer text track aligns with the message content after the form's own `px-3`.
 - Workspace composer form: `relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque`.
+- Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
+  approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
+  any still-pending Permission approval instead of interrupting the Side Chat in progress.
+- Permission approval uses the shared bottom resize handle and replaces the ordinary composer while
+  pending. Its embedded content uses the panel's single border rather than nesting another card. The
+  panel can grow upward only by the amount of currently hidden scroll overflow, never beyond
+  `min(70dvh, 44rem)`; content that already fits cannot be stretched into empty space. At the maximum
+  height, remaining content scrolls inside the panel while the title banner and Allow/Deny action bar
+  stay pinned to the panel top and bottom. Pressing the resize hit area changes only the visible
+  handle, not the full hit-area background.
+- Ask-User elicitation uses the same content-bounded bottom resize behavior. Key the resize shell to
+  the elicitation request so a new question starts at its natural height instead of inheriting the
+  previous question's manual height.
+- Plan approval uses the same content-bounded bottom panel shell and single-border embedded surface.
+  Its compact summary normally has no hidden overflow, so the top resize handle cannot stretch it
+  into empty space. The card shows the Plan lifecycle, task summary, confidence, and inline revision
+  field; keep only Open and Approve in its top action group. Open activates the Plan in the right
+  Preview panel, where the complete Plan and the separate Dismiss action remain available.
+- While Permission
+  approval, Ask-User elicitation, or Plan approval owns the composer lane, hide the Notebook, jobs,
+  and Plan status chrome above it. Restore that status chrome only with the ordinary composer.
 - Textarea: `min-h-[36px] max-h-[200px] py-1.5 text-[15px] leading-relaxed text-text-000 placeholder:text-text-100`.
 - Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.
@@ -516,9 +565,48 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Container: `mx-auto max-w-[1080px] px-8 py-7 pb-16`.
 - Header: `flex items-center justify-between`.
 - Brand title: display `Open Science`, `text-[26px] leading-none font-medium`.
+- Global search: expose a `Search` ghost icon action in the header; it opens the same shared dialog as
+  `Cmd/Ctrl+K` and does not maintain a second search state.
 - Account menu: `Button variant="ghost" size="icon"`, `size-9 rounded-lg`.
 - Main create button: `Button variant="outline" size="sm"` or `Button size="sm"`; the compact button is `h-8 px-3 text-xs rounded-md`.
 - List title: `text-[17px] leading-6 font-medium`.
+- Projects title: use `GalleryVerticalEnd`; activity counters sit beside each Project name and split
+  `running` from `waiting on you` rather than presenting one ambiguous total.
+- Project actions: use the shared Session dropdown styling and size the surface to its content so
+  inline padding stays balanced. The first action is `Pin project` / `Unpin project`, using an outline
+  / filled star; `Settings` opens `Project Settings` for Name and Description, and its edit action is
+  labelled `Save`. Pinned Projects form the first group while each pinned and unpinned group retains
+  the existing most-recent-activity ordering.
+- Project description: explain that the optional description is shown in the Project list for the
+  user's reference and is not included in the agent prompt.
+- Session updates: show a responsive card grid above the Project/Recent columns for
+  every non-archived Session that is `running`, `waiting-permission`, `waiting-plan-approval`, or has
+  an unread `task.completed` notification while idle. Cards occupy one column on compact screens and
+  two columns on desktop, filling rows from top to bottom. Waiting Sessions come first, then running
+  Sessions, then completed Sessions. Every card opens its Session and contains only the Session title,
+  Project name, state, and state-relative time. Cards use the clickable pointer cursor. Opening a
+  completed Session marks its task outcome read, so that card no longer appears when the user returns
+  Home. A completed card also reveals a dismiss action on pointer hover or keyboard focus; dismissing
+  marks every unread completion outcome for that Session read without opening it, and the action stays
+  visible on touch devices.
+- Home reads live Session projections from the application-level runtime owner; it does not mount
+  Workspace commands or preview side effects. Background artifacts remain durable, but only the
+  foreground Workspace for their owning Project may auto-open a molecule preview.
+- Session activity labels: `running` maps to `Running`; `waiting-permission` and
+  `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
+  existing `session-running`, `session-waiting`, and `success-000` tokens. `session-running` is blue
+  in both themes; Running uses a rotating loader in Session update cards and Project counts plus an
+  intermittent left-to-right light sweep over the card title, with both title and loader static under
+  reduced motion. Needs you keeps its amber pulse, while Completed uses a static green check in both
+  the Session update card and message center.
+- Session update cards and the Projects / Recent sessions containers use `shadow-card` without an
+  additional border, so its built-in hairline ring matches the New project button instead of
+  stacking into a heavier outline.
+- Recent sessions: the secondary line is always the owning Project name, never a prompt preview or a
+  repeat of the Session title. Once the Session catalog is complete, if the entire Recent sessions
+  list is empty, each Project row also shows its artifact count from a complete Project Files index;
+  partial index counts are omitted. While those counts are visible, Project Files change events
+  refresh the affected Project so index repair and file changes do not leave stale totals.
 - List row: `h-10 rounded-lg px-3 hover:bg-accent hover:text-accent-foreground`.
 - Inline more actions: default `opacity-0`, then `opacity-100` on hover or focus-visible.
 
@@ -554,7 +642,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 
 - The composer input is a `contenteditable` editor (`role="textbox" aria-multiline`), not a textarea, so it can hold inline non-editable mention chips. Its muted `text-text-300` placeholder is `Ask anything — / skills · @ files · ⌘K search · ↑↓ history` on macOS and uses `Ctrl+K` on Windows/Linux. `/` skills, `@` artifact files, and the platform search shortcut are wired; `#` is reserved for later and is not advertised.
 - `ArrowUp` at the logical start recalls prompt history and `ArrowDown` moves toward the saved scratch draft. Existing Sessions use User Messages from the current visible Branch only; New Conversation uses the most recently active same-Project Sessions' visible opening prompts. Turns with top-level uploads are excluded, while structured Skill and explicit `@` chips are restored. Deleted or Specialist-disallowed Skills become plain `/<name>` text. Mention popups, IME composition, selections, modifier arrows, staged attachments, and normal multiline caret movement retain priority.
-- Typing `/` at a word boundary opens a **skill popup** above the input: `absolute bottom-full mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)]`. It is a `role="listbox"` of `role="option"` rows — name (`font-medium text-sm truncate`) + source badge (`text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground`) + 2-line description (`text-xs text-text-300 line-clamp-2`); active row `bg-bg-200 !text-text-000`. A footer hint bar shows `↑↓ navigate · Enter select · Esc close`.
+- Typing `/` at a word boundary opens a **skill popup** above the input: `absolute bottom-full mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)]`. It is a `role="listbox"` of `role="option"` rows — name (`font-medium text-sm truncate`) + source badge (`text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground`) + 2-line description (`text-xs text-text-300 line-clamp-2`); active row `bg-bg-200 !text-text-000`. Plain `Tab` and `Enter` both select the active option; modified `Shift+Tab` keeps normal backward focus navigation. A footer hint bar shows `↑↓ navigate · Enter / Tab select · Esc close`. The `@` artifact popup follows the same selection contract and leaves plain `Tab` untouched while no selectable result is available.
 - Selecting inserts an inline **skill chip**: `inline-flex items-center px-1.5 py-0.5 mx-0.5 bg-accent text-accent-foreground rounded text-sm font-medium select-all`, `contenteditable="false"`, label `/<Name>`, carrying `data-mention-type="skill" data-skill-id`. Backspace deletes the whole chip; chips are atomic to caret motion.
 - On send, chips serialize to `/<Name>` inline in the visible message, and their skill ids are carried as `forcedSkillIds`: the agent prompt is prefixed with a steering nudge naming the skills, and any picked skill toggled off in Settings is force-loaded for that turn only (the message text the user sees is unchanged).
 
@@ -569,25 +657,39 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Breadcrumb: a clickable root segment (`text-muted-foreground hover:text-foreground`), a muted `/` separator, and the truncated current page label in `text-foreground`, all at `text-sm font-semibold`.
 - Right content column uses `bg-card`; its content area scrolls independently (`min-h-0 flex-1 overflow-y-auto`). Panels pad with `p-5`, and maximize mode constrains inner content to `max-w-[880px]`.
 - First-level groups use `SettingsSection`: `text-base font-semibold` title, optional `text-[13px] leading-5 text-muted-foreground` description, and a hairline separator between groups. Do not wrap ordinary sections in cards.
-- Label/control pairs use `SettingsRow`: a two-column grid with the label and optional description on the left and a stable `12rem` to `20rem` control column on the right. Cards remain for repeated objects, install/status surfaces, paths, errors, and drop zones.
+- Preference label/control pairs use `SettingsRow`: a two-column grid with the label and optional description on the left and a stable `12rem` to `20rem` control column on the right. Create and edit forms use one consistent stacked field rhythm instead: a visible `text-sm font-medium` label above a full-width Input, Textarea, or Select, followed by helper or error text. Cards remain for repeated objects, install/status surfaces, paths, errors, and drop zones.
+- Editor fields needed for the primary task stay visible. Optional or uncommon fields live under a borderless **Advanced settings** disclosure with `aria-expanded` / `aria-controls`; it is collapsed by default and opens initially when imported credentials must be entered or existing advanced values would otherwise be hidden. Do not wrap the disclosure in a card.
 - Form textareas use the shared `Textarea`; binary settings use the shared `Switch`.
 - Select fields use `Select`, with a `32px` trigger height.
+- A visible Settings search or filter field owns the platform search shortcut: `Cmd+K` on macOS and `Ctrl+K` on Windows/Linux focus it without selecting or clearing its value. The topmost nested Settings dialog wins over a search behind it; hidden or disabled searches do not intercept the shortcut. Persistent list-toolbars show the shortcut as right-aligned keycaps inside the field, while transient searches such as runtime-package and Specialist capability filters expose the same behavior through `aria-keyshortcuts` without repeating the visual hint.
+
+#### Resource identity and display names
+
+- Connector, Skill, and Specialist `name` values are stable invocation identities. They are fixed after creation and are used by host APIs, generated Skill documents, package references, and policy routing. Editing a presentation label must never change these references.
+- `displayName` is presentation-only and may appear in lists, search results, prompts, and approval UI. Connector and Specialist editors may change it freely. A Skill may read an optional `displayName` from external `SKILL.md` frontmatter and falls back to `name`; built-in Skills and app-generated Skill exports omit that non-standard field, and the app does not maintain a separate Skill display-name field outside the manifest.
+- Connector context follows a distinct derived path: after live tool discovery the app generates an on-demand `mcp-<name>/SKILL.md`. Its frontmatter identity and every `host.mcp` example use immutable `name`; `displayName` may appear only in generated prose (or through an explicit `listConnectors()` result). Updating a Connector regenerates this document and reloads Skills without creating an invocation alias. Auth-recovery guidance derived from Connector configuration and discovered login tools remains part of the generated document.
+- A custom Connector also has an internal UUID `id`. Runtime calls and Specialist capability references use its immutable lowercase-hyphenated `name`; durable permission grants use the UUID. The UI shows `displayName` and exposes the immutable Connector ID separately. Display names and UUIDs are not invocation aliases.
+- Connector template schema v1 stores both `name` and `displayName` directly. Export never includes secrets, and import does not synthesize compatibility aliases from a display name.
+- Specialist package schema v1 remains byte-for-byte compatible in field shape: package `name` stays the immutable invocation identity and `displayName` stays editable presentation metadata.
+- Public JavaScript host APIs and their object fields use camelCase (`listSkills`, `listConnectors`, `attachSkill`, `displayName`, `systemPrompt`, and related fields). Internal transport operation names may remain snake_case behind that boundary.
 
 #### Skills panel
 
 - Panel navigation is breadcrumb-driven: the list, detail, create, edit, import, and upload screens are second-level pages reached through the settings header's back / forward history and maximize control, not separate dialogs.
-- List toolbar: a single row of `Select` source filter (`w-36`), a flex-1 search `Input` with a leading `Search` icon (`pl-8`, `type="search"`), and a right-aligned "Add skill" control.
+- List toolbar: a single row of `Select` source filter (`w-36`), a flex-1 search `Input` with a leading `Search` icon (`pl-8`, `type="search"`) and platform `Cmd/Ctrl+K` keycaps, and a right-aligned "Add skill" control.
 - "Add skill" is a neutral (not primary) `DropdownMenu` trigger: `h-8 rounded-lg border border-border bg-card px-2.5 text-sm font-medium hover:bg-muted`, with a leading `Plus` and a trailing `ChevronDown` (`opacity-70`). Its items — Write from scratch, Upload a skill, Import from GitHub — use `gap-2.5`, a leading icon, and a stacked label + `text-xs text-muted-foreground` hint.
 - Skills group by source (Featured / Imported / Personal). Each group header is a full-width collapse toggle: `text-sm font-semibold` label with a `ChevronDown` that rotates `-rotate-90` when collapsed, over a `text-xs text-muted-foreground` subtitle.
-- Skill row: `flex min-h-14 items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description (`text-xs text-muted-foreground`) is a flex-1 button opening the detail page; trailing controls use `SettingsIconAction` (`Button ghost icon-sm` + Tooltip) for edit and delete, followed by the enable switch.
+- Skill row: `flex min-h-14 items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description (`text-xs text-muted-foreground`) is a flex-1 button opening the detail page; trailing controls use `SettingsIconAction` (`Button ghost icon-sm` + Tooltip) for export, edit, and delete, followed by the enable switch. Export is available only for Imported and Personal Skills in the desktop app; Featured Skills are built in and never expose the action.
 - Enable controls use the shared shadcn `Switch`, with `bg-primary` when checked and `bg-input` when unchecked. Skills, Connectors, and their detail pages reuse the same component.
 - Skill detail page: header row pairs a `size-6` scroll icon (`ScrollText`, `text-primary`) + `text-base font-semibold` name + a rounded source badge (`bg-muted text-xs text-muted-foreground`, e.g. Featured) against the same enable switch, with a `text-xs text-muted-foreground` "Updated N days ago" line and a `[text-wrap:pretty]` description below. A **Files** section (`border-t border-border pt-4`) renders the `SKILL.md` body via `AgentMarkdown`; a **Details** section lists frontmatter Author / License / Third-party as stacked `text-xs` label + `text-sm` value rows, shown only when present.
-- Editor (create / edit) is sectioned Identity + Content + References: Content offers a Write / Upload toggle where pasting a `SKILL.md` auto-fills the frontmatter; References is a dropzone writing into the skill's `references/`.
-- Import from GitHub is scan-first. Its labeled input accepts either keywords or a direct `owner/repo`, `owner/repo@ref`, or `github.com` URL, with **Find skills** as the main action. Direct references scan immediately; keywords search public GitHub repositories and render at most ten compact rows (`owner/repo`, optional two-line description, star count, neutral **Scan for skills** action). Scanning collapses the repository results; a full-size **Show repositories** / **Hide repositories** control restores or collapses them. A divider separates repository matches from Skill candidates. Scanned candidates use per-row checkboxes with **Select all** and **Invert selection** in a dedicated selection toolbar; already-imported skills (matched by exact source URL or by the same folder name) show a muted `Imported` pill and are not pre-selected. The batch action, "Import selected (N)", is a neutral button (`border border-border bg-card hover:bg-muted`), never primary green. Empty searches keep the input as the recovery path; GitHub failures use the standard Settings danger banner.
+- Editor (create / edit) uses the shared stacked field rhythm for Name, Description, and Content. Content offers a Write / Upload toggle where pasting a `SKILL.md` auto-fills the frontmatter. The optional References dropzone, which writes into the skill's `references/`, lives under **Advanced settings** and opens initially when the Skill already has reference files.
+- Import from GitHub is scan-first. Its labeled input accepts either keywords or a direct `owner/repo`, `owner/repo@ref`, or `github.com` URL, with **Find skills** as the main action. Direct references scan immediately; keywords search public GitHub repositories and render at most ten compact rows (`owner/repo`, optional two-line description, star count, neutral **Scan for skills** action). A selected repository keeps the results visible while its row action shows a spinner and **Scanning…**, then collapses the repository results after a successful scan; a full-size **Show repositories** / **Hide repositories** control restores or collapses them. A divider separates repository matches from Skill candidates. Scanned candidates use per-row checkboxes with **Select all** and **Invert selection** in a dedicated selection toolbar; already-imported skills (matched by exact source URL or by the same folder name) show a muted `Imported` pill and are not pre-selected. The neutral batch action shows its own spinner and **Importing…** while importing instead of a page-level loading message, and otherwise reads "Import selected (N)" (`border border-border bg-card hover:bg-muted`), never primary green. Empty searches keep the input as the recovery path; GitHub failures use the standard Settings danger banner.
+- The import header exposes a neutral **GitHub token** control. Expanding it reveals a separator-backed inline credential area (not a nested card) with a password input and **Verify and save** action. Main verifies the candidate against GitHub before replacing the existing credential, stores only an OS-encrypted reference plus a masked hint, and supports replacement and explicit **Remove token**. Search, scan, lazy preview, Settings import, and conversation-requested import all reuse the same authenticated request seam; the token is attached only to exact trusted GitHub API/raw-content hosts. Missing or undecryptable credentials fall back to anonymous requests without exposing plaintext to the renderer, and rate-limit errors direct the user back to this control.
 - A conversation-requested GitHub import uses the same preview-first semantics in an application modal: the app scans the resolved repo URL, pins candidates to the resolved commit so preview and import share one immutable snapshot, lists every discovered Skill, pre-selects candidates that are not already imported, loads a candidate's full preview only when requested, and writes only the user's confirmed selection. The agent never installs GitHub content directly into its own runtime Skill directory.
 - Upload is a full-page dropzone (`Drag and drop or click to upload`) accepting a `.md` file or a `.zip` / `.skill` bundle, with a centered "Write from scratch instead" fallback. A dropped file is **parsed first, not imported**: on success it advances to a "Confirm import" page (parsed name, description, and — for a bundle — the file list), with a neutral **Import** button and a **Choose a different file** escape. Nothing is written until Import is confirmed.
 - Duplicate detection on the confirm page uses two signals: an **exact re-upload** (the bundle's sha256 content signature already matches an import) and a **same-name skill** already in the catalog (any source; also covers `.md` uploads). Either one shows an "Already uploaded" pill on the name and an `Info`-icon reminder below the button row (`text-xs text-muted-foreground`) — "…already imported — re-importing is a no-op." for an exact match, or `A skill named "X" already exists.` for a name match. The reminder never blocks import.
 - When a file fails to parse into a valid skill (not a ZIP, no `SKILL.md`, or a `SKILL.md` with no `name`), the failure shows in a danger banner directly under the dropzone: `flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000` with a leading `size-3.5` `AlertTriangle`. This is the reusable inline-error style for the settings pages.
+- Export uses a row-level `Download` action and immediately opens the native Save As dialog. The portable ZIP contains the Skill's `SKILL.md` and ordinary supporting files, excludes Open Science provenance/ownership metadata, and can be uploaded again through the standard Skill import flow. Cancellation is silent, a successful save shows a short status, and failures use the standard Settings danger banner.
 - Stray file drops are neutralized app-wide: the renderer entry prevents the default `dragover` / `drop` so a file released outside a dropzone can never navigate the window to `file://…`.
 
 ## Clickable Area Guidelines
@@ -609,7 +711,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | Skills            | Add skill                                            | Neutral `DropdownMenu` trigger (`border border-border bg-card`) + `Plus` / `ChevronDown` |
 | Skills            | Group header                                         | Full-width collapse `button` + rotating `ChevronDown`                                    |
 | Skills            | Skill row                                            | Flex-1 `button` → detail; hover reveals no extra chrome                                  |
-| Skills            | Edit / delete                                        | `SettingsIconAction` (`Button ghost icon-sm` + `Tooltip`)                                |
+| Skills            | Export / edit / delete                               | `SettingsIconAction` (`Button ghost icon-sm` + `Tooltip`)                                |
 | Skills            | Enable toggle                                        | Shared shadcn `Switch`                                                                   |
 | Skills            | Import selected                                      | Neutral `button` (`border border-border bg-card`), not primary                           |
 | Sidebar           | Back / collapse                                      | `Sidebar` + `Button ghost icon`                                                          |

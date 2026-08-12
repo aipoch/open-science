@@ -1,0 +1,392 @@
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings'
+import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
+import type { ResolvedAgentBackend } from '../agent-framework'
+import { claudeCodeFramework } from '../agent-framework/claude-code'
+import { codexFramework } from '../agent-framework/codex'
+import { opencodeFramework } from '../agent-framework/opencode'
+import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import type { AcpRuntimeOptions } from './runtime'
+import {
+  RestrictedInferenceError,
+  RestrictedInferenceRunner,
+  type RestrictedInferenceRuntime
+} from './restricted-inference-runner'
+
+let temporaryRoot: string | undefined
+
+afterEach(async () => {
+  if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true })
+  temporaryRoot = undefined
+})
+
+const target = (
+  frameworkId: ExplicitAgentBackendTarget['frameworkId'] = 'claude-code',
+  providerId = 'provider-a'
+): ExplicitAgentBackendTarget => ({
+  frameworkId,
+  providerId,
+  model: { kind: 'required', id: 'model-a' },
+  reasoningEffort: 'high'
+})
+
+const backend = (
+  framework: ResolvedAgentBackend['framework'],
+  extra: Partial<ResolvedAgentBackend> = {}
+): ResolvedAgentBackend => ({
+  framework,
+  executablePath: `/managed/${framework.id}`,
+  env: {},
+  sessionModel: 'model-a',
+  contextUsageModel: 'model-a',
+  ...extra
+})
+
+type RuntimeHarnessOptions = Readonly<{
+  response?: { stopReason: 'end_turn' | 'cancelled' }
+  events?: AcpRuntimeEvent[]
+  permissionRequest?: true
+  onRuntime?: () => void
+  onCreateSession?: () => Promise<void>
+  onPrompt?: () => Promise<void>
+}>
+
+const runtimeHarness = (
+  options: AcpRuntimeOptions,
+  input: RuntimeHarnessOptions = {}
+): RestrictedInferenceRuntime => {
+  let resolvedBackend: ResolvedAgentBackend | undefined
+  return {
+    createSession: vi.fn(async () => {
+      resolvedBackend = await (options.resolveBackend as () => Promise<ResolvedAgentBackend>)()
+      await input.onCreateSession?.()
+      return { sessionId: 'provider-session-1' } as never
+    }),
+    sendPrompt: vi.fn(async () => {
+      for (const event of input.events ?? []) options.callbacks?.onEvent?.(event)
+      if (input.permissionRequest) {
+        options.callbacks?.onPermissionRequest?.({
+          requestId: 'permission-1',
+          sessionId: 'provider-session-1',
+          toolCallId: 'tool-1',
+          title: 'Run a tool',
+          options: []
+        })
+      }
+      await input.onPrompt?.()
+      return input.response ?? { stopReason: 'end_turn' }
+    }),
+    cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' }) as never),
+    respondToPermission: vi.fn(async () => undefined),
+    shutdownForQuit: vi.fn(async () => {
+      await resolvedBackend?.responsesBridgeLease?.release()
+    })
+  } as unknown as RestrictedInferenceRuntime
+}
+
+const event = (value: Partial<AcpRuntimeEvent>): AcpRuntimeEvent =>
+  ({
+    id: 'event-1',
+    timestamp: 1,
+    kind: 'message',
+    level: 'info',
+    ...value
+  }) as AcpRuntimeEvent
+
+const makeRunner = async (
+  resolved: ResolvedAgentBackend,
+  runtime: RuntimeHarnessOptions = {}
+): Promise<{
+  runner: RestrictedInferenceRunner
+  resolveTarget: ReturnType<typeof vi.fn>
+  runtimes: RestrictedInferenceRuntime[]
+}> => {
+  temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-inference-'))
+  const resolveTarget = vi.fn(async () => resolved)
+  const runtimes: RestrictedInferenceRuntime[] = []
+  const runner = new RestrictedInferenceRunner({
+    appVersion: '0.11.0',
+    configRoot: temporaryRoot,
+    profileNamespace: 'test-inference',
+    resolveTarget,
+    createRuntime: (options) => {
+      runtime.onRuntime?.()
+      const created = runtimeHarness(options, runtime)
+      runtimes.push(created)
+      return created
+    }
+  })
+  return { runner, resolveTarget, runtimes }
+}
+
+const runInput = (
+  overrides: Partial<Parameters<RestrictedInferenceRunner['run']>[0]> = {}
+): Parameters<RestrictedInferenceRunner['run']>[0] => ({
+  prompt: 'Return PONG.',
+  target: target(),
+  systemPrompt: 'Do not use tools.',
+  agentName: 'open-science-test-inference',
+  description: 'Test inference without tools.',
+  ...overrides
+})
+
+describe('RestrictedInferenceRunner', () => {
+  it('fails closed only for native Codex subscription targets', async () => {
+    const { runner } = await makeRunner(backend(claudeCodeFramework))
+
+    expect(runner.supportsTarget(target('claude-code'))).toBe(true)
+    expect(runner.supportsTarget(target('opencode'))).toBe(true)
+    expect(runner.supportsTarget(target('codex'))).toBe(true)
+    expect(runner.supportsTarget(target('codex', CODEX_SHARED_PROVIDER_ID))).toBe(false)
+    await expect(
+      runner.run(runInput({ target: target('codex', CODEX_SHARED_PROVIDER_ID) }))
+    ).rejects.toMatchObject({
+      code: 'transport-unavailable'
+    })
+  })
+
+  it('collects text and provider-neutral usage while verifying the Codex tool-less scope', async () => {
+    const usage: AcpTurnTokenUsage = {
+      inputTokens: 12,
+      cacheTokens: 3,
+      cachedReadTokens: 2,
+      cachedWriteTokens: 1,
+      outputTokens: 4,
+      turnCount: 1
+    }
+    const registered = new Set<string>()
+    const registerToolLessSession = vi.fn((id: string) => registered.add(id))
+    const unregisterToolLessSession = vi.fn((id: string) => registered.delete(id))
+    const release = vi.fn(async () => undefined)
+    const { runner, resolveTarget } = await makeRunner(
+      backend(codexFramework, {
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          registerToolLessSession,
+          unregisterToolLessSession,
+          release
+        }
+      }),
+      {
+        events: [
+          event({ role: 'assistant', text: 'PONG' }),
+          event({ kind: 'stop', text: 'end_turn', turnUsage: usage })
+        ]
+      }
+    )
+
+    await expect(runner.run(runInput({ target: target('codex') }))).resolves.toEqual({
+      text: 'PONG',
+      frameworkId: 'codex',
+      model: 'model-a',
+      stopReason: 'end_turn',
+      usage
+    })
+    expect(resolveTarget).toHaveBeenCalledWith(target('codex'), {
+      systemPromptAppends: ['Do not use tools.'],
+      forceCodexNativeResponsesCompatibility: true
+    })
+    expect(registerToolLessSession).toHaveBeenCalledWith('provider-session-1')
+    expect(unregisterToolLessSession).toHaveBeenCalledWith('provider-session-1')
+    expect(release).toHaveBeenCalledOnce()
+    await expect(
+      readdir(join(temporaryRoot!, 'runtime-support', 'test-inference'))
+    ).resolves.toEqual([])
+  })
+
+  it('cancels and rejects tool events and oversized output', async () => {
+    const cases: Array<{
+      name: string
+      runtime: RuntimeHarnessOptions
+      expectedCode: RestrictedInferenceError['code']
+      outputLimitBytes?: number
+    }> = [
+      {
+        name: 'tool event',
+        runtime: { events: [event({ kind: 'tool' })] },
+        expectedCode: 'tool-violation'
+      },
+      {
+        name: 'oversized output',
+        runtime: { events: [event({ role: 'assistant', text: '12345' })] },
+        expectedCode: 'output-limit',
+        outputLimitBytes: 4
+      }
+    ]
+
+    for (const current of cases) {
+      const { runner, runtimes } = await makeRunner(
+        backend(current.name === 'oversized output' ? opencodeFramework : claudeCodeFramework),
+        current.runtime
+      )
+      await expect(
+        runner.run(runInput({ outputLimitBytes: current.outputLimitBytes }))
+      ).rejects.toMatchObject({ code: current.expectedCode })
+      expect(runtimes[0]?.cancelPrompt).toHaveBeenCalled()
+      await rm(temporaryRoot!, { recursive: true, force: true })
+      temporaryRoot = undefined
+    }
+  })
+
+  it.each([
+    ['claude-code', claudeCodeFramework, target('claude-code')],
+    ['opencode', opencodeFramework, target('opencode')],
+    ['codex response routes', codexFramework, target('codex')]
+  ] as const)('fails closed on %s permission requests', async (_name, framework, runTarget) => {
+    const resolved = backend(
+      framework,
+      framework.id === 'codex'
+        ? {
+            responsesBridgeLease: {
+              selectSkills: vi.fn(async () => []),
+              registerReviewerSession: vi.fn(),
+              unregisterReviewerSession: vi.fn(() => false),
+              registerToolLessSession: vi.fn(),
+              unregisterToolLessSession: vi.fn(() => true),
+              release: vi.fn(async () => undefined)
+            }
+          }
+        : {}
+    )
+    const { runner, runtimes } = await makeRunner(resolved, { permissionRequest: true })
+
+    await expect(runner.run(runInput({ target: runTarget }))).rejects.toMatchObject({
+      code: 'tool-violation'
+    })
+    expect(runtimes[0]?.respondToPermission).toHaveBeenCalledWith({
+      requestId: 'permission-1',
+      cancelled: true
+    })
+    expect(runtimes[0]?.cancelPrompt).toHaveBeenCalled()
+  })
+
+  it('releases every unattached backend lease when tool-less enforcement is unavailable', async () => {
+    const releaseResponses = vi.fn(async () => undefined)
+    const releaseAnthropic = vi.fn(async () => undefined)
+    const releaseTransport = vi.fn(async () => undefined)
+    const { runner, runtimes } = await makeRunner(
+      backend(codexFramework, {
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          release: releaseResponses
+        },
+        anthropicBridgeLease: { setTarget: vi.fn(() => true), release: releaseAnthropic },
+        providerTransportLease: { setTarget: vi.fn(() => true), release: releaseTransport }
+      })
+    )
+
+    await expect(runner.run(runInput({ target: target('codex') }))).rejects.toMatchObject({
+      code: 'transport-unavailable'
+    })
+    expect(runtimes).toHaveLength(0)
+    expect(releaseResponses).toHaveBeenCalledOnce()
+    expect(releaseAnthropic).toHaveBeenCalledOnce()
+    expect(releaseTransport).toHaveBeenCalledOnce()
+  })
+
+  it('leaves output unbounded when an Adapter does not opt into a limit', async () => {
+    const text = 'x'.repeat(300 * 1024)
+    const { runner } = await makeRunner(backend(claudeCodeFramework), {
+      events: [event({ role: 'assistant', text })]
+    })
+
+    await expect(runner.run(runInput())).resolves.toMatchObject({ text })
+  })
+
+  it('propagates caller cancellation and drains active work during shutdown', async () => {
+    let releasePrompt = (): void => undefined
+    const promptBlocked = new Promise<void>((resolve) => {
+      releasePrompt = resolve
+    })
+    const { runner, runtimes } = await makeRunner(backend(claudeCodeFramework), {
+      response: { stopReason: 'cancelled' },
+      onPrompt: () => promptBlocked
+    })
+    const call = runner.run(runInput())
+
+    await vi.waitFor(() => expect(runtimes).toHaveLength(1))
+    const shutdown = runner.shutdown()
+    await vi.waitFor(() => expect(runtimes[0]?.cancelPrompt).toHaveBeenCalled())
+    releasePrompt()
+
+    await expect(call).rejects.toMatchObject({ code: 'cancelled' })
+    await expect(shutdown).resolves.toBeUndefined()
+    await expect(runner.run(runInput())).rejects.toMatchObject({ code: 'shutting-down' })
+  })
+
+  it('rejects a pre-aborted caller before resolving a backend', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const { runner, resolveTarget, runtimes } = await makeRunner(backend(claudeCodeFramework))
+
+    await expect(runner.run(runInput({ signal: controller.signal }))).rejects.toMatchObject({
+      code: 'cancelled'
+    })
+    expect(resolveTarget).not.toHaveBeenCalled()
+    expect(runtimes).toHaveLength(0)
+  })
+
+  it('does not dispatch a prompt when cancellation lands during session setup', async () => {
+    let finishCreate = (): void => undefined
+    const creating = new Promise<void>((resolve) => {
+      finishCreate = resolve
+    })
+    const controller = new AbortController()
+    const { runner, runtimes } = await makeRunner(backend(claudeCodeFramework), {
+      onCreateSession: () => creating
+    })
+    const call = runner.run(runInput({ signal: controller.signal }))
+
+    await vi.waitFor(() => expect(runtimes[0]?.createSession).toHaveBeenCalled())
+    controller.abort()
+    finishCreate()
+
+    await expect(call).rejects.toMatchObject({ code: 'cancelled' })
+    expect(runtimes[0]?.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('does not create a session when cancellation lands after profile preparation', async () => {
+    const controller = new AbortController()
+    const { runner, runtimes } = await makeRunner(backend(claudeCodeFramework), {
+      onRuntime: () => controller.abort()
+    })
+
+    await expect(runner.run(runInput({ signal: controller.signal }))).rejects.toMatchObject({
+      code: 'cancelled'
+    })
+    expect(runtimes[0]?.createSession).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch a prompt when cancellation lands during tool-less scope registration', async () => {
+    const controller = new AbortController()
+    const registerToolLessSession = vi.fn(() => controller.abort())
+    const unregisterToolLessSession = vi.fn(() => true)
+    const { runner, runtimes } = await makeRunner(
+      backend(codexFramework, {
+        responsesBridgeLease: {
+          selectSkills: vi.fn(async () => []),
+          registerReviewerSession: vi.fn(),
+          unregisterReviewerSession: vi.fn(() => false),
+          registerToolLessSession,
+          unregisterToolLessSession,
+          release: vi.fn(async () => undefined)
+        }
+      })
+    )
+
+    await expect(
+      runner.run(runInput({ target: target('codex'), signal: controller.signal }))
+    ).rejects.toMatchObject({ code: 'cancelled' })
+    expect(registerToolLessSession).toHaveBeenCalledWith('provider-session-1')
+    expect(runtimes[0]?.sendPrompt).not.toHaveBeenCalled()
+  })
+})

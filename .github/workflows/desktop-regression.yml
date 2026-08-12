@@ -1,0 +1,171 @@
+name: Desktop Regression
+
+# Advisory desktop behavior checks. Packaged P0 consumes the immutable ARM64 release artifact while
+# visual regression uses the same macos-14 source-build environment that owns the canonical Darwin
+# baselines. Release and Nightly call this reusable workflow inside their existing low-privilege run,
+# so the independent jobs can be retried without a privileged workflow_run checkout boundary.
+on:
+  workflow_call:
+    inputs:
+      allow_failure:
+        description: 'Keep regression advisory when embedded in the Release no-publish dry-run'
+        required: false
+        type: boolean
+        default: false
+      run_id:
+        description: 'Optional caller run ID; defaults to the current Release dry-run'
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Release or Nightly workflow run ID whose macos-arm64 artifact should be tested'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  source:
+    name: Resolve source build
+    continue-on-error: ${{ inputs.allow_failure }}
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.resolve.outputs.available }}
+      run_id: ${{ steps.resolve.outputs.run_id }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Resolve source run
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_RUN_ID: ${{ inputs.run_id }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          run_id="${MANUAL_RUN_ID:-$CURRENT_RUN_ID}"
+          if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "Source run ID must be numeric." >&2
+            exit 1
+          fi
+          metadata=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
+          workflow=$(jq -r .name <<<"$metadata")
+          if [ "$workflow" != "Release" ] && [ "$workflow" != "Nightly" ]; then
+            echo "Source run must belong to Release or Nightly, got: $workflow" >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          jq -r '"sha=" + .head_sha' <<<"$metadata" >> "$GITHUB_OUTPUT"
+          available=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+            --jq 'any(.artifacts[]; .name == "macos-arm64" and (.expired | not))')
+          echo "available=$available" >> "$GITHUB_OUTPUT"
+          if [ "$available" != "true" ]; then
+            echo "Source run $run_id has no active macos-arm64 artifact." >&2
+            exit 1
+          fi
+
+  p0:
+    name: p0 (macos-arm64 artifact)
+    needs: source
+    if: needs.source.outputs.available == 'true'
+    continue-on-error: ${{ inputs.allow_failure }}
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download macOS ARM64 package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.source.outputs.run_id }}
+          name: macos-arm64
+          path: package
+
+      - name: Extract packaged application
+        run: |
+          set -euo pipefail
+          zip=$(find package -maxdepth 1 -type f -name '*-mac-arm64.zip' -print -quit)
+          test -n "$zip"
+          mkdir -p extracted
+          ditto -x -k "$zip" extracted
+
+      - name: Resolve packaged Electron executable
+        id: packaged_app
+        run: |
+          set -euo pipefail
+          executable=$(find extracted -type f -path '*/Open Science.app/Contents/MacOS/Open Science' -print -quit)
+          test -n "$executable"
+          echo "executable=$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$executable")" >> "$GITHUB_OUTPUT"
+
+      - name: Run packaged P0 regression
+        env:
+          OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
+        run: npm run test:e2e:p0
+
+      - name: Upload P0 diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-regression-p0-${{ needs.source.outputs.run_id }}
+          retention-days: 7
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+
+  visual:
+    name: visual (canonical macos-14 source build)
+    needs: source
+    if: needs.source.outputs.available == 'true'
+    continue-on-error: ${{ inputs.allow_failure }}
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron application
+        run: npm run build:e2e
+
+      # Preserve Playwright's single retry, but keep retry-passes visible as flaky. The caller marks
+      # this job advisory, so the signal cannot block Release or Nightly publication.
+      - name: Run visual stability regression
+        run: npm run test:e2e:visual -- --fail-on-flaky-tests
+
+      - name: Upload visual diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-regression-visual-${{ needs.source.outputs.run_id }}
+          retention-days: 7
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore

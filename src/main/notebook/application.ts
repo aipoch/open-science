@@ -13,9 +13,9 @@ type NotebookApplicationDeps = Pick<
   | 'repository'
   | 'getPackageMirror'
   | 'notebookRuntimeSettings'
+  | 'micromambaRunner'
   | 'locale'
   | 'appVersion'
-  | 'resolveArtifactPath'
 > & {
   events: ApplicationEventPublisher
 }

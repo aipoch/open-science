@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  AGENT_RUNTIME_UPDATE_FIXTURE,
   SKILL_IMPORT_APPROVAL_FIXTURE,
   TERMINAL_EVENT_FIXTURE
 } from '../../test/fixtures/renderer-contract-certification'
@@ -29,6 +30,7 @@ import { isWebRpcChannel, isWebRpcEventChannel } from './web-rpc-contract'
 const TASK_RUN_REQUEST_FIELDS = {
   project: true,
   prompt: true,
+  cwd: true,
   sessionId: true,
   permissionProfile: true,
   skillIds: true
@@ -64,6 +66,7 @@ const computePaths = [
   'compute.list',
   'compute.listDir',
   'compute.probe',
+  'compute.replayApproval',
   'compute.respondApproval',
   'compute.revealInFolder',
   'compute.scratchSet',
@@ -212,6 +215,7 @@ describe('renderer surface compatibility matrix', () => {
       )
     ).toBe(false)
     expect(Object.keys(TASK_RUN_REQUEST_FIELDS).sort()).toEqual([
+      'cwd',
       'permissionProfile',
       'project',
       'prompt',
@@ -281,6 +285,26 @@ describe('renderer surface compatibility matrix', () => {
       type: 'run.event',
       data: TERMINAL_EVENT_FIXTURE
     })
+  })
+
+  it('passes scoped Agent Runtime Segment events through Electron and Web unchanged', () => {
+    const event: ApplicationEvent<'acp:agent-runtime-update'> = {
+      channel: 'acp:agent-runtime-update',
+      payload: AGENT_RUNTIME_UPDATE_FIXTURE
+    }
+    const webEvent = projectWebRendererEvent(event)
+    expect(webEvent).toMatchObject({
+      protocolVersion: 1,
+      channel: 'acp:agent-runtime-update'
+    })
+
+    const projected = projectThroughRendererAdapters(
+      'acp.onAgentRuntimeUpdate',
+      'acp:agent-runtime-update',
+      webEvent?.payload
+    )
+    expect(projected.electronPayload).toEqual(AGENT_RUNTIME_UPDATE_FIXTURE)
+    expect(projected.webPayload).toEqual(AGENT_RUNTIME_UPDATE_FIXTURE)
   })
 
   it('preserves Skill import approval identity on Electron/Web and excludes Task', () => {

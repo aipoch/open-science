@@ -1,4 +1,7 @@
+import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { request as httpRequest, type ClientRequest, type Server } from 'node:http'
+import { createConnection, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -74,6 +77,104 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('rejects an invalid token before reading the request body', async () => {
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
+    const connection = await server.ensureStarted()
+    const underlying = (server as unknown as { server?: Server }).server
+    if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+    const accepted = once(underlying, 'request')
+    let responseStatus: number | undefined
+    let responseConnection: string | undefined
+    const request = httpRequest(
+      connection.endpoint,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer invalid-token',
+          'content-type': 'application/json',
+          'content-length': 1024
+        }
+      },
+      (response) => {
+        responseStatus = response.statusCode
+        responseConnection = response.headers.connection
+        response.resume()
+      }
+    )
+    request.once('error', () => undefined)
+
+    try {
+      request.write('{')
+      await accepted
+      await vi.waitFor(() => expect(responseStatus).toBe(401), { timeout: 500 })
+      expect(responseConnection).toBe('close')
+    } finally {
+      request.destroy()
+      await server.close()
+    }
+  })
+
+  it('fails closed when a Session capability omits its Frame owner', async () => {
+    const server = new NotebookLocalRpcServer({} as never)
+
+    await expect(server.issueSessionConnection('session-1', 'project-1', '')).rejects.toThrow(
+      'Notebook RPC capabilities require an explicit Agent Frame owner.'
+    )
+  })
+
+  it('does not let a root Frame capability write through another active Frame lane', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const execute = vi.spyOn(service, 'execute')
+    const server = new NotebookLocalRpcServer(service, { token: 'master-token' })
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    server.setArtifactProvenanceContext('session-1', {
+      rootFrameId: 'root-frame-session-1',
+      agentFrameId: 'child-frame-1',
+      messageBranchId: 'branch-child',
+      runtimeSegmentId: 'runtime-child',
+      promptMessageId: 'message-child'
+    })
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: { sessionId: 'forged', workspaceCwd: '/workspace', code: 'forged = True' }
+          })
+        },
+        'Notebook Frame capability test'
+      )
+
+      expect(response.status).toBe(403)
+      await expect(response.json()).resolves.toEqual({
+        error: 'Notebook RPC capability does not match active Agent Frame.'
+      })
+      expect(execute).not.toHaveBeenCalled()
+    } finally {
+      await server.close()
+    }
+  })
+
   it('binds Plan calls to the issued Session capability and rejects the master token', async () => {
     const root = await createStorageRoot()
     const call = vi.fn(async (input: unknown) => input)
@@ -89,18 +190,22 @@ describe('notebook local RPC server', () => {
     })
     const connection = await server.issuePlanConnection('session-1', 'project-1')
     const request = (token: string): Promise<Response> =>
-      fetch(connection.endpoint, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          method: 'planCall',
-          params: {
-            projectId: 'forged-project',
-            sessionId: 'forged-session',
-            operation: 'approve'
-          }
-        })
-      })
+      fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: {
+              projectId: 'forged-project',
+              sessionId: 'forged-session',
+              operation: 'approve'
+            }
+          })
+        },
+        'Notebook Plan capability RPC'
+      )
 
     try {
       expect((await request('master-token')).status).toBe(401)
@@ -109,7 +214,8 @@ describe('notebook local RPC server', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         operation: 'approve',
-        input: undefined
+        input: undefined,
+        signal: expect.any(AbortSignal)
       })
 
       call.mockRejectedValueOnce(
@@ -128,6 +234,542 @@ describe('notebook local RPC server', () => {
       await server.close()
     }
   })
+
+  it('keeps the Plan signal active after a complete response and closes idle TCP promptly', async () => {
+    const root = await createStorageRoot()
+    let callSignal: AbortSignal | undefined
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      planService: {
+        call: async (input) => {
+          callSignal = input.signal
+          return { approval: 'approved' }
+        }
+      }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    let close: Promise<void> | undefined
+
+    try {
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ method: 'planCall', params: { operation: 'approve' } })
+        },
+        'Notebook Plan capability RPC'
+      )
+      expect(response.status).toBe(200)
+      expect(callSignal).toBeInstanceOf(AbortSignal)
+      expect(callSignal?.aborted).toBe(false)
+
+      close = server.close()
+      const closeSettled = vi.fn()
+      void close.then(closeSettled)
+      await vi.waitFor(() => expect(closeSettled).toHaveBeenCalledTimes(1), {
+        timeout: 250,
+        interval: 10
+      })
+      expect(callSignal?.aborted).toBe(false)
+    } finally {
+      await close?.catch(() => undefined)
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it.each(['tcp', 'pipe'] as const)(
+    'aborts the Plan signal when its client disconnects over %s',
+    async (transport) => {
+      const root = await createStorageRoot()
+      const callStarted = createDeferred<AbortSignal>()
+      const pendingCall = createDeferred<unknown>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+      const server = new NotebookLocalRpcServer(service, {
+        transport,
+        planService: {
+          call: async (input) => {
+            callStarted.resolve(input.signal)
+            return pendingCall.promise
+          }
+        }
+      })
+      const connection = await server.issuePlanConnection('session-1', 'project-1')
+      const disconnect = new AbortController()
+
+      try {
+        const request = fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'planCall',
+              params: { operation: 'generate', input: { schema_version: 1 } }
+            }),
+            signal: disconnect.signal
+          },
+          'Notebook Plan capability RPC'
+        )
+        const signal = await callStarted.promise
+        expect(signal.aborted).toBe(false)
+        disconnect.abort()
+        await expect(request).rejects.toMatchObject({ cause: expect.any(Error) })
+        await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      } finally {
+        pendingCall.resolve(undefined)
+        connection.release?.()
+        await server.close()
+      }
+    }
+  )
+
+  it('aborts an in-flight Plan call before promptly closing the server', async () => {
+    const root = await createStorageRoot()
+    const callStarted = createDeferred<AbortSignal>()
+    const pendingCall = createDeferred<unknown>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      planService: {
+        call: async (input) => {
+          callStarted.resolve(input.signal)
+          input.signal.addEventListener('abort', () => pendingCall.resolve(undefined), {
+            once: true
+          })
+          return pendingCall.promise
+        }
+      }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    let request: Promise<Response> | undefined
+    let close: Promise<void> | undefined
+
+    try {
+      request = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: { operation: 'generate', input: { schema_version: 1 } }
+          })
+        },
+        'Notebook Plan capability RPC'
+      )
+      const signal = await callStarted.promise
+      close = server.close()
+      const closeSettled = vi.fn()
+      void close.then(closeSettled)
+
+      await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      await vi.waitFor(() => expect(closeSettled).toHaveBeenCalledTimes(1), {
+        timeout: 250,
+        interval: 10
+      })
+      await expect(request).resolves.toMatchObject({ status: 200 })
+    } finally {
+      pendingCall.resolve(undefined)
+      await Promise.allSettled([request ?? Promise.resolve(), close ?? Promise.resolve()])
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('aborts a Plan call registered after graceful shutdown has started', async () => {
+    const root = await createStorageRoot()
+    const callStarted = createDeferred<AbortSignal>()
+    const pendingCall = createDeferred<unknown>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      planService: {
+        call: async (input) => {
+          callStarted.resolve(input.signal)
+          if (input.signal.aborted) pendingCall.resolve(undefined)
+          else
+            input.signal.addEventListener('abort', () => pendingCall.resolve(undefined), {
+              once: true
+            })
+          return pendingCall.promise
+        }
+      }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    const bindings = (
+      server as unknown as {
+        sessionRpcCapabilities: Map<string, unknown>
+      }
+    ).sessionRpcCapabilities
+    const getBinding = bindings.get.bind(bindings)
+    let request: Promise<Response> | undefined
+    let close: Promise<void> | undefined
+    vi.spyOn(bindings, 'get').mockImplementation((token) => {
+      const binding = getBinding(token)
+      if (token === connection.token && !close) close = server.close()
+      return binding
+    })
+
+    try {
+      request = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: { operation: 'generate', input: { schema_version: 1 } }
+          })
+        },
+        'Notebook Plan capability RPC'
+      )
+      const signal = await callStarted.promise
+      expect(signal.aborted).toBe(true)
+      await expect(request).resolves.toMatchObject({ status: 200 })
+      await expect(close).resolves.toBeUndefined()
+    } finally {
+      pendingCall.resolve(undefined)
+      await Promise.allSettled([request ?? Promise.resolve(), close ?? Promise.resolve()])
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('destroys a partial Plan body before waiting for graceful shutdown', async () => {
+    const root = await createStorageRoot()
+    const call = vi.fn(async () => undefined)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      planService: { call }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    const underlying = (server as unknown as { server?: Server }).server
+    if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+    const payload = JSON.stringify({
+      method: 'planCall',
+      params: { operation: 'generate', input: { schema_version: 1 } }
+    })
+    const accepted = once(underlying, 'request')
+    let request!: ClientRequest
+    const outcome = new Promise<number | Error>((resolve) => {
+      request = httpRequest(
+        connection.endpoint,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(payload)
+          }
+        },
+        (response) => {
+          response.resume()
+          resolve(response.statusCode ?? 500)
+        }
+      )
+      request.once('error', resolve)
+    })
+    let close: Promise<void> | undefined
+
+    try {
+      request.write(payload.slice(0, -1))
+      await accepted
+      close = server.close()
+      const closeSettled = vi.fn()
+      void close.then(closeSettled)
+      await vi.waitFor(() => expect(closeSettled).toHaveBeenCalledTimes(1))
+      await expect(outcome).resolves.toBeInstanceOf(Error)
+      expect(call).not.toHaveBeenCalled()
+    } finally {
+      request.destroy()
+      await Promise.allSettled([outcome, close ?? Promise.resolve()])
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('waits for the current server to close before restarting the same instance', async () => {
+    const root = await createStorageRoot()
+    const callStarted = createDeferred<AbortSignal>()
+    const pendingCall = createDeferred<unknown>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      planService: {
+        call: async (input) => {
+          callStarted.resolve(input.signal)
+          return pendingCall.promise
+        }
+      }
+    })
+    const connection = await server.issuePlanConnection('session-1', 'project-1')
+    let request: Promise<Response> | undefined
+    let close: Promise<void> | undefined
+    let restart: ReturnType<typeof server.ensureStarted> | undefined
+
+    try {
+      request = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: { operation: 'generate', input: { schema_version: 1 } }
+          })
+        },
+        'Notebook Plan capability RPC'
+      )
+      await callStarted.promise
+      close = server.close()
+      restart = server.ensureStarted()
+      expect((server as unknown as { server?: Server }).server).toBeUndefined()
+
+      pendingCall.resolve(undefined)
+      await expect(request).resolves.toMatchObject({ status: 200 })
+      await expect(close).resolves.toBeUndefined()
+      await expect(restart).resolves.toEqual(
+        expect.objectContaining({ endpoint: expect.any(String) })
+      )
+    } finally {
+      pendingCall.resolve(undefined)
+      await Promise.allSettled([
+        request ?? Promise.resolve(),
+        close ?? Promise.resolve(),
+        restart ?? Promise.resolve()
+      ])
+      connection.release?.()
+      await server.close()
+    }
+  })
+
+  it('allows an identified non-Plan RPC to finish during graceful shutdown', async () => {
+    const root = await createStorageRoot()
+    const callStarted = createDeferred<void>()
+    const pendingCall = createDeferred<unknown>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      connectorService: {
+        call: async () => {
+          callStarted.resolve()
+          return pendingCall.promise
+        }
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'session-1',
+      'project-1',
+      'root-frame-session-1'
+    )
+    let request: Promise<Response> | undefined
+    let close: Promise<void> | undefined
+
+    try {
+      request = fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'mcpCall',
+            params: { server: 'test', method: 'wait', args: {} }
+          })
+        },
+        'Notebook control capability RPC'
+      )
+      await callStarted.promise
+      close = server.close()
+      pendingCall.resolve({ completed: true })
+
+      const response = await request
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toEqual({ result: { completed: true } })
+      await expect(close).resolves.toBeUndefined()
+    } finally {
+      pendingCall.resolve(undefined)
+      await Promise.allSettled([request ?? Promise.resolve(), close ?? Promise.resolve()])
+      connection.release()
+      await server.close()
+    }
+  })
+
+  it.each(['tcp', 'pipe'] as const)(
+    'force-closes an unresolved non-Plan RPC after the graceful drain window over %s',
+    async (transport) => {
+      const root = await createStorageRoot()
+      const callStarted = createDeferred<void>()
+      const pendingCall = createDeferred<unknown>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+      const server = new NotebookLocalRpcServer(service, {
+        transport,
+        connectorService: {
+          call: async () => {
+            callStarted.resolve()
+            return pendingCall.promise
+          }
+        }
+      })
+      const connection = await server.issueControlConnection(
+        'session-1',
+        'project-1',
+        'root-frame-session-1'
+      )
+      let request: Promise<Response> | undefined
+      let close: Promise<void> | undefined
+
+      try {
+        request = fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'mcpCall',
+              params: { server: 'test', method: 'wait', args: {} }
+            })
+          },
+          'Notebook control capability RPC'
+        )
+        const requestOutcome = request.then(
+          (response) => ({ status: 'resolved' as const, response }),
+          (error: unknown) => ({ status: 'rejected' as const, error })
+        )
+        await callStarted.promise
+        close = server.close()
+        const closeSettled = vi.fn()
+        void close.then(closeSettled)
+
+        await vi.waitFor(() => expect(closeSettled).toHaveBeenCalledTimes(1), {
+          timeout: 250,
+          interval: 10
+        })
+        await expect(requestOutcome).resolves.toMatchObject({
+          status: 'rejected',
+          error: { cause: expect.any(Error) }
+        })
+      } finally {
+        pendingCall.resolve(undefined)
+        await Promise.allSettled([request ?? Promise.resolve(), close ?? Promise.resolve()])
+        connection.release()
+        await server.close()
+      }
+    }
+  )
+
+  it.each(['tcp', 'pipe'] as const)(
+    'force-closes a partial-header socket after the graceful drain window over %s',
+    async (transport) => {
+      const root = await createStorageRoot()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectName: 'default-project',
+        repository: new NotebookRunRepository(root)
+      })
+      const server = new NotebookLocalRpcServer(service, { transport })
+      const connection = await server.ensureStarted()
+      const underlying = (server as unknown as { server?: Server }).server
+      if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+      const accepted = once(underlying, 'connection')
+      let socket: Socket | undefined
+      let close: Promise<void> | undefined
+
+      try {
+        if (transport === 'pipe') {
+          if (!connection.socketPath) throw new Error('Expected a local RPC socket path.')
+          socket = createConnection(connection.socketPath)
+        } else {
+          const endpoint = new URL(connection.endpoint)
+          socket = createConnection({
+            host: endpoint.hostname,
+            port: Number(endpoint.port)
+          })
+        }
+        const socketClosed = new Promise<void>((resolve) => {
+          socket?.once('error', () => undefined)
+          socket?.once('close', () => resolve())
+        })
+        await Promise.all([once(socket, 'connect'), accepted])
+        socket.write('POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n')
+
+        close = server.close()
+        const closeSettled = vi.fn()
+        void close.then(closeSettled)
+
+        await vi.waitFor(() => expect(closeSettled).toHaveBeenCalledTimes(1), {
+          timeout: 250,
+          interval: 10
+        })
+        await expect(socketClosed).resolves.toBeUndefined()
+      } finally {
+        socket?.destroy()
+        await close?.catch(() => undefined)
+        await server.close()
+      }
+    }
+  )
 
   it('preserves structured Plan error codes across the session-bound RPC transport', async () => {
     const root = await createStorageRoot()
@@ -148,17 +790,21 @@ describe('notebook local RPC server', () => {
     const connection = await server.issuePlanConnection('session-1', 'project-1')
 
     try {
-      const response = await fetch(connection.endpoint, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${connection.token}`,
-          'content-type': 'application/json'
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'planCall',
+            params: { operation: 'updateStepStatus', input: { title: 'Old step' } }
+          })
         },
-        body: JSON.stringify({
-          method: 'planCall',
-          params: { operation: 'updateStepStatus', input: { title: 'Old step' } }
-        })
-      })
+        'Notebook Plan capability RPC'
+      )
 
       expect(response.status).toBe(500)
       await expect(response.json()).resolves.toEqual({
@@ -179,9 +825,17 @@ describe('notebook local RPC server', () => {
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, { transport: 'pipe' })
-    const session = await server.issueSessionConnection('session-1', 'default-project')
+    const session = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
     const skillImport = await server.issueSkillImportConnection('session-1')
-    const control = await server.issueControlConnection('session-1', 'default-project')
+    const control = await server.issueControlConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
 
     try {
       expect(session.socketPath).toBeTruthy()
@@ -419,7 +1073,11 @@ describe('notebook local RPC server', () => {
       onSessionReleased,
       connectorService: { call: connectorCall }
     })
-    const connection = await server.issueSessionConnection('notebook-session-1', 'default-project')
+    const connection = await server.issueSessionConnection(
+      'notebook-session-1',
+      'default-project',
+      'root-frame-notebook-session-1'
+    )
     server.registerSessionAlias('notebook-session-1', 'real-session-1')
 
     try {
@@ -468,10 +1126,22 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       connectorService: { call: connectorCall }
     })
-    const initial = await server.issueSessionConnection('notebook-session-1', 'default-project')
+    const initial = await server.issueSessionConnection(
+      'notebook-session-1',
+      'default-project',
+      'root-frame-notebook-session-1'
+    )
     server.registerSessionAlias('notebook-session-1', 'real-session-1')
-    const control = await server.issueControlConnection('real-session-1', 'default-project')
-    const replacement = await server.issueSessionConnection('real-session-1', 'default-project')
+    const control = await server.issueControlConnection(
+      'real-session-1',
+      'default-project',
+      'root-frame-real-session-1'
+    )
+    const replacement = await server.issueSessionConnection(
+      'real-session-1',
+      'default-project',
+      'root-frame-real-session-1'
+    )
 
     const callConnector = (token: string): Promise<Response> =>
       fetch(replacement.endpoint, {
@@ -493,6 +1163,157 @@ describe('notebook local RPC server', () => {
       expect(connectorCall).toHaveBeenCalledTimes(2)
     } finally {
       control.release()
+      await server.close()
+    }
+  })
+
+  it('adopts a pre-start alias for the persistent root control capability', async () => {
+    const root = await createStorageRoot()
+    const agentsRead = vi.fn(async () => ({ ok: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token',
+      agentsService: { read: agentsRead }
+    })
+    const control = await server.issueControlConnection(
+      'notebook-session-1',
+      'default-project',
+      'root-frame-notebook-session-1'
+    )
+
+    server.registerSessionAlias('notebook-session-1', 'real-session-1')
+    server.setArtifactProvenanceContext('real-session-1', {
+      rootFrameId: 'root-frame-real-session-1',
+      agentFrameId: 'root-frame-real-session-1',
+      messageBranchId: 'message-branch-real-session-1',
+      runtimeSegmentId: 'runtime-segment-real-session-1',
+      promptMessageId: 'prompt-1'
+    })
+
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${control.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'agentsCall', params: { op: 'list' } })
+      })
+
+      expect(response.status).toBe(200)
+      expect(agentsRead).toHaveBeenCalledWith(
+        { op: 'list', params: {} },
+        expect.objectContaining({
+          sessionId: 'real-session-1'
+        })
+      )
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
+  it('canonicalizes a persistent root control capability issued after alias adoption', async () => {
+    const root = await createStorageRoot()
+    const agentsRead = vi.fn(async () => ({ ok: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token',
+      agentsService: { read: agentsRead }
+    })
+
+    server.registerSessionAlias('notebook-session-1', 'real-session-1')
+    const control = await server.issueControlConnection(
+      'notebook-session-1',
+      'default-project',
+      'root-frame-notebook-session-1'
+    )
+    server.setArtifactProvenanceContext('real-session-1', {
+      rootFrameId: 'root-frame-real-session-1',
+      agentFrameId: 'root-frame-real-session-1',
+      messageBranchId: 'message-branch-real-session-1',
+      runtimeSegmentId: 'runtime-segment-real-session-1',
+      promptMessageId: 'prompt-1'
+    })
+
+    try {
+      const response = await fetch(control.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${control.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method: 'agentsCall', params: { op: 'list' } })
+      })
+
+      expect(response.status).toBe(200)
+      expect(agentsRead).toHaveBeenCalledWith(
+        { op: 'list', params: {} },
+        expect.objectContaining({ sessionId: 'real-session-1' })
+      )
+    } finally {
+      control.release()
+      await server.close()
+    }
+  })
+
+  it('does not adopt a stale or misscoped root capability through a Session alias', async () => {
+    const root = await createStorageRoot()
+    const agentsRead = vi.fn(async () => ({ ok: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root)
+    })
+    const server = new NotebookLocalRpcServer(service, {
+      transport: 'tcp',
+      token: 'secret-token',
+      agentsService: { read: agentsRead }
+    })
+    const stale = await server.issueSessionConnection(
+      'notebook-session-1',
+      'default-project',
+      'root-frame-stale-session'
+    )
+    server.registerSessionAlias('notebook-session-1', 'real-session-1')
+    server.setArtifactProvenanceContext('real-session-1', {
+      rootFrameId: 'durable-root-frame',
+      agentFrameId: 'durable-root-frame',
+      messageBranchId: 'message-branch-real-session-1',
+      runtimeSegmentId: 'runtime-segment-real-session-1',
+      promptMessageId: 'prompt-1'
+    })
+
+    try {
+      const response = await fetch(stale.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${stale.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          method: 'state',
+          params: { sessionId: 'notebook-session-1', workspaceCwd: root }
+        })
+      })
+
+      expect(response.status).toBe(403)
+      expect(agentsRead).not.toHaveBeenCalled()
+    } finally {
+      stale.release?.()
       await server.close()
     }
   })
@@ -541,7 +1362,11 @@ describe('notebook local RPC server', () => {
         clearSession: vi.fn()
       }
     })
-    const control = await server.issueControlConnection('trusted-session', 'default-project')
+    const control = await server.issueControlConnection(
+      'trusted-session',
+      'default-project',
+      'root-frame-trusted-session'
+    )
     server.setArtifactProvenanceContext('trusted-session', {
       rootFrameId: 'root-1',
       agentFrameId: 'agent-1',
@@ -588,6 +1413,7 @@ describe('notebook local RPC server', () => {
         { op: 'switch', params: { name: 'Approved Specialist' } },
         {
           sessionId: 'trusted-session',
+          callerRole: 'main',
           turnId: 'trusted-turn-1',
           controlInvocationGeneration: 7,
           toolInvocationId: 'trusted-tool-1',
@@ -648,8 +1474,16 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       connectorService: { call: connectorCall }
     })
-    const prior = await server.issueSessionConnection('stable-session', 'default-project')
-    const replacement = await server.issueSessionConnection('stable-session', 'default-project')
+    const prior = await server.issueSessionConnection(
+      'stable-session',
+      'default-project',
+      'root-frame-stable-session'
+    )
+    const replacement = await server.issueSessionConnection(
+      'stable-session',
+      'default-project',
+      'root-frame-stable-session'
+    )
 
     try {
       expect(prior.release).toBeTypeOf('function')
@@ -956,7 +1790,7 @@ describe('notebook local RPC server', () => {
       server.revokeArtifactRunCapability(revokedToken)
       const revoked = await call(revokedToken)
       expect(revoked.status).toBe(401)
-      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid Artifact RPC capability.' })
+      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid notebook RPC token.' })
       expect(createVersion).not.toHaveBeenCalled()
     } finally {
       await server.close()
@@ -1478,7 +2312,11 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       computeService: fakeComputeService
     })
-    const connection = await server.issueSessionConnection('my-session', 'default-project')
+    const connection = await server.issueSessionConnection(
+      'my-session',
+      'default-project',
+      'root-frame-my-session'
+    )
 
     try {
       // Known session → returns the registered host list.
@@ -1501,7 +2339,8 @@ describe('notebook local RPC server', () => {
       // Unknown session → empty array.
       const otherConnection = await server.issueSessionConnection(
         'other-session',
-        'default-project'
+        'default-project',
+        'root-frame-other-session'
       )
       const noHosts = await fetch(otherConnection.endpoint, {
         method: 'POST',
@@ -1558,7 +2397,11 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       computeService: fakeComputeService
     })
-    const connection = await server.issueSessionConnection('my-session', 'default-project')
+    const connection = await server.issueSessionConnection(
+      'my-session',
+      'default-project',
+      'root-frame-my-session'
+    )
 
     try {
       const response = await fetch(connection.endpoint, {
@@ -1612,7 +2455,11 @@ describe('notebook local RPC server', () => {
       token: 'secret-token',
       computeService: fakeComputeService
     })
-    const connection = await server.issueSessionConnection('my-session', 'default-project')
+    const connection = await server.issueSessionConnection(
+      'my-session',
+      'default-project',
+      'root-frame-my-session'
+    )
 
     try {
       const response = await fetch(connection.endpoint, {

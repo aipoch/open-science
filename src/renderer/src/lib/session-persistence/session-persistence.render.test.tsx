@@ -42,6 +42,7 @@ describe('session persistence startup', () => {
   let saveSession: ReturnType<typeof vi.fn>
   let saveManifest: ReturnType<typeof vi.fn>
   let reconcilePendingArtifactsApi: ReturnType<typeof vi.fn>
+  let reportRendererFailure: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -55,6 +56,7 @@ describe('session persistence startup', () => {
     saveSession = vi.fn(async (session) => session)
     saveManifest = vi.fn().mockResolvedValue(undefined)
     reconcilePendingArtifactsApi = vi.fn().mockResolvedValue([])
+    reportRendererFailure = vi.fn()
     window.api = {
       sessions: {
         loadAll,
@@ -64,6 +66,9 @@ describe('session persistence startup', () => {
       },
       artifacts: {
         reconcilePendingArtifacts: reconcilePendingArtifactsApi
+      },
+      diagnostics: {
+        reportRendererFailure
       }
     } as unknown as Window['api']
     useSessionStore.setState(createInitialSessionState())
@@ -189,6 +194,13 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).not.toContain(
       '/Users/private'
     )
+    expect(reportRendererFailure).toHaveBeenCalledWith({
+      source: 'handled-error',
+      surface: 'unknown',
+      context: 'session-save',
+      errorCategory: 'error',
+      fingerprint: expect.stringMatching(/^[a-f0-9]{8}$/)
+    })
 
     await act(async () => {
       useSessionStore.getState().appendUserMessage({

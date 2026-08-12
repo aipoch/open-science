@@ -1,0 +1,83 @@
+// @vitest-environment jsdom
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { AgentMarkdown, PresentedAgentMarkdown } from './AgentMarkdown'
+
+describe('AgentMarkdown streaming presentation', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(() => {
+    act(() => root.unmount())
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    container.remove()
+  })
+
+  it('continues painting while target content grows faster than animation frames', async () => {
+    await act(async () => {
+      root.render(<AgentMarkdown content="流" isAnimating />)
+    })
+
+    for (let length = 2; length <= 70; length += 1) {
+      await act(async () => vi.advanceTimersByTimeAsync(8))
+      await act(async () => {
+        root.render(<AgentMarkdown content={'流'.repeat(length)} isAnimating />)
+      })
+    }
+
+    const visible = container.querySelector('.agent-markdown')?.textContent ?? ''
+    expect(visible.length).toBeGreaterThan(0)
+    expect(visible.length).toBeLessThan(70)
+  })
+
+  it('keeps completed Markdown blocks mounted when streaming settles', async () => {
+    vi.useRealTimers()
+
+    const content = Array.from(
+      { length: 40 },
+      (_, index) => `Paragraph ${index + 1} with **formatted content**.`
+    ).join('\n\n')
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} isAnimating />)
+    })
+
+    const firstParagraph = container.querySelector('p')
+    expect(firstParagraph).not.toBeNull()
+
+    const createElement = document.createElement.bind(document) as typeof document.createElement
+    let createdParagraphs = 0
+    vi.spyOn(document, 'createElement').mockImplementation(((
+      tagName: string,
+      options?: ElementCreationOptions
+    ) => {
+      if (tagName === 'p') {
+        createdParagraphs += 1
+      }
+      return createElement(tagName, options)
+    }) as typeof document.createElement)
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} />)
+    })
+
+    expect(createdParagraphs).toBe(0)
+    expect(container.querySelector('p')).toBe(firstParagraph)
+  })
+})

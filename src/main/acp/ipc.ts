@@ -11,8 +11,10 @@ import type {
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
+  AcpContinueInterruptedTurnRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
+  ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
   AcpRevokePermissionGrantRequest,
@@ -24,7 +26,10 @@ import { installAgentShutdownGuard } from './shutdown-guard'
 
 const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
-  workflows: AcpHandlerWorkflows
+  workflows: AcpHandlerWorkflows,
+  respondDelegatedQuestion?: (
+    input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
+  ) => Promise<void>
 ): void => {
   ipcMainHandle('acp:get-state', () => runtime.getSnapshot())
   ipcMainHandle('acp:connect', (_event, request: AcpConnectRequest) => runtime.connect(request))
@@ -34,6 +39,11 @@ const registerAcpIpcHandlerSet = (
   )
   ipcMainHandle('acp:resume-session', (_event, request: AcpResumeSessionRequest) =>
     workflows.resumeSession(request)
+  )
+  ipcMainHandle(
+    'acp:continue-interrupted-turn',
+    (_event, request: AcpContinueInterruptedTurnRequest) =>
+      workflows.continueInterruptedTurn(request)
   )
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
     runtime.resetSessionContext(request)
@@ -72,6 +82,18 @@ const registerAcpIpcHandlerSet = (
     (_event, request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]) =>
       runtime.respondSessionPlan(request)
   )
+  ipcMainHandle('acp:respond-elicitation', (_event, response: ElicitationResponse) => {
+    if (response.delegatedQuestion) {
+      if (!respondDelegatedQuestion) {
+        throw new Error('Delegated question response owner is unavailable.')
+      }
+      return respondDelegatedQuestion({
+        ...response.delegatedQuestion,
+        requestId: response.requestId
+      }).then(() => runtime.getSnapshot())
+    }
+    return runtime.respondToElicitation(response)
+  })
   ipcMainHandle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
     runtime.setPermissionProfile(request)
   )
@@ -83,11 +105,14 @@ const registerAcpIpcHandlerSet = (
 // Installs the renderer-callable Electron adapter over an already-constructed ACP coordinator.
 const installAcpIpcHandlers = (
   runtime: AcpRuntimeCoordinator,
-  workflows: AcpHandlerWorkflows
+  workflows: AcpHandlerWorkflows,
+  respondDelegatedQuestion?: (
+    input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
+  ) => Promise<void>
 ): IpcHandlerInstallation => {
   const scope = createIpcHandlerInstallationScope()
   try {
-    registerAcpIpcHandlerSet(runtime, workflows)
+    registerAcpIpcHandlerSet(runtime, workflows, respondDelegatedQuestion)
     // Kill the agent child on quit so it never outlives the app as an orphaned process.
     return scope.complete(installAgentShutdownGuard(app, runtime))
   } catch (error) {

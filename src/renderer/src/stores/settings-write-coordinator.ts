@@ -2,13 +2,22 @@ export type SettingsWriteKey =
   | 'activeProvider'
   | 'agentFramework'
   | 'reasoningEffort'
+  | 'subagentModel'
   | 'notifications'
   | 'conversationSkillImport'
   | 'closePreference'
+  | 'defaultPermissionProfile'
   | 'appIcon'
+  | 'projectFilesFilter'
 
 export type OptimisticSettingsWriteKey =
-  'reasoningEffort' | 'notifications' | 'conversationSkillImport' | 'closePreference' | 'appIcon'
+  | 'reasoningEffort'
+  | 'notifications'
+  | 'conversationSkillImport'
+  | 'closePreference'
+  | 'defaultPermissionProfile'
+  | 'appIcon'
+  | 'projectFilesFilter'
 
 type SettingsWriteToken = {
   key: SettingsWriteKey

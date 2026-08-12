@@ -1,6 +1,13 @@
 import type { PackageMirror } from '../../../shared/mirror'
-import type { AppIconVariant, ReasoningEffort, SettingsSnapshot } from '../../../shared/settings'
+import type {
+  AppIconVariant,
+  ProjectFilesFilterPreference,
+  ReasoningEffort,
+  SettingsSnapshot,
+  SubagentModelConfiguration
+} from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
+import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   OptimisticSettingsWriteKey,
@@ -11,10 +18,14 @@ type SettingsPreferencesState = {
   onboardingCompletedAt?: number
   packageMirror?: PackageMirror
   reasoningEffort: ReasoningEffort
+  subagentModel?: SubagentModelConfiguration
+  subagentModelPending?: boolean
   notificationsEnabled: boolean
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
   appIconVariant: AppIconVariant
+  projectFilesFilter: ProjectFilesFilterPreference | undefined
+  defaultPermissionProfile: PermissionProfileId
 }
 
 type OptimisticPreferenceField =
@@ -23,13 +34,19 @@ type OptimisticPreferenceField =
   | 'conversationSkillImportEnabled'
   | 'closePreference'
   | 'appIconVariant'
+  | 'projectFilesFilter'
+  | 'defaultPermissionProfile'
 
 export type SettingsPreferencesActions = {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
+  setSubagentModel: (configuration: SubagentModelConfiguration) => Promise<void>
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
   setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
   setAppIconVariant: (variant: AppIconVariant) => Promise<void>
+  setProjectFilesFilter: (filter: ProjectFilesFilterPreference | undefined) => Promise<void>
+  setDefaultPermissionProfile: (profile: PermissionProfileId) => Promise<void>
+
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
 }
@@ -41,9 +58,12 @@ type SettingsPreferencesCommands = Pick<
   | 'setConversationSkillImportEnabled'
   | 'setClosePreference'
   | 'setAppIconVariant'
+  | 'setProjectFilesFilter'
+  | 'setDefaultPermissionProfile'
   | 'markOnboardingComplete'
   | 'setPackageMirror'
->
+> &
+  Partial<Pick<Window['api']['settings'], 'getSettings' | 'setSubagentModel'>>
 
 type SettingsPreferencesSliceOptions = {
   getState: () => SettingsPreferencesState
@@ -58,7 +78,9 @@ const SETTINGS_WRITE_ERRORS: Record<OptimisticSettingsWriteKey, string> = {
   notifications: 'Could not save notification preference. Try again.',
   conversationSkillImport: 'Could not save conversation Skill import preference. Try again.',
   closePreference: 'Could not save window close preference. Try again.',
-  appIcon: 'Could not save app icon preference. Try again.'
+  appIcon: 'Could not save app icon preference. Try again.',
+  projectFilesFilter: 'Could not save files filter preference. Try again.',
+  defaultPermissionProfile: 'Could not save the default permission mode. Try again.'
 }
 
 // Owns renderer preference commands and their optimistic settlement. Core remains the sole owner of
@@ -82,7 +104,7 @@ export const createSettingsPreferencesSlice = ({
 
     try {
       const snapshot = await write.run(command)
-      write.complete({ value: snapshot[field] as SettingsPreferencesState[Field] })
+      write.complete({ value: snapshot[field] as unknown as SettingsPreferencesState[Field] })
       if (!write.isCurrent()) return
       reconcileSnapshot(snapshot)
       write.succeed()
@@ -97,6 +119,30 @@ export const createSettingsPreferencesSlice = ({
   }
 
   return {
+    setSubagentModel: async (configuration) => {
+      const write = writeCoordinator.begin('subagentModel')
+      setState({ subagentModelPending: true })
+      try {
+        const snapshot = await getCommands().setSubagentModel!({ configuration })
+        if (!write.isCurrent()) return
+        reconcileSnapshot(snapshot)
+        write.succeed()
+      } catch (error) {
+        write.fail('Could not save Subagent model. Refresh the model catalog and try again.')
+        console.error('Failed to set Subagent model', error)
+        const refresh = getCommands().getSettings
+        if (refresh) {
+          try {
+            reconcileSnapshot(await refresh())
+          } catch (refreshError) {
+            console.error('Failed to refresh Settings after rejected Subagent model', refreshError)
+          }
+        }
+      } finally {
+        if (write.isCurrent()) setState({ subagentModelPending: false })
+      }
+    },
+
     setReasoningEffort: (effort) =>
       runOptimisticWrite(
         'reasoningEffort',
@@ -140,6 +186,24 @@ export const createSettingsPreferencesSlice = ({
         variant,
         () => getCommands().setAppIconVariant({ variant }),
         'Failed to set app icon variant'
+      ),
+
+    setProjectFilesFilter: (filter) =>
+      runOptimisticWrite(
+        'projectFilesFilter',
+        'projectFilesFilter',
+        filter,
+        () => getCommands().setProjectFilesFilter({ filter }),
+        'Failed to set project files filter'
+      ),
+
+    setDefaultPermissionProfile: (profile) =>
+      runOptimisticWrite(
+        'defaultPermissionProfile',
+        'defaultPermissionProfile',
+        profile,
+        () => getCommands().setDefaultPermissionProfile({ profile }),
+        'Failed to set default permission profile'
       ),
 
     completeOnboarding: async () => {

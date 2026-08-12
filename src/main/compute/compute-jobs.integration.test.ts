@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { computeProviderId } from '../../shared/compute'
-import { createProjectDbClient, ensureProjectSchema } from '../projects/prisma-client'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ComputeHostRepository } from './repository'
 import { ComputeJobRepository } from './job-repository'
 import { ComputeApprovalBroker } from './compute-approval-broker'
@@ -64,7 +64,7 @@ describeIf('compute-jobs integration (real SSH)', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-int-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
-    await ensureProjectSchema(client)
+    await migrateApplicationDatabase(client)
 
     // Seed a compute host using the test alias.
     const hostRepo = new ComputeHostRepository(() => Promise.resolve(client))

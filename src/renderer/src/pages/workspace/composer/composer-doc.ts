@@ -24,10 +24,12 @@ export const MAX_COMPOSER_ARTIFACT_MENTIONS = 10
 // Shared canonical empty document.
 export const emptyDoc: ComposerDoc = { nodes: [] }
 
-// Render a single node as its plain-text form: skills as `/<name>`, artifacts as `@<name>`.
+// Render a single node as its plain-text form: skills as `/<name>`, artifacts as `@<name>`, and
+// linked-folder artifacts as `@<relativePath>` so the text form mirrors the chip label.
 const nodeToText = (node: ComposerNode): string => {
   if (node.type === 'text') return node.text
   if (node.type === 'skill') return `/${node.name}`
+  if (node.source === 'linked-folder') return `@${node.relativePath}`
   return `@${node.name}`
 }
 
@@ -206,8 +208,10 @@ export const domToDoc = (root: HTMLElement): ComposerDoc => {
 // domToDoc still reads the full name back from textContent / the stored filename attribute.
 const CHIP_BASE_CLASS =
   'inline-block max-w-[220px] truncate align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
+// Artifact chips are click-to-preview, so they opt out of text selection entirely — a click must
+// not paint the select-all highlight.
 const ARTIFACT_CHIP_BASE_CLASS =
-  'inline-flex max-w-[220px] align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-all'
+  'inline-flex max-w-[220px] align-middle rounded px-1.5 py-0.5 mx-0.5 text-sm font-medium select-none'
 
 // Render a skill chip span: an atomic, non-editable blue mention token. Exported so the mention hook
 // inserts the exact same markup it re-renders here, and the styling can never drift between the two.
@@ -222,8 +226,11 @@ export const createSkillChip = (node: { id: string; name: string }): HTMLSpanEle
   return span
 }
 
-// Render an artifact chip span: an atomic, non-editable green mention token carrying the path/source
-// needed to round-trip through the DOM and resolve the file on send.
+// Render an artifact chip span: an atomic, non-editable mention token carrying the path/source
+// needed to round-trip through the DOM and resolve the file on send. Uploads/artifacts use the
+// green mention pill with an `@<name>` label; linked-folder references use the dark-gray path
+// pill with an `@<relativePath>` label (the stored filename attribute keeps the plain name,
+// so domToDoc is unaffected by the label change).
 export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement => {
   const span = document.createElement('span')
   span.setAttribute('contenteditable', 'false')
@@ -231,23 +238,34 @@ export const createArtifactChip = (node: ComposerArtifactNode): HTMLSpanElement 
   span.setAttribute('data-mention-id', node.id)
   span.setAttribute('data-mention-source', node.source)
   span.setAttribute('data-mention-filename', node.name)
-  if (node.source === 'linked-folder') {
+  const linkedFolder = node.source === 'linked-folder'
+  if (linkedFolder) {
     span.setAttribute('data-mention-root-id', node.rootId)
     span.setAttribute('data-mention-relative-path', node.relativePath)
   } else {
     span.setAttribute('data-mention-path', node.path)
   }
   if (node.mimeType) span.setAttribute('data-mention-mime-type', node.mimeType)
-  if (node.source !== 'linked-folder' && node.versionId) {
+  if (!linkedFolder && node.versionId) {
     span.setAttribute('data-mention-version-id', node.versionId)
   }
-  // Green mention pill, distinct from the blue skill chip.
-  span.className = `${ARTIFACT_CHIP_BASE_CLASS} bg-mention-chip text-mention-chip-foreground`
-  span.title = node.name
-  const { head, tail, extension } = getExtensionPreservingFileNameParts(node.name)
+  // Green mention pill for uploads/artifacts; dark gray for linked-folder paths. Both stay
+  // distinct from the blue skill chip. All mention chips open the preview panel on click, so
+  // they get the pointer cursor.
+  span.className = `${ARTIFACT_CHIP_BASE_CLASS} cursor-pointer ${
+    linkedFolder
+      ? 'bg-path-chip text-path-chip-foreground'
+      : 'bg-mention-chip text-mention-chip-foreground'
+  }`
+  const labelPrefix = '@'
+  // The label truncates the relative path for linked-folder chips, the plain name otherwise.
+  const labelSource = linkedFolder ? node.relativePath : node.name
+  // Linked-folder chips tooltip the full `@` label; others keep the original bare name.
+  span.title = linkedFolder ? `${labelPrefix}${labelSource}` : node.name
+  const { head, tail, extension } = getExtensionPreservingFileNameParts(labelSource)
   const headSpan = document.createElement('span')
   headSpan.className = 'min-w-0 flex-1 truncate'
-  headSpan.textContent = `@${head}`
+  headSpan.textContent = `${labelPrefix}${head}`
   span.append(headSpan)
 
   for (const segment of [tail, extension]) {

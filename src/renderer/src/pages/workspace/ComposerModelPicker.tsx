@@ -16,14 +16,12 @@ import {
 import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
-import {
-  selectFrameworkApiEndpoints,
-  selectProviderModelOptions,
-  useSettingsStore,
-  type ProviderModelOption
-} from '@/stores/settings-store'
+import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
-import { isModelBridgeSupported } from '../../../../shared/provider-registry'
+import {
+  buildConfiguredModelCatalog,
+  type ConfiguredModelCatalogEntry
+} from '../../../../shared/configured-model-catalog'
 import {
   resolveProviderEffectiveModel,
   resolveProviderReasoningEffortProfile
@@ -35,7 +33,7 @@ const triggerClassName =
   'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
 
 // Label for an option: the model name, or the provider name when the option carries no concrete model.
-const optionLabel = (option: ProviderModelOption): string => option.model || option.providerName
+const optionLabel = (option: ConfiguredModelCatalogEntry): string => option.label
 
 // One radio row shape shared by both submenus: menuitemradio semantics, bold + trailing Check when
 // picked, optional leading icon and trailing hint. The three call sites (default effort, effort
@@ -114,23 +112,14 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
     showEffortRow && reasoningEffort !== 'default' ? selectedEffortLabel : undefined
   const defaultEffortChecked = reasoningEffort === 'default'
 
-  // A provider is selectable only when it can actually drive the current framework (endpoint + type).
-  const isCompatible = (provider: (typeof providers)[number], model: string): boolean =>
-    isProviderUsableByFramework(
-      { apiEndpoints: provider.apiEndpoints, type: provider.type },
-      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-    ) &&
-    (agentFrameworkId !== 'codex' || isModelBridgeSupported(provider, model))
-
-  const options = selectProviderModelOptions(
+  const options = buildConfiguredModelCatalog({
     providers,
     activeProviderId,
-    claudeSubscriptionProviderId
-  )
-  const usableOptions = options.filter((option) => {
-    const provider = providers.find((candidate) => candidate.id === option.providerId)
-    return provider ? isCompatible(provider, option.model) : false
+    claudeSubscriptionProviderId,
+    frameworkId: agentFrameworkId,
+    frameworkEndpoints
   })
+  const usableOptions = options.filter((option) => option.selectable)
   const hasUsable = usableOptions.length > 0
 
   // No provider configured at all: nothing to pick or explain, so warn with a button that opens
@@ -317,9 +306,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
               first level stays a summary; behavior per item is unchanged from the flat menu. */}
           <DropdownMenuSubContent className="max-h-[320px] min-w-[15rem] overflow-y-auto p-1">
             {groups.map((group) => {
-              const compatible = group.options.some((option) =>
-                isCompatible(group.provider, option.model)
-              )
+              const compatible = group.options.some((option) => option.selectable)
               const endpointCompatible = isProviderUsableByFramework(
                 {
                   apiEndpoints: group.provider.apiEndpoints,
@@ -348,7 +335,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                     group.options.map((option) => {
                       const isActive =
                         option.providerId === activeProviderId && option.model === activeKeyModel
-                      const optionCompatible = isCompatible(group.provider, option.model)
+                      const optionCompatible = option.selectable
 
                       if (!optionCompatible) {
                         // Endpoint is fine but this model is statically marked unsupported over the Codex

@@ -8,7 +8,7 @@ const tokenizer = new Tiktoken(cl100kBase)
 
 describe('renderConnectorInstructions', () => {
   it('keeps only shared host.mcp conventions in opencode baseline instructions', () => {
-    const md = renderConnectorInstructions(['chemistry'])
+    const md = renderConnectorInstructions(['mcp-chemistry'])
 
     expect(md).toContain('host.mcp(')
     // The "do not reimplement with raw HTTP" rule is what steers opencode away from raw requests.
@@ -32,10 +32,31 @@ describe('renderConnectorInstructions', () => {
   })
 
   it('forbids connector calls until the matching skill supplies the exact method name', () => {
-    const md = renderConnectorInstructions(['pubmed'])
+    const md = renderConnectorInstructions(['mcp-pubmed'])
 
     expect(md).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
     expect(md).toContain('Never guess a connector server or method name')
+  })
+
+  it('lists the exact enabled Connector Skill names without duplicates or guessed aliases', () => {
+    const md = renderConnectorInstructions([
+      'mcp-pubmed',
+      'mcp-literature',
+      'mcp-pubmed',
+      'not-a-skill'
+    ])
+
+    expect(md).toContain('Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.')
+    expect(md).toContain('Allowed Specialist Skills for this session')
+    expect(md).toContain('do not load or call any `mcp-*` skill absent from that list')
+    expect(md.match(/`mcp-pubmed`/g)).toHaveLength(1)
+    expect(md).not.toContain('`mcp-openalex`')
+  })
+
+  it('includes canonical custom MCP Skill names in the global catalog', () => {
+    const md = renderConnectorInstructions(['mcp-pubmed', 'mcp-custom-chemistry'])
+
+    expect(md).toContain('Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-custom-chemistry`.')
   })
 })
 
@@ -84,7 +105,7 @@ describe('renderSkillDoc', () => {
   it('falls back to a schema-built call example for tools without an authored example', () => {
     // Custom MCP servers ship no `example`, so the doc must still render a concrete, copyable call.
     const md = renderCustomSkillDoc(
-      { slug: 'acme', name: 'Acme', description: 'Use when you need acme tools.' },
+      { name: 'acme', displayName: 'Acme', description: 'Use when you need acme tools.' },
       [
         {
           name: 'do_thing',
@@ -101,7 +122,7 @@ describe('renderSkillDoc', () => {
   it('renders a no-arg tool without a third argument (never a literal ...)', () => {
     // A literal `...` as the args positional reaches the bridge as Ellipsis and raises; a no-arg tool
     // must render as host.mcp(server, method) so the example is copy-runnable.
-    const md = renderCustomSkillDoc({ slug: 'acme', name: 'Acme' }, [
+    const md = renderCustomSkillDoc({ name: 'acme', displayName: 'Acme' }, [
       { name: 'ping', inputSchema: { type: 'object', properties: {} } }
     ])
     expect(md).toContain('const result = await host.mcp("acme", "ping")')
@@ -131,13 +152,47 @@ describe('renderSkillDoc', () => {
     // Custom servers do not always receive the bundled connector baseline, so their compact Skill
     // still carries the minimum persistence rule without copying the full shared conventions.
     const md = renderCustomSkillDoc(
-      { slug: 'acme', name: 'Acme', description: 'Use when you need acme tools.' },
+      { name: 'acme', displayName: 'Acme', description: 'Use when you need acme tools.' },
       [{ name: 'do_thing', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }]
     )
     expect(md).toContain('persistent')
     expect(md).toMatch(/instead of running the call again/)
     expect(md).toContain('Do not bypass `host.mcp` with raw HTTP')
     expect(md).toContain('approval')
+  })
+
+  it('directs custom connector authentication failures to a listed login tool', () => {
+    const md = renderCustomSkillDoc({ name: 'content-service', displayName: 'Content Service' }, [
+      { name: 'content_login' },
+      { name: 'search' }
+    ])
+
+    expect(md).toContain('`connector_unauthenticated`')
+    expect(md).toContain('use a login or authentication tool listed in this Skill')
+    expect(md).toContain('then retry the original call')
+    expect(md).toContain('Do not treat an authentication requirement as connector unavailability')
+    expect(md).not.toContain('Settings > Connectors')
+  })
+
+  it('directs host-managed OAuth authentication to Connector settings', () => {
+    const md = renderCustomSkillDoc(
+      { name: 'content-service', displayName: 'Content Service', oauth: {} },
+      [{ name: 'content_login' }, { name: 'search' }]
+    )
+
+    expect(md).toContain('`connector_unauthenticated`')
+    expect(md).toContain('Settings > Connectors')
+    expect(md).toContain('then retry the original call')
+    expect(md).not.toContain('use a login or authentication tool listed in this Skill')
+  })
+
+  it('omits authentication recovery guidance when the connector declares neither mode', () => {
+    const md = renderCustomSkillDoc({ name: 'content-service', displayName: 'Content Service' }, [
+      { name: 'search' }
+    ])
+
+    expect(md).not.toContain('`connector_unauthenticated`')
+    expect(md).not.toContain('Settings > Connectors')
   })
 
   it('keeps the PubMed Skill under a 2.3k-token on-demand budget', () => {

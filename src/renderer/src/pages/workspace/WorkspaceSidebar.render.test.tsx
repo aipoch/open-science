@@ -1,7 +1,13 @@
+// @vitest-environment jsdom
+
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { Toolbox } from 'lucide-react'
 import type { ChatSession } from '@/stores/session-store'
 import { describe, expect, it, vi } from 'vitest'
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/lib/utils', () => ({
   cn: (...values: Array<string | false | undefined>) => values.filter(Boolean).join(' ')
@@ -29,7 +35,7 @@ const createMessage = (): ChatSession['messages'][number] => ({
   updatedAt: 1
 })
 
-const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
+const renderSidebar = async (sessions: ChatSession[], mobileMode = false): Promise<string> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
 
   return renderToStaticMarkup(
@@ -53,6 +59,13 @@ const renderSidebar = async (sessions: ChatSession[]): Promise<string> => {
       onTogglePin={vi.fn()}
       onDeleteSession={vi.fn()}
       onOpenSettings={vi.fn()}
+      onOpenProjectSettings={vi.fn()}
+      onNewProject={vi.fn()}
+      canDownloadProjectArtifacts
+      onDownloadProjectArtifacts={vi.fn()}
+      mobileMode={mobileMode}
+      isMobileOpen={mobileMode}
+      onMobileClose={vi.fn()}
     />
   )
 }
@@ -91,13 +104,290 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('m-2 flex min-h-0 flex-1 flex-col rounded-lg')
     expect(html).not.toContain('mr-0')
+    expect(html).toContain('aria-label="Messages, no unread messages"')
   })
 
-  it('reserves header padding for the external panel toggle without spacer markup', async () => {
+  it('softens the session list behind the footer controls', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
 
-    expect(html).toContain('flex items-start pr-9')
+    expect(html).toContain('-top-12 h-12 bg-gradient-to-t from-rail-card-bg')
+    expect(html).not.toContain('-top-6 h-6 bg-gradient-to-t from-rail-card-bg')
+  })
+
+  it('keeps the header row free of floating-toggle padding now that the toggle sits inline', async () => {
+    const html = await renderSidebar([createSession({ id: 'session-a' })])
+
+    expect(html).toContain('class="flex items-center"')
+    expect(html).not.toContain('pr-9')
+    expect(html).not.toContain('flex items-start')
+    expect(html).toContain('aria-label="All projects"')
+    expect(html).toContain('title="All projects"')
     expect(html).not.toContain('workspace-sidebar-toggle-slot')
+  })
+
+  it('renders the single-row header with a project menu trigger and wires every menu item', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const onGoHome = vi.fn()
+    const onOpenProjectSettings = vi.fn()
+    const onDownloadProjectArtifacts = vi.fn()
+    const onNewProject = vi.fn()
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [createSession({ id: 'session-a' })],
+      activeSessionId: 'session-a',
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome,
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings,
+      onNewProject,
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts
+    })
+    const elements = collectElements(tree)
+
+    const backButton = elements.find((element) => element.props['aria-label'] === 'All projects')
+    expect(backButton).toBeDefined()
+    ;(backButton?.props.onClick as () => void)()
+    expect(onGoHome).toHaveBeenCalledTimes(1)
+
+    const trigger = elements.find(
+      (element) => element.type === 'button' && element.props.title === 'Example project'
+    )
+    expect(trigger).toBeDefined()
+
+    const settingsItem = elements.find(
+      (element) => getTextContent(element).trim() === 'Project settings'
+    )
+    ;(settingsItem?.props.onSelect as () => void)()
+    expect(onOpenProjectSettings).toHaveBeenCalledTimes(1)
+
+    const downloadItem = elements.find(
+      (element) => getTextContent(element).trim() === 'Download artifacts…'
+    )
+    expect(downloadItem?.props.disabled).toBe(false)
+    ;(downloadItem?.props.onSelect as () => void)()
+    expect(onDownloadProjectArtifacts).toHaveBeenCalledTimes(1)
+
+    const newProjectItem = elements.find(
+      (element) => getTextContent(element).trim() === 'New project'
+    )
+    ;(newProjectItem?.props.onSelect as () => void)()
+    expect(onNewProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables Download artifacts when the project has no downloadable files', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [createSession({ id: 'session-a' })],
+      activeSessionId: 'session-a',
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: false,
+      onDownloadProjectArtifacts: vi.fn()
+    })
+
+    const downloadItem = collectElements(tree).find(
+      (element) => getTextContent(element).trim() === 'Download artifacts…'
+    )
+    expect(downloadItem?.props.disabled).toBe(true)
+  })
+
+  it('disables Download artifacts when the download handler is not wired', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [createSession({ id: 'session-a' })],
+      activeSessionId: 'session-a',
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true
+    })
+
+    const downloadItem = collectElements(tree).find(
+      (element) => getTextContent(element).trim() === 'Download artifacts…'
+    )
+    expect(downloadItem?.props.disabled).toBe(true)
+  })
+
+  it('renders the sidebar toggle inline right after the project menu', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const onSidebarToggle = vi.fn()
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [createSession({ id: 'session-a' })],
+      activeSessionId: 'session-a',
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn(),
+      sidebarToggle: { state: 'open' as const, onToggle: onSidebarToggle }
+    })
+    const elements = collectElements(tree)
+
+    const backButton = elements.find((element) => element.props['aria-label'] === 'All projects')
+    const projectTrigger = elements.find(
+      (element) => element.type === 'button' && element.props.title === 'Example project'
+    )
+    const sidebarToggle = elements.find(
+      (element) => element.props['data-testid'] === 'workspace-sidebar-toggle'
+    )
+
+    expect(backButton).toBeDefined()
+    expect(projectTrigger).toBeDefined()
+    expect(sidebarToggle).toBeDefined()
+
+    // Header order: back, project menu, sidebar toggle. The preview toggle no longer lives in
+    // the header row — it stays a floating button owned by the panel layout.
+    const order = [backButton, projectTrigger, sidebarToggle].map((element) =>
+      elements.indexOf(element as ElementWithProps)
+    )
+    expect(order[1]).toBeGreaterThan(order[0] as number)
+    expect(order[2]).toBeGreaterThan(order[1] as number)
+    expect(
+      elements.find((element) => element.props['data-testid'] === 'workspace-preview-toggle')
+    ).toBeUndefined()
+
+    // The header row shares one hover background token across every clickable element.
+    expect(backButton?.props.className).toContain('hover:bg-bg-300')
+    expect(projectTrigger?.props.className).toContain('hover:bg-bg-300')
+    expect(projectTrigger?.props.className).toContain('data-[state=open]:bg-bg-300')
+    expect(projectTrigger?.props.className).not.toContain('hover:bg-surface-control-hover')
+
+    expect(sidebarToggle?.props['aria-label']).toBe('Collapse sidebar panel')
+    expect(sidebarToggle?.props['aria-expanded']).toBe(true)
+    expect(sidebarToggle?.props['aria-controls']).toBe('left-panel')
+    expect(sidebarToggle?.props['aria-keyshortcuts']).toBe(
+      window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'
+    )
+    expect(sidebarToggle?.props.title).toBe('Collapse sidebar panel')
+    expect(sidebarToggle?.props.className).toContain('text-action-panel-toggle')
+    expect(sidebarToggle?.props.className).toContain('hover:bg-bg-300')
+    expect(sidebarToggle?.props.className).not.toContain('absolute')
+    ;(sidebarToggle?.props.onClick as () => void)()
+    expect(onSidebarToggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('omits the header sidebar toggle while collapsed or in mobile mode', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const baseProps = {
+      now: Date.now(),
+      projectName: 'Example project',
+      sessions: [createSession({ id: 'session-a' })],
+      activeSessionId: 'session-a',
+      canCreateConversation: true,
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      onGoHome: vi.fn(),
+      onNewConversation: vi.fn(),
+      isFilesOpen: false,
+      onOpenFiles: vi.fn(),
+      onOpenSession: vi.fn(),
+      onRenameSession: vi.fn(),
+      canDownloadArtifacts: true,
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onExportSession: vi.fn(),
+      onTogglePin: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
+    }
+
+    // The panel layout mounts the floating fallback while collapsed; the header instance must
+    // stay unmounted so the workspace-sidebar-toggle testid never duplicates.
+    const collapsedTree = WorkspaceSidebarView({
+      ...baseProps,
+      sidebarToggle: { state: 'collapsed' as const, onToggle: vi.fn() }
+    })
+    expect(
+      collectElements(collapsedTree).find(
+        (element) => element.props['data-testid'] === 'workspace-sidebar-toggle'
+      )
+    ).toBeUndefined()
+
+    const mobileTree = WorkspaceSidebarView({
+      ...baseProps,
+      mobileMode: true,
+      isMobileOpen: true,
+      onMobileClose: vi.fn(),
+      sidebarToggle: { state: 'open' as const, onToggle: vi.fn() }
+    })
+    const mobileElements = collectElements(mobileTree)
+    expect(
+      mobileElements.find((element) => element.props['data-testid'] === 'workspace-sidebar-toggle')
+    ).toBeUndefined()
+    expect(
+      mobileElements.find((element) => element.props['aria-label'] === 'Close navigation')
+    ).toBeDefined()
   })
 
   it('renders non-visual session status text for assistive technology', async () => {
@@ -124,8 +414,69 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('aria-label="Open actions for Dataset cleanup"')
   })
 
+  it('reveals session actions on interaction without keeping the selected row action visible', async () => {
+    const session = createSession({ id: 'session-a', title: 'Notebook review' })
+    const desktop = document.createElement('div')
+    desktop.innerHTML = await renderSidebar([session])
+    const desktopTrigger = desktop.querySelector<HTMLButtonElement>(
+      '[aria-label="Open actions for Notebook review"]'
+    )
+
+    expect(desktopTrigger?.classList).toContain('opacity-0')
+    expect(desktopTrigger?.classList).not.toContain('opacity-100')
+    expect(desktopTrigger?.classList).toContain('group-hover:opacity-100')
+    expect(desktopTrigger?.classList).toContain('focus-visible:opacity-100')
+    expect(desktopTrigger?.classList).toContain('data-[state=open]:opacity-100')
+
+    const mobile = document.createElement('div')
+    mobile.innerHTML = await renderSidebar([session], true)
+    const mobileTrigger = mobile.querySelector<HTMLButtonElement>(
+      '[aria-label="Open actions for Notebook review"]'
+    )
+    expect(mobileTrigger?.classList).toContain('opacity-100')
+  })
+
+  it('fades overflowing titles and emphasizes only live sessions in Active', async () => {
+    vi.useFakeTimers()
+    const now = new Date(2026, 7, 9, 13, 30).getTime()
+    vi.setSystemTime(now)
+
+    try {
+      const runningTitle = 'Running session with a title that reaches the row action'
+      const completedTitle = 'Recently completed session'
+      const container = document.createElement('div')
+      container.innerHTML = await renderSidebar([
+        createSession({ id: 'running', title: runningTitle, status: 'running', updatedAt: now }),
+        createSession({
+          id: 'completed',
+          title: completedTitle,
+          status: 'idle',
+          updatedAt: now - 60_000
+        })
+      ])
+      const titleSpans = Array.from(container.querySelectorAll('span'))
+      const running = titleSpans.find((element) => element.textContent === runningTitle)
+      const completed = titleSpans.find((element) => element.textContent === completedTitle)
+      const fade = container.querySelector<HTMLElement>('.bg-gradient-to-r')
+
+      expect(running?.classList).toContain('overflow-hidden')
+      expect(running?.classList).toContain('whitespace-nowrap')
+      expect(running?.classList).not.toContain('truncate')
+      expect(running?.classList).toContain('font-semibold')
+      expect(completed?.classList).not.toContain('font-semibold')
+      expect(fade?.classList).toContain('w-12')
+      expect(fade?.classList).toContain('from-transparent')
+      expect(fade?.classList).toContain('via-rail-card-bg')
+      expect(fade?.classList).toContain('to-rail-card-bg')
+      expect(fade?.classList).toContain('group-hover:via-bg-300')
+      expect(fade?.classList).toContain('group-hover:to-bg-300')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('wires session open and row menu actions to the matching session', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Notebook review' }),
       createSession({ id: 'session-b', title: 'Dataset cleanup' })
@@ -136,7 +487,8 @@ describe('WorkspaceSidebar accessible render', () => {
     const onDeleteSession = vi.fn()
     const onExportSession = vi.fn()
     const onArchiveSession = vi.fn()
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions,
       activeSessionId: sessions[0].id,
@@ -157,7 +509,11 @@ describe('WorkspaceSidebar accessible render', () => {
       canArchiveSession: () => true,
       onArchiveSession,
       onDeleteSession,
-      onOpenSettings: vi.fn()
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
     const elements = collectElements(tree)
     const notebookButton = elements.find(
@@ -206,10 +562,12 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(onDeleteSession).toHaveBeenCalledWith(sessions[0])
   })
 
-  it('renders Files directly after New and wires it to the preview opener', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+  it('renders Customize between New and Files and wires both entries', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const onOpenFiles = vi.fn()
-    const tree = WorkspaceSidebar({
+    const onOpenSettings = vi.fn()
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [createSession({ id: 'session-a', title: 'Notebook review' })],
       activeSessionId: 'session-a',
@@ -228,16 +586,27 @@ describe('WorkspaceSidebar accessible render', () => {
       onExportSession: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings,
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
     const buttons = collectElements(tree).filter((element) => element.type === 'button')
     const newButtonIndex = buttons.findIndex((button) => getTextContent(button).trim() === 'New')
+    const customizeButton = buttons.find((button) => getTextContent(button).trim() === 'Customize')
     const filesButton = buttons.find((button) => getTextContent(button).trim() === 'Files')
 
     expect(newButtonIndex).toBeGreaterThanOrEqual(0)
-    expect(buttons[newButtonIndex + 1]).toBe(filesButton)
+    expect(buttons[newButtonIndex + 1]).toBe(customizeButton)
+    expect(buttons[newButtonIndex + 2]).toBe(filesButton)
+    expect(collectElements(customizeButton).some((element) => element.type === Toolbox)).toBe(true)
     expect(filesButton?.props['aria-controls']).toBe('right-panel')
     expect(filesButton?.props['aria-pressed']).toBe(true)
+
+    expect(customizeButton?.props.onClick).toBeTypeOf('function')
+    ;(customizeButton?.props.onClick as () => void)()
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
 
     expect(filesButton?.props.onClick).toBeTypeOf('function')
     ;(filesButton?.props.onClick as () => void)()
@@ -245,13 +614,14 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('wires the View notebook menu item to the matching session', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Notebook review' }),
       createSession({ id: 'session-b', title: 'Dataset cleanup' })
     ]
     const onViewNotebook = vi.fn()
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions,
       activeSessionId: sessions[0].id,
@@ -270,7 +640,11 @@ describe('WorkspaceSidebar accessible render', () => {
       onDeleteSession: vi.fn(),
       onViewNotebook,
       onExportSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
     const viewNotebookItems = collectElements(tree).filter(
       (element) => getTextContent(element).trim() === 'View notebook'
@@ -295,14 +669,290 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(withPin.indexOf('>Pinned<')).toBeLessThan(withPin.indexOf('>Active<'))
   })
 
-  it('shows Pin for an unpinned session and Unpin for a pinned one, wired to the session', async () => {
+  it('groups unpinned sessions by live activity, recent completion, and local date', async () => {
+    vi.useFakeTimers()
+    const now = new Date(2026, 7, 9, 13, 30).getTime()
+    vi.setSystemTime(now)
+
+    try {
+      const html = await renderSidebar([
+        createSession({
+          id: 'older-session',
+          title: 'Older conversation',
+          status: 'idle',
+          updatedAt: new Date(2026, 7, 2, 12).getTime()
+        }),
+        createSession({
+          id: 'today-session',
+          title: 'Earlier today',
+          status: 'idle',
+          updatedAt: now - 16 * 60_000
+        }),
+        createSession({
+          id: 'failed-session',
+          title: 'Failed today',
+          status: 'error',
+          updatedAt: now
+        }),
+        createSession({
+          id: 'week-session',
+          title: 'Earlier this week',
+          status: 'idle',
+          updatedAt: new Date(2026, 7, 4, 12).getTime()
+        }),
+        createSession({
+          id: 'yesterday-session',
+          title: 'Yesterday conversation',
+          status: 'idle',
+          updatedAt: new Date(2026, 7, 8, 12).getTime()
+        }),
+        createSession({
+          id: 'recent-session',
+          title: 'Just completed',
+          status: 'idle',
+          updatedAt: now - 14 * 60_000
+        }),
+        createSession({
+          id: 'waiting-session',
+          title: 'Waiting for approval',
+          status: 'waiting-permission',
+          updatedAt: new Date(2026, 7, 1, 12).getTime()
+        }),
+        createSession({
+          id: 'waiting-user-session',
+          title: 'Waiting for an answer',
+          status: 'waiting-for-user',
+          updatedAt: new Date(2026, 7, 1, 12).getTime()
+        }),
+        createSession({
+          id: 'waiting-plan-session',
+          title: 'Waiting for plan approval',
+          status: 'waiting-plan-approval',
+          updatedAt: new Date(2026, 7, 1, 12).getTime()
+        }),
+        createSession({
+          id: 'pinned-session',
+          title: 'Pinned running session',
+          status: 'running',
+          pinned: true,
+          updatedAt: now
+        })
+      ])
+
+      const headings = ['Pinned', 'Active', 'Today', 'Yesterday', 'This week', 'Older']
+      headings.reduce((previousIndex, heading) => {
+        const index = html.indexOf(`>${heading}<`)
+        expect(index).toBeGreaterThan(previousIndex)
+        return index
+      }, -1)
+
+      expect(html.indexOf('Pinned running session')).toBeLessThan(html.indexOf('>Active<'))
+      expect(html.indexOf('Waiting for approval')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Waiting for an answer')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Waiting for plan approval')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Just completed')).toBeLessThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Earlier today')).toBeGreaterThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Failed today')).toBeGreaterThan(html.indexOf('>Today<'))
+      expect(html.indexOf('Older conversation')).toBeGreaterThan(html.indexOf('>Older<'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('moves a recently completed idle session to Today when its Active grace period expires', async () => {
+    vi.useFakeTimers()
+    const now = new Date(2026, 7, 9, 13, 30).getTime()
+    vi.setSystemTime(now)
+    const session = createSession({
+      id: 'recent-session',
+      title: 'Just completed',
+      status: 'idle',
+      updatedAt: now - 14 * 60_000
+    })
     const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebar
+            projectName="Example project"
+            sessions={[session]}
+            activeSessionId={undefined}
+            canCreateConversation
+            canMutateConversations
+            canDeleteConversations
+            onGoHome={vi.fn()}
+            onNewConversation={vi.fn()}
+            isFilesOpen={false}
+            onOpenFiles={vi.fn()}
+            onOpenSession={vi.fn()}
+            onRenameSession={vi.fn()}
+            canDownloadArtifacts
+            onDownloadArtifacts={vi.fn()}
+            onViewNotebook={vi.fn()}
+            onExportSession={vi.fn()}
+            onTogglePin={vi.fn()}
+            onDeleteSession={vi.fn()}
+            onOpenSettings={vi.fn()}
+            onOpenProjectSettings={vi.fn()}
+            onNewProject={vi.fn()}
+            canDownloadProjectArtifacts
+            onDownloadProjectArtifacts={vi.fn()}
+          />
+        )
+      })
+
+      expect(container.textContent).toContain('Active')
+      expect(container.textContent).not.toContain('Today')
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_001)
+      })
+
+      expect(container.textContent).not.toContain('Active')
+      expect(container.textContent).toContain('Today')
+      expect(container.textContent).toContain('Just completed')
+    } finally {
+      act(() => root.unmount())
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    {
+      platform: 'darwin',
+      modifierKey: 'Meta',
+      modifier: { metaKey: true },
+      hint: '⌘1',
+      ariaShortcut: 'Meta+1'
+    },
+    {
+      platform: 'win32',
+      modifierKey: 'Control',
+      modifier: { ctrlKey: true },
+      hint: 'Ctrl+1',
+      ariaShortcut: 'Control+1'
+    },
+    {
+      platform: 'linux',
+      modifierKey: 'Control',
+      modifier: { ctrlKey: true },
+      hint: 'Ctrl+1',
+      ariaShortcut: 'Control+1'
+    }
+  ])(
+    'shows and handles the first nine session shortcuts on $platform',
+    async ({ platform, modifierKey, modifier, hint, ariaShortcut }) => {
+      const originalApi = window.api
+      window.api = { ...originalApi, platform } as never
+      const sessions = [
+        createSession({ id: 'active-first', title: 'Active first' }),
+        createSession({ id: 'pinned-target', title: 'Pinned target', pinned: true }),
+        ...Array.from({ length: 8 }, (_, index) =>
+          createSession({ id: `active-${index + 2}`, title: `Active ${index + 2}` })
+        )
+      ]
+      const onOpenSession = vi.fn()
+      const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+      const container = document.createElement('div')
+      const root = createRoot(container)
+      let dialog: HTMLDivElement | undefined
+
+      try {
+        await act(async () => {
+          root.render(
+            <WorkspaceSidebar
+              projectName="Example project"
+              sessions={sessions}
+              activeSessionId={undefined}
+              canCreateConversation
+              canMutateConversations
+              canDeleteConversations
+              onGoHome={vi.fn()}
+              onNewConversation={vi.fn()}
+              isFilesOpen={false}
+              onOpenFiles={vi.fn()}
+              onOpenSession={onOpenSession}
+              onRenameSession={vi.fn()}
+              canDownloadArtifacts
+              onDownloadArtifacts={vi.fn()}
+              onViewNotebook={vi.fn()}
+              onExportSession={vi.fn()}
+              onTogglePin={vi.fn()}
+              onDeleteSession={vi.fn()}
+              onOpenSettings={vi.fn()}
+              onOpenProjectSettings={vi.fn()}
+              onNewProject={vi.fn()}
+              canDownloadProjectArtifacts
+              onDownloadProjectArtifacts={vi.fn()}
+            />
+          )
+        })
+
+        const shortcutButtons = container.querySelectorAll<HTMLButtonElement>(
+          'button[aria-keyshortcuts]'
+        )
+        expect(shortcutButtons).toHaveLength(9)
+        expect(shortcutButtons[0]?.textContent).toContain('Pinned target')
+        expect(shortcutButtons[0]?.getAttribute('aria-keyshortcuts')).toBe(ariaShortcut)
+
+        await act(async () => {
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', { key: modifierKey, ...modifier, bubbles: true })
+          )
+        })
+        expect(container.querySelectorAll('kbd')).toHaveLength(9)
+        expect(container.textContent).toContain(hint)
+
+        const openEvent = new KeyboardEvent('keydown', {
+          key: '1',
+          ...modifier,
+          bubbles: true,
+          cancelable: true
+        })
+        await act(async () => window.dispatchEvent(openEvent))
+        expect(openEvent.defaultPrevented).toBe(true)
+        expect(onOpenSession).toHaveBeenCalledWith('pinned-target')
+
+        await act(async () => {
+          window.dispatchEvent(new KeyboardEvent('keyup', { key: modifierKey, bubbles: true }))
+        })
+        expect(container.querySelector('kbd')).toBeNull()
+
+        onOpenSession.mockClear()
+        dialog = document.createElement('div')
+        dialog.setAttribute('role', 'dialog')
+        document.body.appendChild(dialog)
+        await act(async () => {
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: '2',
+              ...modifier,
+              bubbles: true,
+              cancelable: true
+            })
+          )
+        })
+        expect(onOpenSession).not.toHaveBeenCalled()
+      } finally {
+        dialog?.remove()
+        act(() => root.unmount())
+        window.api = originalApi
+      }
+    }
+  )
+
+  it('shows Pin for an unpinned session and Unpin for a pinned one, wired to the session', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const sessions = [
       createSession({ id: 'session-a', title: 'Unpinned one' }),
       createSession({ id: 'session-b', title: 'Pinned one', pinned: true })
     ]
     const onTogglePin = vi.fn()
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions,
       activeSessionId: sessions[0].id,
@@ -321,7 +971,11 @@ describe('WorkspaceSidebar accessible render', () => {
       onExportSession: vi.fn(),
       onTogglePin,
       onDeleteSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
     const elements = collectElements(tree)
     const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
@@ -339,9 +993,10 @@ describe('WorkspaceSidebar accessible render', () => {
   })
 
   it('keeps target-validated deletion available while other mutations are recovering', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [session],
       activeSessionId: session.id,
@@ -359,7 +1014,11 @@ describe('WorkspaceSidebar accessible render', () => {
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
     const elements = collectElements(tree)
     const pinItem = elements.find((element) => getTextContent(element).trim() === 'Pin')
@@ -371,12 +1030,18 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(deleteItem?.props.disabled).toBe(false)
   })
 
-  it('disables conversation export for running, waiting-permission, or empty sessions', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
-    const tree = WorkspaceSidebar({
+  it('disables conversation export for active, waiting, or empty sessions', async () => {
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [
         createSession({ id: 'running', status: 'running', messages: [createMessage()] }),
+        createSession({
+          id: 'waiting-user',
+          status: 'waiting-for-user',
+          messages: [createMessage()]
+        }),
         createSession({
           id: 'waiting',
           status: 'waiting-permission',
@@ -401,7 +1066,11 @@ describe('WorkspaceSidebar accessible render', () => {
       onExportSession: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
     const exportTriggers = collectElements(tree).filter(
       (element) =>
@@ -409,16 +1078,18 @@ describe('WorkspaceSidebar accessible render', () => {
         typeof element.props.disabled === 'boolean'
     )
 
-    expect(exportTriggers).toHaveLength(4)
+    expect(exportTriggers).toHaveLength(5)
     expect(exportTriggers[0]?.props.disabled).toBe(true)
     expect(exportTriggers[1]?.props.disabled).toBe(true)
     expect(exportTriggers[2]?.props.disabled).toBe(true)
-    expect(exportTriggers[3]?.props.disabled).toBe(false)
+    expect(exportTriggers[3]?.props.disabled).toBe(true)
+    expect(exportTriggers[4]?.props.disabled).toBe(false)
   })
 
   it('hides conversation export when the runtime does not expose that capability', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
-    const tree = WorkspaceSidebar({
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [createSession({ status: 'idle', messages: [createMessage()] })],
       activeSessionId: 'session-1',
@@ -436,16 +1107,21 @@ describe('WorkspaceSidebar accessible render', () => {
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
 
     expect(getTextContent(tree)).not.toContain('Export conversation')
   })
 
   it('hides artifact downloads when the runtime does not provide the desktop save capability', async () => {
-    const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+    const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
     const session = createSession({ id: 'session-a', title: 'Notebook review' })
-    const tree = WorkspaceSidebar({
+    const tree = WorkspaceSidebarView({
+      now: Date.now(),
       projectName: 'Example project',
       sessions: [session],
       activeSessionId: session.id,
@@ -463,7 +1139,11 @@ describe('WorkspaceSidebar accessible render', () => {
       onViewNotebook: vi.fn(),
       onTogglePin: vi.fn(),
       onDeleteSession: vi.fn(),
-      onOpenSettings: vi.fn()
+      onOpenSettings: vi.fn(),
+      onOpenProjectSettings: vi.fn(),
+      onNewProject: vi.fn(),
+      canDownloadProjectArtifacts: true,
+      onDownloadProjectArtifacts: vi.fn()
     })
 
     const downloadItem = collectElements(tree).find(

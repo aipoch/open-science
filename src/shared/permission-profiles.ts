@@ -25,3 +25,14 @@ export const isPermissionProfileId = (value: unknown): value is PermissionProfil
 
 export const normalizePermissionProfile = (value: unknown): PermissionProfileId =>
   isPermissionProfileId(value) ? value : DEFAULT_PERMISSION_PROFILE
+
+/**
+ * Reads the default permission profile from settings.
+ * Falls back to DEFAULT_PERMISSION_PROFILE ('ask') when not configured or invalid.
+ *
+ * @param settings - The app settings snapshot (may be undefined during early init)
+ * @returns The configured default permission profile
+ */
+export const getDefaultPermissionProfile = (
+  settings: { defaultPermissionProfile?: string } | undefined
+): PermissionProfileId => normalizePermissionProfile(settings?.defaultPermissionProfile)

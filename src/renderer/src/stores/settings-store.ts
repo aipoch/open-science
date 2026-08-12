@@ -1,17 +1,20 @@
 import { create, type StoreApi } from 'zustand'
 
-import type { OfficialVendorId } from '../../../shared/provider-registry'
 import {
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
-  DEFAULT_REASONING_EFFORT,
-  isClaudeSubscriptionProvider,
-  providerValidationFailed,
-  selectClaudeSubscriptionProvider
+  DEFAULT_REASONING_EFFORT
 } from '../../../shared/settings'
+import { buildConfiguredModelInventory } from '../../../shared/configured-model-catalog'
+import type { OfficialVendorId } from '../../../shared/provider-registry'
 import type { PackageMirror } from '../../../shared/mirror'
 import type { CloseActionPreference } from '../../../shared/window-controls'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  getDefaultPermissionProfile,
+  type PermissionProfileId
+} from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import {
   createSettingsWriteCoordinator,
@@ -60,11 +63,13 @@ import type {
   AgentFrameworkView,
   ChatApiEndpoint,
   OpencodeInfo,
+  ProjectFilesFilterPreference,
   ProviderType,
   ProviderView,
   ReasoningEffort,
   SettingsSnapshot,
-  AppIconVariant
+  AppIconVariant,
+  SubagentModelConfiguration
 } from '../../../shared/settings'
 
 type SettingsStoreData = RuntimeSetupState &
@@ -100,6 +105,8 @@ type SettingsStoreData = RuntimeSetupState &
     packageMirror?: PackageMirror
     // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
     reasoningEffort: ReasoningEffort
+    subagentModel: SubagentModelConfiguration
+    subagentModelPending: boolean
     // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
     notificationsEnabled: boolean
     // Whether conversations receive the app-owned Skill package import tool and instructions.
@@ -108,6 +115,10 @@ type SettingsStoreData = RuntimeSetupState &
     closePreference: CloseActionPreference | undefined
     // Selected built-in app-icon look, applied to the window and dock/taskbar. Defaults to 'light'.
     appIconVariant: AppIconVariant
+    // Last Files-tab source filter; undefined means the default ("All artifacts").
+    projectFilesFilter: ProjectFilesFilterPreference | undefined
+    // Approval profile applied only when creating a new conversation.
+    defaultPermissionProfile: PermissionProfileId
   }
 
 type SettingsStoreCore = SettingsStoreData &
@@ -120,6 +131,7 @@ type SettingsStoreCore = SettingsStoreData &
 
 type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
+  acceptCommittedSnapshot: (snapshot: SettingsSnapshot) => void
   clearSettingsWriteError: () => void
 }
 
@@ -151,10 +163,14 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   encryptionAvailable: true,
   packageMirror: undefined,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
+  subagentModel: { mode: 'inherit' },
+  subagentModelPending: false,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
   conversationSkillImportEnabled: DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: undefined,
-  appIconVariant: DEFAULT_APP_ICON_VARIANT
+  appIconVariant: DEFAULT_APP_ICON_VARIANT,
+  projectFilesFilter: undefined,
+  defaultPermissionProfile: DEFAULT_PERMISSION_PROFILE
 })
 
 // Applies a fresh main-process snapshot to the renderer cache.
@@ -167,6 +183,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   onboardingCompletedAt: snapshot.onboardingCompletedAt,
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   reasoningEffort: snapshot.reasoningEffort,
+  subagentModel: snapshot.subagentModel ?? { mode: 'inherit' },
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
   // write undefined into the boolean preference.
   notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
@@ -174,6 +191,9 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
     snapshot.conversationSkillImportEnabled ?? DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: snapshot.closePreference,
   appIconVariant: snapshot.appIconVariant ?? DEFAULT_APP_ICON_VARIANT,
+  projectFilesFilter: snapshot.projectFilesFilter,
+  defaultPermissionProfile: getDefaultPermissionProfile(snapshot),
+
   agentFrameworkId: snapshot.agentFrameworkId,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
@@ -212,29 +232,17 @@ export const selectProviderModelOptions = (
   activeProviderId?: string,
   claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
 ): ProviderModelOption[] => {
-  const selectedClaudeProvider = selectClaudeSubscriptionProvider(
+  return buildConfiguredModelInventory({
     providers,
     activeProviderId,
     claudeSubscriptionProviderId
-  )
-
-  return providers
-    .filter(
-      (provider) =>
-        !isClaudeSubscriptionProvider(provider.type) || provider.id === selectedClaudeProvider?.id
-    )
-    .filter((provider) => !providerValidationFailed(provider))
-    .flatMap((provider) => {
-      const models = provider.models.length > 0 ? provider.models : ['']
-
-      return models.map((model) => ({
-        providerId: provider.id,
-        providerName: provider.name,
-        providerType: provider.type,
-        vendorId: provider.vendorId,
-        model
-      }))
-    })
+  }).map(({ providerId, providerName, providerType, vendorId, model }) => ({
+    providerId,
+    providerName,
+    providerType,
+    vendorId,
+    model
+  }))
 }
 
 let settingsLoadPromise: Promise<boolean> | undefined
@@ -351,7 +359,8 @@ const createSettingsStoreState = (
     return loadPromise
   },
 
-  clearSettingsWriteError: () => writeCoordinator.clearFailures()
+  clearSettingsWriteError: () => writeCoordinator.clearFailures(),
+  acceptCommittedSnapshot: (snapshot) => set(applySnapshot(snapshot))
 })
 
 export const useSettingsStore = create<SettingsStore>((set, get) =>

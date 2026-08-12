@@ -558,6 +558,84 @@ describe('artifact MCP server', () => {
     expect(JSON.stringify(toWriteArtifactToolResult(result))).not.toContain('environment')
   })
 
+  it('uses the execution handoff storage Session for a delegated durable write', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+    const environment = {
+      ...(await createEnvironment(root, {
+        artifactRunId: 'artifact-run-delegated',
+        appSessionId: 'parent-session-1',
+        artifactStorageSessionId: 'parent-session-1',
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'child-frame-1',
+        messageBranchId: 'child-branch-1',
+        runtimeSegmentId: 'child-runtime-1',
+        promptMessageId: 'child-prompt-1',
+        rpcCapabilityToken: 'delegated-run-capability'
+      })),
+      sessionId: 'child-routing-session',
+      rpcEndpoint: 'http://127.0.0.1:9000'
+    }
+    const rpcRequests: Record<string, unknown>[] = []
+    const pendingSessionsObserved: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { params: Record<string, unknown> }
+        rpcRequests.push(body.params)
+        for (const sessionId of ['parent-session-1', 'child-routing-session']) {
+          const pendingPath = join(
+            root,
+            'artifacts',
+            'default-project',
+            sessionId,
+            '.pending',
+            'artifact-run-delegated',
+            'delegated.txt'
+          )
+          if (
+            await stat(pendingPath)
+              .then(() => true)
+              .catch(() => false)
+          ) {
+            pendingSessionsObserved.push(sessionId)
+          }
+        }
+        return new Response(
+          JSON.stringify({
+            result: {
+              id: 'version-delegated',
+              artifactId: 'artifact-delegated',
+              versionId: 'version-delegated',
+              versionNumber: 1,
+              checksum: 'b'.repeat(64),
+              createdAt: '2026-08-07T00:00:00.000Z',
+              projectName: 'default-project',
+              sessionId: 'parent-session-1',
+              runId: 'artifact-run-delegated',
+              name: 'delegated.txt',
+              path: join(root, 'immutable-delegated'),
+              fileUrl: 'file:///immutable-delegated',
+              size: 17,
+              mtimeMs: 1
+            }
+          }),
+          { status: 200 }
+        )
+      })
+    )
+
+    const result = await writeArtifactFileForCurrentRun(repository, environment, {
+      filename: 'delegated.txt',
+      source: { kind: 'inline', content: 'delegated content', encoding: 'utf8' }
+    })
+
+    expect(result).toMatchObject({ sessionId: 'parent-session-1' })
+    expect(pendingSessionsObserved).toEqual(['parent-session-1'])
+    expect(rpcRequests).toHaveLength(1)
+    expect(rpcRequests[0]).toMatchObject({ artifactStorageSessionId: 'parent-session-1' })
+  })
+
   it('returns a compact legacy artifact receipt without echoing local paths', () => {
     const result = toWriteArtifactToolResult({
       id: 'legacy-artifact-1',

@@ -153,6 +153,8 @@ describe('AcpContextCompactionWorkflow', () => {
       { kind: 'compaction', status: 'in_progress', compactionReason: 'manual' },
       { kind: 'compaction', status: 'completed', compactionReason: 'manual' }
     ])
+    expect(harness.events[0].toolCallId).toMatch(/^context-compaction:/u)
+    expect(harness.events[1].toolCallId).toBe(harness.events[0].toolCallId)
     expect(harness.emitState).toHaveBeenCalledTimes(2)
     expect(harness.interactions.current('app-session')).toBeUndefined()
   })

@@ -12,6 +12,7 @@ let root: Root
 const detail = {
   id: 'a',
   name: 'Alpha',
+  displayName: 'Alpha',
   description: 'First skill description.',
   source: 'featured' as const,
   updatedAt: '2026-07-08T00:00:00.000Z',
@@ -32,6 +33,7 @@ beforeEach(() => {
       {
         id: 'a',
         name: 'Alpha',
+        displayName: 'Alpha',
         description: 'First skill description.',
         source: 'featured',
         updatedAt: '2026-07-08T00:00:00.000Z',
@@ -129,6 +131,7 @@ describe('SkillDetailView', () => {
           {
             id: 'a',
             name: 'Alpha',
+            displayName: 'Alpha',
             description: 'First skill description.',
             source,
             updatedAt: detail.updatedAt,

@@ -211,6 +211,24 @@ describe('CloseConfirmModal', () => {
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r3', choice: 'quit' })
   })
 
+  it('blocks quitting for delegated work and only acknowledges by staying in the app', async () => {
+    render()
+    act(() => {
+      emit({
+        requestId: 'r-delegated',
+        variant: 'quit',
+        sessions: [{ projectId: 'p', sessionId: 'child-running', kind: 'delegated' }]
+      })
+    })
+
+    await findByText(/Subagents are still running/)
+    expect(document.body.textContent).toMatch(/stop their subagents before quitting/i)
+    expect(document.body.textContent).not.toMatch(/\bQuit\b/)
+    const returnButton = await findButtonByName(/Return to tasks/)
+    act(() => returnButton.click())
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-delegated', choice: 'cancel' })
+  })
+
   it('renders null and does not throw when the desktop bridge is absent (web build)', () => {
     // Test double: web build omits the close-confirm channels entirely.
     window.api = { window: {} } as unknown as typeof window.api

@@ -10,7 +10,10 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { RENDERER_CONTRACT_GROUPS } from '../shared/renderer-contract-catalog'
+import {
+  ELECTRON_APPLICATION_COMMAND_CHANNELS,
+  RENDERER_CONTRACT_GROUPS
+} from '../shared/renderer-contract-catalog'
 
 const { invokeMock, sendMock, exposeMock, getPathForFileMock, onMock, removeListenerMock } =
   vi.hoisted(() => ({
@@ -37,15 +40,23 @@ vi.mock('electron', () => ({
 // The subset of the bridge these tests exercise. Args are unknown — forwarding, not shape, is asserted.
 type PreloadApi = {
   saveSessionArtifacts: (request: unknown) => unknown
+  saveProjectArtifacts: (request: unknown) => unknown
   getRuntimeVersions: () => { electron: string; chrome: string; node: string }
   diagnostics: {
     reportRendererFailure: (report: unknown) => void
+  }
+  databaseStartup: {
+    getState: () => unknown
+    retry: () => unknown
+    quit: () => unknown
+    onStateChanged: (listener: (state: unknown) => void) => () => void
   }
   lifecycle: {
     getClientId: () => unknown
   }
   sessions: {
     loadAll: () => unknown
+    loadOne: (request: unknown) => unknown
     saveSession: (session: unknown, options?: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
@@ -69,6 +80,9 @@ type PreloadApi = {
     setNotificationsEnabled: (request: unknown) => unknown
     setConversationSkillImportEnabled: (request: unknown) => unknown
     setClosePreference: (request: unknown) => unknown
+    setProjectFilesFilter: (request: unknown) => unknown
+    setDefaultPermissionProfile: (request: unknown) => unknown
+
     setAppIconVariant: (request: unknown) => unknown
     listAppIcons: () => unknown
     uninstallClaude: () => unknown
@@ -86,11 +100,13 @@ type PreloadApi = {
     logoutIsolatedClaude: () => unknown
     previewGitHubSkill: (request: unknown) => unknown
     previewAgentHomeSkill: (request: unknown) => unknown
+    exportSkill: (request: unknown) => unknown
     selectCustomServerTemplate: (request?: unknown) => unknown
   }
   acp: {
     connect: (request?: unknown) => unknown
     resumeSession: (request: unknown) => unknown
+    continueInterruptedTurn: (request: unknown) => unknown
     resetSessionContext: (request: unknown) => unknown
     compactSession: (request: unknown) => unknown
   }
@@ -164,7 +180,9 @@ const collectFunctionPaths = (value: unknown, prefix = ''): string[] => {
 beforeAll(async () => {
   // Take the contextBridge branch of the preload's expose logic (production path with context isolation).
   Object.defineProperty(process, 'contextIsolated', { value: true, configurable: true })
-  invokeMock.mockResolvedValue(undefined)
+  invokeMock.mockImplementation(async (channel: string) =>
+    validatedApplicationCommandChannels.has(channel) ? { ok: true, result: undefined } : undefined
+  )
 
   await import('./index')
 
@@ -202,6 +220,7 @@ const coreContractGroups = RENDERER_CONTRACT_GROUPS.filter(
   ({ capability }) => !runtimeContractCapabilities.has(capability)
 )
 const coreContracts = coreContractGroups.flatMap(({ contracts }) => contracts)
+const validatedApplicationCommandChannels = new Set(ELECTRON_APPLICATION_COMMAND_CHANNELS)
 
 const getApiCallable = (publicPath: string): ((...args: unknown[]) => unknown) => {
   const callable = publicPath
@@ -219,16 +238,19 @@ describe('preload bridge — public surface inventory', () => {
       'acp.cancel',
       'acp.compactSession',
       'acp.connect',
+      'acp.continueInterruptedTurn',
       'acp.createSession',
       'acp.deleteSession',
       'acp.disconnect',
       'acp.getPlanProjection',
       'acp.getState',
+      'acp.onAgentRuntimeUpdate',
       'acp.onEvent',
       'acp.onPermissionRequest',
       'acp.onState',
       'acp.resetSessionContext',
       'acp.respondPlan',
+      'acp.respondToElicitation',
       'acp.respondToPermission',
       'acp.resumeSession',
       'acp.revokePermissionGrant',
@@ -269,10 +291,15 @@ describe('preload bridge — public surface inventory', () => {
       'compute.onApprovalRequest',
       'compute.onJobUpdated',
       'compute.probe',
+      'compute.replayApproval',
       'compute.respondApproval',
       'compute.revealInFolder',
       'compute.scratchSet',
       'compute.sshConfigAliases',
+      'databaseStartup.getState',
+      'databaseStartup.onStateChanged',
+      'databaseStartup.quit',
+      'databaseStartup.retry',
       'diagnostics.reportRendererFailure',
       'getRuntimeVersions',
       'github.getStars',
@@ -281,13 +308,19 @@ describe('preload bridge — public surface inventory', () => {
       'handoff.retry',
       'lifecycle.getClientId',
       'localFs.getRoots',
+      'localFs.grantRoot',
       'localFs.listDir',
+      'localFs.listGrantedRoots',
       'localFs.openPath',
       'localFs.readPreview',
+      'localFs.removeGrantedRoot',
       'localFs.reveal',
+      'localFs.setGrantedRootAccess',
       'logs.getPath',
       'logs.openFile',
       'logs.revealInFolder',
+      'network.checkConnectivity',
+      'network.getInfo',
       'notebook.appendCodeCell',
       'notebook.beginCodeCell',
       'notebook.execute',
@@ -307,6 +340,11 @@ describe('preload bridge — public surface inventory', () => {
       'notebookEnv.onProgress',
       'notebookEnv.provision',
       'notebookEnv.repair',
+      'notifications.getSnapshot',
+      'notifications.markAllRead',
+      'notifications.markRead',
+      'notifications.markSessionCompletionsRead',
+      'notifications.onChanged',
       'notifications.onOpenSession',
       'notifications.onViewProbe',
       'notifications.peekPendingOpenSession',
@@ -372,10 +410,12 @@ describe('preload bridge — public surface inventory', () => {
       'runtime.unregisterInterpreter',
       'saveBlobFile',
       'saveManagedFile',
+      'saveProjectArtifacts',
       'saveSessionArtifacts',
       'sessions.deleteSession',
       'sessions.exportConversation',
       'sessions.loadAll',
+      'sessions.loadOne',
       'sessions.onCreated',
       'sessions.onDeleted',
       'sessions.onFlushRequest',
@@ -398,7 +438,9 @@ describe('preload bridge — public surface inventory', () => {
       'settings.detectCodex',
       'settings.detectOpencode',
       'settings.exportCustomServerTemplate',
+      'settings.exportSkill',
       'settings.getConnectorDetail',
+      'settings.getGitHubTokenStatus',
       'settings.getPackageMirror',
       'settings.getPreflight',
       'settings.getSettings',
@@ -424,7 +466,9 @@ describe('preload bridge — public surface inventory', () => {
       'settings.logoutIsolatedCodex',
       'settings.logoutSharedClaude',
       'settings.markOnboardingComplete',
+      'settings.onChanged',
       'settings.onConnectorApprovalRequest',
+      'settings.onConnectorRuntimeChanged',
       'settings.onInstallLog',
       'settings.onSkillImportApprovalRequest',
       'settings.onSkillImportApprovalSettled',
@@ -434,9 +478,13 @@ describe('preload bridge — public surface inventory', () => {
       'settings.previewSkillZip',
       'settings.refreshProviderModels',
       'settings.removeCustomServer',
+      'settings.removeGitHubToken',
+      'settings.replayConnectorApproval',
       'settings.replayPendingSkillImportApprovals',
       'settings.respondConnectorApproval',
       'settings.respondSkillImportApproval',
+      'settings.retryCustomServer',
+      'settings.saveGitHubToken',
       'settings.scanRepoSkills',
       'settings.selectCustomServerTemplate',
       'settings.setActiveProvider',
@@ -447,11 +495,14 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setConnectorEnabled',
       'settings.setConversationSkillImportEnabled',
       'settings.setCustomServerEnabled',
+      'settings.setDefaultPermissionProfile',
       'settings.setNcbiCredentials',
       'settings.setNotificationsEnabled',
       'settings.setPackageMirror',
+      'settings.setProjectFilesFilter',
       'settings.setReasoningEffort',
       'settings.setSkillEnabled',
+      'settings.setSubagentModel',
       'settings.setToolPermission',
       'settings.uninstallClaude',
       'settings.uninstallCodex',
@@ -460,6 +511,13 @@ describe('preload bridge — public surface inventory', () => {
       'settings.updateSkill',
       'settings.upsertProvider',
       'settings.validateProvider',
+      'sideChat.cancel',
+      'sideChat.close',
+      'sideChat.list',
+      'sideChat.onEvent',
+      'sideChat.onRelayDelivered',
+      'sideChat.send',
+      'sideChat.start',
       'specialist.cancelHandoff',
       'specialist.cancelPackage',
       'specialist.create',
@@ -545,10 +603,10 @@ describe('preload bridge — Connector configuration files', () => {
 })
 
 describe('preload bridge — runtime renderer contract catalog', () => {
-  it('routes all 178 owned methods through their cataloged Electron channels', async () => {
+  it('routes every owned method through its cataloged Electron channel', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(178)
+    expect(runtimeContracts).toHaveLength(193)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -614,15 +672,17 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 21-group, 133-callable T1d complement', () => {
+  it('pins the exact 23-group, 156-callable T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
+      'database-startup',
       'diagnostics',
       'github',
       'lifecycle',
       'local-fs',
       'logs',
+      'network',
       'notifications',
       'office-preview',
       'platform-file-save',
@@ -633,12 +693,13 @@ describe('preload bridge — core renderer contract catalog', () => {
       'remote-access',
       'reviewer',
       'sessions',
+      'side-chat',
       'storage',
       'update',
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(133)
+    expect(coreContracts).toHaveLength(157)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -650,16 +711,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 97, events: 25, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 117, events: 29, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 97 request methods through their cataloged Electron channels', async () => {
+  it('routes all 117 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(97)
+    expect(requestContracts).toHaveLength(117)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -682,8 +743,8 @@ describe('preload bridge — core renderer contract catalog', () => {
       ({ lifecycleDispatch }) => lifecycleDispatch == null
     )
 
-    expect(eventContracts).toHaveLength(25)
-    expect(genericEventContracts).toHaveLength(24)
+    expect(eventContracts).toHaveLength(29)
+    expect(genericEventContracts).toHaveLength(28)
 
     for (const contract of genericEventContracts) {
       onMock.mockClear()
@@ -898,6 +959,11 @@ const sampleConversationExport = {
 const sampleInstall = { executablePath: '/usr/local/bin/opencode' }
 const sampleFramework = { framework: 'opencode' }
 const sampleResumeRequest = { sessionId: 's-1', cwd: '/workspace/project' }
+const sampleInterruptedTurnRequest = {
+  sessionId: 's-1',
+  projectId: 'project-1',
+  promptMessageId: 'prompt-1'
+}
 const sampleGitHubPreview = { url: 'https://github.com/acme/skills/tree/main/foo' }
 const sampleAgentHomePreview = { source: 'agents', slug: 'foo' }
 const sampleSessionArtifactSelection = {
@@ -905,8 +971,21 @@ const sampleSessionArtifactSelection = {
   sessionId: 's-1',
   files: [{ path: 'artifact://report', suggestedName: 'report.csv' }]
 }
+const sampleProjectArtifactSelection = {
+  projectId: 'p-1',
+  projectName: 'Research',
+  files: [
+    { source: 'artifact', sessionId: 's-1', path: 'artifact://report', suggestedName: 'report.csv' }
+  ]
+}
 
 const cases: ForwardingCase[] = [
+  {
+    name: 'settings.exportSkill → settings:export-skill',
+    invoke: (a) => a.settings.exportSkill({ id: 'personal-my-skill' }),
+    channel: 'settings:export-skill',
+    args: [{ id: 'personal-my-skill' }]
+  },
   {
     name: 'specialist.previewDelete → specialist:delete-preview',
     invoke: (a) => a.specialist.previewDelete({ id: 'research-synth' }),
@@ -966,6 +1045,12 @@ const cases: ForwardingCase[] = [
     args: [sampleSessionArtifactSelection]
   },
   {
+    name: 'saveProjectArtifacts → file:save-project-artifacts',
+    invoke: (a) => a.saveProjectArtifacts(sampleProjectArtifactSelection),
+    channel: 'file:save-project-artifacts',
+    args: [sampleProjectArtifactSelection]
+  },
+  {
     name: 'lifecycle.getClientId → lifecycle:client-id (no args)',
     invoke: (a) => a.lifecycle.getClientId(),
     channel: 'lifecycle:client-id',
@@ -977,6 +1062,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.sessions.loadAll(),
     channel: 'sessions:load-all',
     args: []
+  },
+  {
+    name: 'sessions.loadOne → sessions:load-one',
+    invoke: (a) => a.sessions.loadOne(sampleDeleteSession),
+    channel: 'sessions:load-one',
+    args: [sampleDeleteSession]
   },
   {
     name: 'sessions.saveSession → sessions:save-session',
@@ -1050,6 +1141,18 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.setClosePreference({ preference: 'minimize' }),
     channel: 'settings:set-close-preference',
     args: [{ preference: 'minimize' }]
+  },
+  {
+    name: 'settings.setProjectFilesFilter → settings:set-project-files-filter',
+    invoke: (a) => a.settings.setProjectFilesFilter({ filter: { sourceMode: 'local' } }),
+    channel: 'settings:set-project-files-filter',
+    args: [{ filter: { sourceMode: 'local' } }]
+  },
+  {
+    name: 'settings.setDefaultPermissionProfile → settings:set-default-permission-profile',
+    invoke: (a) => a.settings.setDefaultPermissionProfile({ profile: 'auto' }),
+    channel: 'settings:set-default-permission-profile',
+    args: [{ profile: 'auto' }]
   },
   {
     name: 'settings.setAppIconVariant → settings:set-app-icon-variant',
@@ -1178,6 +1281,12 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.acp.resumeSession(sampleResumeRequest),
     channel: 'acp:resume-session',
     args: [sampleResumeRequest]
+  },
+  {
+    name: 'acp.continueInterruptedTurn → acp:continue-interrupted-turn',
+    invoke: (a) => a.acp.continueInterruptedTurn(sampleInterruptedTurnRequest),
+    channel: 'acp:continue-interrupted-turn',
+    args: [sampleInterruptedTurnRequest]
   },
   {
     name: 'acp.resetSessionContext → acp:reset-session-context',

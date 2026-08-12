@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createSecondInstanceRelay, orchestrateAppStartup } from './app-startup'
+import {
+  createSecondInstanceRelay,
+  createStartupWindowCloseOptions,
+  createStartupWindowSecondInstanceHandler,
+  orchestrateAppStartup
+} from './app-startup'
 
 describe('createSecondInstanceRelay', () => {
   it('records a signal that arrives before bind and drains it on bind, with its argv', () => {
@@ -40,6 +45,35 @@ describe('createSecondInstanceRelay', () => {
     expect(handler).toHaveBeenNthCalledWith(1, ['app', 'first'])
     expect(handler).toHaveBeenNthCalledWith(2, ['app', 'second'])
   })
+
+  it('surfaces an existing startup window for a second launch', () => {
+    const forward = vi.fn()
+    const window = {
+      focus: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      isMinimized: vi.fn(() => true),
+      restore: vi.fn(),
+      show: vi.fn()
+    }
+
+    createStartupWindowSecondInstanceHandler(window, forward)(['app', '--serve=44100'])
+
+    expect(window.restore).toHaveBeenCalledOnce()
+    expect(window.show).toHaveBeenCalledOnce()
+    expect(window.focus).toHaveBeenCalledOnce()
+    expect(forward).toHaveBeenCalledWith(['app', '--serve=44100'])
+  })
+
+  it('allows the startup window to close after it requests app quit', () => {
+    const quit = vi.fn()
+    const options = createStartupWindowCloseOptions(quit)
+
+    expect(options.classifyClose()).toBe('quit')
+    options.requestQuit()
+
+    expect(quit).toHaveBeenCalledOnce()
+    expect(options.classifyClose()).toBe('close')
+  })
 })
 
 describe('orchestrateAppStartup', () => {
@@ -69,7 +103,8 @@ describe('orchestrateAppStartup', () => {
   })
 
   it('installs the migration guard before the lifecycle for the primary instance', async () => {
-    const deps = makeDeps()
+    const markReady = vi.fn()
+    const deps = makeDeps({ markReady })
 
     await orchestrateAppStartup(deps)
 
@@ -77,10 +112,13 @@ describe('orchestrateAppStartup', () => {
     expect(deps.prepare).toHaveBeenCalledTimes(1)
     const guardOrder = vi.mocked(deps.installMigrationQuitGuard).mock.invocationCallOrder[0]
     const lifecycleOrder = vi.mocked(deps.installAppLifecycle).mock.invocationCallOrder[0]
+    const readyOrder = markReady.mock.invocationCallOrder[0]
     expect(guardOrder).toBeLessThan(lifecycleOrder)
+    expect(lifecycleOrder).toBeLessThan(readyOrder)
     // The guard and lifecycle both receive the context produced by prepare.
     expect(deps.installMigrationQuitGuard).toHaveBeenCalledWith({ tag: 'ctx' })
     expect(deps.installAppLifecycle).toHaveBeenCalledWith({ tag: 'ctx' })
+    expect(markReady).toHaveBeenCalledWith({ tag: 'ctx' })
   })
 
   it('drains a second instance that arrives during startup, forwarding its argv', async () => {

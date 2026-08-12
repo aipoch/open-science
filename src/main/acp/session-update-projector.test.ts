@@ -2,6 +2,8 @@ import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+
 import { AcpSessionUpdateProjector } from './session-update-projector'
 
 type TestRouting = Readonly<{
@@ -24,7 +26,16 @@ type TestProjector = Readonly<{
   route: (notification: SessionNotification, routing: TestRouting) => readonly RecordedEffect[]
 }>
 
-const createProjector = (): TestProjector => {
+const createProjector = (
+  initialPermissionProfile: SessionPermissionProfileState = {
+    selectedProfile: 'ask',
+    effectiveProfile: 'ask',
+    currentModeId: 'default',
+    availableModeIds: ['default', 'bypassPermissions'],
+    fullAccessAvailable: true
+  },
+  acceptProviderPermissionProfile = true
+): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
     visible: true,
@@ -32,6 +43,7 @@ const createProjector = (): TestProjector => {
     mcpServerNames: []
   }
   let effects: RecordedEffect[] = []
+  let permissionProfile = initialPermissionProfile
   const record = (effect: RecordedEffect): void => {
     effects.push(Object.freeze(effect))
   }
@@ -42,20 +54,17 @@ const createProjector = (): TestProjector => {
           aggregate: {
             snapshot: () => ({
               frameworkId: routing.framework,
-              permissionProfile: {
-                selectedProfile: 'ask',
-                effectiveProfile: 'ask',
-                currentModeId: 'default',
-                availableModeIds: ['default', 'bypassPermissions'],
-                fullAccessAvailable: true
-              }
+              permissionProfile
             }),
-            setPermissionProfile: (profile: { currentModeId?: string }) =>
+            setPermissionProfile: (profile: SessionPermissionProfileState) => {
+              permissionProfile = profile
               record({
                 kind: 'current-mode',
                 sessionId,
-                currentModeId: profile.currentModeId
+                currentModeId: profile.currentModeId,
+                selectedProfile: profile.selectedProfile
               })
+            }
           }
         }) as never
     },
@@ -79,6 +88,11 @@ const createProjector = (): TestProjector => {
     reconnectPending: () => routing.reconnectPending,
     mcpServerNamesFor: () => routing.mcpServerNames,
     nextEventId: () => routing.eventId,
+    setProviderPermissionProfile: (sessionId, profile) => {
+      if (!acceptProviderPermissionProfile) return false
+      record({ kind: 'live-profile', sessionId, selectedProfile: profile.selectedProfile })
+      return true
+    },
     emitState: () => undefined,
     pushEvent: (event) => record({ kind: 'visible-event', event }),
     reportToolFailure: (effect) => record(effect)
@@ -132,6 +146,7 @@ describe('AcpSessionUpdateProjector', () => {
       reconnectPending: () => false,
       mcpServerNamesFor: () => [],
       nextEventId,
+      setProviderPermissionProfile: () => true,
       emitState: () => journal.push('state:emit'),
       pushEvent: () => journal.push('event:push'),
       reportToolFailure: () => journal.push('diagnostic')
@@ -210,6 +225,176 @@ describe('AcpSessionUpdateProjector', () => {
     expect(effects.every(Object.isFrozen)).toBe(true)
   })
 
+  it.each([
+    ['claude-code', 'mcp__open-science-notebook__ask_user_question'],
+    ['opencode', 'open_science_notebook_ask_user_question'],
+    ['codex', 'mcp.open-science-notebook.ask_user_question']
+  ] as const)(
+    'keeps the %s app-owned user-choice MCP call out of the visible activity timeline',
+    (framework, providerToolName) => {
+      const projector = createProjector()
+      const effects = projector.route(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'choice-tool-1',
+            title: providerToolName,
+            status: 'failed',
+            _meta:
+              framework === 'claude-code'
+                ? { claudeCode: { toolName: providerToolName } }
+                : { toolName: providerToolName }
+          }
+        },
+        {
+          framework,
+          eventId: 'event-choice-tool',
+          visible: true,
+          reconnectPending: false,
+          mcpServerNames: ['open-science-notebook']
+        }
+      )
+
+      expect(effects.map((effect) => effect.kind)).toEqual([
+        'context-observation',
+        'context-refresh'
+      ])
+    }
+  )
+
+  it('keeps a sparse Codex app-owned user-choice MCP call out of the visible activity timeline', () => {
+    const projector = createProjector()
+    const effects = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'choice-tool-1',
+          kind: 'execute',
+          title: 'Tool activity',
+          status: 'pending',
+          rawInput: {
+            server: 'open-science-notebook',
+            tool: 'ask_user_question',
+            arguments: { questions: [] }
+          },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      {
+        framework: 'codex',
+        eventId: 'event-choice-tool',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: ['open-science-notebook']
+      }
+    )
+
+    expect(effects.map((effect) => effect.kind)).toEqual(['context-observation', 'context-refresh'])
+  })
+
+  it('keeps generic Codex follow-up updates hidden for a recognized user-choice call', () => {
+    const projector = createProjector()
+    const routing = {
+      framework: 'codex' as const,
+      eventId: 'event-choice-tool',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: ['open-science-notebook']
+    }
+
+    projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'choice-tool-1',
+          title: 'Tool activity',
+          status: 'pending',
+          rawInput: { server: 'open-science-notebook', tool: 'ask_user_question' },
+          _meta: { is_mcp_tool_call: true }
+        }
+      },
+      routing
+    )
+    const followUp = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'choice-tool-1',
+          title: 'Tool activity',
+          status: 'completed'
+        }
+      },
+      { ...routing, eventId: 'event-choice-tool-completed' }
+    )
+    const reusedId = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'choice-tool-1',
+          title: 'Ordinary tool',
+          status: 'pending'
+        }
+      },
+      { ...routing, eventId: 'event-ordinary-tool' }
+    )
+
+    expect(followUp.map((effect) => effect.kind)).toEqual([
+      'context-observation',
+      'context-refresh'
+    ])
+    expect(reusedId.map((effect) => effect.kind)).toContain('visible-event')
+  })
+
+  it.each([
+    ['missing Codex MCP marker', undefined, 'open-science-notebook', 'ask_user_question'],
+    [
+      'unconfigured MCP server',
+      { is_mcp_tool_call: true },
+      'external-notebook',
+      'ask_user_question'
+    ],
+    [
+      'ordinary app MCP tool',
+      { is_mcp_tool_call: true },
+      'open-science-notebook',
+      'notebook_execute'
+    ]
+  ] as const)('keeps sparse Codex tool activity visible for %s', (_name, meta, server, tool) => {
+    const projector = createProjector()
+    const effects = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-1',
+          kind: 'execute',
+          title: 'Tool activity',
+          status: 'pending',
+          rawInput: { server, tool, arguments: {} },
+          ...(meta ? { _meta: meta } : {})
+        }
+      },
+      {
+        framework: 'codex',
+        eventId: 'event-tool',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: ['open-science-notebook']
+      }
+    )
+
+    expect(effects.map((effect) => effect.kind)).toEqual([
+      'context-observation',
+      'context-refresh',
+      'visible-event'
+    ])
+  })
+
   it('suppresses only the unscoped Codex compaction warning', () => {
     const projector = createProjector()
     const warning =
@@ -270,6 +455,43 @@ describe('AcpSessionUpdateProjector', () => {
     ])
   })
 
+  it('projects the legacy Codex completion notice as a completed compaction lifecycle', () => {
+    const projector = createProjector()
+    const notice = "*Context compacted to fit the model's context window.*\n\n"
+    const effects = projector.route(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: notice }
+        }
+      },
+      {
+        framework: 'codex',
+        eventId: 'event-legacy-compaction',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+    )
+
+    expect(effects).toMatchObject([
+      { kind: 'context-observation' },
+      { kind: 'context-refresh' },
+      {
+        kind: 'visible-event',
+        event: {
+          kind: 'compaction',
+          sessionId: 'session-1',
+          status: 'completed',
+          title: 'Context compacted',
+          toolCallId: 'context-compaction:event-legacy-compaction'
+        }
+      }
+    ])
+    expect(effects.at(-1)).not.toHaveProperty('event.text')
+  })
+
   it('projects usage to context state without a visible event and suppresses stale reconnect usage', () => {
     const projector = createProjector()
     const notification: SessionNotification = {
@@ -328,11 +550,17 @@ describe('AcpSessionUpdateProjector', () => {
     })
   })
 
-  it('projects hidden current-mode updates while a reconnect suppresses stale context effects', () => {
-    const projector = createProjector()
+  it('synchronizes hidden current-mode downgrades with the live permission profile', () => {
+    const projector = createProjector({
+      selectedProfile: 'full',
+      effectiveProfile: 'full',
+      currentModeId: 'bypassPermissions',
+      availableModeIds: ['default', 'bypassPermissions'],
+      fullAccessAvailable: true
+    })
     const notification: SessionNotification = {
       sessionId: 'session-1',
-      update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
+      update: { sessionUpdate: 'current_mode_update', currentModeId: 'default' }
     }
     const routing = {
       eventId: 'event-mode',
@@ -343,11 +571,45 @@ describe('AcpSessionUpdateProjector', () => {
 
     expect(projector.route(notification, routing)).toMatchObject([
       {
+        kind: 'live-profile',
+        sessionId: 'session-1',
+        selectedProfile: 'ask'
+      },
+      {
         kind: 'current-mode',
         sessionId: 'session-1',
-        currentModeId: 'bypassPermissions'
+        currentModeId: 'default',
+        selectedProfile: 'ask'
       }
     ])
+  })
+
+  it('does not project provider modes while a user profile transition owns the state', () => {
+    const projector = createProjector(
+      {
+        selectedProfile: 'full',
+        effectiveProfile: 'full',
+        currentModeId: 'bypassPermissions',
+        availableModeIds: ['default', 'bypassPermissions'],
+        fullAccessAvailable: true
+      },
+      false
+    )
+
+    expect(
+      projector.route(
+        {
+          sessionId: 'session-1',
+          update: { sessionUpdate: 'current_mode_update', currentModeId: 'default' }
+        },
+        {
+          eventId: 'event-mode',
+          visible: false,
+          reconnectPending: false,
+          mcpServerNames: []
+        }
+      )
+    ).toMatchObject([{ kind: 'context-observation', sessionId: 'session-1' }])
   })
 
   it('classifies MCP context and emits a bounded canonical failure diagnostic before the event', () => {

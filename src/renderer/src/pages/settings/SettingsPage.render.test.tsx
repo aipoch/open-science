@@ -59,6 +59,7 @@ const installApi = (): void => {
         {
           id: 'alpha',
           name: 'Alpha',
+          displayName: 'Alpha',
           description: 'First',
           source: 'featured',
           updatedAt: '2026-07-08T00:00:00.000Z',
@@ -68,6 +69,7 @@ const installApi = (): void => {
       getSkillDetail: vi.fn().mockResolvedValue({
         id: 'alpha',
         name: 'Alpha',
+        displayName: 'Alpha',
         description: 'First',
         source: 'featured',
         updatedAt: '2026-07-08T00:00:00.000Z',
@@ -91,6 +93,7 @@ const installApi = (): void => {
         customServers: [],
         ncbi: { hasApiKey: false }
       }),
+      onConnectorRuntimeChanged: vi.fn().mockReturnValue(() => undefined),
       getPackageMirror: vi.fn().mockResolvedValue({}),
       setPackageMirror: vi.fn().mockResolvedValue({})
     },
@@ -376,15 +379,21 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model and Reasoning effort (their own sections) from provider
-    // management; the agent framework moved to the Agent sub-panel.
+    // The Model panel splits Active model, Reasoning effort, and Subagent model (their own
+    // sections) from provider management; the agent framework moved to the Agent sub-panel.
     expect(document.body.textContent).toContain('Active model')
     expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('preserve relative strength when models change')
     expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(4)
+    expect(
+      Array.from(document.body.querySelectorAll('[data-slot="settings-section"]')).map((section) =>
+        section.getAttribute('aria-label')
+      )
+    ).toEqual(['Active model', 'Reasoning effort', 'Subagent model', 'Providers'])
+    expect(document.body.textContent).toContain('Model used by subagents when Delegation is on.')
     // The add action lives with the list as a dashed ghost row, not a section-header button.
     const addRow = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Add provider'
@@ -1113,6 +1122,9 @@ describe('SettingsPage layout', () => {
       'a[href="https://www.remote.it/download/"]'
     )
     expect(remoteItDownload?.textContent).toBe('Download Remote.It App')
+    expect(remoteItDownload?.className).toContain('underline')
+    expect(remoteItDownload?.className).toContain('bg-primary/10')
+    expect(remoteItDownload?.querySelector('svg')).not.toBeNull()
     expect(remoteItDownload?.closest('[data-slot="settings-section"]')).toBe(
       settingsSection('Remote browser access')
     )
@@ -1849,10 +1861,10 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    // Landed on the specialist's editor (name input prefilled with the public name), not the
+    // Landed on the specialist's editor (display name prefilled), not the
     // default Model panel.
     const name = document.body.querySelector<HTMLInputElement>('#sp-name')
-    expect(name?.value).toBe('RESEARCHER')
+    expect(name?.value).toBe('Researcher')
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
     // The pending id is consumed so a later normal open won't jump back to it.
     expect(useSettingsStore.getState().pendingSpecialistId).toBeUndefined()

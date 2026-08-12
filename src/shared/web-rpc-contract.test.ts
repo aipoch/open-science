@@ -74,6 +74,7 @@ describe('Web RPC contract', () => {
       'compute.list',
       'compute.listDir',
       'compute.probe',
+      'compute.replayApproval',
       'compute.respondApproval',
       'compute.revealInFolder',
       'compute.scratchSet',
@@ -159,6 +160,16 @@ describe('Web RPC contract', () => {
         protocolVersion: WEB_RPC_PROTOCOL_VERSION,
         ok: false,
         error: { code: 'invalid_request', message: 'Invalid request.' }
+      }).success
+    ).toBe(true)
+    expect(
+      webRpcResponseSchema.safeParse({
+        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+        ok: false,
+        error: {
+          code: 'invalid-command-arguments',
+          message: 'Invalid project request.'
+        }
       }).success
     ).toBe(true)
   })

@@ -6,6 +6,72 @@ import { codexFramework } from './codex'
 import { opencodeFramework } from './opencode'
 
 describe('claudeCodeFramework', () => {
+  it('disables every Claude-native delegation path without removing ordinary built-in tools', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
+
+    expect(setup.meta).toMatchObject({
+      claudeCode: {
+        options: {
+          tools: { type: 'preset', preset: 'claude_code' },
+          disallowedTools: ['Agent', 'Task', 'Workflow', 'SendMessage', 'TeamCreate', 'TeamDelete'],
+          managedSettings: {
+            disableAgentView: true,
+            disableWorkflows: true,
+            workflowKeywordTriggerEnabled: false
+          },
+          env: {
+            CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+            CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
+          }
+        }
+      }
+    })
+  })
+
+  it('keeps ordinary background-task controls available', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
+    const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
+
+    expect(options.disallowedTools).not.toContain('TaskOutput')
+    expect(options.disallowedTools).not.toContain('TaskStop')
+  })
+
+  it('does not let backend session options reopen a native delegation bypass', () => {
+    const setup = claudeCodeFramework.buildSessionSetup({
+      systemPromptAppends: [],
+      sessionOptions: {
+        disallowedTools: ['CustomDeniedTool'],
+        managedSettings: { disableAgentView: false, disableWorkflows: false },
+        env: {
+          CLAUDE_CODE_DISABLE_AGENT_VIEW: '0',
+          CLAUDE_CODE_DISABLE_WORKFLOWS: '0',
+          SAFE_BACKEND_VALUE: 'preserved'
+        }
+      }
+    })
+    const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
+
+    expect(options.disallowedTools).toEqual([
+      'CustomDeniedTool',
+      'Agent',
+      'Task',
+      'Workflow',
+      'SendMessage',
+      'TeamCreate',
+      'TeamDelete'
+    ])
+    expect(options.managedSettings).toMatchObject({
+      disableAgentView: true,
+      disableWorkflows: true,
+      workflowKeywordTriggerEnabled: false
+    })
+    expect(options.env).toEqual({
+      SAFE_BACKEND_VALUE: 'preserved',
+      CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+      CLAUDE_CODE_DISABLE_WORKFLOWS: '1'
+    })
+  })
+
   it('injects resolved settings and local plugins into Claude session options', () => {
     const sessionOptions = {
       settings: '/app/claude/settings.json',
@@ -19,7 +85,7 @@ describe('claudeCodeFramework', () => {
 
     expect(setup.meta).toMatchObject({
       claudeCode: {
-        emitRawSDKMessages: [{ type: 'result' }],
+        emitRawSDKMessages: [{ type: 'assistant' }, { type: 'result' }],
         options: {
           ...sessionOptions,
           settingSources: ['user'],
@@ -88,6 +154,7 @@ describe('claudeCodeFramework', () => {
     })
     const systemPrompt = setup.meta?.systemPrompt as { append: string }
 
+    expect(systemPrompt.append).toContain('`mcp__open-science-notebook__ask_user_question`')
     expect(systemPrompt.append).toContain('`mcp__open-science-notebook__notebook_execute`')
     expect(systemPrompt.append).toContain('`mcp__open-science-notebook__repl_execute`')
     expect(systemPrompt.append).toContain('`mcp__open-science-notebook__inspect_packages`')

@@ -9,6 +9,7 @@ import {
 } from '../../../../shared/notebook'
 import { previewIdForNotebookInput } from './notebook-input-preview'
 import { createPreviewFileItem } from './preview-file-item'
+import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 
 type NotebookInputDataStripProps = {
   inputFiles: readonly (NotebookRunInputFile | NotebookInputFileSummary)[]
@@ -43,11 +44,13 @@ const NotebookInputDataStrip = ({
 }: NotebookInputDataStripProps): React.JSX.Element | null => {
   const inputs = collectInputs(inputFiles)
   const openPreview = usePreviewWorkbenchStore((state) => state.upsertAndActivateItem)
+  const scrollFadeRef = useHorizontalScrollFade<HTMLElement>()
   if (inputs.length === 0) return null
 
   return (
     <section
-      className={cn('flex items-center gap-2 overflow-x-auto', className)}
+      ref={scrollFadeRef}
+      className={cn('scroll-fade-x flex items-center gap-2 overflow-x-auto', className)}
       aria-label={label}
       data-testid="notebook-input-data"
     >

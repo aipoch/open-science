@@ -60,7 +60,7 @@ export const SkillMentionPopup = ({
     return (
       visibleSkills
         .map((skill) => {
-          const nameMatch = fuzzyScore(needle, skill.name)
+          const nameMatch = fuzzyScore(needle, skill.displayName)
           if (nameMatch) {
             return {
               skill,
@@ -103,7 +103,14 @@ export const SkillMentionPopup = ({
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         if (matches.length > 0) setActiveIndex((safeIndex - 1 + matches.length) % matches.length)
-      } else if (event.key === 'Enter') {
+      } else if (
+        event.key === 'Enter' ||
+        (event.key === 'Tab' &&
+          !event.shiftKey &&
+          !event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey)
+      ) {
         const active = matches[safeIndex]
         if (active) {
           event.preventDefault()
@@ -146,7 +153,7 @@ export const SkillMentionPopup = ({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium text-sm">
-                    <HighlightedText text={skill.name} positions={positions} />
+                    <HighlightedText text={skill.displayName} positions={positions} />
                   </span>
                   <div className="flex-1" />
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground">
@@ -164,7 +171,7 @@ export const SkillMentionPopup = ({
           <span className="text-text-300">↑↓</span> navigate
         </span>
         <span>
-          <span className="text-text-300">Enter</span> select
+          <span className="text-text-300">Enter / Tab</span> select
         </span>
         <span>
           <span className="text-text-300">Esc</span> close

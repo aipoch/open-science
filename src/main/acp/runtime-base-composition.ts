@@ -26,6 +26,7 @@ import { AcpSessionCapabilityOwner } from './session-capability-owner'
 import { AcpSessionConfigurator } from './session-configurator'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
 import { ArtifactTurnOwner } from './artifact-turn-owner'
 import { AcpTurnSkillOwner } from './turn-skill-owner'
 
@@ -74,6 +75,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     notebook: options.notebook,
     skillImport: options.skillImport,
     plan: options.plan,
+    sideChat: options.sideChat,
     mcpHttpHost: options.mcpHttpHost
   })
   let generationConnectionEffects: AcpGenerationConnectionEffects | undefined
@@ -132,7 +134,10 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     ? (options.artifacts.runRegistry ?? new ArtifactRunRegistry())
     : undefined
   const artifactTurns =
-    options.artifacts && artifactRepository && artifactRunRegistry
+    options.artifacts &&
+    !options.artifacts.currentRunFile &&
+    artifactRepository &&
+    artifactRunRegistry
       ? new ArtifactTurnOwner({
           dataRoot: options.artifacts.dataRoot,
           repository: artifactRepository,
@@ -142,6 +147,9 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
           provenance: options.artifacts.provenance,
           ...(options.notebook
             ? {
+                notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(
+                  options.artifacts.dataRoot
+                ),
                 notebook: {
                   setArtifactProvenanceContext: options.notebook.setArtifactProvenanceContext
                 }
@@ -159,14 +167,17 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
             resolveVersionContent: (request) =>
               options.artifacts!.provenance!.resolveVersionContent!(request)
           },
-          sessions: options.plan.sessions
+          sessions: options.plan.sessions,
+          onApprovalRequested: options.plan.onApprovalRequested,
+          onApprovalSettled: options.plan.onApprovalSettled
         })
       : undefined
   const uploadRepository = options.uploads?.repository
   const fileReferenceResolver = createManagedFileReferenceResolver({
     uploads: uploadRepository,
     artifacts: artifactRepository,
-    artifactVersions: options.artifacts?.provenance
+    artifactVersions: options.artifacts?.provenance,
+    grantedRoots: options.grantedRoots
   })
 
   return Object.freeze({

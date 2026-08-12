@@ -3,17 +3,32 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  ProjectDeletedEvent,
-  SessionDeletedEvent,
-  SessionUpsertEvent
+import {
+  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  type ProjectDeletedEvent,
+  type SessionDeletedEvent,
+  type SessionUpsertEvent
 } from '../../../shared/lifecycle-events'
 import type { Project } from '../../../shared/projects'
+import { hasCurrentRunningDelegatedAttempt } from '../../../shared/delegated-work-projection'
+import {
+  createLinearConversationGraph,
+  getActiveConversationContext,
+  synchronizeActiveConversationMessages
+} from '../../../shared/conversation-graph'
+import { validateDurableMessageOwnership } from '../../../main/artifacts/provenance-message-finalization'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import {
+  createInitialSessionState,
+  toPersistedSession,
+  useSessionStore
+} from '@/stores/session-store'
 import { useLifecycleSync } from './useLifecycleSync'
 
 const listeners: {
@@ -172,6 +187,713 @@ describe('useLifecycleSync', () => {
 
     expect(useSessionStore.getState().sessions[0]?.title).toBe('Updated session')
     expect(container.querySelector<HTMLButtonElement>('button')?.dataset.noticeSession).toBe('')
+  })
+
+  it('projects enabled Compute Host authority without replacing live chat state', async () => {
+    useSessionStore.getState().hydrateSessions([session])
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Keep this live prompt'
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...toPersistedSession(source),
+          enabledComputeHosts: ['ssh:lab'],
+          updatedAt: source.updatedAt + 1
+        }
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      enabledComputeHosts: ['ssh:lab'],
+      messages: [expect.objectContaining({ content: 'Keep this live prompt' })]
+    })
+  })
+
+  it('applies main-owned delegated child lifecycle projections to the live Session store', async () => {
+    const rootPrompt = {
+      id: 'root-prompt',
+      role: 'user' as const,
+      content: 'Delegate this work',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const graph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: [rootPrompt],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const rootFrameId = graph.rootFrameId
+    graph.frames.push({
+      id: 'child-frame',
+      parentFrameId: rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'running',
+      activeBranchId: 'child-branch',
+      createdAt: 2
+    })
+    graph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      createdAt: 2,
+      updatedAt: 2
+    })
+    useSessionStore.getState().hydrateSessions([{ ...session, messages: [rootPrompt] }])
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...session,
+          messages: [rootPrompt],
+          conversationGraph: graph,
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            delegatedWork: {
+              records: [
+                {
+                  agentFrameId: 'child-frame',
+                  attempts: [
+                    {
+                      id: 'child-attempt',
+                      status: 'running',
+                      resolvedAgent: { kind: 'main' },
+                      runtimeSegmentIds: [],
+                      startedAt: 2
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          updatedAt: 2
+        }
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      runtimeContext: {
+        revision: 1,
+        delegatedWork: { records: [{ agentFrameId: 'child-frame' }] }
+      },
+      conversationGraph: {
+        frames: expect.arrayContaining([expect.objectContaining({ id: 'child-frame' })])
+      }
+    })
+
+    const finishedGraph = structuredClone(graph)
+    const childFrame = finishedGraph.frames.find(({ id }) => id === 'child-frame')!
+    childFrame.status = 'cancelled'
+    childFrame.completedAt = 3
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...session,
+          messages: [rootPrompt],
+          conversationGraph: finishedGraph,
+          runtimeContext: {
+            version: 1,
+            revision: 2,
+            delegatedWork: {
+              records: [
+                {
+                  agentFrameId: 'child-frame',
+                  attempts: [
+                    {
+                      id: 'child-attempt',
+                      status: 'cancelled',
+                      resolvedAgent: { kind: 'main' },
+                      runtimeSegmentIds: [],
+                      startedAt: 2,
+                      endedAt: 3,
+                      cancellationReason: 'main_agent_stop'
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          updatedAt: 3
+        }
+      })
+    })
+
+    expect(
+      useSessionStore.getState().sessions[0].runtimeContext?.delegatedWork?.records[0]?.attempts[0]
+    ).toMatchObject({ status: 'cancelled', endedAt: 3 })
+    expect(
+      useSessionStore
+        .getState()
+        .sessions[0].conversationGraph?.frames.find(({ id }) => id === 'child-frame')
+    ).toMatchObject({ status: 'cancelled', completedAt: 3 })
+  })
+
+  it('preserves newer live root state while applying a later delegated terminal snapshot', async () => {
+    const rootPrompt = {
+      id: 'root-prompt',
+      role: 'user' as const,
+      content: 'Delegate and continue locally',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 10,
+      updatedAt: 10
+    }
+    const localOutput = {
+      id: 'root-output',
+      role: 'agent' as const,
+      content: 'Newer renderer output',
+      status: 'streaming' as const,
+      eventIds: ['local-event'],
+      responseToMessageId: rootPrompt.id,
+      createdAt: 20,
+      updatedAt: 50
+    }
+    const localGraph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: [rootPrompt, localOutput],
+      createdAt: 10,
+      updatedAt: 50
+    })
+    localGraph.frames[0].status = 'running'
+    delete localGraph.frames[0].completedAt
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...session,
+        status: 'running',
+        activeRun: { promptMessageId: rootPrompt.id, startedAt: 10 },
+        messages: [rootPrompt, localOutput],
+        conversationGraph: localGraph,
+        updatedAt: 50
+      }
+    ])
+    const incomingGraph = structuredClone(localGraph)
+    incomingGraph.frames[0].status = 'completed'
+    incomingGraph.frames[0].completedAt = 30
+    const staleRootOutput = incomingGraph.messages.find(({ id }) => id === localOutput.id)!
+    staleRootOutput.content = 'Stale durable output'
+    staleRootOutput.status = 'complete'
+    staleRootOutput.updatedAt = 30
+    incomingGraph.frames.push({
+      id: 'child-frame',
+      parentFrameId: incomingGraph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'cancelled',
+      activeBranchId: 'child-branch',
+      createdAt: 20,
+      completedAt: 100
+    })
+    incomingGraph.branches.push({
+      id: 'child-branch',
+      agentFrameId: 'child-frame',
+      createdAt: 20,
+      updatedAt: 100
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...session,
+          status: 'idle',
+          messages: [rootPrompt, { ...localOutput, ...staleRootOutput }],
+          conversationGraph: incomingGraph,
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            delegatedWork: {
+              records: [
+                {
+                  agentFrameId: 'child-frame',
+                  attempts: [
+                    {
+                      id: 'child-attempt',
+                      status: 'cancelled',
+                      resolvedAgent: { kind: 'main' },
+                      runtimeSegmentIds: [],
+                      startedAt: 20,
+                      endedAt: 100,
+                      cancellationReason: 'main_agent_stop'
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          updatedAt: 100
+        }
+      })
+    })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected).toMatchObject({
+      status: 'running',
+      activeRun: { promptMessageId: rootPrompt.id, startedAt: 10 },
+      updatedAt: 50
+    })
+    expect(projected.messages.find(({ id }) => id === localOutput.id)).toMatchObject({
+      content: 'Newer renderer output',
+      status: 'streaming',
+      updatedAt: 50
+    })
+    const projectedRoot = projected.conversationGraph?.frames.find(
+      ({ id }) => id === incomingGraph.rootFrameId
+    )
+    expect(projectedRoot).toMatchObject({ status: 'running' })
+    expect(projectedRoot).not.toHaveProperty('completedAt')
+    expect(
+      projected.conversationGraph?.messages.find(({ id }) => id === localOutput.id)
+    ).toMatchObject({ content: 'Newer renderer output', status: 'streaming', updatedAt: 50 })
+    expect(projected.runtimeContext?.delegatedWork?.records[0]?.attempts[0]).toMatchObject({
+      status: 'cancelled',
+      endedAt: 100
+    })
+    expect(
+      projected.conversationGraph?.frames.find(({ id }) => id === 'child-frame')
+    ).toMatchObject({ status: 'cancelled', completedAt: 100 })
+  })
+
+  it('merges inactive direct-child terminal output so switching the root branch back is current', async () => {
+    const rootPrompt = {
+      id: 'root-prompt',
+      role: 'user' as const,
+      content: 'Start delegated research',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const graph = createLinearConversationGraph({
+      sessionId: session.id,
+      messages: [rootPrompt],
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const rootFrame = graph.frames[0]
+    const originalRootBranchId = rootFrame.activeBranchId
+    graph.frames.push({
+      id: 'inactive-child',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: rootPrompt.id,
+      originBindingState: 'validated',
+      kind: 'delegate',
+      status: 'running',
+      activeBranchId: 'child-branch',
+      createdAt: 2
+    })
+    graph.branches.push(
+      {
+        id: 'child-branch',
+        agentFrameId: 'inactive-child',
+        headMessageId: 'child-prompt',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'alternate-root-branch',
+        agentFrameId: graph.rootFrameId,
+        headMessageId: 'alternate-root-prompt',
+        createdAt: 3,
+        updatedAt: 3
+      }
+    )
+    graph.messages.push(
+      {
+        id: 'child-prompt',
+        role: 'user',
+        content: 'Research the evidence',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: 'inactive-child',
+        introducedOnBranchId: 'child-branch',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'alternate-root-prompt',
+        role: 'user',
+        content: 'Work on an alternate root branch',
+        status: 'complete',
+        eventIds: [],
+        agentFrameId: graph.rootFrameId,
+        introducedOnBranchId: 'alternate-root-branch',
+        createdAt: 3,
+        updatedAt: 3
+      }
+    )
+    rootFrame.activeBranchId = 'alternate-root-branch'
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...session,
+        messages: [rootPrompt],
+        conversationGraph: graph,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          delegatedWork: {
+            records: [
+              {
+                agentFrameId: 'inactive-child',
+                attempts: [
+                  {
+                    id: 'child-attempt',
+                    status: 'running',
+                    resolvedAgent: { kind: 'main' },
+                    runtimeSegmentIds: [],
+                    startedAt: 2
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        updatedAt: 3
+      }
+    ])
+    expect(hasCurrentRunningDelegatedAttempt(useSessionStore.getState().sessions[0])).toBe(true)
+
+    const terminalGraph = structuredClone(graph)
+    const terminalChild = terminalGraph.frames.find(({ id }) => id === 'inactive-child')!
+    terminalChild.status = 'completed'
+    terminalChild.completedAt = 5
+    terminalGraph.branches.find(({ id }) => id === 'child-branch')!.headMessageId = 'child-answer'
+    terminalGraph.messages.push({
+      id: 'child-answer',
+      role: 'agent',
+      content: 'Terminal child result',
+      status: 'complete',
+      eventIds: [],
+      artifactIds: ['child-artifact-version'],
+      agentFrameId: 'inactive-child',
+      introducedOnBranchId: 'child-branch',
+      parentMessageId: 'child-prompt',
+      createdAt: 5,
+      updatedAt: 5
+    })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...session,
+          messages: [rootPrompt],
+          conversationGraph: terminalGraph,
+          runtimeContext: {
+            version: 1,
+            revision: 2,
+            delegatedWork: {
+              records: [
+                {
+                  agentFrameId: 'inactive-child',
+                  attempts: [
+                    {
+                      id: 'child-attempt',
+                      status: 'completed',
+                      resolvedAgent: { kind: 'main' },
+                      runtimeSegmentIds: [],
+                      startedAt: 2,
+                      endedAt: 5,
+                      terminalMessageId: 'child-answer'
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          artifacts: [
+            {
+              id: 'child-artifact-version',
+              kind: 'managed-file',
+              path: 'child-result.md'
+            }
+          ],
+          filesRevision: 1,
+          updatedAt: 5
+        }
+      })
+      useSessionStore.getState().activateMessageBranch(session.id, originalRootBranchId)
+    })
+
+    expect(hasCurrentRunningDelegatedAttempt(useSessionStore.getState().sessions[0])).toBe(false)
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.runtimeContext?.delegatedWork?.records[0]?.attempts[0]).toMatchObject({
+      status: 'completed',
+      terminalMessageId: 'child-answer'
+    })
+    expect(
+      projected.conversationGraph?.frames.find(({ id }) => id === 'inactive-child')
+    ).toMatchObject({ status: 'completed', completedAt: 5 })
+    expect(
+      projected.conversationGraph?.messages.find(({ id }) => id === 'child-answer')
+    ).toMatchObject({ content: 'Terminal child result', artifactIds: ['child-artifact-version'] })
+    expect(projected.artifacts).toContainEqual(
+      expect.objectContaining({ id: 'child-artifact-version', path: 'child-result.md' })
+    )
+    expect(
+      projected.conversationGraph?.frames.find(({ id }) => id === graph.rootFrameId)?.activeBranchId
+    ).toBe(originalRootBranchId)
+  })
+
+  it('merges Main-owned permission authority without replacing live chat state', async () => {
+    useSessionStore.getState().hydrateSessions([session])
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Run the verification'
+    })
+    const durableBeforeOutput = toPersistedSession(useSessionStore.getState().sessions[0])
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: prompt?.messageId,
+      content: 'Preparing the command.'
+    })
+
+    const pendingAuthoritySession = {
+      ...durableBeforeOutput,
+      status: 'waiting-permission' as const,
+      updatedAt: durableBeforeOutput.updatedAt + 1,
+      runtimeContext: {
+        version: 1 as const,
+        revision: 1,
+        permission: {
+          state: 'pending' as const,
+          request: {
+            requestId: 'permission-1',
+            sessionId: session.id,
+            toolCallId: 'tool-1',
+            title: 'Run npm test',
+            options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' as const }]
+          },
+          originatingPromptMessageId: prompt!.messageId,
+          fingerprint: 'a'.repeat(64),
+          createdAt: 1
+        }
+      }
+    }
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: pendingAuthoritySession
+      })
+    })
+
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.status).toBe('waiting-permission')
+    expect(projected.runtimeContext?.permission?.request.requestId).toBe('permission-1')
+    expect(projected.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+    expect(projected.activeRun?.promptMessageId).toBe(prompt?.messageId)
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...durableBeforeOutput,
+          status: 'running',
+          updatedAt: durableBeforeOutput.updatedAt + 2,
+          runtimeContext: { version: 1, revision: 2 }
+        }
+      })
+    })
+
+    const settled = useSessionStore.getState().sessions[0]
+    expect(settled.status).toBe('running')
+    expect(settled.runtimeContext?.permission).toBeUndefined()
+    expect(settled.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        originClientId: MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+        session: {
+          ...pendingAuthoritySession,
+          updatedAt: durableBeforeOutput.updatedAt + 3
+        }
+      })
+    })
+
+    const afterStalePendingReplay = useSessionStore.getState().sessions[0]
+    expect(afterStalePendingReplay.status).toBe('running')
+    expect(afterStalePendingReplay.runtimeContext?.revision).toBe(2)
+    expect(afterStalePendingReplay.runtimeContext?.permission).toBeUndefined()
+    expect(afterStalePendingReplay.messages.map((message) => message.content)).toEqual([
+      'Run the verification',
+      'Preparing the command.'
+    ])
+  })
+
+  it('applies a Main-owned continuation prompt before projecting later artifact events', async () => {
+    const prompt = {
+      id: 'prompt-original',
+      role: 'user' as const,
+      content: 'Choose an approach.',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const preamble = {
+      id: 'agent-question-preamble',
+      role: 'agent' as const,
+      content: 'Please choose one option.',
+      status: 'complete' as const,
+      responseToMessageId: prompt.id,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const base = {
+      ...session,
+      messages: [prompt, preamble],
+      conversationGraph: createLinearConversationGraph({
+        sessionId: session.id,
+        messages: [prompt, preamble],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 2
+      }),
+      updatedAt: 2
+    }
+    useSessionStore.getState().hydrateSessions([base])
+    const revisionPrompt = {
+      id: 'prompt-revision',
+      role: 'user' as const,
+      content: 'The user revised the previous structured answer: Approach: Expanded',
+      status: 'complete' as const,
+      responseToMessageId: preamble.id,
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const durable = {
+      ...base,
+      messages: [...base.messages, revisionPrompt],
+      conversationGraph: synchronizeActiveConversationMessages(
+        base.conversationGraph,
+        [...base.messages, revisionPrompt],
+        3
+      ),
+      updatedAt: 3
+    }
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: durable,
+        originClientId: MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID
+      })
+    })
+
+    const projected = toPersistedSession(useSessionStore.getState().sessions[0])
+    expect(projected.messages.at(-1)).toMatchObject({ id: revisionPrompt.id })
+    expect(projected.conversationGraph?.messages.at(-1)).toMatchObject({
+      id: revisionPrompt.id,
+      introducedOnBranchId: `message-branch-${session.id}`
+    })
+    const context = getActiveConversationContext(projected.conversationGraph!, revisionPrompt.id)
+    const finalMessage = {
+      id: 'agent-final',
+      role: 'agent' as const,
+      content: 'Created the revised artifact.',
+      status: 'complete' as const,
+      responseToMessageId: revisionPrompt.id,
+      eventIds: [],
+      createdAt: 4,
+      updatedAt: 4
+    }
+    projected.messages.push(finalMessage)
+    projected.conversationGraph = synchronizeActiveConversationMessages(
+      projected.conversationGraph!,
+      projected.messages,
+      4,
+      context.runtimeSegmentId
+    )
+    expect(() =>
+      validateDurableMessageOwnership(projected, {
+        ...context,
+        messageId: finalMessage.id
+      })
+    ).not.toThrow()
+  })
+
+  it("does not roll back live conversation state from this renderer's save echo", async () => {
+    useSessionStore.getState().hydrateSessions([
+      {
+        ...session,
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex-response',
+        agentModel: 'gpt-5.5',
+        runtimeContext: { version: 1, revision: 1 }
+      }
+    ])
+    const earlierSave = toPersistedSession(useSessionStore.getState().sessions[0])
+    const appended = useSessionStore.getState().appendUserMessage({
+      sessionId: session.id,
+      content: 'Create the report',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex-response',
+      agentModel: 'gpt-5.6-sol'
+    })
+    const live = useSessionStore.getState().sessions[0]
+    const context = getActiveConversationContext(live.conversationGraph!, appended!.messageId)
+    const response = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: session.id,
+      streamId: 'run-1',
+      eventId: 'agent-message-1',
+      promptMessageId: appended?.messageId,
+      content: 'Saved the report.'
+    })
+    useSessionStore.getState().finishRun(session.id, undefined, appended?.messageId)
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...earlierSave, updatedAt: live.updatedAt + 1 },
+        originClientId: 'electron:7'
+      })
+    })
+
+    expect(() =>
+      validateDurableMessageOwnership(toPersistedSession(useSessionStore.getState().sessions[0]), {
+        ...context,
+        messageId: response!.messageId
+      })
+    ).not.toThrow()
+  })
+
+  it("keeps archive cleanup for this renderer's update echo", async () => {
+    const removeSessionItems = vi.spyOn(usePreviewWorkbenchStore.getState(), 'removeSessionItems')
+    useSessionStore.getState().hydrateSessions([{ ...session, title: 'Live title', updatedAt: 3 }])
+    useSessionStore.setState({ selectedSessionId: session.id })
+
+    await act(async () => {
+      listeners.sessionUpdated?.({
+        session: { ...session, title: 'Stale title', archivedAt: 2, updatedAt: 4 },
+        originClientId: 'electron:7'
+      })
+    })
+
+    expect(useSessionStore.getState().sessions[0]?.title).toBe('Live title')
+    expect(useSessionStore.getState().sessions[0]?.archivedAt).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(removeSessionItems).toHaveBeenCalledWith(session.id)
   })
 
   it('clears a stale notice when its session is archived', async () => {

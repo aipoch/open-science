@@ -1,6 +1,6 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
 
 /**
  * Provider-facing identity and workspace facts for one prompt attempt.
@@ -39,6 +39,7 @@ export type AcpProviderTurnResult = Readonly<{
   turnUsage?: Readonly<Omit<AcpTurnTokenUsage, 'turnCount'>>
   modelTurnCount?: number
   contextUsedTokens?: number
+  lastModelStepUsage?: Readonly<AcpModelStepTokenUsage>
 }>
 
 /**

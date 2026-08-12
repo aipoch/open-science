@@ -117,6 +117,7 @@ describe('ACP session aggregate', () => {
     aggregate.setPermissionProfile(profile)
     aggregate.setSpecialistId('specialist-1')
     aggregate.setSpecialistPrefix('Follow the selected specialist.')
+    aggregate.setSessionSetupPromptPrefix('Project Agent Context.')
     profile.availableModeIds.push('mutated-input')
 
     const firstSnapshot = aggregate.snapshot()
@@ -125,6 +126,7 @@ describe('ACP session aggregate', () => {
       projectName: 'project-1',
       specialistId: 'specialist-1',
       specialistPrefix: 'Follow the selected specialist.',
+      sessionSetupPromptPrefix: 'Project Agent Context.',
       permissionProfile: {
         selectedProfile: 'auto',
         availableModeIds: ['default', 'auto']
@@ -141,10 +143,12 @@ describe('ACP session aggregate', () => {
     aggregate.setPermissionProfile(undefined)
     aggregate.setSpecialistId(undefined)
     aggregate.setSpecialistPrefix(undefined)
+    aggregate.setSessionSetupPromptPrefix(undefined)
     expect(aggregate.snapshot()).toMatchObject({
       permissionProfile: undefined,
       specialistId: undefined,
-      specialistPrefix: undefined
+      specialistPrefix: undefined,
+      sessionSetupPromptPrefix: undefined
     })
   })
 
@@ -179,6 +183,7 @@ describe('ACP session aggregate', () => {
     aggregate.setPermissionProfile(profile)
     aggregate.setSpecialistId('specialist-1')
     aggregate.setSpecialistPrefix('Use specialist instructions.')
+    aggregate.setSessionSetupPromptPrefix('Project Agent Context.')
     attach('provider-1')
 
     aggregate.detachProvider()
@@ -193,7 +198,8 @@ describe('ACP session aggregate', () => {
       frameworkId: 'codex',
       backendId: 'backend-1',
       specialistId: 'specialist-1',
-      specialistPrefix: 'Use specialist instructions.'
+      specialistPrefix: 'Use specialist instructions.',
+      sessionSetupPromptPrefix: 'Project Agent Context.'
     })
 
     attach('provider-2')
@@ -208,7 +214,8 @@ describe('ACP session aggregate', () => {
       frameworkId: 'codex',
       backendId: 'backend-1',
       specialistId: 'specialist-1',
-      specialistPrefix: 'Use specialist instructions.'
+      specialistPrefix: 'Use specialist instructions.',
+      sessionSetupPromptPrefix: 'Project Agent Context.'
     })
   })
 

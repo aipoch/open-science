@@ -3,7 +3,9 @@ import { resolve } from 'node:path'
 
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
+import type { AcpElicitationOwner } from './elicitation-owner'
 import type { AcpPermissionContext } from './permission-context'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
@@ -26,7 +28,10 @@ type AcpSessionReplacementWorkflowDependencies = Readonly<{
     publishedAppSessionId?: string
   ) => AcpPrimarySessionIdentityReservationResult
   adopter: Pick<AcpProviderSessionAdopter, 'adopt'>
-  permission: Pick<AcpPermissionContext, 'cancelForSession'>
+  permission: Pick<AcpPermissionContext, 'cancelForSession' | 'clearLivePermissionProfile'>
+  elicitation: Pick<AcpElicitationOwner, 'cancelForSession'>
+  clearUserChoiceProvenanceForSession: (sessionId: string) => void
+  appContinuations: Pick<AcpAppContinuationOwner, 'delete'>
   promptContent: Pick<AcpPromptContentOwner, 'resetSession'>
   contextUsage: Pick<ContextUsageTracker, 'deleteSession'>
   interactions: Pick<AcpSessionInteractionOwner, 'current' | 'supersedeCurrent'>
@@ -70,6 +75,10 @@ export class AcpSessionReplacementWorkflow {
       }
 
       this.deps.permission.cancelForSession(request.sessionId)
+      this.deps.clearUserChoiceProvenanceForSession(request.sessionId)
+      this.deps.elicitation.cancelForSession(request.sessionId)
+      this.deps.appContinuations.delete(request.sessionId)
+      this.deps.permission.clearLivePermissionProfile(request.sessionId)
       const attachment = this.deps.registry.lookup(request.sessionId)?.attachment
       if (attachment) {
         attachment.session.dispose()

@@ -24,6 +24,10 @@ import {
 } from '../../../../shared/notebook-runtime'
 import type { NotebookLanguage } from '../../../../shared/notebook'
 import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import {
+  getSettingsSearchKeyShortcuts,
+  useSettingsSearchShortcut
+} from './settings-search-shortcut'
 import { PythonIcon, RIcon } from './language-icons'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
@@ -92,6 +96,8 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const [packagesError, setPackagesError] = useState<string | null>(null)
   const [packagesRetryNonce, setPackagesRetryNonce] = useState(0)
   const [packagesFilter, setPackagesFilter] = useState('')
+  const packagesFilterRef = useRef<HTMLInputElement>(null)
+  useSettingsSearchShortcut(packagesFilterRef, packagesEnv !== null)
   // Per-env package counts for the card button badges, fetched lazily AFTER the panel loads.
   // countsRef is the source of truth (readable inside effects without re-triggering them); the
   // state mirror drives rendering. A present null entry means "fetch attempted, unavailable" —
@@ -770,10 +776,12 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                       className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
                     />
                     <Input
+                      ref={packagesFilterRef}
                       value={packagesFilter}
                       onChange={(event) => setPackagesFilter(event.target.value)}
                       placeholder="Filter packages…"
                       aria-label="Filter packages"
+                      aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
                       data-testid="runtime-packages-filter"
                       className="pl-8"
                     />

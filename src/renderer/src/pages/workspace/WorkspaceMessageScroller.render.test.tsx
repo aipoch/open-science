@@ -3,6 +3,7 @@ import type { JSX, PropsWithChildren } from 'react'
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import type { JobSummary } from '../../../../shared/compute'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import type {
   HandoffLifecycleEvent,
@@ -13,16 +14,28 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
 
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
-  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+  AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
+  PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
+}))
+
+vi.mock('@/components/streamdown/use-smooth-streaming-content', () => ({
+  useSmoothStreamingContent: (
+    content: string,
+    sourceOpen: boolean,
+    animateOnMount = sourceOpen
+  ) => ({ content, isPresenting: animateOnMount })
 }))
 
 vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): JSX.Element => <div>{children}</div>
   const Item = ({
     children,
+    disableContainment,
     messageId
-  }: PropsWithChildren<{ messageId?: string }>): JSX.Element => (
-    <div data-message-id={messageId}>{children}</div>
+  }: PropsWithChildren<{ disableContainment?: boolean; messageId?: string }>): JSX.Element => (
+    <div data-message-id={messageId} data-disable-containment={disableContainment || undefined}>
+      {children}
+    </div>
   )
   const Button = (): JSX.Element => <button type="button">Scroll to end</button>
 
@@ -177,6 +190,377 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
   )
 }
 
+const planDocument: ActivePlanProjection['document'] = {
+  schema_version: 1,
+  task_summary: 'Prepare the publication package',
+  phases: [
+    {
+      name: 'Analysis',
+      delegations: [
+        {
+          name: 'Evidence',
+          steps: [{ title: 'Inspect sources', description: 'Check every primary source.' }]
+        }
+      ]
+    }
+  ],
+  desired_outputs: ['PDF report'],
+  feasibility: { confidence: 'high', rationale: 'The sources are available.' }
+}
+
+const createPlanAuthoritySession = (
+  activities: ToolActivity[],
+  overrides: Partial<ChatSession> = {},
+  materializedAt = 1710000000100
+): ChatSession => {
+  const artifactChecksum = 'a'.repeat(64)
+  const activePlanProjection: ActivePlanProjection = {
+    artifactId: 'artifact-plan',
+    artifactVersionId: 'version-plan',
+    artifactChecksum,
+    originatingPromptMessageId: 'prompt-plan',
+    materializedAt,
+    revision: 1,
+    approval: 'pending',
+    lifecycle: 'awaiting_approval',
+    requiresExplicitContinuation: false,
+    document: planDocument,
+    stepStatuses: {},
+    stepStates: { 'Inspect sources': { status: 'not_started' } },
+    counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+  }
+
+  return createSession({
+    id: 'session-plan-authority',
+    status: 'waiting-plan-approval',
+    activities,
+    artifacts: [
+      {
+        id: 'version-plan',
+        artifactId: 'artifact-plan',
+        versionId: 'version-plan',
+        kind: 'managed-file',
+        path: '/workspace/plan.json',
+        name: 'plan.json',
+        mtimeMs: 1710000000100,
+        sha256: artifactChecksum
+      }
+    ],
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: 'artifact-plan',
+        artifactVersionId: 'version-plan',
+        artifactChecksum,
+        originatingPromptMessageId: 'prompt-plan',
+        materializedAt,
+        approval: 'pending',
+        stepStatuses: {}
+      }
+    },
+    activePlanProjection,
+    ...overrides
+  })
+}
+
+const createGeneratePlanActivity = (
+  status: ToolActivity['status'],
+  overrides: Partial<ToolActivity> = {}
+): ToolActivity =>
+  createActivity({
+    id: `generate-plan-${status}`,
+    title: 'generate_plan',
+    providerToolName: 'mcp__open-science-plan__generate_plan',
+    promptMessageId: 'prompt-plan',
+    status,
+    rawInput: planDocument,
+    createdAt: 1710000000050,
+    updatedAt: 1710000000050,
+    ...overrides
+  })
+
+describe('WorkspaceMessageScroller durable Plan activity render', () => {
+  it.each(['in_progress', 'failed'] as const)(
+    'renders a %s generation call as created once its matching Plan authority exists',
+    async (status) => {
+      const html = await renderScroller(
+        createPlanAuthoritySession([createGeneratePlanActivity(status)])
+      )
+
+      expect(html).toContain('Created execution Plan')
+      expect(html).not.toContain('Creating execution Plan')
+      expect(html).not.toContain('Failed to create execution Plan')
+    }
+  )
+
+  it('uses the authoritative Plan projection before Artifact metadata is published', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([createGeneratePlanActivity('in_progress')], {
+        artifacts: undefined
+      })
+    )
+
+    expect(html).toContain('Created execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+
+  it('uses a live Plan projection before renderer runtime authority is synchronized', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([createGeneratePlanActivity('in_progress')], {
+        artifacts: undefined,
+        runtimeContext: undefined
+      })
+    )
+
+    expect(html).toContain('Created execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+
+  it('prefers a replacement Plan projection over stale renderer runtime authority', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([createGeneratePlanActivity('in_progress')], {
+        artifacts: undefined,
+        runtimeContext: {
+          version: 1,
+          revision: 0,
+          plan: {
+            artifactId: 'old-artifact',
+            artifactVersionId: 'old-version',
+            artifactChecksum: 'b'.repeat(64),
+            originatingPromptMessageId: 'old-prompt',
+            materializedAt: 1,
+            approval: 'pending',
+            stepStatuses: {}
+          }
+        }
+      })
+    )
+
+    expect(html).toContain('Created execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+
+  it('keeps a failed generation call failed without matching Plan authority', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [createGeneratePlanActivity('failed')]
+      })
+    )
+
+    expect(html).toContain('Failed to create execution Plan')
+    expect(html).not.toContain('Created execution Plan')
+  })
+
+  it('does not assign an earlier Plan artifact to a later retry from the same prompt', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', { id: 'original-plan-call' }),
+        createGeneratePlanActivity('failed', {
+          id: 'later-plan-retry',
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        })
+      ])
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html.match(/Failed to create execution Plan/gu)).toHaveLength(1)
+  })
+
+  it('keeps the durable Plan created while projecting a legacy already-pending retry neutrally', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', {
+          id: 'original-plan-call',
+          rawOutput: 'UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error'
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'invalid-plan-retry',
+          rawInput: { ...planDocument, phases: [{ delegations: [] }] },
+          rawOutput: 'phases[0].name is required',
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'legacy-already-pending-plan-retry',
+          rawOutput: 'A Session Plan is already awaiting approval.',
+          createdAt: 1710000000300,
+          updatedAt: 1710000000300
+        })
+      ])
+    )
+
+    expect(html.match(/data-testid="plan-call-record"/gu)).toHaveLength(3)
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html.match(/Failed to create execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Execution Plan already awaiting approval')
+    expect(html.match(/lucide-circle-alert/gu)).toHaveLength(1)
+    expect(html).not.toContain('A Session Plan is already awaiting approval.')
+  })
+
+  it('projects a structured live approval waiter conflict neutrally without exposing its payload', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', {
+          id: 'original-plan-call',
+          rawOutput: 'UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error'
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'structured-already-pending-retry',
+          rawOutput: {
+            isError: true,
+            structuredContent: {
+              error: {
+                code: 'approval-already-pending',
+                message: 'Internal live interaction waiter call_123 is still registered.'
+              }
+            },
+            content: [
+              {
+                type: 'text',
+                text: '{"error":{"code":"approval-already-pending","message":"Internal live interaction waiter call_123 is still registered."}}'
+              }
+            ]
+          },
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        })
+      ])
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Execution Plan already awaiting approval')
+    expect(html).toContain('lucide-circle size-3.5 text-text-300')
+    expect(html).not.toContain('Failed to create execution Plan')
+    expect(html).not.toContain('approval-already-pending')
+    expect(html).not.toContain('Internal live interaction waiter')
+    expect(html).not.toContain('call_123')
+  })
+
+  it('warns that a different pending Plan revision was not submitted from its structured code', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession([
+        createGeneratePlanActivity('failed', {
+          id: 'original-plan-call',
+          rawOutput: 'UND_ERR_HEADERS_TIMEOUT: Headers Timeout Error'
+        }),
+        createGeneratePlanActivity('failed', {
+          id: 'different-plan-retry',
+          rawInput: { ...planDocument, task_summary: 'Prepare a different report' },
+          rawOutput: {
+            isError: true,
+            structuredContent: {
+              error: {
+                code: 'plan-review-pending',
+                message: 'Internal checksum conflict for Artifact version-plan.'
+              }
+            },
+            content: [
+              {
+                type: 'text',
+                text: '{"error":{"code":"plan-review-pending","message":"Internal checksum conflict for Artifact version-plan."}}'
+              }
+            ]
+          },
+          createdAt: 1710000000200,
+          updatedAt: 1710000000200
+        })
+      ])
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Plan revision not submitted')
+    expect(html).toContain(
+      'Review or dismiss the current execution Plan before submitting a revision.'
+    )
+    expect(html).toContain('lucide-triangle-alert')
+    expect(html).not.toContain('Failed to create execution Plan')
+    expect(html).not.toContain('Execution Plan already awaiting approval')
+    expect(html).not.toContain('plan-review-pending')
+    expect(html).not.toContain('Internal checksum conflict')
+    expect(html).not.toContain('version-plan')
+  })
+
+  it('uses the materialization boundary to assign a successful same-document retry', async () => {
+    const html = await renderScroller(
+      createPlanAuthoritySession(
+        [
+          createGeneratePlanActivity('failed', { id: 'failed-plan-call' }),
+          createGeneratePlanActivity('in_progress', {
+            id: 'successful-plan-retry',
+            createdAt: 1710000000200,
+            updatedAt: 1710000000200
+          })
+        ],
+        { artifacts: undefined },
+        1710000000250
+      )
+    )
+
+    expect(html.match(/Created execution Plan/gu)).toHaveLength(1)
+    expect(html).toContain('Failed to create execution Plan')
+    expect(html).not.toContain('Creating execution Plan')
+  })
+})
+
+describe('WorkspaceMessageScroller structured input render', () => {
+  it('renders a completed custom answer as a standalone transcript card', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [
+          createActivity({
+            id: 'tool-ask-1',
+            title: 'AskUserQuestion',
+            elicitation: {
+              message: 'What kind of skill are you trying to create?',
+              fields: [{ id: 'question_0_custom', label: 'Other', kind: 'text' }],
+              state: 'answered',
+              answers: [{ fieldId: 'question_0_custom', value: 'A literature review skill' }]
+            }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('data-testid="elicitation-card"')
+    expect(html).toContain('What kind of skill are you trying to create?')
+    expect(html).toContain('A literature review skill')
+    expect(html).not.toContain('data-testid="tool-group"')
+  })
+
+  it('renders the selected option label instead of its protocol value', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        activities: [
+          createActivity({
+            id: 'tool-ask-1',
+            elicitation: {
+              message: 'Choose an approach',
+              fields: [
+                {
+                  id: 'approach',
+                  label: 'Approach',
+                  kind: 'single-select',
+                  options: [{ value: 'minimal', label: 'Minimal change' }]
+                }
+              ],
+              state: 'answered',
+              answers: [{ fieldId: 'approach', value: 'minimal' }]
+            }
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('Minimal change')
+    expect(html).not.toContain('>minimal<')
+  })
+})
+
 describe('WorkspaceMessageScroller loading render', () => {
   it('renders elapsed time beside the activity step count', async () => {
     const html = await renderScroller(
@@ -256,6 +640,7 @@ describe('WorkspaceMessageScroller loading render', () => {
   it('renders an accessible agent loading row before streamed text arrives', async () => {
     const html = await renderScroller(
       createSession({
+        agentStatus: 'retrying root request…',
         activeRun: {
           promptMessageId: 'prompt-1',
           startedAt: 1710000000100
@@ -273,6 +658,7 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).toContain('aria-live="polite"')
     expect(html).toContain('data-testid="open-science-thinking-indicator"')
     expect(html).toContain('>Thinking</span>')
+    expect(html).toContain('retrying root request…')
     expect(html).toContain('data-message-id="session-1-agent-loading"')
     const loadingSurfaceClassName = html.match(
       /<div class="([^"]*max-w-\[56rem\][^"]*)"><div class="flex min-h-5/
@@ -478,7 +864,100 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
   })
 
-  it('shows tool interaction during permission waits and hides it without an active run', async () => {
+  it('does not present an interrupted tool turn as completed before its final activity', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'error',
+        resumeRecovery: {
+          kind: 'resume-required',
+          cause: 'app-restart',
+          promptMessageId: 'prompt-1'
+        },
+        messages: [
+          createMessage({ id: 'prompt-1', interrupted: true, sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'I will search PubMed now.',
+            responseToMessageId: 'prompt-1',
+            completedAt: 1710000007000,
+            sortIndex: 2
+          })
+        ],
+        activities: [
+          createActivity({
+            id: 'activity-1',
+            status: 'failed',
+            promptMessageId: 'prompt-1',
+            sortIndex: 3,
+            createdAt: 1710000008000,
+            updatedAt: 1710000008000
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('This turn was interrupted.')
+    expect(html).not.toContain('Completed ')
+    expect(html).not.toContain('data-slot="assistant-message-footer"')
+  })
+
+  it('keeps a user clarification before its streamed mixed Chinese Markdown response', async () => {
+    const html = await renderScroller(
+      createSession({
+        activeRun: {
+          promptMessageId: 'prompt-2',
+          startedAt: 1710000000300
+        },
+        messages: [
+          createMessage({
+            id: 'prompt-1',
+            content: '找一篇疾病的生信文章',
+            sortIndex: 1,
+            createdAt: 1710000000000
+          }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: '请选择疾病和分析类型。',
+            responseToMessageId: 'prompt-1',
+            sortIndex: 2,
+            createdAt: 1710000000100
+          }),
+          createMessage({
+            id: 'prompt-2',
+            content: '癌症，转录组分析',
+            sortIndex: 3,
+            createdAt: 1710000000200
+          }),
+          createMessage({
+            id: 'reply-2',
+            role: 'agent',
+            content: '明白：聚焦**癌症**，使用转录组分析。',
+            status: 'streaming',
+            streamId: 'stream-2',
+            responseToMessageId: 'prompt-2',
+            sortIndex: 4,
+            createdAt: 1710000000300
+          })
+        ]
+      })
+    )
+
+    const timelineContent = [
+      '找一篇疾病的生信文章',
+      '请选择疾病和分析类型。',
+      '癌症，转录组分析',
+      '明白：聚焦**癌症**，使用转录组分析。'
+    ]
+    const timelinePositions = timelineContent.map((content) => html.indexOf(content))
+
+    expect(timelinePositions.every((position) => position >= 0)).toBe(true)
+    expect(timelinePositions).toEqual([...timelinePositions].sort((left, right) => left - right))
+    expect(html).toContain('data-message-id="reply-2" data-disable-containment="true"')
+  })
+
+  it('shows an approval wait during permission requests and hides ordinary loading without a run', async () => {
     const runningSession = createSession({
       activeRun: {
         promptMessageId: 'prompt-1',
@@ -487,10 +966,10 @@ describe('WorkspaceMessageScroller loading render', () => {
       messages: [createMessage({ id: 'prompt-1' })]
     })
 
-    // Permission remains a tool interaction before and after visible assistant output.
+    // Permission remains a user-facing approval wait before and after visible assistant output.
     await expect(
       renderScroller({ ...runningSession, status: 'waiting-permission' })
-    ).resolves.toContain('>Interacting with tools</span>')
+    ).resolves.toContain('>Waiting for your approval</span>')
     await expect(
       renderScroller({
         ...runningSession,
@@ -507,11 +986,30 @@ describe('WorkspaceMessageScroller loading render', () => {
           })
         ]
       })
-    ).resolves.toContain('>Interacting with tools</span>')
+    ).resolves.toContain('>Waiting for your approval</span>')
     await expect(
       renderScroller({ ...runningSession, activeRun: undefined })
     ).resolves.not.toContain('role="status"')
   })
+
+  it.each([
+    ['waiting-for-user', 'Waiting for your response'],
+    ['waiting-plan-approval', 'Waiting for your approval']
+  ] as const)(
+    'shows the user wait for a %s session without an active run',
+    async (status, label) => {
+      await expect(
+        renderScroller(
+          createSession({
+            status,
+            activeRun: undefined,
+            agentPromptInFlight: false,
+            messages: [createMessage({ id: 'prompt-1' })]
+          })
+        )
+      ).resolves.toContain(`>${label}</span>`)
+    }
+  )
 
   it('renders the loading row for a follow-up prompt after a tool-calling turn', async () => {
     const html = await renderScroller(

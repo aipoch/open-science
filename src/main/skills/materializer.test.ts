@@ -22,7 +22,15 @@ const makeSkill = async (name: string): Promise<BundledSkill> => {
   await mkdir(join(root, 'scripts'), { recursive: true })
   await writeFile(join(root, 'SKILL.md'), `# ${name}`, 'utf8')
   await writeFile(join(root, 'scripts', 'main.py'), 'print(1)', 'utf8')
-  return { id: name, name, description: '', source: 'featured', updatedAt: '', sourceDir: root }
+  return {
+    id: name,
+    name,
+    displayName: name,
+    description: '',
+    source: 'featured',
+    updatedAt: '',
+    sourceDir: root
+  }
 }
 
 const skillsDir = async (): Promise<string> => {
@@ -72,9 +80,13 @@ describe('ClaudeCodeSkillMaterializer', () => {
     expect(await listSkillDirs(configDir)).toEqual(['os-beta'])
   })
 
-  it('skips re-copying when updatedAt is unchanged and re-copies when it changes', async () => {
+  it('re-copies when content compatibility changes even if updatedAt does not', async () => {
     const configDir = await skillsDir()
-    const skill = { ...(await makeSkill('gamma')), updatedAt: 'v1' }
+    const skill = {
+      ...(await makeSkill('gamma')),
+      updatedAt: 'v1',
+      compatibility: 'sha256:v1'
+    }
     const materializer = new ClaudeCodeSkillMaterializer()
 
     await materializer.sync(configDir, [skill])
@@ -82,15 +94,16 @@ describe('ClaudeCodeSkillMaterializer', () => {
       '# gamma'
     )
 
-    // Change the source but keep the same version: the copy is skipped, so the target stays stale.
+    // A source edit with an unchanged fingerprint is skipped.
     await writeFile(join(skill.sourceDir, 'SKILL.md'), '# gamma edited', 'utf8')
     await materializer.sync(configDir, [skill])
     expect(await readFile(join(configDir, 'skills', 'os-gamma', 'SKILL.md'), 'utf8')).toBe(
       '# gamma'
     )
 
-    // Bump the version: the skill is re-copied and the target refreshes.
-    await materializer.sync(configDir, [{ ...skill, updatedAt: 'v2' }])
+    // Registry compatibility tracks content, so a new fingerprint refreshes the materialized copy
+    // even when human-maintained updatedAt metadata was not bumped.
+    await materializer.sync(configDir, [{ ...skill, compatibility: 'sha256:v2' }])
     expect(await readFile(join(configDir, 'skills', 'os-gamma', 'SKILL.md'), 'utf8')).toBe(
       '# gamma edited'
     )
@@ -178,6 +191,7 @@ describe('ClaudeCodeSkillMaterializer', () => {
     const computeSkill: BundledSkill = {
       id: 'remote-compute-ssh',
       name: 'Remote Compute (SSH)',
+      displayName: 'Remote Compute (SSH)',
       description: 'Discover SSH compute hosts.',
       source: 'featured',
       updatedAt: 'v1',
@@ -265,7 +279,8 @@ describe('ClaudeCodeSkillMaterializer', () => {
       source: 'featured',
       updatedAt: '',
       sourceDir: root,
-      ...extra
+      ...extra,
+      displayName: extra.displayName ?? name
     }
   }
 

@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  assertPackagedResources,
+  authenticatePackagedAppEndpoint,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
   cleanupSmokeRoot,
@@ -48,7 +50,7 @@ describe('Windows installer smoke plan', () => {
     )
   })
 
-  it('drills upgrade, process-lock rollback, and final restart in one install location', async () => {
+  it('drills upgrade, process-lock rollback without old-app health, and final restart', async () => {
     const plan = buildSmokePlan({
       currentInstaller: 'current.exe',
       previousInstaller: 'previous.exe'
@@ -60,8 +62,15 @@ describe('Windows installer smoke plan', () => {
     expect(runCycle.mock.calls).toEqual([
       [{ installer: 'previous.exe', phase: 'previous' }],
       [{ installer: 'current.exe', phase: 'current', runningInstaller: 'previous.exe' }],
-      [{ installer: 'previous.exe', phase: 'rollback', runningInstaller: 'current.exe' }],
-      [{ installer: 'current.exe', phase: 'restart', runningInstaller: 'previous.exe' }]
+      [
+        {
+          installer: 'previous.exe',
+          phase: 'rollback',
+          runningInstaller: 'current.exe',
+          launchInstalledApp: false
+        }
+      ],
+      [{ installer: 'current.exe', phase: 'restart' }]
     ])
   })
 
@@ -92,16 +101,33 @@ describe('Windows installer smoke plan', () => {
     expect(text).toHaveBeenCalledOnce()
   })
 
-  it('discovers the authenticated service endpoint from packaged app output', () => {
-    expect(
-      parsePackagedAppEndpoint(`
-[main] app starting
-Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE
-`)
-    ).toEqual({
-      auth: 'token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE',
+  it('authenticates token-free readiness through state while accepting legacy token output', async () => {
+    const output = 'Open Science Web: http://127.0.0.1:52378/'
+    expect(parsePackagedAppEndpoint(output)).toEqual({
       endpoint: 'http://127.0.0.1:52378'
     })
+    await expect(
+      authenticatePackagedAppEndpoint(output, ['C:\\profile\\.open-science'], {
+        readText: async (path: string) =>
+          path.endsWith('web-service.json')
+            ? JSON.stringify({ port: 52378 })
+            : 'windows_smoke_token_12345678901234567890\n'
+      })
+    ).resolves.toEqual({
+      auth: 'token=windows_smoke_token_12345678901234567890',
+      endpoint: 'http://127.0.0.1:52378'
+    })
+
+    const legacyOutput = `
+[main] app starting
+Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE
+`
+    const legacyService = {
+      auth: 'token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE',
+      endpoint: 'http://127.0.0.1:52378'
+    }
+    expect(parsePackagedAppEndpoint(legacyOutput)).toEqual(legacyService)
+    await expect(authenticatePackagedAppEndpoint(legacyOutput)).resolves.toEqual(legacyService)
     expect(parsePackagedAppEndpoint('[main] app starting')).toBeUndefined()
   })
 
@@ -209,6 +235,39 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     ).rejects.toThrow(/timed out after 25ms/)
   })
 
+  it('terminates and awaits an aborted process', async () => {
+    const controller = new AbortController()
+    let finishTermination: (() => void) | undefined
+    const termination = new Promise<void>((resolve) => {
+      finishTermination = resolve
+    })
+    const terminate = vi.fn(async (child: { kill: () => unknown }): Promise<void> => {
+      await termination
+      child.kill()
+    })
+    const result = runProcess(
+      process.execPath,
+      ['-e', 'setInterval(() => undefined, 1_000)'],
+      { signal: controller.signal, timeoutMs: 60_000 },
+      terminate
+    )
+
+    controller.abort(new Error('installer watcher cancelled'))
+    await vi.waitFor(() => expect(terminate).toHaveBeenCalledOnce())
+    await expect(
+      Promise.race([
+        result.then(
+          () => 'settled',
+          () => 'settled'
+        ),
+        Promise.resolve('pending')
+      ])
+    ).resolves.toBe('pending')
+
+    finishTermination?.()
+    await expect(result).rejects.toThrow('installer watcher cancelled')
+  })
+
   it('writes and verifies the upgrade sentinel in the app-reported config root', async () => {
     const profile = await mkdtemp(join(tmpdir(), 'open-science-upgrade-profile-'))
     const configRoot = join(profile, '.open-science')
@@ -255,6 +314,25 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     })
   })
 
+  it('requires a blocked downgrade when current added a migration unknown to previous', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-ledger-aware-upgrade-'))
+    const readLedger = vi
+      .fn()
+      .mockResolvedValueOnce([{ id: '0001_runtime_schema_baseline' }])
+      .mockResolvedValueOnce([{ id: '0001_runtime_schema_baseline' }, { id: '0002_future_schema' }])
+    const guard = createUpgradeProfileGuard(
+      true,
+      'installer-smoke-ledger-aware-upgrade',
+      readLedger
+    )
+
+    await guard.verifyCycle('previous', configRoot)
+    expect(guard.shouldExpectDowngradeBlock()).toBe(false)
+    await guard.verifyCycle('current', configRoot)
+    expect(guard.shouldExpectDowngradeBlock()).toBe(true)
+    await guard.cleanup()
+  })
+
   it('never overwrites or removes a pre-existing upgrade sentinel collision', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'open-science-upgrade-collision-'))
     const sentinelName = 'installer-smoke-upgrade-sentinel-collision'
@@ -284,6 +362,25 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
         'query_engine-windows.dll.node'
       )
     ])
+  })
+
+  it('requires exactly one native Windows Prisma engine', async () => {
+    const installDirectory = await mkdtemp(join(tmpdir(), 'open-science-windows-engine-'))
+    const resources = join(installDirectory, 'resources')
+    const prismaClient = join(resources, 'node_modules', '.prisma', 'client')
+    await mkdir(prismaClient, { recursive: true })
+    await Promise.all([
+      writeFile(join(installDirectory, 'open-science.exe'), ''),
+      writeFile(join(resources, 'app.asar'), ''),
+      writeFile(join(resources, 'micromamba.exe'), ''),
+      writeFile(join(prismaClient, 'query_engine-windows.dll.node'), '')
+    ])
+
+    await expect(assertPackagedResources(installDirectory)).resolves.toBeUndefined()
+    await writeFile(join(prismaClient, 'libquery_engine-debian-openssl-3.0.x.so.node'), '')
+    await expect(assertPackagedResources(installDirectory)).rejects.toThrow(
+      /exactly one Prisma engine/
+    )
   })
 
   it('targets the bundled main entry for packaged MCP subprocesses', () => {

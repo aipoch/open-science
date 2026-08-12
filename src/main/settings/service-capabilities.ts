@@ -14,7 +14,8 @@ export type AcpSettingsCapabilities = Pick<
   | 'getConversationSkillImportEnabled'
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'
->
+> &
+  Partial<Pick<SettingsService, 'resolveExplicitAgentBackend' | 'resolveAdmittedSubagentBackend'>>
 
 export type WindowSettingsCapabilities = Pick<
   SettingsService,

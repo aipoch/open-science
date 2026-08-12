@@ -15,15 +15,16 @@ const skillsRoot = join(__dirname, '..', '..', '..', 'resources', 'skills')
 // name, or the agent fails the pick with "Unknown skill: <id>". This guards that contract for the whole
 // bundled set — a new skill whose manifest id drifts from its frontmatter name breaks the picker.
 describe('bundled skill nudge identity', () => {
-  it('has manifest id === SKILL.md frontmatter name for every bundled skill', async () => {
+  it('uses only the manifest id as every bundled Skill name', async () => {
     const skills = await new SkillRegistry(skillsRoot).list()
     expect(skills.length).toBeGreaterThan(0)
 
     for (const skill of skills) {
       const raw = await readFile(join(skill.sourceDir, 'SKILL.md'), 'utf8')
-      const frontmatterName = parseFrontmatter(raw).fields.name
+      const fields = parseFrontmatter(raw).fields
 
-      expect(frontmatterName, `skill "${skill.id}" frontmatter name`).toBe(skill.id)
+      expect(fields.name, `skill "${skill.id}" frontmatter name`).toBe(skill.id)
+      expect(fields.displayname, `skill "${skill.id}" displayName`).toBeUndefined()
     }
   })
 })

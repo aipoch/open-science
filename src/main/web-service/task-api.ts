@@ -12,6 +12,7 @@ import type {
   AcquiredTaskArtifact,
   StartTaskRunRequest,
   TaskRun,
+  TaskRunProgressEvent,
   TaskSessionSummary
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
@@ -80,7 +81,10 @@ class HeadlessTaskApi {
           this.withCurrentCaller(() => this.ports.agent.resumeSession(request)),
         setPermissionProfile: (sessionId, profile) =>
           this.withCurrentCaller(() => this.ports.agent.setPermissionProfile(sessionId, profile)),
-        prompt: (request) => this.withCurrentCaller(() => this.ports.agent.prompt(request))
+        prompt: (request, observer) =>
+          this.withCurrentCaller(() => this.ports.agent.prompt(request, observer)),
+        cancelPrompt: (sessionId) =>
+          this.withCurrentCaller(() => this.ports.agent.cancelPrompt(sessionId))
       },
       artifacts: {
         finalizeRun: (request: FinalizeRunArtifactsRequest) =>
@@ -149,6 +153,14 @@ class HeadlessTaskApi {
 
   waitForRun(runId: string): Promise<TaskRun> {
     return this.runner.waitForRun(runId)
+  }
+
+  cancelRun(runId: string): Promise<TaskRun> {
+    return this.runner.cancelRun(runId)
+  }
+
+  subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {
+    return this.runner.subscribeProgress(listener)
   }
 
   listArtifacts(sessionId: string): Promise<PersistedArtifact[]> {

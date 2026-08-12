@@ -72,7 +72,6 @@ emb = embed_data(
 embedding (`n_cells × emb_dim`, 512 by default). Downstream: feed to
 `scanpy.pp.neighbors` / `scanpy.tl.umap`.
 
-
 ## Remote compute
 
 Needs ≥24 GB VRAM and the released human checkpoint (~200 MB:
@@ -82,16 +81,16 @@ and a pre-cached checkpoint directory, then:
 
 ```python
 c = host.compute.create(provider)
-job = c.submit_job(
+job = c.submitJob(
     intent="scGPT embed 50k cells — 1×GPU, ~5 min",
     inputs=[
-        {"src": "dataset.h5ad", "dst_filename": "dataset.h5ad"},
-        {"src": "embed.py", "dst_filename": "embed.py"},
+        {"src": "dataset.h5ad", "dstFilename": "dataset.h5ad"},
+        {"src": "embed.py", "dstFilename": "embed.py"},
     ],
     command="python3 embed.py",
     environment=...,   # env name from compute_details
     outputs=["embedded.h5ad"],
-    timeout_seconds=1800,
+    timeoutSeconds=1800,
 )
 print(job.job_id)   # cell ends here — kernel never blocks on compute
 ```
@@ -109,7 +108,7 @@ handle, not on the job object:
 
 ```python
 h = host.compute.create(provider)
-res = h.attach_job(job_id).result()
+res = h.attachJob(job_id).result()
 h.close()
 ```
 
@@ -119,7 +118,6 @@ orchestration details.
 In `embed.py`, pass `model_dir=` the checkpoint path from `compute_details`.
 If `flash-attn` is unavailable in that environment, set
 `use_fast_transformer=False`.
-
 
 ## Gotchas
 
@@ -135,11 +133,11 @@ If `flash-attn` is unavailable in that environment, set
 
 ## Troubleshooting
 
-| Symptom                                           | Fix                                              |
-| ------------------------------------------------- | ------------------------------------------------ |
-| `flash_attn is not installed` warning at import   | Harmless; pass `use_fast_transformer=False`      |
-| `'Vocab' object has no attribute 'vocab'`         | Env has an old torchtext shim — update the env   |
-| Nearly all genes dropped                          | Wrong `gene_col`; check `adata.var.columns`      |
+| Symptom                                              | Fix                                                                                                                                                                           |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `flash_attn is not installed` warning at import      | Harmless; pass `use_fast_transformer=False`                                                                                                                                   |
+| `'Vocab' object has no attribute 'vocab'`            | Env has an old torchtext shim — update the env                                                                                                                                |
+| Nearly all genes dropped                             | Wrong `gene_col`; check `adata.var.columns`                                                                                                                                   |
 | "scgpt not in manifest" / env-detection misses scGPT | The baked env manifest lists the distribution as `scGPT` (and `flash_attn`), pip's canonical casing — normalize manifest keys before lookup: `name.lower().replace('-', '_')` |
 
 ---

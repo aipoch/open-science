@@ -90,6 +90,8 @@ const makeResponsesBridgeDouble = (
   unregisterReviewerSession: vi.fn(() => false),
   registerToolLessSession: vi.fn(),
   unregisterToolLessSession: vi.fn(() => false),
+  registerHostMessageSession: vi.fn(),
+  unregisterHostMessageSession: vi.fn(() => false),
   setTarget: vi.fn(),
   setReasoningEffort: vi.fn(),
   setModelTarget: vi.fn()
@@ -117,6 +119,8 @@ const makeNativeResponsesProxyDouble = (
   unregisterReviewerSession: vi.fn(() => false),
   registerToolLessSession: vi.fn(),
   unregisterToolLessSession: vi.fn(() => false),
+  registerHostMessageSession: vi.fn(),
+  unregisterHostMessageSession: vi.fn(() => false),
   setTarget: vi.fn(),
   setModelTarget: vi.fn()
 })
@@ -143,6 +147,8 @@ type HarnessOptions = {
   settings?: StoredSettings
   frameworkOverride?: string
   connectorIds?: string[]
+  connectorSkillNames?: string[]
+  materializedConnectorSkillNames?: string[]
   rejectRequiredModels?: ReadonlySet<string>
   targetOverride?: (
     provider: StoredProvider,
@@ -231,7 +237,12 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveCodexExecutable: vi.fn(async () => '/runtime/codex-acp'),
     probeCodexNativeVersion: vi.fn(async () => '0.144.6'),
     provisionClaudeRuntimeConfig: vi.fn(async () => '/storage/claude-config'),
-    materializeAgentSkills: vi.fn(async () => undefined),
+    materializeAgentSkills: vi.fn(
+      async () =>
+        options.materializedConnectorSkillNames ??
+        options.connectorSkillNames ??
+        (options.connectorIds ?? []).map((id) => `mcp-${id}`)
+    ),
     materializeAgentConfigFiles: vi.fn(async (files?: AgentConfigFile[]) => {
       void files
     }),
@@ -239,7 +250,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveCodexProxyEnvironment: vi.fn(async () => undefined)
   } satisfies AgentBackendRuntimePort
   const connectors = {
-    enabledConnectorIds: vi.fn(() => options.connectorIds ?? [])
+    connectorSkillNames: vi.fn(
+      () => options.connectorSkillNames ?? (options.connectorIds ?? []).map((id) => `mcp-${id}`)
+    )
   } satisfies AgentBackendConnectorPort
 
   const responsesBridges: ResponsesBridgeDouble[] = []
@@ -338,7 +351,7 @@ describe('AgentBackendResolver construction and selection', () => {
     expect(harness.readFrameworkOverride).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeReasoningEffortProfile).not.toHaveBeenCalled()
-    expect(harness.connectors.enabledConnectorIds).not.toHaveBeenCalled()
+    expect(harness.connectors.connectorSkillNames).not.toHaveBeenCalled()
     expect(harness.createResponsesBridge).not.toHaveBeenCalled()
     expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
     expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
@@ -371,6 +384,35 @@ describe('AgentBackendResolver construction and selection', () => {
 })
 
 describe('AgentBackendResolver configured and explicit targets', () => {
+  it('fails closed instead of rerouting an admitted backend after endpoint compatibility changes', async () => {
+    let apiEndpoints: ProviderRuntimeTarget['apiEndpoints'] = ['openai']
+    const harness = makeHarness({
+      settings: makeSettings({ agentFrameworkId: 'opencode' }),
+      targetOverride: () => ({
+        apiEndpoints,
+        provider: { apiEndpoints }
+      })
+    })
+    const admitted = {
+      frameworkId: 'opencode' as const,
+      providerId: 'provider-a',
+      model: { kind: 'required' as const, id: 'model-a' },
+      reasoningEffort: 'default' as const,
+      expectedBackendId: 'opencode:provider-a',
+      expectedModelRoute: 'opencode-openai' as const
+    }
+
+    await expect(harness.resolver.resolveAdmittedTarget(admitted)).resolves.toMatchObject({
+      backendId: 'opencode:provider-a',
+      modelRoute: 'opencode-openai'
+    })
+
+    apiEndpoints = ['anthropic']
+    await expect(harness.resolver.resolveAdmittedTarget(admitted)).rejects.toThrow(
+      'changed since admission'
+    )
+  })
+
   it('captures the click-time provider, model, framework, and effort as one explicit target', async () => {
     const harness = makeHarness({
       settings: makeSettings({ agentFrameworkId: 'codex', reasoningEffort: 'max' })
@@ -1060,6 +1102,49 @@ describe('AgentBackendResolver runtime delegation', () => {
     expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
   })
 
+  it.each(['opencode', 'codex'] as const)(
+    'preserves %s executable error priority over route catalog projection',
+    async (frameworkId) => {
+      const harness = makeHarness()
+      const executableError = new Error(`${frameworkId} executable is unavailable`)
+      harness.resolveRuntimeModelCatalog.mockImplementation(() => {
+        throw new Error('catalog projection failed')
+      })
+      if (frameworkId === 'codex') {
+        harness.runtime.resolveCodexExecutable.mockRejectedValueOnce(executableError)
+      } else {
+        harness.runtime.resolveOpencodeExecutable.mockRejectedValueOnce(executableError)
+      }
+
+      await expect(
+        harness.resolver.resolveExplicitTarget({
+          frameworkId,
+          providerId: 'provider-a',
+          model: { kind: 'provider-default' },
+          reasoningEffort: 'high'
+        })
+      ).rejects.toBe(executableError)
+    }
+  )
+
+  it('preserves Codex native probe error priority over route catalog projection', async () => {
+    const harness = makeHarness()
+    const probeError = new Error('Codex native probe failed')
+    harness.resolveRuntimeModelCatalog.mockImplementation(() => {
+      throw new Error('catalog projection failed')
+    })
+    harness.runtime.probeCodexNativeVersion.mockRejectedValueOnce(probeError)
+
+    await expect(
+      harness.resolver.resolveExplicitTarget({
+        frameworkId: 'codex',
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'high'
+      })
+    ).rejects.toBe(probeError)
+  })
+
   it.each([
     { frameworkId: 'claude-code' as const, executableMethod: 'resolveClaudeExecutable' as const },
     { frameworkId: 'opencode' as const, executableMethod: 'resolveOpencodeExecutable' as const },
@@ -1105,6 +1190,90 @@ describe('AgentBackendResolver runtime delegation', () => {
 })
 
 describe('AgentBackendResolver bridge predicates', () => {
+  it.each([
+    { name: 'Claude Code', frameworkId: 'claude-code' as const, target: {} },
+    { name: 'OpenCode', frameworkId: 'opencode' as const, target: {} },
+    {
+      name: 'Codex Responses',
+      frameworkId: 'codex' as const,
+      target: { provider: { apiEndpoints: ['responses'] as const } }
+    },
+    {
+      name: 'Codex bridge',
+      frameworkId: 'codex' as const,
+      target: {
+        needsChatResponsesBridge: true,
+        provider: { apiEndpoints: ['openai'] as const }
+      }
+    }
+  ])('advertises exact enabled Connector Skill names to $name', async (testCase) => {
+    const harness = makeHarness({
+      connectorIds: ['pubmed', 'literature'],
+      connectorSkillNames: ['mcp-pubmed', 'mcp-literature', 'mcp-custom-chemistry'],
+      targetOverride: () => testCase.target
+    })
+
+    const backend = await harness.resolver.resolveExplicitTarget({
+      frameworkId: testCase.frameworkId,
+      providerId: 'provider-a',
+      model: { kind: 'provider-default' },
+      reasoningEffort: 'high'
+    })
+    const instructions =
+      testCase.frameworkId === 'claude-code'
+        ? backend.systemPromptAppends?.join('\n\n')
+        : backend.persistentSystemPrompt
+
+    expect(instructions).toContain(
+      'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
+    )
+    expect(instructions).toContain('Allowed Specialist Skills for this session')
+    expect(instructions).not.toContain('host.mcp("custom-chemistry"')
+    expect(instructions).not.toContain('`mcp-openalex`')
+    await backend.anthropicBridgeLease?.release()
+    await backend.responsesBridgeLease?.release()
+    await backend.providerTransportLease?.release()
+  })
+
+  it.each([
+    { name: 'OpenCode', frameworkId: 'opencode' as const, target: {} },
+    {
+      name: 'Codex Responses',
+      frameworkId: 'codex' as const,
+      target: { provider: { apiEndpoints: ['responses'] as const } }
+    },
+    {
+      name: 'Codex bridge',
+      frameworkId: 'codex' as const,
+      target: {
+        needsChatResponsesBridge: true,
+        provider: { apiEndpoints: ['openai'] as const }
+      }
+    }
+  ])(
+    'does not advertise a custom Skill whose doc failed to materialize for $name',
+    async (testCase) => {
+      const harness = makeHarness({
+        connectorSkillNames: ['mcp-pubmed', 'mcp-xt'],
+        materializedConnectorSkillNames: ['mcp-pubmed'],
+        targetOverride: () => testCase.target
+      })
+
+      const backend = await harness.resolver.resolveExplicitTarget({
+        frameworkId: testCase.frameworkId,
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'high'
+      })
+
+      expect(backend.persistentSystemPrompt).toContain('`mcp-pubmed`')
+      expect(backend.persistentSystemPrompt).not.toContain('`mcp-xt`')
+      await backend.anthropicBridgeLease?.release()
+      await backend.responsesBridgeLease?.release()
+      await backend.providerTransportLease?.release()
+    }
+  )
+
   it.each([
     { name: 'direct Responses', chat: false, native: false, apiEndpoints: ['responses'] as const },
     { name: 'Chat bridge', chat: true, native: false, apiEndpoints: ['openai'] as const },

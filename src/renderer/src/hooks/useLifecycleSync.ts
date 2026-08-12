@@ -1,6 +1,12 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
-import type { SessionUpsertEvent } from '../../../shared/lifecycle-events'
+import {
+  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID,
+  MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
+  MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID,
+  MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID,
+  type SessionUpsertEvent
+} from '../../../shared/lifecycle-events'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
@@ -108,9 +114,64 @@ const useLifecycleSync = ({
         })
       }
     )
-    const removeSessionUpdated = window.api.sessions.onUpdated(({ session }) => {
+    const removeSessionUpdated = window.api.sessions.onUpdated(({ session, originClientId }) => {
       applyOrQueue(() => {
-        useSessionStore.getState().upsertPersistedSession(session)
+        // The ordered persistence owner already applies this renderer's save result. Its lifecycle
+        // echo may describe an earlier graph with a later main-owned timestamp, so replacing the
+        // live projection here can discard a prompt and the Runtime Segment used by its artifact
+        // claim. Events from other clients remain authoritative synchronization input; same-client
+        // command results return through their direct IPC path.
+        if (originClientId === MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'replace-persisted-if-current'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId === MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'permission-authority'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId === MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'delegated-authority'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId === MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID) {
+          const store = useSessionStore.getState()
+          const source = store.sessions.find((candidate) => candidate.id === session.id)
+          if (source) {
+            store.applyDurableSessionProjection({
+              source,
+              session,
+              mode: 'enabled-compute-hosts-authority'
+            })
+          } else {
+            store.upsertPersistedSession(session)
+          }
+        } else if (originClientId !== lifecycleClientIdRef.current) {
+          useSessionStore.getState().upsertPersistedSession(session)
+        }
         useArchiveUndoStore.getState().reconcileSession(session)
         if (
           session.archivedAt !== undefined &&

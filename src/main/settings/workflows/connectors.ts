@@ -14,6 +14,7 @@ import type { SettingsService } from '../service'
 
 type ConnectorSettingsWorkflowStore = Pick<
   SettingsService,
+  | 'listConnectors'
   | 'getConnectors'
   | 'setConnectorEnabled'
   | 'setConnectorAutoAllow'
@@ -29,11 +30,12 @@ type ConnectorSettingsWorkflowStore = Pick<
 
 type ConnectorSettingsWorkflowEffects = {
   invalidatePermissionProjection: () => void
-  refreshConnectorSkillDocs: () => Promise<unknown>
+  refreshConnectorSkillDocs: (customServerId?: string) => Promise<unknown>
   requestSkillsReload: () => void
   pruneCustomServerPermissions: (serverId: string) => Promise<void>
   beginCustomServerSecurityChange: (serverId: string) => CustomServerSecurityChangeGuard | undefined
   clearCustomServerFailure: (serverId: string) => void
+  resetCustomServerClient: (serverId: string) => Promise<void>
 }
 
 type WorkflowResult<Method extends keyof ConnectorSettingsWorkflowStore> = Promise<
@@ -77,7 +79,9 @@ class ConnectorSettingsWorkflows {
   async setCustomServerEnabled(
     request: Parameters<ConnectorSettingsWorkflowStore['setCustomServerEnabled']>[0]
   ): WorkflowResult<'setCustomServerEnabled'> {
-    return this.afterConnectorsChanged(() => this.settings.setCustomServerEnabled(request))
+    const snapshot = await this.settings.setCustomServerEnabled(request)
+    this.connectorsChanged(request.id)
+    return snapshot
   }
 
   async removeCustomServer(
@@ -117,16 +121,30 @@ class ConnectorSettingsWorkflows {
     return this.settings.cancelCustomServerAuthentication(request.id)
   }
 
+  async retryCustomServer(
+    request: AuthenticateCustomServerRequest
+  ): WorkflowResult<'listConnectors'> {
+    await this.effects.resetCustomServerClient(request.id)
+    this.effects.clearCustomServerFailure(request.id)
+    this.effects.invalidatePermissionProjection()
+    await this.refreshConnectorProjection()
+    return this.settings.listConnectors()
+  }
+
   private async afterConnectorsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {
     const result = await mutation()
     this.connectorsChanged()
     return result
   }
 
-  private connectorsChanged(): void {
+  private connectorsChanged(customServerId?: string): void {
     this.effects.invalidatePermissionProjection()
-    void wireConnectorReload(
-      this.effects.refreshConnectorSkillDocs,
+    void this.refreshConnectorProjection(customServerId)
+  }
+
+  private refreshConnectorProjection(customServerId?: string): Promise<unknown> {
+    return wireConnectorReload(
+      () => this.effects.refreshConnectorSkillDocs(customServerId),
       this.effects.requestSkillsReload
     )
   }

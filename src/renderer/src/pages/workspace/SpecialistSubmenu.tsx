@@ -56,13 +56,14 @@ const SpecialistSubmenu = ({
   // Lazy-load on mount. This submenu only mounts when the parent menu opens
   // (DropdownMenuContent mounts its children on open), so this is open-time load.
   useEffect(() => {
-    if (!isLoaded) {
+    if (!isLoaded && typeof window.api?.specialist?.list === 'function') {
       void load()
     }
   }, [isLoaded, load])
 
   // Keep the list fresh when the specialist catalog changes elsewhere.
   useEffect(() => {
+    if (typeof window.api?.specialist?.onCatalogChanged !== 'function') return
     const remove = window.api.specialist.onCatalogChanged(() => {
       void load()
     })

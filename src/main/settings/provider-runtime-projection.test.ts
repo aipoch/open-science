@@ -1,0 +1,116 @@
+import { describe, expect, it, vi } from 'vitest'
+
+import { getAgentFramework } from '../agent-framework'
+import type { StoredProvider } from './types'
+
+vi.mock('electron', () => ({
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (plaintext: string) => Buffer.from(`cipher:${plaintext}`, 'utf8'),
+    decryptString: (buffer: Buffer) => buffer.toString('utf8').slice('cipher:'.length)
+  }
+}))
+
+const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-projection')
+const { encryptKey } = await import('./crypto')
+
+describe('ProviderRuntimeProjectionOwner', () => {
+  it('fails closed when a required model is outside the provider catalog', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      apiEndpoints: ['openai']
+    }
+
+    expect(() =>
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'unavailable-model' },
+        getAgentFramework('codex')
+      )
+    ).toThrow(
+      'The requested model "unavailable-model" is not available for provider "Lab gateway".'
+    )
+  })
+
+  it('projects a configured target without mutating or exposing the stored credential', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Lab gateway',
+      baseUrl: 'https://lab.example/v1',
+      model: 'lab-model',
+      keyRef: encryptKey('secret-key'),
+      keyMask: 'secr…-key',
+      apiEndpoints: ['openai']
+    }
+    const before = structuredClone(provider)
+
+    const target = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'configured', requestedModel: 'unavailable-model' },
+      getAgentFramework('codex')
+    )
+    const view = owner.toProviderView(provider)
+
+    expect(target).toMatchObject({
+      providerId: 'provider-1',
+      effectiveModel: 'lab-model',
+      provider: { model: 'lab-model', key: 'secret-key' },
+      needsChatResponsesBridge: true
+    })
+    expect(view).toMatchObject({
+      models: ['lab-model'],
+      maskedKey: 'secr…-key',
+      hasKey: true,
+      needsKey: false
+    })
+    expect(JSON.stringify(view)).not.toContain('secret-key')
+    expect(provider).toEqual(before)
+  })
+
+  it('keeps an exact required model when a subscription catalog is unknown', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-claude-shared',
+      type: 'claude-shared',
+      name: 'Claude shared'
+    }
+
+    const target = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: 'account-model' },
+      getAgentFramework('claude-code')
+    )
+
+    expect(target).toMatchObject({
+      effectiveModel: 'account-model',
+      provider: { model: 'account-model' }
+    })
+  })
+
+  it('builds a catalog and reasoning profile through the same effective-model policy', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'Lab gateway',
+      model: 'lab-model',
+      apiEndpoints: ['anthropic']
+    }
+
+    expect(owner.resolveRuntimeModelCatalog(provider, getAgentFramework('claude-code'))).toEqual([
+      expect.objectContaining({ effectiveModel: 'lab-model', frameworkCompatible: true })
+    ])
+    expect(owner.resolveRuntimeReasoningEffortProfile(provider, 'unavailable-model')).toMatchObject(
+      {
+        supported: true
+      }
+    )
+  })
+})

@@ -5,12 +5,23 @@ import {
   derivePlanLifecycle,
   generatePlanContentSchema,
   formatPlanProtectedContext,
+  isPlanCommandErrorCode,
   isPlanComplete,
   isPlanTerminalOutcome,
   parsePlanDocumentV1,
   PlanCommandError,
   projectPlanStepStates
 } from './contract'
+
+describe('Plan command errors', () => {
+  it('recognizes a pending Plan review conflict at the shared transport boundary', () => {
+    expect(isPlanCommandErrorCode('plan-review-pending')).toBe(true)
+  })
+
+  it('recognizes a live approval waiter conflict at the shared transport boundary', () => {
+    expect(isPlanCommandErrorCode('approval-already-pending')).toBe(true)
+  })
+})
 
 describe('protected Plan context', () => {
   it('retains immutable identity, approval, lifecycle, and the latest step notes', () => {

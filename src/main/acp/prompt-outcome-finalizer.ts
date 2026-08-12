@@ -1,9 +1,14 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
-import { ACP_PROMPT_FAILED_EVENT_TITLE, type AcpRuntimeEvent } from '../../shared/acp'
+import {
+  ACP_PROMPT_FAILED_EVENT_TITLE,
+  type AcpRuntimeEvent,
+  type AcpTerminalContextWindow,
+  type AcpTurnTokenUsage
+} from '../../shared/acp'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import { createLogger, errorLogFields } from '../logger'
-import type { ContextUsageTurnHandle } from './context-usage-tracker'
+import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import { describePromptError, isProviderPromptError } from './prompt-error'
@@ -24,14 +29,14 @@ export type AcpPromptFinalizationHandles = Readonly<{
   interactions: Pick<InteractionOwner, 'captureTerminal' | 'current' | 'release' | 'settle'>
   permission: Pick<AcpPermissionContext, 'clearCorrelationsForSession'>
   prepared?: Pick<PreparedPromptHandle, 'close'>
-  context?: ContextUsageTurnHandle
+  context?: ContextWindowTurnHandle
   skill: Pick<TurnSkillHandle, 'close' | 'reloadDecision'>
   model?: string
   emitUserMessage: () => void
   emitArtifact: (onPublished: () => void) => Promise<void>
   disposeArtifact: () => Promise<void>
   failPendingSkillActivities: () => void
-  recordContextUsed: (used: number) => void
+  recordContextUsed: (used: number) => boolean
   errorMessage: (error: unknown) => string
   errorKind: (error: unknown) => string | undefined
   pushEvent: (event: RuntimeEventInput) => void
@@ -46,8 +51,85 @@ type ObservedPromptStop = Readonly<{
   response: PromptResponse
   turnUsage?: Extract<ProviderPromptOutcome, { kind: 'stopped' }>['facts']['turnUsage']
   modelTurnCount?: number
+  terminalContextWindow?: AcpTerminalContextWindow
 }>
+
+type LogicalTurnUsage = Readonly<{
+  turnUsage?: AcpTurnTokenUsage
+  unavailable?: true
+}>
+
+const MAX_LOGICAL_TURN_USAGE_ENTRIES = 500
+
+const sumTurnUsage = (
+  left: AcpTurnTokenUsage,
+  right: AcpTurnTokenUsage
+): AcpTurnTokenUsage | undefined => {
+  const inputTokens = left.inputTokens + right.inputTokens
+  const cacheTokens = left.cacheTokens + right.cacheTokens
+  const outputTokens = left.outputTokens + right.outputTokens
+  const hasCacheBreakdown =
+    left.cachedReadTokens !== undefined &&
+    left.cachedWriteTokens !== undefined &&
+    right.cachedReadTokens !== undefined &&
+    right.cachedWriteTokens !== undefined
+  const cachedReadTokens = (left.cachedReadTokens ?? 0) + (right.cachedReadTokens ?? 0)
+  const cachedWriteTokens = (left.cachedWriteTokens ?? 0) + (right.cachedWriteTokens ?? 0)
+  const hasTurnCount = left.turnCount !== undefined && right.turnCount !== undefined
+  const turnCount = (left.turnCount ?? 0) + (right.turnCount ?? 0)
+
+  if (
+    !Number.isSafeInteger(inputTokens) ||
+    !Number.isSafeInteger(cacheTokens) ||
+    !Number.isSafeInteger(outputTokens) ||
+    !Number.isSafeInteger(cachedReadTokens) ||
+    !Number.isSafeInteger(cachedWriteTokens) ||
+    !Number.isSafeInteger(turnCount)
+  ) {
+    return undefined
+  }
+
+  return {
+    inputTokens,
+    cacheTokens,
+    ...(hasCacheBreakdown ? { cachedReadTokens, cachedWriteTokens } : {}),
+    outputTokens,
+    ...(hasTurnCount ? { turnCount } : {})
+  }
+}
+
 export class AcpPromptOutcomeFinalizer {
+  // Detached ask-user replies resume as new provider prompts but keep the original Message identity.
+  // Retain a bounded running total so every later stop describes that complete visible user turn.
+  private readonly logicalTurnUsage = new Map<string, LogicalTurnUsage>()
+
+  private accumulateTurnUsage(
+    sessionId: string,
+    promptMessageId: string | undefined,
+    turnUsage: AcpTurnTokenUsage | undefined
+  ): AcpTurnTokenUsage | undefined {
+    if (!promptMessageId) return turnUsage
+
+    const key = `${sessionId.length}:${sessionId}${promptMessageId}`
+    const previous = this.logicalTurnUsage.get(key)
+    const accumulated =
+      !turnUsage || previous?.unavailable
+        ? undefined
+        : previous?.turnUsage
+          ? sumTurnUsage(previous.turnUsage, turnUsage)
+          : turnUsage
+    const next: LogicalTurnUsage = accumulated ? { turnUsage: accumulated } : { unavailable: true }
+
+    // Refresh insertion order so an active continuation is never the oldest retained entry.
+    this.logicalTurnUsage.delete(key)
+    this.logicalTurnUsage.set(key, next)
+    if (this.logicalTurnUsage.size > MAX_LOGICAL_TURN_USAGE_ENTRIES) {
+      const oldestKey = this.logicalTurnUsage.keys().next().value
+      if (oldestKey) this.logicalTurnUsage.delete(oldestKey)
+    }
+    return accumulated
+  }
+
   async finalize(
     handles: AcpPromptFinalizationHandles,
     outcome: AcpPromptFinalizationOutcome
@@ -99,6 +181,11 @@ export class AcpPromptOutcomeFinalizer {
           : { modelTurnCount: observedStop.modelTurnCount })
       })
       if (!terminal) return false
+      const turnUsage = this.accumulateTurnUsage(
+        sessionId,
+        handles.promptMessageId,
+        terminal.turnUsage
+      )
       handles.pushEvent({
         kind: 'stop',
         level: 'info',
@@ -107,7 +194,10 @@ export class AcpPromptOutcomeFinalizer {
         timestamp: terminal.timestamp,
         title: 'Prompt stopped',
         text: observedStop.response.stopReason,
-        turnUsage: terminal.turnUsage,
+        turnUsage,
+        ...(observedStop.terminalContextWindow
+          ? { terminalContextWindow: observedStop.terminalContextWindow }
+          : {}),
         raw: observedStop.response
       })
       return true
@@ -118,7 +208,18 @@ export class AcpPromptOutcomeFinalizer {
       if (outcome.kind === 'not-dispatched') {
         skillOutcome = 'cancelled'
         const response: PromptResponse = { stopReason: 'cancelled' }
-        observedStop = { response }
+        const capturedContext = context?.captureTerminal()
+        observedStop = {
+          response,
+          ...(capturedContext
+            ? {
+                terminalContextWindow: {
+                  termination: { kind: 'stop', stopReason: response.stopReason },
+                  ...capturedContext
+                }
+              }
+            : {})
+        }
         if (!interactions.captureTerminal(interaction, 'cancelled')) return response
         handles.emitUserMessage()
         await emitArtifact()
@@ -129,12 +230,23 @@ export class AcpPromptOutcomeFinalizer {
       }
       const { response, facts } = outcome
       skillOutcome = response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
+      const providerContextReconciled =
+        facts.contextUsedTokens !== undefined && handles.recordContextUsed(facts.contextUsedTokens)
+      const capturedContext = context?.captureTerminal(providerContextReconciled)
       observedStop = {
         response,
         ...(facts.turnUsage ? { turnUsage: facts.turnUsage } : {}),
-        ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount })
+        ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
+        ...(capturedContext
+          ? {
+              terminalContextWindow: {
+                termination: { kind: 'stop', stopReason: response.stopReason },
+                ...capturedContext,
+                ...(facts.lastModelStepUsage ? { modelStepUsage: facts.lastModelStepUsage } : {})
+              }
+            }
+          : {})
       }
-      if (facts.contextUsedTokens !== undefined) handles.recordContextUsed(facts.contextUsedTokens)
       if (context?.complete()) handles.emitState()
       await emitArtifact()
       safeLog('info', 'prompt stopped', { stopReason: response.stopReason })
@@ -159,6 +271,7 @@ export class AcpPromptOutcomeFinalizer {
         throw error
       }
       if (!interactions.captureTerminal(interaction, 'error')) throw error
+      const capturedContext = context?.captureTerminal()
       context?.fail()
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
       safeLog('error', 'prompt failed', errorLogFields(error))
@@ -180,7 +293,15 @@ export class AcpPromptOutcomeFinalizer {
         ...eventIdentity,
         timestamp: terminal.timestamp,
         title: ACP_PROMPT_FAILED_EVENT_TITLE,
-        text
+        text,
+        ...(capturedContext
+          ? {
+              terminalContextWindow: {
+                termination: { kind: 'error' },
+                ...capturedContext
+              }
+            }
+          : {})
       })
       throw error
     } finally {

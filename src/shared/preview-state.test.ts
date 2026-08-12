@@ -41,6 +41,39 @@ describe('createEmptyPersistedPreviewState', () => {
 // sanitizePreviewFileItem is not exported, so its behavior is exercised through the items array
 // of normalizePersistedPreviewState.
 describe('normalizePersistedPreviewState item sanitization', () => {
+  it('keeps only the durable Session-scoped Subagents selection among tool previews', () => {
+    const state = normalizePersistedPreviewState({
+      panelState: 'collapsed',
+      subagents: {
+        id: 'tool:session-1:subagents',
+        sessionId: 'session-1',
+        title: 'Subagents',
+        type: 'tool',
+        toolKind: 'subagents',
+        selectedAgentFrameId: 'child-21'
+      },
+      items: [
+        {
+          id: 'tool:session-1:notebook',
+          sessionId: 'session-1',
+          title: 'Notebook',
+          type: 'tool',
+          toolKind: 'notebook'
+        }
+      ]
+    })
+
+    expect(state.items).toEqual([])
+    expect(state.subagents).toEqual({
+      id: 'tool:session-1:subagents',
+      sessionId: 'session-1',
+      title: 'Subagents',
+      type: 'tool',
+      toolKind: 'subagents',
+      selectedAgentFrameId: 'child-21'
+    })
+  })
+
   it('keeps a fully valid item and preserves its source', () => {
     const state = normalizePersistedPreviewState({ items: [validItem] })
 

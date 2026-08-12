@@ -17,14 +17,20 @@ export const CUSTOMIZE_SKILL_REF = {
 
 // Editable prose following the chip. The leading two-space gap is part of the approved prototype and
 // is preserved verbatim through serialization.
+export type CustomizeGoal = 'specialist' | 'skill'
+
 export const CUSTOMIZE_PREFILL_TEXT = '  Help me create a new specialist.'
+export const CUSTOMIZE_SKILL_PREFILL_TEXT = '  Help me create a new skill.'
 
 // Builds the unsent composer document for `Chat with agent`: a real `/customize` Skill chip followed
 // by the editable sentence. The result is a normal ComposerDoc — the renderer treats it exactly like
 // a user-picked Skill chip, never as an executable string.
-export const buildCustomizePrefillDoc = (): ComposerDoc => ({
+export const buildCustomizePrefillDoc = (goal: CustomizeGoal = 'specialist'): ComposerDoc => ({
   nodes: [
     { type: 'skill', id: CUSTOMIZE_SKILL_REF.id, name: CUSTOMIZE_SKILL_REF.name },
-    { type: 'text', text: CUSTOMIZE_PREFILL_TEXT }
+    {
+      type: 'text',
+      text: goal === 'skill' ? CUSTOMIZE_SKILL_PREFILL_TEXT : CUSTOMIZE_PREFILL_TEXT
+    }
   ]
 })

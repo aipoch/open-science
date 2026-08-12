@@ -1,0 +1,446 @@
+import type { ComputeJob } from '../../shared/compute'
+import { sharedDispatchTracker, type DispatchTracker } from './dispatch-tracker'
+import { computeRemoteWorkdir, quoteRemotePath, type RemoteHandle } from './job-dispatcher'
+import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import type {
+  ComputeJobOwner,
+  ComputeJobRepository,
+  ComputeJobSessionOwner
+} from './job-repository'
+import type { ComputeHostRepository } from './repository'
+import { resolveSshTarget, type ResolvedSshTarget, type SshRunner } from './ssh-runner'
+
+type ComputeJobDeletionRepository = Pick<ComputeJobRepository, 'findByOwner' | 'listOwners'>
+type ComputeJobOwnerLiveness = boolean | 'unknown'
+
+type ComputeJobDeletionLifecycle = Pick<
+  ComputeJobLifecycle,
+  'beginOwnerDeletion' | 'deleteOwnerRows' | 'abortOwnerDeletion'
+>
+
+type ComputeJobQueuePause = {
+  pauseOwner(owner: ComputeJobOwner): Promise<void>
+  resumeOwner(owner: ComputeJobOwner): void
+}
+
+type ComputeJobRuntimePause = {
+  pause(): Promise<void>
+  resume(): void
+}
+
+type PreparedRemoteCleanup = {
+  jobId: string
+  target: ResolvedSshTarget
+  command: string
+}
+
+type PreparedDeletionOutcome = { status: 'released' } | { status: 'retained'; error: unknown }
+
+type PreparedOwnerDeletion = {
+  owner: ComputeJobOwner
+  remoteCleanups: PreparedRemoteCleanup[]
+  outcome: Promise<PreparedDeletionOutcome>
+  settleOutcome(outcome: PreparedDeletionOutcome): void
+}
+
+type ComputeJobDeletionOwnerDeps = {
+  jobRepository: ComputeJobDeletionRepository
+  lifecycle: ComputeJobDeletionLifecycle
+  queueManager?: ComputeJobQueuePause
+  hostRepository: Pick<ComputeHostRepository, 'get'>
+  runner: SshRunner
+  dispatchTracker?: Pick<DispatchTracker, 'waitFor'>
+  resolveTarget?: (
+    alias: string,
+    overrides: Parameters<typeof resolveSshTarget>[1]
+  ) => Promise<ResolvedSshTarget>
+}
+
+const ACTIVE_STATUSES = new Set<ComputeJob['status']>(['submitted', 'running'])
+
+const validatedRemoteWorkdir = (job: ComputeJob, fallback?: string): string => {
+  const workdir = job.remote_workdir ?? fallback
+  const safeJobId = /^[A-Za-z0-9_-]+$/.test(job.job_id)
+  const hasTraversal = workdir?.split('/').some((part) => part === '.' || part === '..')
+  if (
+    !workdir ||
+    !safeJobId ||
+    /[\0\r\n]/.test(workdir) ||
+    hasTraversal ||
+    !workdir.endsWith(`/.openscience/jobs/${job.job_id}`)
+  ) {
+    throw new Error(`Unsafe remote work directory for Compute Job ${job.job_id}.`)
+  }
+  return workdir
+}
+
+const sshAliasFromProviderId = (providerId: string): string => {
+  const alias = providerId.startsWith('ssh:') ? providerId.slice(4).trim() : ''
+  if (!alias || /[\0\r\n]/.test(alias)) {
+    throw new Error(`Invalid Compute Job provider ${providerId}.`)
+  }
+  return alias
+}
+
+const activeRemoteHandle = (job: ComputeJob, workdir: string): RemoteHandle | undefined => {
+  if (!ACTIVE_STATUSES.has(job.status)) return undefined
+  if (!job.remote_handle) {
+    if (job.status === 'submitted') return undefined
+    throw new Error(`Invalid remote handle for active Compute Job ${job.job_id}.`)
+  }
+  try {
+    const handle = JSON.parse(job.remote_handle) as RemoteHandle
+    if (!Number.isSafeInteger(handle.pid) || handle.pid <= 0 || handle.workdir !== workdir) {
+      throw new Error('invalid handle')
+    }
+    return handle
+  } catch {
+    throw new Error(`Invalid remote handle for active Compute Job ${job.job_id}.`)
+  }
+}
+
+const cleanupCommand = (workdir: string, handle: RemoteHandle | undefined): string => {
+  const marker = '/.openscience/jobs/'
+  const markerIndex = workdir.lastIndexOf(marker)
+  if (markerIndex < 0) throw new Error('Unsafe remote Compute Job cleanup path.')
+  const scratchRoot = markerIndex === 0 ? '/' : workdir.slice(0, markerIndex)
+  const workdirSuffix = workdir.slice(markerIndex + 1)
+  const quotedScratchRoot = quoteRemotePath(scratchRoot)
+  const quotedWorkdirSuffix = quoteRemotePath(workdirSuffix)
+  const quotedWorkdir = quoteRemotePath(workdir)
+  const quotedPidFile = quoteRemotePath(`${workdir}/job.pid`)
+  // Retried plans may contain stale PIDs. Signal only while cwd still proves Job ownership;
+  // without that evidence, skip process mutation and keep directory removal idempotent.
+  const lines = [
+    `[ ! -L ${quotedWorkdir} ] || exit 1`,
+    `scratch_root=$(cd -- ${quotedScratchRoot} 2>/dev/null && pwd -P || true)`,
+    `workdir=$(cd -- ${quotedWorkdir} 2>/dev/null && pwd -P || true)`,
+    'expected_workdir=${scratch_root%/}/' + quotedWorkdirSuffix,
+    '[ -z "$workdir" ] || { [ -n "$scratch_root" ] && [ "$workdir" = "$expected_workdir" ]; } || exit 1',
+    'kill_job_pid() {',
+    '  pid=$1',
+    "  case $pid in ''|*[!0-9]*) return 0 ;; esac",
+    '  [ -n "$workdir" ] || return 0',
+    '  process_workdir=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)',
+    '  if [ -z "$process_workdir" ] && command -v lsof >/dev/null 2>&1; then',
+    `    process_workdir=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)`,
+    '  fi',
+    '  [ "$process_workdir" = "$workdir" ] || return 0',
+    '  kill -TERM -- -$pid 2>/dev/null || true',
+    '  kill -TERM $pid 2>/dev/null || true',
+    '  kill -KILL -- -$pid 2>/dev/null || true',
+    '  kill -KILL $pid 2>/dev/null || true',
+    '}'
+  ]
+  if (handle) lines.push(`kill_job_pid ${handle.pid}`)
+  lines.push(
+    `if [ -f ${quotedPidFile} ]; then kill_job_pid "$(cat ${quotedPidFile} 2>/dev/null || true)"; fi`,
+    'if [ -n "$workdir" ]; then rm -rf -- "$workdir"; fi',
+    'test -z "$workdir" || test ! -e "$workdir"'
+  )
+  return lines.join('\n')
+}
+
+class ComputeJobDeletionOwner {
+  private operationQueue: Promise<unknown> = Promise.resolve()
+  private runtime: ComputeJobRuntimePause | undefined
+  private preparedDeletion: PreparedOwnerDeletion | undefined
+  private readonly armedOwners = new Map<string, ComputeJobOwner>()
+  private readonly retainedOwners = new Set<string>()
+  private readonly dispatchTracker: Pick<DispatchTracker, 'waitFor'>
+  private readonly resolveTarget: NonNullable<ComputeJobDeletionOwnerDeps['resolveTarget']>
+
+  constructor(private readonly deps: ComputeJobDeletionOwnerDeps) {
+    this.dispatchTracker = deps.dispatchTracker ?? sharedDispatchTracker
+    this.resolveTarget = deps.resolveTarget ?? resolveSshTarget
+  }
+
+  bindRuntime(runtime: ComputeJobRuntimePause): () => void {
+    this.runtime = runtime
+    return () => {
+      if (this.runtime === runtime) this.runtime = undefined
+    }
+  }
+
+  prepareSessionJobDeletion(projectId: string, sessionId: string): Promise<void> {
+    return this.prepareOwnerWhenAvailable({ projectId, sessionId })
+  }
+
+  commitSessionJobDeletion(projectId: string, sessionId: string): Promise<void> {
+    return this.enqueue(() => this.commitOwner({ projectId, sessionId }))
+  }
+
+  prepareProjectJobDeletion(projectId: string): Promise<void> {
+    return this.prepareOwnerWhenAvailable({ projectId })
+  }
+
+  commitProjectJobDeletion(projectId: string): Promise<void> {
+    return this.enqueue(() => this.commitOwner({ projectId }))
+  }
+
+  abortSessionJobDeletion(projectId: string, sessionId: string): Promise<void> {
+    return this.enqueue(() => this.abortOwner({ projectId, sessionId }))
+  }
+
+  abortProjectJobDeletion(projectId: string): Promise<void> {
+    return this.enqueue(() => this.abortOwner({ projectId }))
+  }
+
+  restoreProjectJobDeletion(projectId: string): Promise<void> {
+    return this.enqueue(() => this.armOwner({ projectId }, true))
+  }
+
+  restoreOrphanJobDeletionBarriers(
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>
+  ): Promise<void> {
+    return this.enqueue(async () => {
+      const owners = await this.deps.jobRepository.listOwners()
+      for (const owner of owners) {
+        if ((await isOwnerLive(owner)) === true) continue
+        await this.armOwner(owner, true)
+      }
+    })
+  }
+
+  reconcileOrphanJobs(
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>
+  ): Promise<void> {
+    return this.enqueue(() => this.reconcileOrphanOwners(isOwnerLive))
+  }
+
+  reconcileProjectOrphanJobs(
+    projectId: string,
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>
+  ): Promise<void> {
+    return this.enqueue(() => this.reconcileOrphanOwners(isOwnerLive, projectId))
+  }
+
+  private enqueue<Result>(operationOwner: () => Promise<Result>): Promise<Result> {
+    const operation = this.operationQueue.then(operationOwner)
+    this.operationQueue = operation.catch(() => undefined)
+    return operation
+  }
+
+  private async prepareOwnerWhenAvailable(owner: ComputeJobOwner): Promise<void> {
+    while (true) {
+      const decision = await this.enqueue(async () => {
+        const prepared = this.preparedDeletion
+        if (prepared && !this.sameOwner(prepared.owner, owner)) {
+          return { status: 'wait' as const, outcome: prepared.outcome }
+        }
+        await this.prepareOwner(owner)
+        return { status: 'prepared' as const }
+      })
+      if (decision.status === 'prepared') return
+
+      const outcome = await decision.outcome
+      if (outcome.status === 'retained') throw outcome.error
+    }
+  }
+
+  private sameOwner(left: ComputeJobOwner, right: ComputeJobOwner): boolean {
+    return left.projectId === right.projectId && left.sessionId === right.sessionId
+  }
+
+  private ownerKey(owner: ComputeJobOwner): string {
+    return JSON.stringify([owner.projectId, owner.sessionId])
+  }
+
+  private async armOwner(owner: ComputeJobOwner, retainOnFailure: boolean): Promise<void> {
+    const key = this.ownerKey(owner)
+    if (this.armedOwners.has(key)) {
+      if (retainOnFailure) this.retainedOwners.add(key)
+      return
+    }
+
+    await this.deps.lifecycle.beginOwnerDeletion(owner)
+    try {
+      await this.deps.queueManager?.pauseOwner(owner)
+      this.armedOwners.set(key, owner)
+      if (retainOnFailure) this.retainedOwners.add(key)
+    } catch (error) {
+      try {
+        await this.deps.lifecycle.abortOwnerDeletion(owner)
+      } finally {
+        this.deps.queueManager?.resumeOwner(owner)
+      }
+      throw error
+    }
+  }
+
+  private async releaseOwnerBarrier(owner: ComputeJobOwner): Promise<void> {
+    const key = this.ownerKey(owner)
+    await this.deps.lifecycle.abortOwnerDeletion(owner)
+    this.armedOwners.delete(key)
+    this.retainedOwners.delete(key)
+    this.deps.queueManager?.resumeOwner(owner)
+  }
+
+  private releaseCommittedOwnerBarriers(owner: ComputeJobOwner): void {
+    for (const [key, candidate] of this.armedOwners) {
+      if (
+        candidate.projectId !== owner.projectId ||
+        (owner.sessionId !== undefined && candidate.sessionId !== owner.sessionId)
+      ) {
+        continue
+      }
+      this.armedOwners.delete(key)
+      this.retainedOwners.delete(key)
+      this.deps.queueManager?.resumeOwner(candidate)
+    }
+  }
+
+  private async prepareOwner(owner: ComputeJobOwner): Promise<void> {
+    if (this.preparedDeletion) {
+      if (this.sameOwner(this.preparedDeletion.owner, owner)) return
+      throw new Error('Another Compute Job owner deletion is already prepared.')
+    }
+
+    await this.armOwner(owner, false)
+    let runtimePaused = false
+    try {
+      if (this.runtime) {
+        await this.runtime.pause()
+        runtimePaused = true
+      }
+      const observed = await this.deps.jobRepository.findByOwner(owner)
+      await this.dispatchTracker.waitFor(observed.map((job) => job.job_id))
+      const jobs = await this.deps.jobRepository.findByOwner(owner)
+      const remoteCleanups: PreparedRemoteCleanup[] = []
+      for (const job of jobs) {
+        const cleanup = await this.prepareRemoteCleanup(job)
+        if (cleanup) remoteCleanups.push(cleanup)
+      }
+      let settleOutcome!: (outcome: PreparedDeletionOutcome) => void
+      const outcome = new Promise<PreparedDeletionOutcome>((resolve) => {
+        settleOutcome = resolve
+      })
+      this.preparedDeletion = { owner, remoteCleanups, outcome, settleOutcome }
+    } catch (error) {
+      try {
+        if (!this.retainedOwners.has(this.ownerKey(owner))) {
+          await this.releaseOwnerBarrier(owner)
+        }
+      } finally {
+        if (runtimePaused) this.runtime?.resume()
+      }
+      throw error
+    }
+  }
+
+  private async commitOwner(owner: ComputeJobOwner): Promise<void> {
+    const prepared = this.preparedDeletion
+    if (!prepared || !this.sameOwner(prepared.owner, owner)) {
+      throw new Error('Compute Job owner deletion is not prepared.')
+    }
+    // The caller invokes this phase only after Session JSON deletion or the Project Session
+    // tombstone is durable. Keep Job rows until every idempotent remote cleanup succeeds.
+    try {
+      for (const cleanup of prepared.remoteCleanups) await this.runRemoteCleanup(cleanup)
+      await this.deps.lifecycle.deleteOwnerRows(owner)
+    } catch (error) {
+      prepared.settleOutcome({ status: 'retained', error })
+      throw error
+    }
+    this.preparedDeletion = undefined
+    prepared.settleOutcome({ status: 'released' })
+    this.releaseCommittedOwnerBarriers(owner)
+    this.runtime?.resume()
+  }
+
+  private async abortOwner(owner: ComputeJobOwner): Promise<void> {
+    if (this.preparedDeletion && !this.sameOwner(this.preparedDeletion.owner, owner)) {
+      // A parent Project abort can race a retained child Session cleanup plan. The parent never
+      // armed a new barrier because prepareOwner rejected before armOwner, so leave the child plan
+      // and any restored durable Project barrier untouched for the next recovery attempt.
+      return
+    }
+    const prepared = this.preparedDeletion
+    await this.releaseOwnerBarrier(owner)
+    if (prepared) {
+      this.preparedDeletion = undefined
+      prepared.settleOutcome({ status: 'released' })
+      this.runtime?.resume()
+    }
+  }
+
+  private async reconcileOrphanOwners(
+    isOwnerLive: (owner: ComputeJobSessionOwner) => Promise<ComputeJobOwnerLiveness>,
+    projectId?: string
+  ): Promise<void> {
+    const owners = (await this.deps.jobRepository.listOwners()).filter(
+      (owner) => projectId === undefined || owner.projectId === projectId
+    )
+    const prepared = this.preparedDeletion?.owner
+    if (prepared?.sessionId !== undefined) {
+      const preparedIndex = owners.findIndex((owner) => this.sameOwner(owner, prepared))
+      if (preparedIndex > 0) owners.unshift(...owners.splice(preparedIndex, 1))
+    }
+    for (const owner of owners) {
+      const liveness = await isOwnerLive(owner)
+      if (liveness === 'unknown') continue
+      if (liveness) {
+        const key = this.ownerKey(owner)
+        if (
+          this.retainedOwners.has(key) &&
+          (!this.preparedDeletion || !this.sameOwner(this.preparedDeletion.owner, owner))
+        ) {
+          await this.releaseOwnerBarrier(owner)
+        }
+        continue
+      }
+      await this.prepareOwner(owner)
+      await this.commitOwner(owner)
+    }
+  }
+
+  private async prepareRemoteCleanup(job: ComputeJob): Promise<PreparedRemoteCleanup | undefined> {
+    if (job.status === 'queued') return undefined
+    const host = await this.deps.hostRepository.get(job.provider_id)
+    const fallbackWorkdir = host ? computeRemoteWorkdir(host.scratchRoot, job.job_id) : undefined
+    const workdir = validatedRemoteWorkdir(job, fallbackWorkdir)
+    const handle = activeRemoteHandle(job, workdir)
+    const target = await this.resolveTarget(
+      host?.sshAlias ?? sshAliasFromProviderId(job.provider_id),
+      host?.sshOverrides
+    )
+    return { jobId: job.job_id, target, command: cleanupCommand(workdir, handle) }
+  }
+
+  private async runRemoteCleanup(cleanup: PreparedRemoteCleanup): Promise<void> {
+    const result = await this.deps.runner.run(cleanup.target, cleanup.command, {
+      timeoutMs: 30_000,
+      loginShell: false,
+      maxOutputBytes: 4 * 1024
+    })
+    if (result.timedOut || result.exitCode !== 0) {
+      const detail = result.stderr.trim() || `exit ${result.exitCode ?? 'null'}`
+      throw new Error(`Remote Compute Job cleanup failed for ${cleanup.jobId}: ${detail}`)
+    }
+  }
+}
+
+const createComputeJobDeletionOwner = (
+  deps: Omit<ComputeJobDeletionOwnerDeps, 'jobRepository' | 'lifecycle'> & {
+    jobRepository: ComputeJobRepository
+  }
+): ComputeJobDeletionOwner =>
+  new ComputeJobDeletionOwner({
+    ...deps,
+    lifecycle: new ComputeJobLifecycle(deps.jobRepository)
+  })
+
+export {
+  ComputeJobDeletionOwner,
+  cleanupCommand,
+  createComputeJobDeletionOwner,
+  validatedRemoteWorkdir
+}
+export type {
+  ComputeJobDeletionLifecycle,
+  ComputeJobDeletionOwnerDeps,
+  ComputeJobDeletionRepository,
+  ComputeJobOwnerLiveness,
+  ComputeJobQueuePause,
+  ComputeJobRuntimePause
+}

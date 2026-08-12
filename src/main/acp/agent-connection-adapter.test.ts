@@ -49,6 +49,7 @@ const asAgentProcess = (process: FakeAgentProcess): ChildProcessWithoutNullStrea
   process as unknown as ChildProcessWithoutNullStreams
 
 const hooks = (): AcpAgentConnectionHooks => ({
+  createElicitation: vi.fn(async () => ({ action: 'decline' as const })),
   requestPermission: vi.fn(async () => ({ outcome: { outcome: 'cancelled' as const } })),
   observeSessionUpdate: vi.fn(),
   observeClaudeSdkMessage: vi.fn(),
@@ -352,6 +353,47 @@ describe('AcpAgentConnectionAdapter', () => {
       agentConnection.client.request(acp.methods.client.session.requestPermission, request)
     ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
     expect(connectionHooks.requestPermission).toHaveBeenCalledWith(request)
+
+    await close()
+    agentConnection.close()
+  })
+
+  it('translates form elicitation requests and returns the hook response', async () => {
+    const process = new FakeAgentProcess()
+    const agentConnection = acp
+      .agent({ name: 'test-agent' })
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const connectionHooks = hooks()
+    const request = {
+      mode: 'form' as const,
+      sessionId: 'provider-session',
+      toolCallId: 'tool-choice-1',
+      message: 'Choose an approach',
+      requestedSchema: {
+        type: 'object' as const,
+        properties: {
+          question_0: {
+            type: 'string' as const,
+            enum: ['minimal', 'expanded']
+          }
+        }
+      }
+    }
+    vi.mocked(connectionHooks.createElicitation).mockResolvedValue({
+      action: 'accept',
+      content: { question_0: 'minimal' }
+    })
+    const { close } = await openConnection(process, connectionHooks)
+
+    await expect(
+      agentConnection.client.request(acp.methods.client.elicitation.create, request)
+    ).resolves.toEqual({ action: 'accept', content: { question_0: 'minimal' } })
+    expect(connectionHooks.createElicitation).toHaveBeenCalledWith(request)
 
     await close()
     agentConnection.close()

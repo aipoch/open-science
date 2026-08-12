@@ -48,6 +48,17 @@ describe('ComputeApprovalDialog', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
+    useComputeStore.setState({
+      pendingApprovals: [{ ...request, session_id: 'session-side' }]
+    })
+
+    act(() => root.render(<ComputeApprovalDialog blockedSessionIds={new Set(['session-side'])} />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useComputeStore.getState().pendingApprovals).toHaveLength(1)
+  })
+
   it('uses shared dialog chrome while preserving the approval content', () => {
     useComputeStore.setState({ pendingApprovals: [request] })
     act(() => root.render(<ComputeApprovalDialog />))

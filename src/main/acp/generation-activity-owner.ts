@@ -16,6 +16,7 @@ export class AcpGenerationActivityOwner {
   private activityLeaseCount = 0
   private operationLeaseCount = 0
   private readonly startupTokens = new Set<AcpGenerationStartupToken>()
+  private additionalActivity: (() => boolean) | undefined
 
   constructor(private readonly options: AcpGenerationActivityOwnerOptions) {}
 
@@ -23,12 +24,20 @@ export class AcpGenerationActivityOwner {
     const reconnect =
       this.options.hasActivePrompts() ||
       this.options.hasActiveReviewerSessions() ||
+      this.additionalActivity?.() === true ||
       this.activityLeaseCount > 0 ||
       this.startupTokens.size > 0
     return Object.freeze({
       reconnect,
       retirement: reconnect || this.operationLeaseCount > 0
     })
+  }
+
+  bindAdditionalActivity(probe: () => boolean): void {
+    if (this.additionalActivity) {
+      throw new Error('ACP generation additional activity is already bound.')
+    }
+    this.additionalActivity = probe
   }
 
   async withOperation<T>(work: () => Promise<T>): Promise<T> {

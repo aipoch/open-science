@@ -31,6 +31,7 @@ type AcpSessionAggregateSnapshot = DeepReadonly<{
   permissionProfile?: SessionPermissionProfileState
   specialistId?: string
   specialistPrefix?: string
+  sessionSetupPromptPrefix?: string
   appliedModel?: string
   configOptions?: SessionConfigOption[]
 }>
@@ -55,6 +56,7 @@ class AcpSessionAggregate {
   private permissionProfile: SessionPermissionProfileState | undefined
   private specialistId: string | undefined
   private specialistPrefix: string | undefined
+  private sessionSetupPromptPrefix: string | undefined
   private appliedModel: string | undefined
   private configOptions: SessionConfigOption[] | undefined
   private snapshotValue: AcpSessionAggregateSnapshot
@@ -82,6 +84,7 @@ class AcpSessionAggregate {
         this.permissionProfile === undefined ? undefined : structuredClone(this.permissionProfile),
       specialistId: this.specialistId,
       specialistPrefix: this.specialistPrefix,
+      sessionSetupPromptPrefix: this.sessionSetupPromptPrefix,
       appliedModel: this.appliedModel,
       configOptions: cloneConfigOptions(this.configOptions)
     })
@@ -123,6 +126,13 @@ class AcpSessionAggregate {
 
   setSpecialistPrefix(prefix: string | undefined): void {
     this.specialistPrefix = prefix
+    this.refreshSnapshot()
+  }
+
+  // Frameworks without dynamic Session system-prompt metadata return a prompt prefix from setup.
+  // Keep it separate from Specialist identity so Specialist changes cannot drop Project context.
+  setSessionSetupPromptPrefix(prefix: string | undefined): void {
+    this.sessionSetupPromptPrefix = prefix
     this.refreshSnapshot()
   }
 

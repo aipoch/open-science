@@ -1,25 +1,31 @@
 import { load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
 
+const readFrontmatter = (
+  raw: string
+): { value?: unknown; body: string; hasFrontmatter: boolean } => {
+  const normalized = raw.replace(/\r\n?/g, '\n')
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
+
+  if (!match) return { body: raw, hasFrontmatter: false }
+
+  const body = normalized.slice(match[0].length).replace(/^\n+/, '')
+  try {
+    return {
+      value: loadYaml(match[1], { schema: FAILSAFE_SCHEMA }),
+      body,
+      hasFrontmatter: true
+    }
+  } catch {
+    return { body, hasFrontmatter: true }
+  }
+}
+
 // SKILL.md frontmatter reader shared by main and renderer. Values remain strings so metadata can
 // round-trip through previews and the repository without YAML bool/number/Date coercion.
 const parseFrontmatter = (
   raw: string
 ): { fields: Record<string, string>; body: string; hasFrontmatter: boolean } => {
-  const normalized = raw.replace(/\r\n?/g, '\n')
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
-
-  if (!match) {
-    return { fields: {}, body: raw, hasFrontmatter: false }
-  }
-
-  const body = normalized.slice(match[0].length).replace(/^\n+/, '')
-
-  let parsed: unknown
-  try {
-    parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
-  } catch {
-    return { fields: {}, body, hasFrontmatter: true }
-  }
+  const { value: parsed, body, hasFrontmatter } = readFrontmatter(raw)
 
   const fields: Record<string, string> = {}
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -33,7 +39,14 @@ const parseFrontmatter = (
     }
   }
 
-  return { fields, body, hasFrontmatter: true }
+  return { fields, body, hasFrontmatter }
+}
+
+const frontmatterFieldNames = (raw: string): string[] => {
+  const { value } = readFrontmatter(raw)
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.keys(value).map((key) => key.toLowerCase())
+    : []
 }
 
 // Higher-level SKILL.md view used by import adapters and editors. Callers get authoritative identity
@@ -59,4 +72,4 @@ const splitFrontmatter = (raw: string): { description: string; body: string } =>
   return { description: fields.description ?? '', body }
 }
 
-export { parseFrontmatter, parseSkillDocument, splitFrontmatter }
+export { frontmatterFieldNames, parseFrontmatter, parseSkillDocument, splitFrontmatter }

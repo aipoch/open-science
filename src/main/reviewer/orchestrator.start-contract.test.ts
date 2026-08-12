@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Review, ReviewWithChecks, TurnScope } from '../../shared/reviewer'
@@ -88,7 +91,7 @@ const baseOptions = (
   getSession: () => session,
   reviewRepository,
   acpRuntime,
-  artifactStorageRoot: '/tmp/data-root',
+  artifactStorageRoot: join(tmpdir(), 'reviewer-data-root'),
   onStarted: hooks.onStarted,
   onReviewUpdate: hooks.onReviewUpdate
 })
