@@ -226,12 +226,13 @@ export const ComposerEditor = ({
 
   useLayoutEffect(() => {
     const root = editorRef.current
-    if (
-      root &&
-      (restoreFocusRequest !== undefined || (focusRequest !== undefined && canReceiveFocus(root)))
-    )
-      moveCaretToEnd(root)
-  }, [focusRequest, restoreFocusRequest])
+    if (root && focusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
+  }, [focusRequest])
+
+  useLayoutEffect(() => {
+    const root = editorRef.current
+    if (root && restoreFocusRequest !== undefined && canReceiveFocus(root)) moveCaretToEnd(root)
+  }, [restoreFocusRequest])
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])
 

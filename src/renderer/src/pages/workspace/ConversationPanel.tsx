@@ -1123,7 +1123,7 @@ const ConversationPanel = ({
                               : undefined
                           }
                           focusRequest={composerFocusKey}
-                          restoreFocusRequest={composerRestoreFocusRequest}
+                          restoreFocusRequest={sideChat ? undefined : composerRestoreFocusRequest}
                         />
                       </div>
 

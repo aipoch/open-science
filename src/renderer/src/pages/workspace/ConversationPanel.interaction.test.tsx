@@ -1551,7 +1551,20 @@ describe('ConversationPanel composer intake', () => {
       (container.querySelector('[aria-label="Close Side chat"]') as HTMLButtonElement).click()
     )
     expect(onCloseSideChat).toHaveBeenCalledOnce()
+    renderPanel({ onCloseSideChat })
     expect(document.activeElement).toBe(getComposerEditor())
+
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+    renderPanel({
+      composerFocusKey: 'session-blocked-after-side-chat',
+      pendingPermissions: [{ requestId: 'permission-after-side-chat' } as never]
+    })
+
+    expect(getComposerForm().hidden).toBe(true)
+    expect(document.activeElement).toBe(navigationButton)
   })
 
   it('keeps the Side chat input fixed and pins streamed output to the bottom', () => {
