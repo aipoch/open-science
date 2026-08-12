@@ -100,16 +100,23 @@ vi.mock('@/components/ui/message-scroller', () => {
     PropsWithChildren<React.HTMLAttributes<HTMLDivElement>>
   >(function MockMessageScrollerContent({ children, ...props }, ref) {
     return (
-      <div ref={ref} {...props}>
+      <div ref={ref} data-slot="message-scroller-content" {...props}>
         {children}
       </div>
     )
   })
   const Item = ({
     children,
-    messageId
-  }: PropsWithChildren<{ messageId?: string }>): React.JSX.Element => (
-    <div data-message-id={messageId}>{children}</div>
+    messageId,
+    scrollAnchor
+  }: PropsWithChildren<{ messageId?: string; scrollAnchor?: boolean }>): React.JSX.Element => (
+    <div
+      data-slot="message-scroller-item"
+      data-message-id={messageId}
+      data-scroll-anchor={scrollAnchor === true ? 'true' : undefined}
+    >
+      {children}
+    </div>
   )
   const Button = forwardRef<
     HTMLButtonElement,
@@ -327,6 +334,47 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     container.remove()
+  })
+
+  it('keeps every transcript row a direct MessageScrollerItem child of the content element', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({
+      id: 'prompt-structure',
+      content: 'Flatten the transcript',
+      sortIndex: 1,
+      createdAt: 100
+    })
+    const reply = createMessage({
+      id: 'reply-structure',
+      role: 'agent',
+      content: 'Reply body',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const session = createSession({ status: 'idle', messages: [prompt, reply] })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    // message-scroller only measures and anchors Content's direct children, so every transcript
+    // row must be a MessageScrollerItem and no wrapper div may sit in between.
+    const content = container.querySelector('[data-slot="message-scroller-content"]')
+    expect(content).not.toBeNull()
+    const rows = Array.from(content?.children ?? [])
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.getAttribute('data-slot')).toBe('message-scroller-item')
+    }
+
+    const userRow = content?.querySelector('[data-message-id="prompt-structure"]')
+    expect(userRow?.getAttribute('data-scroll-anchor')).toBe('true')
+    const agentRow = content?.querySelector('[data-message-id="reply-structure"]')
+    expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
   })
 
   it('keeps later tools behind the visible assistant prefix', async () => {

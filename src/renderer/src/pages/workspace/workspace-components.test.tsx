@@ -369,8 +369,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain(
       "'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'"
     )
-    expect(workspaceMessageScrollerSource).toContain('conversationContentClassName')
-    expect(workspaceMessageScrollerSource).toContain('mx-auto w-full max-w-4xl')
+    expect(workspaceMessageScrollerSource).toContain('className="gap-0 px-4 pb-[56px]"')
+    // Rows must stay direct children of MessageScrollerContent; no transcript wrapper div.
+    expect(workspaceMessageScrollerSource).not.toContain('conversationContentClassName')
   })
 
   it('matches the reference page chat background and transparent assistant progress', () => {
