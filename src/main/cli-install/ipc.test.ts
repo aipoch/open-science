@@ -1,14 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Captures the handlers registered via ipcMain.handle so tests can invoke them directly.
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
 
-const { launcher } = vi.hoisted(() => ({
+const { launcher, logger } = vi.hoisted(() => ({
   launcher: {
+    ensureCliLauncherCurrent: vi.fn(),
     getCliLauncherStatus: vi.fn(),
     installCliLauncher: vi.fn(),
     uninstallCliLauncher: vi.fn()
-  }
+  },
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() }
 }))
 
 vi.mock('electron', () => ({
@@ -25,12 +27,12 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('../logger', () => ({
-  createLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn() })
+  createLogger: () => logger
 }))
 
 vi.mock('./launcher', () => launcher)
 
-import { registerCliInstallIpcHandlers, type CliCommandOwner } from './ipc'
+import { createCliCommandOwner, registerCliInstallIpcHandlers, type CliCommandOwner } from './ipc'
 
 const INSTALLED = { installed: true, target: '/home/u/.local/bin/open-science', onPath: true }
 
@@ -38,6 +40,10 @@ beforeEach(() => {
   handlers.clear()
   vi.clearAllMocks()
   registerCliInstallIpcHandlers()
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
 })
 
 describe('registerCliInstallIpcHandlers', () => {
@@ -83,5 +89,20 @@ describe('registerCliInstallIpcHandlers', () => {
     launcher.getCliLauncherStatus.mockRejectedValue(new Error('fs blew up'))
     const result = await handlers.get('cli:get-status')!()
     expect(result).toEqual({ installed: false, target: '', onPath: false })
+  })
+
+  it('reconciles an AppImage launcher through the owner and logs failures', async () => {
+    vi.stubEnv('APPIMAGE', '/home/u/Open Science.AppImage')
+    launcher.ensureCliLauncherCurrent.mockRejectedValue(new Error('read only'))
+
+    await expect(createCliCommandOwner().ensureCurrent()).resolves.toBeUndefined()
+
+    expect(launcher.ensureCliLauncherCurrent).toHaveBeenCalledWith(
+      expect.objectContaining({ appImagePath: '/home/u/Open Science.AppImage' })
+    )
+    expect(logger.error).toHaveBeenCalledWith(
+      'cli launcher reconciliation failed',
+      expect.any(Error)
+    )
   })
 })

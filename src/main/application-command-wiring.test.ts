@@ -113,6 +113,7 @@ describe('production application command wiring', () => {
     )
     expect(dependencyBlock).toContain('compute: computeIpcModule.handlers')
     expect(dependencyBlock).toContain('enabledHosts: hostsRegistry')
+    expect(ipcSource).toContain('await cliCommandOwner.ensureCurrent()')
   })
 
   it('keeps native-only commands inside the Electron owner adapter and exposes only narrow views', () => {

@@ -13,6 +13,8 @@ export type CliLauncherEnv = {
   appExecPath: string
   // Absolute path to the bundled CLI entry (resources/cli/index.mjs when packaged).
   cliEntryPath: string
+  // Stable path to the AppImage file. APPDIR/process paths point into an ephemeral FUSE mount.
+  appImagePath?: string
   packaged: boolean
   homeDir: string
   // Per-user data dir (app.getPath('userData')); the Windows bin dir lives under it.
@@ -40,23 +42,41 @@ const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): b
     .some((entry) => entry === binDir)
 }
 
+// AppImage exposes APPIMAGE as the stable bundle path and APPDIR/process paths inside its ephemeral
+// FUSE mount. Start the stable bundle in Node mode, then resolve the CLI entry from the new process's
+// resourcesPath so the launcher remains usable while the desktop app is not running.
+const appImageCliBootstrap = [
+  "Promise.all([import('node:path'), import('node:url')])",
+  '.then(([{ join }, { pathToFileURL }]) =>',
+  "import(pathToFileURL(join(process.resourcesPath, 'cli', 'index.mjs')).href))",
+  '.then(({ reportCliError, runCli }) => runCli(process.argv.slice(1)).catch(reportCliError))',
+  '.catch((error) => { console.error(error instanceof Error ? error.message : error);',
+  'process.exitCode = 1 })'
+].join('')
+
+const isLinuxAppImage = (env: CliLauncherEnv): boolean =>
+  env.platform === 'linux' && env.packaged && Boolean(env.appImagePath)
+
 // POSIX: a /bin/sh shim in ~/.local/bin. Single-quote every path so it survives spaces and shell
 // metacharacters: inside single quotes nothing is special (no $, backtick, or backslash expansion),
 // so the only thing to escape is an embedded single quote, via the standard '\'' close-escape-reopen
-// idiom. This fully quotes an arbitrary path — unlike double quotes, which would still expand $/backtick
-// and need backslash handling.
+// idiom. This fully quotes an arbitrary path, unlike double quotes, which would still expand
+// $/backtick and need backslash handling.
 const posixShim = (env: CliLauncherEnv): string => {
   const quote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`
-  const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(env.appExecPath)} ` : ''
+  const command = isLinuxAppImage(env) ? env.appImagePath! : env.appExecPath
+  const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(command)} ` : ''
+  const args = isLinuxAppImage(env)
+    ? `-e ${quote(appImageCliBootstrap)} -- "$@"`
+    : `${quote(env.cliEntryPath)} "$@"`
   return [
     '#!/bin/sh',
     '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
     "# tool); edits will be overwritten on reinstall. Runs the app's Electron in Node mode.",
-    `${appPathLine}ELECTRON_RUN_AS_NODE=1 exec ${quote(env.appExecPath)} ${quote(env.cliEntryPath)} "$@"`,
+    `${appPathLine}ELECTRON_RUN_AS_NODE=1 exec ${quote(command)} ${args}`,
     ''
   ].join('\n')
 }
-
 // Windows: an open-science.cmd in a per-user bin dir. %* forwards all arguments.
 const windowsShim = (env: CliLauncherEnv): string => {
   const appPathLine = env.packaged ? `set "OPEN_SCIENCE_APP_PATH=${env.appExecPath}"\r\n` : ''
@@ -159,9 +179,25 @@ export const uninstallCliLauncher = async (env: CliLauncherEnv): Promise<CliLaun
   return { installed: false, target: plan.target, onPath: false }
 }
 
+const readCliLauncher = async (target: string): Promise<string | undefined> => {
+  try {
+    return await readFile(target, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+const isManagedCliLauncher = (content: string): boolean =>
+  content.includes('Open Science command-line launcher. Managed by the app')
+
+// AppImage status is content-aware: a legacy shim can exist while still pointing at an unmounted
+// FUSE path. Other packages retain the existing existence-only status contract.
 export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLauncherStatus> => {
   const plan = planCliLauncher(env)
-  const installed = await exists(plan.target)
+  const installed = isLinuxAppImage(env)
+    ? (await readCliLauncher(plan.target)) === plan.shim
+    : await exists(plan.target)
   return {
     installed,
     target: plan.target,
@@ -173,25 +209,16 @@ export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLaun
   }
 }
 
-// On AppImage builds, FUSE re-mounts the image at a different path on every launch, making the
-// hardcoded paths in the CLI shim stale. This reads the existing shim and checks whether it still
-// references the current appExecPath. Returns true when the shim needs to be rewritten.
+// Only an existing app-managed AppImage launcher is eligible for automatic migration. Comparing the
+// complete planned content covers the stable AppImage path, bootstrap, and CLI entry behavior.
 export const isCliShimStale = async (env: CliLauncherEnv): Promise<boolean> => {
-  if (!env.packaged) return false
+  if (!isLinuxAppImage(env)) return false
   const plan = planCliLauncher(env)
-  try {
-    const content = await readFile(plan.target, 'utf8')
-    // The shim embeds appExecPath in OPEN_SCIENCE_APP_PATH=... and in the exec line.
-    // If either reference is missing or points to a different path, the shim is stale.
-    return !content.includes(env.appExecPath)
-  } catch {
-    // Shim doesn't exist — not stale, just not installed.
-    return false
-  }
+  const content = await readCliLauncher(plan.target)
+  return content !== undefined && isManagedCliLauncher(content) && content !== plan.shim
 }
 
-// AppImage-safe startup hook: if the CLI is installed but the shim paths are stale (FUSE
-// re-mount), silently reinstall so the CLI keeps working. Non-blocking — fire-and-forget.
+// Migrate legacy mount-pinned shims and refresh the stable path after the AppImage file itself moves.
 export const ensureCliLauncherCurrent = async (
   env: CliLauncherEnv,
   runCommand: CommandRunner = defaultRunCommand
