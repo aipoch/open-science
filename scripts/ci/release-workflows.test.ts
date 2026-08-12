@@ -78,9 +78,9 @@ describe('release and scheduled workflow topology', () => {
 
     expect(build.needs).toBe('setup')
     expect(build.if).toBe("${{ needs.setup.result == 'success' }}")
-    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build'])
-    expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac'])
-    expect(release.jobs['notarize-mac'].needs).toBe('build')
+    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
+    expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
+    expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
   })
 
   it('batches Nightly hourly and prepares publication without write access', () => {
@@ -107,8 +107,8 @@ describe('release and scheduled workflow topology', () => {
     )
     expect(nightly.jobs).not.toHaveProperty('publish-dry-run')
     expect(prepare).toMatchObject({
-      needs: ['plan', 'build'],
-      if: "needs.build.result == 'success'",
+      needs: ['plan', 'build', 'package-smoke'],
+      if: "needs.build.result == 'success' && needs.package-smoke.result == 'success'",
       'runs-on': 'ubuntu-latest'
     })
     expect(step(prepare, 'Aggregate release certification evidence').run).toContain(
