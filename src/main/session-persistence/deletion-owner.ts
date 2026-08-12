@@ -1,4 +1,5 @@
 import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/project-files'
+import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
 import type {
   LoadAllSessionsResult,
   PersistedChatSession,
@@ -117,6 +118,9 @@ const assertArchiveExpectedAt = (value: number | null, target: 'Project' | 'Sess
 const isSessionArchiveBlocked = (session: PersistedChatSession): boolean =>
   ARCHIVE_BLOCKING_SESSION_STATUSES.has(session.status)
 
+const isSessionArchiveBlockedByPersistedWork = (session: PersistedChatSession): boolean =>
+  isSessionArchiveBlocked(session) || hasCurrentRunningDelegatedAttempt(session)
+
 class SessionPersistenceDeletionOwner {
   private readonly repository: SessionDeletionRepository
   private readonly fileIndex: SessionDeletionFileIndex
@@ -150,7 +154,7 @@ class SessionPersistenceDeletionOwner {
     }
     if (
       loaded.sessions.some(
-        (session) => isSessionArchiveBlocked(session) || isRuntimeBusy(session.id)
+        (session) => isSessionArchiveBlockedByPersistedWork(session) || isRuntimeBusy(session.id)
       )
     ) {
       throw new Error('Finish or stop active sessions before archiving this project.')
@@ -189,7 +193,10 @@ class SessionPersistenceDeletionOwner {
     if (currentArchivedAt !== request.expectedArchivedAt) {
       throw new Error('Session archive state changed elsewhere.')
     }
-    if (request.archived && (isSessionArchiveBlocked(loaded.session) || isRuntimeBusy())) {
+    if (
+      request.archived &&
+      (isSessionArchiveBlockedByPersistedWork(loaded.session) || isRuntimeBusy())
+    ) {
       throw new Error('Finish or stop this session before archiving.')
     }
     if (request.archived === (currentArchivedAt !== null)) return loaded.session

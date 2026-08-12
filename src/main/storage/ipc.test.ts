@@ -87,6 +87,7 @@ const fakeDeps = (overrides: Partial<FakeDeps> = {}): FakeDeps => ({
     getActiveNotebookSessions: vi.fn().mockReturnValue([])
   },
   getActivePromptSessions: vi.fn().mockReturnValue([]),
+  getActiveDelegatedSessions: vi.fn().mockReturnValue([]),
   settingsService: {
     setDataRoot: vi.fn().mockResolvedValue(undefined),
     markOnboardingComplete: vi.fn().mockResolvedValue(undefined),
@@ -358,6 +359,9 @@ describe('storage IPC handlers', () => {
       getActivePromptSessions: vi
         .fn()
         .mockReturnValue([{ projectName: 'p', sessionId: 'agent-1' }]),
+      getActiveDelegatedSessions: vi
+        .fn()
+        .mockReturnValue([{ projectName: 'p', sessionId: 'delegated-1' }]),
       notebook: {
         shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
         dispose: vi.fn().mockResolvedValue({ reaped: true }),
@@ -369,6 +373,7 @@ describe('storage IPC handlers', () => {
     registerStorageIpcHandlers(deps)
 
     await expect(invoke('storage:detect-active')).resolves.toEqual([
+      { projectId: 'p', sessionId: 'delegated-1', kind: 'delegated' },
       { projectId: 'p', sessionId: 'agent-1', kind: 'agent' },
       { projectId: 'p', sessionId: 'nb-1', kind: 'notebook' }
     ])
@@ -470,6 +475,24 @@ describe('storage IPC handlers', () => {
     // clicks "Restart now" (storage:commit-and-relaunch).
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale migration request while delegated work is running without interrupting it', async () => {
+    initDataRoot(dataRoot)
+    const deps = fakeDeps({
+      getActiveDelegatedSessions: vi
+        .fn()
+        .mockReturnValue([{ projectName: 'p', sessionId: 'delegated-1' }])
+    })
+    registerStorageIpcHandlers(deps)
+
+    await expect(invoke('storage:migrate', { parent: targetParent })).resolves.toEqual({
+      ok: false,
+      error: 'Subagents are still running. Return to their tasks and stop them before moving data.'
+    })
+    expect(deps.runtime.disconnect).not.toHaveBeenCalled()
+    expect(deps.notebook.shutdownAll).not.toHaveBeenCalled()
+    expect(isMigrationPending()).toBe(false)
   })
 
   it('uses the shared prepared runner when exporting runtime locks for migration', async () => {

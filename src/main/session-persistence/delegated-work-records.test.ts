@@ -51,7 +51,10 @@ type Harness = Readonly<{
   durable(): PersistedChatSession
 }>
 
-const createHarness = (seed = createRootSession()): Harness => {
+const createHarness = (
+  seed = createRootSession(),
+  onDelegatedWorkSessionUpdated?: (session: PersistedChatSession) => void
+): Harness => {
   let durable = structuredClone(seed)
   const repository: SessionMutationRepository = {
     loadAllWithDiagnostics: vi.fn(async () => ({
@@ -91,7 +94,18 @@ const createHarness = (seed = createRootSession()): Harness => {
     markReconciliationIncomplete: vi.fn()
   }
   return {
-    coordinator: new SessionPersistenceCoordinator(repository, fileIndex),
+    coordinator: new SessionPersistenceCoordinator(
+      repository,
+      fileIndex,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onDelegatedWorkSessionUpdated
+    ),
     repository,
     durable: () => structuredClone(durable)
   }
@@ -117,6 +131,54 @@ const child = (
 })
 
 describe('delegated-work Session records', () => {
+  it('publishes durable child start and finish projections after each repository commit', async () => {
+    const published: PersistedChatSession[] = []
+    const { coordinator, durable } = createHarness(createRootSession(), (session) => {
+      expect(session).toEqual(durable())
+      published.push(structuredClone(session))
+    })
+    const rootFrameId = durable().conversationGraph!.rootFrameId
+
+    await coordinator.createChildren(key, {
+      expectedRevision: 0,
+      parentFrameId: rootFrameId,
+      originMessageId: rootPrompt.id,
+      children: [child(1)]
+    })
+    await coordinator.transitionAttempt(key, {
+      expectedRevision: 1,
+      frameId: 'child-frame-1',
+      attemptId: 'attempt-1',
+      status: 'cancelled',
+      endedAt: 20,
+      cancellationReason: 'main_agent_stop'
+    })
+
+    expect(
+      published.map(
+        (session) => session.runtimeContext?.delegatedWork?.records[0]?.attempts.at(-1)?.status
+      )
+    ).toEqual(['running', 'cancelled'])
+  })
+
+  it('does not reverse a delegated commit when its Session publication callback throws', async () => {
+    const { coordinator, durable } = createHarness(createRootSession(), () => {
+      throw new Error('renderer lifecycle unavailable')
+    })
+
+    await expect(
+      coordinator.createChildren(key, {
+        expectedRevision: 0,
+        parentFrameId: durable().conversationGraph!.rootFrameId,
+        originMessageId: rootPrompt.id,
+        children: [child(1)]
+      })
+    ).resolves.toEqual([expect.objectContaining({ frameId: 'child-frame-1' })])
+    expect(durable().runtimeContext?.delegatedWork?.records[0]?.attempts.at(-1)?.status).toBe(
+      'running'
+    )
+  })
+
   it('atomically validates required non-emoji names and rejects durable sibling conflicts', async () => {
     const { coordinator, durable } = createHarness()
     const rootFrameId = durable().conversationGraph!.rootFrameId

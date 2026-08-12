@@ -43,6 +43,10 @@ import { NotificationBell } from '@/components/NotificationBell'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
+import {
+  earliestCurrentDelegatedAttemptStartedAt,
+  hasCurrentRunningDelegatedAttempt
+} from '../../../../shared/delegated-work-projection'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
 import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
@@ -83,7 +87,7 @@ const getRequiredEnvironmentFailures = (
 
 const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
   if (hasAnswerableDelegatedQuestion(session)) return 'needs-you'
-  if (session.status === 'running') return 'running'
+  if (session.status === 'running' || hasCurrentRunningDelegatedAttempt(session)) return 'running'
   if (
     session.status === 'waiting-for-user' ||
     session.status === 'waiting-permission' ||
@@ -92,6 +96,14 @@ const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | und
     return 'needs-you'
   }
   return undefined
+}
+
+const getRunningActivityTimestamp = (session: ChatSession): number => {
+  const candidates = [
+    session.status === 'running' ? session.activeRun?.startedAt : undefined,
+    earliestCurrentDelegatedAttemptStartedAt(session)
+  ].filter((value): value is number => value !== undefined)
+  return candidates.length > 0 ? Math.min(...candidates) : session.updatedAt
 }
 
 const sectionHeadingClassName =
@@ -195,9 +207,7 @@ const HomePage = ({
             session,
             activity,
             activityTimestamp:
-              activity === 'needs-you'
-                ? session.updatedAt
-                : (session.activeRun?.startedAt ?? session.updatedAt)
+              activity === 'needs-you' ? session.updatedAt : getRunningActivityTimestamp(session)
           }
         ]
       }
@@ -352,7 +362,8 @@ const HomePage = ({
     !sessions.some(
       (session) =>
         session.projectId === project.id &&
-        (session.status === 'running' ||
+        (hasCurrentRunningDelegatedAttempt(session) ||
+          session.status === 'running' ||
           session.status === 'waiting-for-user' ||
           session.status === 'waiting-permission' ||
           session.status === 'waiting-plan-approval')

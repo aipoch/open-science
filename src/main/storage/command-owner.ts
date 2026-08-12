@@ -59,6 +59,7 @@ type StorageCommandOwnerDeps = {
     getActiveNotebookSessions: () => SessionSource[]
   }
   getActivePromptSessions: () => SessionSource[]
+  getActiveDelegatedSessions: () => SessionSource[]
   settingsService: {
     setDataRoot: (path: string) => Promise<void>
     // Stamps onboardingCompletedAt. Injected (rather than importing the renderer store action)
@@ -192,6 +193,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   const detectActive = (): ActiveSessionInfo[] =>
     detectActiveSessions({
       runtime: { getActivePromptSessions: deps.getActivePromptSessions },
+      delegated: { getActiveDelegatedSessions: deps.getActiveDelegatedSessions },
       // Call as a method (arrow wrapper), never a bare reference: the real notebook service is a
       // class whose getActiveNotebookSessions reads `this.sessions`, so extracting it loose would
       // drop `this` and throw "Cannot read properties of undefined (reading 'values')".
@@ -222,6 +224,15 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
     }
     if (activeMigration) {
       return { ok: false, error: 'A migration is already in progress.' }
+    }
+    // Re-check at the mutating boundary: a child can start after the modal's detect-active call, and
+    // a stale or forged renderer must not bypass the user-owned stop flow.
+    if (deps.getActiveDelegatedSessions().length > 0) {
+      return {
+        ok: false,
+        error:
+          'Subagents are still running. Return to their tasks and stop them before moving data.'
+      }
     }
 
     const controller = new AbortController()

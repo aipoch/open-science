@@ -5,6 +5,7 @@ import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
 } from '../../../../shared/specialist'
+import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import type { ChatSession } from '@/stores/session-store'
@@ -220,6 +221,7 @@ const useWorkspaceSessionController = ({
     session.status !== 'waiting-for-user' &&
     session.status !== 'waiting-permission' &&
     session.status !== 'waiting-plan-approval' &&
+    !hasCurrentRunningDelegatedAttempt(session) &&
     !hasUnfinishedTransfers(session.id)
 
   const openRename = (session: ChatSession): void => {

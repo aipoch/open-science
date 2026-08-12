@@ -45,6 +45,7 @@ type SessionDelegatedWorkStoreOptions = {
   runExclusive: <Result>(work: () => Promise<Result>) => Promise<Result>
   assertMutable: (projectId: string, sessionId: string) => void
   markStartupRecoveryComplete: () => void
+  notifySessionUpdated: (session: PersistedChatSession) => void
 }
 
 const emptySessionRuntimeContext = (): SessionRuntimeContext => ({ version: 1, revision: 0 })
@@ -220,12 +221,14 @@ class SessionDelegatedWorkStore {
         throw new Error('Delegated Work mutation produced an invalid delegated question owner.')
       }
       const updatedAt = Math.max(session.updatedAt + 1, Date.now())
-      await this.options.repository.saveSession({
+      const updated = {
         ...materialized,
         conversationGraph: graph,
         runtimeContext,
         updatedAt
-      })
+      }
+      await this.options.repository.saveSession(updated)
+      this.options.notifySessionUpdated(updated)
       return result
     })
   }
@@ -294,13 +297,15 @@ class SessionDelegatedWorkStore {
       const ownerChanged = nextOwnerIds.length !== (owner.artifactIds?.length ?? 0)
       if (!ownerChanged && !artifactsChanged) return
       owner.artifactIds = nextOwnerIds
-      await this.options.repository.saveSession({
+      const updated = {
         ...materialized,
         conversationGraph: graph,
         artifacts: nextArtifacts,
         filesRevision: (materialized.filesRevision ?? 0) + 1,
         updatedAt: Math.max(materialized.updatedAt + 1, Date.now())
-      })
+      }
+      await this.options.repository.saveSession(updated)
+      this.options.notifySessionUpdated(updated)
     })
   }
 
@@ -342,6 +347,7 @@ class SessionDelegatedWorkStore {
         const recovery = recoverInterruptedDelegatedWorkSession(session)
         if (recovery.interrupted.length === 0) continue
         await this.options.repository.saveSession(recovery.session)
+        this.options.notifySessionUpdated(recovery.session)
         interrupted.push(...recovery.interrupted)
       }
       this.options.markStartupRecoveryComplete()

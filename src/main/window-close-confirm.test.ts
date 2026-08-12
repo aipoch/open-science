@@ -180,13 +180,13 @@ describe('createCloseConfirm', () => {
     const h = makeHarness()
     const pending = h.confirm('close-to-tray', [session])
     await expect(pending).resolves.toBe('quit') // nativeFallback default
-    expect(h.nativeFallback).toHaveBeenCalledWith('close-to-tray')
+    expect(h.nativeFallback).toHaveBeenCalledWith('close-to-tray', [session])
   })
 
   it('falls back immediately when no renderer is available', async () => {
     const h = makeHarness({ isRendererAvailable: () => false })
     await expect(h.confirm('close-to-tray', [session])).resolves.toBe('quit')
-    expect(h.nativeFallback).toHaveBeenCalledWith('close-to-tray')
+    expect(h.nativeFallback).toHaveBeenCalledWith('close-to-tray', [session])
   })
 
   it('persists a remembered choice from the native fallback', async () => {
@@ -220,6 +220,27 @@ describe('createCloseConfirm', () => {
 
     const trayHarness = makeHarness({ isRendererAvailable: () => false, nativeFallback: rejecting })
     await expect(trayHarness.confirm('close-to-tray', [session])).resolves.toBe('minimize')
+  })
+
+  it('cannot force quit delegated work through a renderer or native fallback choice', async () => {
+    const delegated = { ...session, kind: 'delegated' as const }
+    const rendererHarness = makeHarness()
+    const pending = rendererHarness.confirm('quit', [delegated])
+    rendererHarness.ack()
+    rendererHarness.choose('quit')
+    await expect(pending).resolves.toBe('cancel')
+
+    const nativeHarness = makeHarness({ isRendererAvailable: () => false })
+    await expect(nativeHarness.confirm('quit', [delegated])).resolves.toBe('cancel')
+    expect(nativeHarness.nativeFallback).toHaveBeenCalledWith('quit', [delegated])
+  })
+
+  it('turns a saved quit preference into a safe minimize while delegated work is running', async () => {
+    const delegated = { ...session, kind: 'delegated' as const }
+    const h = makeHarness({ getClosePreference: async () => 'quit' })
+
+    await expect(h.confirm('close-to-tray', [delegated])).resolves.toBe('minimize')
+    expect(h.sent).toHaveLength(0)
   })
 
   it('still resolves the choice when saving a remembered preference fails', async () => {
@@ -626,6 +647,23 @@ describe('createElectronCloseConfirm — nativeFallback', () => {
 
     await expect(confirm('quit', [session])).resolves.toBe('cancel')
     expect(electronMocks.showMessageBox).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers no force-quit action in the native fallback for delegated work', async () => {
+    getWindow.mockReturnValue(undefined)
+    electronMocks.showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false })
+    const confirm = createElectronCloseConfirm(
+      getWindow as () => BrowserWindow | undefined,
+      emptyPreferences
+    )
+    const delegated = { ...session, kind: 'delegated' as const }
+
+    await expect(confirm('quit', [delegated])).resolves.toBe('cancel')
+
+    const [options] = electronMocks.showMessageBox.mock.calls[0] as [Record<string, unknown>]
+    expect(options.buttons).toEqual(['Return to tasks'])
+    expect(options.message).toBe('Subagents are still running')
+    expect(options.detail).toMatch(/stop their subagents before quitting/i)
   })
 
   it('offers Minimize/Quit for close-to-tray with a "remember" checkbox', async () => {

@@ -133,6 +133,8 @@ export const installAppLifecycle = (
   }
 
   const confirmClose = deps.createConfirmClose(() => mainWindow)
+  const detectDelegatedWork = (): ActiveSessionInfo[] =>
+    deps.detectActiveSessions().filter((session) => session.kind === 'delegated')
 
   // Synchronous close classification, evaluated at close time. A mid-quit close is held so the
   // renderer survives persistence flushing; otherwise darwin keeps its dock convention (real close),
@@ -153,7 +155,10 @@ export const installAppLifecycle = (
     if (confirmInFlight) return 'cancel'
     confirmInFlight = true
     try {
-      return await confirmClose('close-to-tray', deps.detectActiveSessions())
+      const choice = await confirmClose('close-to-tray', deps.detectActiveSessions())
+      if (choice !== 'quit') return choice
+      const delegated = detectDelegatedWork()
+      return delegated.length > 0 ? await confirmClose('close-to-tray', delegated) : choice
     } finally {
       confirmInFlight = false
     }
@@ -234,6 +239,23 @@ export const installAppLifecycle = (
     }
     const trigger = shutdownTrigger()
 
+    // Final synchronous resource-safety boundary. A delegated Attempt may start after an earlier
+    // confirmation snapshot (or after a saved close preference was read), and requestQuit(true) can
+    // arrive directly from the Windows titlebar path. Never enter preparation/flush/teardown while
+    // such work exists; clear confirmation/trigger state and show the hard-blocking prompt instead.
+    const delegatedAtShutdownBoundary = detectDelegatedWork()
+    if (delegatedAtShutdownBoundary.length > 0) {
+      event.preventDefault()
+      quitConfirmed = false
+      clearApplicationShutdownTrigger()
+      if (confirmInFlight) return
+      confirmInFlight = true
+      void confirmClose('quit', delegatedAtShutdownBoundary).finally(() => {
+        confirmInFlight = false
+      })
+      return
+    }
+
     // Confirmation gate: unless the user already confirmed (e.g. Windows X -> Quit), confirm the
     // quit. An empty active-session list makes confirmClose('quit', []) resolve 'quit' with no modal.
     if (!quitConfirmed && trigger === 'quit') {
@@ -241,8 +263,14 @@ export const installAppLifecycle = (
       if (confirmInFlight) return
       confirmInFlight = true
       void confirmClose('quit', deps.detectActiveSessions())
-        .then((choice) => {
+        .then(async (choice) => {
           if (choice === 'quit') {
+            const delegated = detectDelegatedWork()
+            if (delegated.length > 0) {
+              quitConfirmed = false
+              await confirmClose('quit', delegated)
+              return
+            }
             quitConfirmed = true
             deps.quit()
             return

@@ -28,6 +28,10 @@ import {
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
+import {
+  LIFECYCLE_CHANNELS,
+  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
+} from '../shared/lifecycle-events'
 
 import { createAcpRuntime } from './acp/runtime-composition'
 import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
@@ -253,7 +257,7 @@ import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
-import { detectActiveSessions } from './storage/detect-active'
+import { createDelegatedActivityProjection, detectActiveSessions } from './storage/detect-active'
 import {
   computeDefaultDataRoot,
   initDataRoot,
@@ -264,6 +268,7 @@ import {
 } from './storage-root'
 import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
+import { createDelegatedSafeInstallGate } from './update/strategy'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 import { createUploadCommandOwner } from './uploads/command-owner'
@@ -621,6 +626,14 @@ const createApplicationModules = async (
       return computeJobDeletionRef.current.abortProjectJobDeletion(projectId)
     }
   }
+  // Delegated execution can outlive its root Turn and therefore is absent from the ACP runtime's
+  // active-prompt list. Keep a synchronous projection of durable delegated mutations for the
+  // close/quit and storage-migration safety gates. The selector deliberately ignores active routes:
+  // inactive-branch work still owns processes/files and must block disruptive operations.
+  const delegatedActivity = createDelegatedActivityProjection()
+  const getActiveDelegatedSessions = (): { projectName: string; sessionId: string }[] =>
+    delegatedActivity.getActiveDelegatedSessions()
+
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
@@ -633,7 +646,14 @@ const createApplicationModules = async (
         reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
     },
     undefined,
-    computeJobDeletionPort
+    computeJobDeletionPort,
+    (session) => {
+      delegatedActivity.recordSession(session)
+      broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+        session,
+        originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
+      })
+    }
   )
   const sideChatRelay = new SideChatRelayOwner({
     targetState: (parentSessionId) => {
@@ -690,6 +710,7 @@ const createApplicationModules = async (
       runtime: {
         getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
       },
+      delegated: { getActiveDelegatedSessions },
       notebook: {
         getActiveNotebookSessions: () =>
           notebookActivityRef.current?.getActiveNotebookSessions() ?? []
@@ -1957,7 +1978,10 @@ const createApplicationModules = async (
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
   const updateStrategy = createUpdateStrategy(process.platform, {
-    installGate: () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+    installGate: createDelegatedSafeInstallGate(
+      () => getActiveDelegatedSessions().length > 0,
+      () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+    )
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
   let stopUpdateScheduler: (() => void) | undefined
@@ -2351,6 +2375,7 @@ const createApplicationModules = async (
     runtime,
     notebook: notebookService,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
+    getActiveDelegatedSessions,
     settingsService,
     micromambaRunner
   })
@@ -2360,6 +2385,7 @@ const createApplicationModules = async (
         runtime,
         notebook: notebookService,
         getActivePromptSessions: () => runtime.getActivePromptSessions(),
+        getActiveDelegatedSessions,
         settingsService
       },
       storageCommandOwner
@@ -2622,6 +2648,7 @@ const createApplicationModules = async (
     detectActiveSessions: () =>
       detectActiveSessions({
         runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+        delegated: { getActiveDelegatedSessions },
         notebook: notebookService
       }),
     prepareForQuit: () => runtime.prepareForQuit(),

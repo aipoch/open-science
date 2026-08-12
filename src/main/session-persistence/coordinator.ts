@@ -170,7 +170,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     artifactStorage?: ArtifactStorageReconciler,
     permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence'),
-    private readonly computeJobs?: ComputeJobDeletionParticipant
+    private readonly computeJobs?: ComputeJobDeletionParticipant,
+    private readonly onDelegatedWorkSessionUpdated?: (session: PersistedChatSession) => void
   ) {
     const assertMutable = (
       projectId: string,
@@ -230,6 +231,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
+      },
+      notifySessionUpdated: (session) => {
+        try {
+          this.onDelegatedWorkSessionUpdated?.(session)
+        } catch (error) {
+          this.log.warn('delegated work Session publication failed', {
+            errorCategory: error instanceof Error ? error.name : typeof error
+          })
+        }
       }
     })
   }

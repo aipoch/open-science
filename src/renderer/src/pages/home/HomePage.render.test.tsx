@@ -180,6 +180,127 @@ const sessionWithPendingDelegatedQuestion = (
   }
 })
 
+const sessionWithDelegatedRuns = (
+  status: ChatSession['status'],
+  attempts: readonly Readonly<{
+    frameId: string
+    originMessageId?: string
+    startedAt: number
+    status: 'running' | 'completed' | 'cancelled' | 'error'
+  }>[]
+): ChatSession => {
+  const candidate = session('delegated-runs', 'Delegated runs', status, 590_000)
+  const inactiveOriginMessageIds = [
+    ...new Set(
+      attempts
+        .map(({ originMessageId }) => originMessageId)
+        .filter((id): id is string => Boolean(id && id !== 'root-prompt'))
+    )
+  ]
+  return {
+    ...candidate,
+    activeRun: undefined,
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'root',
+      activeFrameId: 'root',
+      frames: [
+        {
+          id: 'root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'completed',
+          activeBranchId: 'root-branch',
+          createdAt: 1
+        },
+        ...attempts.map(({ frameId, originMessageId = 'root-prompt', status, startedAt }) => ({
+          id: frameId,
+          parentFrameId: 'root',
+          originMessageId,
+          originBindingState: 'validated' as const,
+          kind: 'delegate' as const,
+          status,
+          activeBranchId: `${frameId}-branch`,
+          createdAt: startedAt
+        }))
+      ],
+      branches: [
+        {
+          id: 'root-branch',
+          agentFrameId: 'root',
+          headMessageId: 'root-prompt',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        ...inactiveOriginMessageIds.map((id) => ({
+          id: `${id}-branch`,
+          agentFrameId: 'root',
+          headMessageId: id,
+          createdAt: 2,
+          updatedAt: 2
+        })),
+        ...attempts.map(({ frameId, startedAt }) => ({
+          id: `${frameId}-branch`,
+          agentFrameId: frameId,
+          createdAt: startedAt,
+          updatedAt: startedAt
+        }))
+      ],
+      messages: [
+        {
+          id: 'root-prompt',
+          role: 'user',
+          content: 'Delegate the research',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: 'root-branch',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        ...inactiveOriginMessageIds.map((id) => ({
+          id,
+          role: 'user' as const,
+          content: 'Delegate work from the alternate branch',
+          status: 'complete' as const,
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: `${id}-branch`,
+          createdAt: 2,
+          updatedAt: 2
+        }))
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: attempts.map(({ frameId, startedAt, status }) => ({
+          agentFrameId: frameId,
+          attempts: [
+            {
+              id: `${frameId}-attempt`,
+              status,
+              resolvedAgent: { kind: 'main' },
+              runtimeSegmentIds: [],
+              startedAt,
+              ...(status === 'running' ? {} : { endedAt: startedAt + 1 }),
+              ...(status === 'completed' ? { terminalMessageId: `${frameId}-terminal` } : {}),
+              ...(status === 'cancelled' ? { cancellationReason: 'main_agent_stop' as const } : {}),
+              ...(status === 'error'
+                ? { error: { code: 'child_error', message: 'Child failed' } }
+                : {})
+            }
+          ]
+        }))
+      }
+    }
+  }
+}
+
 const environment = (checks: EnvironmentCheckResult['checks']): EnvironmentCheckResult => ({
   checkedAt: 1,
   platform: 'darwin',
@@ -459,6 +580,41 @@ describe('HomePage activity overview', () => {
     expect(document.body.textContent).not.toContain('Save changes')
   })
 
+  it('disables Project archive while any current delegated Attempt is running', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        sessionWithDelegatedRuns('idle', [
+          {
+            frameId: 'branch-a-child',
+            originMessageId: 'branch-a-prompt',
+            startedAt: 500_000,
+            status: 'running'
+          }
+        ])
+      ]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    openRadixMenu(
+      container.querySelector<HTMLButtonElement>('[aria-label="Open actions for Research project"]')
+    )
+
+    const archiveItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    ).find((item) => item.textContent?.trim() === 'Archive')
+    expect(archiveItem?.getAttribute('aria-disabled')).toBe('true')
+  })
+
   it('pins and unpins a Project from the first menu action', async () => {
     const updateProject = vi.fn(async ({ pinned }: { pinned?: boolean }) => {
       const updated = { ...project, pinned }
@@ -707,6 +863,284 @@ describe('HomePage activity overview', () => {
     ).not.toBeNull()
     expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+  })
+
+  it.each(['idle', 'error'] as const)(
+    'shows a current delegated Attempt as Running while the root Session is %s',
+    async (status) => {
+      const now = 600_000
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
+      useProjectStore.setState({
+        ...createInitialProjectState(),
+        projects: [project],
+        isLoaded: true
+      })
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        sessions: [
+          sessionWithDelegatedRuns(status, [
+            { frameId: 'child-later', startedAt: now - 60_000, status: 'running' },
+            { frameId: 'child-earlier', startedAt: now - 5 * 60_000, status: 'running' }
+          ])
+        ]
+      })
+
+      await act(async () =>
+        root.render(
+          <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+        )
+      )
+
+      const card = container.querySelector('[aria-label="Open session Delegated runs, running"]')
+      expect(card).not.toBeNull()
+      expect(card?.textContent).toContain('running 5m')
+      expect(container.querySelector('[aria-label="1 running"]')).not.toBeNull()
+      nowSpy.mockRestore()
+    }
+  )
+
+  it('tracks the earliest still-running child as delegated Attempts finish', async () => {
+    const now = 600_000
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const initial = sessionWithDelegatedRuns('idle', [
+      { frameId: 'child-first', startedAt: now - 5 * 60_000, status: 'running' },
+      { frameId: 'child-second', startedAt: now - 2 * 60_000, status: 'running' }
+    ])
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [initial] })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')?.textContent
+    ).toContain('running 5m')
+
+    const oneRemaining = sessionWithDelegatedRuns('idle', [
+      { frameId: 'child-first', startedAt: now - 5 * 60_000, status: 'completed' },
+      { frameId: 'child-second', startedAt: now - 2 * 60_000, status: 'running' }
+    ])
+    await act(async () => useSessionStore.setState({ sessions: [oneRemaining] }))
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')?.textContent
+    ).toContain('running 2m')
+
+    const noneRemaining = sessionWithDelegatedRuns('idle', [
+      { frameId: 'child-first', startedAt: now - 5 * 60_000, status: 'completed' },
+      { frameId: 'child-second', startedAt: now - 2 * 60_000, status: 'error' }
+    ])
+    await act(async () => useSessionStore.setState({ sessions: [noneRemaining] }))
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')
+    ).toBeNull()
+    nowSpy.mockRestore()
+  })
+
+  it.each([
+    {
+      reason: 'child started first',
+      rootStartedAt: 540_000,
+      childStartedAt: 300_000,
+      expected: 'running 5m'
+    },
+    {
+      reason: 'root started first',
+      rootStartedAt: 240_000,
+      childStartedAt: 540_000,
+      expected: 'running 6m'
+    }
+  ])('uses the earliest root-or-child start when $reason', async (scenario) => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(600_000)
+    const mixed = sessionWithDelegatedRuns('running', [
+      { frameId: 'child', startedAt: scenario.childStartedAt, status: 'running' }
+    ])
+    mixed.activeRun = { promptMessageId: 'root-prompt', startedAt: scenario.rootStartedAt }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [mixed] })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')?.textContent
+    ).toContain(scenario.expected)
+    nowSpy.mockRestore()
+  })
+
+  it('falls back to the root start for display and ordering after an earlier child terminates', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(600_000)
+    const mixed = sessionWithDelegatedRuns('running', [
+      { frameId: 'child', startedAt: 300_000, status: 'running' }
+    ])
+    mixed.activeRun = { promptMessageId: 'root-prompt', startedAt: 540_000 }
+    const comparison = session('comparison', 'Comparison run', 'running', 480_000)
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [comparison, mixed] })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    const labels = (): (string | null)[] =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[aria-label$=", running"]')).map(
+        (card) => card.getAttribute('aria-label')
+      )
+    expect(labels()).toEqual([
+      'Open session Comparison run, running',
+      'Open session Delegated runs, running'
+    ])
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')?.textContent
+    ).toContain('running 5m')
+
+    const terminal = sessionWithDelegatedRuns('running', [
+      { frameId: 'child', startedAt: 300_000, status: 'completed' }
+    ])
+    terminal.activeRun = { promptMessageId: 'root-prompt', startedAt: 540_000 }
+    await act(async () => useSessionStore.setState({ sessions: [comparison, terminal] }))
+
+    expect(labels()).toEqual([
+      'Open session Delegated runs, running',
+      'Open session Comparison run, running'
+    ])
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')?.textContent
+    ).toContain('running 1m')
+    nowSpy.mockRestore()
+  })
+
+  it('shows Running instead of an unread completion while any current child is running', async () => {
+    const candidate = sessionWithDelegatedRuns('idle', [
+      { frameId: 'child', startedAt: 500_000, status: 'running' }
+    ])
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [candidate] })
+    useNotificationInboxStore.setState({
+      revision: 1,
+      unreadCount: 1,
+      latestSequence: 1,
+      status: 'ready',
+      items: [
+        {
+          id: 'completed-while-child-running',
+          sequence: 1,
+          dedupeKey: 'task:completed:delegated-runs',
+          kind: 'task.completed',
+          projectId: project.id,
+          sessionId: candidate.id,
+          originId: 'root-run',
+          title: candidate.title,
+          summary: 'The root turn completed.',
+          createdAt: 590_000
+        }
+      ]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')
+    ).not.toBeNull()
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, completed"]')
+    ).toBeNull()
+  })
+
+  it('keeps inactive-branch delegated work Running until its current Attempt becomes terminal', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(600_000)
+    const branchARunning = sessionWithDelegatedRuns('idle', [
+      {
+        frameId: 'branch-a-child',
+        originMessageId: 'branch-a-prompt',
+        startedAt: 300_000,
+        status: 'running'
+      }
+    ])
+    const rootFrame = branchARunning.conversationGraph?.frames.find(({ id }) => id === 'root')
+    if (rootFrame) rootFrame.activeBranchId = 'branch-a-prompt-branch'
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [branchARunning]
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')?.textContent
+    ).toContain('running 5m')
+
+    const branchBSelected = structuredClone(branchARunning)
+    const selectedRoot = branchBSelected.conversationGraph?.frames.find(({ id }) => id === 'root')
+    branchBSelected.conversationGraph?.branches.push({
+      id: 'branch-b',
+      agentFrameId: 'root',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    if (selectedRoot) selectedRoot.activeBranchId = 'branch-b'
+    await act(async () => useSessionStore.setState({ sessions: [branchBSelected] }))
+
+    expect(
+      container.querySelector('[aria-label="Open session Delegated runs, running"]')?.textContent
+    ).toContain('running 5m')
+    expect(container.querySelector('[aria-label="1 running"]')).not.toBeNull()
+
+    const childTerminal = sessionWithDelegatedRuns('idle', [
+      {
+        frameId: 'branch-a-child',
+        originMessageId: 'branch-a-prompt',
+        startedAt: 300_000,
+        status: 'completed'
+      }
+    ])
+    const terminalRoot = childTerminal.conversationGraph?.frames.find(({ id }) => id === 'root')
+    childTerminal.conversationGraph?.branches.push({
+      id: 'branch-b',
+      agentFrameId: 'root',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    if (terminalRoot) terminalRoot.activeBranchId = 'branch-b'
+    await act(async () => useSessionStore.setState({ sessions: [childTerminal] }))
+
+    expect(container.querySelector('[aria-label$=", running"]')).toBeNull()
+    expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+    nowSpy.mockRestore()
   })
 
   it('shows Needs you ahead of an unread completion for an idle Session', async () => {

@@ -487,7 +487,8 @@ describe('Session persistence coordinator architecture', () => {
       'artifactStorage:optional',
       'permissionGrants:optional',
       'log:defaulted',
-      'computeJobs:optional'
+      'computeJobs:optional',
+      'onDelegatedWorkSessionUpdated:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()
@@ -519,6 +520,7 @@ describe('Session persistence coordinator architecture', () => {
         'fileIndex',
         'log',
         'delegatedWorkOwner',
+        'onDelegatedWorkSessionUpdated',
         'onFilesChanged',
         'queue',
         'reconciliationOwner',

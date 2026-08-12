@@ -3,12 +3,25 @@ import type { UpdateStatus } from '../../shared/update'
 // Readiness reported by the pre-install gate: whether the backend teardown completed within its budget
 // and whether every process tree was cleanly reaped. Structurally matches lifecycle-shutdown's
 // ShutdownOutcome so the coordinator satisfies it without coupling update code to that module.
-export type InstallReadiness = { completed: boolean; reaped: boolean }
+export type InstallReadiness = {
+  completed: boolean
+  reaped: boolean
+  blockedBy?: 'delegated-work'
+}
 
 // Runs backend teardown before an in-place install and reports whether it is safe to proceed. The
 // in-place strategy receives it at construction and awaits it before quitAndInstall, so the installer
 // never starts while a background process still holds app files open.
 export type InstallGate = () => Promise<InstallReadiness>
+
+// Performs the delegated-work check before invoking the destructive backend teardown gate. Kept
+// independent of Electron/runtime types so composition tests can prove the backend remains untouched.
+export const createDelegatedSafeInstallGate =
+  (hasRunningDelegatedWork: () => boolean, runTeardownGate: InstallGate): InstallGate =>
+  async () =>
+    hasRunningDelegatedWork()
+      ? { completed: false, reaped: false, blockedBy: 'delegated-work' }
+      : runTeardownGate()
 
 // The platform-agnostic update contract the IPC layer and scheduler drive. Two implementations exist:
 // ElectronUpdaterStrategy (win/linux, and signed stable macOS — in-place download/restart) and

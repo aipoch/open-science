@@ -4,6 +4,15 @@ import type {
   SessionRuntimeContext
 } from '../../../shared/session-persistence'
 
+const collectDirectDelegateFrameIds = (
+  graph: NonNullable<PersistedChatSession['conversationGraph']>
+): Set<string> =>
+  new Set(
+    graph.frames
+      .filter((frame) => frame.kind === 'delegate' && frame.parentFrameId === graph.rootFrameId)
+      .map(({ id }) => id)
+  )
+
 const mergeCollectionByIdentity = <Item>(
   currentItems: readonly Item[],
   incomingItems: readonly Item[],
@@ -186,6 +195,71 @@ const mergeRuntimeContextByOwner = (
   }
 }
 
+const mergeDelegatedRuntimeAuthority = (
+  current: SessionRuntimeContext | undefined,
+  incoming: SessionRuntimeContext | undefined
+): SessionRuntimeContext | undefined => {
+  if (!incoming?.delegatedWork) return current ? structuredClone(current) : undefined
+  const incomingAdvanced = incoming.revision > (current?.revision ?? -1)
+  const delegatedWork = mergeDelegatedWorkByIdentity(
+    current?.delegatedWork,
+    incoming.delegatedWork,
+    incomingAdvanced
+  )
+  return {
+    version: 1,
+    revision: Math.max(current?.revision ?? 0, incoming.revision),
+    ...(current?.plan ? { plan: structuredClone(current.plan) } : {}),
+    ...(delegatedWork ? { delegatedWork } : {}),
+    ...(current?.permission ? { permission: structuredClone(current.permission) } : {}),
+    ...(current?.sideChat ? { sideChat: structuredClone(current.sideChat) } : {}),
+    ...(current?.sideChatRelays ? { sideChatRelays: structuredClone(current.sideChatRelays) } : {})
+  }
+}
+
+const mergeDelegatedConversationAuthority = (
+  current: NonNullable<PersistedChatSession['conversationGraph']>,
+  incoming: NonNullable<PersistedChatSession['conversationGraph']>
+): NonNullable<PersistedChatSession['conversationGraph']> => {
+  const childFrameIds = collectDirectDelegateFrameIds(incoming)
+  const replaceChildIdentity = <Item extends { id: string }>(
+    currentItems: readonly Item[],
+    incomingItems: readonly Item[]
+  ): Item[] =>
+    mergeCollectionByIdentity(
+      currentItems,
+      incomingItems,
+      ({ id }) => id,
+      (_currentItem, incomingItem) => incomingItem
+    )
+  const childFrames = incoming.frames.filter(({ id }) => childFrameIds.has(id))
+  const childBranches = incoming.branches.filter(({ agentFrameId }) =>
+    childFrameIds.has(agentFrameId)
+  )
+  const childMessages = incoming.messages.filter(({ agentFrameId }) =>
+    childFrameIds.has(agentFrameId)
+  )
+  const childActivities = incoming.activities.filter(({ agentFrameId }) =>
+    childFrameIds.has(agentFrameId)
+  )
+  const childActivityGroups = incoming.activityGroups.filter(({ agentFrameId }) =>
+    childFrameIds.has(agentFrameId)
+  )
+  const childRuntimeSegments = incoming.runtimeSegments.filter(({ agentFrameId }) =>
+    childFrameIds.has(agentFrameId)
+  )
+
+  return {
+    ...structuredClone(current),
+    frames: replaceChildIdentity(current.frames, childFrames),
+    branches: replaceChildIdentity(current.branches, childBranches),
+    messages: replaceChildIdentity(current.messages, childMessages),
+    activities: replaceChildIdentity(current.activities, childActivities),
+    activityGroups: replaceChildIdentity(current.activityGroups, childActivityGroups),
+    runtimeSegments: replaceChildIdentity(current.runtimeSegments, childRuntimeSegments)
+  }
+}
+
 type PersistedIdentityState = Pick<
   PersistedChatSession,
   'artifacts' | 'conversationGraph' | 'filesRevision' | 'messages' | 'runtimeContext'
@@ -211,6 +285,48 @@ export const mergePersistedRuntimeIdentityProjection = (
       }
     : {})
 })
+
+export const mergeDelegatedWorkAuthorityProjection = (
+  current: PersistedIdentityState,
+  incoming: PersistedChatSession
+): Pick<
+  PersistedChatSession,
+  'artifacts' | 'conversationGraph' | 'filesRevision' | 'runtimeContext'
+> => {
+  const incomingGraph = incoming.conversationGraph
+  const childFrameIds = incomingGraph
+    ? collectDirectDelegateFrameIds(incomingGraph)
+    : new Set<string>()
+  const childArtifactIds = new Set(
+    incomingGraph?.messages
+      .filter(({ agentFrameId }) => childFrameIds.has(agentFrameId))
+      .flatMap(({ artifactIds }) => artifactIds ?? []) ?? []
+  )
+  const childArtifacts = (incoming.artifacts ?? []).filter(({ id }) => childArtifactIds.has(id))
+
+  return {
+    runtimeContext: mergeDelegatedRuntimeAuthority(current.runtimeContext, incoming.runtimeContext),
+    ...(incomingGraph
+      ? {
+          conversationGraph: current.conversationGraph
+            ? mergeDelegatedConversationAuthority(current.conversationGraph, incomingGraph)
+            : structuredClone(incomingGraph)
+        }
+      : current.conversationGraph
+        ? { conversationGraph: structuredClone(current.conversationGraph) }
+        : {}),
+    artifacts: mergeCollectionByIdentity(
+      current.artifacts ?? [],
+      childArtifacts,
+      ({ id }) => id,
+      (_currentArtifact, incomingArtifact) => incomingArtifact
+    ),
+    filesRevision: Math.max(
+      current.filesRevision ?? 0,
+      childArtifacts.length > 0 ? (incoming.filesRevision ?? 0) : 0
+    )
+  }
+}
 
 export const mergeNewerPersistedSessionByIdentity = (
   current: PersistedIdentityState,

@@ -4,6 +4,10 @@ import {
   resolveMessageBranchPath,
   type PersistedAgentFrame
 } from '../../../../shared/conversation-graph'
+import {
+  projectActiveRootDelegatedFrames,
+  resolveActiveRootMessageIds
+} from '../../../../shared/delegated-work-projection'
 import type {
   DelegatedMessageCommand,
   DelegatedQuestionRequest,
@@ -49,18 +53,6 @@ type InlineParentMessageProjection = Readonly<{
 type DelegatedWorkAvailability =
   Readonly<{ available: true }> | Readonly<{ available: false; title: string; description: string }>
 
-const resolveActiveRootMessageIds = (
-  graph: NonNullable<PersistedChatSession['conversationGraph']>
-): ReadonlySet<string> | undefined => {
-  const root = graph.frames.find((frame) => frame.id === graph.rootFrameId)
-  if (!root) return undefined
-  try {
-    return new Set(resolveMessageBranchPath(graph, root.activeBranchId).map(({ id }) => id))
-  } catch {
-    return undefined
-  }
-}
-
 const latestAttempt = (
   session: PersistedChatSession,
   frameId: string
@@ -89,39 +81,27 @@ const projectSessionSubagents = (
 ): SessionSubagentProjection => {
   const graph = session?.conversationGraph
   if (!session || !graph) return { runningCount: 0, children: [] }
-  const activeRootMessageIds = resolveActiveRootMessageIds(graph)
-  if (!activeRootMessageIds) return { runningCount: 0, children: [] }
-
-  const children = graph.frames
-    .filter(
-      (frame) =>
-        frame.kind === 'delegate' &&
-        frame.parentFrameId === graph.rootFrameId &&
-        (frame.originBindingState === 'legacy-unavailable' ||
-          (frame.originBindingState === 'validated' &&
-            Boolean(frame.originMessageId && activeRootMessageIds.has(frame.originMessageId))))
-    )
-    .map((frame): SessionSubagentChild => {
-      const attempt = latestAttempt(session, frame.id)
-      const awaitingPermission =
-        frame.status === 'running' &&
-        permissions.some(
-          (permission) =>
-            permission.sessionId === session.id &&
-            permission.delegated?.frameId === frame.id &&
-            (!attempt || permission.delegated.attemptId === attempt.id)
-        )
-      const awaitingUser = session.runtimeContext?.delegatedWork?.questionRequests?.some(
-        (request) => request.sourceFrameId === frame.id && request.status === 'pending'
+  const children = projectActiveRootDelegatedFrames(session).map((frame): SessionSubagentChild => {
+    const attempt = latestAttempt(session, frame.id)
+    const awaitingPermission =
+      frame.status === 'running' &&
+      permissions.some(
+        (permission) =>
+          permission.sessionId === session.id &&
+          permission.delegated?.frameId === frame.id &&
+          (!attempt || permission.delegated.attemptId === attempt.id)
       )
-      return {
-        frameId: frame.id,
-        title: titleForFrame(frame),
-        agentLabel: agentLabelForFrame(session, frame),
-        status: awaitingUser ? 'awaiting_user' : frame.status,
-        ...(awaitingPermission ? { awaitingPermission: true } : {})
-      }
-    })
+    const awaitingUser = session.runtimeContext?.delegatedWork?.questionRequests?.some(
+      (request) => request.sourceFrameId === frame.id && request.status === 'pending'
+    )
+    return {
+      frameId: frame.id,
+      title: titleForFrame(frame),
+      agentLabel: agentLabelForFrame(session, frame),
+      status: awaitingUser ? 'awaiting_user' : frame.status,
+      ...(awaitingPermission ? { awaitingPermission: true } : {})
+    }
+  })
 
   return {
     runningCount: children.filter(

@@ -54,6 +54,104 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   ...overrides
 })
 
+const createIdleSessionWithRunningChild = (originMessageId = 'root-prompt'): PersistedChatSession =>
+  createSession({
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'root',
+      activeFrameId: 'root',
+      frames: [
+        {
+          id: 'root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'completed',
+          activeBranchId: 'root-branch',
+          createdAt: 1
+        },
+        {
+          id: 'child',
+          parentFrameId: 'root',
+          originMessageId,
+          originBindingState: 'validated',
+          kind: 'delegate',
+          status: 'running',
+          activeBranchId: 'child-branch',
+          createdAt: 2
+        }
+      ],
+      branches: [
+        {
+          id: 'root-branch',
+          agentFrameId: 'root',
+          headMessageId: 'root-prompt',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'child-branch',
+          agentFrameId: 'child',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'inactive-root-branch',
+          agentFrameId: 'root',
+          headMessageId: 'inactive-root-prompt',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      messages: [
+        {
+          id: 'root-prompt',
+          role: 'user',
+          content: 'Delegate this task',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: 'root-branch',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'inactive-root-prompt',
+          role: 'user',
+          content: 'Delegate from an alternate branch',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: 'inactive-root-branch',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'child',
+            attempts: [
+              {
+                id: 'child-attempt',
+                status: 'running',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: [],
+                startedAt: 2
+              }
+            ]
+          }
+        ]
+      }
+    }
+  })
+
 const createRuntimePlan = (
   overrides: Partial<SessionPlanRuntimeContext> = {}
 ): SessionPlanRuntimeContext => ({
@@ -1154,6 +1252,81 @@ describe('SessionPersistenceCoordinator', () => {
         expectedArchivedAt: null
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
+  })
+
+  it('rejects Project archive while an idle Session has a current child Attempt on any branch', async () => {
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [createIdleSessionWithRunningChild()],
+        isComplete: true
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.assertProjectArchivable('project-1')).rejects.toThrow(
+      'Finish or stop active sessions before archiving this project.'
+    )
+
+    const inactiveRoute = createIdleSessionWithRunningChild('inactive-root-prompt')
+    vi.mocked(repository.loadProjectWithDiagnostics).mockResolvedValue({
+      sessions: [inactiveRoute],
+      isComplete: true
+    })
+    await expect(coordinator.assertProjectArchivable('project-1')).rejects.toThrow(
+      'Finish or stop active sessions before archiving this project.'
+    )
+  })
+
+  it('rejects Session archive while its current child Attempt is still running', async () => {
+    const delegated = createIdleSessionWithRunningChild()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({
+        status: 'found',
+        session: delegated
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.updateArchive({
+        projectId: delegated.projectId,
+        sessionId: delegated.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).rejects.toThrow('Finish or stop this session before archiving.')
+
+    expect(repository.saveSession).not.toHaveBeenCalled()
+
+    const inactiveRoute = createIdleSessionWithRunningChild('inactive-root-prompt')
+    vi.mocked(repository.loadSessionWithDiagnostics).mockResolvedValue({
+      status: 'found',
+      session: inactiveRoute
+    })
+    await expect(
+      coordinator.updateArchive({
+        projectId: inactiveRoute.projectId,
+        sessionId: inactiveRoute.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).rejects.toThrow('Finish or stop this session before archiving.')
+
+    const terminal = structuredClone(inactiveRoute)
+    const latest = terminal.runtimeContext?.delegatedWork?.records[0]?.attempts[0]
+    if (latest) Object.assign(latest, { status: 'completed', endedAt: 3 })
+    vi.mocked(repository.loadSessionWithDiagnostics).mockResolvedValue({
+      status: 'found',
+      session: terminal
+    })
+    await expect(
+      coordinator.updateArchive({
+        projectId: terminal.projectId,
+        sessionId: terminal.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).resolves.toMatchObject({ archivedAt: expect.any(Number) })
   })
 
   it('does not let a renderer whole-session save create runtime authority', async () => {
