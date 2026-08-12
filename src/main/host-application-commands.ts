@@ -4,6 +4,7 @@ import type {
   GrantLocalRootRequest,
   GrantedLocalRoot,
   LocalDirListing,
+  LocalDrive,
   LocalRoots,
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
@@ -94,6 +95,9 @@ const localFsCommands = Object.freeze({
   >('local-fs:grant-root'),
   listDir: defineApplicationCommand<'local-fs:list-dir', readonly [path: string], LocalDirListing>(
     'local-fs:list-dir'
+  ),
+  listDrives: defineApplicationCommand<'local-fs:list-drives', readonly [], LocalDrive[]>(
+    'local-fs:list-drives'
   ),
   listGrantedRoots: defineApplicationCommand<
     'local-fs:granted-roots:list',
@@ -322,6 +326,7 @@ type HostApplicationCommandDependencies = Readonly<{
     | 'getRoots'
     | 'grantRoot'
     | 'listDir'
+    | 'listDrives'
     | 'listGrantedRoots'
     | 'openPath'
     | 'readPreview'
@@ -401,6 +406,10 @@ const registerHostApplicationCommands = (
       'local-fs:list-dir': ({ args, callerContext }) =>
         localCommand(callerContext, 'local-fs:list-dir', () =>
           dependencies.localFs.listDir(args[0])
+        ),
+      'local-fs:list-drives': ({ callerContext }) =>
+        localCommand(callerContext, 'local-fs:list-drives', () =>
+          dependencies.localFs.listDrives()
         ),
       'local-fs:granted-roots:list': ({ callerContext }) =>
         localCommand(callerContext, 'local-fs:granted-roots:list', () =>

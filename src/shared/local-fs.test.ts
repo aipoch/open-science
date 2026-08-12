@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  canBrowseGrantedPath,
   describeLocalListingError,
   isLocalPathRoot,
   isPathWithin,
@@ -12,7 +11,6 @@ import {
   sortLocalEntries,
   validateGrantCandidate,
   validateLocalPath,
-  type GrantedLocalRoot,
   type LocalDirEntry
 } from './local-fs'
 
@@ -227,70 +225,38 @@ describe('isPathWithin', () => {
   })
 })
 
-describe('canBrowseGrantedPath', () => {
-  const roots: GrantedLocalRoot[] = [
-    { id: '1', path: '/mnt/data', name: 'data', access: 'ro' },
-    { id: '2', path: '/Volumes/external', name: 'external', access: 'rw' }
-  ]
-
-  it('allows anything inside home', () => {
-    expect(canBrowseGrantedPath('/Users/roxi/Documents', '/Users/roxi', [])).toBe(true)
-    expect(canBrowseGrantedPath('/Users/roxi', '/Users/roxi', [])).toBe(true)
-  })
-
-  it('allows paths inside any granted root', () => {
-    expect(canBrowseGrantedPath('/mnt/data/raw', '/Users/roxi', roots)).toBe(true)
-    expect(canBrowseGrantedPath('/Volumes/external', '/Users/roxi', roots)).toBe(true)
-  })
-
-  it('rejects paths outside home and all roots', () => {
-    expect(canBrowseGrantedPath('/etc', '/Users/roxi', roots)).toBe(false)
-    expect(canBrowseGrantedPath('/mnt/data2', '/Users/roxi', roots)).toBe(false)
-  })
-})
-
 describe('validateGrantCandidate', () => {
   const home = '/Users/roxi'
-  const roots: GrantedLocalRoot[] = [{ id: '1', path: '/mnt/data', name: 'data', access: 'ro' }]
 
   it('accepts a folder inside home', () => {
-    expect(validateGrantCandidate('/Users/roxi/Documents', home, [], 'linux')).toEqual({ ok: true })
+    expect(validateGrantCandidate('/Users/roxi/Documents', home, 'linux')).toEqual({ ok: true })
   })
 
-  it('accepts a folder inside an already-granted root', () => {
-    expect(validateGrantCandidate('/mnt/data/raw', home, roots, 'linux')).toEqual({ ok: true })
+  it('accepts an arbitrary absolute path outside home (cross-drive granting)', () => {
+    expect(validateGrantCandidate('/etc', home, 'linux')).toEqual({ ok: true })
+    expect(validateGrantCandidate('/Volumes/External/data', home, 'darwin')).toEqual({ ok: true })
+    expect(validateGrantCandidate('D:\\Data', 'C:\\Users\\roxi', 'win32')).toEqual({ ok: true })
   })
 
   it('rejects non-absolute input', () => {
-    expect(validateGrantCandidate('relative/path', home, roots, 'linux')).toEqual({
+    expect(validateGrantCandidate('relative/path', home, 'linux')).toEqual({
       ok: false,
       reason: 'not-absolute'
     })
-    expect(validateGrantCandidate('/Users/roxi/\x00x', home, roots, 'linux')).toEqual({
+    expect(validateGrantCandidate('/Users/roxi/\x00x', home, 'linux')).toEqual({
       ok: false,
       reason: 'not-absolute'
     })
   })
 
   it('rejects home itself', () => {
-    expect(validateGrantCandidate(home, home, roots, 'linux')).toEqual({
+    expect(validateGrantCandidate(home, home, 'linux')).toEqual({
       ok: false,
       reason: 'is-home'
     })
-    expect(validateGrantCandidate(`${home}/`, home, roots, 'linux')).toEqual({
+    expect(validateGrantCandidate(`${home}/`, home, 'linux')).toEqual({
       ok: false,
       reason: 'is-home'
-    })
-  })
-
-  it('rejects folders outside home and all granted roots', () => {
-    expect(validateGrantCandidate('/etc', home, roots, 'linux')).toEqual({
-      ok: false,
-      reason: 'out-of-scope'
-    })
-    expect(validateGrantCandidate('/mnt/data2', home, roots, 'linux')).toEqual({
-      ok: false,
-      reason: 'out-of-scope'
     })
   })
 })

@@ -61,6 +61,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     getRoots: vi.fn(() => ({ home: '/home/scientist', machineName: 'Lab' })),
     grantRoot: vi.fn(async () => []),
     listDir: vi.fn(async (path: string) => ({ entries: [], truncated: false, resolvedPath: path })),
+    listDrives: vi.fn(async () => []),
     listGrantedRoots: vi.fn(async () => []),
     openPath: vi.fn(async () => ''),
     readPreview: vi.fn(async () => ({
@@ -165,7 +166,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 50 request channels in their existing capability groups', () => {
+  it('defines the exact 51 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => ({
@@ -179,7 +180,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     }))
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(50)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(51)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -195,7 +196,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(50)
+    expect(router.dispatcher.commandNames()).toHaveLength(51)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -228,6 +229,7 @@ describe('Host application commands', () => {
       invocation([{ path: '/data', access: 'ro' }])
     )
     await router.dispatcher.invoke(hostApplicationCommands.localFs.listDir, invocation(['/data']))
+    await router.dispatcher.invoke(hostApplicationCommands.localFs.listDrives, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.localFs.listGrantedRoots, invocation([]))
     await router.dispatcher.invoke(
       hostApplicationCommands.localFs.openPath,
@@ -400,7 +402,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(25)
+    expect(localOnlyChannels).toHaveLength(26)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(

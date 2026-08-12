@@ -1,16 +1,31 @@
 // Local ("This computer") file browser. Rendered as one of the two containers the Files tab can show:
 // the source dropdown swaps between the artifacts list and this browser, so it owns no tab or modal
 // chrome of its own. Forked from the remote FileBrowserModal chrome (editable address bar, Go-to
-// dropdown with a fixed Home + pin/unpin bookmarks) but:
+// dropdown with mounted drives/volumes, a fixed Home, and pin/unpin bookmarks) but:
 //   - transport is window.api.localFs (node:fs in main), not SSH
 //   - the toolbar has a single arrow, which goes to the parent directory; there is no history stack
 //   - opening a file does NOT show an inline detail panel; it opens a standalone preview-workbench
 //     tab (source:'local') that renders through the shared preview pipeline with a dedicated header
 //   - bookmarks persist under the reserved LOCAL_BOOKMARKS_KEY in the compute bookmark store
-import { ArrowLeft, ChevronDown, Folder, File, Home, Pin, PinOff, RefreshCw } from 'lucide-react'
+import {
+  ArrowLeft,
+  ChevronDown,
+  Folder,
+  File,
+  HardDrive,
+  Home,
+  Pin,
+  PinOff,
+  RefreshCw
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { LocalDirEntry, LocalListingProblem, LocalRoots } from '../../../../shared/local-fs'
+import type {
+  LocalDirEntry,
+  LocalDrive,
+  LocalListingProblem,
+  LocalRoots
+} from '../../../../shared/local-fs'
 import {
   describeLocalListingError,
   isLocalPathRoot,
@@ -108,10 +123,12 @@ const GoToRow = ({
   </>
 )
 
-// Go-to dropdown: Home is fixed at the top (never removable); pinned folders follow with Unpin.
-// Built on the shared shadcn DropdownMenu, so click-outside, Escape, focus trapping and the
-// trigger's aria-expanded all come from Radix instead of hand-rolled open state.
+// Go-to dropdown: mounted drives/volumes lead the menu, Home is fixed next (never removable);
+// pinned folders follow with Unpin. Built on the shared shadcn DropdownMenu, so click-outside,
+// Escape, focus trapping and the trigger's aria-expanded all come from Radix instead of
+// hand-rolled open state.
 const GoToMenu = ({
+  drives,
   home,
   bookmarks,
   currentPath,
@@ -120,6 +137,7 @@ const GoToMenu = ({
   onPinCurrent,
   onRemoveBookmark
 }: {
+  drives: LocalDrive[]
   home: string | undefined
   bookmarks: string[]
   currentPath: string
@@ -129,7 +147,7 @@ const GoToMenu = ({
   onRemoveBookmark: (path: string) => void
 }): React.JSX.Element => (
   <DropdownMenu>
-    <Hint label="Jump to Home or a pinned folder">
+    <Hint label="Jump to a drive, Home, or a pinned folder">
       {/* Label at the default 13px: at text-xs it was the smallest type in the row despite being
           the only worded control there. */}
       <DropdownMenuTrigger asChild>
@@ -145,6 +163,27 @@ const GoToMenu = ({
       </DropdownMenuTrigger>
     </Hint>
     <DropdownMenuContent align="start" className="w-[300px] max-w-[70vw]">
+      {drives.length > 0 ? (
+        <>
+          <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
+            {window.api.platform === 'win32' ? 'Drives' : 'Volumes'}
+          </DropdownMenuLabel>
+          {drives.map((drive) => (
+            <DropdownMenuItem
+              key={drive.path}
+              data-testid={`go-to-drive-${drive.path}`}
+              className="items-start gap-2 text-xs"
+              onSelect={() => onNavigate(drive.path)}
+            >
+              <GoToRow
+                icon={<HardDrive className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+                label={drive.label}
+                path={drive.path}
+              />
+            </DropdownMenuItem>
+          ))}
+        </>
+      ) : null}
       {home ? (
         <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={() => onNavigate(home)}>
           <GoToRow
@@ -290,6 +329,7 @@ export const LocalFileBrowser = ({
   requestedPath?: { path: string; nonce: number }
 }): React.JSX.Element => {
   const [roots, setRoots] = useState<LocalRoots | null>(null)
+  const [drives, setDrives] = useState<LocalDrive[]>([])
   const [cwd, setCwd] = useState('')
   const [state, setState] = useState<BrowserState>({ kind: 'loading' })
   const [addressInput, setAddressInput] = useState('')
@@ -346,15 +386,19 @@ export const LocalFileBrowser = ({
     }
   }, [])
 
-  // On mount: fetch roots + bookmarks, then land in Home — or in a path already requested before
-  // the browser mounted (its nonce is marked handled so the effect below doesn't re-navigate).
+  // On mount: fetch roots + drives + bookmarks, then land in Home — or in a path already requested
+  // before the browser mounted (its nonce is marked handled so the effect below doesn't
+  // re-navigate).
   useEffect(() => {
     void (async () => {
-      const [fetchedRoots, fetchedBookmarks] = await Promise.all([
+      const [fetchedRoots, fetchedDrives, fetchedBookmarks] = await Promise.all([
         window.api.localFs.getRoots(),
+        // Optional-chained: some component tests stub localFs without the drive surface.
+        window.api.localFs.listDrives?.() ?? Promise.resolve([]),
         window.api.compute.bookmarksGet(LOCAL_BOOKMARKS_KEY)
       ])
       setRoots(fetchedRoots)
+      setDrives(fetchedDrives)
       setBookmarks(fetchedBookmarks)
       const pendingRequest = initialRequestedPathRef.current
       await navigate(pendingRequest?.path ?? fetchedRoots.home)
@@ -464,9 +508,10 @@ export const LocalFileBrowser = ({
             </Button>
           </Hint>
 
-          {/* Go-to dropdown: fixed Home + pinned bookmarks. Selecting an item closes the menu
-              itself, so nothing here tracks open state. */}
+          {/* Go-to dropdown: mounted drives, fixed Home, pinned bookmarks. Selecting an item
+              closes the menu itself, so nothing here tracks open state. */}
           <GoToMenu
+            drives={drives}
             home={roots?.home}
             bookmarks={bookmarks}
             currentPath={currentPath}

@@ -619,6 +619,7 @@ const api: OpenScienceAPI = {
     listDir: (path) => electronRendererContracts.invoke('localFs.listDir', path),
     readPreview: (request) => electronRendererContracts.invoke('localFs.readPreview', request),
     getRoots: () => electronRendererContracts.invoke('localFs.getRoots'),
+    listDrives: () => electronRendererContracts.invoke('localFs.listDrives'),
     reveal: (path) => electronRendererContracts.invoke('localFs.reveal', path),
     openPath: (path) => electronRendererContracts.invoke('localFs.openPath', path),
     listGrantedRoots: () => electronRendererContracts.invoke('localFs.listGrantedRoots'),

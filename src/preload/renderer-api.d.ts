@@ -86,6 +86,7 @@ import type {
   GrantLocalRootRequest,
   GrantedLocalRoot,
   LocalDirListing,
+  LocalDrive,
   LocalRoots,
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
@@ -773,6 +774,9 @@ export interface OpenScienceAPI {
     readPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
     // Home directory + friendly machine name for the browser's initial location and label.
     getRoots(): Promise<LocalRoots>
+    // Mounted drives/volumes for the browsers' drive switchers (drive letters on Windows,
+    // / + /Volumes on macOS, / + mount parents on Linux).
+    listDrives(): Promise<LocalDrive[]>
     // Reveals a local file in the OS file manager.
     reveal(path: string): Promise<void>
     // Opens a local file with the OS default application; resolves to '' on success.

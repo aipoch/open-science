@@ -1,34 +1,52 @@
 // "Grant folder access" dialog. Opened from the Files tab filter menu ("Add folder…"). The user
-// browses subfolders of home (or of already-granted roots) via a breadcrumb + folder-only listing,
-// picks an access level, and grants the current folder. The main process is authoritative on what
-// may be granted; the dialog mirrors its scope check only to avoid listing out-of-scope folders.
-import { CircleAlert, Folder, Home, Info } from 'lucide-react'
+// browses any folder on any mounted drive via a breadcrumb + folder-only listing, picks an access
+// level, and grants the current folder. The breadcrumb bar doubles as a path field (click its
+// empty area to type a path), and its leading drive crumb opens a drive/volume switcher.
+import { ChevronDown, CircleAlert, Folder, Home, Info } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type {
   GrantedLocalRoot,
   GrantedLocalRootAccess,
-  LocalDirEntry
+  LocalDirEntry,
+  LocalDrive
 } from '../../../../shared/local-fs'
 import {
-  canBrowseGrantedPath,
   describeLocalListingError,
   isLocalPathRoot,
   parentLocalPath,
   resolveLocalPath,
-  sameLocalDirectory
+  sameLocalDirectory,
+  validateLocalPath
 } from '../../../../shared/local-fs'
 import { Button } from '@/components/ui/button'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 
 type ListingState =
   | { kind: 'loading' }
   | { kind: 'ok'; entries: LocalDirEntry[] }
-  | { kind: 'out-of-scope' }
   | { kind: 'error'; summary: string }
+
+// The drive/volume a path lives on: the drive root on Windows (C:\), the volume root on POSIX
+// (/Volumes/<name> when browsing an external volume, / otherwise).
+const driveRootOf = (path: string, platform: string): string => {
+  if (platform !== 'win32') {
+    const volume = path.match(/^\/Volumes\/[^/]+/)
+    if (volume) return volume[0]
+  }
+  let root = path
+  while (!isLocalPathRoot(root, platform)) root = parentLocalPath(root, platform)
+  return root
+}
 
 // One custom-dot radio option for the access-level choice in the footer.
 const AccessRadio = ({
@@ -60,6 +78,51 @@ const AccessRadio = ({
   </button>
 )
 
+// The path input that replaces the breadcrumb while editing. Enter or blur submits, Escape
+// cancels; either way the parent swaps the breadcrumb back in. The settled ref guards the blur
+// that follows an Enter/Escape unmount from submitting twice.
+const PathEditInput = ({
+  initialPath,
+  onSubmit,
+  onCancel
+}: {
+  initialPath: string
+  onSubmit: (input: string) => void
+  onCancel: () => void
+}): React.JSX.Element => {
+  const [value, setValue] = useState(initialPath)
+  const settledRef = useRef(false)
+  const settle = (action: () => void): void => {
+    if (settledRef.current) return
+    settledRef.current = true
+    action()
+  }
+  return (
+    <input
+      ref={(element) => {
+        // Prefilled with cwd and fully selected, so typing replaces the whole path.
+        element?.focus()
+        element?.select()
+      }}
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          settle(() => onSubmit(value))
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          settle(onCancel)
+        }
+      }}
+      onBlur={() => settle(() => onSubmit(value))}
+      spellCheck={false}
+      aria-label="Folder path"
+      className="w-full rounded-md border border-border bg-bg-000 px-2 py-1 font-mono text-xs text-text-100 outline-none focus:text-text-000 focus:ring-2 focus:ring-ring/50"
+    />
+  )
+}
+
 // The dialog body. Rendered only while the dialog is open, so every open starts fresh at home
 // with the default access level and no leftover grant error.
 const GrantFolderAccessDialogContent = ({
@@ -75,7 +138,10 @@ const GrantFolderAccessDialogContent = ({
   // Host platform drives path segmentation/joining ('win32' paths use '\' and drive roots).
   const platform = window.api?.platform ?? 'darwin'
   const [home, setHome] = useState<string | undefined>(undefined)
+  const [drives, setDrives] = useState<LocalDrive[]>([])
   const [cwd, setCwd] = useState('')
+  // True while the breadcrumb bar is swapped for the path input.
+  const [editingPath, setEditingPath] = useState(false)
   // Latest completed listing, keyed by the path it belongs to; anything else renders as loading.
   const [result, setResult] = useState<
     | { kind: 'ok'; path: string; entries: LocalDirEntry[] }
@@ -85,18 +151,21 @@ const GrantFolderAccessDialogContent = ({
   const [access, setAccess] = useState<GrantedLocalRootAccess>('ro')
   const [grantFailed, setGrantFailed] = useState(false)
 
-  const outOfScope = home !== undefined && cwd !== '' && !canBrowseGrantedPath(cwd, home, roots)
-
-  // On mount: resolve home (the initial location) and refresh the granted roots that, together
-  // with home, define the browsable scope.
+  // On mount: resolve home (the initial location), enumerate the mounted drives for the drive
+  // dropdown, and refresh the granted roots the grant fallback compares against.
   useEffect(() => {
     if (!window.api?.localFs) return
     let cancelled = false
     void (async () => {
-      const fetchedRoots = await window.api.localFs.getRoots()
+      const [fetchedRoots, fetchedDrives] = await Promise.all([
+        window.api.localFs.getRoots(),
+        // Optional-chained: some component tests stub localFs without the drive surface.
+        window.api.localFs.listDrives?.() ?? Promise.resolve([])
+      ])
       if (cancelled) return
       setHome(fetchedRoots.home)
       setCwd(fetchedRoots.home)
+      setDrives(fetchedDrives)
       await refresh().catch(() => undefined)
     })()
     return () => {
@@ -104,10 +173,10 @@ const GrantFolderAccessDialogContent = ({
     }
   }, [refresh])
 
-  // List the current folder's subfolders. Out-of-scope locations are never listed: the breadcrumb
-  // can point outside home/granted roots, but reading them is not allowed.
+  // List the current folder's subfolders. Browsing is not scope-confined ("Home start, full-disk
+  // navigable"): any location the breadcrumb or path field points at gets listed.
   useEffect(() => {
-    if (!home || !cwd || outOfScope || !window.api?.localFs) return
+    if (!home || !cwd || !window.api?.localFs) return
     let cancelled = false
     window.api.localFs
       .listDir(cwd)
@@ -132,11 +201,10 @@ const GrantFolderAccessDialogContent = ({
     return () => {
       cancelled = true
     }
-  }, [home, cwd, outOfScope, platform])
+  }, [home, cwd, platform])
 
-  const listing: ListingState = outOfScope
-    ? { kind: 'out-of-scope' }
-    : result && sameLocalDirectory(result.path, cwd, platform)
+  const listing: ListingState =
+    result && sameLocalDirectory(result.path, cwd, platform)
       ? result.kind === 'ok'
         ? { kind: 'ok', entries: result.entries }
         : { kind: 'error', summary: result.summary }
@@ -145,6 +213,27 @@ const GrantFolderAccessDialogContent = ({
   const navigateTo = (path: string): void => {
     setGrantFailed(false)
     setCwd(path)
+  }
+
+  // Path-field submit (Enter/blur). Relative input resolves against cwd; invalid input surfaces
+  // the same quiet inline error LocalFileBrowser shows for a bad address, and a well-formed path
+  // that doesn't exist surfaces through the ordinary listDir error path.
+  const handlePathSubmit = (input: string): void => {
+    setEditingPath(false)
+    const resolved = resolveLocalPath(cwd, input.trim(), platform)
+    const invalid = validateLocalPath(resolved, platform)
+    if (invalid) {
+      setResult({
+        kind: 'error',
+        path: cwd,
+        summary:
+          invalid === 'not_absolute'
+            ? 'Enter an absolute path, starting at /.'
+            : 'That path contains invalid characters.'
+      })
+      return
+    }
+    if (!sameLocalDirectory(resolved, cwd, platform)) navigateTo(resolved)
   }
 
   const isHome = home !== undefined && sameLocalDirectory(cwd, home, platform)
@@ -158,24 +247,26 @@ const GrantFolderAccessDialogContent = ({
       onOpenChange(false)
       if (granted) onGranted?.(granted)
     } catch {
-      // Main rejected the candidate (out of scope, unreadable, home itself): state it quietly
-      // next to the buttons; navigation clears the message.
+      // Main rejected the candidate (unreadable, home itself): state it quietly next to the
+      // buttons; navigation clears the message.
       setGrantFailed(true)
     }
   }
 
-  // Absolute-path breadcrumb: home icon jumps home; every segment of cwd stays clickable.
-  // Segmentation is platform-aware — a Windows drive path leads with its drive root ("C:\").
+  // Absolute-path breadcrumb: a leading drive crumb (opening the drive/volume dropdown), a home
+  // shortcut, then every segment of cwd as a clickable crumb. Segmentation is platform-aware.
+  // The root itself is not a crumb — the drive dropdown trigger represents it.
+  const driveRoot = cwd === '' ? undefined : driveRootOf(cwd, platform)
+  const currentDrive = drives.find(
+    (drive) => driveRoot !== undefined && sameLocalDirectory(drive.path, driveRoot, platform)
+  )
   const crumbs: { label: string; path: string }[] = []
-  if (cwd !== '') {
+  if (cwd !== '' && driveRoot !== undefined) {
     let cursor = cwd
     for (;;) {
-      if (isLocalPathRoot(cursor, platform)) {
-        // The POSIX root is already implied by the leading separator; a Windows drive root
-        // ("C:\") gets its own crumb.
-        if (cursor !== '/') crumbs.push({ label: cursor, path: cursor })
+      // Stop at the drive root: the drive dropdown trigger already represents it.
+      if (isLocalPathRoot(cursor, platform) || sameLocalDirectory(cursor, driveRoot, platform))
         break
-      }
       crumbs.push({ label: cursor.split(/[\\/]/).pop() ?? cursor, path: cursor })
       cursor = parentLocalPath(cursor, platform)
     }
@@ -198,60 +289,123 @@ const GrantFolderAccessDialogContent = ({
           Browse to a folder and grant the app read-only or read &amp; write access to it.
         </Dialog.Description>
 
-        {/* Breadcrumb bar */}
-        <div className="flex flex-wrap items-center gap-0.5 border-y border-border-200 px-5 py-2.5 text-[13px] text-text-100">
-          <button
-            type="button"
-            aria-label="Go to home folder"
-            data-testid="grant-access-crumb-home"
-            onClick={() => home && navigateTo(home)}
-            className="flex items-center rounded p-1 hover:bg-bg-200 hover:text-text-000"
+        {/* Breadcrumb bar. Clicking the bar's own empty space (not a crumb) swaps it for the
+            path input; submit/cancel brings this rendering back unchanged. */}
+        {editingPath ? (
+          <div className="border-y border-border-200 px-5 py-2">
+            <PathEditInput
+              initialPath={cwd}
+              onSubmit={handlePathSubmit}
+              onCancel={() => setEditingPath(false)}
+            />
+          </div>
+        ) : (
+          <div
+            data-testid="grant-access-path-bar"
+            onClick={(event) => {
+              // target === currentTarget means the click landed on the bar itself (padding or
+              // empty flex space), not on a crumb, separator, or the home shortcut.
+              if (event.target === event.currentTarget && cwd !== '') setEditingPath(true)
+            }}
+            className="flex flex-wrap items-center gap-0.5 border-y border-border-200 px-5 py-2.5 text-[13px] text-text-100"
           >
-            <Home className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-          </button>
-          <span className="text-text-300" aria-hidden="true">
-            /
-          </span>
-          {crumbs.map((crumb, index) => {
-            const isCurrent = index === crumbs.length - 1
-            return (
-              <span key={crumb.path} className="flex items-center gap-0.5">
-                {index > 0 ? (
-                  <span className="text-text-300" aria-hidden="true">
-                    ›
-                  </span>
-                ) : null}
-                {isCurrent ? (
-                  <span className="rounded bg-bg-200 px-1 py-0.5 font-medium text-text-000">
-                    {crumb.label}
-                  </span>
-                ) : (
+            {driveRoot !== undefined ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    data-testid={`grant-access-crumb-${crumb.label}`}
-                    onClick={() => navigateTo(crumb.path)}
-                    className="rounded px-1 py-0.5 hover:bg-bg-200 hover:text-text-000"
+                    aria-label="Choose a drive or volume"
+                    data-testid="grant-access-drive-root"
+                    className="flex items-center gap-0.5 rounded px-1 py-0.5 font-medium text-text-000 hover:bg-bg-200"
                   >
-                    {crumb.label}
+                    {currentDrive?.label ?? driveRoot}
+                    <ChevronDown
+                      className="size-3 text-text-300"
+                      strokeWidth={1.8}
+                      aria-hidden="true"
+                    />
                   </button>
-                )}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-[280px] max-w-[70vw]">
+                  {drives.map((drive) => {
+                    const isCurrent =
+                      currentDrive !== undefined &&
+                      sameLocalDirectory(drive.path, currentDrive.path, platform)
+                    return (
+                      <DropdownMenuItem
+                        key={drive.path}
+                        data-testid={`grant-access-drive-${drive.path}`}
+                        aria-current={isCurrent ? 'true' : undefined}
+                        className={cn('items-start gap-2 text-xs', isCurrent && 'bg-muted')}
+                        onSelect={() => navigateTo(drive.path)}
+                      >
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate">{drive.label}</span>
+                          <span
+                            title={drive.path}
+                            className="truncate font-mono text-[10px] leading-tight text-muted-foreground"
+                          >
+                            {drive.path}
+                          </span>
+                        </span>
+                      </DropdownMenuItem>
+                    )
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+            <button
+              type="button"
+              aria-label="Go to home folder"
+              data-testid="grant-access-crumb-home"
+              onClick={() => home && navigateTo(home)}
+              className="flex items-center rounded p-1 hover:bg-bg-200 hover:text-text-000"
+            >
+              <Home className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            </button>
+            <span className="text-text-300" aria-hidden="true">
+              ›
+            </span>
+            {crumbs.length === 0 ? (
+              // At a drive root there are no segment crumbs; say so instead of a dangling separator.
+              <span className="rounded bg-bg-200 px-1 py-0.5 font-medium text-text-000">
+                {currentDrive?.label ?? driveRoot}
               </span>
-            )
-          })}
-        </div>
+            ) : null}
+            {crumbs.map((crumb, index) => {
+              const isCurrent = index === crumbs.length - 1
+              return (
+                <span key={crumb.path} className="flex items-center gap-0.5">
+                  {index > 0 ? (
+                    <span className="text-text-300" aria-hidden="true">
+                      ›
+                    </span>
+                  ) : null}
+                  {isCurrent ? (
+                    <span className="rounded bg-bg-200 px-1 py-0.5 font-medium text-text-000">
+                      {crumb.label}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid={`grant-access-crumb-${crumb.label}`}
+                      onClick={() => navigateTo(crumb.path)}
+                      className="rounded px-1 py-0.5 hover:bg-bg-200 hover:text-text-000"
+                    >
+                      {crumb.label}
+                    </button>
+                  )}
+                </span>
+              )
+            })}
+          </div>
+        )}
 
         {/* Subfolder listing */}
         <div className="flex max-h-[320px] min-h-[220px] flex-col overflow-y-auto px-5 pb-3 pt-2">
           {listing.kind === 'loading' ? (
             <div className="flex flex-1 items-center justify-center text-[13px] text-text-300">
               Loading…
-            </div>
-          ) : listing.kind === 'out-of-scope' ? (
-            <div
-              data-testid="grant-access-out-of-scope"
-              className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-danger-000"
-            >
-              Directory is not under $HOME or a granted root.
             </div>
           ) : listing.kind === 'error' ? (
             <div className="flex flex-1 items-center justify-center px-6 text-center text-[13px] text-text-300">

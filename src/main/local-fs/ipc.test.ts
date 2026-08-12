@@ -23,6 +23,7 @@ import {
   LOCAL_FS_GRANTED_ROOTS_SET_ACCESS_CHANNEL,
   LOCAL_FS_GRANT_ROOT_CHANNEL,
   LOCAL_FS_LIST_DIR_CHANNEL,
+  LOCAL_FS_LIST_DRIVES_CHANNEL,
   LOCAL_FS_OPEN_PATH_CHANNEL,
   LOCAL_FS_READ_PREVIEW_CHANNEL,
   LOCAL_FS_REVEAL_CHANNEL,
@@ -32,6 +33,7 @@ import {
 const CHANNELS = [
   LOCAL_FS_GET_ROOTS_CHANNEL,
   LOCAL_FS_LIST_DIR_CHANNEL,
+  LOCAL_FS_LIST_DRIVES_CHANNEL,
   LOCAL_FS_OPEN_PATH_CHANNEL,
   LOCAL_FS_READ_PREVIEW_CHANNEL,
   LOCAL_FS_REVEAL_CHANNEL,
@@ -44,6 +46,7 @@ const CHANNELS = [
 const createServiceStub = (): LocalFsService =>
   ({
     getRoots: vi.fn(() => ({ machineName: 'host', home: '/Users/test', roots: [] })),
+    listDrives: vi.fn(async () => []),
     listDir: vi.fn(async () => ({ path: '/Users/test', entries: [], truncated: false })),
     openPath: vi.fn(async () => ''),
     readPreview: vi.fn(async () => ({ kind: 'text', text: '' })),

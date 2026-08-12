@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GrantedLocalRoot, LocalDirListing } from '../../../../shared/local-fs'
@@ -9,6 +10,26 @@ import {
   useGrantedFoldersStore
 } from '@/stores/granted-folders-store'
 import { GrantFolderAccessDialog } from './GrantFolderAccessDialog'
+
+// Radix DropdownMenu calls pointer-capture APIs that jsdom does not implement. Replace with a
+// flat render so the drive menu's content is always visible in the DOM and items fire onSelect
+// on click.
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  DropdownMenuContent: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <div>{children}</div>
+  ),
+  DropdownMenuItem: ({
+    children,
+    onSelect,
+    ...rest
+  }: PropsWithChildren<{ onSelect?: () => void }>): React.JSX.Element => (
+    <button type="button" onClick={onSelect} {...rest}>
+      {children}
+    </button>
+  )
+}))
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -26,6 +47,11 @@ const grantedRoot: GrantedLocalRoot = {
   name: 'Projects',
   access: 'ro'
 }
+
+const DRIVES = [
+  { path: '/', label: '/' },
+  { path: '/Volumes/External', label: 'External' }
+]
 
 let container: HTMLElement
 let root: Root
@@ -55,6 +81,7 @@ beforeEach(() => {
   ;(window as unknown as { api: unknown }).api = {
     localFs: {
       getRoots: vi.fn().mockResolvedValue({ home: HOME, machineName: 'Test Mac' }),
+      listDrives: vi.fn().mockResolvedValue(DRIVES),
       listDir,
       listGrantedRoots: vi.fn().mockResolvedValue([]),
       grantRoot
@@ -92,6 +119,12 @@ const crumb = (label: string): Element | undefined =>
     (element) => element.getAttribute('data-testid') === `grant-access-crumb-${label}`
   )
 
+// Same for drive-menu entries, whose testids carry raw paths ("C:\", "/Volumes/External").
+const driveEntry = (path: string): Element | undefined =>
+  Array.from(document.body.querySelectorAll('[data-testid^="grant-access-drive-"]')).find(
+    (element) => element.getAttribute('data-testid') === `grant-access-drive-${path}`
+  )
+
 describe('GrantFolderAccessDialog', () => {
   it('lists the home subfolders on open', async () => {
     renderDialog()
@@ -116,15 +149,91 @@ describe('GrantFolderAccessDialog', () => {
     expect(document.body.textContent).toContain('Library')
   })
 
-  it('shows the out-of-scope error after a breadcrumb jump outside home and skips listDir', async () => {
+  it('lists folders outside home after a breadcrumb jump (cross-drive browsing)', async () => {
     renderDialog()
     await flush()
 
     await click(document.body.querySelector('[data-testid="grant-access-crumb-Users"]'))
 
-    expect(document.body.textContent).toContain('Directory is not under $HOME or a granted root.')
-    expect(listDir).not.toHaveBeenCalledWith('/Users')
-    expect(listDir).not.toHaveBeenCalledWith('/Users/roxi/Projects')
+    expect(listDir).toHaveBeenCalledWith('/Users')
+    expect(document.body.textContent).toContain('No subfolders.')
+    expect(document.body.textContent).not.toContain('out of scope')
+  })
+
+  it('swaps the breadcrumb for a path input on bar click and navigates on submit', async () => {
+    renderDialog()
+    await flush()
+
+    // Clicking the bar's own empty area (target === currentTarget) opens the editor.
+    await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Folder path"]')
+    expect(input).not.toBeNull()
+    expect(input?.value).toBe(HOME)
+    expect(input?.selectionStart).toBe(0)
+    expect(input?.selectionEnd).toBe(HOME.length)
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set
+      setter?.call(input, `${HOME}/Projects`)
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(listDir).toHaveBeenCalledWith(`${HOME}/Projects`)
+    // The bar is back to breadcrumb rendering.
+    expect(document.body.querySelector('[aria-label="Folder path"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="grant-access-path-bar"]')).not.toBeNull()
+  })
+
+  it('cancels path editing on Escape without navigating', async () => {
+    renderDialog()
+    await flush()
+    const initialCalls = listDir.mock.calls.length
+
+    await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Folder path"]')
+    expect(input).not.toBeNull()
+
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[aria-label="Folder path"]')).toBeNull()
+    expect(document.body.querySelector('[data-testid="grant-access-path-bar"]')).not.toBeNull()
+    expect(listDir.mock.calls.length).toBe(initialCalls)
+  })
+
+  it('lists the drives in the root crumb menu and navigates on select', async () => {
+    renderDialog()
+    await flush()
+
+    // The root crumb shows the current volume; the menu lists every mounted drive/volume.
+    expect(
+      document.body.querySelector('[data-testid="grant-access-drive-root"]')?.textContent
+    ).toContain('/')
+    const rootItem = document.body.querySelector('[data-testid="grant-access-drive-/"]')
+    const externalItem = document.body.querySelector(
+      '[data-testid="grant-access-drive-/Volumes/External"]'
+    )
+    expect(rootItem).not.toBeNull()
+    expect(externalItem).not.toBeNull()
+    // Home sits on /, so that entry is the highlighted current drive.
+    expect(rootItem?.getAttribute('aria-current')).toBe('true')
+    expect(externalItem?.getAttribute('aria-current')).toBeNull()
+
+    await click(externalItem)
+    expect(listDir).toHaveBeenCalledWith('/Volumes/External')
+    // The root crumb now tracks the external volume.
+    expect(
+      document.body.querySelector('[data-testid="grant-access-drive-root"]')?.textContent
+    ).toContain('External')
   })
 
   it('shows the home hint and disables Grant while cwd is home', async () => {
@@ -175,7 +284,7 @@ describe('GrantFolderAccessDialog', () => {
     expect(useGrantedFoldersStore.getState().roots).toEqual([grantedRoot])
   })
 
-  it('segments a Windows drive path into drive-root and folder crumbs', async () => {
+  it('segments a Windows drive path and switches drives via the root crumb menu', async () => {
     const WIN_HOME = 'C:\\Users\\roxi'
     const winListDir = vi.fn(async (path: string): Promise<LocalDirListing> => ({
       entries:
@@ -187,6 +296,10 @@ describe('GrantFolderAccessDialog', () => {
       platform: 'win32',
       localFs: {
         getRoots: vi.fn().mockResolvedValue({ home: WIN_HOME, machineName: 'Test PC' }),
+        listDrives: vi.fn().mockResolvedValue([
+          { path: 'C:\\', label: 'C:' },
+          { path: 'D:\\', label: 'D:' }
+        ]),
         listDir: winListDir,
         listGrantedRoots: vi.fn().mockResolvedValue([]),
         grantRoot
@@ -195,17 +308,18 @@ describe('GrantFolderAccessDialog', () => {
     renderDialog()
     await flush()
 
-    // The drive root leads the breadcrumb, followed by the folder segments.
-    expect(crumb('C:\\')).toBeDefined()
+    // The drive root leads the bar as the dropdown trigger, followed by the folder segments.
+    expect(
+      document.body.querySelector('[data-testid="grant-access-drive-root"]')?.textContent
+    ).toContain('C:')
     expect(crumb('Users')).toBeDefined()
 
     // Navigating into a subfolder joins with the Windows separator.
     await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
     expect(winListDir).toHaveBeenCalledWith('C:\\Users\\roxi\\Projects')
 
-    // Jumping to the drive root is out of scope and never lists.
-    await click(crumb('C:\\'))
-    expect(document.body.textContent).toContain('Directory is not under $HOME or a granted root.')
-    expect(winListDir).not.toHaveBeenCalledWith('C:\\')
+    // Selecting another drive from the menu navigates to its root.
+    await click(driveEntry('D:\\'))
+    expect(winListDir).toHaveBeenCalledWith('D:\\')
   })
 })

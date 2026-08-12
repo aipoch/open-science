@@ -1,6 +1,6 @@
 import { hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { readdir, realpath, stat } from 'node:fs/promises'
+import { access, readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { app, shell } from 'electron'
@@ -12,6 +12,7 @@ import type {
   GrantedLocalRootAccess,
   LocalDirEntry,
   LocalDirListing,
+  LocalDrive,
   LocalRoots,
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
@@ -74,6 +75,52 @@ export class LocalFsService {
     return { home: app.getPath('home'), machineName: buildMachineName() }
   }
 
+  // Mounted drives/volumes for the browsers' drive switchers. win32 probes A:–Z: for existence
+  // (no volume labels — that would need PowerShell/wmic); darwin lists /Volumes; other POSIX
+  // checks the conventional per-user and /mnt mount parents. Everything is existence-checked, so
+  // unmounted letters and empty mount parents never surface.
+  async listDrives(): Promise<LocalDrive[]> {
+    if (process.platform === 'win32') {
+      const drives: LocalDrive[] = []
+      for (let code = 65; code <= 90; code += 1) {
+        const letter = String.fromCharCode(code)
+        try {
+          await access(`${letter}:\\`)
+          drives.push({ path: `${letter}:\\`, label: `${letter}:` })
+        } catch {
+          // Letter not mounted.
+        }
+      }
+      return drives
+    }
+    if (process.platform === 'darwin') {
+      return [{ path: '/', label: '/' }, ...(await this.listMountEntries('/Volumes'))]
+    }
+    let username = ''
+    try {
+      username = userInfo().username
+    } catch {
+      // No OS user record (some CI): skip the per-user mount parents, keep /mnt.
+    }
+    const parents = [...(username ? [`/media/${username}`, `/run/media/${username}`] : []), '/mnt']
+    const mounted = await Promise.all(parents.map((parent) => this.listMountEntries(parent)))
+    return [{ path: '/', label: '/' }, ...mounted.flat()]
+  }
+
+  // Directory entries of a mount-point parent as drives; an unreadable or missing parent (the
+  // common case — most machines have no /mnt mounts) simply contributes nothing. Symlinks count:
+  // macOS represents the boot volume in /Volumes as a symlink.
+  private async listMountEntries(parent: string): Promise<LocalDrive[]> {
+    try {
+      const dirents = await readdir(parent, { withFileTypes: true })
+      return dirents
+        .filter((dirent) => dirent.isDirectory() || dirent.isSymbolicLink())
+        .map((dirent) => ({ path: join(parent, dirent.name), label: dirent.name }))
+    } catch {
+      return []
+    }
+  }
+
   private requireGrantedRootsStore(): GrantedLocalRootsStore {
     if (!this.grantedRootsStore) throw new Error('Granted local roots store is not configured.')
     return this.grantedRootsStore
@@ -94,15 +141,12 @@ export class LocalFsService {
     const resolvedPath = await realpath(request.path)
     // Home must be canonicalized too: app.getPath('home') may sit behind a symlink (/var on
     // macOS, /home mounts on some Linux setups), and comparing the realpath'd candidate against
-    // the verbatim string would fail every scope check.
+    // the verbatim string would fail the is-home check.
     const resolvedHome = await realpath(this.getRoots().home)
-    const roots = await store.list()
-    const verdict = validateGrantCandidate(resolvedPath, resolvedHome, roots, process.platform)
+    const verdict = validateGrantCandidate(resolvedPath, resolvedHome, process.platform)
     if (!verdict.ok) {
       if (verdict.reason === 'is-home')
         throw new Error('The home folder is already browsable; it cannot be granted.')
-      if (verdict.reason === 'out-of-scope')
-        throw new Error('That folder is outside the currently browsable scope.')
       throw new Error('Local path must be absolute.')
     }
     // De-dupe on the resolved path: re-granting an already granted folder updates its access and

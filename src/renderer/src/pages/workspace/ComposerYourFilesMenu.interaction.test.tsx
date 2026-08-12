@@ -23,6 +23,11 @@ const subState = vi.hoisted(() => ({
 // Radix DropdownMenu calls pointer-capture APIs that jsdom does not implement.
 // Replace with a flat render so the submenu content is always visible in the DOM.
 vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: PropsWithChildren): React.JSX.Element => <>{children}</>,
+  DropdownMenuContent: ({ children }: PropsWithChildren): React.JSX.Element => (
+    <div>{children}</div>
+  ),
   DropdownMenuSub: ({
     children,
     onOpenChange

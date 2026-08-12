@@ -31,6 +31,14 @@ export type LocalRoots = {
   machineName: string
 }
 
+// One mounted drive/volume, for the drive switchers in both local browsers. `path` is the
+// browsable root (`C:\` on Windows, `/` or `/Volumes/<name>` on POSIX); `label` is what the
+// dropdown shows (the drive letter on Windows, the volume name elsewhere).
+export type LocalDrive = {
+  path: string
+  label: string
+}
+
 // The single settings key under computeBookmarks reserved for local (non-SSH) bookmarks. Reusing
 // the compute bookmark store avoids a settings-schema migration; SSH providers are keyed by
 // provider_id, which never collides with this literal.
@@ -175,27 +183,18 @@ export const isPathWithin = (path: string, root: string): boolean => {
   return candidate === base || candidate.startsWith(`${base}/`)
 }
 
-// True when `path` is browsable under the granted-roots scope model: inside home or inside any
-// granted root.
-export const canBrowseGrantedPath = (
-  path: string,
-  home: string,
-  roots: readonly GrantedLocalRoot[]
-): boolean => isPathWithin(path, home) || roots.some((root) => isPathWithin(path, root.path))
-
-// Validates a folder the user wants to grant. A grant candidate must already be browsable (within
-// home or an already-granted root) so granting can only ever extend scope one visible step at a
-// time; home itself is rejected because it is the implicit root and granting it would be a no-op.
+// Validates a folder the user wants to grant. Any valid absolute path qualifies — granting is no
+// longer confined to home or already-granted roots (existence is guaranteed by the realpath in
+// grantRoot). Home itself is rejected because it is the implicit root and granting it would be a
+// no-op.
 export const validateGrantCandidate = (
   path: string,
   home: string,
-  roots: readonly GrantedLocalRoot[],
   platform: string
-): { ok: true } | { ok: false; reason: 'not-absolute' | 'is-home' | 'out-of-scope' } => {
+): { ok: true } | { ok: false; reason: 'not-absolute' | 'is-home' } => {
   if (validateLocalPath(path, platform) !== undefined) return { ok: false, reason: 'not-absolute' }
   if (normalizePathForScope(path) === normalizePathForScope(home))
     return { ok: false, reason: 'is-home' }
-  if (!canBrowseGrantedPath(path, home, roots)) return { ok: false, reason: 'out-of-scope' }
   return { ok: true }
 }
 

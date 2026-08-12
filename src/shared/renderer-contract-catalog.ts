@@ -212,7 +212,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   ]),
   group('local-fs', 'localFs', [
     ['getRoots', 'local-fs:get-roots', LOCAL], ['grantRoot', 'local-fs:grant-root', LOCAL], ['listDir', 'local-fs:list-dir', LOCAL],
-    ['listGrantedRoots', 'local-fs:granted-roots:list', LOCAL], ['openPath', 'local-fs:open-path', LOCAL], ['readPreview', 'local-fs:read-preview', LOCAL],
+    ['listDrives', 'local-fs:list-drives', LOCAL], ['listGrantedRoots', 'local-fs:granted-roots:list', LOCAL], ['openPath', 'local-fs:open-path', LOCAL], ['readPreview', 'local-fs:read-preview', LOCAL],
     ['removeGrantedRoot', 'local-fs:granted-roots:remove', LOCAL], ['reveal', 'local-fs:reveal', LOCAL], ['setGrantedRootAccess', 'local-fs:granted-roots:set-access', LOCAL],
   ]),
   group('logs', 'logs', [

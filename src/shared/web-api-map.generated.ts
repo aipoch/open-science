@@ -60,6 +60,7 @@ export const WEB_INVOKE_CHANNELS = {
   'localFs.getRoots': 'local-fs:get-roots',
   'localFs.grantRoot': 'local-fs:grant-root',
   'localFs.listDir': 'local-fs:list-dir',
+  'localFs.listDrives': 'local-fs:list-drives',
   'localFs.listGrantedRoots': 'local-fs:granted-roots:list',
   'localFs.openPath': 'local-fs:open-path',
   'localFs.readPreview': 'local-fs:read-preview',

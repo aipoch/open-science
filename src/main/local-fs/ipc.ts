@@ -3,6 +3,7 @@ import type {
   GrantLocalRootRequest,
   GrantedLocalRoot,
   LocalDirListing,
+  LocalDrive,
   LocalRoots,
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
@@ -12,6 +13,7 @@ import { LocalFsService } from './service'
 
 // Channel names for the local ("This computer") file browser. Grouped under the local-fs: prefix.
 export const LOCAL_FS_LIST_DIR_CHANNEL = 'local-fs:list-dir'
+export const LOCAL_FS_LIST_DRIVES_CHANNEL = 'local-fs:list-drives'
 export const LOCAL_FS_READ_PREVIEW_CHANNEL = 'local-fs:read-preview'
 export const LOCAL_FS_GET_ROOTS_CHANNEL = 'local-fs:get-roots'
 export const LOCAL_FS_REVEAL_CHANNEL = 'local-fs:reveal'
@@ -35,6 +37,7 @@ export const registerLocalFsIpcHandlers = (
       service.readPreview(request)
   )
   ipcMainHandle(LOCAL_FS_GET_ROOTS_CHANNEL, (): LocalRoots => service.getRoots())
+  ipcMainHandle(LOCAL_FS_LIST_DRIVES_CHANNEL, (): Promise<LocalDrive[]> => service.listDrives())
   ipcMainHandle(LOCAL_FS_REVEAL_CHANNEL, (_event, path: string): void => {
     service.revealInFolder(path)
   })

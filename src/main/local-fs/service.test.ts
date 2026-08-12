@@ -1,5 +1,6 @@
+import type { Dirent } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,10 +11,26 @@ vi.mock('electron', () => ({
   shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => '') }
 }))
 
+// access/readdir start as delegating wrappers so listDrives tests can substitute per-platform
+// fakes; every other export stays real for the listDir/preview tests above.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    access: vi.fn(actual.access),
+    readdir: vi.fn(actual.readdir)
+  }
+})
+
+import { access, readdir } from 'node:fs/promises'
+
 import { app } from 'electron'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { LocalFsService, type GrantedLocalRootsStore } from './service'
+
+// The unmocked fs/promises, for restoring the delegating wrappers after each listDrives test.
+const realFsPromises = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
 
 let root = ''
 const service = new LocalFsService()
@@ -76,6 +93,74 @@ describe('LocalFsService.getRoots', () => {
     const roots = service.getRoots()
     expect(roots.home).toBe('/home/testuser')
     expect(roots.machineName.length).toBeGreaterThan(0)
+  })
+})
+
+describe('LocalFsService.listDrives', () => {
+  const realPlatform = process.platform
+  const setPlatform = (value: string): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true })
+  }
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
+    // Hand the delegating wrappers back so later suites see the real filesystem again.
+    vi.mocked(access).mockImplementation(realFsPromises.access)
+    vi.mocked(readdir).mockImplementation(realFsPromises.readdir as never)
+  })
+
+  // Minimal Dirent stand-in: listDrives only reads name/isDirectory/isSymbolicLink.
+  const dirent = (name: string, kind: 'dir' | 'link' | 'file' = 'dir'): Dirent =>
+    ({
+      name,
+      isDirectory: () => kind === 'dir',
+      isSymbolicLink: () => kind === 'link'
+    }) as Dirent
+
+  it('probes A:–Z: on win32 and keeps only the mounted letters', async () => {
+    setPlatform('win32')
+    vi.mocked(access).mockImplementation(async (path) => {
+      if (path === 'C:\\' || path === 'E:\\') return undefined
+      throw new Error('ENOENT')
+    })
+
+    await expect(service.listDrives()).resolves.toEqual([
+      { path: 'C:\\', label: 'C:' },
+      { path: 'E:\\', label: 'E:' }
+    ])
+  })
+
+  it('lists / plus the directory entries of /Volumes on darwin', async () => {
+    setPlatform('darwin')
+    vi.mocked(readdir).mockImplementation((async (path: string) => {
+      // The boot volume appears in /Volumes as a symlink; plain files never do.
+      if (path === '/Volumes')
+        return [dirent('Macintosh HD', 'link'), dirent('External'), dirent('note.txt', 'file')]
+      throw new Error('ENOENT')
+    }) as never)
+
+    await expect(service.listDrives()).resolves.toEqual([
+      { path: '/', label: '/' },
+      { path: '/Volumes/Macintosh HD', label: 'Macintosh HD' },
+      { path: '/Volumes/External', label: 'External' }
+    ])
+  })
+
+  it('lists / plus existing entries under the linux mount parents', async () => {
+    setPlatform('linux')
+    const user = userInfo().username
+    vi.mocked(readdir).mockImplementation((async (path: string) => {
+      if (path === `/media/${user}`) return [dirent('usb')]
+      if (path === '/mnt') return [dirent('data')]
+      // /run/media/<user> not existing is the common case and must contribute nothing.
+      throw new Error('ENOENT')
+    }) as never)
+
+    await expect(service.listDrives()).resolves.toEqual([
+      { path: '/', label: '/' },
+      { path: `/media/${user}/usb`, label: 'usb' },
+      { path: '/mnt/data', label: 'data' }
+    ])
   })
 })
 
@@ -161,9 +246,11 @@ describe('LocalFsService granted roots', () => {
     expect(store).toEqual([])
   })
 
-  it('rejects granting a folder outside home and all granted roots', async () => {
-    await expect(grantService.grantRoot({ path: outside, access: 'ro' })).rejects.toThrow(/scope/i)
-    expect(store).toEqual([])
+  it('grants an absolute path outside home (cross-drive granting)', async () => {
+    const updated = await grantService.grantRoot({ path: outside, access: 'ro' })
+
+    expect(updated).toHaveLength(1)
+    expect(updated[0]).toMatchObject({ path: outside, access: 'ro' })
   })
 
   it('re-granting an already granted path updates its access instead of duplicating', async () => {
