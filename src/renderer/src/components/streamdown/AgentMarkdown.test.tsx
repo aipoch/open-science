@@ -178,6 +178,29 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(streamdownHarness.caret).toBeUndefined()
   })
 
+  it('drains a large backlog with catch-up frames instead of trailing seconds behind', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    streamdownHarness.shouldThrow = false
+    const content = 'y'.repeat(3000)
+
+    await act(async () => {
+      root.render(<AgentMarkdown content={content} isAnimating />)
+    })
+    // Prebuffer, then the backlog (3000 > 600) drains at remaining/30 per frame.
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    // Without catch-up, ~94 frames at <=3 graphemes would reveal under 300 graphemes.
+    expect(
+      container.querySelector('[data-testid="rich-markdown"]')?.textContent?.length ?? 0
+    ).toBeGreaterThan(2000)
+  })
+
   it('keeps revealing while faster stream updates extend the target between frames', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
