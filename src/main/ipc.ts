@@ -382,13 +382,14 @@ const createApplicationModules = async (
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsRepository = new SettingsRepository(resolveStorageRoot())
   const networkProxyRuntime = new NetworkProxyRuntime({
-    setProxy: (config) => session.defaultSession.setProxy(config),
-    resolveProxy: (url) => session.defaultSession.resolveProxy(url)
+    setProxy: (config) => session.defaultSession.setProxy(config)
   })
   const settingsService = await modules.add(undefined, () => ({
     capability: new SettingsService({
       repository: settingsRepository,
-      applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined)
+      applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined),
+      resolveCodexProxyEnvironment: () =>
+        Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
     })
   }))
   const storedSettings = await settingsService.getStoredSettings()

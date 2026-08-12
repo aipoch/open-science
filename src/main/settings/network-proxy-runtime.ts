@@ -9,15 +9,12 @@ import {
   SYSTEM_PROXY_ENV_KEYS,
   clearSystemProxyEnvironment,
   loopbackProxyBypassEnvironment,
-  resolveSystemProxyEnvironment,
-  type ResolveProxy,
   type SystemProxyEnvironment
 } from './system-proxy'
 
 type NetworkProxyRuntimeOptions = Readonly<{
   environment?: NodeJS.ProcessEnv
   setProxy: (config: ProxyConfig) => Promise<void>
-  resolveProxy?: ResolveProxy
 }>
 
 const captureProxyEnvironment = (environment: NodeJS.ProcessEnv): SystemProxyEnvironment => {
@@ -79,18 +76,26 @@ export class NetworkProxyRuntime {
   private readonly environment: NodeJS.ProcessEnv
   private readonly inheritedEnvironment: SystemProxyEnvironment
   private readonly setProxy: (config: ProxyConfig) => Promise<void>
-  private readonly resolveProxy?: ResolveProxy
+  private childProcessEnvironment: SystemProxyEnvironment | undefined
   private settings: NetworkProxySettings = DEFAULT_NETWORK_PROXY_SETTINGS
 
   constructor(options: NetworkProxyRuntimeOptions) {
     this.environment = options.environment ?? process.env
     this.inheritedEnvironment = captureProxyEnvironment(this.environment)
     this.setProxy = options.setProxy
-    this.resolveProxy = options.resolveProxy
+    this.childProcessEnvironment = hasProxyServer(this.inheritedEnvironment)
+      ? withLoopbackBypass(this.inheritedEnvironment, this.inheritedEnvironment)
+      : undefined
   }
 
   getSettings(): NetworkProxySettings {
     return { ...this.settings }
+  }
+
+  getChildProcessProxyEnvironment(): SystemProxyEnvironment | undefined {
+    return this.childProcessEnvironment === undefined
+      ? undefined
+      : { ...this.childProcessEnvironment }
   }
 
   async apply(value: unknown): Promise<NetworkProxySettings> {
@@ -105,18 +110,13 @@ export class NetworkProxyRuntime {
       await this.setProxy({ mode: 'direct' })
     } else {
       await this.setProxy({ mode: 'system' })
-      const resolved = await resolveSystemProxyEnvironment(
-        this.resolveProxy,
-        this.inheritedEnvironment
-      )
-      environment =
-        resolved === undefined
-          ? withLoopbackBypass(this.inheritedEnvironment, this.inheritedEnvironment)
-          : resolved
+      environment = withLoopbackBypass(this.inheritedEnvironment, this.inheritedEnvironment)
     }
 
     clearSystemProxyEnvironment(this.environment)
     Object.assign(this.environment, environment)
+    this.childProcessEnvironment =
+      settings.mode === 'system' && !hasProxyServer(environment) ? undefined : environment
     this.settings = settings
     return this.getSettings()
   }

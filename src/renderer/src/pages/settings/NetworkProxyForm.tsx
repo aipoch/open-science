@@ -79,12 +79,12 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
     <div className="space-y-5 p-5">
       <SettingsSection
         title="Proxy"
-        description="Choose how Open Science reaches the internet. This setting is global and applies to new app requests and processes."
+        description="Choose how Open Science reaches the internet. Changes apply to new app requests and processes."
         aria-label="Proxy settings"
       >
         <SettingsRow
           label="Mode"
-          description="System follows your device proxy. Direct bypasses all proxies."
+          description="System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open Science started with; choose Manual to give them a fixed proxy."
           className="pt-0"
         >
           <Select
@@ -133,7 +133,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                   }
                   role={showServerError ? 'alert' : undefined}
                 >
-                  {showServerError ?? 'Example: http://127.0.0.1:1086'}
+                  {showServerError || 'Example: http://127.0.0.1:1086'}
                 </p>
               </div>
             </SettingsRow>
@@ -158,7 +158,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
 
       <div className="rounded-lg bg-bg-10 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground ring-1 ring-border-200">
         Existing agent sessions, notebook kernels, and installers keep their current connection. New
-        processes use this setting.
+        requests and processes use the saved setting.
       </div>
 
       {message ? (

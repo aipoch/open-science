@@ -39,8 +39,21 @@ describe('NetworkProxyForm', () => {
     act(() => root.render(<NetworkProxyForm onDone={vi.fn()} />))
 
     expect(container.textContent).toContain('System')
+    expect(container.textContent).toContain('Agent processes inherit only the proxy environment')
     expect(container.textContent).toContain('Existing agent sessions')
-    expect(container.textContent).toContain('New processes use this setting.')
+    expect(container.textContent).toContain('New requests and processes use the saved setting.')
+  })
+
+  it('shows the proxy URL example before the field is blurred', () => {
+    useSettingsStore.setState({
+      networkProxy: { mode: 'manual', server: '' }
+    })
+
+    act(() => root.render(<NetworkProxyForm onDone={vi.fn()} />))
+
+    expect(container.querySelector('#network-proxy-server-help')?.textContent).toBe(
+      'Example: http://127.0.0.1:1086'
+    )
   })
 
   it('surfaces a rejected save without leaving the form', async () => {
