@@ -91,7 +91,17 @@ vi.mock('@/components/ui/message-scroller', () => {
   }: PropsWithChildren<{ messageId?: string }>): React.JSX.Element => (
     <div data-message-id={messageId}>{children}</div>
   )
-  const Button = (): React.JSX.Element => <button type="button">Scroll to end</button>
+  const Button = ({
+    children,
+    direction = 'end',
+    ...props
+  }: PropsWithChildren<
+    React.ButtonHTMLAttributes<HTMLButtonElement> & { direction?: 'start' | 'end' }
+  >): React.JSX.Element => (
+    <button type="button" data-direction={direction} {...props}>
+      {children ?? `Scroll to ${direction}`}
+    </button>
+  )
 
   return {
     MessageScrollerProvider: Wrapper,
@@ -2054,6 +2064,37 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     // The find bar is an Electron overlay owned by main; the Workspace's only job is to announce it is
     // mounted and searchable so main intercepts Cmd/Ctrl+F.
     expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers scrolling to the first message only while the Session is idle or terminal', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const render = async (status: ChatSession['status']): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render('idle')
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+
+    for (const status of [
+      'running',
+      'waiting-for-user',
+      'waiting-permission',
+      'waiting-plan-approval'
+    ] as const) {
+      await render(status)
+      expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+    }
+
+    await render('error')
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
   })
 
   it('does not write to the preview store for non-managed-file artifacts', async () => {
