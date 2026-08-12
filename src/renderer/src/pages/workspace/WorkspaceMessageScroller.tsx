@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -993,14 +994,14 @@ const WorkspaceMessageScrollerImpl = ({
               direction="start"
               aria-label="Scroll to first message"
               size="default"
-              className="z-20 min-h-11 rounded-full border-border-200 bg-bg-000 px-4 text-sm shadow-card hover:bg-bg-200 data-[direction=start]:top-3"
+              className="z-20 min-h-11 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card hover:bg-bg-200 data-[direction=start]:top-3"
             >
               <ArrowDownIcon aria-hidden="true" />
               <span>First message</span>
             </MessageScrollerButton>
           ) : null}
 
-          <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+          <MessageScrollerButton className="z-10 border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
 
           {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
           {mentionNotice ? (

@@ -2081,7 +2081,15 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     root = createRoot(container)
     await render('idle')
-    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+    const firstMessageButton = container.querySelector('[aria-label="Scroll to first message"]')
+    const lastMessageButton = container.querySelector('[data-direction="end"]')
+    expect(firstMessageButton).not.toBeNull()
+    expect(lastMessageButton).not.toBeNull()
+    for (const button of [firstMessageButton, lastMessageButton]) {
+      expect(button?.classList.contains('border-transparent')).toBe(true)
+      expect(button?.classList.contains('shadow-card')).toBe(true)
+      expect(button?.classList.contains('border-border-200')).toBe(false)
+    }
 
     for (const status of [
       'running',
