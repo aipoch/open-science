@@ -7,7 +7,7 @@ import { Streamdown } from 'streamdown'
 import { describe, expect, it } from 'vitest'
 
 describe('AgentMarkdown fullscreen chrome', () => {
-  it('keeps the streaming caret visible before and between text segments', () => {
+  it('hides empty streaming blocks before the terminal block without any caret styling', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
     const streamingBlock = css.slice(
       css.indexOf('.agent-markdown-streaming'),
@@ -15,11 +15,11 @@ describe('AgentMarkdown fullscreen chrome', () => {
     )
 
     expect(streamingBlock).toContain('& > div > :empty:not(:last-child)')
-    expect(streamingBlock).toContain('opacity: 1')
     expect(streamingBlock).not.toContain('cursor-blink')
+    expect(streamingBlock).not.toContain('background-color: currentColor')
   })
 
-  it('anchors a thin streaming caret to the terminal text block', () => {
+  it('renders no streaming caret on the terminal text block', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
     const streamingBlock = css.slice(
       css.indexOf('.agent-markdown-streaming'),
@@ -35,14 +35,11 @@ describe('AgentMarkdown fullscreen chrome', () => {
 
     expect(markup).toContain('style="display:contents"')
     expect(markup).not.toContain('--streamdown-caret')
-    expect(streamingBlock).not.toContain('!important')
-    expect(streamingBlock).toContain('& .agent-markdown > :last-child:empty::after')
-    expect(streamingBlock).toContain('& .agent-markdown > :last-child > :last-child::after')
-    expect(streamingBlock).toContain("content: ''")
-    expect(streamingBlock).toContain('width: 1px')
-    expect(streamingBlock).toContain('height: 1.25em')
-    expect(streamingBlock).toContain('overflow: hidden')
-    expect(streamingBlock).toContain('background-color: currentColor')
+    // The terminal-block ::after stays suppressed so no caret glyph appears while streaming.
+    expect(streamingBlock).toContain('& .agent-markdown > :last-child::after')
+    expect(streamingBlock).toContain('content: none')
+    expect(streamingBlock).not.toContain('& .agent-markdown > :last-child:empty::after')
+    expect(streamingBlock).not.toContain('& .agent-markdown > :last-child > :last-child::after')
   })
 
   it('keeps Mermaid fullscreen functionality enabled while matching the dialog overlay chrome', () => {
