@@ -520,6 +520,32 @@ describe('ComposerEditor', () => {
     expect(lastCall.nodes.some((node) => node.type === 'skill' && node.id === 'lit')).toBe(true)
   })
 
+  it('exposes the active skill suggestion from the focused editor', () => {
+    renderEditor()
+
+    const textNode = document.createTextNode('/')
+    editor().appendChild(textNode)
+    setCaret(textNode, 1)
+    act(() => {
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const listbox = document.body.querySelector<HTMLElement>('[role="listbox"]')
+    const options = document.body.querySelectorAll<HTMLElement>('[role="option"]')
+    expect(editor().getAttribute('aria-autocomplete')).toBe('list')
+    expect(editor().getAttribute('aria-controls')).toBe(listbox?.id)
+    expect(editor().getAttribute('aria-activedescendant')).toBe(options[0]?.id)
+
+    dispatchKey(document, 'ArrowDown')
+
+    expect(editor().getAttribute('aria-activedescendant')).toBe(options[1]?.id)
+
+    dispatchKey(document, 'Escape')
+
+    expect(editor().getAttribute('aria-autocomplete')).toBeNull()
+    expect(editor().getAttribute('aria-controls')).toBeNull()
+    expect(editor().getAttribute('aria-activedescendant')).toBeNull()
+  })
   it('deletes the whole chip on Backspace when the caret is right after it', () => {
     const onDocChange = vi.fn()
     renderEditor({
@@ -592,6 +618,27 @@ describe('ComposerEditor', () => {
     ).toBe(true)
   })
 
+  it('exposes the active artifact suggestion from the focused editor', async () => {
+    renderEditor()
+
+    const textNode = document.createTextNode('@')
+    editor().appendChild(textNode)
+    setCaret(textNode, 1)
+    act(() => {
+      editor().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flushProjectFiles()
+
+    const listbox = document.body.querySelector<HTMLElement>('[role="listbox"]')
+    const options = document.body.querySelectorAll<HTMLElement>('[role="option"]')
+    expect(editor().getAttribute('aria-autocomplete')).toBe('list')
+    expect(editor().getAttribute('aria-controls')).toBe(listbox?.id)
+    expect(editor().getAttribute('aria-activedescendant')).toBe(options[0]?.id)
+
+    dispatchKey(document, 'ArrowDown')
+
+    expect(editor().getAttribute('aria-activedescendant')).toBe(options[1]?.id)
+  })
   it('allows multiple artifact chips in one message', async () => {
     const onDocChange = vi.fn()
     renderEditor({

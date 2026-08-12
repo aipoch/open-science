@@ -25,6 +25,8 @@ export type PickedArtifact = {
 // the composer keeps caret focus, so this listens for navigation keys on document while mounted.
 type ArtifactMentionPopupProps = {
   query: string
+  listboxId?: string
+  onActiveOptionIdChange?: (optionId: string | undefined) => void
   onSelect: (ref: PickedArtifact) => void
   onClose: () => void
 }
@@ -67,11 +69,14 @@ const loadProjectFiles = async (projectId: string): Promise<ProjectFileItem[]> =
 
 export const ArtifactMentionPopup = ({
   query,
+  listboxId,
+  onActiveOptionIdChange,
   onSelect,
   onClose
 }: ArtifactMentionPopupProps): React.JSX.Element | null => {
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
-  const listboxId = useId()
+  const generatedListboxId = useId()
+  const resolvedListboxId = listboxId ?? generatedListboxId
   const [projectFiles, setProjectFiles] = useState<{
     projectId?: string
     files: ProjectFileItem[]
@@ -146,6 +151,18 @@ export const ArtifactMentionPopup = ({
   // Keep the highlight within the current match set even after filtering shrinks it.
   const safeIndex = matches.length === 0 ? 0 : Math.min(activeIndex, matches.length - 1)
 
+  const activeOptionId = matches.length > 0 ? `${resolvedListboxId}-option-${safeIndex}` : undefined
+
+  // Focus remains in the editor, so keep its active-descendant target synchronized and visible.
+  useEffect(() => {
+    onActiveOptionIdChange?.(activeOptionId)
+    return () => onActiveOptionIdChange?.(undefined)
+  }, [activeOptionId, onActiveOptionIdChange])
+
+  useEffect(() => {
+    if (activeOptionId)
+      document.getElementById(activeOptionId)?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeOptionId])
   // Handle navigation keys at the document level while mounted, since focus stays in the editor.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -203,7 +220,7 @@ export const ArtifactMentionPopup = ({
     return (
       <li
         key={`${row.source}:${row.id}`}
-        id={`${listboxId}-option-${index}`}
+        id={`${resolvedListboxId}-option-${index}`}
         role="option"
         aria-selected={isActive}
         onMouseEnter={() => setActiveIndex(index)}
@@ -248,44 +265,48 @@ export const ArtifactMentionPopup = ({
   return (
     <div className="absolute bottom-full left-0 mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
       {matches.length === 0 ? (
-        <div className="px-2 py-1.5 text-sm text-text-300">
+        <div
+          role={loadState === 'error' ? 'alert' : 'status'}
+          aria-live={loadState === 'error' ? 'assertive' : 'polite'}
+          aria-atomic="true"
+          className="px-2 py-1.5 text-sm text-text-300"
+        >
           {loadState === 'loading'
             ? 'Loading project files…'
             : loadState === 'error'
               ? 'Could not load project files'
               : 'No artifacts yet'}
         </div>
-      ) : (
-        <ul
-          id={`${listboxId}-listbox`}
-          role="listbox"
-          aria-label="Artifact suggestions"
-          className="overflow-y-auto max-h-[min(45vh,18rem)]"
-        >
-          {uploadMatches.length > 0 ? (
-            <>
-              <li
-                aria-hidden="true"
-                className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-              >
-                {SECTION_UPLOADS}
-              </li>
-              {uploadMatches.map((row, index) => renderRow(row, index))}
-            </>
-          ) : null}
-          {artifactMatches.length > 0 ? (
-            <>
-              <li
-                aria-hidden="true"
-                className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-              >
-                {SECTION_ARTIFACTS}
-              </li>
-              {artifactMatches.map((row, index) => renderRow(row, uploadMatches.length + index))}
-            </>
-          ) : null}
-        </ul>
-      )}
+      ) : null}
+      <ul
+        id={resolvedListboxId}
+        role="listbox"
+        aria-label="Artifact suggestions"
+        className="overflow-y-auto max-h-[min(45vh,18rem)]"
+      >
+        {uploadMatches.length > 0 ? (
+          <>
+            <li
+              aria-hidden="true"
+              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
+            >
+              {SECTION_UPLOADS}
+            </li>
+            {uploadMatches.map((row, index) => renderRow(row, index))}
+          </>
+        ) : null}
+        {artifactMatches.length > 0 ? (
+          <>
+            <li
+              aria-hidden="true"
+              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
+            >
+              {SECTION_ARTIFACTS}
+            </li>
+            {artifactMatches.map((row, index) => renderRow(row, uploadMatches.length + index))}
+          </>
+        ) : null}
+      </ul>
       <div className="mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
         <span>
           <span className="text-text-300">↑↓</span> navigate

@@ -768,6 +768,46 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).not.toContain('Input</dt>')
   })
 
+  it('exposes completed and failed assistant timestamps as status messages', async () => {
+    const completedHtml = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({ id: 'prompt-complete' }),
+          createMessage({
+            id: 'reply-complete',
+            role: 'agent',
+            content: 'Done',
+            responseToMessageId: 'prompt-complete',
+            completedAt: 1710000001000
+          })
+        ]
+      })
+    )
+    const failedHtml = await renderScroller(
+      createSession({
+        status: 'error',
+        messages: [
+          createMessage({ id: 'prompt-failed' }),
+          createMessage({
+            id: 'reply-failed',
+            role: 'agent',
+            content: 'Could not finish',
+            status: 'error',
+            responseToMessageId: 'prompt-failed',
+            failedAt: 1710000001000
+          })
+        ]
+      })
+    )
+
+    expect(completedHtml).toMatch(
+      /<time[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/
+    )
+    expect(failedHtml).toMatch(
+      /<time[^>]*role="alert"[^>]*aria-live="assertive"[^>]*aria-atomic="true"/
+    )
+  })
   it('does not expose the fallback framework from a synthesized legacy graph', async () => {
     const messages = [
       createMessage({ id: 'prompt-1' }),

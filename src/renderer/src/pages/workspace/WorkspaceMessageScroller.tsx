@@ -1055,16 +1055,18 @@ const WorkspaceMessageScrollerImpl = ({
           <MessageScrollerButton className="z-10 border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
 
           {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
-          {mentionNotice ? (
-            <div
-              role="status"
-              className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"
-            >
+          <div
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+            className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"
+          >
+            {mentionNotice ? (
               <span className="rounded-full border border-border-200 bg-bg-000 px-3 py-1 text-[13px] text-text-100 shadow-card">
                 {mentionNotice}
               </span>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </MessageScroller>
       </MessageScrollerProvider>
 

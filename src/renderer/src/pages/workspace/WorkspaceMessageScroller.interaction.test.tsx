@@ -2347,6 +2347,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
       )
     })
+    const mentionAlert = container.querySelector('[role="alert"]')
+    expect(mentionAlert).not.toBeNull()
+    expect(mentionAlert?.getAttribute('aria-live')).toBe('assertive')
+    expect(mentionAlert?.getAttribute('aria-atomic')).toBe('true')
+    expect(mentionAlert?.textContent).toBe('')
     const pill = container.querySelector<HTMLButtonElement>('[aria-label="Preview sin.png"]')
     expect(pill).not.toBeNull()
     await act(async () => {
@@ -2398,6 +2403,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     expect(upsertAndActivateItem).not.toHaveBeenCalled()
     expect(container.textContent).toContain(
+      'Linked-folder files are not available until the folder is connected.'
+    )
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
       'Linked-folder files are not available until the folder is connected.'
     )
   })

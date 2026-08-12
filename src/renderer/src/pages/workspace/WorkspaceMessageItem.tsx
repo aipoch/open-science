@@ -124,7 +124,13 @@ const MessageTimestamp = ({
   date: Date
 }): React.JSX.Element => {
   return (
-    <time dateTime={date.toISOString()} title={messageTimestampTitleFormatter.format(date)}>
+    <time
+      role={label === 'Completed' ? 'status' : label === 'Failed' ? 'alert' : undefined}
+      aria-live={label === 'Completed' ? 'polite' : label === 'Failed' ? 'assertive' : undefined}
+      aria-atomic={label === 'Sent' ? undefined : true}
+      dateTime={date.toISOString()}
+      title={messageTimestampTitleFormatter.format(date)}
+    >
       {label} {messageTimestampFormatter.format(date)}
     </time>
   )
