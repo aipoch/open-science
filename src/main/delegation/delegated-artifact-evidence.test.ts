@@ -84,8 +84,15 @@ describe('delegated Artifact evidence adapter', () => {
     }
 
     const handle = await evidence.open(scope)
-    expect(handle.execution?.currentRunFile).toMatch(
-      /\.execution-handoffs\/artifact-run-10-1\.json$/
+    expect(handle.execution?.currentRunFile).toBe(
+      join(
+        dataRoot,
+        'artifacts',
+        'project-1',
+        'artifact-session-1',
+        '.execution-handoffs',
+        'artifact-run-10-1.json'
+      )
     )
     const ownerHandle = owner.handleForExecution('attempt-1')
     await owner.write(ownerHandle, { filename: 'child.md', content: 'child bytes' })

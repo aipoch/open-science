@@ -2097,8 +2097,15 @@ describe('production delegated-work composition', () => {
     })
     await expect.poll(() => execution.controls()).toHaveLength(1)
     const control = execution.controls()[0]
-    expect(control.input.artifactCurrentRunFile).toMatch(
-      /\.execution-handoffs\/artifact-run-10-1\.json$/
+    expect(control.input.artifactCurrentRunFile).toBe(
+      join(
+        root,
+        'artifacts',
+        'project-1',
+        'artifact-session-codex',
+        '.execution-handoffs',
+        'artifact-run-10-1.json'
+      )
     )
     const turn = turns.handleForExecution(control.input.attemptId)
     await turns.write(turn, { filename: 'evidence.md', content: 'exact child evidence' })

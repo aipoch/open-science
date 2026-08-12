@@ -280,8 +280,22 @@ describe('ArtifactTurnOwner', () => {
     )
     const handoffFiles = children.map((child) => owner.handoffFile(child))
     expect(handoffFiles).toEqual([
-      expect.stringMatching(/artifact-session-1\/\.execution-handoffs\/artifact-run-100-1\.json$/),
-      expect.stringMatching(/artifact-session-2\/\.execution-handoffs\/artifact-run-100-2\.json$/)
+      join(
+        dataRoot,
+        'artifacts',
+        'project-1',
+        'artifact-session-1',
+        '.execution-handoffs',
+        'artifact-run-100-1.json'
+      ),
+      join(
+        dataRoot,
+        'artifacts',
+        'project-1',
+        'artifact-session-2',
+        '.execution-handoffs',
+        'artifact-run-100-2.json'
+      )
     ])
 
     await Promise.all(children.map((child) => owner.dispose(child)))
