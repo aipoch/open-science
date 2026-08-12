@@ -249,8 +249,8 @@ describe('release certification evidence', () => {
       platform,
       source: { sha },
       checks: {
-        electronP0: platform === 'macos-arm64' ? 'passed' : 'not-applicable',
-        visualRegression: platform === 'macos-arm64' ? 'passed' : 'not-applicable',
+        electronP0: 'not-applicable',
+        visualRegression: 'not-applicable',
         packageSmoke: 'passed',
         authenticode: platform === 'windows-x64' ? 'not-required' : 'not-applicable'
       },
@@ -292,22 +292,22 @@ describe('release certification evidence', () => {
     })
 
     await writeFile(
-      join(root, 'certification-windows-x64.json'),
+      join(root, 'certification-macos-arm64.json'),
       JSON.stringify({
-        ...recordFor('windows-x64'),
+        ...recordFor('macos-arm64'),
         checks: {
-          ...recordFor('windows-x64').checks,
+          ...recordFor('macos-arm64').checks,
           electronP0: 'passed',
           visualRegression: 'passed'
         }
       })
     )
     await expect(aggregateEvidence({ argv: args })).rejects.toThrow(
-      /Invalid release certification evidence for windows-x64/
+      /Invalid release certification evidence for macos-arm64/
     )
     await writeFile(
-      join(root, 'certification-windows-x64.json'),
-      JSON.stringify(recordFor('windows-x64'))
+      join(root, 'certification-macos-arm64.json'),
+      JSON.stringify(recordFor('macos-arm64'))
     )
 
     await writeFile(

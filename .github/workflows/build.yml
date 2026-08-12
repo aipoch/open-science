@@ -6,9 +6,10 @@ name: Build
 # place. Publishing is done by the caller, not here.
 #
 # `npm ci` on each runner installs the native binaries it needs (claude-agent-sdk optional package,
-# Prisma query engine). macOS uses native ARM64 and Intel macOS 26 runners so packaged-app
-# certification does not execute across architectures and Xcode 26 can compile the Icon Composer
-# asset; Linux runs on ubuntu-latest and Windows x64 on windows-latest.
+# Prisma query engine). macOS uses native ARM64 and Intel macOS 26 runners so packaging does not
+# cross architectures and Xcode 26 can compile the Icon Composer asset; Linux runs on ubuntu-latest
+# and Windows x64 on windows-latest. Package smoke and desktop regression consume these immutable
+# artifacts in separate workflows so either can be retried without rebuilding.
 on:
   workflow_call:
     inputs:
@@ -79,8 +80,8 @@ jobs:
       - id: set
         shell: bash
         run: |
-          # Run each macOS package on its native macOS 26 architecture so P0, visual, and package
-          # smoke can execute the produced app while Xcode 26 compiles build/icon.icon. Windows'
+          # Build each macOS package on its native macOS 26 architecture while Xcode 26 compiles
+          # build/icon.icon. Downstream validation uses the same native runner mapping. Windows'
           # engine is query_engine-windows.dll.node (no `lib`
           # prefix, .dll.node not .so/.dylib). engine_keep = substring of the engine file to keep.
           # subdir/bin_os/bin_arch drive the notebook runtime staging step: `subdir` is the conda
@@ -326,131 +327,13 @@ jobs:
           security delete-keychain "$MAC_SIGNING_KEYCHAIN" || true
           rm -f "$MAC_SIGNING_CERTIFICATE" "$MAC_SIGNING_KEYCHAIN_LIST"
 
-      - name: Resolve packaged Electron executable
-        id: packaged_app
-        if: ${{ !inputs.skip_verify }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "${{ matrix.platform }}" in
-            mac) candidate="$(find dist -type f -path '*/Open Science.app/Contents/MacOS/Open Science' -print -quit)" ;;
-            win) candidate="$(find dist -type f -path '*/win-unpacked/open-science.exe' -print -quit)" ;;
-            linux) candidate="$(find dist -type f -path '*/linux-unpacked/open-science' -print -quit)" ;;
-            *) echo "Unsupported packaged Electron platform" >&2; exit 1 ;;
-          esac
-          if [ -z "$candidate" ] || [ ! -f "$candidate" ]; then
-            echo "Packaged Electron executable was not produced for ${{ matrix.name }}" >&2
-            exit 1
-          fi
-          executable="$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$candidate")"
-          echo "executable=$executable" >> "$GITHUB_OUTPUT"
-
-      # Run the portable release-critical desktop journeys once against the packaged ARM64 app.
-      # Native installer/package behavior remains hard-gated below for every published target.
-      - name: Run P0 Electron certification
-        id: p0
-        if: >-
-          ${{ !inputs.skip_verify &&
-              matrix.name == 'macos-arm64' &&
-              steps.packaged_app.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        env:
-          OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
-        run: npm run test:e2e:p0
-
-      # Visual behavior uses the same renderer bundle on every package. Keep one canonical hard gate
-      # beside P0 instead of multiplying antialiasing and launch variance across four native runners.
-      - name: Run desktop visual regression
-        id: visual
-        if: >-
-          ${{ !inputs.skip_verify &&
-              matrix.name == 'macos-arm64' &&
-              steps.packaged_app.outcome == 'success' }}
-        continue-on-error: true
-        shell: bash
-        env:
-          OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
-        run: npm run test:e2e:visual
-
-      # Exercise both macOS distributables rather than treating the unpacked app launch above as
-      # package coverage: mount the DMG, extract the ZIP, verify each bundle, and launch each app.
-      - name: Smoke test macOS packages
-        if: ${{ matrix.platform == 'mac' && !inputs.skip_verify }}
-        id: macos_smoke
-        continue-on-error: true
-        timeout-minutes: 10
-        run: node scripts/macos-package-smoke.mjs --artifact-dir dist
-
-      # Run the actual NSIS artifact, not the source tree: silent install into an isolated directory,
-      # start the packaged app in headless web mode, verify its authenticated bootstrap and bundled
-      # Windows runtime resources, request a clean shutdown, then silently uninstall it.
-      - name: Smoke test Windows installer
-        if: ${{ matrix.platform == 'win' && !inputs.skip_verify }}
-        id: windows_smoke
-        continue-on-error: true
-        timeout-minutes: 10
-        run: node scripts/windows-installer-smoke.mjs --installer-dir dist
-
-      # Install the deb with apt, launch the installed application, then extract and launch the
-      # AppImage. Both paths verify authenticated bootstrap and packaged native/runtime resources.
-      - name: Smoke test Linux packages
-        if: ${{ matrix.platform == 'linux' && !inputs.skip_verify }}
-        id: linux_smoke
-        continue-on-error: true
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          sudo apt-get install --yes ./dist/*.deb
-          trap 'sudo apt-get remove --yes open-science || true' EXIT
-          xvfb-run -a node scripts/linux-package-smoke.mjs \
-            --artifact-dir dist \
-            --installed-executable /usr/bin/open-science
-
-      - name: Record platform certification evidence
-        if: >-
-          ${{ !inputs.skip_verify &&
-              steps.packaged_app.outcome == 'success' &&
-              ((matrix.name == 'macos-arm64' &&
-                steps.p0.outcome == 'success' &&
-                steps.visual.outcome == 'success') ||
-               (matrix.name != 'macos-arm64' &&
-                steps.p0.outcome == 'skipped' &&
-                steps.visual.outcome == 'skipped')) &&
-              ((matrix.platform == 'mac' && steps.macos_smoke.outcome == 'success') ||
-               (matrix.platform == 'win' && steps.windows_smoke.outcome == 'success') ||
-               (matrix.platform == 'linux' && steps.linux_smoke.outcome == 'success')) }}
-        shell: bash
-        run: |
-          electron_p0=not-applicable
-          visual_regression=not-applicable
-          if [ "${{ matrix.name }}" = "macos-arm64" ]; then
-            electron_p0=passed
-            visual_regression=passed
-          fi
-          package_smoke=passed
-          authenticode=not-applicable
-          if [ "${{ matrix.platform }}" = "win" ]; then
-            authenticode=not-required
-          fi
-          node scripts/ci/release-certification-evidence.mjs write \
-            --platform "${{ matrix.name }}" \
-            --artifact-dir dist \
-            --output "dist/certification-${{ matrix.name }}.json" \
-            --electron-p0 "$electron_p0" \
-            --visual-regression "$visual_regression" \
-            --package-smoke "$package_smoke" \
-            --database-migration-certification dist/database-migration-certification.json \
-            --authenticode "$authenticode"
-
-      # Upload only the distributables + electron-updater metadata for the caller's publish job.
+      # Upload the build once. Blocking package smoke and advisory desktop regression download this
+      # immutable artifact, so re-running either validation never rebuilds or re-signs the package.
       - name: Upload build artifacts
-        if: ${{ always() && steps.package.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.name }}
-          retention-days: 1
+          retention-days: 7
           path: |
             dist/*.dmg
             dist/*.zip
@@ -460,39 +343,4 @@ jobs:
             dist/*.blockmap
             dist/latest*.yml
             dist/*-mac.yml
-            dist/certification-*.json
           if-no-files-found: error
-
-      - name: Enforce platform certification
-        if: ${{ !inputs.skip_verify && always() }}
-        shell: bash
-        env:
-          LINUX_SMOKE_OUTCOME: ${{ steps.linux_smoke.outcome }}
-          MACOS_SMOKE_OUTCOME: ${{ steps.macos_smoke.outcome }}
-          MATRIX_NAME: ${{ matrix.name }}
-          P0_OUTCOME: ${{ steps.p0.outcome }}
-          PACKAGED_APP_OUTCOME: ${{ steps.packaged_app.outcome }}
-          PLATFORM: ${{ matrix.platform }}
-          VISUAL_OUTCOME: ${{ steps.visual.outcome }}
-          WINDOWS_SMOKE_OUTCOME: ${{ steps.windows_smoke.outcome }}
-        run: |
-          set -euo pipefail
-          failed=0
-          check() {
-            if [[ "$2" != "success" ]]; then
-              echo "$1 ended with $2" >&2
-              failed=1
-            fi
-          }
-          check packaged_app "$PACKAGED_APP_OUTCOME"
-          if [[ "$MATRIX_NAME" == "macos-arm64" ]]; then
-            check p0 "$P0_OUTCOME"
-            check visual "$VISUAL_OUTCOME"
-          fi
-          case "$PLATFORM" in
-            mac) check macos_smoke "$MACOS_SMOKE_OUTCOME" ;;
-            win) check windows_smoke "$WINDOWS_SMOKE_OUTCOME" ;;
-            linux) check linux_smoke "$LINUX_SMOKE_OUTCOME" ;;
-            *) echo "Unsupported platform: $PLATFORM" >&2; failed=1 ;;
-          esac
-          exit "$failed"

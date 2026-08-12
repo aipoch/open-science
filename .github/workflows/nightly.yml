@@ -45,13 +45,17 @@ jobs:
     with:
       nightly: true
 
+  package-smoke:
+    needs: build
+    uses: ./.github/workflows/package-smoke.yml
+
   # Aggregate and checksum on the low-privilege build run. A manual Nightly stops here, making this
   # the focused no-side-effect dry-run; a successful schedule hands these prepared files to the
   # separate publisher as artifacts, never as executable code.
   prepare:
     name: Prepare nightly publish artifact
-    needs: [plan, build]
-    if: needs.build.result == 'success'
+    needs: [plan, build, package-smoke]
+    if: needs.build.result == 'success' && needs.package-smoke.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

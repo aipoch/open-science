@@ -241,7 +241,6 @@ const aggregateEvidence = async ({ argv }) => {
 
   for (const platform of PLATFORMS) {
     const record = byPlatform.get(platform)
-    const expectedPortableCheck = platform === 'macos-arm64' ? 'passed' : 'not-applicable'
     try {
       assertDatabaseMigrationCertification(record?.databaseMigration)
     } catch {
@@ -250,8 +249,8 @@ const aggregateEvidence = async ({ argv }) => {
     if (
       record.schemaVersion !== 1 ||
       record.source?.sha !== expectedSha ||
-      record.checks?.electronP0 !== expectedPortableCheck ||
-      record.checks?.visualRegression !== expectedPortableCheck ||
+      record.checks?.electronP0 !== 'not-applicable' ||
+      record.checks?.visualRegression !== 'not-applicable' ||
       !Array.isArray(record.artifacts) ||
       record.artifacts.length === 0
     ) {

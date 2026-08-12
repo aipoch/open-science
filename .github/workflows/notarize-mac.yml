@@ -114,6 +114,16 @@ jobs:
           name: macos-${{ matrix.arch }}
           path: mac
 
+      - name: Download macOS certification evidence (from this run)
+        if: >-
+          steps.gate.outputs.enabled == 'true' &&
+          inputs.from_run &&
+          inputs.certified_build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: certification-macos-${{ matrix.arch }}
+          path: mac
+
       # Standalone path: pull the arch's signed assets straight off the existing Release.
       - name: Download signed mac assets (from the release)
         if: steps.gate.outputs.enabled == 'true' && !inputs.from_run
@@ -253,7 +263,7 @@ jobs:
           '
 
       # Stapling changes the installer bytes. Re-hash the final artifacts while preserving the
-      # platform certification signal already established by the build job.
+      # package certification signal already established by the separate smoke job.
       - name: Refresh macOS certification evidence
         if: >-
           steps.gate.outputs.enabled == 'true' &&
@@ -264,11 +274,35 @@ jobs:
           --platform "macos-${{ matrix.arch }}"
           --artifact-dir mac
           --output "mac/certification-macos-${{ matrix.arch }}.json"
-          --electron-p0 "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
-          --visual-regression "${{ matrix.arch == 'arm64' && 'passed' || 'not-applicable' }}"
+          --electron-p0 not-applicable
+          --visual-regression not-applicable
           --package-smoke passed
           --database-migration-certification mac/database-migration-certification.json
           --authenticode not-applicable
+
+      - name: Preserve final database certification name
+        if: >-
+          steps.gate.outputs.enabled == 'true' &&
+          inputs.from_run &&
+          inputs.certified_build
+        run: >-
+          mv mac/database-migration-certification.json
+          "mac/database-migration-certification-macos-${{ matrix.arch }}.json"
+
+      - name: Replace macOS certification evidence
+        if: >-
+          steps.gate.outputs.enabled == 'true' &&
+          inputs.from_run &&
+          inputs.certified_build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: certification-macos-${{ matrix.arch }}
+          overwrite: true
+          retention-days: 7
+          path: |
+            mac/certification-macos-${{ matrix.arch }}.json
+            mac/database-migration-certification-macos-${{ matrix.arch }}.json
+          if-no-files-found: error
 
       # Call path: replace this run's signed artifacts with the stapled ones (same names) plus the
       # regenerated ${arch}-mac.yml feed, so the publish job's merge-multiple download picks them up.
@@ -280,12 +314,11 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}
           overwrite: true
-          retention-days: 1
+          retention-days: 7
           path: |
             mac/*-mac-*.dmg
             mac/*-mac-*.zip
             mac/*-mac.yml
-            mac/certification-*.json
           if-no-files-found: error
 
       # Standalone path: push the stapled dmg/zip + regenerated feed back onto the Release, replacing
