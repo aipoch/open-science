@@ -1633,6 +1633,18 @@ describe('ConversationPanel composer intake', () => {
         sideSessionId: 'side-1',
         draft: '',
         running: true,
+        entries: entries.slice(0, -1)
+      }
+    })
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        generation: 1,
+        parentSessionId: 'session-existing',
+        projectId: 'project-a',
+        sideSessionId: 'side-1',
+        draft: '',
+        running: true,
         entries
       }
     })
@@ -1645,6 +1657,13 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).not.toContain('流畅输出')
     await act(async () => vi.advanceTimersByTimeAsync(16))
     expect(container.textContent).toContain('流')
+
+    const nextAssistant = {
+      id: 'assistant-after-tool',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      text: '工具后的新内容'
+    }
 
     renderPanel({
       ...sideChatProps,
@@ -1662,15 +1681,81 @@ describe('ConversationPanel composer intake', () => {
             kind: 'tool',
             title: 'Tool after current answer',
             status: 'in_progress'
-          }
+          },
+          nextAssistant
         ]
       }
     })
     expect(container.textContent).not.toContain('Tool after current answer')
+    expect(container.textContent).not.toContain(nextAssistant.text)
 
     await act(async () => vi.advanceTimersByTimeAsync(96))
     expect(container.textContent).toContain('流畅输出')
     expect(container.textContent).toContain('Tool after current answer')
+    expect(container.textContent).not.toContain(nextAssistant.text)
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.textContent).toContain('工')
+    expect(container.textContent).not.toContain(nextAssistant.text)
+  })
+
+  it('does not replay a buffered Side chat answer after the panel reopens', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const sideChatProps = {
+      onSendSideChat: vi.fn(async () => true),
+      onSideChatDraftChange: vi.fn(),
+      onCancelSideChat: vi.fn(),
+      onCloseSideChat: vi.fn()
+    }
+    const userEntry = {
+      id: 'user-reopen',
+      kind: 'message' as const,
+      role: 'user' as const,
+      text: 'Keep going'
+    }
+    const assistantEntry = {
+      id: 'assistant-reopen',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      text: '重新打开时不应从头播放'
+    }
+    const sideChat = {
+      generation: 2,
+      parentSessionId: 'session-existing',
+      projectId: 'project-a',
+      sideSessionId: 'side-2',
+      draft: '',
+      running: true,
+      entries: [userEntry, assistantEntry]
+    }
+
+    renderPanel({ ...sideChatProps, sideChat: { ...sideChat, entries: [userEntry] } })
+    renderPanel({ ...sideChatProps, sideChat })
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.textContent).toContain('重')
+    expect(container.textContent).not.toContain(assistantEntry.text)
+
+    renderPanel()
+    renderPanel({ ...sideChatProps, sideChat })
+
+    expect(container.textContent).toContain(assistantEntry.text)
+
+    const continuedAnswer = `${assistantEntry.text}，继续输出`
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        ...sideChat,
+        entries: [userEntry, { ...assistantEntry, text: continuedAnswer }]
+      }
+    })
+    expect(container.textContent).not.toContain(continuedAnswer)
+    await act(async () => vi.advanceTimersByTimeAsync(512))
+    expect(container.textContent).toContain(`${assistantEntry.text}，`)
   })
 
   it('keeps main approval and ask-user surfaces waiting while Side chat is open', () => {

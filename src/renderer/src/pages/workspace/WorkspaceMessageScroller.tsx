@@ -17,6 +17,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -93,8 +94,28 @@ type SessionScopedActivityExpansionState = {
 }
 
 type SessionScopedMessagePresentationState = {
-  sessionId: string | undefined
+  scopeId: string | undefined
   messageIds: Set<string>
+}
+
+type VisibleMessageSnapshot = {
+  scopeId: string | undefined
+  messageIds: Set<string>
+}
+
+const VisibleMessageSnapshotCommit = ({
+  scopeId,
+  messageIdsKey,
+  onCommit
+}: {
+  scopeId: string | undefined
+  messageIdsKey: string
+  onCommit: (scopeId: string | undefined, messageIds: Set<string>) => void
+}): null => {
+  useLayoutEffect(() => {
+    onCommit(scopeId, new Set(JSON.parse(messageIdsKey)))
+  }, [messageIdsKey, onCommit, scopeId])
+  return null
 }
 
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
@@ -255,6 +276,12 @@ const WorkspaceMessageScrollerImpl = ({
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
+  const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
+    (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
+  )
+  const currentPresentationScopeId = currentSessionId
+    ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
+    : undefined
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
   const notebookRunsById = useNotebookRunsById(notebookReference)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
@@ -326,7 +353,7 @@ const WorkspaceMessageScrollerImpl = ({
     }))
   const [messagePresentationState, setMessagePresentationState] =
     useState<SessionScopedMessagePresentationState>(() => ({
-      sessionId: undefined,
+      scopeId: undefined,
       messageIds: new Set()
     }))
   const collapsedActivityGroups =
@@ -345,27 +372,46 @@ const WorkspaceMessageScrollerImpl = ({
     () => groupConversationItems(rawConversationItems, activeSession?.activityGroups),
     [activeSession?.activityGroups, rawConversationItems]
   )
+  const [visibleMessageSnapshot, setVisibleMessageSnapshot] = useState<VisibleMessageSnapshot>(
+    () => ({ scopeId: undefined, messageIds: new Set() })
+  )
+  const presentationScopeRemainedVisible =
+    visibleMessageSnapshot.scopeId === currentPresentationScopeId
   const presentingMessageIds =
-    messagePresentationState.sessionId === currentSessionId
+    messagePresentationState.scopeId === currentPresentationScopeId
       ? messagePresentationState.messageIds
       : new Set<string>()
   const presentationBarrierIndex = conversationItems.findIndex(
     (item) => item.type === 'message' && presentingMessageIds.has(item.message.id)
   )
+  const visibleMessageIds = (
+    presentationBarrierIndex >= 0
+      ? conversationItems.slice(0, presentationBarrierIndex + 1)
+      : conversationItems
+  ).flatMap((item) => (item.type === 'message' ? [item.message.id] : []))
+  const visibleMessageIdsKey = JSON.stringify(visibleMessageIds)
+  const handleVisibleMessageSnapshotCommit = useCallback(
+    (scopeId: string | undefined, messageIds: Set<string>): void => {
+      setVisibleMessageSnapshot({ scopeId, messageIds })
+    },
+    []
+  )
   const handleMessagePresentationChange = useCallback(
     (messageId: string, presenting: boolean): void => {
       setMessagePresentationState((currentState) => {
         const currentMessageIds =
-          currentState.sessionId === currentSessionId ? currentState.messageIds : new Set<string>()
+          currentState.scopeId === currentPresentationScopeId
+            ? currentState.messageIds
+            : new Set<string>()
         if (currentMessageIds.has(messageId) === presenting) return currentState
 
         const nextMessageIds = new Set(currentMessageIds)
         if (presenting) nextMessageIds.add(messageId)
         else nextMessageIds.delete(messageId)
-        return { sessionId: currentSessionId, messageIds: nextMessageIds }
+        return { scopeId: currentPresentationScopeId, messageIds: nextMessageIds }
       })
     },
-    [currentSessionId]
+    [currentPresentationScopeId]
   )
   const durablePlanOwnerActivityId = useMemo(
     () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
@@ -647,6 +693,11 @@ const WorkspaceMessageScrollerImpl = ({
           <MessageScrollerViewport aria-label="Conversation">
             <MessageScrollerContent className="gap-0 px-4">
               <div className={conversationContentClassName}>
+                <VisibleMessageSnapshotCommit
+                  scopeId={currentPresentationScopeId}
+                  messageIdsKey={visibleMessageIdsKey}
+                  onCommit={handleVisibleMessageSnapshotCommit}
+                />
                 {/* Messages and tool activities share one sorted transcript timeline. */}
                 {conversationItems.map((item, itemIndex) => {
                   if (presentationBarrierIndex >= 0 && itemIndex > presentationBarrierIndex) {
@@ -737,10 +788,13 @@ const WorkspaceMessageScrollerImpl = ({
                       messageItemProps.onPresentationChange = handleMessagePresentationChange
                       messageItemProps.presentationSourceOpen =
                         itemIndex === conversationItems.length - 1
+                      messageItemProps.presentationAnimateOnMount =
+                        presentationScopeRemainedVisible &&
+                        !visibleMessageSnapshot.messageIds.has(item.message.id)
                     }
 
                     return (
-                      <div key={item.id}>
+                      <div key={JSON.stringify([currentPresentationScopeId, item.id])}>
                         {/* Unbound completed jobs that belong chronologically before this message */}
                         {jobsBeforeMessage.map((job) => (
                           <MessageScrollerItem
