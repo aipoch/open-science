@@ -498,7 +498,6 @@ const HomePage = ({
             <div className="mt-1 text-[11px] text-muted-foreground">Beta</div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
-            <UpdateCapsule />
             {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
               <button
                 type="button"
@@ -539,6 +538,7 @@ const HomePage = ({
             >
               <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
             </button>
+            <UpdateCapsule />
             {/* Account button hidden for now; restore when the account flow lands. */}
             <Button
               variant="outline"

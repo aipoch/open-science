@@ -20,7 +20,13 @@ import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
 import { HomePage } from './HomePage'
 
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
-vi.mock('@/components/UpdateCapsule', () => ({ UpdateCapsule: () => null }))
+vi.mock('@/components/UpdateCapsule', () => ({
+  UpdateCapsule: () => (
+    <button type="button" data-testid="home-update-capsule">
+      Update
+    </button>
+  )
+}))
 
 let container: HTMLDivElement
 let root: Root
@@ -767,6 +773,26 @@ describe('HomePage activity overview', () => {
     )
 
     expect(onOpenGlobalSearch).toHaveBeenCalledOnce()
+  })
+
+  it('places the update action beside Settings and before New project', async () => {
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const settings = container.querySelector('[aria-label="Model settings"]')
+    const update = container.querySelector('[data-testid="home-update-capsule"]')
+    const newProject = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('New project')
+    )
+
+    expect(settings).not.toBeNull()
+    expect(update).not.toBeNull()
+    expect(newProject).toBeDefined()
+    expect(settings?.compareDocumentPosition(update!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(update?.compareDocumentPosition(newProject!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('prioritizes needs-you cards and shows separate per-project activity counts', async () => {

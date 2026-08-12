@@ -5,7 +5,8 @@ import { createRoot } from 'react-dom/client'
 import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { Toolbox } from 'lucide-react'
 import type { ChatSession } from '@/stores/session-store'
-import { describe, expect, it, vi } from 'vitest'
+import { useUpdateStore } from '@/stores/update-store'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -98,6 +99,13 @@ const getTextContent = (node: ReactNode): string => {
     .join('')
 }
 
+beforeEach(() => {
+  useUpdateStore.setState({
+    status: { state: 'up-to-date', current: '0.2.0', latest: '0.2.0' },
+    isDialogOpen: false
+  })
+})
+
 describe('WorkspaceSidebar accessible render', () => {
   it('keeps the sidebar card inset even on both sides', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
@@ -112,6 +120,54 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('-top-12 h-12 bg-gradient-to-t from-rail-card-bg')
     expect(html).not.toContain('-top-6 h-6 bg-gradient-to-t from-rail-card-bg')
+  })
+
+  it('docks the update action on the row above Settings', async () => {
+    useUpdateStore.setState({
+      status: { state: 'available', current: '0.2.0', latest: '0.3.0' }
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    try {
+      const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebar
+            projectName="Example project"
+            sessions={[createSession({ id: 'session-a' })]}
+            activeSessionId="session-a"
+            canCreateConversation
+            canMutateConversations
+            canDeleteConversations
+            onGoHome={vi.fn()}
+            onNewConversation={vi.fn()}
+            isFilesOpen={false}
+            onOpenFiles={vi.fn()}
+            onOpenSession={vi.fn()}
+            onRenameSession={vi.fn()}
+            canDownloadArtifacts
+            onDownloadArtifacts={vi.fn()}
+            onViewNotebook={vi.fn()}
+            onTogglePin={vi.fn()}
+            onDeleteSession={vi.fn()}
+            onOpenSettings={vi.fn()}
+            onOpenProjectSettings={vi.fn()}
+            onNewProject={vi.fn()}
+          />
+        )
+      })
+      const update = container.querySelector('[data-variant="session"]')
+      const settings = container.querySelector('[aria-label="Settings"]')
+
+      expect(update).not.toBeNull()
+      expect(settings).not.toBeNull()
+      expect(update?.compareDocumentPosition(settings!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    } finally {
+      act(() => root.unmount())
+      container.remove()
+    }
   })
 
   it('keeps the header row free of floating-toggle padding now that the toggle sits inline', async () => {
