@@ -2096,12 +2096,13 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ]
     const render = async (
       status: ChatSession['status'],
-      sessionMessages: ChatMessage[] = messages
+      sessionMessages: ChatMessage[] = messages,
+      overrides: Partial<ChatSession> = {}
     ): Promise<void> => {
       await act(async () => {
         root.render(
           <WorkspaceMessageScroller
-            activeSession={createSession({ status, messages: sessionMessages })}
+            activeSession={createSession({ status, messages: sessionMessages, ...overrides })}
             onSendEditedMessage={vi.fn()}
           />
         )
@@ -2150,6 +2151,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     await scrollTo(40, { clientHeight: 400, scrollHeight: 800 })
     expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+
+    await render('idle', messages, { compacting: true })
+    await scrollTo(400)
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
 
     for (const status of [
       'running',

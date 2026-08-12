@@ -285,7 +285,8 @@ const WorkspaceMessageScrollerImpl = ({
   const statusAllowsScrollToFirstMessage = Boolean(
     activeSession &&
     activeSession.status !== 'running' &&
-    !activeSession.status.startsWith('waiting-')
+    !activeSession.status.startsWith('waiting-') &&
+    !activeSession.compacting
   )
   const messageScrollerViewportRef = useRef<HTMLDivElement | null>(null)
   const messageScrollerContentRef = useRef<HTMLDivElement | null>(null)
