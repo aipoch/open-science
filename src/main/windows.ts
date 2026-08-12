@@ -76,10 +76,6 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
 
   window.on('ready-to-show', () => {
     if (e2eWindowMode === 'hidden') return
-    if (e2eWindowMode === 'inactive') {
-      window.showInactive()
-      return
-    }
     window.show()
   })
 

@@ -11,7 +11,7 @@ const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
-type E2eWindowMode = 'hidden' | 'inactive' | 'normal'
+type E2eWindowMode = 'hidden' | 'normal'
 
 const electronLaunchTarget = (
   userDataRoot: string,
