@@ -3337,24 +3337,22 @@ describe('SettingsService: official vendors', () => {
     })
   })
 
-  it('probes DeepSeek with the bridge tool-call contract under Codex', async () => {
+  it('probes DeepSeek Pro through the native Responses route under Codex', async () => {
     const service = createService()
     await repository.setAgentFramework('codex')
-    const fetchMock = vi.fn().mockResolvedValue(validBridgeToolCallResponse())
+    const fetchMock = vi.fn().mockResolvedValue(validNativeCompatibilityToolCallResponse())
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await service.validateProvider({
       draft: { type: 'official', vendorId: 'deepseek', key: 'sk-ds' }
     })
 
-    expect(result.ok).toBe(true)
-    // The dual-endpoint vendor reaches Codex through the Chat Completions bridge, so the probe must
-    // prove streaming function calls on the same OpenAI route before validation succeeds.
-    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/chat/completions')
-    expect(body).toMatchObject({
+    expect(result).toMatchObject({ ok: true, category: 'ok' })
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/responses')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      model: 'deepseek-v4-pro',
       stream: true,
-      tools: [{ type: 'function', function: { name: 'open_science_bridge_probe' } }]
+      tools: [{ type: 'function', name: 'open_science__bridge_probe' }]
     })
   })
 
