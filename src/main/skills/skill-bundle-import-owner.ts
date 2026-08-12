@@ -19,7 +19,7 @@ import {
   type ScannedSkill
 } from './github-import'
 import { parseSkillDocument } from './frontmatter'
-import { selectSkillManifestRoots } from './skill-bundle-paths'
+import { isSkillDocumentName, selectSkillManifestRoots } from './skill-bundle-paths'
 import { extractZip, extractZipLenient } from './zip-extract'
 import {
   SOURCE_MANIFEST,
@@ -232,7 +232,7 @@ export class SkillBundleImportOwner {
       let previewContentBytes = 0
       for (const root of roots) {
         try {
-          const skillMd = root.files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
+          const skillMd = root.files.find((file) => isSkillDocumentName(file.relativePath))!
           const previewContentUnavailable =
             previewContentBytes + skillMd.content.length >
             SKILL_IMPORT_LIMITS.maxPreviewContentBytes
@@ -361,7 +361,7 @@ export class SkillBundleImportOwner {
 
   private async writeRootLocked(root: SkillRoot, replaceId?: string): Promise<ImportOutcome> {
     const files = root.files
-    const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
+    const skillMd = files.find((file) => isSkillDocumentName(file.relativePath))!
     const signature = signatureOf(files)
 
     if (replaceId !== undefined) {

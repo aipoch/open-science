@@ -6,9 +6,10 @@ import { dump as dumpYaml, load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
 
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
+import { isSkillDocumentName } from './skill-bundle-paths'
+import { INTERNAL_SKILL_FILES } from './skill-files'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 
-const INTERNAL_SKILL_FILES = new Set(['.source.json', '.specialist-package.json'])
 const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 
 const withoutDisplayName = (raw: string): string => {
@@ -103,7 +104,7 @@ const collectFiles = async (
         throw new Error('Skill tree exceeds the total export size limit.')
       }
       let bytes = new Uint8Array(await readFile(absolutePath))
-      if (relativePath === 'SKILL.md') {
+      if (isSkillDocumentName(relativePath)) {
         bytes = new TextEncoder().encode(
           withoutDisplayName(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
         )

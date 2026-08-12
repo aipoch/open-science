@@ -43,7 +43,7 @@ import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limit
 import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
 import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
-import { readSkillFile } from '../skills/skill-files'
+import { listSkillFiles, readSkillFile } from '../skills/skill-files'
 import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
 import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
 import {
@@ -322,7 +322,8 @@ class SkillCatalogModule {
       metadata: Object.fromEntries(
         Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
       ),
-      references: await this.listReferences(skill.sourceDir)
+      references: await this.listReferences(skill.sourceDir),
+      files: await listSkillFiles(skill.sourceDir)
     }
   }
 

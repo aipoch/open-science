@@ -20,7 +20,8 @@ const detail = {
   author: 'Test Author',
   license: 'Test License',
   thirdParty: 'Weights — Example (CC-BY-4.0)',
-  body: '# Alpha body'
+  body: '# Alpha body',
+  files: []
 }
 
 beforeEach(() => {
@@ -168,5 +169,78 @@ describe('SkillDetailView', () => {
     act(() => toggle?.click())
 
     expect(useSettingsStore.getState().setSkillEnabled).toHaveBeenCalledWith('a', false)
+  })
+
+  it('renders attached files as a directory tree under Included files', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          ...detail,
+          files: [
+            { path: 'assets/model.bin', size: 12 * 1024 * 1024 },
+            { path: 'scripts/run.py', size: 4300 },
+            { path: 'scripts/helpers/utils.py', size: 1024 },
+            { path: 'requirements.txt', size: 400 }
+          ]
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Included files')
+    // Directory nodes by segment.
+    expect(text).toContain('assets')
+    expect(text).toContain('scripts')
+    expect(text).toContain('helpers')
+    // File leaves render the basename, not the full path.
+    expect(text).toContain('model.bin')
+    expect(text).toContain('run.py')
+    expect(text).toContain('utils.py')
+    expect(text).toContain('requirements.txt')
+    // Formatted sizes.
+    expect(text).toContain('12.0 MB')
+    expect(text).toContain('4.2 KB')
+    expect(text).toContain('1.0 KB')
+    expect(text).toContain('400 B')
+  })
+
+  it('omits the Included files section when there are no attached files', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: { getSkillDetail: vi.fn().mockResolvedValue({ ...detail, files: [] }) }
+    }
+
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Included files')
+  })
+
+  it('does not crash when the detail payload omits files', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({ ...detail, files: undefined })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillDetailView skillId="a" />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain('Alpha')
+    expect(document.body.textContent).not.toContain('Included files')
   })
 })

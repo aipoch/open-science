@@ -1,7 +1,7 @@
-import { ScrollText } from 'lucide-react'
+import { FileText, Folder, ScrollText } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import type { SkillDetailView as SkillDetail } from '../../../../shared/settings'
+import type { SkillDetailView as SkillDetail, SkillFileEntry } from '../../../../shared/settings'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SettingsToggle } from './SettingsLayout'
@@ -20,6 +20,13 @@ const formatUpdated = (iso: string): string => {
   return `Updated ${days} days ago`
 }
 
+// Formats a byte count as a compact human-readable size (B / KB / MB).
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 // One label/value row in the Details section.
 const DetailRow = ({ label, value }: { label: string; value: string }): React.JSX.Element => (
   <div className="flex flex-col gap-0.5 py-1.5">
@@ -27,6 +34,82 @@ const DetailRow = ({ label, value }: { label: string; value: string }): React.JS
     <span className="text-sm text-foreground">{value}</span>
   </div>
 )
+
+// A node in the attached-files tree. `file` is set on leaf nodes; intermediate nodes are directories
+// inferred from file paths (an empty directory has no files and never appears).
+type FileTreeNode = {
+  name: string
+  children: Map<string, FileTreeNode>
+  file: { size: number } | null
+}
+
+// Builds a directory tree from the flat list of posix relative paths the catalog returns. The tree is
+// presentation-only: it groups files by path segment so the detail view can render nested folders.
+const buildFileTree = (files: readonly SkillFileEntry[]): FileTreeNode => {
+  const root: FileTreeNode = { name: '', children: new Map(), file: null }
+  for (const file of files) {
+    const segments = file.path.split('/')
+    let current = root
+    for (const segment of segments) {
+      const next = current.children.get(segment) ?? {
+        name: segment,
+        children: new Map(),
+        file: null
+      }
+      current.children.set(segment, next)
+      current = next
+    }
+    current.file = { size: file.size }
+  }
+  return root
+}
+
+// Renders one tree node and recurses into its children. Directories sort before files, then each
+// group alphabetically. Indentation is driven by depth so nesting is visible without tree-drawing glyphs.
+const FileTreeRow = ({ node, depth }: { node: FileTreeNode; depth: number }): React.JSX.Element => {
+  const isDirectory = node.children.size > 0
+  const sortedChildren = [...node.children.values()].sort((left, right) => {
+    const leftIsDir = left.children.size > 0
+    const rightIsDir = right.children.size > 0
+    if (leftIsDir !== rightIsDir) return leftIsDir ? -1 : 1
+    return left.name.localeCompare(right.name)
+  })
+  return (
+    <>
+      {node.name === '' ? null : (
+        <div
+          className="flex items-center justify-between py-1"
+          style={{ paddingLeft: `${depth * 1.25}rem` }}
+        >
+          <span className="flex min-w-0 items-center gap-2 text-sm">
+            {isDirectory ? (
+              <Folder className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            ) : (
+              <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            <span
+              className={
+                isDirectory
+                  ? 'font-medium text-foreground'
+                  : 'font-mono text-foreground [overflow-wrap:anywhere]'
+              }
+            >
+              {node.name}
+            </span>
+          </span>
+          {node.file ? (
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {formatFileSize(node.file.size)}
+            </span>
+          ) : null}
+        </div>
+      )}
+      {sortedChildren.map((child) => (
+        <FileTreeRow key={child.name} node={child} depth={node.name === '' ? depth : depth + 1} />
+      ))}
+    </>
+  )
+}
 
 const metadataLabel = (key: string): string =>
   key.replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
@@ -40,8 +123,8 @@ const DEDICATED_METADATA_KEYS = new Set([
 ])
 
 // Read-only detail view for one bundled skill: header (name + badge + updated + description), the
-// rendered SKILL.md under "Files", and frontmatter metadata under "Details". The breadcrumb and back
-// control live in the settings header, not here.
+// rendered SKILL.md under "Files", every shipped file under "Included files", and frontmatter
+// metadata under "Details". The breadcrumb and back control live in the settings header, not here.
 const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element => {
   const skill = useSettingsStore((state) => state.skills.find((item) => item.id === skillId))
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
@@ -68,6 +151,9 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const genericMetadata = Object.entries(detail?.metadata ?? {}).filter(
     ([key]) => !DEDICATED_METADATA_KEYS.has(key.toLowerCase())
   )
+  // `files` arrives over IPC from getSkillDetail; default to [] so a partial or legacy payload never
+  // crashes the page. The type is required, but the renderer stays defensive about IPC data.
+  const files = detail?.files ?? []
 
   return (
     <div className="p-5">
@@ -99,6 +185,14 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
         <h2 className="mb-3 text-sm font-semibold text-foreground">Files</h2>
         {detail ? <AgentMarkdown content={detail.body} /> : null}
       </section>
+
+      {/* Included files: every shipped file (references/scripts/assets/templates/...), as a tree. */}
+      {files.length > 0 ? (
+        <section className="mt-6 border-t border-border pt-4">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Included files</h2>
+          <FileTreeRow node={buildFileTree(files)} depth={0} />
+        </section>
+      ) : null}
 
       {/* Details: frontmatter metadata (author, license, third-party notices, ...). */}
       {detail &&

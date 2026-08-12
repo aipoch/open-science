@@ -19,6 +19,7 @@ import {
 } from '../../../shared/specialist-package'
 import { parseSkillDocument } from '../../../shared/skill-frontmatter'
 import { createLogger } from '../../logger'
+import { isSkillDocumentName } from '../../skills/skill-bundle-paths'
 import type { StoredSpecialist } from '../types'
 import { SpecialistRepository } from '../repository'
 import { validateSpecialistZip } from './zip-adapter'
@@ -628,14 +629,13 @@ export class SpecialistPackageService {
     }
     for (const skill of skillSnapshots) {
       for (const file of skill.files) {
-        files[`skills/${skill.id}/${file.path}`] =
-          file.path === 'SKILL.md'
-            ? normalizeExportedSkillDocument(
-                file.bytes,
-                skill.id,
-                builtinIds.has(skill.id) ? undefined : skill.version
-              )
-            : file.bytes
+        files[`skills/${skill.id}/${file.path}`] = isSkillDocumentName(file.path)
+          ? normalizeExportedSkillDocument(
+              file.bytes,
+              skill.id,
+              builtinIds.has(skill.id) ? undefined : skill.version
+            )
+          : file.bytes
       }
     }
     const archiveBytes = buildDeterministicSpecialistZip(files)

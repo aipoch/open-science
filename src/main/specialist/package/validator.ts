@@ -13,6 +13,7 @@ import {
   type SpecialistPackageValidationResult
 } from '../../../shared/specialist-package'
 import { parseSkillDocument } from '../../../shared/skill-frontmatter'
+import { isSkillDocumentName } from '../../skills/skill-bundle-paths'
 import {
   validateSpecialistDescription,
   validateSpecialistDisplayName,
@@ -444,11 +445,14 @@ const planBundledSkills = (
       .filter((file) => file.path.startsWith(prefix))
       .map((file) => ({ path: file.path.slice(prefix.length), bytes: file.bytes }))
       .sort((left, right) => {
-        if (left.path === 'SKILL.md') return -1
-        if (right.path === 'SKILL.md') return 1
+        if (isSkillDocumentName(left.path)) return -1
+        if (isSkillDocumentName(right.path)) return 1
         return left.path.localeCompare(right.path)
       })
-    const document = files.find((file) => file.path === 'SKILL.md')
+    // The skill document may use any casing (skill.md, Skill.md, SKILL.md) — packages built on a
+    // case-insensitive filesystem (macOS/APFS) commonly land as skill.md. Match case-insensitively
+    // here (zip entry paths are pure strings, so the OS can't save us) so such packages import.
+    const document = files.find((file) => isSkillDocumentName(file.path))
     if (!document) {
       warning(
         diagnostics,
@@ -459,6 +463,8 @@ const planBundledSkills = (
       )
       continue
     }
+    // Diagnostics point at the document's actual filename, which may not be SKILL.md.
+    const documentPath = `${root}/${document.path}`
     let skillDocument: ReturnType<typeof parseSkillDocument> | undefined
     try {
       skillDocument = parseSkillDocument(decoder.decode(document.bytes))
@@ -467,7 +473,7 @@ const planBundledSkills = (
         diagnostics,
         'skill.document-invalid',
         'SKILL.md must contain valid UTF-8 text.',
-        `${root}/SKILL.md`,
+        documentPath,
         id
       )
       continue
@@ -477,7 +483,7 @@ const planBundledSkills = (
         diagnostics,
         'skill.name-mismatch',
         'SKILL.md frontmatter name must exactly match its directory Skill ID.',
-        `${root}/SKILL.md`,
+        documentPath,
         id
       )
       continue
@@ -488,7 +494,7 @@ const planBundledSkills = (
         diagnostics,
         'skill.version-invalid',
         'SKILL.md frontmatter version must be SemVer when present.',
-        `${root}/SKILL.md`,
+        documentPath,
         id
       )
       continue
