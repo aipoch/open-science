@@ -344,18 +344,18 @@
     animation: home-session-running-shimmer 7.2s cubic-bezier(0.65, 0, 0.35, 1) infinite;
   }
 
-  @keyframes update-reminder-trail-run {
+  @keyframes update-reminder-orbit-run {
     0% {
       opacity: 0;
-      transform: translate(var(--update-trail-from-x), var(--update-trail-from-y));
+      transform: rotate(-80deg);
     }
-    16%,
-    84% {
+    10%,
+    86% {
       opacity: 1;
     }
     100% {
       opacity: 0;
-      transform: translate(var(--update-trail-to-x), var(--update-trail-to-y));
+      transform: rotate(640deg);
     }
   }
 
@@ -398,23 +398,7 @@
     }
   }
 
-  @keyframes update-reminder-halo-release {
-    0%,
-    68% {
-      opacity: 0;
-      transform: scale(0.94);
-    }
-    72% {
-      opacity: 0.5;
-      transform: scale(0.98);
-    }
-    100% {
-      opacity: 0;
-      transform: scale(1.12);
-    }
-  }
-
-  /* One finite attention cue: surface light → border trail → icon wiggle → quiet halo release. */
+  /* One finite attention cue: surface light → exterior orbit → icon wiggle. */
   .update-reminder {
     --update-reminder-gradient-start: color-mix(
       in srgb,
@@ -433,6 +417,13 @@
       in srgb,
       var(--color-primary-foreground) 16%,
       transparent
+    );
+    --update-reminder-orbit-edge: color-mix(in srgb, var(--color-session-running) 20%, transparent);
+    --update-reminder-orbit-tail: color-mix(in srgb, var(--color-session-running) 42%, transparent);
+    --update-reminder-orbit-head: color-mix(
+      in srgb,
+      var(--color-session-running) 90%,
+      var(--color-primary-foreground)
     );
     overflow: visible;
   }
@@ -482,88 +473,35 @@
     animation: update-reminder-sheen-pass 1.4s cubic-bezier(0.4, 0, 0.2, 1) both;
   }
 
-  .update-reminder-trail,
-  .update-reminder-halo {
+  .update-reminder-orbit {
     position: absolute;
+    z-index: 6;
     inset: 0;
+    overflow: hidden;
+    padding: 0.0625rem;
     border-radius: inherit;
+    background: var(--update-reminder-orbit-edge);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
   }
 
-  .update-reminder-trail > span {
+  .update-reminder-orbit::before {
     position: absolute;
-    border-radius: inherit;
+    inset: -100%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg 276deg,
+      var(--update-reminder-orbit-tail) 308deg,
+      var(--update-reminder-orbit-head) 328deg,
+      transparent 344deg 360deg
+    );
+    content: '';
     opacity: 0;
-    animation: update-reminder-trail-run 380ms cubic-bezier(0.4, 0, 0.2, 1) both;
-  }
-
-  .update-reminder-trail > span:nth-child(2) {
-    animation-delay: 260ms;
-  }
-
-  .update-reminder-trail > span:nth-child(3) {
-    animation-delay: 520ms;
-  }
-
-  .update-reminder-trail > span:nth-child(4) {
-    animation-delay: 780ms;
-  }
-
-  .update-reminder-trail > span:nth-child(1),
-  .update-reminder-trail > span:nth-child(3) {
-    width: 42%;
-    height: 0.125rem;
-  }
-
-  .update-reminder-trail > span:nth-child(2),
-  .update-reminder-trail > span:nth-child(4) {
-    width: 0.125rem;
-    height: 42%;
-  }
-
-  .update-reminder-trail > span:nth-child(1) {
-    --update-trail-from-x: -110%;
-    --update-trail-from-y: 0;
-    --update-trail-to-x: 340%;
-    --update-trail-to-y: 0;
-    top: 0;
-    left: 0;
-    background: linear-gradient(90deg, transparent, currentColor);
-  }
-
-  .update-reminder-trail > span:nth-child(2) {
-    --update-trail-from-x: 0;
-    --update-trail-from-y: -110%;
-    --update-trail-to-x: 0;
-    --update-trail-to-y: 340%;
-    top: 0;
-    right: 0;
-    background: linear-gradient(180deg, transparent, currentColor);
-  }
-
-  .update-reminder-trail > span:nth-child(3) {
-    --update-trail-from-x: 110%;
-    --update-trail-from-y: 0;
-    --update-trail-to-x: -340%;
-    --update-trail-to-y: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(270deg, transparent, currentColor);
-  }
-
-  .update-reminder-trail > span:nth-child(4) {
-    --update-trail-from-x: 0;
-    --update-trail-from-y: 110%;
-    --update-trail-to-x: 0;
-    --update-trail-to-y: -340%;
-    bottom: 0;
-    left: 0;
-    background: linear-gradient(0deg, transparent, currentColor);
-  }
-
-  .update-reminder-halo {
-    box-shadow: 0 0 0 0.125rem currentColor;
-    opacity: 0;
-    animation: update-reminder-halo-release 1.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform: rotate(-80deg);
+    animation: update-reminder-orbit-run 1.8s cubic-bezier(0.65, 0, 0.35, 1) both;
   }
 
   .update-reminder-mark {
@@ -595,8 +533,7 @@
     pointer-events: none;
   }
 
-  .update-reminder:disabled .update-reminder-trail > span,
-  .update-reminder:disabled .update-reminder-halo,
+  .update-reminder:disabled .update-reminder-orbit::before,
   .update-reminder:disabled .update-reminder-sheen::after,
   .update-reminder:disabled .update-reminder-mark > svg {
     animation: none;

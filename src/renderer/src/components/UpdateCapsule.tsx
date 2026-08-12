@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: update action · genre: modern-minimal · theme: existing Open Science
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: existing project token pairs
@@ -42,13 +42,7 @@ const updateCopy = (status: UpdateStatus): { title: string; action: string; icon
 const UpdateAttention = (): React.JSX.Element => (
   <span className="update-reminder-attention" aria-hidden="true">
     <span className="update-reminder-sheen" />
-    <span className="update-reminder-trail">
-      <span />
-      <span />
-      <span />
-      <span />
-    </span>
-    <span className="update-reminder-halo" />
+    <span className="update-reminder-orbit" />
   </span>
 )
 

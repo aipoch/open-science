@@ -55,8 +55,7 @@ describe('UpdateCapsule', () => {
     expect(button).not.toBeNull()
     expect(button?.getAttribute('data-variant')).toBe('home')
     expect(button?.querySelector('.update-reminder-sheen')).not.toBeNull()
-    expect(button?.querySelectorAll('.update-reminder-trail > span')).toHaveLength(4)
-    expect(button?.querySelector('.update-reminder-halo')).not.toBeNull()
+    expect(button?.querySelector('.update-reminder-orbit')).not.toBeNull()
     expect(button?.querySelector('.update-reminder-status-dot')).not.toBeNull()
     expect(button?.textContent).toBe('Update')
 
