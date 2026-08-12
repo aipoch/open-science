@@ -20,7 +20,7 @@ import {
   installerVersion,
   installAndProbe,
   launchAndProbe,
-  parsePackagedAppEndpoint,
+  authenticatePackagedAppEndpoint,
   runProcess,
   terminateProcessTree,
   uninstallAndVerify,
@@ -304,6 +304,7 @@ exit $exitCode
 const runElectronUpdater = async ({
   executable,
   env,
+  configRoots,
   expectedVersion,
   expectedInstaller,
   onDownloaded
@@ -332,7 +333,9 @@ const runElectronUpdater = async ({
   let installerExit
   try {
     const { endpoint, auth } = await Promise.race([
-      waitFor('the updater app web service', async () => parsePackagedAppEndpoint(output())),
+      waitFor('the updater app web service', async () =>
+        authenticatePackagedAppEndpoint(output(), configRoots)
+      ),
       exit.then((code) => {
         throw new Error(
           `Updater app exited before becoming healthy (${code}).\n${diagnosticOutput()}`
@@ -560,6 +563,7 @@ const main = async () => {
     await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
+      configRoots: [previousConfigRoot],
       expectedVersion: currentVersion,
       expectedInstaller: join(
         env.LOCALAPPDATA,
@@ -594,7 +598,8 @@ const main = async () => {
     const currentConfigRoot = await launchAndProbe({
       installDirectory,
       expectedVersion: currentVersion,
-      env
+      env,
+      legacyConfigRoots: [previousConfigRoot]
     })
     await profileGuard.verifyCycle('current', currentConfigRoot)
     console.log('Windows electron-updater differential certification completed successfully.')

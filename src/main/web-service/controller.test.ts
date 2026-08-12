@@ -129,6 +129,7 @@ describe('createWebServiceController', () => {
       const result = await h.controller.ensureStarted(44100, { attached: false })
 
       expect(result.url).toBe('http://127.0.0.1:44100/?token=tok-123')
+      expect(stdout).toHaveBeenCalledWith('Open Science Web: http://127.0.0.1:44100/')
       expect(stdout.mock.calls.flat().join(' ')).not.toContain('tok-123')
     } finally {
       stdout.mockRestore()

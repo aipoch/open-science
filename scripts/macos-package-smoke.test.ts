@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  authenticatePackagedAppEndpoint,
   artifactVersion,
   assertPackagedResources,
   findAppBundle,
@@ -60,10 +61,20 @@ describe('macOS package smoke', () => {
     expect(() => parseArguments([])).toThrow(/Usage/)
   })
 
-  it('extracts the authenticated packaged service endpoint', () => {
-    expect(
-      parsePackagedAppEndpoint('Open Science Web: http://127.0.0.1:3210/?token=abc_123')
-    ).toEqual({ endpoint: 'http://127.0.0.1:3210', auth: 'token=abc_123' })
+  it('authenticates the token-free readiness endpoint through the service state contract', async () => {
+    const output = 'Open Science Web: http://127.0.0.1:3210/'
+    expect(parsePackagedAppEndpoint(output)).toEqual({ endpoint: 'http://127.0.0.1:3210' })
+    await expect(
+      authenticatePackagedAppEndpoint(output, ['/config'], {
+        readText: async (path: string) =>
+          path.endsWith('web-service.json')
+            ? JSON.stringify({ port: 3210 })
+            : 'macos_smoke_token_12345678901234567890\n'
+      })
+    ).resolves.toEqual({
+      endpoint: 'http://127.0.0.1:3210',
+      auth: 'token=macos_smoke_token_12345678901234567890'
+    })
     expect(parsePackagedAppEndpoint('not ready')).toBeUndefined()
   })
 
