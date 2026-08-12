@@ -145,4 +145,38 @@ describe('AnthropicProviderBridge', () => {
     expect(response.status).toBe(401)
     expect(upstream.requests).toEqual([])
   })
+
+  it('filters Fetch Metadata headers before invoking the upstream fetch', async () => {
+    let upstreamHeaders: Headers | undefined
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      upstreamHeaders = new Headers(init?.headers)
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'content-type': 'application/json' }
+      })
+    }
+    const target = {
+      id: 'provider/model-a',
+      baseUrl: 'https://provider.example.test',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new AnthropicProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+
+    const response = await fetch(`${connection.baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json',
+        'sec-fetch-site': 'same-origin',
+        'x-request-id': 'request-1'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(200)
+    expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
+    expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+  })
 })

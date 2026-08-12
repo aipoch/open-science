@@ -45,6 +45,7 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
       HOP_BY_HOP_HEADERS.has(normalized) ||
       normalized === 'authorization' ||
       normalized === 'x-api-key' ||
+      normalized.startsWith('sec-fetch-') ||
       value === undefined
     ) {
       continue
