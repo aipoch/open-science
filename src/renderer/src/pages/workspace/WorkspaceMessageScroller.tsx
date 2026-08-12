@@ -1097,6 +1097,7 @@ const WorkspaceMessageScrollerImpl = ({
                       expansionOverrides={activityExpansionOverrides}
                       onToggleRow={toggleActivityRow}
                       notebookRunsById={notebookRunsById}
+                      permission={activeSession?.runtimeContext?.permission}
                       jobsByActivityId={jobsByActivityId}
                       onOpenJobDetail={handleOpenJobDetail}
                     />

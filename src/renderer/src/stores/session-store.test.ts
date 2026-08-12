@@ -4485,6 +4485,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
+      'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',

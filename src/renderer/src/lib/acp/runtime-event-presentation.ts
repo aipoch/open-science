@@ -158,6 +158,8 @@ const applyRuntimePresentationEvent = (
       promptMessageId: event.promptMessageId,
       title: event.title,
       status: event.status,
+      toolDisposition: event.toolDisposition,
+      executionInvocationId: event.executionInvocationId,
       providerToolName: event.providerToolName,
       toolKind: event.toolKind,
       toolContent: event.toolContent,

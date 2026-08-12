@@ -499,8 +499,8 @@ describe('conversation message scroller integration', () => {
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group"')
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group-header"')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceWebSearchActivityRow')
-    expect(workspaceActivityGroupSource).toContain(
-      'formatActivityGroupTitle(group.activities, group.title)'
+    expect(workspaceActivityGroupSource).toMatch(
+      /formatActivityGroupPresentationTitle\(\s*group\.activities,\s*group\.title,\s*permission,\s*notebookRunsById\s*\)/
     )
     expect(workspaceActivityGroupSource).toContain('getRenderableActivityEntries(group.activities)')
     expect(workspaceWebSearchActivityRowSource).toContain('const WorkspaceWebSearchActivityRow')
@@ -631,7 +631,7 @@ describe('notebook preview integration', () => {
     expect(notebookPreviewSource).toContain("source: 'user'")
     expect(notebookPreviewSource).toContain("inputKind: 'terminal'")
     expect(notebookPreviewSource).toContain(
-      "import {\n  resolveRunErrorLine,\n  environmentLabel,\n  isProblemRunStatus,\n  kernelKindLabel,\n  kernelOriginLabel,\n  resolveRunEnvironment,\n  resolveRunKernelKind\n} from './notebook-cell-utils'"
+      "import {\n  resolveRunErrorLine,\n  environmentLabel,\n  isProblemRunStatus,\n  kernelKindLabel,\n  kernelOriginLabel,\n  notebookRunStatusLabel,\n  resolveRunEnvironment,\n  resolveRunKernelKind\n} from './notebook-cell-utils'"
     )
     expect(notebookPreviewSource).toContain('[{index}]')
     expect(notebookPreviewSource).toContain('resolveRunKernelKind(run)')

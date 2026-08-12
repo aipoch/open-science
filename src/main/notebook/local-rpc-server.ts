@@ -39,6 +39,11 @@ import {
   type TrustedControlInvocationIdentity
 } from '../../shared/agents-contract'
 import {
+  NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS,
+  NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS,
+  type NotebookExecutionRpcMethod
+} from '../../shared/notebook'
+import {
   listenForLocalRpc,
   localRpcServerLogFields,
   type LocalRpcListenOptions
@@ -236,6 +241,13 @@ type NotebookRpcSessionBinding = {
   }
 }
 
+type NotebookExecutionAuthorization = Readonly<{
+  executionInvocationId: string
+  toolCallId: string
+  promptMessageId: string
+  inputFingerprint: string
+}>
+
 type DelegatedNotebookConnectionRequest = Readonly<{
   projectId: string
   sessionId: string
@@ -312,6 +324,44 @@ const isArtifactRpcMethod = (method: string): method is ArtifactRpcMethod =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+// Session, prompt, method, and one-shot ownership are checked separately. This digest binds the
+// authorization to executable input so a racing same-method request cannot take another Tool's join.
+const notebookExecutionInputFingerprint = (
+  method: NotebookExecutionRpcMethod,
+  rawInput: unknown
+): string | undefined => {
+  const outer = isRecord(rawInput) ? rawInput : undefined
+  const input = isRecord(outer?.arguments) ? outer.arguments : outer
+  const executable = input?.[method === 'executeShell' ? 'command' : 'code']
+  if (typeof executable !== 'string') return undefined
+  const timeoutMs =
+    method === 'executeControl'
+      ? typeof input?.timeoutMs === 'number'
+        ? input.timeoutMs
+        : NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS
+      : method === 'executeShell'
+        ? typeof input?.timeoutMs === 'number'
+          ? input.timeoutMs
+          : NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
+        : null
+
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        method,
+        executable,
+        timeoutMs,
+        method === 'execute' && typeof input?.language === 'string'
+          ? input.language.toLowerCase()
+          : method === 'execute'
+            ? 'python'
+            : null,
+        method === 'execute' && typeof input?.cellId === 'string' ? input.cellId : null
+      ])
+    )
+    .digest('hex')
+}
+
 // Reads the full HTTP request body and parses it as the notebook RPC payload.
 const readJsonBody = async (request: IncomingMessage): Promise<NotebookRpcPayload> => {
   const chunks: Buffer[] = []
@@ -377,6 +427,11 @@ class NotebookLocalRpcServer {
   private readonly inputRunLeaseIds = new WeakMap<NotebookInputRunLease, string>()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
+  private readonly executionAuthorizations = new Map<
+    string,
+    Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization | 'ambiguous'>
+  >()
+  private readonly consumedExecutionToolCalls = new Map<string, Set<string>>()
 
   constructor(
     private readonly service: NotebookLocalRpcCapability,
@@ -504,6 +559,8 @@ class NotebookLocalRpcServer {
     this.sessionRpcCapabilities.clear()
     this.sessionRpcTokens.clear()
     this.skillImportRpcTokens.clear()
+    this.executionAuthorizations.clear()
+    this.consumedExecutionToolCalls.clear()
 
     if (!server || !lifecycle) return Promise.resolve()
 
@@ -648,6 +705,8 @@ class NotebookLocalRpcServer {
     this.revokePlanSessionCapabilities(sessionId)
     for (const ownedSessionId of ownedSessionIds) {
       this.sessionSpecialists.delete(ownedSessionId)
+      this.executionAuthorizations.delete(ownedSessionId)
+      this.consumedExecutionToolCalls.delete(ownedSessionId)
     }
     for (const [aliasSessionId, targetSessionId] of this.sessionAliases) {
       if (ownedSessionIds.has(aliasSessionId) || ownedSessionIds.has(targetSessionId)) {
@@ -655,6 +714,82 @@ class NotebookLocalRpcServer {
       }
     }
     this.onSessionReleased?.(sessionId)
+  }
+
+  // Creates the app-owned half of an exact ACP-tool/Notebook-Run join before permission is released.
+  // The authenticated RPC bridge consumes it only for the matching method and active prompt. Two
+  // different unclaimed calls for the same lane become ambiguous and therefore never show running.
+  authorizeExecution(authorization: {
+    sessionId: string
+    toolCallId: string
+    promptMessageId: string
+    method: NotebookExecutionRpcMethod
+    rawInput?: unknown
+  }): string | undefined {
+    const sessionId = this.sessionAliases.get(authorization.sessionId) ?? authorization.sessionId
+    const inputFingerprint = notebookExecutionInputFingerprint(
+      authorization.method,
+      authorization.rawInput
+    )
+    if (
+      !inputFingerprint ||
+      this.artifactProvenanceContexts.get(sessionId)?.promptMessageId !==
+        authorization.promptMessageId ||
+      this.consumedExecutionToolCalls.get(sessionId)?.has(authorization.toolCallId)
+    ) {
+      return undefined
+    }
+
+    const byMethod = this.executionAuthorizations.get(sessionId) ?? new Map()
+    const existing = byMethod.get(authorization.method)
+    if (existing === 'ambiguous') return undefined
+    if (
+      existing?.toolCallId === authorization.toolCallId &&
+      existing.inputFingerprint === inputFingerprint
+    ) {
+      return existing.executionInvocationId
+    }
+    if (existing) {
+      byMethod.set(authorization.method, 'ambiguous')
+      this.executionAuthorizations.set(sessionId, byMethod)
+      return undefined
+    }
+
+    const executionInvocationId = randomUUID()
+    byMethod.set(authorization.method, {
+      executionInvocationId,
+      toolCallId: authorization.toolCallId,
+      promptMessageId: authorization.promptMessageId,
+      inputFingerprint
+    })
+    this.executionAuthorizations.set(sessionId, byMethod)
+    return executionInvocationId
+  }
+
+  private claimExecutionAuthorization(
+    sessionId: string,
+    method: string,
+    params: Record<string, unknown>
+  ): string | undefined {
+    if (method !== 'execute' && method !== 'executeControl' && method !== 'executeShell') {
+      return undefined
+    }
+    const byMethod = this.executionAuthorizations.get(sessionId)
+    const authorization = byMethod?.get(method)
+    byMethod?.delete(method)
+    if (byMethod?.size === 0) this.executionAuthorizations.delete(sessionId)
+    if (!authorization || authorization === 'ambiguous') return undefined
+    const consumed = this.consumedExecutionToolCalls.get(sessionId) ?? new Set<string>()
+    consumed.add(authorization.toolCallId)
+    this.consumedExecutionToolCalls.set(sessionId, consumed)
+    if (
+      this.artifactProvenanceContexts.get(sessionId)?.promptMessageId !==
+        authorization.promptMessageId ||
+      notebookExecutionInputFingerprint(method, params) !== authorization.inputFingerprint
+    ) {
+      return undefined
+    }
+    return authorization.executionInvocationId
   }
 
   async issueSessionConnection(
@@ -898,6 +1033,12 @@ class NotebookLocalRpcServer {
     context: NotebookRunProvenanceContext | undefined
   ): void {
     if (context) {
+      const previousPromptMessageId =
+        this.artifactProvenanceContexts.get(sessionId)?.promptMessageId
+      if (previousPromptMessageId && previousPromptMessageId !== context.promptMessageId) {
+        this.executionAuthorizations.delete(sessionId)
+        this.consumedExecutionToolCalls.delete(sessionId)
+      }
       this.artifactProvenanceContexts.set(sessionId, context)
       if (context.agentFrameId === context.rootFrameId) {
         for (const binding of this.sessionRpcCapabilities.values()) {
@@ -916,6 +1057,8 @@ class NotebookLocalRpcServer {
     } else {
       this.artifactProvenanceContexts.delete(sessionId)
       this.activeTurnProjectIds.delete(sessionId)
+      this.executionAuthorizations.delete(sessionId)
+      this.consumedExecutionToolCalls.delete(sessionId)
     }
   }
 
@@ -1260,7 +1403,8 @@ class NotebookLocalRpcServer {
       }
       // Resolve pre-session aliases before the runtime service looks up persistent state.
       if (method === 'planCall' && lifecycle.closing) disconnect.abort()
-      let resolvedParams = this.resolveSessionAlias(params)
+      let resolvedParams = { ...this.resolveSessionAlias(params) }
+      delete resolvedParams.executionInvocationId
       const authenticatedBinding = authenticatedSessionBinding
       if (authenticatedBinding?.delegatedNotebook && isNotebookLocalRpcMethod(method)) {
         resolvedParams = {
@@ -1303,6 +1447,24 @@ class NotebookLocalRpcServer {
           activeContext.agentFrameId !== authenticatedBinding.agentFrameId
         ) {
           throw new RpcHttpError(403, 'Notebook RPC capability does not match active Agent Frame.')
+        }
+      }
+      if (
+        authenticatedBinding &&
+        !authenticatedBinding.delegatedNotebook &&
+        !authenticatedBinding.isControl &&
+        authenticatedBinding.delegatedWorkRole === 'main' &&
+        !authenticatedBinding.allowedMethods &&
+        typeof resolvedParams.sessionId === 'string' &&
+        (method === 'execute' || method === 'executeControl' || method === 'executeShell')
+      ) {
+        const executionInvocationId = this.claimExecutionAuthorization(
+          resolvedParams.sessionId,
+          method,
+          resolvedParams
+        )
+        if (executionInvocationId) {
+          resolvedParams = { ...resolvedParams, executionInvocationId }
         }
       }
       const result =
@@ -2034,11 +2196,14 @@ class NotebookLocalRpcServer {
       this.inputRunLeaseIds.set(lease, inputRunLeaseId)
       this.activeInputRunLeases.set(sessionId, leases)
       try {
-        return await handler({
-          ...params,
-          registeredInputFiles: lease.getRunInputFiles(),
-          inputRunLeaseId
-        })
+        return await handler(
+          {
+            ...params,
+            registeredInputFiles: lease.getRunInputFiles(),
+            inputRunLeaseId
+          },
+          signal
+        )
       } finally {
         lease.close()
         leases.delete(lease)
@@ -2047,7 +2212,7 @@ class NotebookLocalRpcServer {
       }
     }
 
-    return handler(params)
+    return handler(params, signal)
   }
 
   // Rewrites the temporary notebook session id to the final ACP session id when needed.

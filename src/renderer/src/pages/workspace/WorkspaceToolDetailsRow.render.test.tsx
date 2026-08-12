@@ -215,6 +215,35 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).toContain('hi')
   })
 
+  it('renders a closed permission as neutral terminal metadata', async () => {
+    const activity = createActivity({
+      providerToolName: 'Bash',
+      toolKind: 'execute',
+      title: 'echo hi',
+      status: 'in_progress',
+      toolDisposition: 'permission-closed'
+    })
+    const details = buildToolActivityDetails(activity)
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          phase="closed"
+          details={details!}
+          isExpanded={false}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('request ended')
+    expect(container.querySelector('.animate-spin')).toBeNull()
+    expect(container.querySelector('[aria-live="polite"]')).toBeNull()
+    expect(container.querySelector('.lucide-circle-minus')).not.toBeNull()
+  })
+
   it('renders local notebook figures outside the independently collapsible text output', async () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-notebook__notebook_execute',

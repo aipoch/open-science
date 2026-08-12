@@ -26,8 +26,8 @@ type NotebookLocalRpcCapability = {
   beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<unknown>
   appendCodeCell(request: AppendNotebookCodeCellRequest): Promise<unknown>
   finishCodeCell(request: FinishNotebookCodeCellRequest): Promise<unknown>
-  runCell(request: RunNotebookCellRequest): Promise<unknown>
-  execute(request: ExecuteNotebookCodeRequest): Promise<unknown>
+  runCell(request: RunNotebookCellRequest, signal?: AbortSignal): Promise<unknown>
+  execute(request: ExecuteNotebookCodeRequest, signal?: AbortSignal): Promise<unknown>
   executeControl(request: ExecuteNotebookControlRequest): Promise<unknown>
   executeShell(request: ExecuteShellRequest): Promise<unknown>
   state(request: NotebookSessionRequest): Promise<unknown>
@@ -61,7 +61,10 @@ const NOTEBOOK_LOCAL_RPC_METHODS = [
 ] as const
 
 type NotebookLocalRpcMethod = (typeof NOTEBOOK_LOCAL_RPC_METHODS)[number]
-type NotebookLocalRpcHandler = (request: Record<string, unknown>) => Promise<unknown>
+type NotebookLocalRpcHandler = (
+  request: Record<string, unknown>,
+  signal?: AbortSignal
+) => Promise<unknown>
 
 const NOTEBOOK_LOCAL_RPC_METHOD_SET = new Set<string>(NOTEBOOK_LOCAL_RPC_METHODS)
 const NOTEBOOK_INPUT_RUN_METHODS = new Set<NotebookLocalRpcMethod>([
@@ -102,9 +105,9 @@ const resolveNotebookLocalRpcHandler = (
     case 'finishCodeCell':
       return (request) => capability.finishCodeCell(request as FinishNotebookCodeCellRequest)
     case 'runCell':
-      return (request) => capability.runCell(request as RunNotebookCellRequest)
+      return (request, signal) => capability.runCell(request as RunNotebookCellRequest, signal)
     case 'execute':
-      return (request) => capability.execute(request as ExecuteNotebookCodeRequest)
+      return (request, signal) => capability.execute(request as ExecuteNotebookCodeRequest, signal)
     case 'executeControl':
       return (request) => capability.executeControl(request as ExecuteNotebookControlRequest)
     case 'executeShell':

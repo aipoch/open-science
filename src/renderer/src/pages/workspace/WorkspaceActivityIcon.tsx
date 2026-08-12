@@ -15,14 +15,19 @@ import {
 } from 'lucide-react'
 
 import { isActivityActive, isContextCompactionActivity } from './workspace-conversation-items'
+import type { ToolExecutionPhase } from './tool-execution-phase'
 
 type WorkspaceActivityIconProps = {
   activity: ToolActivity
+  phase?: ToolExecutionPhase
 }
 
 // Picks the smallest status/tool-kind icon that describes the current activity state.
-const WorkspaceActivityIcon = ({ activity }: WorkspaceActivityIconProps): React.JSX.Element => {
-  const isActive = isActivityActive(activity)
+const WorkspaceActivityIcon = ({
+  activity,
+  phase
+}: WorkspaceActivityIconProps): React.JSX.Element => {
+  const isActive = phase ? phase === 'executing' : isActivityActive(activity)
   const className = cn('size-3.5 shrink-0', isActive ? 'animate-spin' : undefined)
   const iconProps = {
     className,
@@ -32,11 +37,24 @@ const WorkspaceActivityIcon = ({ activity }: WorkspaceActivityIconProps): React.
 
   // Status takes precedence over tool kind so terminal or active states are unmistakable.
   if (isActive) return <LoaderCircle {...iconProps} />
-  if (activity.status === 'failed') return <CircleAlert {...iconProps} />
+  if (phase ? phase === 'failed' : activity.status === 'failed') {
+    return <CircleAlert {...iconProps} />
+  }
+  if (
+    phase === 'closed' ||
+    phase === 'declined' ||
+    phase === 'limit-reached' ||
+    phase === 'cancelled' ||
+    phase === 'interrupted'
+  ) {
+    return <CircleMinus {...iconProps} />
+  }
   if (isContextCompactionActivity(activity) && activity.title === 'Context compaction cancelled') {
     return <CircleMinus {...iconProps} />
   }
-  if (activity.status === 'completed') return <Check {...iconProps} />
+  if (phase ? phase === 'completed' : activity.status === 'completed') {
+    return <Check {...iconProps} />
+  }
 
   // Otherwise the tool kind hints at what the call did.
   switch (activity.toolKind) {

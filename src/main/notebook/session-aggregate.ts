@@ -35,6 +35,7 @@ export type NotebookSessionExecutionRequest = {
   runtimeRoot: string
   protectedDirs?: string[]
   timeoutMs?: number
+  signal?: AbortSignal
   language?: NotebookLanguage
   environment?: string
   resolvedInterpreter?: NotebookSessionResolvedInterpreter
@@ -279,27 +280,62 @@ export class NotebookSessionAggregate<
 
   completeCellRun(
     cellId: string,
-    status: NotebookSessionExecutionResult['status'],
+    status: Exclude<NotebookRunStatus, 'queued' | 'running'>,
     cwdAfter: string
   ): void {
     const cell = this.requireCell(cellId)
     this.cwdValue = cwdAfter
     this.activeRunIdValue = undefined
-    cell.status = status === 'completed' ? 'completed' : 'failed'
+    cell.status = status
   }
 
   hasActiveRun(): boolean {
     return this.activeRunIdValue !== undefined
   }
 
-  enqueueExecution<T>(processKey: string, task: () => Promise<T>): Promise<T> {
+  enqueueExecution<T>(
+    processKey: string,
+    task: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
     const previous = this.executionQueues.get(processKey) ?? Promise.resolve()
-    const run = previous.then(task)
+    if (!signal) {
+      const run = previous.then(task)
+      this.executionQueues.set(
+        processKey,
+        run.catch(() => undefined)
+      )
+      return run
+    }
+
+    signal.throwIfAborted()
+    let started = false
+    let resolveResult!: (result: T | PromiseLike<T>) => void
+    let rejectResult!: (reason?: unknown) => void
+    const result = new Promise<T>((resolve, reject) => {
+      resolveResult = resolve
+      rejectResult = reject
+    })
+    const onAbort = (): void => {
+      if (!started) rejectResult(signal.reason)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+
+    const run = previous.then(async () => {
+      if (signal.aborted) return
+      started = true
+      signal.removeEventListener('abort', onAbort)
+      try {
+        resolveResult(await task())
+      } catch (error) {
+        rejectResult(error)
+      }
+    })
     this.executionQueues.set(
       processKey,
       run.catch(() => undefined)
     )
-    return run
+    return result
   }
 
   async drainExecution(processKey: string): Promise<void> {

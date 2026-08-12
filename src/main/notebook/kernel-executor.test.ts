@@ -175,7 +175,11 @@ const makeDefaultEnvCwd = async (prefix: string): Promise<string> => {
 }
 
 type ExecutorInternals = { procs: Map<string, ProcStateLike> }
-type ProcStateLike = { child: ChildProcessWithoutNullStreams; env: string }
+type ProcStateLike = {
+  child: ChildProcessWithoutNullStreams
+  env: string
+  pending?: { timeout?: TimeoutController }
+}
 // Composite process key: 'repl' for the control kernel, `${kind}:${env}` for data kernels. `env`
 // defaults to the language's default env so existing single-env call sites need no change.
 const procKeyFor = (kind: 'python' | 'r' | 'repl', env?: string): string =>
@@ -519,6 +523,117 @@ gate('NotebookKernelExecutor (fake loop)', () => {
     }
   }, 15_000)
 
+  it('cancels a long run with SIGINT and preserves the kernel process', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-cancel-')
+    const executor = makeExecutor()
+    try {
+      await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+      const child = procFor(executor, 'python')?.child as ChildProcessWithoutNullStreams
+      const killSpy = vi.spyOn(child, 'kill')
+      const cancellation = new AbortController()
+
+      const run = executor.execute({
+        ...baseRequest(cwdDir),
+        code: '__SLEEP__',
+        signal: cancellation.signal
+      })
+      await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+      cancellation.abort()
+
+      await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+      expect(killSpy).toHaveBeenCalledWith('SIGINT')
+      expect(killSpy).not.toHaveBeenCalledWith('SIGKILL')
+
+      const next = await executor.execute({ ...baseRequest(cwdDir), code: 'again' })
+      expect(next.status).toBe('completed')
+      expect(procFor(executor, 'python')?.child).toBe(child)
+    } finally {
+      await executor.shutdown()
+    }
+  }, 15_000)
+
+  it('drops and respawns the kernel when Windows cancellation cannot preserve it', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-windows-cancel-')
+    const terminated: Array<['python' | 'r' | 'repl', string]> = []
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: 'win32',
+      onTerminated: (kind, env) => terminated.push([kind, env])
+    })
+    try {
+      await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+      const child = procFor(executor, 'python')?.child
+      const cancellation = new AbortController()
+      const run = executor.execute({
+        ...baseRequest(cwdDir),
+        code: '__SLEEP__',
+        signal: cancellation.signal
+      })
+      await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+
+      cancellation.abort()
+
+      await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+      expect(procFor(executor, 'python')).toBeUndefined()
+      expect(terminated).toEqual([['python', DEFAULT_PY_ENV]])
+
+      const next = await executor.execute({ ...baseRequest(cwdDir), code: 'again' })
+      expect(next.status).toBe('completed')
+      expect(procFor(executor, 'python')?.child).not.toBe(child)
+    } finally {
+      await executor.shutdown()
+    }
+  }, 15_000)
+
+  it('drops a POSIX kernel that does not acknowledge cancellation within the grace period', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-posix-cancel-grace-')
+    const terminated: Array<['python' | 'r' | 'repl', string]> = []
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      platform: 'linux',
+      cancellationGraceMs: 50,
+      onTerminated: (kind, env) => terminated.push([kind, env])
+    })
+    try {
+      await executor.execute({ ...baseRequest(cwdDir), code: 'warm' })
+      const child = procFor(executor, 'python')?.child
+      const cancellation = new AbortController()
+      const run = executor.execute({
+        ...baseRequest(cwdDir),
+        code: '__IGNORE_SIGINT__',
+        signal: cancellation.signal
+      })
+      await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+
+      cancellation.abort()
+
+      await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+      expect(procFor(executor, 'python')).toBeUndefined()
+      expect(terminated).toEqual([['python', DEFAULT_PY_ENV]])
+
+      const next = await executor.execute({ ...baseRequest(cwdDir), code: 'again' })
+      expect(next.status).toBe('completed')
+      expect(procFor(executor, 'python')?.child).not.toBe(child)
+    } finally {
+      await executor.shutdown()
+    }
+  }, 15_000)
+
+  it('does not arm an execution timeout when a data-kernel request omits timeoutMs', async () => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-unbounded-')
+    const executor = makeExecutor()
+    try {
+      const resultPromise = executor.execute({ ...baseRequest(cwdDir), code: '__SLEEP__' })
+      await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+
+      expect(procFor(executor, 'python')?.pending?.timeout).toBeUndefined()
+      await executor.shutdown()
+      await expect(resultPromise).resolves.toMatchObject({ status: 'failed' })
+    } finally {
+      await executor.shutdown()
+    }
+  }, 15_000)
+
   it('shutdown terminates a loop that only soft-timed-out (child.killed but still alive)', async () => {
     cwdDir = await makeDefaultEnvCwd('os-kernel-shutdown-soft-')
     const executor = makeExecutor()
@@ -653,6 +768,43 @@ gate('NotebookKernelExecutor (fake loop)', () => {
 })
 
 posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
+  it('cancels a run without clearing the persistent Python namespace', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-cancel-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvPython(request.runtimeRoot, DEFAULT_PY_ENV)
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: join(__dirname, '../../../resources/notebook/python_loop.py'),
+      platform: 'linux'
+    })
+
+    try {
+      await expect(
+        executor.execute({ ...request, code: 'preserved_after_cancel = 41', language: 'python' })
+      ).resolves.toMatchObject({ status: 'completed' })
+      const child = procFor(executor, 'python')?.child
+      const cancellation = new AbortController()
+      const run = executor.execute({
+        ...request,
+        code: 'import time\ntime.sleep(30)',
+        language: 'python',
+        signal: cancellation.signal
+      })
+      await vi.waitFor(() => expect(procFor(executor, 'python')?.pending).toBeDefined())
+      cancellation.abort()
+
+      await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+      const next = await executor.execute({
+        ...request,
+        code: 'print(preserved_after_cancel + 1)',
+        language: 'python'
+      })
+      expect(next).toMatchObject({ status: 'completed', stdout: '42\n' })
+      expect(procFor(executor, 'python')?.child).toBe(child)
+    } finally {
+      await executor.shutdown()
+    }
+  }, 15_000)
+
   it('blocks dynamically assembled venv and pip subprocess entry points', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-python-loop-package-guard-'))
     const request = baseRequest(cwdDir)
@@ -801,6 +953,43 @@ posixGate('NotebookKernelExecutor (real Python loop mutation policy)', () => {
 })
 
 describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (real R loop)', () => {
+  it('cancels a run without clearing the persistent R namespace', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-cancel-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      await expect(
+        executor.execute({ ...request, code: 'preserved_after_cancel <- 41', language: 'r' })
+      ).resolves.toMatchObject({ status: 'completed' })
+      const child = procFor(executor, 'r')?.child
+      const cancellation = new AbortController()
+      const run = executor.execute({
+        ...request,
+        code: 'Sys.sleep(30)',
+        language: 'r',
+        signal: cancellation.signal
+      })
+      await vi.waitFor(() => expect(procFor(executor, 'r')?.pending).toBeDefined())
+      cancellation.abort()
+
+      await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+      const next = await executor.execute({
+        ...request,
+        code: 'cat(preserved_after_cancel + 1)',
+        language: 'r'
+      })
+      expect(next).toMatchObject({ status: 'completed', stdout: '42' })
+      expect(procFor(executor, 'r')?.child).toBe(child)
+    } finally {
+      await executor.shutdown()
+    }
+  }, 15_000)
+
   it.each([
     {
       name: 'base graphics through a PNG device',
@@ -1609,6 +1798,44 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       await executor.shutdown()
     }
   })
+
+  it.runIf(process.platform === 'win32')(
+    'cancels by terminating and lazily respawning the kernel on Windows',
+    async () => {
+      cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-repl-windows-cancel-'))
+      const terminated: Array<['python' | 'r' | 'repl', string]> = []
+      const executor = new NotebookKernelExecutor({
+        replLoopPath: REPL_LOOP,
+        onTerminated: (kind, env) => terminated.push([kind, env])
+      })
+      try {
+        await executor.execute({ ...baseRequest(cwdDir), code: 'return 1', kind: 'repl' })
+        const child = procFor(executor, 'repl')?.child
+        const cancellation = new AbortController()
+        const run = executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'await new Promise(() => {})',
+          kind: 'repl',
+          signal: cancellation.signal
+        })
+        await vi.waitFor(() => expect(procFor(executor, 'repl')?.pending).toBeDefined())
+        cancellation.abort()
+
+        await expect(run).resolves.toMatchObject({ status: 'cancelled', traceback: '' })
+        expect(terminated).toEqual([['repl', '']])
+        const next = await executor.execute({
+          ...baseRequest(cwdDir),
+          code: 'return 2',
+          kind: 'repl'
+        })
+        expect(next.status).toBe('completed')
+        expect(procFor(executor, 'repl')?.child).not.toBe(child)
+      } finally {
+        await executor.shutdown()
+      }
+    },
+    15_000
+  )
 
   it.skipIf(process.platform === 'win32')(
     'allows read-only child argv but blocks descriptor permission changes in the managed runtime',

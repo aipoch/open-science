@@ -1,8 +1,22 @@
 import type { NotebookKernelKind, NotebookRunRecord } from '../../../../shared/notebook'
 
-// Groups the non-success terminal states rendered with a diagnostic error badge.
-const isProblemRunStatus = (status: NotebookRunRecord['status']): boolean =>
-  status === 'failed' || status === 'timeout' || status === 'interrupted'
+// Only an execution failure is an error. Limits and deliberate/process interruptions stay neutral.
+const isProblemRunStatus = (status: NotebookRunRecord['status']): boolean => status === 'failed'
+
+const notebookRunStatusLabel = (status: NotebookRunRecord['status']): string | undefined => {
+  switch (status) {
+    case 'failed':
+      return 'error'
+    case 'timeout':
+      return 'limit reached'
+    case 'interrupted':
+      return 'interrupted'
+    case 'cancelled':
+      return 'cancelled'
+    default:
+      return undefined
+  }
+}
 
 // Best-effort 1-based error line, parsed from the user-code frames of a Python traceback. The
 // executor compiles cells as "<cell>" (runtime errors) and ast.parse reports "<unknown>" (syntax
@@ -108,6 +122,7 @@ export {
   detectCellLanguage,
   environmentLabel,
   isProblemRunStatus,
+  notebookRunStatusLabel,
   kernelKindLabel,
   kernelOriginLabel,
   resolveRunErrorLine,

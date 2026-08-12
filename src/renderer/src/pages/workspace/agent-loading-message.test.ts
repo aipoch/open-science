@@ -118,6 +118,49 @@ describe('agent loading message state', () => {
     expect(getAgentLoadingPhase(session)).toBe('interacting-with-tools')
   })
 
+  it('shows Notebook tool interaction while approval waiting remains a distinct phase', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      activeRun: {
+        promptMessageId: 'prompt-1',
+        startedAt: 1710000000100
+      },
+      messages: [createMessage({ id: 'prompt-1', sortIndex: 1 })],
+      activities: [
+        createActivity({
+          status: 'in_progress',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute',
+          rawInput: { code: 'print(1)' }
+        })
+      ]
+    })
+
+    expect(getAgentLoadingPhase(session)).toBe('interacting-with-tools')
+    expect(
+      getAgentLoadingPhase({
+        ...session,
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-1',
+              sessionId: 'session-1',
+              toolCallId: 'tool-1',
+              title: 'Run code',
+              options: []
+            },
+            originatingPromptMessageId: 'prompt-1',
+            fingerprint: 'fingerprint-1',
+            createdAt: 1710000000400
+          }
+        }
+      })
+    ).toBe('waiting-for-approval')
+  })
+
   it('ignores active tools from a historical run when no prompt is in flight', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({

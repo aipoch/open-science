@@ -24,6 +24,7 @@ import {
   isProblemRunStatus,
   kernelKindLabel,
   kernelOriginLabel,
+  notebookRunStatusLabel,
   resolveRunErrorLine,
   resolveRunKernelKind
 } from './notebook-cell-utils'
@@ -62,6 +63,7 @@ const NotebookDialogCell = ({
   showInputData?: boolean
 }): React.JSX.Element => {
   const isProblem = isProblemRunStatus(run.status)
+  const statusLabel = notebookRunStatusLabel(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
   const kind = resolveRunKernelKind(run)
   const originLabel = kernelOriginLabel(kind)
@@ -80,6 +82,10 @@ const NotebookDialogCell = ({
             ) : (
               <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
             )
+          ) : statusLabel ? (
+            <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+              {statusLabel}
+            </span>
           ) : null}
         </div>
         {originLabel ? (

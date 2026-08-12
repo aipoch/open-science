@@ -55,6 +55,8 @@ export type ToolActivity = {
   activityGroupId?: string
   promptMessageId?: string
   status: ToolActivityStatus
+  toolDisposition?: 'declined' | 'permission-closed'
+  executionInvocationId?: string
   eventIds: string[]
   sortIndex: number
   providerToolName?: string

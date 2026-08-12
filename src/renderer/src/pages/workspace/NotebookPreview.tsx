@@ -35,6 +35,7 @@ import {
   isProblemRunStatus,
   kernelKindLabel,
   kernelOriginLabel,
+  notebookRunStatusLabel,
   resolveRunEnvironment,
   resolveRunKernelKind
 } from './notebook-cell-utils'
@@ -111,6 +112,7 @@ const NotebookRunCell = ({
   index: number
 }): React.JSX.Element => {
   const isProblem = isProblemRunStatus(run.status)
+  const statusLabel = notebookRunStatusLabel(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
   const kind = resolveRunKernelKind(run)
   const originLabel = kernelOriginLabel(kind)
@@ -132,6 +134,8 @@ const NotebookRunCell = ({
             ) : (
               <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
             )
+          ) : statusLabel ? (
+            <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{statusLabel}</span>
           ) : null}
         </div>
         {originLabel ? (

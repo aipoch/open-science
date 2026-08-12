@@ -209,7 +209,7 @@ describe('workspace tool activity details', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.displayName).toBe('Notebook run')
     // Only the compact run id enters transcript presentation data. Figure bytes stay in the local
     // notebook state and are resolved by the expanded row at render time.
     expect(details?.notebookRunId).toBe('notebook-run-1')
@@ -249,7 +249,7 @@ describe('workspace tool activity details', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.displayName).toBe('Notebook run')
     expect(details?.sections[0]).toMatchObject({
       kind: 'code',
       label: 'Code',
@@ -270,7 +270,7 @@ describe('workspace tool activity details', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.displayName).toBe('Notebook run')
     expect(details?.sections[0]).toMatchObject({
       kind: 'code',
       language: 'python',
@@ -296,7 +296,7 @@ describe('workspace tool activity details', () => {
     })
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.displayName).toBe('Notebook run')
   })
 
   it('falls back to the run summary script when notebook input code is unavailable', () => {
@@ -343,7 +343,7 @@ describe('workspace tool activity details', () => {
 
     const details = buildToolActivityDetails(activity)
 
-    expect(details?.displayName).toBe('Notebook cell')
+    expect(details?.displayName).toBe('Notebook run')
     expect(details?.sections[0]).toMatchObject({
       label: 'Code',
       language: 'r',

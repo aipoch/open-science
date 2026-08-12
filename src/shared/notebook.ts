@@ -4,9 +4,16 @@ import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
 
 export const NOTEBOOKS_DIR = 'notebooks'
 export const NOTEBOOK_RUN_FILE = 'run.json'
+// Execution authorization canonicalizes omitted control/shell deadlines to the same defaults used
+// by the MCP schema and process owner. These are runtime constants, not persisted schema fields.
+export const NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
+export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
 
 // Identifies whether a run was initiated by the agent or by the user terminal.
 export type NotebookRunSource = 'agent' | 'user'
+
+// Exact app-local dispatch methods corresponding to the three approval-gated Notebook MCP tools.
+export type NotebookExecutionRpcMethod = 'execute' | 'executeControl' | 'executeShell'
 
 // Distinguishes regular notebook cells from terminal submissions in the same history.
 export type NotebookRunInputKind = 'cell' | 'terminal'
@@ -306,6 +313,9 @@ export type NotebookKernelMetadata = {
 // Stores one durable notebook execution, including code, output, and generated-file references.
 export type NotebookRunRecord = {
   runId: string
+  // App-owned one-shot identity joining an authorized ACP tool call to the execution admitted by
+  // the authenticated Notebook RPC bridge. Optional keeps existing run.json documents readable.
+  executionInvocationId?: string
   cellId: string
   source: NotebookRunSource
   inputKind?: NotebookRunInputKind
@@ -340,9 +350,10 @@ export type NotebookRunRecord = {
   messageBranchId?: string
   runtimeSegmentId?: string
   promptMessageId?: string
-  // Why a run ended non-normally. Set to 'app-terminated' when a stale 'running' run is reconciled to
-  // 'interrupted' on the next startup (the process died mid-run). Absent for normal completions.
-  interruptionReason?: 'app-terminated'
+  // Why a run ended non-normally. 'app-terminated' is startup reconciliation after process death;
+  // 'execution-error' is an unexpected execution-infrastructure rejection in the live process.
+  // Optional keeps existing run.json documents readable without a migration.
+  interruptionReason?: 'app-terminated' | 'execution-error'
 }
 
 // The complete JSON document persisted at each notebook session's run.json path.
@@ -368,7 +379,15 @@ export type NotebookCell = {
   id: string
   language: NotebookLanguage
   code: string
-  status: 'idle' | 'receiving-code' | 'running' | 'completed' | 'failed'
+  status:
+    | 'idle'
+    | 'receiving-code'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'timeout'
+    | 'interrupted'
+    | 'cancelled'
   writeId?: string
   executionCount?: number
   latestRunId?: string
@@ -447,6 +466,8 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
   sessionId: string
   workspaceCwd: string
   provenanceContext?: NotebookRunProvenanceContext
+  // Injected only by the authenticated local RPC bridge. Public/renderer adapters strip it.
+  executionInvocationId?: string
   // Injected only by the authenticated local RPC bridge after resolving the active turn registry.
   // Renderer IPC strips this field before calling the runtime service.
   registeredInputFiles?: NotebookRunInputFile[]

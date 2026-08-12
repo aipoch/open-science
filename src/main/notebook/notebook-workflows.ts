@@ -72,8 +72,15 @@ const withoutTrustedTurnContext = <
 >(
   request: Request
 ): Request => {
-  const { provenanceContext, registeredInputFiles, inputRunLeaseId, ...publicRequest } = request
+  const {
+    provenanceContext,
+    executionInvocationId,
+    registeredInputFiles,
+    inputRunLeaseId,
+    ...publicRequest
+  } = request
   void provenanceContext
+  void executionInvocationId
   void registeredInputFiles
   void inputRunLeaseId
   return publicRequest as Request

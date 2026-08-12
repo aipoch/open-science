@@ -71,6 +71,15 @@ type AcpSessionUpdateProjectorOptions = Readonly<{
   currentFramework: () => AgentFrameworkId
   reconnectPending: () => boolean
   mcpServerNamesFor: (sessionId: string) => readonly string[]
+  presentationToolCallId: (
+    notification: SessionNotification,
+    context: Readonly<{
+      sessionId: string
+      framework: AgentFrameworkId
+      mcpServerNames: readonly string[]
+    }>,
+    providerToolCallId: string
+  ) => string
   nextEventId: () => string
   setProviderPermissionProfile: (
     sessionId: string,
@@ -201,11 +210,11 @@ class AcpSessionUpdateProjector {
       )
     )
     const projectedEvent = projection.event
-    const event = deepFreeze(
+    const unaliasedEvent =
       routing.framework === 'codex' &&
-        projectedEvent.kind === 'message' &&
-        projectedEvent.messageId === undefined &&
-        projectedEvent.text?.trim() === CODEX_LEGACY_COMPACTION_NOTICE
+      projectedEvent.kind === 'message' &&
+      projectedEvent.messageId === undefined &&
+      projectedEvent.text?.trim() === CODEX_LEGACY_COMPACTION_NOTICE
         ? {
             id: projectedEvent.id,
             timestamp: projectedEvent.timestamp,
@@ -217,6 +226,21 @@ class AcpSessionUpdateProjector {
             toolCallId: `context-compaction:${routing.eventId}`
           }
         : projectedEvent
+    const event = deepFreeze(
+      unaliasedEvent.kind === 'tool' && unaliasedEvent.toolCallId
+        ? {
+            ...unaliasedEvent,
+            toolCallId: this.options.presentationToolCallId(
+              notification,
+              {
+                sessionId: routed.sessionId,
+                framework: routing.framework ?? this.options.currentFramework(),
+                mcpServerNames: routing.mcpServerNames
+              },
+              unaliasedEvent.toolCallId
+            )
+          }
+        : unaliasedEvent
     )
     // codex-acp 1.1.4 flattens Codex's post-compaction warning into an unscoped assistant chunk.
     // Keep the separate compaction notice, but do not attribute this adapter-authored warning to the model.

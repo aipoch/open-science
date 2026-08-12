@@ -720,14 +720,20 @@ class NotebookRuntimeService {
   }
 
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
-  async runCell(request: RunNotebookCellRequest): Promise<NotebookRunSummary> {
+  async runCell(
+    request: RunNotebookCellRequest,
+    signal?: AbortSignal
+  ): Promise<NotebookRunSummary> {
     const session = await this.sessionLifecycle.ensure(request)
-    const run = await this.executionOwner.executeDataCell(session, request)
+    const run = await this.executionOwner.executeDataCell(session, request, signal)
     return this.sessionReadModel.toRunSummary(session, run)
   }
 
   // Convenience path used by the terminal and MCP to write a temporary cell and run it.
-  async execute(request: ExecuteNotebookCodeRequest): Promise<NotebookRunSummary> {
+  async execute(
+    request: ExecuteNotebookCodeRequest,
+    signal?: AbortSignal
+  ): Promise<NotebookRunSummary> {
     const begin = await this.beginCodeCell(request)
 
     await this.appendCodeCell({
@@ -742,10 +748,13 @@ class NotebookRuntimeService {
       cellId: begin.cellId
     })
 
-    return this.runCell({
-      ...request,
-      cellId: begin.cellId
-    })
+    return this.runCell(
+      {
+        ...request,
+        cellId: begin.cellId
+      },
+      signal
+    )
   }
 
   // Compatibility facade for the control-plane REPL. Admission, capability lifetime, dispatch,
@@ -774,6 +783,7 @@ class NotebookRuntimeService {
     request: NotebookSessionRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const session = await this.sessionLifecycle.ensure(request)
+    await this.runTerminalization.reconcilePending(session)
     return this.sessionReadModel.state(session)
   }
 

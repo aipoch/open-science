@@ -73,6 +73,23 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('ModuleNotFoundError')
   })
 
+  it('renders timeout as a neutral limit instead of an error', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      status: 'ready',
+      runs: [
+        makeRun({
+          status: 'timeout',
+          text: { stdout: '', stderr: 'limit', traceback: '', plain: [] }
+        })
+      ]
+    })
+
+    expect(html).toContain('limit reached')
+    expect(html).not.toContain('>error<')
+    expect(html).not.toContain('text-danger-000')
+  })
+
   it('shows exact registered input Versions inside the run that used them', () => {
     const html = renderContent({
       projectId: 'project-1',

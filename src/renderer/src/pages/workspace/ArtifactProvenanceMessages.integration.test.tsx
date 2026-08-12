@@ -76,7 +76,7 @@ describe('ProvenanceMessagesTimeline integration', () => {
     })
 
     expect(container.textContent).toContain('Plot a sine curve')
-    expect(container.textContent).toContain('Notebook execution')
+    expect(container.textContent).toContain('Notebook code shown')
 
     const messageRow = container.querySelector<HTMLElement>('[class~="pb-1"][class~="pt-5"]')
     const activityGroup = container.querySelector<HTMLElement>('[data-testid="tool-group"]')

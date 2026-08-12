@@ -32,7 +32,7 @@ import type {
   NotebookExecutionResult,
   NotebookExecutor
 } from './runtime-service'
-import { DEFAULT_TIMEOUT_MS, TimeoutController } from './timeout-controller'
+import { TimeoutController } from './timeout-controller'
 import { startWorkingFileObservation, type WorkingFileObservation } from './working-file-observer'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing
@@ -58,6 +58,7 @@ type CancelIdleTimer = (handle: IdleTimerHandle) => void
 // kernel is opt-in via OPEN_SCIENCE_KERNEL_IDLE_MS (a positive ms value); 0 / unset keeps kernels
 // alive until an explicit shutdown/restart or session teardown.
 const DEFAULT_IDLE_MS = 0
+const DEFAULT_CANCELLATION_GRACE_MS = 2_000
 
 // Real scheduler: unref'd so a pending idle timer alone never keeps the process alive.
 const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
@@ -95,6 +96,9 @@ export type NotebookKernelExecutorOptions = {
   // respawns a fresh one (namespace cleared). Defaults to OPEN_SCIENCE_KERNEL_IDLE_MS if that is a
   // positive ms value, else DEFAULT_IDLE_MS (0 = disabled). A non-positive value keeps kernels alive.
   idleTimeoutMs?: number
+  // Time allowed for a POSIX kernel to acknowledge SIGINT before its process tree is dropped. The
+  // short grace preserves responsive namespaces without letting cancellation hang indefinitely.
+  cancellationGraceMs?: number
   // Injectable idle-timer scheduler/canceller so tests drive idle-shutdown with a fake clock instead
   // of waiting out the real idle window.
   scheduleIdleTimer?: ScheduleIdleTimer
@@ -103,9 +107,10 @@ export type NotebookKernelExecutorOptions = {
   // kernel status upward (see NotebookRuntimeService). Carries the resolved env so the caller marks
   // the right per-(kind, env) kernel status ('' for the env-agnostic repl).
   onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
-  // Invoked once a proc is lost unexpectedly (a crash exit or a hard-timeout drop), NOT on an
-  // intentional shutdown()/restart(). Parallels onIdleShutdown so the caller can persist a
-  // 'terminated' kernel status for an involuntary loss too (see NotebookRuntimeService).
+  // Invoked once a proc is lost unexpectedly (a crash exit or a hard-timeout drop), or cancellation
+  // must drop it because Windows cannot recoverably interrupt it or a POSIX grace period expires.
+  // NOT invoked on an intentional shutdown()/restart(). Parallels onIdleShutdown so the caller can
+  // persist a 'terminated' kernel status for an involuntary loss too (see NotebookRuntimeService).
   onTerminated?: (kind: KernelProcessKind, env: string) => void
   // Injectable only to exercise the Windows conda activation contract on non-Windows test hosts.
   platform?: NodeJS.Platform
@@ -116,8 +121,12 @@ type PendingRequest = {
   reqId: string
   resolve: (response: KernelLoopResponse) => void
   reject: (error: unknown) => void
-  timeout: TimeoutController
-  timeoutMs: number
+  cancelled: boolean
+  signal?: AbortSignal
+  abortListener?: () => void
+  cancellationTimer?: IdleTimerHandle
+  timeout?: TimeoutController
+  timeoutMs?: number
 }
 
 // One persistent loop process for a (kind, env), reused across cells until it exits or is killed.
@@ -149,6 +158,13 @@ class NotebookExecutionTimeoutError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'NotebookExecutionTimeoutError'
+  }
+}
+
+class NotebookExecutionCancelledError extends Error {
+  constructor() {
+    super('Notebook execution was cancelled.')
+    this.name = 'NotebookExecutionCancelledError'
   }
 }
 
@@ -209,6 +225,18 @@ const errorToExecutionResult = (
   error: unknown,
   request: NotebookExecutionRequest
 ): NotebookExecutionResult => {
+  if (error instanceof NotebookExecutionCancelledError) {
+    return {
+      status: 'cancelled',
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: request.cwd,
+      outputs: [],
+      workingFiles: []
+    }
+  }
+
   const message = error instanceof Error ? error.message : String(error)
 
   return {
@@ -244,6 +272,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   private readonly cancelIdleTimer: CancelIdleTimer
   private readonly onIdleShutdown?: (kind: KernelProcessKind, env: string) => void
   private readonly onTerminated?: (kind: KernelProcessKind, env: string) => void
+  private readonly cancellationGraceMs: number
   private readonly platform: NodeJS.Platform
 
   constructor(options: NotebookKernelExecutorOptions = {}) {
@@ -255,6 +284,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.cancelIdleTimer = options.cancelIdleTimer ?? defaultCancelIdleTimer
     this.onIdleShutdown = options.onIdleShutdown
     this.onTerminated = options.onTerminated
+    this.cancellationGraceMs = options.cancellationGraceMs ?? DEFAULT_CANCELLATION_GRACE_MS
     this.platform = options.platform ?? process.platform
   }
 
@@ -262,6 +292,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
     let workingFileObservation: WorkingFileObservation | undefined
     try {
+      if (request.signal?.aborted) throw new NotebookExecutionCancelledError()
       const kind = resolveProcessKind(request)
       const env = kind === 'repl' ? '' : resolveRequestEnv(kind, request)
       const key = resolveProcessKey(request)
@@ -274,7 +305,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       workingFileObservation = await startWorkingFileObservation(request)
       const reqId = randomUUID()
-      const { response, timedOut } = await this.sendRequest(proc, reqId, request)
+      const { response, timedOut, cancelled } = await this.sendRequest(proc, reqId, request)
       const workingFiles = await workingFileObservation.finish()
       workingFileObservation = undefined
 
@@ -290,15 +321,23 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       // A soft-timeout interrupt was sent for this run; whatever answered is reported as a timeout,
       // not trusted as a genuine completion (an interrupt ack does not prove the loop stopped).
-      const status = timedOut ? 'timeout' : response.error !== null ? 'failed' : 'completed'
+      const status = cancelled
+        ? 'cancelled'
+        : timedOut
+          ? 'timeout'
+          : response.error !== null
+            ? 'failed'
+            : 'completed'
 
       return {
         status,
         stdout: mapped.stdout,
         stderr: mapped.stderr,
-        traceback: mapped.traceback,
+        traceback: cancelled ? '' : mapped.traceback,
         cwdAfter: response.cwd || request.cwd,
-        outputs: mapped.outputs,
+        outputs: cancelled
+          ? mapped.outputs.filter((output) => output.type !== 'error')
+          : mapped.outputs,
         workingFiles,
         environmentOverlay: response.environmentOverlay
       }
@@ -463,7 +502,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const pending = proc.pending
       this.rejectPending(
         proc,
-        pending?.timeout.timedOut
+        pending?.timeout?.timedOut && pending.timeoutMs !== undefined
           ? new NotebookExecutionTimeoutError(
               `Notebook execution timed out after ${pending.timeoutMs}ms.`
             )
@@ -604,39 +643,86 @@ class NotebookKernelExecutor implements NotebookExecutor {
     proc: ProcState,
     reqId: string,
     request: NotebookExecutionRequest
-  ): Promise<{ response: KernelLoopResponse; timedOut: boolean }> {
+  ): Promise<{ response: KernelLoopResponse; timedOut: boolean; cancelled: boolean }> {
     return new Promise((resolve, reject) => {
-      const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS
-      const timeout = new TimeoutController({
-        // SIGINT (soft) goes to the direct loop so it can interrupt gracefully. The hard SIGKILL is
-        // routed through terminateProcessTree, which enumerates descendants BEFORE killing — so a
-        // grandchild the loop spawned is reaped too, not orphaned by a premature direct kill of the
-        // root (killing the root first would reparent its children away from any ps-walk).
-        kill: (signal) => {
-          if (signal === 'SIGKILL') this.killChildTracked(proc)
-          else proc.child.kill(signal)
-        },
-        onHardTimeout: () => {
-          // The tree kill was already initiated by kill('SIGKILL') above; here we just drop the wedged
-          // loop (next execute respawns), surface 'terminated', and fail this run.
-          if (proc.pending?.reqId !== reqId) return
-          proc.pending = undefined
-          this.dropProc(proc)
-          // The dropped proc is gone for good; surface it as 'terminated' (its exit handler no longer
-          // fires onTerminated because dropProc already removed it from the map).
-          this.onTerminated?.(proc.kind, proc.env)
-          reject(
-            new NotebookExecutionTimeoutError(`Notebook execution timed out after ${timeoutMs}ms.`)
-          )
-        }
-      })
+      if (request.signal?.aborted) {
+        reject(new NotebookExecutionCancelledError())
+        return
+      }
+      const timeoutMs = request.timeoutMs
+      const timeout =
+        timeoutMs === undefined
+          ? undefined
+          : new TimeoutController({
+              // SIGINT (soft) goes to the direct loop so it can interrupt gracefully. The hard
+              // SIGKILL is routed through terminateProcessTree, which reaps descendants too.
+              kill: (signal) => {
+                if (signal === 'SIGKILL') this.killChildTracked(proc)
+                else proc.child.kill(signal)
+              },
+              onHardTimeout: () => {
+                // Drop the wedged loop so the next execute respawns it, then fail this run.
+                if (proc.pending?.reqId !== reqId) return
+                this.clearPendingResources(proc.pending)
+                proc.pending = undefined
+                this.dropProc(proc)
+                this.onTerminated?.(proc.kind, proc.env)
+                reject(
+                  new NotebookExecutionTimeoutError(
+                    `Notebook execution timed out after ${timeoutMs}ms.`
+                  )
+                )
+              }
+            })
 
-      proc.pending = {
+      const pending: PendingRequest = {
         reqId,
-        resolve: (response) => resolve({ response, timedOut: timeout.timedOut }),
+        resolve: (response) =>
+          resolve({
+            response,
+            timedOut: timeout?.timedOut ?? false,
+            cancelled: pending.cancelled
+          }),
         reject,
+        cancelled: false,
+        signal: request.signal,
         timeout,
         timeoutMs
+      }
+      proc.pending = pending
+
+      if (request.signal) {
+        pending.abortListener = () => {
+          if (proc.pending !== pending || pending.cancelled) return
+          pending.cancelled = true
+          pending.timeout?.disarm()
+
+          // Node maps SIGINT to TerminateProcess on Windows, so it cannot preserve this headless
+          // kernel's namespace. Make that platform limitation explicit: drop and reap the whole
+          // process tree, mark the kernel terminated, and let the next execute lazily respawn it.
+          if (this.platform === 'win32') {
+            this.clearPendingResources(pending)
+            proc.pending = undefined
+            this.dropProc(proc)
+            this.killChildTracked(proc)
+            this.onTerminated?.(proc.kind, proc.env)
+            pending.reject(new NotebookExecutionCancelledError())
+            return
+          }
+
+          proc.child.kill('SIGINT')
+          pending.cancellationTimer = this.scheduleIdleTimer(() => {
+            pending.cancellationTimer = undefined
+            if (proc.pending !== pending) return
+            this.clearPendingResources(pending)
+            proc.pending = undefined
+            this.dropProc(proc)
+            this.killChildTracked(proc)
+            this.onTerminated?.(proc.kind, proc.env)
+            pending.reject(new NotebookExecutionCancelledError())
+          }, this.cancellationGraceMs)
+        }
+        request.signal.addEventListener('abort', pending.abortListener, { once: true })
       }
 
       if (proc.kind === 'r') {
@@ -645,7 +731,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         // Python and the repl (JS) loop share the same JSON-lines request framing.
         proc.child.stdin.write(framePythonRequest(reqId, request.code, request.controlInvocationId))
       }
-      timeout.arm(timeoutMs)
+      if (timeout && timeoutMs !== undefined) timeout.arm(timeoutMs)
     })
   }
 
@@ -657,7 +743,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
     const pending = proc.pending
     if (!pending || pending.reqId !== response.reqId) return
 
-    pending.timeout.disarm()
+    this.clearPendingResources(pending)
     proc.pending = undefined
     pending.resolve(response)
     this.rearmIdleTimerIfLive(proc)
@@ -692,10 +778,21 @@ class NotebookKernelExecutor implements NotebookExecutor {
     const pending = proc.pending
     if (!pending) return
 
-    pending.timeout.disarm()
+    this.clearPendingResources(pending)
     proc.pending = undefined
-    pending.reject(error)
+    pending.reject(pending.cancelled ? new NotebookExecutionCancelledError() : error)
     this.rearmIdleTimerIfLive(proc)
+  }
+
+  private clearPendingResources(pending: PendingRequest): void {
+    pending.timeout?.disarm()
+    if (pending.cancellationTimer !== undefined) {
+      this.cancelIdleTimer(pending.cancellationTimer)
+      pending.cancellationTimer = undefined
+    }
+    if (pending.signal && pending.abortListener) {
+      pending.signal.removeEventListener('abort', pending.abortListener)
+    }
   }
 
   // Arms the idle-shutdown timer for a proc that just went idle (no pending request). A non-positive

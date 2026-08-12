@@ -188,6 +188,46 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     setTimer: base.setTimer,
     clearTimer: base.clearTimer,
     onPermissionSettled: callbacks.onPermissionSettled,
+    onToolPermissionSettled: (request, state, context) => {
+      if (state === 'resolved') return
+      publication.pushEvent({
+        kind: 'tool',
+        level: 'info',
+        sessionId: request.sessionId,
+        toolCallId: request.toolCallId,
+        promptMessageId: context?.promptMessageId,
+        title: request.title,
+        providerToolName: request.providerToolName ?? request.mcpIdentity,
+        rawInput: request.rawInput,
+        status: state === 'rejected' ? 'completed' : 'in_progress',
+        toolDisposition: state === 'rejected' ? 'declined' : 'permission-closed'
+      })
+    },
+    onNotebookExecutionAuthorized: (authorization) => {
+      const executionInvocationId = options.notebook?.authorizeExecution?.({
+        sessionId: authorization.sessionId,
+        toolCallId: authorization.toolCallId,
+        promptMessageId: authorization.promptMessageId,
+        method: authorization.method,
+        rawInput: authorization.executionInput
+      })
+      if (!executionInvocationId) return
+      publication.pushEvent({
+        kind: 'tool',
+        level: 'info',
+        sessionId: authorization.sessionId,
+        toolCallId: permissionContext.presentationToolCallId(
+          authorization.sessionId,
+          authorization.toolCallId
+        ),
+        promptMessageId: authorization.promptMessageId,
+        title: authorization.title,
+        providerToolName: authorization.providerToolName,
+        rawInput: authorization.rawInput,
+        status: 'in_progress',
+        executionInvocationId
+      })
+    },
     onOpenCodeWaitTimeout: ({ sessionId, toolCallId, waitMs }) => {
       log.warn('OpenCode permission context wait timed out', { sessionId, toolCallId, waitMs })
     }
@@ -241,6 +281,9 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     currentFramework: () => base.backendGeneration.current.framework.id,
     reconnectPending: () => base.connectionTransitions.providerReconnectPending,
     mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+    presentationToolCallId: (notification, context, providerToolCallId) =>
+      permissionContext.presentationToolCallIdForUpdate(notification, context) ??
+      providerToolCallId,
     nextEventId: () => publication.nextEventId(),
     setProviderPermissionProfile: (sessionId, profile) =>
       permissionContext.setProviderPermissionProfile(sessionId, profile),

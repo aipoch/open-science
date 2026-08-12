@@ -273,6 +273,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.releaseSessionCapabilities(sessionId),
                 registerSessionSpecialist: (sessionId, specialistId) =>
                   notebookRpcServer.registerSessionSpecialist(sessionId, specialistId),
+                authorizeExecution: (authorization) =>
+                  notebookRpcServer.authorizeExecution(authorization),
                 setArtifactProvenanceContext: (sessionId, context) =>
                   notebookRpcServer.setArtifactProvenanceContext(sessionId, context),
                 registerTurnInputs: (request) =>

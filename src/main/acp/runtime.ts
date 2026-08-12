@@ -59,6 +59,7 @@ import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
 import type { NotebookHandoffContext } from '../notebook/runtime-service'
+import type { NotebookExecutionRpcMethod } from '../../shared/notebook'
 import type { SkillImportRpcConnection } from '../skills/mcp-server'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
@@ -283,6 +284,13 @@ type AcpRuntimeNotebookOptions = {
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   releaseSessionCapabilities?: (sessionId: string) => void
   registerSessionSpecialist?: (sessionId: string, specialistId: string | undefined) => void
+  authorizeExecution?: (authorization: {
+    sessionId: string
+    toolCallId: string
+    promptMessageId: string
+    method: NotebookExecutionRpcMethod
+    rawInput?: unknown
+  }) => string | undefined
   setArtifactProvenanceContext?: (
     sessionId: string,
     context: import('../../shared/notebook').NotebookRunProvenanceContext | undefined
@@ -1367,10 +1375,27 @@ class AcpRuntime {
       }
     })
     this.schedulePendingAppContinuation(restored.sessionId)
-    this.options.callbacks?.onPermissionSettled?.(
-      response.requestId,
-      response.cancelled ? 'cancelled' : decision.denied ? 'rejected' : 'resolved'
-    )
+    const settlementState = response.cancelled
+      ? 'cancelled'
+      : decision.denied
+        ? 'rejected'
+        : 'resolved'
+    this.options.callbacks?.onPermissionSettled?.(response.requestId, settlementState)
+    if (settlementState !== 'resolved') {
+      this.pushEvent({
+        kind: 'tool',
+        level: 'info',
+        sessionId: restored.sessionId,
+        promptMessageId: decision.permission.originatingPromptMessageId,
+        toolCallId: decision.permission.request.toolCallId,
+        title: decision.permission.request.title,
+        providerToolName:
+          decision.permission.request.providerToolName ?? decision.permission.request.mcpIdentity,
+        rawInput: decision.permission.request.rawInput,
+        status: settlementState === 'rejected' ? 'completed' : 'in_progress',
+        toolDisposition: settlementState === 'rejected' ? 'declined' : 'permission-closed'
+      })
+    }
     this.pushEvent({
       kind: 'permission',
       level: 'info',

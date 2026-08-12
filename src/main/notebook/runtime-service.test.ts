@@ -65,6 +65,17 @@ const createStorageRoot = async (): Promise<string> => {
   return storageRoot
 }
 
+const createDeferred = <Value>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
+
 afterEach(async () => {
   vi.unstubAllEnvs()
   if (storageRoot) {
@@ -498,6 +509,116 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it('persists an Agent-cancelled data execution as a cancelled run', async () => {
+    const root = await createStorageRoot()
+    const executionStarted = createDeferred<NotebookExecutionRequest>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      executorFactory: () => ({
+        execute: async (request) => {
+          executionStarted.resolve(request)
+          await new Promise<void>((resolve) => {
+            request.signal?.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return {
+            status: 'cancelled',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const cancellation = new AbortController()
+    const run = service.execute(
+      {
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'long_running_analysis()'
+      },
+      cancellation.signal
+    )
+    const execution = await executionStarted.promise
+
+    expect(execution.signal).toBe(cancellation.signal)
+    cancellation.abort()
+
+    await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+    await expect(
+      service.state({ sessionId: 'session-1', workspaceCwd: root })
+    ).resolves.toMatchObject({
+      cells: [
+        expect.objectContaining({
+          status: 'cancelled'
+        })
+      ],
+      runs: [
+        expect.objectContaining({
+          status: 'cancelled',
+          script: 'long_running_analysis()'
+        })
+      ]
+    })
+    const runJson = JSON.parse(
+      await readFile(join(root, 'notebooks', 'default-project', 'session-1', 'run.json'), 'utf8')
+    ) as { runs: Array<{ status: string }> }
+    expect(runJson.runs).toEqual([expect.objectContaining({ status: 'cancelled' })])
+  })
+
+  it('repairs a transient terminal write failure on the next same-process state read', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    vi.spyOn(repository, 'updateRun').mockRejectedValueOnce(
+      new Error('transient terminal write failure')
+    )
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      executorFactory: () => ({
+        execute: async (request) => ({
+          status: 'completed',
+          stdout: 'done\n',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+
+    await expect(
+      service.execute({
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'print("done")'
+      })
+    ).rejects.toThrow('transient terminal write failure')
+
+    const state = await service.state({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+
+    expect(state.runs).toEqual([
+      expect.objectContaining({
+        status: 'completed',
+        text: expect.objectContaining({ stdout: 'done\n' })
+      })
+    ])
+  })
+
   it('does not invoke the executor when the initial running record cannot be persisted', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
@@ -543,10 +664,10 @@ describe('notebook runtime service', () => {
     expect(execute).not.toHaveBeenCalled()
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.runs).toEqual([])
-    expect(state.activeRunId).toMatch(/^notebook-run-/)
+    expect(state.activeRunId).toBeUndefined()
   })
 
-  it('leaves the running record recoverable when its terminal update cannot be persisted', async () => {
+  it('releases live ownership while leaving the running record recoverable when its terminal update cannot be persisted', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
     const updateError = new Error('could not persist terminal run')
@@ -606,8 +727,9 @@ describe('notebook runtime service', () => {
       status: 'running',
       script: 'print("done")'
     })
-    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-    expect(state.activeRunId).toBe(document.runs[0]?.runId)
+    await expect(service.state({ sessionId: 'session-1', workspaceCwd: root })).rejects.toBe(
+      updateError
+    )
   })
 
   it('persists a fail-closed default-runtime admission without dispatching or capturing evidence', async () => {
@@ -2494,6 +2616,66 @@ describe('notebook runtime service', () => {
     >
     expect(document.runs).toHaveLength(2)
     expect(document.runs.every((run) => run.status === 'completed')).toBe(true)
+  })
+
+  it('settles a cancelled queued run before the active interpreter execution finishes', async () => {
+    const root = await createStorageRoot()
+    const executionStarted = createDeferred<void>()
+    const releaseExecution = createDeferred<void>()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          executionStarted.resolve()
+          await releaseExecution.promise
+          return {
+            status: 'completed',
+            stdout: `${request.code}\n`,
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: [],
+            workingFiles: []
+          }
+        },
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const first = service.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: 'long_running_analysis()'
+    })
+    await executionStarted.promise
+
+    const cancellation = new AbortController()
+    const queued = service.execute(
+      {
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        code: 'should_not_run()'
+      },
+      cancellation.signal
+    )
+    await vi.waitFor(async () => {
+      const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+      expect(state.cells).toHaveLength(2)
+    })
+    cancellation.abort()
+
+    await expect(queued).rejects.toBe(cancellation.signal.reason)
+    const queuedState = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(queuedState.runs).toHaveLength(1)
+    expect(queuedState.cells[1]).toMatchObject({
+      code: 'should_not_run()',
+      status: 'idle'
+    })
+
+    releaseExecution.resolve()
+    await expect(first).resolves.toMatchObject({ status: 'completed' })
   })
 
   it('runs different sessions in parallel instead of serializing across sessions', async () => {

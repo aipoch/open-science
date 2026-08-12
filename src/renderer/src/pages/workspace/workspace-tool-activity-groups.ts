@@ -1,13 +1,12 @@
 import type { PersistedActivityGroup } from '../../../../shared/session-persistence'
 import type { ToolActivity } from '@/stores/session-store'
 
-import {
-  getNotebookToolSuffix,
-  isActivityActive,
-  type ConversationItem
-} from './workspace-conversation-items'
+import { isActivityActive, type ConversationItem } from './workspace-conversation-items'
 import { isEditActivity, isSkillActivity } from './workspace-tool-activity-details'
 import { hasWebSearchContentEvidence } from './workspace-web-search-details'
+import { getToolExecutionPhase, isNotebookExecutionActivity } from './tool-execution-phase'
+import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
+import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 type ConversationActivityGroupItem = {
   id: string
@@ -191,8 +190,8 @@ const categorizeActivity = (
 
   const providerName = getNormalizedProviderName(activity)
 
-  // A notebook_execute call is one cell run; summarize it as such instead of a generic tool.
-  if (getNotebookToolSuffix(providerName) === 'notebook_execute') return 'notebook'
+  // A Notebook execution is one run; use the shared provider-name matcher for every ACP backend.
+  if (isNotebookExecutionActivity(activity)) return 'notebook'
   if (isSkillActivity(activity)) return 'skill'
   if (providerName === 'save_artifacts' || providerName.includes('artifact')) return 'artifact'
   if (providerName === 'manage_packages' || providerName.includes('package')) return 'environment'
@@ -233,7 +232,7 @@ const formatCategoryClause = (category: ActivityCategory, count: number): string
     case 'artifact':
       return count === 1 ? 'saved a file' : `saved ${count} files`
     case 'notebook':
-      return count === 1 ? 'ran a notebook cell' : `ran ${count} notebook cells`
+      return count === 1 ? 'completed a Notebook run' : `completed ${count} Notebook runs`
     default:
       return count === 1 ? 'ran a tool' : `ran ${count} tools`
   }
@@ -269,6 +268,37 @@ const formatActivityGroupTitle = (activities: ToolActivity[], declaredTitle?: st
   return capitalizeFirst(clauses.join(', '))
 }
 
+const formatActivityGroupPresentationTitle = (
+  activities: ToolActivity[],
+  declaredTitle: string | undefined,
+  permission: SessionPermissionRuntimeContext | undefined,
+  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
+): string => {
+  const activityPhases = activities.map((activity) => ({
+    isNotebook: isNotebookExecutionActivity(activity),
+    phase: getToolExecutionPhase(activity, permission, notebookRunsById)
+  }))
+  const phases = activityPhases.filter(({ isNotebook }) => isNotebook).map(({ phase }) => phase)
+  const notebookCount = phases.length
+  if (notebookCount === 0) {
+    if (activityPhases.length > 0 && activityPhases.every(({ phase }) => phase === 'closed')) {
+      return activityPhases.length === 1 ? 'Tool request ended' : 'Tool requests ended'
+    }
+    return formatActivityGroupTitle(activities, declaredTitle)
+  }
+  const noun = notebookCount === 1 ? 'Notebook run' : `${notebookCount} Notebook runs`
+
+  if (phases.includes('awaiting-approval')) return 'Waiting for your approval'
+  if (phases.includes('executing')) return `Running ${noun}`
+  if (phases.includes('prepared')) return 'Notebook code shown'
+  if (phases.includes('declined')) return `Declined ${noun}`
+  if (phases.includes('failed')) return `Failed ${noun}`
+  if (phases.includes('limit-reached')) return `Execution limit reached for ${noun}`
+  if (phases.includes('interrupted')) return `Interrupted ${noun}`
+  if (phases.includes('cancelled')) return `Cancelled ${noun}`
+  return formatActivityGroupTitle(activities, declaredTitle)
+}
+
 // Removes ToolSearch wrapper rows from rendering once concrete search rows are available.
 const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableActivityEntry[] => {
   const hasSearchActivities = countSearchActivities(activities) > 0
@@ -279,20 +309,29 @@ const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableAct
 }
 
 // Formats the group header's total visible-step count, flagging any failed steps.
-const formatStepCount = (activities: ToolActivity[]): string => {
+const formatStepCount = (
+  activities: ToolActivity[],
+  permission?: SessionPermissionRuntimeContext,
+  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
+): string => {
   const activityCount = activities.length
   const stepLabel = activityCount === 1 ? '1 step' : `${activityCount} steps`
-  const failedCount = activities.filter((activity) => activity.status === 'failed').length
+  const failedCount = activities.filter(
+    (activity) => getToolExecutionPhase(activity, permission, notebookRunsById) === 'failed'
+  ).length
 
   return failedCount > 0 ? `${stepLabel} · ${failedCount} failed` : stepLabel
 }
 
 // Adds each tool's own runtime, excluding idle gaps between tools in the same group.
-const getActivityGroupElapsedMs = (activities: ToolActivity[], now: number): number =>
+const getActivityGroupElapsedMs = (
+  activities: ToolActivity[],
+  now: number,
+  isActive: (activity: ToolActivity) => boolean = isActivityActive
+): number =>
   activities.reduce(
     (total, activity) =>
-      total +
-      Math.max(0, (isActivityActive(activity) ? now : activity.updatedAt) - activity.createdAt),
+      total + Math.max(0, (isActive(activity) ? now : activity.updatedAt) - activity.createdAt),
     0
   )
 
@@ -313,6 +352,7 @@ const formatActivityGroupElapsed = (elapsedMs: number): string => {
 
 export {
   formatActivityGroupElapsed,
+  formatActivityGroupPresentationTitle,
   formatActivityGroupTitle,
   formatStepCount,
   getActivityGroupElapsedMs,

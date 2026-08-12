@@ -253,7 +253,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 
 // A friendly action title for the code card header, matching the transcript's activity phrasing.
 const getPermissionActionTitle = (request: AcpPermissionRequest, fallback: string): string => {
-  if (resolveNotebookToolName(request)) return 'Run notebook cell'
+  if (resolveNotebookToolName(request)) return 'Start Notebook run'
   if (isArtifactWriteRequest(request)) return 'Artifact file input'
   if (isMcpPermissionRequest(request)) return 'External service input'
   if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return 'Run command'

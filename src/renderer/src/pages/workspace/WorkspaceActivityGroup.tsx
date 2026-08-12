@@ -14,7 +14,7 @@ import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 import {
   formatActivityGroupElapsed,
-  formatActivityGroupTitle,
+  formatActivityGroupPresentationTitle,
   formatStepCount,
   getActivityGroupElapsedMs,
   getRenderableActivityEntries,
@@ -24,8 +24,9 @@ import type {
   ActivityExpansionOverrides,
   ConversationActivityGroupItem
 } from './workspace-tool-activity-groups'
-import { isActivityActive } from './workspace-conversation-items'
 import { formatWebSearchDetails } from './workspace-web-search-details'
+import { getCorrelatedNotebookRun, getToolExecutionPhase } from './tool-execution-phase'
+import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 
 type WorkspaceActivityGroupProps = {
   group: ConversationActivityGroupItem
@@ -40,17 +41,24 @@ type WorkspaceActivityGroupProps = {
   // Map of job_id → JobSummary for jobs bound to activities in this group.
   jobsByActivityId?: Map<string, JobSummary>
   onOpenJobDetail?: (job: JobSummary) => void
+  permission?: SessionPermissionRuntimeContext
 }
 
 const ACTIVE_ELAPSED_TICK_MS = 100
 
 // Isolates the ticking clock so active tools do not re-render the group's expanded detail rows.
 const ActivityGroupElapsed = ({
-  activities
+  activities,
+  permission,
+  notebookRunsById
 }: {
   activities: ConversationActivityGroupItem['activities']
+  permission?: SessionPermissionRuntimeContext
+  notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
 }): React.JSX.Element => {
-  const isActive = activities.some(isActivityActive)
+  const isExecuting = (activity: (typeof activities)[number]): boolean =>
+    getToolExecutionPhase(activity, permission, notebookRunsById) === 'executing'
+  const isActive = activities.some(isExecuting)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -60,7 +68,7 @@ const ActivityGroupElapsed = ({
     return () => clearInterval(timer)
   }, [isActive])
 
-  return <>{formatActivityGroupElapsed(getActivityGroupElapsedMs(activities, now))}</>
+  return <>{formatActivityGroupElapsed(getActivityGroupElapsedMs(activities, now, isExecuting))}</>
 }
 
 // Renders adjacent tool calls as one collapsible transcript row group.
@@ -73,7 +81,8 @@ const WorkspaceActivityGroup = ({
   notebookRunsById,
   contentPaddingClassName,
   jobsByActivityId,
-  onOpenJobDetail
+  onOpenJobDetail,
+  permission
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
   // ToolSearch wrapper rows are hidden when concrete search rows are present.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
@@ -102,17 +111,28 @@ const WorkspaceActivityGroup = ({
               <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
             </span>
             <span className="min-w-0 truncate text-left font-medium text-text-000">
-              {formatActivityGroupTitle(group.activities, group.title)}
+              {formatActivityGroupPresentationTitle(
+                group.activities,
+                group.title,
+                permission,
+                notebookRunsById
+              )}
             </span>
-            <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-100">
-              {formatStepCount(visibleActivities)} ·{' '}
-              <ActivityGroupElapsed activities={visibleActivities} />
+            <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-000">
+              {formatStepCount(visibleActivities, permission, notebookRunsById)} ·{' '}
+              <ActivityGroupElapsed
+                activities={visibleActivities}
+                permission={permission}
+                notebookRunsById={notebookRunsById}
+              />
             </span>
           </button>
           {isExpanded ? (
             <div className="grid grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out">
               <div className="min-h-0 overflow-hidden">
                 {renderableActivityEntries.map(({ activity, activityIndex }) => {
+                  const phase = getToolExecutionPhase(activity, permission, notebookRunsById)
+                  const correlatedNotebookRun = getCorrelatedNotebookRun(activity, notebookRunsById)
                   // Search rows get bespoke query/result details; other tools reuse the shared builder.
                   const isSearch = isSearchActivity(activity, group.activities, activityIndex)
                   const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
@@ -126,6 +146,7 @@ const WorkspaceActivityGroup = ({
                       {searchDetails ? (
                         <WorkspaceWebSearchActivityRow
                           activity={activity}
+                          phase={phase}
                           details={searchDetails}
                           isExpanded={isRowExpanded}
                           onToggleSearch={onToggleRow}
@@ -133,17 +154,19 @@ const WorkspaceActivityGroup = ({
                       ) : toolDetails ? (
                         <WorkspaceToolDetailsRow
                           activity={activity}
+                          phase={phase}
                           details={toolDetails}
                           notebookRun={
-                            toolDetails.notebookRunId
+                            correlatedNotebookRun ??
+                            (toolDetails.notebookRunId
                               ? notebookRunsById?.get(toolDetails.notebookRunId)
-                              : undefined
+                              : undefined)
                           }
                           isExpanded={isRowExpanded}
                           onToggle={onToggleRow}
                         />
                       ) : (
-                        <WorkspaceToolActivityRow activity={activity} />
+                        <WorkspaceToolActivityRow activity={activity} phase={phase} />
                       )}
                       {/* RemoteJobRow: injected below a repl_execute activity that submitted a job */}
                       {(() => {

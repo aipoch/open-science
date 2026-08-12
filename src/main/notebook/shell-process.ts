@@ -4,9 +4,8 @@ import { win32 } from 'node:path'
 import { protectManagedRuntimeWrites } from './managed-runtime-guard'
 import { terminateProcessTree } from '../process-tree'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
+import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 
-// Default bash_execute timeout, matching the data/repl kernels' own default.
-const DEFAULT_SHELL_TIMEOUT_MS = 120_000
 // Grace between the POSIX process group's polite termination and an uncatchable group kill.
 const SHELL_KILL_GRACE_MS = 2_000
 
@@ -255,7 +254,7 @@ const runShellCommand = (
   }
 ): Promise<NotebookShellResult> =>
   new Promise((resolve) => {
-    const timeoutMs = options.timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS
+    const timeoutMs = options.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS
     const platform = options.platform ?? process.platform
     const invocation = protectManagedRuntimeWrites(
       resolveShellInvocation(options.command, platform),

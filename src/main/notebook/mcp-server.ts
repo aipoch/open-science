@@ -11,17 +11,18 @@ import {
   MIN_AGENT_USER_CHOICE_OPTIONS
 } from '../../shared/elicitation'
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
-import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
+import {
+  fetchLocalRpc,
+  fetchLongLivedLocalRpc,
+  type LocalRpcTransport
+} from '../local-rpc-transport'
 import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
+import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
-// Host SDK bounded observations allow 30 minutes. Keep the outer control REPL alive slightly longer
-// so its default deadline cannot destroy the kernel while collect/message_receipt is still valid.
-const REPL_EXECUTE_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
-
 const HOST_SDK_DISCOVERY_GUIDANCE =
   "Host SDK discovery (use from `repl_execute`): `await host.help()` is the role-aware catalog. Query only the operation you plan to call; each topic returns concise parameter and result field descriptions. Main/root agents can use `await host.help('delegate')` when delegation guidance is needed; do not prefetch all Help topics. Delegate agents should use the same catalog for messaging and structured-output operations; unavailable root-only topics remain visible with a reason."
 
@@ -61,7 +62,6 @@ type NotebookMcpServerConfigRequest = NotebookMcpEnvironment & {
 
 const executeToolSchema = {
   code: z.string(),
-  timeoutMs: z.number().int().positive().optional(),
   cellId: z.string().min(1).optional(),
   language: z.enum(['python', 'r']).optional()
   // No `environment`: the env is the session's bound runtime (notebook_bind_runtime), not a per-call
@@ -70,7 +70,7 @@ const executeToolSchema = {
 
 const replExecuteToolSchema = {
   code: z.string(),
-  timeoutMs: z.number().int().positive().default(REPL_EXECUTE_DEFAULT_TIMEOUT_MS)
+  timeoutMs: z.number().int().positive().default(NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS)
 }
 
 const bashExecuteToolSchema = {
@@ -235,6 +235,12 @@ type NotebookRpcToolDefinition = {
   resultLimitChars?: number
 }
 
+const notebookRpcSignal = (
+  method: string,
+  signal: AbortSignal | undefined
+): AbortSignal | undefined =>
+  method === 'executeControl' || method === 'executeShell' ? undefined : signal
+
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
 const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest): McpServerStdio => {
   const projectId = resolveProjectId(request)
@@ -294,10 +300,12 @@ const createNotebookMcpEnvironmentFromProcess = (
 const callNotebookRpc = async (
   environment: NotebookMcpEnvironment,
   method: string,
-  params: unknown = {}
+  params: unknown = {},
+  fetchRpc: typeof fetchLocalRpc = resolveNotebookRpcFetch(method),
+  signal?: AbortSignal
 ): Promise<unknown> => {
   const projectId = resolveProjectId(environment)
-  const response = await fetchLocalRpc(
+  const response = await fetchRpc(
     environment,
     {
       method: 'POST',
@@ -313,7 +321,11 @@ const callNotebookRpc = async (
           workspaceCwd: environment.workspaceCwd,
           projectId
         }
-      } satisfies RpcRequest)
+      } satisfies RpcRequest),
+      // Control REPL and shell execution do not yet consume cancellation below the RPC boundary.
+      // Keep their transport attached so Agent cancellation cannot report completion while they
+      // continue mutating state. Python/R execution owns its AbortSignal end to end.
+      signal: notebookRpcSignal(method, signal)
     },
     'Notebook RPC'
   )
@@ -326,6 +338,11 @@ const callNotebookRpc = async (
 
   return payload.result
 }
+
+// Python/R cells are intentionally unbounded. Only their local RPC hop needs the transport that
+// omits Undici's response-headers deadline; short control methods retain the ordinary transport.
+const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
+  method === 'execute' ? fetchLongLivedLocalRpc : fetchLocalRpc
 
 // These character caps apply only to serialized MCP replies; full values stay in run.json and the
 // notebook preview.
@@ -719,7 +736,13 @@ const registerNotebookRpcTool = (
         definition.method === 'requestUserInput'
           ? { ...input, _appToolRequestId: String(extra.requestId) }
           : input
-      const raw = await callNotebookRpc(environment, definition.method, rpcInput)
+      const raw = await callNotebookRpc(
+        environment,
+        definition.method,
+        rpcInput,
+        resolveNotebookRpcFetch(definition.method),
+        extra.signal
+      )
       const result = definition.mapResult ? definition.mapResult(raw, input) : raw
       return {
         content: [
@@ -1086,6 +1109,7 @@ export {
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  resolveNotebookRpcFetch,
   compactNotebookExecutionResult,
   compactNotebookStateResult,
   compactManagePackagesResult,

@@ -1436,6 +1436,37 @@ describe('WorkspaceMessageScroller loading render', () => {
     expect(html).not.toContain('https://example.com/breaking-news')
   })
 
+  it('renders a closed search permission as neutral and inactive', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'idle',
+        messages: [createMessage({ id: 'prompt-1' })],
+        activities: [
+          createActivity({
+            status: 'in_progress',
+            providerToolName: 'WebSearch',
+            toolDisposition: 'permission-closed',
+            toolContent: [
+              {
+                type: 'content',
+                content: {
+                  type: 'text',
+                  text: JSON.stringify({ query: 'closed query', results: [] })
+                }
+              }
+            ]
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('Tool request ended')
+    expect(html).toContain('>request ended<')
+    expect(html).toContain('lucide-circle-minus')
+    expect(html).not.toContain('animate-spin')
+    expect(html.match(/<button[^>]*data-testid="tool-chip"[^>]*>/u)?.[0]).not.toContain('aria-live')
+  })
+
   it('keeps Claude web search payload links collapsed by default', async () => {
     const html = await renderScroller(
       createSession({
@@ -2009,6 +2040,43 @@ describe('WorkspaceActivityGroup header summaries', () => {
 })
 
 describe('WorkspaceToolDetailsRow expanded rendering', () => {
+  it.each([
+    ['timeout', 'limit-reached', 'limit reached'],
+    ['cancelled', 'cancelled', 'cancelled'],
+    ['interrupted', 'interrupted', 'interrupted']
+  ] as const)('renders the neutral Notebook %s status', async (status, phase, label) => {
+    const { WorkspaceToolDetailsRow } = await import('./WorkspaceToolDetailsRow')
+    const html = renderToStaticMarkup(
+      <WorkspaceToolDetailsRow
+        activity={createActivity({
+          id: 'tool-notebook-1',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute'
+        })}
+        phase={phase}
+        details={{ displayName: 'Notebook cell', metaLabel: 'success', sections: [] }}
+        notebookRun={{
+          runId: 'run-1',
+          cellId: 'cell-1',
+          source: 'agent',
+          kernelKind: 'python',
+          script: 'print(1)',
+          status,
+          startedAt: 1,
+          endedAt: 2,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          artifacts: [],
+          workingFiles: []
+        }}
+        isExpanded={false}
+        onToggle={() => {}}
+      />
+    )
+
+    expect(html).toContain(label)
+    expect(html).not.toContain('success')
+  })
+
   it('renders command and output code blocks when expanded', async () => {
     const { WorkspaceToolDetailsRow } = await import('./WorkspaceToolDetailsRow')
     const details: ToolActivityDetails = {

@@ -164,7 +164,11 @@ const NotebookDisplayTextOutput = ({
 }
 
 // Renders one structured output entry, or null when it carries no visible content.
-const renderTextOutput = (output: NotebookOutput, index: number): React.JSX.Element | null => {
+const renderTextOutput = (
+  output: NotebookOutput,
+  index: number,
+  errorClassName: string
+): React.JSX.Element | null => {
   switch (output.type) {
     case 'stream': {
       const text = trimTrailingNewline(output.text)
@@ -174,7 +178,7 @@ const renderTextOutput = (output: NotebookOutput, index: number): React.JSX.Elem
       return (
         <pre
           key={index}
-          className={`${preClassName} ${output.name === 'stderr' ? 'text-danger-000' : 'text-text-200'}`}
+          className={`${preClassName} ${output.name === 'stderr' ? errorClassName : 'text-text-200'}`}
         >
           {renderAnsi(text)}
         </pre>
@@ -210,7 +214,7 @@ const renderTextOutput = (output: NotebookOutput, index: number): React.JSX.Elem
       if (body.trim().length === 0) return null
 
       return (
-        <pre key={index} className={`${preClassName} text-danger-000`}>
+        <pre key={index} className={`${preClassName} ${errorClassName}`}>
           {renderAnsi(body)}
         </pre>
       )
@@ -237,7 +241,11 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
         <pre className={`${preClassName} text-text-200`}>{renderAnsi(stdout)}</pre>
       ) : null}
       {stderr.trim().length > 0 ? (
-        <pre className={`${preClassName} text-danger-000`}>{renderAnsi(stderr)}</pre>
+        <pre
+          className={`${preClassName} ${run.status === 'failed' ? 'text-danger-000' : 'text-text-200'}`}
+        >
+          {renderAnsi(stderr)}
+        </pre>
       ) : null}
     </>
   )
@@ -245,10 +253,11 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
 
 const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
   let rendered: React.JSX.Element[]
+  const errorClassName = run.status === 'failed' ? 'text-danger-000' : 'text-text-200'
 
   if (run.outputs.length > 0) {
     rendered = run.outputs
-      .map((output, index) => renderTextOutput(output, index))
+      .map((output, index) => renderTextOutput(output, index, errorClassName))
       .filter((node): node is React.JSX.Element => node !== null)
   } else {
     const legacy = <LegacyTextOutput run={run} />

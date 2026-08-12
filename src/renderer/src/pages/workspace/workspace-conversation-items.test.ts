@@ -659,7 +659,7 @@ describe('workspace conversation items', () => {
           toolKind: 'other'
         })
       )
-    ).toBe('Used tool: Notebook cell')
+    ).toBe('Used tool: Notebook run')
 
     expect(
       formatActivityTitle(
@@ -673,6 +673,33 @@ describe('workspace conversation items', () => {
     ).toBe('Using tool: Notebook restart')
   })
 
+  it.each([
+    ['limit-reached', 'Execution limit reached: Notebook run'],
+    ['cancelled', 'Cancelled: Notebook run'],
+    ['interrupted', 'Interrupted: Notebook run'],
+    ['failed', 'Tool failed: Notebook run'],
+    ['completed', 'Used tool: Notebook run']
+  ] as const)('formats the Notebook terminal phase %s', (phase, expected) => {
+    expect(
+      formatActivityTitle(
+        createActivity({
+          status: 'completed',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute'
+        }),
+        phase
+      )
+    ).toBe(expected)
+  })
+
+  it('formats an ordinary closed tool without implying rejection or execution cancellation', () => {
+    expect(
+      formatActivityTitle(
+        createActivity({ status: 'in_progress', providerToolName: 'Bash' }),
+        'closed'
+      )
+    ).toBe('Request ended: Bash')
+  })
+
   it('detects notebook tools whose server name was underscore-sanitized (Codex/gpt bridge)', () => {
     // The gpt/codex bridge rewrites the hyphenated server name to underscores; still a notebook cell.
     expect(
@@ -684,7 +711,7 @@ describe('workspace conversation items', () => {
           toolKind: 'other'
         })
       )
-    ).toBe('Used tool: Notebook cell')
+    ).toBe('Used tool: Notebook run')
   })
 
   it('detects a Codex notebook activity whose MCP identity is only in the title', () => {
@@ -697,7 +724,7 @@ describe('workspace conversation items', () => {
           toolKind: 'execute'
         })
       )
-    ).toBe('Used tool: Notebook cell')
+    ).toBe('Used tool: Notebook run')
   })
 
   it('falls back to readable tool kind names for unnamed tools', () => {

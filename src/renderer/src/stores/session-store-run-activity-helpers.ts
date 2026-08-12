@@ -21,6 +21,8 @@ export type UpsertToolActivityInput = {
   promptMessageId?: string
   title?: string
   status?: string
+  toolDisposition?: 'declined' | 'permission-closed'
+  executionInvocationId?: string
   providerToolName?: string
   toolKind?: ToolKind
   toolContent?: ToolCallContent[]
@@ -192,6 +194,8 @@ export const projectToolActivity = (
               promptMessageId: input.promptMessageId ?? activity.promptMessageId,
               title: input.title?.trim() || activity.title,
               status: mergeToolActivityStatus(activity.status, nextStatus),
+              toolDisposition: input.toolDisposition ?? activity.toolDisposition,
+              executionInvocationId: input.executionInvocationId ?? activity.executionInvocationId,
               providerToolName: input.providerToolName ?? activity.providerToolName,
               toolKind: input.toolKind ?? activity.toolKind,
               toolContent: input.toolContent ?? activity.toolContent,
@@ -221,6 +225,8 @@ export const projectToolActivity = (
     kind: 'tool',
     title: createToolActivityTitle(input.title, input.toolKind),
     status: nextStatus ?? 'pending',
+    toolDisposition: input.toolDisposition,
+    executionInvocationId: input.executionInvocationId,
     eventIds: [input.eventId],
     sortIndex: createSortIndex(),
     activityGroupId: activeGroup?.id,

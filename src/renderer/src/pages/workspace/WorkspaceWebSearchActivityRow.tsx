@@ -1,10 +1,12 @@
 import type { ToolActivity } from '@/stores/session-store'
 
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
+import type { ToolExecutionPhase } from './tool-execution-phase'
 import type { WebSearchDetails } from './workspace-web-search-details'
 
 type WorkspaceWebSearchActivityRowProps = {
   activity: ToolActivity
+  phase?: ToolExecutionPhase
   details: WebSearchDetails
   isExpanded: boolean
   onToggleSearch: (activityId: string, nextExpanded: boolean) => void
@@ -46,15 +48,17 @@ const renderSearchDetailsBody = (details: WebSearchDetails): React.JSX.Element =
 // Renders one web-search activity row with an optional expandable result summary.
 const WorkspaceWebSearchActivityRow = ({
   activity,
+  phase,
   details,
   isExpanded,
   onToggleSearch
 }: WorkspaceWebSearchActivityRowProps): React.JSX.Element => (
   <WorkspaceToolActivityRowButton
     activity={activity}
+    phase={phase}
     label="Web Search"
     subtitle={details.query || undefined}
-    metaLabel={formatResultCountLabel(details.resultCount)}
+    metaLabel={phase === 'closed' ? 'request ended' : formatResultCountLabel(details.resultCount)}
     isExpanded={isExpanded}
     // Rows without any query or result metadata remain visible but non-interactive.
     canExpand={Boolean(details.query || details.resultCount)}

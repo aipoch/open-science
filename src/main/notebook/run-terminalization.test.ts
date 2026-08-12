@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type {
   NotebookEnvironmentManifest,
@@ -58,9 +58,9 @@ const documentWith = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
 })
 
 const completedResult = (
-  status: NotebookRunStatus = 'completed'
+  status: Exclude<NotebookRunStatus, 'queued' | 'running'> = 'completed'
 ): {
-  status: NotebookRunStatus
+  status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   stdout: string
   stderr: string
   traceback: string
@@ -98,6 +98,7 @@ const createHarness = (
     now?: () => number
     appendFailure?: Error
     updateFailure?: Error
+    updateFailureCount?: number
     omitUpdatedRun?: boolean
   } = {}
 ): {
@@ -107,6 +108,7 @@ const createHarness = (
 } => {
   const events: string[] = []
   let document = documentWith([])
+  let updateFailuresRemaining = options.updateFailureCount ?? Number.POSITIVE_INFINITY
   const owner = new NotebookRunTerminalizationOwner({
     repository: {
       appendRun: async ({ run }) => {
@@ -117,7 +119,10 @@ const createHarness = (
       },
       updateRun: async ({ run }) => {
         events.push(`update:${run.status}`)
-        if (options.updateFailure) throw options.updateFailure
+        if (options.updateFailure && updateFailuresRemaining > 0) {
+          updateFailuresRemaining -= 1
+          throw options.updateFailure
+        }
         document = documentWith(
           document.runs.map((candidate) => (candidate.runId === run.runId ? run : candidate))
         )
@@ -155,7 +160,7 @@ describe('NotebookRunTerminalizationOwner', () => {
     })
   })
 
-  it('commits one terminal record before post-commit work and the final notification', async () => {
+  it('commits one terminal record before settling live ownership and the final notification', async () => {
     const harness = createHarness()
     const running = runningRun('run-1')
 
@@ -166,8 +171,8 @@ describe('NotebookRunTerminalizationOwner', () => {
         harness.events.push('invoke')
         return completedResult()
       },
-      postCommit: (result, run) => {
-        harness.events.push(`post-commit:${result.status}:${run.status}`)
+      settleLive: (result) => {
+        harness.events.push(`settle-live:${result.status}`)
       }
     })
 
@@ -176,7 +181,7 @@ describe('NotebookRunTerminalizationOwner', () => {
       'notify:running',
       'invoke',
       'update:completed',
-      'post-commit:completed:completed',
+      'settle-live:completed',
       'notify:completed'
     ])
     const document = harness.document()
@@ -190,6 +195,33 @@ describe('NotebookRunTerminalizationOwner', () => {
     })
     expect(terminalized.run).toEqual(document.runs[0])
     expect(terminalized.result.status).toBe('completed')
+  })
+
+  it('keeps an admitted Run running across hours without an elapsed-time transition', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = createHarness()
+      let finish!: (result: ReturnType<typeof completedResult>) => void
+      const result = new Promise<ReturnType<typeof completedResult>>((resolve) => {
+        finish = resolve
+      })
+      const execution = harness.owner.run({
+        session,
+        runningRun: runningRun('run-hours'),
+        invoke: () => result
+      })
+      await vi.waitFor(() => expect(harness.document().runs[0]?.status).toBe('running'))
+
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1_000)
+      expect(harness.document().runs[0]?.status).toBe('running')
+      expect(harness.events).not.toContainEqual(expect.stringMatching(/^update:/))
+
+      finish(completedResult())
+      await execution
+      expect(harness.document().runs[0]?.status).toBe('completed')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each(['failed', 'timeout', 'cancelled'] as const)(
@@ -265,7 +297,7 @@ describe('NotebookRunTerminalizationOwner', () => {
     expect(unavailable.document().runs[0]).not.toHaveProperty('environmentManifestChecksum')
   })
 
-  it('keeps the running record when invocation rejects unexpectedly', async () => {
+  it('terminalizes an unexpected invocation rejection as interrupted before rethrowing', async () => {
     const harness = createHarness()
 
     await expect(
@@ -275,15 +307,33 @@ describe('NotebookRunTerminalizationOwner', () => {
         invoke: async () => {
           harness.events.push('invoke')
           throw new Error('unexpected rejection')
-        }
+        },
+        settleLive: (result) => harness.events.push(`settle-live:${result.status}`)
       })
     ).rejects.toThrow('unexpected rejection')
 
-    expect(harness.events).toEqual(['append:running', 'notify:running', 'invoke'])
-    expect(harness.document().runs[0]).toMatchObject({ runId: 'run-rejected', status: 'running' })
+    expect(harness.events).toEqual([
+      'append:running',
+      'notify:running',
+      'invoke',
+      'update:interrupted',
+      'settle-live:interrupted',
+      'notify:interrupted'
+    ])
+    expect(harness.document().runs[0]).toMatchObject({
+      runId: 'run-rejected',
+      status: 'interrupted',
+      endedAt: 200,
+      interruptionReason: 'execution-error',
+      text: {
+        stderr: 'unexpected rejection',
+        plain: ['unexpected rejection']
+      },
+      environmentCapture: { state: 'unavailable', reason: 'environment-capture-failed' }
+    })
   })
 
-  it('does not invoke or notify when the initial append fails', async () => {
+  it('settles live ownership without invoking when the initial append fails', async () => {
     const harness = createHarness({ appendFailure: new Error('append failed') })
 
     await expect(
@@ -293,33 +343,80 @@ describe('NotebookRunTerminalizationOwner', () => {
         invoke: async () => {
           harness.events.push('invoke')
           return completedResult()
-        }
+        },
+        settleLive: (result) => harness.events.push(`settle-live:${result.status}`)
       })
     ).rejects.toThrow('append failed')
 
-    expect(harness.events).toEqual(['append:running'])
+    expect(harness.events).toEqual([
+      'append:running',
+      'settle-live:interrupted',
+      'notify:undefined'
+    ])
     expect(harness.document().runs).toEqual([])
   })
 
-  it('keeps the running record when the terminal update fails', async () => {
+  it('releases live ownership when the terminal update fails', async () => {
     const harness = createHarness({ updateFailure: new Error('update failed') })
 
     await expect(
       harness.owner.run({
         session,
         runningRun: runningRun('run-update-failed'),
-        invoke: async () => completedResult()
+        invoke: async () => completedResult(),
+        settleLive: (result) => harness.events.push(`settle-live:${result.status}`)
       })
     ).rejects.toThrow('update failed')
 
-    expect(harness.events).toEqual(['append:running', 'notify:running', 'update:completed'])
+    expect(harness.events).toEqual([
+      'append:running',
+      'notify:running',
+      'update:completed',
+      'settle-live:completed',
+      'notify:running'
+    ])
     expect(harness.document().runs[0]).toMatchObject({
       runId: 'run-update-failed',
       status: 'running'
     })
   })
 
-  it('leaves the terminal update committed when post-commit work fails', async () => {
+  it('retries a pending terminal write in the same process on later reconciliation', async () => {
+    const harness = createHarness({
+      updateFailure: new Error('transient update failure'),
+      updateFailureCount: 1
+    })
+
+    await expect(
+      harness.owner.run({
+        session,
+        runningRun: runningRun('run-retry'),
+        invoke: async () => completedResult(),
+        settleLive: (result) => harness.events.push(`settle-live:${result.status}`)
+      })
+    ).rejects.toThrow('transient update failure')
+
+    expect(harness.document().runs[0]?.status).toBe('running')
+
+    await harness.owner.reconcilePending(session)
+
+    expect(harness.document().runs[0]).toMatchObject({
+      runId: 'run-retry',
+      status: 'completed',
+      endedAt: 200
+    })
+    expect(harness.events).toEqual([
+      'append:running',
+      'notify:running',
+      'update:completed',
+      'settle-live:completed',
+      'notify:running',
+      'update:completed',
+      'notify:completed'
+    ])
+  })
+
+  it('leaves the terminal update committed when settling live ownership fails', async () => {
     const harness = createHarness()
 
     await expect(
@@ -327,18 +424,19 @@ describe('NotebookRunTerminalizationOwner', () => {
         session,
         runningRun: runningRun('run-post-commit-failed'),
         invoke: async () => completedResult(),
-        postCommit: () => {
-          harness.events.push('post-commit')
-          throw new Error('post-commit failed')
+        settleLive: () => {
+          harness.events.push('settle-live')
+          throw new Error('settle-live failed')
         }
       })
-    ).rejects.toThrow('post-commit failed')
+    ).rejects.toThrow('settle-live failed')
 
     expect(harness.events).toEqual([
       'append:running',
       'notify:running',
       'update:completed',
-      'post-commit'
+      'settle-live',
+      'notify:completed'
     ])
     expect(harness.document().runs[0]).toMatchObject({
       runId: 'run-post-commit-failed',
@@ -357,6 +455,11 @@ describe('NotebookRunTerminalizationOwner', () => {
       })
     ).rejects.toThrow('Notebook run not found after update: run-missing')
 
-    expect(harness.events).toEqual(['append:running', 'notify:running', 'update:completed'])
+    expect(harness.events).toEqual([
+      'append:running',
+      'notify:running',
+      'update:completed',
+      'notify:completed'
+    ])
   })
 })

@@ -746,7 +746,8 @@ class AcpPermissionBroker {
     private readonly permissionGrantRegistry?: PermissionGrantRegistry,
     private readonly onPermissionSettled?: (
       requestId: string,
-      state: AcpPermissionSettlementState
+      state: AcpPermissionSettlementState,
+      request: AcpPermissionRequest
     ) => void,
     private readonly permissionWaitHooks?: PermissionWaitHooks
   ) {}
@@ -1363,7 +1364,7 @@ class AcpPermissionBroker {
     pending.settled = true
     pending.resolve(response)
     try {
-      this.onPermissionSettled?.(pending.request.requestId, state)
+      this.onPermissionSettled?.(pending.request.requestId, state, pending.request)
     } catch {
       // Notification projection failures must never change the permission decision.
     }
@@ -1378,7 +1379,7 @@ class AcpPermissionBroker {
     pending.settled = true
     pending.reject(error)
     try {
-      this.onPermissionSettled?.(pending.request.requestId, state)
+      this.onPermissionSettled?.(pending.request.requestId, state, pending.request)
     } catch {
       // Notification projection failures must never change the permission decision.
     }

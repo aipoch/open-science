@@ -97,6 +97,24 @@ describe('notebook local RPC adapter', () => {
     }
   )
 
+  it.each(['runCell', 'execute'] as const)(
+    'forwards request cancellation to data execution method %s',
+    async (method) => {
+      const capability = createCapability()
+      const handler = resolveNotebookLocalRpcHandler(capability, method, request)
+      const cancellation = new AbortController()
+
+      await (
+        handler as unknown as (
+          request: Record<string, unknown>,
+          signal: AbortSignal
+        ) => Promise<unknown>
+      )(request, cancellation.signal)
+
+      expect(capability[method]).toHaveBeenCalledWith(request, cancellation.signal)
+    }
+  )
+
   it('validates common notebook routing fields before resolving a handler', () => {
     const capability = createCapability()
 
