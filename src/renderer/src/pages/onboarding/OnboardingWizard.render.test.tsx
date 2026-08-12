@@ -237,4 +237,16 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).toContain(DEFAULT_DATA_ROOT)
     expect(window.api.storage.getInfo).toHaveBeenCalledTimes(2)
   })
+
+  it('uses the startup storage loader supplied by App', async () => {
+    const loadStorageInfo = vi.fn().mockResolvedValue(storageInfo())
+    readyClaudeState()
+
+    await act(async () => {
+      root.render(<OnboardingWizard loadStorageInfo={loadStorageInfo} />)
+    })
+
+    expect(loadStorageInfo).toHaveBeenCalledOnce()
+    expect(window.api.storage.getInfo).not.toHaveBeenCalled()
+  })
 })

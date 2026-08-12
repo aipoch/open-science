@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
+import type { StorageInfo } from '../../shared/storage'
 
 import { useDeepLinkNavigation } from '@/lib/deep-link'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -132,6 +133,31 @@ const AppContent = (): React.JSX.Element | null => {
   const [legacyMove, setLegacyMove] = useState<
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
+  const storageInfoRequest = useRef<Promise<StorageInfo> | undefined>(undefined)
+  const loadStorageInfo = useCallback((): Promise<StorageInfo> => {
+    if (storageInfoRequest.current) return storageInfoRequest.current
+
+    const request = Promise.resolve()
+      .then(() => window.api.storage.getInfo())
+      .then(
+        (info) => {
+          if (info.dataRootMissing) setMissingDataRoot(info.dataRoot)
+          else if (info.legacyDataMovePrompt) {
+            setLegacyMove({
+              currentDataRoot: info.dataRoot,
+              defaultParent: info.defaultParent
+            })
+          }
+          return info
+        },
+        (error: unknown) => {
+          if (storageInfoRequest.current === request) storageInfoRequest.current = undefined
+          throw error
+        }
+      )
+    storageInfoRequest.current = request
+    return request
+  }, [])
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
@@ -295,18 +321,11 @@ const AppContent = (): React.JSX.Element | null => {
 
   // Checked once at startup, after the gate is settled: dataRootMissing only fires for an
   // explicitly-configured root, which implies onboarding already completed - never during the
-  // wizard itself.
+  // wizard itself. Onboarding shares this promise because usage calculation recursively scans the
+  // data root; a rejection clears the cache so its Retry action can start a fresh request.
   useEffect(() => {
-    void window.api.storage.getInfo().then((info) => {
-      if (info.dataRootMissing) setMissingDataRoot(info.dataRoot)
-      else if (info.legacyDataMovePrompt) {
-        setLegacyMove({
-          currentDataRoot: info.dataRoot,
-          defaultParent: info.defaultParent
-        })
-      }
-    })
-  }, [])
+    void loadStorageInfo().catch(() => undefined)
+  }, [loadStorageInfo])
 
   // Subscribe once to connector approval requests from the main-process gate; they surface as a
   // modal the user must answer before the held connector call proceeds.
@@ -518,7 +537,7 @@ const AppContent = (): React.JSX.Element | null => {
   }
 
   if (startupView === 'onboarding') {
-    return <OnboardingWizard />
+    return <OnboardingWizard loadStorageInfo={loadStorageInfo} />
   }
 
   if (!isSessionPersistenceHydrated && isSessionPersistenceLoading) {

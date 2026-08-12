@@ -21,6 +21,9 @@ import { ProviderStep } from './ProviderStep'
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
 // show only once the provider is already validated.
 type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
+type OnboardingWizardProps = {
+  loadStorageInfo?: () => Promise<StorageInfo>
+}
 
 const STEP_ORDER: WizardStep[] = ['environment', 'agent', 'provider', 'notebook', 'location']
 const STEP_LABELS: Record<WizardStep, string> = {
@@ -30,6 +33,7 @@ const STEP_LABELS: Record<WizardStep, string> = {
   notebook: 'Notebook runtime',
   location: 'Data location'
 }
+const loadStorageInfoFromBridge = (): Promise<StorageInfo> => window.api.storage.getInfo()
 
 // Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
 const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
@@ -73,7 +77,9 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
 // First-run gate: inspect the host, install the agent runtime, configure and validate a model
 // provider, optionally set up the notebook runtime, then choose where data lives — one focused
 // step each. Completed users repair later environment regressions from the relevant Settings panel.
-const OnboardingWizard = (): React.JSX.Element => {
+const OnboardingWizard = ({
+  loadStorageInfo = loadStorageInfoFromBridge
+}: OnboardingWizardProps): React.JSX.Element => {
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
@@ -120,12 +126,12 @@ const OnboardingWizard = (): React.JSX.Element => {
     )
   }, [])
   const retryDataRootInfo = useCallback((): void => {
-    void window.api.storage.getInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
-  }, [handleDataRootInfoFailure, handleDataRootInfoSuccess])
+    void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
+  }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
 
   useEffect(() => {
-    void window.api.storage.getInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
-  }, [handleDataRootInfoFailure, handleDataRootInfoSuccess])
+    void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
+  }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
 
   // App starts this check on every launch. This local fallback also keeps the wizard self-contained in
   // tests or alternate entry surfaces where it may be mounted without App as its parent.

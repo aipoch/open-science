@@ -85,6 +85,9 @@ const mocks = vi.hoisted(() => {
     },
     startupView: 'app' as 'app' | 'onboarding',
     getInfo: vi.fn(),
+    onboarding: {
+      props: undefined as { loadStorageInfo: () => Promise<unknown> } | undefined
+    },
     syncWindowFindAppearance: vi.fn(),
     syncUnreadTaskView: vi.fn(),
     globalSearch: { props: undefined as { open: boolean } | undefined },
@@ -228,7 +231,10 @@ vi.mock('@/pages/home/HomePage', () => ({
   }
 }))
 vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
-  OnboardingWizard: (): React.JSX.Element => <div data-testid="onboarding-page" />
+  OnboardingWizard: (props: { loadStorageInfo: () => Promise<unknown> }): React.JSX.Element => {
+    mocks.onboarding.props = props
+    return <div data-testid="onboarding-page" />
+  }
 }))
 vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
   ConnectorApprovalDialog: (): React.JSX.Element => <div data-testid="approval-dialog" />
@@ -326,12 +332,13 @@ describe('App startup routing', () => {
     mocks.lifecycleSync.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
     mocks.syncUnreadTaskView.mockClear()
-    mocks.getInfo.mockResolvedValue({
+    mocks.getInfo.mockReset().mockResolvedValue({
       dataRoot: '/workspace/OpenScience',
       dataRootMissing: false,
       legacyDataMovePrompt: false,
       defaultParent: '/workspace'
     })
+    mocks.onboarding.props = undefined
     window.api = {
       storage: { getInfo: mocks.getInfo },
       settings: {
@@ -819,6 +826,39 @@ describe('App startup routing', () => {
 
     expect(container.querySelector('[data-testid="onboarding-page"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
+  })
+
+  it('shares the startup storage lookup with onboarding', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+
+    await render()
+    expect(mocks.getInfo).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      await mocks.onboarding.props?.loadStorageInfo()
+    })
+
+    expect(mocks.getInfo).toHaveBeenCalledOnce()
+  })
+
+  it('allows onboarding to retry a failed shared storage lookup', async () => {
+    mocks.settings.isLoaded = true
+    mocks.startupView = 'onboarding'
+    mocks.getInfo.mockRejectedValueOnce(new Error('storage unavailable')).mockResolvedValueOnce({
+      dataRoot: '/workspace/OpenScience',
+      dataRootMissing: false,
+      legacyDataMovePrompt: false,
+      defaultParent: '/workspace'
+    })
+
+    await render()
+
+    await act(async () => {
+      await mocks.onboarding.props?.loadStorageInfo()
+    })
+
+    expect(mocks.getInfo).toHaveBeenCalledTimes(2)
   })
 
   it('continues the startup animation while the initial session snapshot loads', async () => {
