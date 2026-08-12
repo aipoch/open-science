@@ -1,8 +1,8 @@
 name: Desktop Regression
 
-# Advisory packaged-app behavior checks. They consume a completed Release/Nightly build artifact and
-# intentionally live in a separate workflow so failures never block publication. Each matrix leg is
-# independently red and independently re-runnable without rebuilding the package.
+# Advisory desktop behavior checks. Packaged P0 consumes the immutable ARM64 release artifact while
+# visual regression uses the same macos-14 source-build environment that owns the canonical Darwin
+# baselines. The independent jobs can be re-run without rebuilding or re-signing release packages.
 on:
   workflow_call:
     inputs:
@@ -71,20 +71,12 @@ jobs:
             exit 1
           fi
 
-  regression:
-    name: ${{ matrix.name }} (macos-arm64 artifact)
+  p0:
+    name: p0 (macos-arm64 artifact)
     needs: source
     if: needs.source.outputs.available == 'true'
     runs-on: macos-26
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: p0
-            command: npm run test:e2e:p0
-          - name: visual
-            command: npm run test:e2e:visual
     steps:
       - name: Checkout source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -124,16 +116,56 @@ jobs:
           test -n "$executable"
           echo "executable=$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$executable")" >> "$GITHUB_OUTPUT"
 
-      - name: Run packaged desktop regression
+      - name: Run packaged P0 regression
         env:
           OPEN_SCIENCE_E2E_EXECUTABLE: ${{ steps.packaged_app.outputs.executable }}
-        run: ${{ matrix.command }}
+        run: npm run test:e2e:p0
 
-      - name: Upload regression diagnostics
-        if: failure()
+      - name: Upload P0 diagnostics
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: desktop-regression-${{ matrix.name }}-${{ needs.source.outputs.run_id }}
+          name: desktop-regression-p0-${{ needs.source.outputs.run_id }}
+          retention-days: 7
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+
+  visual:
+    name: visual (canonical macos-14 source build)
+    needs: source
+    if: needs.source.outputs.available == 'true'
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Electron application
+        run: npm run build:e2e
+
+      # Keep Playwright's single CI retry for diagnostics, but report a retry-pass as flaky so this
+      # advisory check records baseline instability instead of silently normalizing it.
+      - name: Run visual regression
+        run: npm run test:e2e:visual -- --fail-on-flaky-tests
+
+      - name: Upload visual diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-regression-visual-${{ needs.source.outputs.run_id }}
           retention-days: 7
           path: |
             test-results/

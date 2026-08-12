@@ -157,7 +157,8 @@ describe('post-merge Windows validation', () => {
     const evidence = findStep(smoke, 'Record platform certification evidence')
     const uploadEvidence = findStep(smoke, 'Upload platform certification evidence')
     const regressionWorkflow = readWorkflow('desktop-regression.yml')
-    const regression = regressionWorkflow.jobs.regression
+    const p0Regression = regressionWorkflow.jobs.p0
+    const visualRegression = regressionWorkflow.jobs.visual
     const notarize = readWorkflow('notarize-mac.yml').jobs.notarize
     const notarizeDryRun = readWorkflow('notarize-dryrun.yml').jobs.notarize
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
@@ -200,26 +201,27 @@ describe('post-merge Windows validation', () => {
     expect(evidence.run).toContain('--database-migration-certification "$database_certification"')
     expect(uploadEvidence.with?.name).toBe('certification-${{ matrix.name }}')
     expect(uploadEvidence.with?.['retention-days']).toBe(7)
-    expect(regression).toMatchObject({ needs: 'source', 'runs-on': 'macos-26' })
-    expect(regression.if).toBe("needs.source.outputs.available == 'true'")
-    expect(regression['continue-on-error']).toBeUndefined()
-    expect(regression.strategy?.matrix).toEqual({
-      include: [
-        { name: 'p0', command: 'npm run test:e2e:p0' },
-        { name: 'visual', command: 'npm run test:e2e:visual' }
-      ]
-    })
-    expect(findStep(regression, 'Download macOS ARM64 package').with?.name).toBe('macos-arm64')
-    expect(findStep(regression, 'Download macOS ARM64 package').with?.['run-id']).toBe(
+    expect(p0Regression).toMatchObject({ needs: 'source', 'runs-on': 'macos-26' })
+    expect(p0Regression.if).toBe("needs.source.outputs.available == 'true'")
+    expect(p0Regression['continue-on-error']).toBeUndefined()
+    expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.name).toBe('macos-arm64')
+    expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.['run-id']).toBe(
       '${{ needs.source.outputs.run_id }}'
     )
-    expect(findStep(regression, 'Extract packaged application').run).toContain('ditto -x -k')
-    expect(findStep(regression, 'Run packaged desktop regression').run).toBe(
-      '${{ matrix.command }}'
-    )
+    expect(findStep(p0Regression, 'Extract packaged application').run).toContain('ditto -x -k')
+    expect(findStep(p0Regression, 'Run packaged P0 regression').run).toBe('npm run test:e2e:p0')
     expect(
-      findStep(regression, 'Run packaged desktop regression').env?.OPEN_SCIENCE_E2E_EXECUTABLE
+      findStep(p0Regression, 'Run packaged P0 regression').env?.OPEN_SCIENCE_E2E_EXECUTABLE
     ).toBe('${{ steps.packaged_app.outputs.executable }}')
+    expect(findStep(p0Regression, 'Upload P0 diagnostics').if).toBe('always()')
+    expect(visualRegression).toMatchObject({ needs: 'source', 'runs-on': 'macos-14' })
+    expect(visualRegression.if).toBe("needs.source.outputs.available == 'true'")
+    expect(visualRegression['continue-on-error']).toBeUndefined()
+    expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
+    expect(findStep(visualRegression, 'Run visual regression').run).toBe(
+      'npm run test:e2e:visual -- --fail-on-flaky-tests'
+    )
+    expect(findStep(visualRegression, 'Upload visual diagnostics').if).toBe('always()')
     expect(finalMacos.run).toBe(
       'node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper'
     )
