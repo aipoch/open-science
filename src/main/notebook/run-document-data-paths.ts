@@ -8,12 +8,23 @@ import type {
 } from '../../shared/notebook'
 import { decodeDataPath, encodeDataPath } from '../storage/data-path'
 
+// Persisted documents are versionless historical input: once the canonical field exists it wins,
+// while legacy documents fall back to the old alias.
+const persistedProjectId = (scope: { projectId?: string; projectName?: string }): string => {
+  const projectId = scope.projectId ?? scope.projectName
+  if (!projectId) throw new Error('A persisted projectId is required.')
+  return projectId
+}
+
 // Replaces a data-root absolute path with a $DATA sentinel and drops the derived fileUrl.
 const encodeArtifact = (artifact: ArtifactFile, dataRoot: string | undefined): ArtifactFile => {
+  const projectId = persistedProjectId(artifact)
   const encoded: ArtifactFile = {
     ...artifact,
+    projectId,
     path: encodeDataPath(artifact.path, dataRoot) as string
   }
+  delete (encoded as { projectName?: string }).projectName
   delete (encoded as Partial<ArtifactFile>).fileUrl
   return encoded
 }
@@ -21,7 +32,8 @@ const encodeArtifact = (artifact: ArtifactFile, dataRoot: string | undefined): A
 // Resolves a $DATA sentinel back to an absolute path and recomputes fileUrl from it.
 const decodeArtifact = (artifact: ArtifactFile, dataRoot: string | undefined): ArtifactFile => {
   const path = decodeDataPath(artifact.path, dataRoot) as string
-  return { ...artifact, path, fileUrl: pathToFileURL(path).href }
+  const projectId = persistedProjectId(artifact)
+  return { ...artifact, projectId, projectName: projectId, path, fileUrl: pathToFileURL(path).href }
 }
 
 // Encodes/decodes a single working file's absolute path, leaving the already-relative field alone.
@@ -57,30 +69,41 @@ const decodeRun = (run: NotebookRunRecord, dataRoot: string | undefined): Notebo
 export const encodeRunDocumentDataPaths = (
   doc: NotebookRunDocument,
   dataRoot?: string
-): NotebookRunDocument => ({
-  ...doc,
-  workspaceCwd: encodeDataPath(doc.workspaceCwd, dataRoot) as string,
-  notebookSessionRoot: encodeDataPath(doc.notebookSessionRoot, dataRoot) as string,
-  dataRoot: encodeDataPath(doc.dataRoot, dataRoot) as string,
-  kernel: {
-    ...doc.kernel,
-    runtimeRoot: encodeDataPath(doc.kernel.runtimeRoot, dataRoot) as string
-  },
-  runs: doc.runs.map((run) => encodeRun(run, dataRoot))
-})
+): NotebookRunDocument => {
+  const projectId = persistedProjectId(doc)
+  const encoded: NotebookRunDocument = {
+    ...doc,
+    projectId,
+    workspaceCwd: encodeDataPath(doc.workspaceCwd, dataRoot) as string,
+    notebookSessionRoot: encodeDataPath(doc.notebookSessionRoot, dataRoot) as string,
+    dataRoot: encodeDataPath(doc.dataRoot, dataRoot) as string,
+    kernel: {
+      ...doc.kernel,
+      runtimeRoot: encodeDataPath(doc.kernel.runtimeRoot, dataRoot) as string
+    },
+    runs: doc.runs.map((run) => encodeRun(run, dataRoot))
+  }
+  delete (encoded as { projectName?: string }).projectName
+  return encoded
+}
 
 // Resolves a decoded document's "$DATA/..." sentinels against the current data root.
 export const decodeRunDocumentDataPaths = (
   doc: NotebookRunDocument,
   dataRoot?: string
-): NotebookRunDocument => ({
-  ...doc,
-  workspaceCwd: decodeDataPath(doc.workspaceCwd, dataRoot) as string,
-  notebookSessionRoot: decodeDataPath(doc.notebookSessionRoot, dataRoot) as string,
-  dataRoot: decodeDataPath(doc.dataRoot, dataRoot) as string,
-  kernel: {
-    ...doc.kernel,
-    runtimeRoot: decodeDataPath(doc.kernel.runtimeRoot, dataRoot) as string
-  },
-  runs: doc.runs.map((run) => decodeRun(run, dataRoot))
-})
+): NotebookRunDocument => {
+  const projectId = persistedProjectId(doc)
+  return {
+    ...doc,
+    projectId,
+    projectName: projectId,
+    workspaceCwd: decodeDataPath(doc.workspaceCwd, dataRoot) as string,
+    notebookSessionRoot: decodeDataPath(doc.notebookSessionRoot, dataRoot) as string,
+    dataRoot: decodeDataPath(doc.dataRoot, dataRoot) as string,
+    kernel: {
+      ...doc.kernel,
+      runtimeRoot: decodeDataPath(doc.kernel.runtimeRoot, dataRoot) as string
+    },
+    runs: doc.runs.map((run) => decodeRun(run, dataRoot))
+  }
+}

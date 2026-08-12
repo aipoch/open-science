@@ -23,6 +23,7 @@ import {
   notebookLaneScope,
   type NotebookLaneIdentity
 } from './lane-identity'
+import { resolveProjectId } from '../../shared/project-scope'
 
 type RuntimeSession = NotebookSessionAggregate
 
@@ -38,7 +39,7 @@ type NotebookSessionLifecycleCallbacks = {
 
 type NotebookSessionLifecycleOptions = {
   storageRoot: string
-  defaultProjectName: string
+  defaultProjectId: string
   repository: NotebookRunRepository
   sessions: NotebookSessionRegistry<RuntimeSession>
   runtimeBindings: NotebookRuntimeBindingOwner
@@ -76,34 +77,34 @@ class NotebookSessionLifecycleOwner {
   constructor(private readonly options: NotebookSessionLifecycleOptions) {}
 
   laneForRequest(request: NotebookSessionRequest): NotebookLaneIdentity {
-    const projectName = request.projectName ?? this.options.defaultProjectName
+    const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const context = request.provenanceContext
     const attemptId = (request as InternalNotebookSessionRequest).delegatedWorkAttemptId
     if (context && context.agentFrameId === context.rootFrameId) {
-      return createRootNotebookLane(projectName, request.sessionId, context.agentFrameId)
+      return createRootNotebookLane(projectId, request.sessionId, context.agentFrameId)
     }
     return context?.agentFrameId
-      ? createFrameNotebookLane(projectName, request.sessionId, context.agentFrameId, attemptId)
-      : this.rootLane(request.sessionId, projectName)
+      ? createFrameNotebookLane(projectId, request.sessionId, context.agentFrameId, attemptId)
+      : this.rootLane(request.sessionId, projectId)
   }
 
-  rootLane(sessionId: string, projectName = this.options.defaultProjectName): NotebookLaneIdentity {
-    return createRootNotebookLane(projectName, sessionId, `root-frame-${sessionId}`)
+  rootLane(sessionId: string, projectId = this.options.defaultProjectId): NotebookLaneIdentity {
+    return createRootNotebookLane(projectId, sessionId, `root-frame-${sessionId}`)
   }
 
   ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
-    const projectName = request.projectName ?? this.options.defaultProjectName
+    const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const lane = this.laneForRequest(request)
     return this.options.sessions.getOrCreate(lane, async () => {
       let document = await this.options.repository.loadOrCreate({
-        projectName,
+        projectName: projectId,
         sessionId: request.sessionId,
         workspaceCwd: request.workspaceCwd,
         lane
       })
       if (document.runs.some((run) => run.status === 'running' || run.status === 'queued')) {
         document = await this.options.repository.reconcileInterruptedRuns(
-          projectName,
+          projectId,
           request.sessionId,
           lane
         )
@@ -112,14 +113,14 @@ class NotebookSessionLifecycleOwner {
       const ownedExecutor = this.createExecutor(lane)
       const session = new NotebookSessionAggregate({
         sessionId: request.sessionId,
-        projectName,
+        projectId,
         cwd: document.dataRoot,
         notebookSessionRoot: document.notebookSessionRoot,
         dataRoot: document.dataRoot,
         runtimeRoot: document.kernel.runtimeRoot,
         runJsonPath: getNotebookRunJsonPath(
           this.options.storageRoot,
-          projectName,
+          projectId,
           request.sessionId,
           lane
         ),
@@ -197,10 +198,10 @@ class NotebookSessionLifecycleOwner {
     return this.options.runtimeBindings.withGlobalTeardown(() => this.options.sessions.dispose())
   }
 
-  activeSessions(): { projectName: string; sessionId: string }[] {
+  activeSessions(): { projectId: string; sessionId: string }[] {
     return Array.from(this.options.sessions.values())
       .filter((session) => session.hasActiveRun())
-      .map((session) => ({ projectName: session.projectName, sessionId: session.sessionId }))
+      .map((session) => ({ projectId: session.projectId, sessionId: session.sessionId }))
   }
 
   notifyAvailable(session: RuntimeSession, source: NotebookRunSource): void {
@@ -223,7 +224,7 @@ class NotebookSessionLifecycleOwner {
     if (!persistsToRunJson(processKey)) return
     try {
       await this.options.repository.updateKernelStatus({
-        projectName: session.projectName,
+        projectName: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
         status

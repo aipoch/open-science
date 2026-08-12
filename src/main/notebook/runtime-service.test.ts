@@ -1653,7 +1653,7 @@ describe('notebook runtime service', () => {
     expect(executions).toHaveLength(1)
     expect(executions[0].kind).toBe('repl')
     expect(executions[0].sessionId).toBe('session-9')
-    expect(executions[0].projectName).toBe('my-project')
+    expect(executions[0].projectId).toBe('my-project')
   })
 
   it('records a failed repl run when the executor throws', async () => {

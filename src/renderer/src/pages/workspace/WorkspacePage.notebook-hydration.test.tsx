@@ -156,7 +156,7 @@ describe('WorkspacePage notebook entry hydration', () => {
     expect(getReference).toHaveBeenCalledWith({
       sessionId: 'sess-1',
       workspaceCwd: '/workspace/proj-1',
-      projectName: 'proj-1'
+      projectId: 'proj-1'
     })
   })
 })

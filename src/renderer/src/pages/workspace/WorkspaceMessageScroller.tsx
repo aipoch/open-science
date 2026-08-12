@@ -36,6 +36,7 @@ import {
 } from './preview-file-item'
 import { createPreviewRequestScope } from './previews/preview-file-reader'
 import { resolveLocalPath } from '../../../../shared/local-fs'
+import { resolveProjectId } from '../../../../shared/project-scope'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import type { JobSummary } from '../../../../shared/compute'
 import { CompletedJobCard } from '@/components/CompletedJobCard'
@@ -1113,7 +1114,8 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&
-  previous.notebookReference?.projectName === next.notebookReference?.projectName &&
+  (previous.notebookReference ? resolveProjectId(previous.notebookReference) : undefined) ===
+    (next.notebookReference ? resolveProjectId(next.notebookReference) : undefined) &&
   previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 

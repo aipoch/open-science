@@ -1882,7 +1882,7 @@ describe('workspace agent message sending', () => {
     expect(shutdown).toHaveBeenCalledWith({
       sessionId: 'transport-session-1',
       workspaceCwd: '/workspace/project',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     expect(resetSessionContext).toHaveBeenCalledOnce()
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(

@@ -784,7 +784,7 @@ export class AcpSessionCapabilityOwner {
     const connection = await this.options.artifacts.getRpcConnection?.()
     return {
       storageRoot: this.options.artifacts.dataRoot,
-      projectName,
+      projectId: projectName,
       sessionId: routingId,
       currentRunFile:
         this.options.artifacts.currentRunFile ??
@@ -814,7 +814,7 @@ export class AcpSessionCapabilityOwner {
       endpoint: connection.endpoint,
       socketPath: connection.socketPath,
       token: connection.token,
-      projectName,
+      projectId: projectName,
       sessionId: routingId,
       workspaceCwd: sessionCwd
     }

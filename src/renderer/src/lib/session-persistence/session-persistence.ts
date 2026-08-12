@@ -180,7 +180,7 @@ const reconcilePendingArtifacts = async (api: ArtifactReconcileApi): Promise<voi
 
       try {
         const finalized = await api.reconcilePendingArtifacts({
-          projectName: session.projectId,
+          projectId: session.projectId,
           sessionId: session.id,
           messageId: message.id,
           pendingPaths

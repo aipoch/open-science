@@ -12,6 +12,8 @@ import {
 } from '../../shared/elicitation'
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
+import { resolveProjectId } from '../../shared/project-scope'
+import type { ProjectIdScope } from '../../shared/project-scope'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 const MAX_RUNTIME_RESULTS = 40
@@ -46,11 +48,11 @@ type NotebookRpcConnection = LocalRpcTransport & {
   release?: () => void
 }
 
-type NotebookMcpEnvironment = NotebookRpcConnection & {
-  projectName: string
-  sessionId: string
-  workspaceCwd: string
-}
+type NotebookMcpEnvironment = NotebookRpcConnection &
+  ProjectIdScope & {
+    sessionId: string
+    workspaceCwd: string
+  }
 
 type NotebookMcpServerConfigRequest = NotebookMcpEnvironment & {
   command: string
@@ -234,29 +236,27 @@ type NotebookRpcToolDefinition = {
 }
 
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
-const createNotebookMcpServerConfig = ({
-  command,
-  entryPath,
-  endpoint,
-  socketPath,
-  token,
-  projectName,
-  sessionId,
-  workspaceCwd
-}: NotebookMcpServerConfigRequest): McpServerStdio => ({
-  name: NOTEBOOK_MCP_SERVER_NAME,
-  command,
-  args: [entryPath, NOTEBOOK_MCP_SERVER_ARG],
-  env: [
-    { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: endpoint },
-    ...(socketPath ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: socketPath }] : []),
-    { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: token },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectName },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: sessionId },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: workspaceCwd }
-  ]
-})
+const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest): McpServerStdio => {
+  const projectId = resolveProjectId(request)
+  return {
+    name: NOTEBOOK_MCP_SERVER_NAME,
+    command: request.command,
+    args: [request.entryPath, NOTEBOOK_MCP_SERVER_ARG],
+    env: [
+      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: request.endpoint },
+      ...(request.socketPath
+        ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: request.socketPath }]
+        : []),
+      { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: request.token },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: projectId },
+      // Keep the old variable for rollback to a child entry point that predates the adapter.
+      { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectId },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: request.sessionId },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: request.workspaceCwd }
+    ]
+  }
+}
 
 // Reads one required environment value for the stdio MCP subprocess.
 const requireEnvironmentVariable = (
@@ -275,14 +275,20 @@ const requireEnvironmentVariable = (
 // Reconstructs the notebook RPC routing context passed through the MCP server environment.
 const createNotebookMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
-): NotebookMcpEnvironment => ({
-  endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
-  socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
-  token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'),
-  projectName: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME'),
-  sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
-  workspaceCwd: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD')
-})
+): NotebookMcpEnvironment => {
+  const projectId = resolveProjectId({
+    projectId: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID,
+    projectName: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
+  })
+  return {
+    endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
+    socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
+    token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'),
+    projectId,
+    sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
+    workspaceCwd: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD')
+  }
+}
 
 // Sends a tool request to the app-local notebook RPC server and returns its raw result payload.
 const callNotebookRpc = async (
@@ -290,6 +296,7 @@ const callNotebookRpc = async (
   method: string,
   params: unknown = {}
 ): Promise<unknown> => {
+  const projectId = resolveProjectId(environment)
   const response = await fetchLocalRpc(
     environment,
     {
@@ -301,10 +308,10 @@ const callNotebookRpc = async (
       body: JSON.stringify({
         method,
         params: {
+          ...((params ?? {}) as Record<string, unknown>),
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
-          projectName: environment.projectName,
-          ...((params ?? {}) as Record<string, unknown>)
+          projectId
         }
       } satisfies RpcRequest)
     },

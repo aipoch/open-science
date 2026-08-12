@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
+import { resolveProjectId } from '../../../../shared/project-scope'
 
 type NotebookRunSnapshot = {
   sessionId?: string
@@ -18,11 +19,11 @@ const useNotebookRunsById = (
     runsById: EMPTY_RUNS_BY_ID
   })
   const sessionId = reference?.sessionId
-  const projectName = reference?.projectName
+  const projectId = reference ? resolveProjectId(reference) : undefined
   const workspaceCwd = reference?.workspaceCwd
 
   useEffect(() => {
-    if (!sessionId || !projectName || workspaceCwd === undefined) {
+    if (!sessionId || !projectId || workspaceCwd === undefined) {
       return undefined
     }
 
@@ -32,7 +33,7 @@ const useNotebookRunsById = (
       const sequence = ++requestSequence
 
       try {
-        const state = await window.api.notebook.state({ sessionId, projectName, workspaceCwd })
+        const state = await window.api.notebook.state({ sessionId, projectId, workspaceCwd })
 
         if (!active || sequence !== requestSequence) return
         setSnapshot({
@@ -55,7 +56,7 @@ const useNotebookRunsById = (
       active = false
       stopChanged()
     }
-  }, [projectName, sessionId, workspaceCwd])
+  }, [projectId, sessionId, workspaceCwd])
 
   return snapshot.sessionId === sessionId ? snapshot.runsById : EMPTY_RUNS_BY_ID
 }

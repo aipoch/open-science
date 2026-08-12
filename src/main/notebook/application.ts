@@ -4,21 +4,22 @@ import type { NotebookEnvironmentLifecycle } from './environment-lifecycle-workf
 import type { NotebookLocalRpcCapability } from './local-rpc-notebook-adapter'
 import { createNotebookCommandWorkflows, type NotebookCommandWorkflows } from './notebook-workflows'
 import { NotebookRuntimeService, type NotebookRuntimeServiceOptions } from './runtime-service'
+import type { ProjectIdScope } from '../../shared/project-scope'
 
 type NotebookApplicationDeps = Pick<
   NotebookRuntimeServiceOptions,
   | 'configRoot'
   | 'dataRoot'
-  | 'projectName'
   | 'repository'
   | 'getPackageMirror'
   | 'notebookRuntimeSettings'
   | 'micromambaRunner'
   | 'locale'
   | 'appVersion'
-> & {
-  events: ApplicationEventPublisher
-}
+> &
+  ProjectIdScope & {
+    events: ApplicationEventPublisher
+  }
 
 type NotebookApplication = {
   // Retained as the internal compatibility surface while later Notebook slices narrow remaining

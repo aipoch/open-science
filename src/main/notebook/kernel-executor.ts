@@ -579,8 +579,12 @@ class NotebookKernelExecutor implements NotebookExecutor {
       ...(kind === 'repl' && request.sessionId
         ? { OPEN_SCIENCE_NOTEBOOK_SESSION_ID: request.sessionId }
         : {}),
-      ...(kind === 'repl' && request.projectName
-        ? { OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: request.projectName }
+      ...(kind === 'repl' && request.projectId
+        ? {
+            OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: request.projectId,
+            // Compatibility for the existing REPL bridge until its next protocol revision.
+            OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: request.projectId
+          }
         : {}),
       ...(kind === 'repl' ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       ...(rEnvPrefix ? { OPEN_SCIENCE_R_ENV_PREFIX: rEnvPrefix } : {})

@@ -365,9 +365,7 @@ describe('storage IPC handlers', () => {
       notebook: {
         shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
         dispose: vi.fn().mockResolvedValue({ reaped: true }),
-        getActiveNotebookSessions: vi
-          .fn()
-          .mockReturnValue([{ projectName: 'p', sessionId: 'nb-1' }])
+        getActiveNotebookSessions: vi.fn().mockReturnValue([{ projectId: 'p', sessionId: 'nb-1' }])
       }
     })
     registerStorageIpcHandlers(deps)
@@ -384,10 +382,10 @@ describe('storage IPC handlers', () => {
     // `this.sessions`. The handler must invoke it as a method — extracting it as a bare function
     // reference drops `this` and throws "Cannot read properties of undefined (reading 'values')".
     class FakeNotebookService {
-      private sessions = new Map([['nb-1', { projectName: 'p', sessionId: 'nb-1' }]])
+      private sessions = new Map([['nb-1', { projectId: 'p', sessionId: 'nb-1' }]])
       shutdownAll = vi.fn().mockResolvedValue({ reaped: true })
       dispose = vi.fn().mockResolvedValue({ reaped: true })
-      getActiveNotebookSessions(): { projectName: string; sessionId: string }[] {
+      getActiveNotebookSessions(): { projectId: string; sessionId: string }[] {
         return Array.from(this.sessions.values())
       }
     }

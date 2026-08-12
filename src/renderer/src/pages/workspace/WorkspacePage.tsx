@@ -684,7 +684,7 @@ const WorkspacePage = ({
       .getReference({
         sessionId: activeSessionId,
         workspaceCwd: activeSessionCwd ?? '',
-        projectName: activeSessionProjectId
+        projectId: activeSessionProjectId
       })
       .then((reference) => {
         if (cancelled || !reference) return

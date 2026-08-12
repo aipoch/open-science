@@ -25,6 +25,7 @@ import type {
   GetArtifactCodeReconstructionRequest
 } from '../../shared/artifact-code-reconstruction'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { resolveProjectId } from '../../shared/project-scope'
 import type {
   FinalizeRunArtifactsRequest,
   ListProjectArtifactsRequest,
@@ -172,9 +173,16 @@ const createArtifactHandlers = (
         })
       ),
     listProjectFiles: (request) =>
-      repository.listProjectArtifacts(request.projectName, inFlightRunIds()),
+      repository.listProjectArtifacts(resolveProjectId(request), inFlightRunIds()),
     reconcilePendingArtifacts: (request) =>
-      withDataRootWrite(() => repository.reconcilePendingArtifactPaths(request)),
+      withDataRootWrite(() =>
+        repository.reconcilePendingArtifactPaths({
+          projectName: resolveProjectId(request),
+          sessionId: request.sessionId,
+          messageId: request.messageId,
+          pendingPaths: request.pendingPaths
+        })
+      ),
     openFile: async (request) => {
       // Resolve through the repository first so shell.openPath never sees unmanaged locations.
       const versionIdentity = parseArtifactVersionLocator(request.path)

@@ -86,6 +86,7 @@ import { createLogger, getLogFilePath } from '../logger'
 import { EnvironmentStateTracker, type EnvironmentCaptureTarget } from './environment-state-tracker'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
+import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import type { NotebookShellProcess, NotebookShellResult } from './shell-process'
 import {
@@ -139,12 +140,11 @@ type McpRpcConnectionBinding = {
   attemptId?: string
 }
 
-type NotebookRuntimeServiceOptions = {
+type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
   // Data root: where notebook workspaces, data, and the runtime install live (user-relocatable).
   dataRoot: string
-  projectName: string
   repository?: NotebookRunRepository
   executorFactory?: (
     sessionId: string,
@@ -335,10 +335,11 @@ class NotebookRuntimeService {
   private disposalPromise: Promise<{ reaped: boolean }> | undefined
 
   constructor(private readonly options: NotebookRuntimeServiceOptions) {
+    const defaultProjectId = resolveProjectId(options)
     this.repository = options.repository ?? new NotebookRunRepository(options.dataRoot)
     this.exportReader = new NotebookExportReader({
       repository: this.repository,
-      defaultProjectName: options.projectName,
+      defaultProjectId,
       appVersion: options.appVersion
     })
     this.sessions = new NotebookSessionRegistry({
@@ -373,7 +374,7 @@ class NotebookRuntimeService {
     })
     this.sessionReadModel = new NotebookSessionReadModel({
       storageRoot: options.dataRoot,
-      defaultProjectName: options.projectName,
+      defaultProjectId,
       repository: this.repository,
       findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       runtimeBindings: (session) => this.runtimeBindingOwner.snapshot(session),
@@ -382,7 +383,7 @@ class NotebookRuntimeService {
     })
     this.sessionLifecycle = new NotebookSessionLifecycleOwner({
       storageRoot: options.dataRoot,
-      defaultProjectName: options.projectName,
+      defaultProjectId,
       repository: this.repository,
       sessions: this.sessions,
       runtimeBindings: this.runtimeBindingOwner,
@@ -814,7 +815,7 @@ class NotebookRuntimeService {
     const envKeys = session.kernelProcessKeys()
 
     await this.repository.updateKernelStatus({
-      projectName: session.projectName,
+      projectName: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       status: 'restarting'
@@ -826,7 +827,7 @@ class NotebookRuntimeService {
       this.environmentOperations.clearRestartRecommendations(envKeys)
     } finally {
       await this.repository.updateKernelStatus({
-        projectName: session.projectName,
+        projectName: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
         status: 'idle'
@@ -1032,7 +1033,7 @@ class NotebookRuntimeService {
   }
 
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
-  getActiveNotebookSessions(): { projectName: string; sessionId: string }[] {
+  getActiveNotebookSessions(): { projectId: string; sessionId: string }[] {
     return this.sessionLifecycle.activeSessions()
   }
 }

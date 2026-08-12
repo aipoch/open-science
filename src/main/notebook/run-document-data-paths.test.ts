@@ -81,6 +81,10 @@ describe('run document data-path codec', () => {
       '$DATA/notebooks/default-project/session-1/data/processed/plot.png'
     )
     expect(encoded.runs[0].artifacts[0].fileUrl).toBeUndefined()
+    expect(encoded).toMatchObject({ projectId: 'default-project' })
+    expect(encoded.projectName).toBeUndefined()
+    expect(encoded.runs[0].artifacts[0]).toMatchObject({ projectId: 'default-project' })
+    expect(encoded.runs[0].artifacts[0].projectName).toBeUndefined()
 
     // Unrelated fields are untouched.
     expect(encoded.runs[0].text.stdout).toBe('hello\n')
@@ -106,6 +110,60 @@ describe('run document data-path codec', () => {
       at('notebooks/default-project/session-1/data/processed/plot.png')
     )
     expect(decoded.runs[0].artifacts[0].fileUrl).toMatch(/^file:\/\/.*plot\.png$/)
+    expect(decoded.runs[0].artifacts[0]).toMatchObject({
+      projectId: 'default-project',
+      projectName: 'default-project'
+    })
+  })
+
+  it('reads historical projectName-only documents and nested artifacts', () => {
+    const decoded = decodeRunDocumentDataPaths(buildDocument(), ROOT)
+
+    expect(decoded).toMatchObject({
+      projectId: 'default-project',
+      projectName: 'default-project'
+    })
+    expect(decoded.runs[0].artifacts[0]).toMatchObject({
+      projectId: 'default-project',
+      projectName: 'default-project'
+    })
+  })
+
+  it('writes canonical application artifacts without the legacy field', () => {
+    const doc = buildDocument()
+    doc.runs[0].artifacts[0] = { ...doc.runs[0].artifacts[0], projectId: 'default-project' }
+    delete (doc.runs[0].artifacts[0] as { projectName?: string }).projectName
+
+    const artifact = encodeRunDocumentDataPaths(doc, ROOT).runs[0].artifacts[0]
+    expect(artifact.projectId).toBe('default-project')
+    expect(artifact.projectName).toBeUndefined()
+  })
+
+  it('prefers projectId over a conflicting legacy alias at both persisted levels', () => {
+    const doc = {
+      ...buildDocument(),
+      projectId: 'canonical-project',
+      projectName: 'renamed-project'
+    }
+    doc.runs[0].artifacts[0] = {
+      ...doc.runs[0].artifacts[0],
+      projectId: 'canonical-project',
+      projectName: 'renamed-project'
+    }
+
+    const decoded = decodeRunDocumentDataPaths(doc, ROOT)
+    expect(decoded).toMatchObject({
+      projectId: 'canonical-project',
+      projectName: 'canonical-project'
+    })
+    expect(decoded.runs[0].artifacts[0]).toMatchObject({
+      projectId: 'canonical-project',
+      projectName: 'canonical-project'
+    })
+
+    const encoded = encodeRunDocumentDataPaths(decoded, ROOT)
+    expect(encoded.projectName).toBeUndefined()
+    expect(encoded.runs[0].artifacts[0].projectName).toBeUndefined()
   })
 
   it('leaves an external workspaceCwd unchanged on encode', () => {

@@ -15,15 +15,16 @@ import type {
   CreateArtifactVersionRequest,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
+import { resolveProjectId } from '../../shared/project-scope'
+import type { ProjectIdScope } from '../../shared/project-scope'
 import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { ArtifactRepository } from './repository'
 
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
 
-type ArtifactMcpEnvironment = {
+type ArtifactMcpEnvironment = ProjectIdScope & {
   storageRoot: string
-  projectName: string
   sessionId: string
   currentRunFile: string
   allowedImportRoots: string[]
@@ -321,6 +322,7 @@ const writeArtifactFileForCurrentRun = async (
   input: ArtifactToolWriteInput,
   invocation: ArtifactWriteInvocation = {}
 ): Promise<ArtifactFile | ArtifactVersionFile> => {
+  const projectId = resolveProjectId(environment)
   const context = await readCurrentRunContext(environment.currentRunFile)
   const artifactStorageSessionId = context.artifactStorageSessionId ?? environment.sessionId
   const source = normalizeArtifactToolWriteInput(
@@ -340,7 +342,7 @@ const writeArtifactFileForCurrentRun = async (
       ]
     : environment.allowedImportRoots.slice(0, 1)
   const writeRequest = {
-    projectName: environment.projectName,
+    projectName: projectId,
     sessionId: artifactStorageSessionId,
     runId: context.artifactRunId,
     filename: input.filename,
@@ -391,12 +393,7 @@ const writeArtifactFileForCurrentRun = async (
     (invocation.requestId !== undefined
       ? `artifact-write-${createHash('sha256')
           .update(
-            JSON.stringify([
-              environment.projectName,
-              appSessionId,
-              context.artifactRunId,
-              invocation.requestId
-            ])
+            JSON.stringify([projectId, appSessionId, context.artifactRunId, invocation.requestId])
           )
           .digest('hex')}`
       : `artifact-write-${randomUUID()}`)
@@ -406,7 +403,7 @@ const writeArtifactFileForCurrentRun = async (
   // byte-checked below so reusing an operation with different inline bytes is still a hard conflict.
   if (source.kind === 'localPath') {
     const replay = await callArtifactReplayRpc(environment, rpcCapabilityToken, {
-      projectId: environment.projectName,
+      projectId,
       appSessionId,
       artifactStorageSessionId,
       artifactRunId: context.artifactRunId,
@@ -439,7 +436,7 @@ const writeArtifactFileForCurrentRun = async (
         .digest('hex')
 
       return callArtifactRpc(environment, rpcCapabilityToken, {
-        projectId: environment.projectName,
+        projectId,
         appSessionId,
         artifactStorageSessionId,
         artifactRunId: context.artifactRunId,
@@ -524,36 +521,33 @@ const createArtifactMcpServer = (
 }
 
 // Creates the ACP MCP config that launches this Electron entry point in Node-compatible mode.
-const createArtifactMcpServerConfig = ({
-  command,
-  entryPath,
-  storageRoot,
-  projectName,
-  sessionId,
-  currentRunFile,
-  allowedImportRoots,
-  rpcEndpoint,
-  rpcSocketPath
-}: ArtifactMcpServerConfigRequest): McpServerStdio => ({
-  name: ARTIFACT_MCP_SERVER_NAME,
-  command,
-  args: [entryPath, ARTIFACT_MCP_SERVER_ARG],
-  env: [
-    { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
-    { name: 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT', value: storageRoot },
-    { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME', value: projectName },
-    { name: 'OPEN_SCIENCE_ARTIFACT_SESSION_ID', value: sessionId },
-    { name: 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE', value: currentRunFile },
-    {
-      name: 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS',
-      value: JSON.stringify(allowedImportRoots)
-    },
-    ...(rpcEndpoint ? [{ name: 'OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT', value: rpcEndpoint }] : []),
-    ...(rpcSocketPath
-      ? [{ name: 'OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH', value: rpcSocketPath }]
-      : [])
-  ]
-})
+const createArtifactMcpServerConfig = (request: ArtifactMcpServerConfigRequest): McpServerStdio => {
+  const projectId = resolveProjectId(request)
+  return {
+    name: ARTIFACT_MCP_SERVER_NAME,
+    command: request.command,
+    args: [request.entryPath, ARTIFACT_MCP_SERVER_ARG],
+    env: [
+      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+      { name: 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT', value: request.storageRoot },
+      { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID', value: projectId },
+      // Keep the old variable for rollback to a child entry point that predates the adapter.
+      { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME', value: projectId },
+      { name: 'OPEN_SCIENCE_ARTIFACT_SESSION_ID', value: request.sessionId },
+      { name: 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE', value: request.currentRunFile },
+      {
+        name: 'OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS',
+        value: JSON.stringify(request.allowedImportRoots)
+      },
+      ...(request.rpcEndpoint
+        ? [{ name: 'OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT', value: request.rpcEndpoint }]
+        : []),
+      ...(request.rpcSocketPath
+        ? [{ name: 'OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH', value: request.rpcSocketPath }]
+        : [])
+    ]
+  }
+}
 
 // Fails fast when the app launches MCP mode without the required artifact routing context.
 const requireEnvironmentVariable = (
@@ -575,15 +569,21 @@ const parseAllowedImportRoots = (value: string | undefined): string[] =>
 // Reconstructs the repository/session context passed from the ACP runtime to the MCP process.
 const createArtifactMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
-): ArtifactMcpEnvironment => ({
-  storageRoot: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT'),
-  projectName: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME'),
-  sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_SESSION_ID'),
-  currentRunFile: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'),
-  allowedImportRoots: parseAllowedImportRoots(env.OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS),
-  rpcEndpoint: env.OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT,
-  rpcSocketPath: env.OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH
-})
+): ArtifactMcpEnvironment => {
+  const projectId = resolveProjectId({
+    projectId: env.OPEN_SCIENCE_ARTIFACT_PROJECT_ID,
+    projectName: env.OPEN_SCIENCE_ARTIFACT_PROJECT_NAME
+  })
+  return {
+    storageRoot: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT'),
+    projectId,
+    sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_SESSION_ID'),
+    currentRunFile: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE'),
+    allowedImportRoots: parseAllowedImportRoots(env.OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS),
+    rpcEndpoint: env.OPEN_SCIENCE_ARTIFACT_RPC_ENDPOINT,
+    rpcSocketPath: env.OPEN_SCIENCE_ARTIFACT_RPC_SOCKET_PATH
+  }
+}
 
 // Runs only the artifact MCP server; Electron app modules are intentionally not loaded in this mode.
 const runArtifactMcpServer = async (

@@ -42,10 +42,10 @@ describe('detectActiveSessions', () => {
       delegated: {
         getActiveDelegatedSessions: () => [{ projectName: 'p', sessionId: 'delegated-1' }]
       },
-      notebook: { getActiveNotebookSessions: () => [{ projectName: 'p', sessionId: 's2' }] }
+      notebook: { getActiveNotebookSessions: () => [{ projectId: 'p', sessionId: 's2' }] }
     })
 
-    // The runtime source calls the storage key projectName; detect-active exposes it as projectId.
+    // The ACP runtime still uses its legacy key; the Notebook source is already canonical.
     expect(result).toEqual([
       { projectId: 'p', sessionId: 'delegated-1', kind: 'delegated' },
       { projectId: 'p', sessionId: 's1', kind: 'agent' },
@@ -68,7 +68,7 @@ describe('detectActiveSessions', () => {
     const result = detectActiveSessions({
       runtime: { getActivePromptSessions: () => [source] },
       delegated: { getActiveDelegatedSessions: () => [source] },
-      notebook: { getActiveNotebookSessions: () => [source] }
+      notebook: { getActiveNotebookSessions: () => [{ projectId: 'p', sessionId: 's1' }] }
     })
 
     expect(result).toEqual([

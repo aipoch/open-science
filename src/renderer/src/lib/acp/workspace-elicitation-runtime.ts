@@ -92,10 +92,10 @@ const restoreElicitationRevisionProjection = (projection: ChatSession): void => 
 const shutdownNotebookForElicitationRevision = async (
   sessionId: string,
   workspaceCwd: string,
-  projectName?: string
+  projectId?: string
 ): Promise<void> => {
   if (typeof window === 'undefined' || !window.api?.notebook?.shutdown) return
-  await window.api.notebook.shutdown({ sessionId, workspaceCwd, projectName })
+  await window.api.notebook.shutdown({ sessionId, workspaceCwd, projectId })
 }
 
 const reviseWorkspaceElicitation = async (

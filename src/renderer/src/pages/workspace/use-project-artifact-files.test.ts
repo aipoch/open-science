@@ -58,8 +58,8 @@ afterEach(() => {
 describe('useProjectArtifactFiles', () => {
   it('never returns the previous project files while the new project scan is in flight', async () => {
     let resolveProjectB: ((files: ArtifactFile[]) => void) | undefined
-    const listProjectFiles = vi.fn((request: { projectName: string }) => {
-      if (request.projectName === 'project-a') {
+    const listProjectFiles = vi.fn((request: { projectId: string }) => {
+      if (request.projectId === 'project-a') {
         return Promise.resolve([artifact('project-a', 'a.txt')])
       }
       // project-b's scan is held open so the test can observe the value while it is still pending.

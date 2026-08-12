@@ -27,6 +27,7 @@ import {
   compactRuntimeBindingResult,
   compactShutdownResult,
   compactRestartResult,
+  createNotebookMcpEnvironmentFromProcess,
   createNotebookMcpServerConfig,
   serializeNotebookToolResult
 } from './mcp-server'
@@ -53,11 +54,34 @@ describe('notebook MCP server config', () => {
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: 'http://127.0.0.1:4567' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
+        { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: 'session-1' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' }
       ]
     })
+  })
+
+  it('accepts legacy projectName but rejects conflicting project environment values', () => {
+    const base = {
+      OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://127.0.0.1:4567',
+      OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: 'secret-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1',
+      OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: '/workspace'
+    }
+    expect(
+      createNotebookMcpEnvironmentFromProcess({
+        ...base,
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'legacy-project-id'
+      }).projectId
+    ).toBe('legacy-project-id')
+    expect(() =>
+      createNotebookMcpEnvironmentFromProcess({
+        ...base,
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'project-1',
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'renamed-project'
+      })
+    ).toThrow('Conflicting projectId and legacy projectName values.')
   })
 
   it('passes the Windows named-pipe path to the notebook MCP process', () => {
@@ -326,13 +350,19 @@ describe('notebook_execute tool', () => {
     try {
       const result = await callNotebookRpc(environment, 'execute', {
         code: '1 + 1',
-        language: 'r'
+        language: 'r',
+        projectId: 'forged-project',
+        sessionId: 'forged-session'
       })
 
       expect(result).toEqual({ ok: true })
       expect(fetchCalls).toHaveLength(1)
-      const sentBody = JSON.parse(fetchCalls[0].body) as { params: { language?: string } }
+      const sentBody = JSON.parse(fetchCalls[0].body) as {
+        params: { language?: string; projectId?: string; sessionId?: string }
+      }
       expect(sentBody.params.language).toBe('r')
+      expect(sentBody.params.projectId).toBe('default-project')
+      expect(sentBody.params.sessionId).toBe('session-1')
     } finally {
       globalThis.fetch = originalFetch
     }

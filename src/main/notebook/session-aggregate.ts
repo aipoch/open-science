@@ -13,6 +13,7 @@ import type {
 } from '../../shared/notebook'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
+import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 
 export type NotebookSessionResolvedInterpreter = {
@@ -42,7 +43,7 @@ export type NotebookSessionExecutionRequest = {
   mcpRpcSocketPath?: string
   mcpRpcToken?: string
   sessionId?: string
-  projectName?: string
+  projectId?: string
   inputRunLeaseId?: string
   // Opaque per-control invocation identity forwarded through the REPL request frame. It binds a
   // host.agents.switch approval to this exact outer repl_execute completion.
@@ -94,9 +95,8 @@ export type NotebookSessionMcpRpcConnection = {
 export type NotebookSessionAggregateInit<
   Request = NotebookSessionExecutionRequest,
   Result = NotebookSessionExecutionResult
-> = {
+> = ProjectIdScope & {
   sessionId: string
-  projectName: string
   cwd: string
   notebookSessionRoot: string
   dataRoot: string
@@ -111,7 +111,7 @@ export type NotebookSessionAggregateInit<
 export type NotebookSessionSnapshot = Readonly<{
   id: string
   sessionId: string
-  projectName: string
+  projectId: string
   cwd: string
   notebookSessionRoot: string
   dataRoot: string
@@ -147,7 +147,7 @@ export class NotebookSessionAggregate<
 > {
   readonly id: string
   readonly sessionId: string
-  readonly projectName: string
+  readonly projectId: string
   readonly notebookSessionRoot: string
   readonly dataRoot: string
   readonly runtimeRoot: string
@@ -177,7 +177,7 @@ export class NotebookSessionAggregate<
   constructor(init: NotebookSessionAggregateInit<Request, Result>) {
     this.id = `notebook-session-${init.sessionId}`
     this.sessionId = init.sessionId
-    this.projectName = init.projectName
+    this.projectId = resolveProjectId(init)
     this.cwdValue = init.cwd
     this.notebookSessionRoot = init.notebookSessionRoot
     this.dataRoot = init.dataRoot
@@ -198,7 +198,7 @@ export class NotebookSessionAggregate<
     return {
       id: this.id,
       sessionId: this.sessionId,
-      projectName: this.projectName,
+      projectId: this.projectId,
       cwd: this.cwdValue,
       notebookSessionRoot: this.notebookSessionRoot,
       dataRoot: this.dataRoot,
@@ -439,7 +439,7 @@ export class NotebookSessionAggregate<
       const lane = notebookLaneScope(this.lane)
       this.mcpRpcConnection = await resolver({
         sessionId: this.sessionId,
-        projectId: this.projectName,
+        projectId: this.projectId,
         agentFrameId: lane.agentFrameId,
         ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
       })

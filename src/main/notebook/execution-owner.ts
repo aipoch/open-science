@@ -416,7 +416,7 @@ class NotebookExecutionOwner {
                   mcpRpcSocketPath: mcpRpc?.socketPath,
                   mcpRpcToken: mcpRpc?.token,
                   sessionId: session.sessionId,
-                  projectName: session.projectName,
+                  projectId: session.projectId,
                   inputRunLeaseId: request.inputRunLeaseId,
                   controlInvocationId: runId
                 })
@@ -534,7 +534,7 @@ class NotebookExecutionOwner {
     session.setKernelStatus('repl', status)
     try {
       await this.options.repository.updateKernelStatus({
-        projectName: session.projectName,
+        projectName: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
         status

@@ -763,7 +763,7 @@ const ConversationPanel = ({
                         ? {
                             sessionId: activeSession.id,
                             workspaceCwd: activeSession.cwd ?? '',
-                            projectName: activeSession.projectId
+                            projectId: activeSession.projectId
                           }
                         : undefined
                     }
@@ -936,7 +936,7 @@ const ConversationPanel = ({
                             ? {
                                 sessionId: activeSession.id,
                                 workspaceCwd: activeSession.cwd ?? '',
-                                projectName: activeSession.projectId
+                                projectId: activeSession.projectId
                               }
                             : undefined
                         }

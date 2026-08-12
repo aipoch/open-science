@@ -1,7 +1,9 @@
-// Renderer-safe description of one generated file without embedding file contents.
-export type ArtifactFile = {
+import type { ProjectIdScope } from './project-scope'
+
+// Renderer-safe description of one generated file without embedding file contents. `projectName`
+// remains a rolling/historical transport alias whose value is a Project id, never a display name.
+export type ArtifactFile = ProjectIdScope & {
   id: string
-  projectName: string
   sessionId: string
   messageId?: string
   runId?: string
@@ -153,9 +155,7 @@ export type ListMessageArtifactsRequest = {
 
 // Renderer request to enumerate every finalized artifact on disk for one project, so the file library
 // can surface files whose owning session was deleted (the project name matches the durable project id).
-export type ListProjectArtifactsRequest = {
-  projectName: string
-}
+export type ListProjectArtifactsRequest = ProjectIdScope
 
 // A copied conversation stores native generated-file Version ids in its messages, not paths or a
 // second file-library entry. Keep this query small because it is issued while historical messages
@@ -173,8 +173,7 @@ export type ResolveArtifactVersionDescriptorsRequest = {
 // Renderer request to re-finalize pending artifacts a crash left behind: the persisted message still
 // references `.pending/<run>/<file>` paths whose in-memory finalize claim was lost on restart. Returns
 // the message's finalized files so the renderer can replace the stale pending references.
-export type ReconcilePendingArtifactsRequest = {
-  projectName: string
+export type ReconcilePendingArtifactsRequest = ProjectIdScope & {
   sessionId: string
   messageId: string
   pendingPaths: string[]

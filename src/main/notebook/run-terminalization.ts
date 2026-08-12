@@ -15,7 +15,7 @@ type NotebookRunIdentity = Readonly<{
 }>
 
 type NotebookRunTerminalizationSession = Readonly<{
-  projectName: string
+  projectId: string
   sessionId: string
   lane: NotebookLaneIdentity
 }>
@@ -71,7 +71,7 @@ class NotebookRunTerminalizationOwner {
     const { session, runningRun } = request
     const lane = session.lane
     await this.options.repository.appendRun({
-      projectName: session.projectName,
+      projectName: session.projectId,
       sessionId: session.sessionId,
       lane,
       run: runningRun
@@ -108,7 +108,7 @@ class NotebookRunTerminalizationOwner {
         : {})
     }
     const document = await this.options.repository.updateRun({
-      projectName: session.projectName,
+      projectName: session.projectId,
       sessionId: session.sessionId,
       lane,
       run: terminalRun

@@ -21,7 +21,7 @@ import {
 type EnvironmentOperationKind = 'execution' | 'inspection' | 'mutation' | 'provision' | 'revocation'
 
 type EnvironmentOperationSession = {
-  readonly projectName: string
+  readonly projectId: string
   readonly sessionId: string
   readonly lane: NotebookLaneIdentity
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined

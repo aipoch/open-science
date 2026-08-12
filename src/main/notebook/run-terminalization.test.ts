@@ -11,7 +11,7 @@ import { createRootNotebookLane } from './lane-identity'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 
 const session = {
-  projectName: 'project-1',
+  projectId: 'project-1',
   sessionId: 'session-1',
   lane: createRootNotebookLane('project-1', 'session-1', 'root-frame-session-1'),
   notebookSessionRoot: '/storage/notebooks/project-1/session-1',
@@ -42,7 +42,7 @@ const runningRun = (
 
 const documentWith = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   version: 1,
-  projectName: session.projectName,
+  projectName: session.projectId,
   sessionId: session.sessionId,
   workspaceCwd: '/workspace',
   notebookSessionRoot: session.notebookSessionRoot,

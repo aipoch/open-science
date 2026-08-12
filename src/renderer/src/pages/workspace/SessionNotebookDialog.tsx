@@ -453,7 +453,7 @@ const SessionNotebookDialog = ({
 
       void loadSessionNotebookRuns(window.api.notebook, {
         sessionId,
-        projectName: projectId,
+        projectId,
         workspaceCwd: cwd ?? ''
       })
         .then((loadedRuns) => {
@@ -509,7 +509,7 @@ const SessionNotebookDialog = ({
               onExport={async (kernel, agentFrameFilter) => {
                 await window.api.notebook.exportIpynb({
                   sessionId: dialogSession.id,
-                  projectName: dialogSession.projectId,
+                  projectId: dialogSession.projectId,
                   workspaceCwd: dialogSession.cwd ?? '',
                   kernel,
                   ...(agentFrameFilter !== undefined ? { agentFrameFilter } : {})
@@ -518,7 +518,7 @@ const SessionNotebookDialog = ({
               onExportAll={async (agentFrameFilter) => {
                 const result = await window.api.notebook.exportIpynbAll({
                   sessionId: dialogSession.id,
-                  projectName: dialogSession.projectId,
+                  projectId: dialogSession.projectId,
                   workspaceCwd: dialogSession.cwd ?? '',
                   ...(agentFrameFilter !== undefined ? { agentFrameFilter } : {})
                 })

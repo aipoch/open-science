@@ -385,6 +385,8 @@ class ArtifactStorageAccess {
     const ownerId = request.messageId ?? request.runId ?? 'artifact'
     return {
       id: `${request.sessionId}:${ownerId}:${request.filename}`,
+      projectId: request.projectName,
+      // Compatibility output for an older renderer/main pair; this value is the Project id.
       projectName: request.projectName,
       sessionId: request.sessionId,
       messageId: request.messageId,

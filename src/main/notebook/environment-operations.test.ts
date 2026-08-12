@@ -24,7 +24,7 @@ const createRoot = async (): Promise<string> => {
 }
 
 type TestSession = {
-  projectName: string
+  projectId: string
   sessionId: string
   lane: NotebookLaneIdentity
   bindings: Partial<Record<NotebookLanguage, NotebookSessionRuntimeBinding>>
@@ -169,7 +169,7 @@ describe('NotebookEnvironmentOperations', () => {
     let releaseDrain!: () => void
     const terminations: string[] = []
     const session: TestSession = {
-      projectName: 'project',
+      projectId: 'project',
       sessionId: 'session-1',
       lane: createRootNotebookLane('project', 'session-1', 'root-frame-session-1'),
       bindings: {

@@ -172,11 +172,12 @@ const normalizeDocument = (
   request: NormalizeNotebookRunDocumentRequest,
   document: NotebookRunDocument
 ): NotebookRunDocument => {
-  const projectName = assertSafeNotebookPathSegment(request.projectName)
+  const storageProjectId = assertSafeNotebookPathSegment(request.projectName)
+  const projectId = assertSafeNotebookPathSegment(document.projectId ?? document.projectName)
   const sessionId = assertSafeNotebookPathSegment(request.sessionId)
   const notebookSessionRoot = getNotebookSessionRoot(
     storageRoot,
-    projectName,
+    storageProjectId,
     sessionId,
     request.lane
   )
@@ -184,12 +185,13 @@ const normalizeDocument = (
   return {
     ...document,
     version: 1,
-    projectName,
+    projectId,
+    projectName: projectId,
     sessionId,
     artifactSessionId: request.artifactSessionId ?? document.artifactSessionId,
     workspaceCwd: request.workspaceCwd ?? document.workspaceCwd,
     notebookSessionRoot,
-    dataRoot: getNotebookDataRoot(storageRoot, projectName, sessionId, request.lane),
+    dataRoot: getNotebookDataRoot(storageRoot, storageProjectId, sessionId, request.lane),
     kernel: {
       ...document.kernel,
       language: 'python',

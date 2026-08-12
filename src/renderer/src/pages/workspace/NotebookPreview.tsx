@@ -20,6 +20,7 @@ import type {
   NotebookSessionReference,
   NotebookSessionState
 } from '../../../../shared/notebook'
+import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
 import { shouldProvisionR } from './lazy-r'
 import { notebookGated } from './provisioning-view'
@@ -81,11 +82,11 @@ const getErrorMessage = (error: unknown): string =>
 const createNotebookRequest = (
   notebook: NotebookSessionReference
 ): {
-  projectName: string
+  projectId: string
   sessionId: string
   workspaceCwd: string
 } => ({
-  projectName: notebook.projectName,
+  projectId: resolveProjectId(notebook),
   sessionId: notebook.sessionId,
   workspaceCwd: notebook.workspaceCwd
 })

@@ -23,7 +23,7 @@ type RuntimeBindingSession = Pick<
   NotebookSessionAggregate,
   'runtimeBinding' | 'setRuntimeBinding'
 > & {
-  readonly projectName: string
+  readonly projectId: string
   readonly sessionId: string
   readonly lane: NotebookSessionAggregate['lane']
 }
@@ -260,7 +260,7 @@ export class NotebookRuntimeBindingOwner {
   async persist(session: RuntimeBindingSession): Promise<void> {
     try {
       await this.options.repository.setRuntimeBindings(
-        session.projectName,
+        session.projectId,
         session.sessionId,
         this.snapshot(session),
         session.lane

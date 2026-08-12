@@ -181,6 +181,8 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     const runRawAfterFirstPass = await readFile(join(notebookSessionDir, NOTEBOOK_RUN_FILE), 'utf8')
     expect(runRawAfterFirstPass).toContain('$DATA/')
     expect(runRawAfterFirstPass).not.toContain(dataRoot)
+    expect(JSON.parse(runRawAfterFirstPass)).toMatchObject({ projectId: projectName })
+    expect(JSON.parse(runRawAfterFirstPass).projectName).toBeUndefined()
 
     // --- Relocation: reading from a different data root resolves paths under the new root. ---
     const newRoot = await mkdtemp(join(tmpdir(), 'open-science-normalize-newroot-'))

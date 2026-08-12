@@ -44,7 +44,8 @@ import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 
-type SessionSource = { projectName: string; sessionId: string }
+type LegacySessionSource = { projectName: string; sessionId: string }
+type NotebookSessionSource = { projectId: string; sessionId: string }
 
 type StorageCommandOwnerDeps = {
   // disconnect/shutdownAll drive the reusable migration session-interrupt; shutdownForQuit/dispose are
@@ -56,10 +57,10 @@ type StorageCommandOwnerDeps = {
   notebook: {
     shutdownAll: () => Promise<{ reaped: boolean }>
     dispose: () => Promise<{ reaped: boolean }>
-    getActiveNotebookSessions: () => SessionSource[]
+    getActiveNotebookSessions: () => NotebookSessionSource[]
   }
-  getActivePromptSessions: () => SessionSource[]
-  getActiveDelegatedSessions: () => SessionSource[]
+  getActivePromptSessions: () => LegacySessionSource[]
+  getActiveDelegatedSessions: () => LegacySessionSource[]
   settingsService: {
     setDataRoot: (path: string) => Promise<void>
     // Stamps onboardingCompletedAt. Injected (rather than importing the renderer store action)

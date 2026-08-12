@@ -760,7 +760,7 @@ class NotebookLocalRpcServer {
           ? Promise.resolve()
           : new Promise<void>((resolve) => delegatedNotebook.drainWaiters.add(resolve))
       const shutdown = this.service.shutdown({
-        projectName: scope.projectId,
+        projectId: scope.projectId,
         sessionId: scope.sessionId,
         workspaceCwd: scope.workspaceCwd,
         provenanceContext: delegatedNotebook.provenanceContext,
@@ -1266,6 +1266,7 @@ class NotebookLocalRpcServer {
         resolvedParams = {
           ...resolvedParams,
           sessionId: authenticatedBinding.sessionId,
+          projectId: authenticatedBinding.projectId,
           projectName: authenticatedBinding.projectId,
           workspaceCwd: authenticatedBinding.delegatedNotebook.workspaceCwd,
           provenanceContext: authenticatedBinding.delegatedNotebook.provenanceContext,

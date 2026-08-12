@@ -539,8 +539,7 @@ const createApplicationModules = async (
     current: undefined
   }
   const notebookActivityRef: {
-    current:
-      { getActiveNotebookSessions(): { projectName: string; sessionId: string }[] } | undefined
+    current: { getActiveNotebookSessions(): { projectId: string; sessionId: string }[] } | undefined
   } = { current: undefined }
 
   // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
@@ -850,7 +849,7 @@ const createApplicationModules = async (
     {
       configRoot: resolveConfigRoot(),
       dataRoot: resolveDataRoot(),
-      projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+      projectId: DEFAULT_ARTIFACT_PROJECT_NAME,
       repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
       notebookRuntimeSettings,

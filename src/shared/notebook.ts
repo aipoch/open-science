@@ -1,5 +1,6 @@
 import type { ArtifactFile } from './artifacts'
 import type { NotebookRuntimeBindings } from './notebook-runtime'
+import type { OptionalProjectIdScope, ProjectIdScope } from './project-scope'
 
 export const NOTEBOOKS_DIR = 'notebooks'
 export const NOTEBOOK_RUN_FILE = 'run.json'
@@ -345,9 +346,8 @@ export type NotebookRunRecord = {
 }
 
 // The complete JSON document persisted at each notebook session's run.json path.
-export type NotebookRunDocument = {
+export type NotebookRunDocument = ProjectIdScope & {
   version: 1
-  projectName: string
   sessionId: string
   artifactSessionId?: string
   workspaceCwd: string
@@ -420,9 +420,8 @@ export type NotebookSessionState = {
 }
 
 // Lightweight session handle used by events and preview tabs to reopen the notebook.
-export type NotebookSessionReference = {
+export type NotebookSessionReference = ProjectIdScope & {
   sessionId: string
-  projectName: string
   workspaceCwd: string
   notebookSessionRoot: string
   dataRoot: string
@@ -444,8 +443,7 @@ export type NotebookRunSummary = Omit<NotebookRunRecord, 'inputFiles'> & {
 }
 
 // Common routing fields required by every notebook command.
-export type NotebookSessionRequest = {
-  projectName?: string
+export type NotebookSessionRequest = OptionalProjectIdScope & {
   sessionId: string
   workspaceCwd: string
   provenanceContext?: NotebookRunProvenanceContext

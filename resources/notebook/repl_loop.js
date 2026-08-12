@@ -35,8 +35,10 @@ delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
 // enumerates process.env sees neither the token nor the routing identity. Absent -> host.compute call
 // payloads omit them and the approval broker falls back to 'once'-only semantics.
 const COMPUTE_SESSION_ID = process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
-const COMPUTE_PROJECT_NAME = process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
+const COMPUTE_PROJECT_NAME =
+  process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID || process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 delete process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
+delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID
 delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 
 // Updated only by the trusted kernel request frame while one serialized control invocation is

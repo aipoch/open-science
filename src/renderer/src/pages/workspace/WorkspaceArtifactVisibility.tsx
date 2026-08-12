@@ -8,6 +8,7 @@ import {
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'
 import { projectRootArtifactVisibility } from '../../../../shared/artifact-visibility'
+import { resolveProjectId } from '../../../../shared/project-scope'
 import { resolveTurnTerminalAgentMessageIds } from './workspace-conversation-items'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
@@ -50,7 +51,7 @@ const toResolvedMessageArtifact = (descriptor: ArtifactVersionDescriptor): Messa
   versionNumber: descriptor.versionNumber,
   kind: 'managed-file',
   path: createArtifactVersionLocator({
-    projectId: descriptor.projectName,
+    projectId: resolveProjectId(descriptor),
     appSessionId: descriptor.sessionId,
     artifactId: descriptor.artifactId,
     versionId: descriptor.versionId
@@ -60,7 +61,7 @@ const toResolvedMessageArtifact = (descriptor: ArtifactVersionDescriptor): Messa
   size: descriptor.size,
   mtimeMs: descriptor.mtimeMs,
   sha256: descriptor.checksum,
-  resolvedProjectId: descriptor.projectName,
+  resolvedProjectId: resolveProjectId(descriptor),
   resolvedSessionId: descriptor.sessionId
 })
 
