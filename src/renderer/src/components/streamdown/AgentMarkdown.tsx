@@ -29,6 +29,10 @@ type AgentMarkdownProps = {
   sessionLinks?: boolean
 }
 
+type RichAgentMarkdownProps = AgentMarkdownProps & {
+  incrementalBlocks?: boolean
+}
+
 type SessionMessageLinkProps = ComponentProps<'a'> & {
   node?: unknown
   'data-incomplete'?: boolean
@@ -236,8 +240,9 @@ const RichAgentMarkdown = memo(
     content,
     isAnimating = false,
     allowMedia = true,
-    sessionLinks = false
-  }: AgentMarkdownProps): React.JSX.Element => {
+    sessionLinks = false,
+    incrementalBlocks = false
+  }: RichAgentMarkdownProps): React.JSX.Element => {
     const renderedContent = useMemo(() => normalizeAgentMarkdown(content), [content])
 
     return (
@@ -254,7 +259,7 @@ const RichAgentMarkdown = memo(
           linkSafety={agentLinkSafety}
           components={sessionLinks ? sessionLinkComponents : undefined}
           dir="auto"
-          mode={isAnimating ? 'streaming' : 'static'}
+          mode={isAnimating || incrementalBlocks ? 'streaming' : 'static'}
           isAnimating={isAnimating}
           animated={false}
           parseIncompleteMarkdown={isAnimating}
@@ -280,14 +285,16 @@ const PresentedAgentMarkdown = memo(
     content,
     isAnimating = false,
     allowMedia = true,
-    sessionLinks = false
-  }: AgentMarkdownProps): React.JSX.Element => (
+    sessionLinks = false,
+    incrementalBlocks = true
+  }: RichAgentMarkdownProps): React.JSX.Element => (
     <AgentMarkdownErrorBoundary content={content}>
       <RichAgentMarkdown
         content={content}
         isAnimating={isAnimating}
         allowMedia={allowMedia}
         sessionLinks={sessionLinks}
+        incrementalBlocks={incrementalBlocks}
       />
     </AgentMarkdownErrorBoundary>
   )
@@ -311,6 +318,7 @@ const AgentMarkdown = memo(
         isAnimating={presentation.isPresenting}
         allowMedia={allowMedia}
         sessionLinks={sessionLinks}
+        incrementalBlocks={false}
       />
     )
   }
