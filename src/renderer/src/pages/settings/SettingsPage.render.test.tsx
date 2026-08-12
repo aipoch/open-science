@@ -1173,7 +1173,25 @@ describe('SettingsPage layout', () => {
         }
       }
     ).api.remoteAccess
-    remoteAccess.getSnapshot.mockRejectedValueOnce(new Error('Remote access is unavailable.'))
+    const retrySnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: false, loggedIn: false, registered: false },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    let finishRetry!: (snapshot: typeof retrySnapshot) => void
+    remoteAccess.getSnapshot
+      .mockRejectedValueOnce(new Error('Remote access is unavailable.'))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRetry = resolve
+          })
+      )
 
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
@@ -1187,13 +1205,21 @@ describe('SettingsPage layout', () => {
     )
     expect(retryButton).not.toBeUndefined()
 
-    await act(async () => {
+    act(() => {
       retryButton?.click()
+      retryButton?.click()
+    })
+
+    expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('Loading remote access')
+    expect(document.body.textContent).not.toContain('Try again')
+
+    await act(async () => {
+      finishRetry(retrySnapshot)
       await Promise.resolve()
       await Promise.resolve()
     })
 
-    expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
     expect(document.body.textContent).not.toContain('Remote access is unavailable.')
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
       'Remote access is off'

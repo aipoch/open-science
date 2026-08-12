@@ -122,6 +122,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const [copied, setCopied] = useState(false)
 
   const operationTriggerRef = useRef<HTMLElement | null>(null)
+  const initialLoadRetryRef = useRef(false)
   const refresh = async (detect = false, completesBusyOperation = true): Promise<void> => {
     try {
       const next = detect
@@ -181,6 +182,14 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     }
   }
 
+  const retryInitialLoad = (): void => {
+    if (initialLoadRetryRef.current) return
+    initialLoadRetryRef.current = true
+    void run('loading', () => loadRemoteAccessSnapshot(setSnapshot)).finally(() => {
+      initialLoadRetryRef.current = false
+    })
+  }
+
   const approve = (requestId: string, decision: RemotePairingDecision): void => {
     void run(`approve:${requestId}`, () => window.api.remoteAccess.approve({ requestId, decision }))
   }
@@ -193,7 +202,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   }
 
   if (!snapshot) {
-    if (!snapshot && actionError) {
+    if (actionError) {
       return (
         <div className="p-5" data-testid="remote-control-load-error">
           <div
@@ -209,7 +218,8 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                 variant="outline"
                 size="sm"
                 className="mt-3"
-                onClick={() => void run('loading', () => loadRemoteAccessSnapshot(setSnapshot))}
+                disabled={busy !== null}
+                onClick={retryInitialLoad}
               >
                 <RefreshCw className="size-3.5" aria-hidden="true" />
                 Try again
