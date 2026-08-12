@@ -173,7 +173,7 @@
 
     & .agent-markdown > :last-child:empty::after,
     & .agent-markdown > :last-child > :last-child::after {
-      content: var(--streamdown-caret, none);
+      content: '';
       display: inline-block;
       width: 1px;
       height: 1.25em;

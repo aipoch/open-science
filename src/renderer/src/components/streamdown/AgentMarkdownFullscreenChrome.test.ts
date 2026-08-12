@@ -28,15 +28,17 @@ describe('AgentMarkdown fullscreen chrome', () => {
     const markup = renderToStaticMarkup(
       createElement(
         Streamdown,
-        { animated: false, caret: 'block', dir: 'auto', isAnimating: true, mode: 'streaming' },
-        '好的，我用 Python (matplotlib)'
+        { animated: false, dir: 'auto', isAnimating: true, mode: 'streaming' },
+        'Example output with Python (matplotlib)'
       )
     )
 
     expect(markup).toContain('style="display:contents"')
+    expect(markup).not.toContain('--streamdown-caret')
+    expect(streamingBlock).not.toContain('!important')
     expect(streamingBlock).toContain('& .agent-markdown > :last-child:empty::after')
     expect(streamingBlock).toContain('& .agent-markdown > :last-child > :last-child::after')
-    expect(streamingBlock).toContain('content: var(--streamdown-caret, none)')
+    expect(streamingBlock).toContain("content: ''")
     expect(streamingBlock).toContain('width: 1px')
     expect(streamingBlock).toContain('height: 1.25em')
     expect(streamingBlock).toContain('overflow: hidden')

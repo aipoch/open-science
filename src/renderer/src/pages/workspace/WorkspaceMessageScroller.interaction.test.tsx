@@ -311,7 +311,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const reply = createMessage({
       id: 'reply-stream',
       role: 'agent',
-      content: '流畅输出',
+      content: 'Flow',
       status: 'streaming',
       streamId: 'stream-1',
       responseToMessageId: prompt.id,
@@ -345,7 +345,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(512))
     expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
-      '流'
+      'F'
     )
 
     const tool = createActivity({
@@ -367,7 +367,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).toBeNull()
 
     await act(async () => vi.advanceTimersByTimeAsync(96))
-    expect(container.textContent).toContain('流畅输出')
+    expect(container.textContent).toContain('Flow')
     expect(
       container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
     ).not.toBeNull()
@@ -386,7 +386,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const reply = createMessage({
       id: 'reply-terminal',
       role: 'agent',
-      content: '完整结尾',
+      content: 'Done',
       status: 'streaming',
       streamId: 'stream-terminal',
       responseToMessageId: prompt.id,
@@ -429,10 +429,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       })
     )
     expect(container.textContent).not.toContain('Completed')
-    expect(container.textContent).not.toContain('完整结尾')
+    expect(container.textContent).not.toContain('Done')
 
     await act(async () => vi.advanceTimersByTimeAsync(96))
-    expect(container.textContent).toContain('完整结尾')
+    expect(container.textContent).toContain('Done')
     expect(container.textContent).toContain('Completed')
   })
 
@@ -449,7 +449,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const reply = createMessage({
       id: 'reply-session-a',
       role: 'agent',
-      content: '切换会话后不应重新播放这一段流式内容',
+      content: 'Resume without replay after switching sessions',
       status: 'streaming',
       streamId: 'stream-session-a',
       responseToMessageId: prompt.id,
@@ -480,7 +480,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await render(sessionA)
     await act(async () => vi.advanceTimersByTimeAsync(512))
     expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
-      '切'
+      'R'
     )
 
     await render(
@@ -495,14 +495,14 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       reply.content
     )
 
-    const continuedReply = { ...reply, content: `${reply.content}继续输出` }
+    const continuedReply = { ...reply, content: `${reply.content} plus more` }
     await render({ ...sessionA, messages: [prompt, continuedReply] })
     expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
       reply.content
     )
     await act(async () => vi.advanceTimersByTimeAsync(512))
     expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
-      `${reply.content}继`
+      `${reply.content} `
     )
   })
 
@@ -519,7 +519,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const reply = createMessage({
       id: 'reply-before-tool',
       role: 'agent',
-      content: '工具调用前的文字已经固定',
+      content: 'Fixed before tool',
       status: 'streaming',
       streamId: 'stream-before-tool',
       responseToMessageId: prompt.id,
@@ -569,7 +569,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const beforeTool = createMessage({
       id: 'reply-before-live-tool',
       role: 'agent',
-      content: '前置缓冲文字',
+      content: 'Before tool',
       status: 'streaming',
       streamId: 'stream-around-tool',
       responseToMessageId: prompt.id,
@@ -586,7 +586,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const afterTool = createMessage({
       id: 'reply-after-live-tool',
       role: 'agent',
-      content: '工具后的新文字',
+      content: 'After tool',
       status: 'streaming',
       streamId: 'stream-around-tool',
       responseToMessageId: prompt.id,
@@ -632,7 +632,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(assistantSurfaces[0]?.textContent).toBe(beforeTool.content)
     expect(assistantSurfaces[1]?.textContent).toBe('')
     await act(async () => vi.advanceTimersByTimeAsync(512))
-    expect(assistantSurfaces[1]?.textContent).toBe('工')
+    expect(assistantSurfaces[1]?.textContent).toBe('A')
   })
 
   it('does not replay a buffered assistant message after switching active branches', async () => {
@@ -648,7 +648,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const replyA = createMessage({
       id: 'reply-branch-a',
       role: 'agent',
-      content: '返回原分支时不应重新播放',
+      content: 'Resume without replay on the original branch',
       status: 'streaming',
       streamId: 'stream-branch-a',
       responseToMessageId: promptA.id,
@@ -699,7 +699,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     await render(sessionFromGraph(streamingGraphA))
     await act(async () => vi.advanceTimersByTimeAsync(512))
     expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
-      '返'
+      'R'
     )
 
     await render(sessionFromGraph(branchBGraph))

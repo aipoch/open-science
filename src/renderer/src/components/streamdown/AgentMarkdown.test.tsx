@@ -133,18 +133,18 @@ describe('AgentMarkdown renderer recovery', () => {
     )
     vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
     streamdownHarness.shouldThrow = false
-    const content = '流畅输出'.repeat(13)
+    const content = 'flow'.repeat(13)
 
     await act(async () => {
       root.render(<AgentMarkdown content={content} isAnimating />)
     })
-    expect(streamdownHarness.caret).toBe('block')
+    expect(streamdownHarness.caret).toBeUndefined()
     expect(streamdownHarness.animated).toBe(false)
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('')
 
     await act(async () => vi.advanceTimersByTimeAsync(512))
     const firstFrame = container.querySelector('[data-testid="rich-markdown"]')?.textContent ?? ''
-    expect(firstFrame).toBe('流')
+    expect(firstFrame).toBe('f')
 
     for (let expectedLength = 2; expectedLength <= 12; expectedLength += 1) {
       await act(async () => vi.advanceTimersByTimeAsync(16))
@@ -173,20 +173,20 @@ describe('AgentMarkdown renderer recovery', () => {
     streamdownHarness.shouldThrow = false
 
     await act(async () => {
-      root.render(<AgentMarkdown content="流" isAnimating />)
+      root.render(<AgentMarkdown content="x" isAnimating />)
     })
 
     for (let length = 2; length <= 70; length += 1) {
       await act(async () => vi.advanceTimersByTimeAsync(8))
       await act(async () => {
-        root.render(<AgentMarkdown content={'流'.repeat(length)} isAnimating />)
+        root.render(<AgentMarkdown content={'x'.repeat(length)} isAnimating />)
       })
     }
 
     const visible = container.querySelector('[data-testid="rich-markdown"]')?.textContent ?? ''
     expect(visible.length).toBeGreaterThan(0)
     expect(visible.length).toBeLessThan(70)
-    expect(streamdownHarness.caret).toBe('block')
+    expect(streamdownHarness.caret).toBeUndefined()
   })
 
   it('prebuffers a small segment instead of exposing source jitter directly', async () => {
@@ -200,17 +200,17 @@ describe('AgentMarkdown renderer recovery', () => {
     streamdownHarness.shouldThrow = false
 
     await act(async () => {
-      root.render(<AgentMarkdown content={'流'.repeat(12)} isAnimating />)
+      root.render(<AgentMarkdown content={'x'.repeat(12)} isAnimating />)
     })
     await act(async () => vi.advanceTimersByTimeAsync(480))
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('')
-    expect(streamdownHarness.caret).toBe('block')
+    expect(streamdownHarness.caret).toBeUndefined()
 
     await act(async () => {
-      root.render(<AgentMarkdown content={'流'.repeat(40)} isAnimating />)
+      root.render(<AgentMarkdown content={'x'.repeat(40)} isAnimating />)
     })
     await act(async () => vi.advanceTimersByTimeAsync(32))
-    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('流')
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('x')
   })
 
   it('starts a slow stream after the bounded prebuffer delay', async () => {
@@ -224,13 +224,13 @@ describe('AgentMarkdown renderer recovery', () => {
     streamdownHarness.shouldThrow = false
 
     await act(async () => {
-      root.render(<AgentMarkdown content={'流'.repeat(12)} isAnimating />)
+      root.render(<AgentMarkdown content={'x'.repeat(12)} isAnimating />)
     })
     await act(async () => vi.advanceTimersByTimeAsync(496))
     expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('')
 
     await act(async () => vi.advanceTimersByTimeAsync(16))
-    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('流')
+    expect(container.querySelector('[data-testid="rich-markdown"]')?.textContent).toBe('x')
   })
 
   it('flushes a non-append correction that preserves the visible prefix', async () => {

@@ -257,7 +257,6 @@ const RichAgentMarkdown = memo(
           mode={isAnimating ? 'streaming' : 'static'}
           isAnimating={isAnimating}
           animated={false}
-          caret={isAnimating ? 'block' : undefined}
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={AGENT_ALLOWED_TAGS}
