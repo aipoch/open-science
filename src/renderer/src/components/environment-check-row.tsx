@@ -105,7 +105,7 @@ const EnvironmentCheckRow = ({ check, icon }: EnvironmentCheckRowProps): React.J
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">{check.summary}</p>
         {check.detail ? (
-          <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground/80">
+          <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground">
             {check.detail}
           </p>
         ) : null}

@@ -401,11 +401,11 @@ export const ArtifactPreview = ({
     return (
       <div className="size-full overflow-hidden bg-bg-000 px-2 py-1.5">
         {previewText ? (
-          <pre className="m-0 line-clamp-4 whitespace-pre-wrap break-words font-mono text-[9px] leading-[1.15] text-text-100">
+          <pre className="m-0 line-clamp-4 whitespace-pre-wrap break-words font-mono text-[9px] leading-[1.15] text-text-000">
             {previewText}
           </pre>
         ) : (
-          <span className="text-[11px] font-semibold text-text-100">
+          <span className="text-[11px] font-semibold text-text-000">
             {getArtifactExtensionLabel(artifact)}
           </span>
         )}
