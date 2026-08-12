@@ -1785,6 +1785,58 @@ describe('SettingsPage layout', () => {
     expect(settingsSection('Remote App Access')).toBeUndefined()
   })
 
+  it('reports and announces a rejected browser-link copy attempt', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const publicSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit-public',
+      enabled: true,
+      lifecycle: 'running',
+      accessUrl: 'https://open-science.connect.remote.it/',
+      remoteItPublicUrl: 'https://open-science.connect.remote.it/',
+      remoteIt: {
+        installed: true,
+        loggedIn: true,
+        registered: true,
+        service: { id: 'service-1', host: '127.0.0.1', port: 44100, enabled: true, ready: true }
+      },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(publicSnapshot)
+    remoteAccess.detect.mockResolvedValue(publicSnapshot)
+    const writeText = vi.fn().mockRejectedValue(new Error('Clipboard permission denied'))
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+    const copyButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Copy'
+    )
+
+    await act(async () => {
+      copyButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(writeText).toHaveBeenCalledWith(publicSnapshot.accessUrl)
+    const copyError = document.body.querySelector('[data-testid="remote-link-copy-error"]')
+    expect(copyError?.getAttribute('role')).toBe('alert')
+    expect(copyError?.textContent).toContain('Could not copy the browser link')
+  })
+
   it('explains Remote.It Device setup after a pre-install selection failed', async () => {
     const remoteAccess = (
       window as unknown as {

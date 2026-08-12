@@ -36,9 +36,9 @@ function ResizableHandle({
       data-slot="resizable-handle"
       className={cn(
         // Wide after-hit area makes CSS :hover match the draggable edge; default tick is thin and centered.
-        'relative flex w-px items-center justify-center bg-transparent outline-none',
-        "after:absolute after:inset-y-0 after:left-1/2 after:w-3 after:-translate-x-1/2 after:content-['']",
-        'before:pointer-events-none before:absolute before:top-1/2 before:left-1/2 before:z-10 before:h-8 before:w-0.5 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full before:bg-text-300 before:opacity-0',
+        'relative flex w-px items-center justify-center bg-transparent outline-none aria-[orientation=horizontal]:h-px aria-[orientation=horizontal]:w-full',
+        "after:absolute after:inset-y-0 after:left-1/2 after:w-3 after:-translate-x-1/2 after:content-[''] aria-[orientation=horizontal]:after:inset-x-0 aria-[orientation=horizontal]:after:inset-y-auto aria-[orientation=horizontal]:after:top-1/2 aria-[orientation=horizontal]:after:h-3 aria-[orientation=horizontal]:after:w-auto aria-[orientation=horizontal]:after:-translate-y-1/2 aria-[orientation=horizontal]:after:translate-x-0",
+        'before:pointer-events-none before:absolute before:top-1/2 before:left-1/2 before:z-10 before:h-8 before:w-0.5 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full before:bg-text-300 before:opacity-0 aria-[orientation=horizontal]:before:h-0.5 aria-[orientation=horizontal]:before:w-8',
         'hover:before:opacity-60 focus-visible:before:opacity-60 data-[separator=active]:before:opacity-60',
         className
       )}

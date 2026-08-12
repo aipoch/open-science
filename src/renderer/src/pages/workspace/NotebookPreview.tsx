@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 
 import type {
   NotebookEnvironmentStatus,
@@ -549,32 +550,44 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col" data-testid="operon-notebook-terminal-split">
-        <div className="min-h-0 flex-[4_1_0] overflow-visible" data-testid="notebook-cells-panel">
-          <div className="flex h-full min-h-0 flex-col overflow-auto">
-            <div className="min-h-0 flex-1 overflow-y-auto" data-testid="notebook-cells">
-              <div className="divide-y divide-border-100">
-                {visibleRuns.map((run, index) => (
-                  <NotebookRunCell key={run.runId} run={run} index={index} />
-                ))}
-              </div>
+      <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1 flex-col">
+        <ResizablePanel
+          id="notebook-cells-panel"
+          defaultSize="80%"
+          minSize="35%"
+          className="min-h-0 overflow-hidden"
+        >
+          <div
+            className="h-full min-h-0 overflow-y-auto overscroll-contain"
+            data-testid="notebook-cells"
+          >
+            <div className="divide-y divide-border-100">
+              {visibleRuns.map((run, index) => (
+                <NotebookRunCell key={run.runId} run={run} index={index} />
+              ))}
             </div>
           </div>
-        </div>
+        </ResizablePanel>
 
-        <div
-          aria-orientation="horizontal"
-          className="group relative flex shrink-0 select-none items-center justify-between gap-2 border-y border-border-200 bg-bg-200/70 px-3 py-1 text-[11px] text-text-300 outline-none transition-colors hover:bg-bg-200"
-          data-testid="notebook-terminal-divider"
-          role="separator"
+        <ResizableHandle
+          aria-label="Resize notebook and terminal"
+          className="shrink-0 bg-border-200"
+        />
+
+        <ResizablePanel
+          id="notebook-terminal-panel"
+          defaultSize="20%"
+          minSize="15%"
+          className="min-h-0 overflow-hidden"
         >
-          <span>Python kernel · shared with the agent</span>
-          <div className="pointer-events-none absolute left-1/2 top-1/2 h-1 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border-100 opacity-60 transition duration-150 group-hover:opacity-100" />
-          <span>{isNotebookBusy ? 'running' : 'idle'}</span>
-        </div>
-
-        <div className="min-h-0 flex-[1_1_0]" data-testid="notebook-terminal-panel">
           <div className="flex h-full min-h-0 flex-col bg-bg-200" data-testid="kernel-terminal">
+            <div
+              className="flex shrink-0 items-center justify-between gap-2 border-b border-border-200 bg-bg-200/70 px-3 py-1 text-[11px] text-text-300"
+              data-testid="notebook-terminal-header"
+            >
+              <span>Python kernel · shared with the agent</span>
+              <span>{isNotebookBusy ? 'running' : 'idle'}</span>
+            </div>
             {actionError ? (
               <div className="border-b border-border-100/60 px-3 py-2 font-mono text-xs text-danger-000">
                 {actionError}
@@ -590,8 +603,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               }}
             />
           </div>
-        </div>
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </section>
   )
 }

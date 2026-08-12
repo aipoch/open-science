@@ -94,8 +94,12 @@ const PageLoadError = ({
   message: string
   onRetry: () => void
 }): React.JSX.Element => (
-  <div className="flex items-center justify-between gap-3 px-4 py-3 text-[11px] text-danger-000">
-    <span className="min-w-0 flex-1 truncate">{message}</span>
+  <div
+    role="alert"
+    aria-atomic="true"
+    className="flex items-start justify-between gap-3 px-4 py-3 text-[11px] text-danger-000"
+  >
+    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
     <Button type="button" variant="outline" className="h-7 shrink-0 px-2.5" onClick={onRetry}>
       Retry
     </Button>
@@ -451,6 +455,7 @@ const ProjectFilesViewContent = ({
   const selectedLocalRoot = selectedLocalRootId
     ? grantedRoots.find((root) => root.id === selectedLocalRootId)
     : undefined
+  const filesExpansionLabel = isFilesExpanded ? 'Exit full screen files' : 'Expand files'
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">
@@ -540,7 +545,7 @@ const ProjectFilesViewContent = ({
                   variant="ghost"
                   size="icon"
                   className="rounded-md text-text-000 hover:bg-muted"
-                  aria-label={isFilesExpanded ? 'Exit full screen files' : 'Expand files'}
+                  aria-label={filesExpansionLabel}
                   onClick={() =>
                     setToolItemExpanded(isFilesExpanded ? null : PROJECT_FILES_PREVIEW_ID)
                   }
@@ -552,9 +557,7 @@ const ProjectFilesViewContent = ({
                   )}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent className="z-[70]">
-                {isFilesExpanded ? 'Exit full screen' : 'Expand files'}
-              </TooltipContent>
+              <TooltipContent className="z-[70]">{filesExpansionLabel}</TooltipContent>
             </Tooltip>
           </div>
         </TooltipProvider>
@@ -594,7 +597,7 @@ const ProjectFilesViewContent = ({
                       <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent className="z-[70]">Clear search</TooltipContent>
+                  <TooltipContent className="z-[70]">Clear file search</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             ) : null}

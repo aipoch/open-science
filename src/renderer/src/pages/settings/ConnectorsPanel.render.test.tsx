@@ -246,6 +246,28 @@ describe('ConnectorsPanel (groups)', () => {
     expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
+  it('uses a two-row narrow toolbar with full-width search and paired actions', () => {
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    const toolbar = document.body.querySelector<HTMLElement>('[data-testid="connectors-toolbar"]')
+    const search = document.body.querySelector<HTMLInputElement>('[aria-label="Search connectors"]')
+    const filter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter connectors by group"]'
+    )
+    const addConnector = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('button')
+    ).find((button) => button.textContent?.includes('Add connector'))
+
+    expect(toolbar?.className).toContain('grid-cols-2')
+    expect(toolbar?.className).toContain('sm:grid-cols-[minmax(0,1fr)_9rem_auto]')
+    expect(search?.parentElement?.className).toContain('col-span-2')
+    expect(search?.parentElement?.className).toContain('sm:col-span-1')
+    expect(filter?.className).toContain('w-full')
+    expect(addConnector?.className).toContain('w-full')
+  })
+
   it('toggles a featured connector and navigates to its detail on row click', () => {
     const onNavigate = vi.fn()
     act(() => {

@@ -31,9 +31,10 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
-import { SettingsSection } from './SettingsLayout'
+import { SettingsIconAction, SettingsSection } from './SettingsLayout'
 
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
+type CopyStatus = 'idle' | 'copied' | 'error'
 
 const lifecycleLabel = (snapshot: RemoteAccessSnapshot): string => {
   if (snapshot.lifecycle === 'starting') return 'Starting…'
@@ -121,11 +122,12 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(null)
   const [busy, setBusy] = useState<string | null>('loading')
   const [actionError, setActionError] = useState<string | undefined>()
-  const [copied, setCopied] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle')
 
   const operationTriggerRef = useRef<HTMLElement | null>(null)
   const initialLoadRetryRef = useRef(false)
   const mountedRef = useRef(false)
+  const copyResetTimerRef = useRef<number | undefined>(undefined)
   const refresh = async (detect = false, completesBusyOperation = true): Promise<void> => {
     try {
       const next = detect
@@ -167,6 +169,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     return () => {
       active = false
       mountedRef.current = false
+      if (copyResetTimerRef.current !== undefined) {
+        window.clearTimeout(copyResetTimerRef.current)
+      }
       unsubscribe()
     }
   }, [])
@@ -206,9 +211,21 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
   const copyUrl = async (): Promise<void> => {
     if (!snapshot?.accessUrl) return
-    await navigator.clipboard.writeText(snapshot.accessUrl)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1_500)
+    if (copyResetTimerRef.current !== undefined) {
+      window.clearTimeout(copyResetTimerRef.current)
+    }
+    setCopyStatus('idle')
+
+    try {
+      await navigator.clipboard.writeText(snapshot.accessUrl)
+      if (!mountedRef.current) return
+      setCopyStatus('copied')
+      copyResetTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current) setCopyStatus('idle')
+      }, 1_500)
+    } catch {
+      if (mountedRef.current) setCopyStatus('error')
+    }
   }
 
   if (!snapshot) {
@@ -514,7 +531,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                             onClick={() => void copyUrl()}
                           >
                             <Copy className="size-3.5" aria-hidden="true" />
-                            {copied ? 'Copied' : 'Copy'}
+                            {copyStatus === 'copied' ? 'Copied' : 'Copy'}
                           </Button>
                           <Button type="button" variant="outline" size="sm" asChild>
                             <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
@@ -527,6 +544,24 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       <div className="mt-1 break-all font-mono text-xs text-muted-foreground">
                         {snapshot.accessUrl}
                       </div>
+                      {copyStatus === 'error' ? (
+                        <div
+                          role="alert"
+                          className="mt-2 text-xs text-destructive"
+                          data-testid="remote-link-copy-error"
+                        >
+                          Could not copy the browser link. Select it and copy it manually.
+                        </div>
+                      ) : null}
+                      <span
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="sr-only"
+                        data-testid="remote-link-copy-status"
+                      >
+                        {copyStatus === 'copied' ? 'Browser link copied.' : ''}
+                      </span>
                     </div>
                   </div>
                   <BrowserAccessSteps />
@@ -583,21 +618,17 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       Last used {timeLabel(browser.lastSeenAt)}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
+                  <SettingsIconAction
+                    label={`Revoke ${browser.browser}`}
+                    icon={Trash2}
+                    danger
                     disabled={busy !== null}
                     onClick={() =>
                       void run(`revoke:${browser.id}`, () =>
                         window.api.remoteAccess.revokeBrowser({ browserId: browser.id })
                       )
                     }
-                    aria-label={`Revoke ${browser.browser}`}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="size-4" aria-hidden="true" />
-                  </Button>
+                  />
                 </div>
               ))}
             </div>

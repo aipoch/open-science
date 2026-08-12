@@ -27,4 +27,19 @@ describe('ResizableHandle', () => {
       ])
     )
   })
+
+  it('includes horizontal-separator geometry for vertical panel groups', () => {
+    const markup = renderToStaticMarkup(<ResizableHandle aria-label="Resize stacked panels" />)
+    const classNames = markup.match(/class="([^"]*)"/)?.[1]?.split(' ') ?? []
+
+    expect(classNames).toEqual(
+      expect.arrayContaining([
+        'aria-[orientation=horizontal]:h-px',
+        'aria-[orientation=horizontal]:w-full',
+        'aria-[orientation=horizontal]:after:h-3',
+        'aria-[orientation=horizontal]:before:h-0.5',
+        'aria-[orientation=horizontal]:before:w-8'
+      ])
+    )
+  })
 })

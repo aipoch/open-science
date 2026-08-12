@@ -189,7 +189,9 @@ const PreviewFileHeader = ({
               <Maximize2 aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent className={tooltipClassName}>Open full screen preview</TooltipContent>
+          <TooltipContent className={tooltipClassName}>
+            {`Open full screen preview of ${item.title}`}
+          </TooltipContent>
         </Tooltip>
       </TooltipProvider>
     ) : null}
@@ -207,7 +209,9 @@ const PreviewFileHeader = ({
             <X aria-hidden="true" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent className={tooltipClassName}>Close preview</TooltipContent>
+        <TooltipContent className={tooltipClassName}>
+          {`Close preview of ${item.title}`}
+        </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   </header>
