@@ -267,6 +267,7 @@ describe('post-merge Windows validation', () => {
     expect(regression.on).not.toHaveProperty('workflow_run')
     expect(regression.on).toHaveProperty('workflow_dispatch')
     expect(regression.on).toHaveProperty('workflow_call')
+    expect(regression.jobs.source['continue-on-error']).toBe('${{ inputs.allow_failure }}')
     expect(findStep(regression.jobs.source, 'Resolve source run').run).toContain(
       '.name == "macos-arm64" and (.expired | not)'
     )
