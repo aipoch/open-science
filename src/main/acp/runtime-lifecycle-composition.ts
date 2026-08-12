@@ -115,6 +115,7 @@ const composeAcpRuntimeLifecycleOwners = (
         }
       }
     },
+    cancelPendingStatePublication: () => session.publication.cancelPendingStatePublication(),
     setStatus,
     transitionStatus: (status) => base.snapshotOwner.transitionStatus(status),
     emitState: () => session.publication.emitState(),

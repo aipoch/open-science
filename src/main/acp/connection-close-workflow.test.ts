@@ -39,6 +39,7 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
     clearHttpRoutes: vi.fn(() => actions.push('routes')),
     selectSession: vi.fn(() => actions.push('select')),
     publishInterruptedPromptFailures: vi.fn(() => actions.push('prompt-failures')),
+    cancelPendingStatePublication: vi.fn(() => actions.push('publication-cancel')),
     setStatus: vi.fn((status: AcpStateSnapshot['status']) => actions.push(status)),
     transitionStatus: vi.fn((status: AcpStateSnapshot['status']) => actions.push(status)),
     emitState: vi.fn(() => actions.push('emit')),
@@ -103,7 +104,7 @@ const createWorkflow = (overrides: Record<string, unknown> = {}): TestHarness =>
 
 describe('AcpConnectionCloseWorkflow', () => {
   it('coordinates expected teardown while preserving owner ordering', async () => {
-    const { workflow, actions, resources, transitions } = createWorkflow()
+    const { workflow, actions, resources, transitions, state } = createWorkflow()
 
     await expect(workflow.disconnect()).resolves.toBe(snapshot)
 
@@ -111,6 +112,7 @@ describe('AcpConnectionCloseWorkflow', () => {
     expect(resources.supersede).toHaveBeenCalledOnce()
     expect(resources.teardown).toHaveBeenCalledOnce()
     expect(resources.closeMcp).toHaveBeenCalledOnce()
+    expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
     expect(actions).toEqual([
       'model-cancel',
       'invalidate',
@@ -130,8 +132,23 @@ describe('AcpConnectionCloseWorkflow', () => {
       'routes',
       'select',
       'closed',
-      'backend:2'
+      'backend:2',
+      'publication-cancel'
     ])
+  })
+
+  it('cancels pending state publication before a failed disconnect returns ownership', async () => {
+    const disconnectFailure = new Error('disconnect failed')
+    const { workflow, resources, state } = createWorkflow({
+      disconnectCurrent: vi.fn(async () => {
+        throw disconnectFailure
+      })
+    })
+
+    await expect(workflow.disconnect()).rejects.toBe(disconnectFailure)
+
+    expect(resources.restorePublished).toHaveBeenCalledOnce()
+    expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
   })
 
   it('cleans an unexpected close once, reports interrupted prompts, then reevaluates intents', () => {
@@ -144,7 +161,9 @@ describe('AcpConnectionCloseWorkflow', () => {
     expect(state.publishInterruptedPromptFailures).toHaveBeenCalledWith(['prompt'])
     expect(transitions.resetReconnect).toHaveBeenCalledOnce()
     expect(transitions.activityChanged).toHaveBeenCalledOnce()
+    expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
     expect(actions).toEqual([
+      'publication-cancel',
       'model-cancel',
       'invalidate',
       'permission',
@@ -179,6 +198,7 @@ describe('AcpConnectionCloseWorkflow', () => {
     expect(resources.beginAwaitableShutdown).toHaveBeenCalledWith(true)
     expect(state.clearPlanInteractions).toHaveBeenCalledOnce()
     expect(state.clearSessionProjection).toHaveBeenCalledOnce()
+    expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
   })
 
   it('clears Plan interactions during synchronous shutdown', () => {
@@ -187,6 +207,7 @@ describe('AcpConnectionCloseWorkflow', () => {
     workflow.shutdown()
 
     expect(state.clearPlanInteractions).toHaveBeenCalledOnce()
+    expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
   })
 
   it('clears usage before deferring provider reconnect and delegates intent ownership', async () => {

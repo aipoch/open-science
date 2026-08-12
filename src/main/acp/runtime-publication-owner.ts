@@ -81,9 +81,13 @@ class AcpRuntimePublicationOwner {
   }
 
   emitState(): void {
+    this.cancelPendingStatePublication()
+    this.options.callbacks.onStateChanged?.(this.getSnapshot())
+  }
+
+  cancelPendingStatePublication(): void {
     this.cancelScheduledStatePublication?.()
     this.cancelScheduledStatePublication = undefined
-    this.options.callbacks.onStateChanged?.(this.getSnapshot())
   }
 
   private scheduleStatePublication(): void {

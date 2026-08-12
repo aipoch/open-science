@@ -21,6 +21,7 @@ import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { RuntimeEventInput } from './runtime-snapshot-owner'
 import { AcpPermissionContext } from './permission-context'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
@@ -984,6 +985,12 @@ const connectionCloseForTest = (
   runtime: AcpRuntime
 ): Pick<AcpConnectionCloseWorkflow, 'disconnectCurrent'> =>
   (runtime as unknown as { connectionClose: AcpConnectionCloseWorkflow }).connectionClose
+
+const publicationForTest = (
+  runtime: AcpRuntime
+): { pushEvent: (event: RuntimeEventInput) => void } =>
+  (runtime as unknown as { publication: { pushEvent: (event: RuntimeEventInput) => void } })
+    .publication
 
 const invalidatePendingSessionStartupsForTest = (runtime: AcpRuntime): void => {
   const owners = runtime as unknown as {
@@ -3935,6 +3942,33 @@ describe('ACP runtime session management', () => {
     // Calling it again after the process is gone is a no-op, not a crash.
     expect(() => runtime.shutdown()).not.toThrow()
     await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+  })
+
+  it('cancels delayed state publication before synchronous shutdown releases the runtime', () => {
+    vi.useFakeTimers()
+    try {
+      const onStateChanged = vi.fn()
+      const runtime = new AcpRuntime({
+        appVersion: '0.2.0',
+        defaultCwd: '/workspace',
+        callbacks: { onStateChanged }
+      })
+
+      publicationForTest(runtime).pushEvent({
+        kind: 'message',
+        level: 'info',
+        role: 'assistant',
+        text: 'buffered state'
+      })
+      expect(onStateChanged).not.toHaveBeenCalled()
+
+      runtime.shutdown()
+      vi.advanceTimersByTime(16)
+
+      expect(onStateChanged).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('kills a child that finishes spawning after shutdown began, so quit-during-connect cannot orphan it', async () => {
