@@ -11,6 +11,7 @@ import {
   getCliLauncherStatus,
   installCliLauncher,
   uninstallCliLauncher,
+  ensureCliLauncherCurrent,
   type CliLauncherEnv
 } from './launcher'
 
@@ -24,7 +25,7 @@ type CliCommandOwner = Readonly<{
 
 // Resolves the launcher environment from Electron at call time. Packaged builds ship the CLI under
 // resources/cli (see electron-builder.yml extraResources); in dev it lives in the repo's cli/ dir.
-const resolveEnv = (): CliLauncherEnv => ({
+export const resolveEnv = (): CliLauncherEnv => ({
   platform: process.platform,
   appExecPath: process.execPath,
   cliEntryPath: app.isPackaged
@@ -69,4 +70,4 @@ const registerCliInstallIpcHandlers = (
 }
 
 export type { CliCommandOwner }
-export { registerCliInstallIpcHandlers, createCliCommandOwner }
+export { ensureCliLauncherCurrent, registerCliInstallIpcHandlers, createCliCommandOwner }

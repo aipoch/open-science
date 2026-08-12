@@ -8,8 +8,10 @@ const pdescribe = describe.skipIf(process.platform === 'win32')
 
 import {
   buildWindowsPathCommand,
+  ensureCliLauncherCurrent,
   getCliLauncherStatus,
   installCliLauncher,
+  isCliShimStale,
   planCliLauncher,
   uninstallCliLauncher,
   type CliLauncherEnv
@@ -183,5 +185,52 @@ describe('installCliLauncher on Windows PATH edit', () => {
     expect(called).toBe(false)
     expect(status.onPath).toBe(true)
     expect(status.pathHint).toBeUndefined()
+  })
+})
+
+pdescribe('isCliShimStale (POSIX)', () => {
+  it('returns false when no shim exists', async () => {
+    expect(await isCliShimStale(posixEnv())).toBe(false)
+  })
+
+  it('returns false when shim matches current appExecPath', async () => {
+    await installCliLauncher(posixEnv())
+    expect(await isCliShimStale(posixEnv())).toBe(false)
+  })
+
+  it('returns true when appExecPath has changed (AppImage re-mount)', async () => {
+    await installCliLauncher(posixEnv())
+    // Simulate AppImage re-mount: new FUSE path
+    const staleEnv = posixEnv({ appExecPath: '/tmp/.mount_open-scienceABCD1234/open-science' })
+    expect(await isCliShimStale(staleEnv)).toBe(true)
+  })
+
+  it('returns false for non-packaged builds', async () => {
+    expect(await isCliShimStale(posixEnv({ packaged: false }))).toBe(false)
+  })
+})
+
+pdescribe('ensureCliLauncherCurrent (POSIX)', () => {
+  it('does nothing when shim is up to date', async () => {
+    await installCliLauncher(posixEnv())
+    const result = await ensureCliLauncherCurrent(posixEnv())
+    expect(result).toBeUndefined()
+  })
+
+  it('reinstalls shim when appExecPath has changed', async () => {
+    await installCliLauncher(posixEnv())
+    // Simulate AppImage re-mount
+    const newEnv = posixEnv({ appExecPath: '/tmp/.mount_open-scienceNEW/open-science' })
+    const result = await ensureCliLauncherCurrent(newEnv)
+    expect(result).toBeDefined()
+    expect(result!.installed).toBe(true)
+    // Verify the shim now contains the new path
+    const shim = await readFile(result!.target, 'utf8')
+    expect(shim).toContain('/tmp/.mount_open-scienceNEW/open-science')
+  })
+
+  it('does nothing when CLI is not installed', async () => {
+    const result = await ensureCliLauncherCurrent(posixEnv())
+    expect(result).toBeUndefined()
   })
 })

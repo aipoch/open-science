@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { access, chmod, mkdir, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
@@ -171,4 +171,31 @@ export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLaun
         ? `Add ${plan.binDir} to your PATH to use "open-science".`
         : undefined
   }
+}
+
+// On AppImage builds, FUSE re-mounts the image at a different path on every launch, making the
+// hardcoded paths in the CLI shim stale. This reads the existing shim and checks whether it still
+// references the current appExecPath. Returns true when the shim needs to be rewritten.
+export const isCliShimStale = async (env: CliLauncherEnv): Promise<boolean> => {
+  if (!env.packaged) return false
+  const plan = planCliLauncher(env)
+  try {
+    const content = await readFile(plan.target, 'utf8')
+    // The shim embeds appExecPath in OPEN_SCIENCE_APP_PATH=... and in the exec line.
+    // If either reference is missing or points to a different path, the shim is stale.
+    return !content.includes(env.appExecPath)
+  } catch {
+    // Shim doesn't exist — not stale, just not installed.
+    return false
+  }
+}
+
+// AppImage-safe startup hook: if the CLI is installed but the shim paths are stale (FUSE
+// re-mount), silently reinstall so the CLI keeps working. Non-blocking — fire-and-forget.
+export const ensureCliLauncherCurrent = async (
+  env: CliLauncherEnv,
+  runCommand: CommandRunner = defaultRunCommand
+): Promise<CliLauncherStatus | undefined> => {
+  if (!(await isCliShimStale(env))) return undefined
+  return installCliLauncher(env, runCommand)
 }

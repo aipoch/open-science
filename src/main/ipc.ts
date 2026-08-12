@@ -57,7 +57,12 @@ import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-setting
 import { ConnectorService } from './connectors/service'
 import { registerFileSaveHandlers } from './file-save'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
-import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
+import {
+  createCliCommandOwner,
+  ensureCliLauncherCurrent,
+  registerCliInstallIpcHandlers,
+  resolveEnv as resolveCliEnv
+} from './cli-install/ipc'
 import { createGithubCommandOwner, registerGithubIpcHandlers } from './github-ipc'
 import {
   BackendShutdownOutcomeError,
@@ -1103,6 +1108,9 @@ const createApplicationModules = async (
     )
 
   const cliCommandOwner = createCliCommandOwner()
+  // AppImage: FUSE re-mounts at a different path on every launch, so the CLI shim's hardcoded
+  // paths go stale. Silently refresh if needed — non-blocking, no await in the hot path.
+  ensureCliLauncherCurrent(resolveCliEnv()).catch(() => {})
   const githubCommandOwner = createGithubCommandOwner()
   const logsCommandOwner = createLogsCommandOwner()
   declareElectronAdapter('desktop-utilities', () => {
