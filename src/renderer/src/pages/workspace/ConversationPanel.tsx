@@ -13,11 +13,7 @@ import type {
   PermissionProfileId,
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
-import {
-  MAX_UPLOAD_FILE_BYTES,
-  formatUploadSizeLimit,
-  type UploadedAttachment
-} from '../../../../shared/uploads'
+import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
 import { isReportableRunFailure } from '../../../../shared/run-error-classification'
 import {
   AlertTriangle,
@@ -40,7 +36,7 @@ import {
   Square,
   X
 } from 'lucide-react'
-import { useRef, useState, type SetStateAction } from 'react'
+import { useRef, useState } from 'react'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 
 import { FileDropOverlay } from '@/components/FileDropOverlay'
@@ -63,8 +59,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 
 import { ComposerEditor } from './composer/ComposerEditor'
-import type { ComposerUploadTransfer } from './composer-upload-transfer'
-import { appendArtifactMention, docToSkillIds, type ComposerDoc } from './composer/composer-doc'
+import { appendArtifactMention, docToSkillIds } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
@@ -94,17 +89,15 @@ import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfa
 import { projectSessionSubagents } from './subagent-release-projection'
 import { ResizableBottomPanel } from './ResizableBottomPanel'
 import { SideChatPanel } from './SideChatPanel'
-import { hasMainConversation, type SideChatView } from './use-side-chat-controller'
+import { hasMainConversation, type SideChatController } from './use-side-chat-controller'
+import type { WorkspaceComposerController } from './workspace-composer-controller'
+import type { WorkspaceConversationController } from './workspace-conversation-controller'
+import type { WorkspaceSessionController } from './workspace-session-controller'
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
 const composerIconButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
-  composerInteractiveTransitionClassName
-)
-
-const composerSendButtonClassName = cn(
-  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/80 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary',
   composerInteractiveTransitionClassName
 )
 
@@ -180,174 +173,198 @@ const formatAttachmentSize = (size: number): string => {
   return `${(megabytes / 1024).toFixed(1)} GB`
 }
 
-type ConversationPanelProps = {
+type ConversationPanelView = {
   activeSession: ChatSession | undefined
   composerFocusKey?: string
-  draftDoc: ComposerDoc
-  canSendMessage: boolean
   canEditDraft: boolean
-  canResumeSession: boolean
   actionError: string | null
-  isPreviewPanelCollapsed?: boolean
-  attachments: UploadedAttachment[]
-  attachmentTransfers: ComposerUploadTransfer[]
-  isUploadingAttachments: boolean
-  notebookReference: NotebookSessionReference | undefined
-  pendingPermissions: AcpPermissionRequest[]
-  subagentUnavailableReason?: string
-  pendingElicitations?: PendingElicitationRequest[]
+  sideChatDisabledReason?: string
+}
+
+type ConversationPanelSpecialist = {
+  view: {
+    specialist: WorkspaceSessionController['view']['specialist']
+  }
+  actions: Pick<
+    WorkspaceSessionController['actions'],
+    'selectSpecialist' | 'chooseOtherSpecialist' | 'useMainAgent'
+  >
+}
+
+type ConversationPanelLayout = {
+  isPreviewPanelCollapsed: boolean
+  togglePreviewPanel: () => void
+  openSidebar: () => void
+}
+
+type ConversationPanelPermissions = {
+  requests: AcpPermissionRequest[]
   permissionProfile: PermissionProfileId
   permissionProfileState: SessionPermissionProfileState | undefined
   permissionGrants: AcpPermissionGrant[]
-  // Latest context-window usage for the active session (undefined when the framework never reported it).
-  contextUsage: AcpContextUsage | undefined
-  canCompactContext?: boolean
-  compactContextDisabledReason?: string
-  onCompactContext?: () => void
-  canChangeAgentControls: boolean
   canChangePermissionProfile: boolean
-  // Auto-review toggle: whether the current session has auto-review enabled (default false).
+  respond: (requestId: string, optionId?: string) => Promise<void>
+  changeProfile: (profile: PermissionProfileId) => void
+  revokeGrant: (categoryKey: string) => void
+  clearGrants: () => void
+}
+
+type ConversationPanelElicitation = {
+  requests: PendingElicitationRequest[]
+  respond: (response: ElicitationResponse) => Promise<void>
+}
+
+type ConversationPanelAgentControls = {
+  canChange: boolean
   autoReviewEnabled: boolean
-  onDraftDocChange: (doc: ComposerDoc) => void
-  isHistoryBrowsing?: boolean
-  historyStatus?: string
-  onNavigateHistory?: (direction: 'previous' | 'next') => boolean
-  onSendMessage: (forcedSkillIds: string[]) => void
-  // Sends this draft as a one-turn request to plan before execution.
-  onPlanFirst?: (forcedSkillIds: string[]) => void
-  sideChat?: SideChatView
-  onStartSideChat?: () => void
-  sideChatDisabledReason?: string
-  onSendSideChat?: (text: string) => Promise<boolean>
-  onSideChatDraftChange?: (value: SetStateAction<string>) => void
-  onCancelSideChat?: () => void
-  onCloseSideChat?: () => void
-  // A restored pending Plan has no live tool-call waiter. Every card action starts a fresh,
-  // identity-bound Plan interaction instead of trying to resume the expired one.
-  onRespondToRestoredPlan: (
-    response: { decision: 'approved' | 'rejected' } | { feedback: string }
-  ) => Promise<void>
-  // Starts a new session from this session's visible branch, then sends the current draft there.
-  // Optional while callers migrate to the split send affordance.
-  onBranchInNewSession?: (forcedSkillIds: string[]) => void
-  onStageAttachmentFiles: (files: File[]) => void
-  onRemoveAttachment: (attachment: UploadedAttachment) => void
-  onCancelAttachmentTransfer: (transfer: ComposerUploadTransfer) => void
-  onCancelRun: () => void | Promise<void>
-  onStopSubagents?: () => void | Promise<void>
-  onResumeSession: () => Promise<void>
-  onOpenNotebook: (notebook: NotebookSessionReference) => void
-  onTogglePreviewPanel?: () => void
-  onOpenSidebar?: () => void
-  onRespondToPermission: (requestId: string, optionId?: string) => Promise<void>
-  onRespondToElicitation?: (response: ElicitationResponse) => Promise<void>
-  onPermissionProfileChange: (profile: PermissionProfileId) => void
-  onRevokePermissionGrant: (categoryKey: string) => void
-  onClearPermissionGrants: () => void
-  onAutoReviewToggle: (enabled: boolean) => void
-  // Enabled compute hosts for this session (providerIds); toggling is single-select.
   enabledComputeHosts: string[]
-  onComputeHostToggle: (providerId: string, enabled: boolean) => void
-  // Manual review: invoked by the "Request review" + menu item.
-  onRequestReview: () => void
-  // True when "Request review" should be disabled: no completed turn, already reviewed, or currently reviewing.
-  isRequestReviewDisabled: boolean
-  // Inline editing of a sent prompt is only allowed once the run settles; confirming truncates the
-  // conversation at that message and resends the adjusted doc.
-  canEditMessage: boolean
-  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
-  // Open job list modal for a specific session.
-  onOpenJobList?: (sessionId: string) => void
-  // Specialist picker. For new conversations: undefined = None. For existing sessions: always shown.
-  specialistId?: string
-  specialistUnavailable?: boolean
-  // True when the user has selected a different specialist while the current turn is still running.
-  specialistHasPendingSwitch?: boolean
-  onSpecialistChange?: (specialistId: string | undefined) => void
-  // Reconfigure failure recovery callbacks.
-  reconfigureError?: {
-    sessionId: string
-    specialistName: string
-    message: string
-  } | null
-  onReconfigureRetry?: () => void
-  onReconfigureChooseOther?: () => void
-  onReconfigureUseNone?: () => void
+  toggleAutoReview: (enabled: boolean) => void
+  toggleComputeHost: (providerId: string, enabled: boolean) => void
+}
+
+type ConversationPanelContextWindow = {
+  usage: AcpContextUsage | undefined
+  canCompact: boolean
+  compactDisabledReason: string
+  compact: () => void
+}
+
+type ConversationPanelReview = {
+  disabled: boolean
+  request: () => void
+}
+
+type ConversationPanelSessionTools = {
+  notebookReference: NotebookSessionReference | undefined
+  openNotebook: (notebook: NotebookSessionReference) => void
+  openJobs: (sessionId: string) => void
+}
+
+type ConversationPanelSubagents = {
+  unavailableReason?: string
+  stop: () => void | Promise<void>
+}
+
+type ConversationPanelProps = {
+  view: ConversationPanelView
+  composer: Pick<WorkspaceComposerController, 'view' | 'actions'>
+  conversation: WorkspaceConversationController
+  sideChat: SideChatController
+  specialist: ConversationPanelSpecialist
+  layout: ConversationPanelLayout
+  permissions: ConversationPanelPermissions
+  elicitation: ConversationPanelElicitation
+  agentControls: ConversationPanelAgentControls
+  contextWindow: ConversationPanelContextWindow
+  review: ConversationPanelReview
+  sessionTools: ConversationPanelSessionTools
+  subagents: ConversationPanelSubagents
 }
 
 // Middle chat surface owns the visible conversation and local message composer UI.
 const ConversationPanel = ({
-  activeSession,
-  composerFocusKey,
-  draftDoc,
-  canSendMessage,
-  canEditDraft,
-  canResumeSession,
-  actionError,
-  isPreviewPanelCollapsed = false,
-  attachments,
-  attachmentTransfers,
-  isUploadingAttachments,
-  notebookReference,
-  pendingPermissions,
-  subagentUnavailableReason,
-  pendingElicitations = [],
-  permissionProfile,
-  permissionProfileState,
-  permissionGrants,
-  contextUsage,
-  canCompactContext = false,
-  compactContextDisabledReason,
-  onCompactContext,
-  canChangeAgentControls,
-  canChangePermissionProfile,
-  autoReviewEnabled,
-  onDraftDocChange,
-  isHistoryBrowsing = false,
-  historyStatus = '',
-  onNavigateHistory,
-  onSendMessage,
-  onPlanFirst,
-  sideChat,
-  onStartSideChat,
-  sideChatDisabledReason,
-  onSendSideChat,
-  onSideChatDraftChange,
-  onCancelSideChat,
-  onCloseSideChat,
-  onRespondToRestoredPlan,
-  onBranchInNewSession,
-  onStageAttachmentFiles,
-  onRemoveAttachment,
-  onCancelAttachmentTransfer,
-  onCancelRun,
-  onStopSubagents = onCancelRun,
-  onResumeSession,
-  onOpenNotebook,
-  onTogglePreviewPanel = () => undefined,
-  onOpenSidebar,
-  onRespondToPermission,
-  onRespondToElicitation = async () => undefined,
-  onPermissionProfileChange,
-  onRevokePermissionGrant,
-  onClearPermissionGrants,
-  onAutoReviewToggle,
-  enabledComputeHosts,
-  onComputeHostToggle,
-  onRequestReview,
-  isRequestReviewDisabled,
-  canEditMessage,
-  onSendEditedMessage,
-  onOpenJobList,
-  specialistId,
-  specialistUnavailable = false,
-  specialistHasPendingSwitch = false,
-  onSpecialistChange,
-  reconfigureError,
-  onReconfigureRetry,
-  onReconfigureChooseOther,
-  onReconfigureUseNone
+  view,
+  composer,
+  conversation,
+  sideChat: sideChatController,
+  specialist,
+  layout,
+  permissions,
+  elicitation,
+  agentControls,
+  contextWindow,
+  review,
+  sessionTools,
+  subagents
 }: ConversationPanelProps): React.JSX.Element => {
+  const { activeSession, composerFocusKey, canEditDraft, actionError, sideChatDisabledReason } =
+    view
+  const {
+    view: {
+      doc: draftDoc,
+      attachments,
+      transfers: attachmentTransfers,
+      historyStatus,
+      isHistoryBrowsing,
+      isUploading: isUploadingAttachments
+    },
+    actions: {
+      changeDoc: onDraftDocChange,
+      navigateHistory: onNavigateHistory,
+      stageFiles: onStageAttachmentFiles,
+      cancelTransfer: onCancelAttachmentTransfer,
+      removeAttachment: onRemoveAttachment
+    }
+  } = composer
+  const {
+    availability: { submit: canSendMessage, revise: canEditMessage, resume: canResumeSession },
+    actions: {
+      submit: { draft: submitDraft, restoredPlan: onRespondToRestoredPlan },
+      revise: onSendEditedMessage,
+      sideChat: { start: onStartSideChat },
+      resume: onResumeSession,
+      cancel: onCancelRun
+    }
+  } = conversation
+  const {
+    view: sideChat,
+    send: onSendSideChat,
+    setDraft: onSideChatDraftChange,
+    cancel: onCancelSideChat,
+    close: onCloseSideChat
+  } = sideChatController
+
+  const {
+    isPreviewPanelCollapsed,
+    togglePreviewPanel: onTogglePreviewPanel,
+    openSidebar: onOpenSidebar
+  } = layout
+  const {
+    requests: pendingPermissions,
+    permissionProfile,
+    permissionProfileState,
+    permissionGrants,
+    canChangePermissionProfile,
+    respond: onRespondToPermission,
+    changeProfile: onPermissionProfileChange,
+    revokeGrant: onRevokePermissionGrant,
+    clearGrants: onClearPermissionGrants
+  } = permissions
+  const { requests: pendingElicitations, respond: onRespondToElicitation } = elicitation
+  const {
+    canChange: canChangeAgentControls,
+    autoReviewEnabled,
+    enabledComputeHosts,
+    toggleAutoReview: onAutoReviewToggle,
+    toggleComputeHost: onComputeHostToggle
+  } = agentControls
+  const {
+    usage: contextUsage,
+    canCompact: canCompactContext,
+    compactDisabledReason: compactContextDisabledReason,
+    compact: onCompactContext
+  } = contextWindow
+  const { disabled: isRequestReviewDisabled, request: onRequestReview } = review
+  const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
+  const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
+  const specialistId = activeSession
+    ? activeSession.specialistId
+    : specialist.view.specialist.newConversationId
+  const specialistUnavailable = specialist.view.specialist.unavailable
+  const specialistHasPendingSwitch = specialist.view.specialist.hasPendingSwitch
+  const reconfigureError = specialist.view.specialist.reconfigureError
+  const onSpecialistChange = specialist.actions.selectSpecialist
+  const onReconfigureChooseOther = specialist.actions.chooseOtherSpecialist
+  const onReconfigureUseNone = specialist.actions.useMainAgent
+  const onSendMessage = (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds })
+  const onPlanFirst = (forcedSkillIds: string[]): void =>
+    submitDraft({ forcedSkillIds, mode: 'plan-first' })
+  const onBranchInNewSession = activeSession
+    ? (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds, mode: 'branch' })
+    : undefined
+  const onReconfigureRetry = (): void =>
+    submitDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
+
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const selectedFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
@@ -571,7 +588,7 @@ const ConversationPanel = ({
   const hasTextDraft = draftDoc.nodes.some(
     (node) => node.type === 'text' && node.text.trim().length > 0
   )
-  const canPlanFirst = effectiveCanSend && hasTextDraft && onPlanFirst !== undefined
+  const canPlanFirst = effectiveCanSend && hasTextDraft
   const canStartSideChat =
     Boolean(activeSession) &&
     hasMainConversation(activeSession) &&
@@ -582,20 +599,19 @@ const ConversationPanel = ({
     hasTextDraft &&
     attachments.length === 0 &&
     attachmentTransfers.length === 0 &&
-    !sideChatDisabledReason &&
-    onStartSideChat !== undefined
+    !sideChatDisabledReason
 
   const handlePlanFirst = (): void => {
-    if (!canPlanFirst || !onPlanFirst) return
+    if (!canPlanFirst) return
     onPlanFirst(docToSkillIds(draftDoc))
   }
 
   const handleSideChat = (): void => {
-    if (canStartSideChat) onStartSideChat?.()
+    if (canStartSideChat) onStartSideChat()
   }
 
   const handleCloseSideChat = (): void => {
-    onCloseSideChat?.()
+    onCloseSideChat()
     setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
   }
 
@@ -890,11 +906,7 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {sideChat &&
-                  onSendSideChat &&
-                  onSideChatDraftChange &&
-                  onCancelSideChat &&
-                  onCloseSideChat ? (
+                  {sideChat ? (
                     <SideChatPanel
                       view={sideChat}
                       onSend={onSendSideChat}
@@ -1350,12 +1362,7 @@ const ConversationPanel = ({
                           // reachable across the whole loop, not just the agent-fix running turn.
                           <div
                             data-testid="composer-running-control-slot"
-                            className={cn(
-                              'flex shrink-0 justify-end',
-                              onPlanFirst || onStartSideChat || onBranchInNewSession
-                                ? 'w-16 [@media(pointer:coarse)]:mx-3'
-                                : 'w-8'
-                            )}
+                            className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                           >
                             <button
                               type="button"
@@ -1379,55 +1386,53 @@ const ConversationPanel = ({
                                 {stopError}
                               </span>
                             ) : null}
-                            {onStartSideChat ? (
-                              <DropdownMenu>
-                                <TooltipProvider delayDuration={200}>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="inline-flex">
-                                        <DropdownMenuTrigger asChild>
-                                          <button
-                                            type="button"
-                                            className={composerIconButtonClassName}
-                                            disabled={!canStartSideChat}
-                                            aria-label="More send options"
-                                            data-testid="running-side-chat-menu-trigger"
-                                          >
-                                            <ChevronDown className="size-3.5" aria-hidden="true" />
-                                          </button>
-                                        </DropdownMenuTrigger>
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">
-                                      {sideChatDisabledReason ?? 'More send options'}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                                <DropdownMenuContent side="top" align="end" className="w-64">
-                                  <DropdownMenuItem
-                                    data-testid="menu-side-chat"
-                                    disabled={!canStartSideChat}
-                                    onSelect={handleSideChat}
-                                    title={sideChatDisabledReason}
-                                  >
-                                    <MessageCircleMore
-                                      className="mr-2 size-4 text-text-300"
-                                      aria-hidden="true"
-                                    />
-                                    <span>
-                                      Side chat
-                                      {sideChatDisabledReason ? (
-                                        <span className="block text-[11px] text-text-300">
-                                          {sideChatDisabledReason}
-                                        </span>
-                                      ) : null}
+                            <DropdownMenu>
+                              <TooltipProvider delayDuration={200}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex">
+                                      <DropdownMenuTrigger asChild>
+                                        <button
+                                          type="button"
+                                          className={composerIconButtonClassName}
+                                          disabled={!canStartSideChat}
+                                          aria-label="More send options"
+                                          data-testid="running-side-chat-menu-trigger"
+                                        >
+                                          <ChevronDown className="size-3.5" aria-hidden="true" />
+                                        </button>
+                                      </DropdownMenuTrigger>
                                     </span>
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            ) : null}
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top">
+                                    {sideChatDisabledReason ?? 'More send options'}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                              <DropdownMenuContent side="top" align="end" className="w-64">
+                                <DropdownMenuItem
+                                  data-testid="menu-side-chat"
+                                  disabled={!canStartSideChat}
+                                  onSelect={handleSideChat}
+                                  title={sideChatDisabledReason}
+                                >
+                                  <MessageCircleMore
+                                    className="mr-2 size-4 text-text-300"
+                                    aria-hidden="true"
+                                  />
+                                  <span>
+                                    Side chat
+                                    {sideChatDisabledReason ? (
+                                      <span className="block text-[11px] text-text-300">
+                                        {sideChatDisabledReason}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
-                        ) : onPlanFirst || onStartSideChat || onBranchInNewSession ? (
+                        ) : (
                           <TooltipProvider delayDuration={200}>
                             <div
                               role="group"
@@ -1543,16 +1548,6 @@ const ConversationPanel = ({
                               </DropdownMenu>
                             </div>
                           </TooltipProvider>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={handleSubmit}
-                            disabled={!effectiveCanSend}
-                            className={composerSendButtonClassName}
-                            aria-label="Send message"
-                          >
-                            <ArrowUp className="size-4" strokeWidth={2.2} aria-hidden="true" />
-                          </button>
                         )}
                         {hasRunningSubagents && !rootTurnBusy ? (
                           <TooltipProvider delayDuration={200}>

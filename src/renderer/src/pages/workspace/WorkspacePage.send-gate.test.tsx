@@ -25,22 +25,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import { type ComposerDoc } from './composer/composer-doc'
 
 // Capture the ConversationPanel props the page computes, notably canSendMessage and the draft callback.
-let conversationProps: {
-  actionError: string | null
-  draftDoc: ComposerDoc
-  canEditDraft: boolean
-  canSendMessage: boolean
-  canEditMessage: boolean
-  canChangeAgentControls: boolean
-  canChangePermissionProfile: boolean
-  canCompactContext: boolean
-  compactContextDisabledReason?: string
-  onDraftDocChange: (doc: ComposerDoc) => void
-  onSendMessage: (forcedSkillIds: string[]) => void
-  onRespondToRestoredPlan: (
-    response: { decision: 'approved' | 'rejected' } | { feedback: string }
-  ) => Promise<void>
-}
+let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
 
 const runtime = vi.hoisted(() => ({
   actionError: null as string | null,
@@ -237,23 +222,23 @@ describe('WorkspacePage send gate while compacting', () => {
 
     // A non-empty draft on an idle session is normally sendable — this is the control.
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('retry this'))
+      conversationProps.composer.actions.changeDoc(textDoc('retry this'))
     })
-    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
 
     // Entering the compacting recovery state must gate the composer even though the status is idle and the
     // draft is unchanged, so a manual prompt can't race the recovery resend.
     await act(async () => {
       useSessionStore.getState().beginCompaction('sess-a')
     })
-    expect(conversationProps.canSendMessage).toBe(false)
+    expect(conversationProps.conversation.availability.submit).toBe(false)
 
     // Once the replay turn starts (running) and the recovery clears the flag, sending is governed by the
     // normal status rules again. Finishing the run returns to idle with the draft still sendable.
     await act(async () => {
       useSessionStore.getState().finishRun('sess-a')
     })
-    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
   })
 
   it.each(['running', 'waiting-permission'] as const)(
@@ -266,8 +251,8 @@ describe('WorkspacePage send gate while compacting', () => {
 
       await renderPage()
 
-      expect(conversationProps.canChangeAgentControls).toBe(false)
-      expect(conversationProps.canChangePermissionProfile).toBe(true)
+      expect(conversationProps.agentControls.canChange).toBe(false)
+      expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
     }
   )
 
@@ -293,12 +278,12 @@ describe('WorkspacePage send gate while compacting', () => {
 
     await renderPage()
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('start another request'))
+      conversationProps.composer.actions.changeDoc(textDoc('start another request'))
     })
 
-    expect(conversationProps.canSendMessage).toBe(false)
-    expect(conversationProps.canEditMessage).toBe(false)
-    expect(conversationProps.canChangeAgentControls).toBe(false)
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(conversationProps.agentControls.canChange).toBe(false)
   })
 
   it('unlocks a waiting Session after main drops unreadable Plan authority', async () => {
@@ -332,7 +317,7 @@ describe('WorkspacePage send gate while compacting', () => {
     await renderPage()
 
     await act(async () => {
-      await conversationProps.onRespondToRestoredPlan({
+      await conversationProps.conversation.actions.submit.restoredPlan({
         feedback: 'Split the analysis by cohort.'
       })
     })
@@ -370,7 +355,7 @@ describe('WorkspacePage send gate while compacting', () => {
       await renderPage()
 
       await act(async () => {
-        await conversationProps.onRespondToRestoredPlan({ decision })
+        await conversationProps.conversation.actions.submit.restoredPlan({ decision })
       })
 
       expect(window.api.acp.respondPlan).toHaveBeenCalledWith({
@@ -393,10 +378,10 @@ describe('WorkspacePage send gate while compacting', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('continue'))
+      conversationProps.composer.actions.changeDoc(textDoc('continue'))
     })
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
       await Promise.resolve()
     })
 
@@ -411,10 +396,10 @@ describe('WorkspacePage send gate while compacting', () => {
 
     runtime.sendMessage.mockClear()
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('What is the weather?'))
+      conversationProps.composer.actions.changeDoc(textDoc('What is the weather?'))
     })
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
       await Promise.resolve()
     })
 
@@ -434,10 +419,10 @@ describe('WorkspacePage send gate while compacting', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('approve and continue'))
+      conversationProps.composer.actions.changeDoc(textDoc('approve and continue'))
     })
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
       await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledOnce())
     })
 
@@ -463,10 +448,10 @@ describe('WorkspacePage send gate while compacting', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('approve'))
+      conversationProps.composer.actions.changeDoc(textDoc('approve'))
     })
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
       await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledOnce())
     })
 
@@ -479,7 +464,7 @@ describe('WorkspacePage send gate while compacting', () => {
 
   it('blocks message-branch changes only while the project-scoped review is running', async () => {
     await renderPage()
-    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
 
     const runningReview: ReviewWithChecks = {
       id: 'review-1',
@@ -504,7 +489,7 @@ describe('WorkspacePage send gate while compacting', () => {
     await act(async () => {
       useReviewStore.getState().handleReviewUpdate({ review: runningReview })
     })
-    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
     expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).toBe(true)
 
     await act(async () => {
@@ -517,7 +502,7 @@ describe('WorkspacePage send gate while compacting', () => {
         }
       })
     })
-    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
     expect(useSessionStore.getState().sessions[0]?.branchSwitchBlocked).not.toBe(true)
   })
 
@@ -525,9 +510,9 @@ describe('WorkspacePage send gate while compacting', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('wait for compaction'))
+      conversationProps.composer.actions.changeDoc(textDoc('wait for compaction'))
     })
-    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
 
     runtime.promptInFlightSessionIds = ['sess-a']
     await act(async () => {
@@ -539,7 +524,7 @@ describe('WorkspacePage send gate while compacting', () => {
         />
       )
     })
-    expect(conversationProps.canSendMessage).toBe(false)
+    expect(conversationProps.conversation.availability.submit).toBe(false)
 
     runtime.promptInFlightSessionIds = []
     await act(async () => {
@@ -551,18 +536,18 @@ describe('WorkspacePage send gate while compacting', () => {
         />
       )
     })
-    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
   })
 
   it('locks draft submission and message editing while a send prepares runtime adoption', async () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('wait for adoption'))
+      conversationProps.composer.actions.changeDoc(textDoc('wait for adoption'))
     })
-    expect(conversationProps.canEditDraft).toBe(true)
-    expect(conversationProps.canSendMessage).toBe(true)
-    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.view.canEditDraft).toBe(true)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
 
     runtime.sendPreparationInFlightSessionIds = ['sess-a']
     await act(async () => {
@@ -575,10 +560,10 @@ describe('WorkspacePage send gate while compacting', () => {
       )
     })
 
-    expect(conversationProps.canEditDraft).toBe(false)
-    expect(conversationProps.canSendMessage).toBe(false)
-    expect(conversationProps.canEditMessage).toBe(false)
-    expect(conversationProps.canChangePermissionProfile).toBe(false)
+    expect(conversationProps.view.canEditDraft).toBe(false)
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
   })
 
   it('blocks new prompts after terminal conversation graph synchronization fails', async () => {
@@ -593,24 +578,24 @@ describe('WorkspacePage send gate while compacting', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('do not overwrite the durable graph'))
+      conversationProps.composer.actions.changeDoc(textDoc('do not overwrite the durable graph'))
     })
 
-    expect(conversationProps.canSendMessage).toBe(false)
-    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
   })
 
   it('allows manual compaction only for an idle session, not an unresolved error', async () => {
     await renderPage()
 
-    expect(conversationProps.canCompactContext).toBe(true)
+    expect(conversationProps.contextWindow.canCompact).toBe(true)
 
     await act(async () => {
       useSessionStore.getState().failRun('sess-a', 'Keep this failure visible')
     })
 
-    expect(conversationProps.canCompactContext).toBe(false)
-    expect(conversationProps.compactContextDisabledReason).toBe(
+    expect(conversationProps.contextWindow.canCompact).toBe(false)
+    expect(conversationProps.contextWindow.compactDisabledReason).toBe(
       'Resolve the current session error before compacting.'
     )
   })
@@ -642,7 +627,7 @@ describe('WorkspacePage send gate while compacting', () => {
     }))
     await renderPage()
 
-    expect(conversationProps.actionError).toBe('Permission response failed')
+    expect(conversationProps.view.actionError).toBe('Permission response failed')
 
     runtime.actionError = null
     await act(async () => {
@@ -650,6 +635,6 @@ describe('WorkspacePage send gate while compacting', () => {
       useSessionStore.getState().setPermissionPending('sess-a')
     })
 
-    expect(conversationProps.actionError).toBe('Continuation failed')
+    expect(conversationProps.view.actionError).toBe('Continuation failed')
   })
 })

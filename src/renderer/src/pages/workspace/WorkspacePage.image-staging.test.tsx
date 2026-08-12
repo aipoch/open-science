@@ -25,13 +25,7 @@ import {
 import type { UploadedAttachment } from '../../../../shared/uploads'
 
 // Capture the ConversationPanel props the page computes on each render.
-let conversationProps: {
-  attachments: UploadedAttachment[]
-  actionError: string | null
-  canSendMessage: boolean
-  onStageAttachmentFiles: (files: File[]) => void
-  onSendMessage: (forcedSkillIds: string[]) => void
-}
+let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
 
 const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -228,22 +222,22 @@ describe('WorkspacePage image attachment gating', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onStageAttachmentFiles([imageFile()])
+      conversationProps.composer.actions.stageFiles([imageFile()])
     })
 
     // The image takes the native-path upload adapter and then surfaces as a composer attachment.
     await act(async () => {
       await vi.waitFor(() => {
         expect(stageLocalFile).toHaveBeenCalledTimes(1)
-        expect(conversationProps.attachments).toEqual([staged])
+        expect(conversationProps.composer.view.attachments).toEqual([staged])
       })
     })
-    expect(conversationProps.actionError).toBeNull()
-    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.view.actionError).toBeNull()
+    expect(conversationProps.conversation.availability.submit).toBe(true)
 
     // Sending forwards the staged image attachment to the runtime bridge.
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
     await act(async () => {
       await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledTimes(1))
@@ -258,13 +252,13 @@ describe('WorkspacePage image attachment gating', () => {
 
     // The guard rejects the batch before any read/upload happens and surfaces the reason.
     await act(async () => {
-      conversationProps.onStageAttachmentFiles([imageFile()])
+      conversationProps.composer.actions.stageFiles([imageFile()])
     })
     await act(async () => {
-      await vi.waitFor(() => expect(conversationProps.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
+      await vi.waitFor(() => expect(conversationProps.view.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
     })
     expect(stageLocalFile).not.toHaveBeenCalled()
-    expect(conversationProps.attachments).toEqual([])
+    expect(conversationProps.composer.view.attachments).toEqual([])
   })
 
   it('blocks sending a previously staged image after the model loses image support', async () => {
@@ -284,10 +278,10 @@ describe('WorkspacePage image attachment gating', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onStageAttachmentFiles([imageFile()])
+      conversationProps.composer.actions.stageFiles([imageFile()])
     })
     await act(async () => {
-      await vi.waitFor(() => expect(conversationProps.attachments).toEqual([staged]))
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toEqual([staged]))
     })
 
     // ...then switch to a model without image support and attempt to send.
@@ -297,10 +291,10 @@ describe('WorkspacePage image attachment gating', () => {
 
     // The send-path guard blocks the image and never reaches the runtime bridge.
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
     await act(async () => {
-      await vi.waitFor(() => expect(conversationProps.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
+      await vi.waitFor(() => expect(conversationProps.view.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
     })
     expect(runtime.sendMessage).not.toHaveBeenCalled()
   })

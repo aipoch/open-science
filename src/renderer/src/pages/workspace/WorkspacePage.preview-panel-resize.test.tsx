@@ -188,24 +188,24 @@ vi.mock('./WorkspaceSidebar', () => ({
 
 vi.mock('./ConversationPanel', () => ({
   ConversationPanel: ({
-    isPreviewPanelCollapsed,
-    onTogglePreviewPanel,
-    onOpenSidebar
+    layout: { isPreviewPanelCollapsed, togglePreviewPanel, openSidebar }
   }: {
-    isPreviewPanelCollapsed: boolean
-    onTogglePreviewPanel: () => void
-    onOpenSidebar?: () => void
+    layout: {
+      isPreviewPanelCollapsed: boolean
+      togglePreviewPanel: () => void
+      openSidebar: () => void
+    }
   }): React.JSX.Element => (
     <section data-testid="conversation-panel">
       <button
         type="button"
         data-testid="preview-toggle"
         data-collapsed={isPreviewPanelCollapsed ? 'true' : 'false'}
-        onClick={onTogglePreviewPanel}
+        onClick={togglePreviewPanel}
       >
         Toggle preview
       </button>
-      <button type="button" data-testid="navigation-toggle" onClick={onOpenSidebar}>
+      <button type="button" data-testid="navigation-toggle" onClick={openSidebar}>
         Toggle navigation
       </button>
     </section>

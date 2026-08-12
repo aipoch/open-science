@@ -20,15 +20,10 @@ import type { ComposerDoc } from './composer/composer-doc'
 
 // Capture the props passed to the heavy child components so the test can observe the draft doc and
 // the new-conversation Specialist binding.
-let conversationProps: {
-  draftDoc: ComposerDoc
-  specialistId: string | undefined
-  attachments: unknown[]
-  attachmentTransfers: unknown[]
-  onDraftDocChange: (doc: ComposerDoc) => void
-  isHistoryBrowsing: boolean
-  onNavigateHistory: (direction: 'previous' | 'next') => boolean
-}
+let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
+const panelSpecialistId = (): string | undefined =>
+  conversationProps.view.activeSession?.specialistId ??
+  conversationProps.specialist.view.specialist.newConversationId
 
 const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -207,7 +202,7 @@ describe('WorkspacePage customize prefill', () => {
     })
     await renderPage()
 
-    expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
+    expect(conversationProps.composer.view.doc).toEqual(expectedCustomizeDoc)
   })
 
   it('prefills the Skill chat entry with the Skill Creator goal', async () => {
@@ -216,7 +211,7 @@ describe('WorkspacePage customize prefill', () => {
     })
     await renderPage()
 
-    expect(conversationProps.draftDoc).toEqual(expectedSkillCustomizeDoc)
+    expect(conversationProps.composer.view.doc).toEqual(expectedSkillCustomizeDoc)
   })
 
   it('clears the pending prefill intent once it has been applied', async () => {
@@ -247,14 +242,14 @@ describe('WorkspacePage customize prefill', () => {
     await renderPage()
 
     // The fresh New Conversation draft carries no Specialist binding (no badge, no Customize Profile).
-    expect(conversationProps.specialistId).toBeUndefined()
+    expect(panelSpecialistId()).toBeUndefined()
   })
 
   it('starts empty when no prefill intent is pending', async () => {
     await renderPage()
 
     // No pending prefill: the new-conversation composer stays empty.
-    expect(conversationProps.draftDoc).toEqual({ nodes: [] })
+    expect(conversationProps.composer.view.doc).toEqual({ nodes: [] })
   })
 
   it('renders a selected session when an older preload omits plan projection hydration', async () => {
@@ -270,13 +265,13 @@ describe('WorkspacePage customize prefill', () => {
     })
     await renderPage()
 
-    expect(conversationProps.draftDoc.nodes[0]).toEqual({
+    expect(conversationProps.composer.view.doc.nodes[0]).toEqual({
       type: 'skill',
       id: 'customize',
       name: 'Customize'
     })
     // The text node carries the two-space gap verbatim.
-    expect(conversationProps.draftDoc.nodes[1]).toEqual({
+    expect(conversationProps.composer.view.doc.nodes[1]).toEqual({
       type: 'text',
       text: '  Help me create a new specialist.'
     })
@@ -301,20 +296,22 @@ describe('WorkspacePage customize prefill', () => {
     }))
     await renderPage()
     await act(async () => {
-      conversationProps.onDraftDocChange({ nodes: [{ type: 'text', text: 'old scratch' }] })
+      conversationProps.composer.actions.changeDoc({
+        nodes: [{ type: 'text', text: 'old scratch' }]
+      })
     })
     await act(async () => {
-      conversationProps.onNavigateHistory('previous')
+      conversationProps.composer.actions.navigateHistory('previous')
     })
-    expect(conversationProps.isHistoryBrowsing).toBe(true)
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(true)
 
     await act(async () => {
       useNavigationStore.getState().startCustomizeConversation('proj-1')
     })
-    expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
-    expect(conversationProps.isHistoryBrowsing).toBe(false)
-    expect(conversationProps.onNavigateHistory('next')).toBe(false)
-    expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
+    expect(conversationProps.composer.view.doc).toEqual(expectedCustomizeDoc)
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(false)
+    expect(conversationProps.composer.actions.navigateHistory('next')).toBe(false)
+    expect(conversationProps.composer.view.doc).toEqual(expectedCustomizeDoc)
   })
 
   // F1 regression: `Chat with agent` prefill must survive when it is triggered from a workspace
@@ -334,13 +331,13 @@ describe('WorkspacePage customize prefill', () => {
 
     // (1) The composer draft must be exactly the customize prefill — not empty, not the prior
     // session's draft.
-    expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
+    expect(conversationProps.composer.view.doc).toEqual(expectedCustomizeDoc)
 
     // (2) No staged attachments or transfers may leak from the previously-selected session.
-    expect(conversationProps.attachments).toEqual([])
-    expect(conversationProps.attachmentTransfers).toEqual([])
+    expect(conversationProps.composer.view.attachments).toEqual([])
+    expect(conversationProps.composer.view.transfers).toEqual([])
     // (3) No Specialist binding on the fresh New Conversation draft.
-    expect(conversationProps.specialistId).toBeUndefined()
+    expect(panelSpecialistId()).toBeUndefined()
 
     // (4) Still no auto-send / no session creation on this path either.
     expect(runtime.sendMessage).not.toHaveBeenCalled()
@@ -352,14 +349,14 @@ describe('WorkspacePage customize prefill', () => {
       pendingCustomizePrefill: { projectId: 'proj-1', goal: 'specialist', requestId: 1 }
     })
     await renderPage()
-    expect(conversationProps.draftDoc).toEqual(expectedCustomizeDoc)
+    expect(conversationProps.composer.view.doc).toEqual(expectedCustomizeDoc)
 
     // The intent is gone; a re-render does not re-apply or clobber an edited draft.
     const edited: ComposerDoc = { nodes: [{ type: 'text', text: 'my edit' }] }
     await act(async () => {
-      conversationProps.onDraftDocChange(edited)
+      conversationProps.composer.actions.changeDoc(edited)
     })
-    expect(conversationProps.draftDoc).toEqual(edited)
+    expect(conversationProps.composer.view.doc).toEqual(edited)
     expect(useNavigationStore.getState().pendingCustomizePrefill).toBeUndefined()
   })
 })

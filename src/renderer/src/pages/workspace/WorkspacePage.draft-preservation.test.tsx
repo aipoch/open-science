@@ -19,29 +19,10 @@ import {
 } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
-import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-
-import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 // Capture the props passed to the heavy child components so the test can drive selection and drafts.
-let conversationProps: {
-  composerFocusKey: string
-  draftDoc: ComposerDoc
-  attachments: UploadedAttachment[]
-  attachmentTransfers: ComposerUploadTransfer[]
-  canResumeSession: boolean
-  onDraftDocChange: (doc: ComposerDoc) => void
-  isHistoryBrowsing: boolean
-  historyStatus: string
-  permissionProfile: PermissionProfileId
-  onNavigateHistory: (direction: 'previous' | 'next') => boolean
-  onSpecialistChange?: (specialistId: string | undefined) => void
-  onSendMessage: (forcedSkillIds: string[]) => void
-  onBranchInNewSession?: (forcedSkillIds: string[]) => void
-  onStageAttachmentFiles: (files: File[]) => void
-  onResumeSession: () => Promise<void>
-}
+let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
 let sidebarProps: {
   canDeleteConversations: boolean
   onOpenSession: (id: string) => void
@@ -301,7 +282,7 @@ describe('WorkspacePage draft preservation', () => {
   const stageAttachment = async (attachment: UploadedAttachment): Promise<void> => {
     stageLocalFile.mockResolvedValueOnce(attachment)
     await act(async () => {
-      conversationProps.onStageAttachmentFiles([
+      conversationProps.composer.actions.stageFiles([
         new File(['data'], `${attachment.id}.txt`, { type: 'text/plain' })
       ])
     })
@@ -330,29 +311,29 @@ describe('WorkspacePage draft preservation', () => {
 
   it('preserves each session doc independently when switching away and back', async () => {
     await renderPage()
-    expect(conversationProps.composerFocusKey).toBe('sess-a')
+    expect(conversationProps.view.composerFocusKey).toBe('sess-a')
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('draft for A'))
+      conversationProps.composer.actions.changeDoc(textDoc('draft for A'))
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('draft for A'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for A'))
 
     // Switching to session B clears the composer to B's own (empty) doc.
     await openSession('sess-b')
-    expect(conversationProps.composerFocusKey).toBe('sess-b')
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.view.composerFocusKey).toBe('sess-b')
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('draft for B'))
+      conversationProps.composer.actions.changeDoc(textDoc('draft for B'))
     })
 
     // Switching back to session A restores A's doc, and B keeps its own.
     await openSession('sess-a')
-    expect(conversationProps.composerFocusKey).toBe('sess-a')
-    expect(conversationProps.draftDoc).toEqual(textDoc('draft for A'))
+    expect(conversationProps.view.composerFocusKey).toBe('sess-a')
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for A'))
 
     await openSession('sess-b')
-    expect(conversationProps.draftDoc).toEqual(textDoc('draft for B'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for B'))
   })
 
   it('uses the configured profile only for new conversations', async () => {
@@ -365,14 +346,14 @@ describe('WorkspacePage draft preservation', () => {
     }))
     await renderPage()
 
-    expect(conversationProps.permissionProfile).toBe('full')
+    expect(conversationProps.permissions.permissionProfile).toBe('full')
 
     await act(async () => {
       sidebarProps.onNewConversation()
     })
 
-    expect(conversationProps.permissionProfile).toBe('auto')
-    expect(conversationProps.composerFocusKey).toBe('new:proj-1')
+    expect(conversationProps.permissions.permissionProfile).toBe('auto')
+    expect(conversationProps.view.composerFocusKey).toBe('new:proj-1')
   })
 
   it('targets the new-conversation composer after the keyboard shortcut', async () => {
@@ -391,7 +372,7 @@ describe('WorkspacePage draft preservation', () => {
       )
     })
 
-    expect(conversationProps.composerFocusKey).toBe('new:proj-1')
+    expect(conversationProps.view.composerFocusKey).toBe('new:proj-1')
   })
 
   it('browses visible Session prompts and restores the unsent scratch draft', async () => {
@@ -411,27 +392,27 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('unsent scratch'))
+      conversationProps.composer.actions.changeDoc(textDoc('unsent scratch'))
     })
     await act(async () => {
-      expect(conversationProps.onNavigateHistory('previous')).toBe(true)
+      expect(conversationProps.composer.actions.navigateHistory('previous')).toBe(true)
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('latest prompt'))
-    expect(conversationProps.isHistoryBrowsing).toBe(true)
-    expect(conversationProps.historyStatus).toBe('History item 1 of 2')
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('latest prompt'))
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(true)
+    expect(conversationProps.composer.view.historyStatus).toBe('History item 1 of 2')
 
     await act(async () => {
-      expect(conversationProps.onNavigateHistory('previous')).toBe(true)
+      expect(conversationProps.composer.actions.navigateHistory('previous')).toBe(true)
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('first prompt'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('first prompt'))
 
     await act(async () => {
-      expect(conversationProps.onNavigateHistory('next')).toBe(true)
-      expect(conversationProps.onNavigateHistory('next')).toBe(true)
+      expect(conversationProps.composer.actions.navigateHistory('next')).toBe(true)
+      expect(conversationProps.composer.actions.navigateHistory('next')).toBe(true)
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('unsent scratch'))
-    expect(conversationProps.isHistoryBrowsing).toBe(false)
-    expect(conversationProps.historyStatus).toBe('Draft restored')
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('unsent scratch'))
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(false)
+    expect(conversationProps.composer.view.historyStatus).toBe('Draft restored')
   })
 
   it('does not enter history while a top-level attachment is staged', async () => {
@@ -445,9 +426,9 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage()
     await stageAttachment(createAttachment('history-blocker'))
 
-    expect(conversationProps.onNavigateHistory('previous')).toBe(false)
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
-    expect(conversationProps.isHistoryBrowsing).toBe(false)
+    expect(conversationProps.composer.actions.navigateHistory('previous')).toBe(false)
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(false)
   })
 
   it('restores scratch and exits history when switching Sessions', async () => {
@@ -460,17 +441,17 @@ describe('WorkspacePage draft preservation', () => {
     }))
     await renderPage()
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('session scratch'))
+      conversationProps.composer.actions.changeDoc(textDoc('session scratch'))
     })
     await act(async () => {
-      conversationProps.onNavigateHistory('previous')
+      conversationProps.composer.actions.navigateHistory('previous')
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('historical prompt'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('historical prompt'))
 
     await openSession('sess-b')
     await openSession('sess-a')
-    expect(conversationProps.draftDoc).toEqual(textDoc('session scratch'))
-    expect(conversationProps.isHistoryBrowsing).toBe(false)
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('session scratch'))
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(false)
   })
 
   it('restores New Conversation scratch when a frozen opener source is deleted', async () => {
@@ -485,20 +466,20 @@ describe('WorkspacePage draft preservation', () => {
     }))
     await renderPage()
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('new scratch'))
+      conversationProps.composer.actions.changeDoc(textDoc('new scratch'))
     })
     await act(async () => {
-      conversationProps.onNavigateHistory('previous')
+      conversationProps.composer.actions.navigateHistory('previous')
     })
-    expect(conversationProps.isHistoryBrowsing).toBe(true)
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(true)
 
     await act(async () => {
       useSessionStore.setState((state) => ({
         sessions: state.sessions.filter((candidate) => candidate.id !== 'sess-a')
       }))
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('new scratch'))
-    expect(conversationProps.isHistoryBrowsing).toBe(false)
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('new scratch'))
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(false)
   })
 
   it('keeps a New Conversation browsing round frozen when a new Session appears', async () => {
@@ -513,9 +494,9 @@ describe('WorkspacePage draft preservation', () => {
     }))
     await renderPage()
     await act(async () => {
-      conversationProps.onNavigateHistory('previous')
+      conversationProps.composer.actions.navigateHistory('previous')
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('opener 0'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('opener 0'))
 
     await act(async () => {
       useSessionStore.setState((state) => ({
@@ -529,13 +510,13 @@ describe('WorkspacePage draft preservation', () => {
         ]
       }))
     })
-    expect(conversationProps.isHistoryBrowsing).toBe(true)
-    expect(conversationProps.draftDoc).toEqual(textDoc('opener 0'))
+    expect(conversationProps.composer.view.isHistoryBrowsing).toBe(true)
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('opener 0'))
 
     await act(async () => {
-      conversationProps.onNavigateHistory('previous')
+      conversationProps.composer.actions.navigateHistory('previous')
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('opener 1'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('opener 1'))
   })
 
   it('downgrades a recalled Skill when the selected Specialist disallows it', async () => {
@@ -589,21 +570,21 @@ describe('WorkspacePage draft preservation', () => {
     }))
     await renderPage()
     await act(async () => {
-      conversationProps.onNavigateHistory('previous')
+      conversationProps.composer.actions.navigateHistory('previous')
     })
-    expect(conversationProps.draftDoc.nodes[0]).toMatchObject({ type: 'skill', id: 'lit' })
+    expect(conversationProps.composer.view.doc.nodes[0]).toMatchObject({ type: 'skill', id: 'lit' })
 
     await act(async () => {
-      conversationProps.onSpecialistChange?.('restricted')
+      conversationProps.specialist.actions.selectSpecialist?.('restricted')
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('/Literature analyze'))
-    expect(conversationProps.historyStatus).toContain('/Literature unavailable')
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('/Literature analyze'))
+    expect(conversationProps.composer.view.historyStatus).toContain('/Literature unavailable')
 
     await act(async () => {
-      conversationProps.onSpecialistChange?.(undefined)
+      conversationProps.specialist.actions.selectSpecialist?.(undefined)
     })
-    expect(conversationProps.draftDoc.nodes[0]).toMatchObject({ type: 'skill', id: 'lit' })
-    expect(conversationProps.historyStatus).toBe('History item 1 of 1')
+    expect(conversationProps.composer.view.doc.nodes[0]).toMatchObject({ type: 'skill', id: 'lit' })
+    expect(conversationProps.composer.view.historyStatus).toBe('History item 1 of 1')
   })
 
   it('does not downgrade Skill history when the catalog fails to load', async () => {
@@ -630,11 +611,11 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage()
 
     await act(async () => {
-      expect(conversationProps.onNavigateHistory('previous')).toBe(false)
+      expect(conversationProps.composer.actions.navigateHistory('previous')).toBe(false)
       await Promise.resolve()
     })
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
-    expect(conversationProps.historyStatus).toContain('loading')
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.historyStatus).toContain('loading')
     expect(listSkills).toHaveBeenCalled()
   })
 
@@ -642,18 +623,18 @@ describe('WorkspacePage draft preservation', () => {
     useSessionStore.setState((state) => ({ ...state, selectedSessionId: undefined }))
     await renderPage()
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('project one draft'))
+      conversationProps.composer.actions.changeDoc(textDoc('project one draft'))
     })
 
     await act(async () => {
       useNavigationStore.setState({ activeProjectId: 'proj-2' })
     })
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('project two draft'))
+      conversationProps.composer.actions.changeDoc(textDoc('project two draft'))
       useNavigationStore.setState({ activeProjectId: 'proj-1' })
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('project one draft'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('project one draft'))
   })
 
   it('preserves the new-conversation draft across session switches', async () => {
@@ -662,18 +643,18 @@ describe('WorkspacePage draft preservation', () => {
     await act(async () => {
       sidebarProps.onNewConversation()
     })
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('draft for new conversation'))
+      conversationProps.composer.actions.changeDoc(textDoc('draft for new conversation'))
     })
 
     await openSession('sess-a')
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
 
     await act(async () => {
       sidebarProps.onNewConversation()
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('draft for new conversation'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('draft for new conversation'))
   })
 
   it.each([
@@ -705,7 +686,7 @@ describe('WorkspacePage draft preservation', () => {
   it('keeps the draft when the current conversation has no messages', async () => {
     await renderPage()
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('unsent draft'))
+      conversationProps.composer.actions.changeDoc(textDoc('unsent draft'))
     })
 
     const event = new KeyboardEvent('keydown', {
@@ -718,7 +699,7 @@ describe('WorkspacePage draft preservation', () => {
 
     expect(event.defaultPrevented).toBe(true)
     expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
-    expect(conversationProps.draftDoc).toEqual(textDoc('unsent draft'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('unsent draft'))
   })
 
   it('preserves a skill chip as a structured node when switching away and back', async () => {
@@ -731,16 +712,16 @@ describe('WorkspacePage draft preservation', () => {
       ]
     }
     await act(async () => {
-      conversationProps.onDraftDocChange(skillDoc)
+      conversationProps.composer.actions.changeDoc(skillDoc)
     })
 
     await openSession('sess-b')
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
 
     // On return the chip must survive as a skill node with its id, not be flattened to `/Literature`.
     await openSession('sess-a')
-    expect(conversationProps.draftDoc).toEqual(skillDoc)
-    expect(conversationProps.draftDoc.nodes[0]).toEqual({
+    expect(conversationProps.composer.view.doc).toEqual(skillDoc)
+    expect(conversationProps.composer.view.doc.nodes[0]).toEqual({
       type: 'skill',
       id: 'lit',
       name: 'Literature'
@@ -752,24 +733,24 @@ describe('WorkspacePage draft preservation', () => {
 
     const attachmentA = createAttachment('att-a')
     await stageAttachment(attachmentA)
-    expect(conversationProps.attachments).toEqual([attachmentA])
+    expect(conversationProps.composer.view.attachments).toEqual([attachmentA])
     expect(claimLocalFile).toHaveBeenCalledWith({ transferId: expect.any(String) })
 
     // Switching away must not delete the staged file and must clear the composer for B.
     await openSession('sess-b')
-    expect(conversationProps.attachments).toEqual([])
+    expect(conversationProps.composer.view.attachments).toEqual([])
     expect(deleteUpload).not.toHaveBeenCalled()
 
     const attachmentB = createAttachment('att-b')
     await stageAttachment(attachmentB)
-    expect(conversationProps.attachments).toEqual([attachmentB])
+    expect(conversationProps.composer.view.attachments).toEqual([attachmentB])
 
     // Returning to A restores A's own attachment; B keeps its independent attachment.
     await openSession('sess-a')
-    expect(conversationProps.attachments).toEqual([attachmentA])
+    expect(conversationProps.composer.view.attachments).toEqual([attachmentA])
 
     await openSession('sess-b')
-    expect(conversationProps.attachments).toEqual([attachmentB])
+    expect(conversationProps.composer.view.attachments).toEqual([attachmentB])
 
     expect(deleteUpload).not.toHaveBeenCalled()
   })
@@ -779,19 +760,19 @@ describe('WorkspacePage draft preservation', () => {
 
     const attachment = createAttachment('att-send')
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('send me'))
+      conversationProps.composer.actions.changeDoc(textDoc('send me'))
     })
     await stageAttachment(attachment)
 
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     expect(runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'send me', attachments: [attachment] })
     )
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
-    expect(conversationProps.attachments).toEqual([])
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.attachments).toEqual([])
     // The runtime consumes (moves) the staged files, so the page must not delete them itself.
     expect(deleteUpload).not.toHaveBeenCalled()
   })
@@ -800,10 +781,10 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('try a different approach'))
+      conversationProps.composer.actions.changeDoc(textDoc('try a different approach'))
     })
     await act(async () => {
-      conversationProps.onBranchInNewSession?.([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [], mode: 'branch' })
     })
 
     expect(runtime.sendMessage).toHaveBeenCalledWith(
@@ -815,7 +796,7 @@ describe('WorkspacePage draft preservation', () => {
         projectName: 'proj-1'
       })
     )
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
   })
 
   it('preserves a different draft submitted while the first send is preparing', async () => {
@@ -824,30 +805,30 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('first prompt'))
+      conversationProps.composer.actions.changeDoc(textDoc('first prompt'))
     })
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('keep this second prompt'))
+      conversationProps.composer.actions.changeDoc(textDoc('keep this second prompt'))
     })
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     expect(runtime.sendMessage).toHaveBeenCalledTimes(1)
     expect(runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: 'first prompt' })
     )
-    expect(conversationProps.draftDoc).toEqual(textDoc('keep this second prompt'))
-    expect(conversationProps.attachments).toEqual([])
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('keep this second prompt'))
+    expect(conversationProps.composer.view.attachments).toEqual([])
 
     await act(async () => {
       firstSend.resolve({ sessionId: 'sess-a', messageId: 'm1' })
       await firstSend.promise
     })
-    expect(conversationProps.draftDoc).toEqual(textDoc('keep this second prompt'))
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('keep this second prompt'))
   })
 
   it('restores a failed prepared send only to its original conversation draft', async () => {
@@ -857,11 +838,11 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('restore to session A'))
+      conversationProps.composer.actions.changeDoc(textDoc('restore to session A'))
     })
     await stageAttachment(attachment)
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
     expect(runtime.sendMessage).toHaveBeenCalledOnce()
     expect(runtime.sendMessage).toHaveBeenCalledWith(
@@ -869,7 +850,7 @@ describe('WorkspacePage draft preservation', () => {
     )
     await openSession('sess-b')
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('keep session B draft'))
+      conversationProps.composer.actions.changeDoc(textDoc('keep session B draft'))
     })
 
     await act(async () => {
@@ -877,11 +858,11 @@ describe('WorkspacePage draft preservation', () => {
       await failedSend.promise
     })
 
-    expect(conversationProps.draftDoc).toEqual(textDoc('keep session B draft'))
-    expect(conversationProps.attachments).toEqual([])
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('keep session B draft'))
+    expect(conversationProps.composer.view.attachments).toEqual([])
     await openSession('sess-a')
-    expect(conversationProps.draftDoc).toEqual(textDoc('restore to session A'))
-    expect(conversationProps.attachments).toEqual([attachment])
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('restore to session A'))
+    expect(conversationProps.composer.view.attachments).toEqual([attachment])
   })
 
   it('preserves a newer same-conversation draft when prepared send restoration finishes', async () => {
@@ -892,15 +873,15 @@ describe('WorkspacePage draft preservation', () => {
     await renderPage()
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('first prompt'))
+      conversationProps.composer.actions.changeDoc(textDoc('first prompt'))
     })
     await stageAttachment(firstAttachment)
     await act(async () => {
-      conversationProps.onSendMessage([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('keep this newer prompt'))
+      conversationProps.composer.actions.changeDoc(textDoc('keep this newer prompt'))
     })
     await stageAttachment(newerAttachment)
 
@@ -909,8 +890,8 @@ describe('WorkspacePage draft preservation', () => {
       await failedSend.promise
     })
 
-    expect(conversationProps.draftDoc).toEqual(textDoc('keep this newer prompt'))
-    expect(conversationProps.attachments).toEqual([newerAttachment])
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('keep this newer prompt'))
+    expect(conversationProps.composer.view.attachments).toEqual([newerAttachment])
     expect(deleteUpload).toHaveBeenCalledWith({ path: firstAttachment.path })
     expect(deleteUpload).not.toHaveBeenCalledWith({ path: newerAttachment.path })
   })
@@ -921,7 +902,7 @@ describe('WorkspacePage draft preservation', () => {
     // Give session B an unsent draft with a staged attachment, then leave it for session A.
     await openSession('sess-b')
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('draft for B'))
+      conversationProps.composer.actions.changeDoc(textDoc('draft for B'))
     })
     const attachmentB = createAttachment('att-del')
     await stageAttachment(attachmentB)
@@ -938,7 +919,7 @@ describe('WorkspacePage draft preservation', () => {
     // B's abandoned staged file is deleted and its draft entry is dropped; A stays untouched.
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(runtime.deleteRuntimeSession).toHaveBeenCalledWith('sess-b')
-    expect(conversationProps.draftDoc).toEqual(emptyDoc)
+    expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
   })
 
   it('allows target-validated session deletion while other persistence is recovering', async () => {
@@ -967,9 +948,9 @@ describe('WorkspacePage draft preservation', () => {
 
     await renderPage(false)
 
-    expect(conversationProps.canResumeSession).toBe(false)
+    expect(conversationProps.conversation.availability.resume).toBe(false)
     await act(async () => {
-      await conversationProps.onResumeSession()
+      await conversationProps.conversation.actions.resume()
     })
     expect(runtime.resumeInterruptedSession).not.toHaveBeenCalled()
 
@@ -983,9 +964,9 @@ describe('WorkspacePage draft preservation', () => {
       )
     })
 
-    expect(conversationProps.canResumeSession).toBe(true)
+    expect(conversationProps.conversation.availability.resume).toBe(true)
     await act(async () => {
-      await conversationProps.onResumeSession()
+      await conversationProps.conversation.actions.resume()
     })
     expect(runtime.resumeInterruptedSession).toHaveBeenCalledWith('sess-a')
   })
@@ -1061,14 +1042,16 @@ describe('WorkspacePage draft preservation', () => {
         })
     )
     await act(async () => {
-      conversationProps.onStageAttachmentFiles([
+      conversationProps.composer.actions.stageFiles([
         new File(['first'], 'first.txt', { type: 'text/plain' }),
         new File(['second'], 'second.txt', { type: 'text/plain' })
       ])
       await Promise.resolve()
     })
 
-    const transferIds = conversationProps.attachmentTransfers.map(({ transferId }) => transferId)
+    const transferIds = conversationProps.composer.view.transfers.map(
+      ({ transferId }) => transferId
+    )
     expect(transferIds).toHaveLength(2)
     expect(stageLocalFile).toHaveBeenCalledTimes(1)
 
@@ -1121,7 +1104,7 @@ describe('WorkspacePage draft preservation', () => {
     )
 
     await act(async () => {
-      conversationProps.onStageAttachmentFiles([
+      conversationProps.composer.actions.stageFiles([
         new File(['data'], 'late.txt', { type: 'text/plain' })
       ])
       await Promise.resolve()
@@ -1141,7 +1124,7 @@ describe('WorkspacePage draft preservation', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(conversationProps.attachments).toEqual([attachment])
+    expect(conversationProps.composer.view.attachments).toEqual([attachment])
 
     await act(async () => {
       finishDeletion?.()
@@ -1175,7 +1158,7 @@ describe('WorkspacePage draft preservation', () => {
     )
 
     await act(async () => {
-      conversationProps.onStageAttachmentFiles([
+      conversationProps.composer.actions.stageFiles([
         new File(['data'], 'late-continuation.txt', { type: 'text/plain' })
       ])
       await Promise.resolve()
@@ -1242,7 +1225,7 @@ describe('WorkspacePage draft preservation', () => {
 
     await openSession('sess-b')
     await act(async () => {
-      conversationProps.onDraftDocChange(textDoc('keep draft B'))
+      conversationProps.composer.actions.changeDoc(textDoc('keep draft B'))
     })
     const attachmentB = createAttachment('att-keep')
     await stageAttachment(attachmentB)
@@ -1259,7 +1242,7 @@ describe('WorkspacePage draft preservation', () => {
 
     expect(deleteUpload).not.toHaveBeenCalled()
     await openSession('sess-b')
-    expect(conversationProps.draftDoc).toEqual(textDoc('keep draft B'))
-    expect(conversationProps.attachments).toEqual([attachmentB])
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('keep draft B'))
+    expect(conversationProps.composer.view.attachments).toEqual([attachmentB])
   })
 })

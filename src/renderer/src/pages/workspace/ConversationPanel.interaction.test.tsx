@@ -326,51 +326,177 @@ const delegatedQuestionSession = (): ChatSession => ({
   }
 })
 
-const renderPanel = (props: Partial<Parameters<typeof ConversationPanel>[0]> = {}): void => {
+type PanelProps = Parameters<typeof ConversationPanel>[0]
+type DeepPartial<T> = {
+  [Key in keyof T]?: T[Key] extends readonly unknown[]
+    ? T[Key]
+    : T[Key] extends (...args: infer Args) => infer Result
+      ? (...args: Args) => Result
+      : T[Key] extends object
+        ? DeepPartial<T[Key]>
+        : T[Key]
+}
+
+type DraftSubmitCallbacks = {
+  send?: (forcedSkillIds: string[]) => void
+  planFirst?: (forcedSkillIds: string[]) => void
+  branch?: (forcedSkillIds: string[]) => void
+  reconfigure?: () => void
+}
+
+const routeDraftSubmit =
+  ({
+    send = vi.fn(),
+    planFirst = vi.fn(),
+    branch = vi.fn(),
+    reconfigure = vi.fn()
+  }: DraftSubmitCallbacks): PanelProps['conversation']['actions']['submit']['draft'] =>
+  ({ forcedSkillIds, mode = 'continue' }): void => {
+    if (mode === 'plan-first') planFirst(forcedSkillIds)
+    else if (mode === 'branch') branch(forcedSkillIds)
+    else if (mode === 'retry-reconfigure') reconfigure()
+    else send(forcedSkillIds)
+  }
+
+const createPanelDefaults = (): PanelProps => ({
+  view: {
+    activeSession: undefined,
+    canEditDraft: true,
+    actionError: null
+  },
+  composer: {
+    view: {
+      doc: emptyDoc,
+      attachments: [],
+      transfers: [],
+      error: null,
+      historyStatus: '',
+      isHistoryBrowsing: false,
+      isUploading: false
+    },
+    actions: {
+      changeDoc: vi.fn(),
+      navigateHistory: vi.fn(() => false),
+      stageFiles: onStageAttachmentFiles,
+      cancelTransfer: vi.fn(),
+      removeAttachment: vi.fn(),
+      setError: vi.fn()
+    }
+  },
+  conversation: {
+    availability: {
+      submit: false,
+      revise: true,
+      resume: true
+    },
+    actions: {
+      submit: {
+        draft: vi.fn(),
+        restoredPlan: vi.fn().mockResolvedValue(undefined)
+      },
+      revise: vi.fn(),
+      sideChat: { start: vi.fn() },
+      resume: vi.fn().mockResolvedValue(undefined),
+      cancel: vi.fn(),
+      delete: vi.fn()
+    }
+  },
+  sideChat: {
+    view: undefined,
+    start: vi.fn().mockResolvedValue(false),
+    send: vi.fn().mockResolvedValue(false),
+    setDraft: vi.fn(),
+    cancel: vi.fn(),
+    close: vi.fn()
+  },
+  specialist: {
+    view: {
+      specialist: {
+        newConversationId: undefined,
+        historyId: undefined,
+        unavailable: false,
+        hasPendingSwitch: false,
+        barrierInFlight: false,
+        reconfigureError: null
+      }
+    },
+    actions: {
+      selectSpecialist: vi.fn(),
+      chooseOtherSpecialist: vi.fn(),
+      useMainAgent: vi.fn()
+    }
+  },
+  layout: {
+    isPreviewPanelCollapsed: false,
+    togglePreviewPanel: vi.fn(),
+    openSidebar: vi.fn()
+  },
+  permissions: {
+    requests: [],
+    permissionProfile: 'ask',
+    permissionProfileState: undefined,
+    permissionGrants: [],
+    canChangePermissionProfile: true,
+    respond: vi.fn(),
+    changeProfile: vi.fn(),
+    revokeGrant: vi.fn(),
+    clearGrants: vi.fn()
+  },
+  elicitation: {
+    requests: [],
+    respond: vi.fn()
+  },
+  agentControls: {
+    canChange: true,
+    autoReviewEnabled: true,
+    enabledComputeHosts: [],
+    toggleAutoReview: vi.fn(),
+    toggleComputeHost: vi.fn()
+  },
+  contextWindow: {
+    usage: undefined,
+    canCompact: false,
+    compactDisabledReason: '',
+    compact: vi.fn()
+  },
+  review: {
+    disabled: false,
+    request: vi.fn()
+  },
+  sessionTools: {
+    notebookReference: undefined,
+    openNotebook: vi.fn(),
+    openJobs: vi.fn()
+  },
+  subagents: {
+    stop: vi.fn()
+  }
+})
+
+const mergePanelProps = (defaults: PanelProps, overrides: DeepPartial<PanelProps>): PanelProps => {
+  const merge = (base: unknown, override: unknown): unknown => {
+    if (override === undefined) return base
+    if (override === null || typeof override !== 'object' || Array.isArray(override)) {
+      return override
+    }
+    const baseRecord =
+      base !== null && typeof base === 'object' && !Array.isArray(base)
+        ? (base as Record<string, unknown>)
+        : {}
+    const merged: Record<string, unknown> = { ...baseRecord }
+    for (const [key, value] of Object.entries(override)) {
+      merged[key] = merge(baseRecord[key], value)
+    }
+    return merged
+  }
+
+  return merge(defaults, overrides) as PanelProps
+}
+
+const renderPanel = (props: DeepPartial<PanelProps> = {}): void => {
+  const panelProps = mergePanelProps(createPanelDefaults(), props)
   act(() => {
-    root.render(
-      <ConversationPanel
-        activeSession={undefined}
-        draftDoc={emptyDoc}
-        canSendMessage={false}
-        canEditDraft
-        canResumeSession
-        actionError={null}
-        attachments={[]}
-        attachmentTransfers={[]}
-        isUploadingAttachments={false}
-        notebookReference={undefined}
-        pendingPermissions={[]}
-        permissionProfile="ask"
-        permissionProfileState={undefined}
-        permissionGrants={[]}
-        contextUsage={undefined}
-        canChangeAgentControls
-        canChangePermissionProfile
-        onDraftDocChange={vi.fn()}
-        onSendMessage={vi.fn()}
-        onRespondToRestoredPlan={vi.fn().mockResolvedValue(undefined)}
-        onStageAttachmentFiles={onStageAttachmentFiles}
-        onRemoveAttachment={vi.fn()}
-        onCancelAttachmentTransfer={vi.fn()}
-        onCancelRun={vi.fn()}
-        onResumeSession={vi.fn().mockResolvedValue(undefined)}
-        onOpenNotebook={vi.fn()}
-        onRespondToPermission={vi.fn()}
-        onPermissionProfileChange={vi.fn()}
-        onRevokePermissionGrant={vi.fn()}
-        onClearPermissionGrants={vi.fn()}
-        autoReviewEnabled={true}
-        onAutoReviewToggle={vi.fn()}
-        enabledComputeHosts={[]}
-        onComputeHostToggle={vi.fn()}
-        onRequestReview={vi.fn()}
-        isRequestReviewDisabled={false}
-        canEditMessage={true}
-        onSendEditedMessage={vi.fn()}
-        {...props}
-      />
-    )
+    root.render(<ConversationPanel {...panelProps} />)
   })
 }
 
@@ -455,7 +581,11 @@ afterEach(() => {
 
 describe('ConversationPanel composer intake', () => {
   it('focuses the ordinary composer when the draft context changes', () => {
-    renderPanel({ composerFocusKey: 'session-a' })
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-a'
+      }
+    })
     expect(document.activeElement).toBe(getComposerEditor())
 
     const navigationButton = container.querySelector<HTMLButtonElement>(
@@ -464,20 +594,32 @@ describe('ConversationPanel composer intake', () => {
     navigationButton.focus()
     expect(document.activeElement).toBe(navigationButton)
 
-    renderPanel({ composerFocusKey: 'session-b' })
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-b'
+      }
+    })
     expect(document.activeElement).toBe(getComposerEditor())
   })
 
   it('does not focus the hidden composer while a blocking interaction owns its lane', () => {
-    renderPanel({ composerFocusKey: 'session-a' })
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-a'
+      }
+    })
     const navigationButton = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open navigation"]'
     )!
     navigationButton.focus()
 
     renderPanel({
-      composerFocusKey: 'session-blocked',
-      pendingPermissions: [{ requestId: 'permission-focus' } as never]
+      view: {
+        composerFocusKey: 'session-blocked'
+      },
+      permissions: {
+        requests: [{ requestId: 'permission-focus' } as never]
+      }
     })
 
     expect(getComposerForm().hidden).toBe(true)
@@ -485,21 +627,37 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it('does not refocus the composer when draft editing becomes available', () => {
-    renderPanel({ composerFocusKey: 'session-preparing', canEditDraft: false })
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-preparing',
+        canEditDraft: false
+      }
+    })
     const navigationButton = container.querySelector<HTMLButtonElement>(
       '[aria-label="Open navigation"]'
     )!
     navigationButton.focus()
 
-    renderPanel({ composerFocusKey: 'session-preparing', canEditDraft: true })
+    renderPanel({
+      view: {
+        composerFocusKey: 'session-preparing',
+        canEditDraft: true
+      }
+    })
 
     expect(document.activeElement).toBe(navigationButton)
   })
 
   it('keeps the Main composer available while a delegated question is pending', () => {
     renderPanel({
-      activeSession: delegatedQuestionSession(),
-      canSendMessage: true
+      view: {
+        activeSession: delegatedQuestionSession()
+      },
+      conversation: {
+        availability: {
+          submit: true
+        }
+      }
     })
 
     expect(container.textContent).toContain('Asked by Researcher')
@@ -577,7 +735,14 @@ describe('ConversationPanel composer intake', () => {
         (button) => button.textContent?.trim() === name
       )
 
-    renderPanel({ activeSession: firstSession, onRespondToElicitation })
+    renderPanel({
+      view: {
+        activeSession: firstSession
+      },
+      elicitation: {
+        respond: onRespondToElicitation
+      }
+    })
     expect(container.textContent).toContain('Asked by Researcher')
     await act(async () =>
       container.querySelector<HTMLButtonElement>('button[aria-label="Narrow"]')?.click()
@@ -600,7 +765,14 @@ describe('ConversationPanel composer intake', () => {
         }
       }
     })
-    renderPanel({ activeSession: secondSession, onRespondToElicitation })
+    renderPanel({
+      view: {
+        activeSession: secondSession
+      },
+      elicitation: {
+        respond: onRespondToElicitation
+      }
+    })
     expect(container.textContent).toContain('Asked by Reviewer')
     expect(container.textContent).toContain('Which format?')
     await act(async () =>
@@ -624,7 +796,14 @@ describe('ConversationPanel composer intake', () => {
         }
       }
     })
-    renderPanel({ activeSession: emptySession, onRespondToElicitation })
+    renderPanel({
+      view: {
+        activeSession: emptySession
+      },
+      elicitation: {
+        respond: onRespondToElicitation
+      }
+    })
     expect(container.querySelector('[data-testid="delegated-question-card"]')).toBeNull()
   })
 
@@ -691,25 +870,31 @@ describe('ConversationPanel composer intake', () => {
 
     mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
     renderPanel({
-      activeSession,
-      notebookReference: {
-        sessionId: activeSession.id,
-        projectName: activeSession.projectId,
-        workspaceCwd: '/workspace',
-        notebookSessionRoot: '/notebook',
-        dataRoot: '/data',
-        runtimeRoot: '/runtime',
-        runJsonPath: '/notebook/run.json'
+      view: {
+        activeSession: activeSession
       },
-      pendingElicitations: [
-        {
-          requestId: 'elicitation-1',
+      sessionTools: {
+        notebookReference: {
           sessionId: activeSession.id,
-          toolCallId: 'tool-ask-1',
-          message: 'What kind of skill are you trying to create?',
-          fields
+          projectName: activeSession.projectId,
+          workspaceCwd: '/workspace',
+          notebookSessionRoot: '/notebook',
+          dataRoot: '/data',
+          runtimeRoot: '/runtime',
+          runJsonPath: '/notebook/run.json'
         }
-      ]
+      },
+      elicitation: {
+        requests: [
+          {
+            requestId: 'elicitation-1',
+            sessionId: activeSession.id,
+            toolCallId: 'tool-ask-1',
+            message: 'What kind of skill are you trying to create?',
+            fields
+          }
+        ]
+      }
     })
 
     const elicitationComposer = container.querySelector('[data-testid="elicitation-composer"]')
@@ -790,29 +975,33 @@ describe('ConversationPanel composer intake', () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
 
     renderPanel({
-      activeSession: {
-        ...activeSession,
-        activities: [
-          {
-            ...activeSession.activities![0],
-            id: 'tool-ask-2',
-            elicitation: {
-              message: 'Choose the next skill type.',
-              fields,
-              state: 'pending'
+      view: {
+        activeSession: {
+          ...activeSession,
+          activities: [
+            {
+              ...activeSession.activities![0],
+              id: 'tool-ask-2',
+              elicitation: {
+                message: 'Choose the next skill type.',
+                fields,
+                state: 'pending'
+              }
             }
+          ]
+        }
+      },
+      elicitation: {
+        requests: [
+          {
+            requestId: 'elicitation-2',
+            sessionId: activeSession.id,
+            toolCallId: 'tool-ask-2',
+            message: 'Choose the next skill type.',
+            fields
           }
         ]
-      },
-      pendingElicitations: [
-        {
-          requestId: 'elicitation-2',
-          sessionId: activeSession.id,
-          toolCallId: 'tool-ask-2',
-          message: 'Choose the next skill type.',
-          fields
-        }
-      ]
+      }
     })
 
     const nextElicitationComposer = container.querySelector(
@@ -838,22 +1027,26 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[aria-label="Cancel run"]')?.closest('form')?.hidden).toBe(true)
 
     renderPanel({
-      activeSession: {
-        ...activeSession,
-        status: 'idle',
-        activities: activeSession.activities?.map((activity) => ({
-          ...activity,
-          status: 'completed',
-          elicitation: activity.elicitation
-            ? {
-                ...activity.elicitation,
-                state: 'answered',
-                answers: [{ fieldId: 'question_0', value: 'integration' }]
-              }
-            : undefined
-        }))
+      view: {
+        activeSession: {
+          ...activeSession,
+          status: 'idle',
+          activities: activeSession.activities?.map((activity) => ({
+            ...activity,
+            status: 'completed',
+            elicitation: activity.elicitation
+              ? {
+                  ...activity.elicitation,
+                  state: 'answered',
+                  answers: [{ fieldId: 'question_0', value: 'integration' }]
+                }
+              : undefined
+          }))
+        }
       },
-      pendingElicitations: []
+      elicitation: {
+        requests: []
+      }
     })
 
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
@@ -873,33 +1066,41 @@ describe('ConversationPanel composer intake', () => {
     }
     mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
     renderPanel({
-      activeSession,
-      notebookReference: {
-        sessionId: activeSession.id,
-        projectName: activeSession.projectId,
-        workspaceCwd: '/workspace',
-        notebookSessionRoot: '/notebook',
-        dataRoot: '/data',
-        runtimeRoot: '/runtime',
-        runJsonPath: '/notebook/run.json'
+      view: {
+        activeSession: activeSession
       },
-      pendingPermissions: [{ requestId: 'permission-1' } as never],
-      pendingElicitations: [
-        {
-          requestId: 'elicitation-after-permission',
-          sessionId: 'session-existing',
-          toolCallId: 'tool-ask-after-permission',
-          message: 'Which scope should the agent use?',
-          fields: [
-            {
-              id: 'question_0',
-              label: 'Scope',
-              kind: 'single-select',
-              options: [{ value: 'focused', label: 'Focused' }]
-            }
-          ]
+      sessionTools: {
+        notebookReference: {
+          sessionId: activeSession.id,
+          projectName: activeSession.projectId,
+          workspaceCwd: '/workspace',
+          notebookSessionRoot: '/notebook',
+          dataRoot: '/data',
+          runtimeRoot: '/runtime',
+          runJsonPath: '/notebook/run.json'
         }
-      ]
+      },
+      permissions: {
+        requests: [{ requestId: 'permission-1' } as never]
+      },
+      elicitation: {
+        requests: [
+          {
+            requestId: 'elicitation-after-permission',
+            sessionId: 'session-existing',
+            toolCallId: 'tool-ask-after-permission',
+            message: 'Which scope should the agent use?',
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Scope',
+                kind: 'single-select',
+                options: [{ value: 'focused', label: 'Focused' }]
+              }
+            ]
+          }
+        ]
+      }
     })
 
     const permissionComposer = container.querySelector(
@@ -955,7 +1156,11 @@ describe('ConversationPanel composer intake', () => {
     expect(permissionComposer.style.height).toBe('660px')
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
 
-    renderPanel({ pendingPermissions: [{ requestId: 'permission-2' } as never] })
+    renderPanel({
+      permissions: {
+        requests: [{ requestId: 'permission-2' } as never]
+      }
+    })
     const nextPermissionComposer = container.querySelector(
       '[data-testid="permission-composer"]'
     ) as HTMLDivElement
@@ -1011,7 +1216,12 @@ describe('ConversationPanel composer intake', () => {
       updatedAt: 2
     }
 
-    renderPanel({ activeSession: session, canEditDraft: false })
+    renderPanel({
+      view: {
+        activeSession: session,
+        canEditDraft: false
+      }
+    })
 
     expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-composer"] h3')?.textContent).toBe(
@@ -1021,21 +1231,23 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[role="textbox"]')?.closest('form')?.hidden).toBe(true)
 
     renderPanel({
-      activeSession: {
-        ...session,
-        activities: [
-          {
-            ...pendingActivity,
-            status: 'completed',
-            elicitation: {
-              ...pendingActivity.elicitation!,
-              state: 'answered',
-              answers: [{ fieldId: 'question_0', value: 'focused' }]
+      view: {
+        activeSession: {
+          ...session,
+          activities: [
+            {
+              ...pendingActivity,
+              status: 'completed',
+              elicitation: {
+                ...pendingActivity.elicitation!,
+                state: 'answered',
+                answers: [{ fieldId: 'question_0', value: 'focused' }]
+              }
             }
-          }
-        ]
-      },
-      canEditDraft: false
+          ]
+        },
+        canEditDraft: false
+      }
     })
 
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
@@ -1086,7 +1298,15 @@ describe('ConversationPanel composer intake', () => {
       updatedAt: 1
     }
 
-    renderPanel({ activeSession, pendingElicitations: [], onRespondToElicitation })
+    renderPanel({
+      view: {
+        activeSession: activeSession
+      },
+      elicitation: {
+        requests: [],
+        respond: onRespondToElicitation
+      }
+    })
 
     const option = container.querySelector<HTMLButtonElement>(
       '[data-testid="elicitation-option-minimal"]'
@@ -1133,7 +1353,11 @@ describe('ConversationPanel composer intake', () => {
     expect(fallback?.className).toContain('hidden')
     expect(fallback?.className).toContain('[@media(pointer:coarse)]:block')
 
-    renderPanel({ canEditDraft: false })
+    renderPanel({
+      view: {
+        canEditDraft: false
+      }
+    })
     expect(fallback?.className).toContain('block')
     expect(fallback?.className).not.toContain('hidden')
   })
@@ -1155,7 +1379,12 @@ describe('ConversationPanel composer intake', () => {
       }
     }
 
-    renderPanel({ activeSession: session, canEditDraft: true })
+    renderPanel({
+      view: {
+        activeSession: session,
+        canEditDraft: true
+      }
+    })
 
     expect(container.textContent).not.toContain('Plan ready for review')
     expect(container.querySelector('[role="textbox"]')?.closest('form')?.classList).not.toContain(
@@ -1175,9 +1404,15 @@ describe('ConversationPanel composer intake', () => {
       status: 'uploading' as const
     }
     renderPanel({
-      attachmentTransfers: [transfer],
-      isUploadingAttachments: true,
-      onCancelAttachmentTransfer
+      composer: {
+        view: {
+          transfers: [transfer],
+          isUploading: true
+        },
+        actions: {
+          cancelTransfer: onCancelAttachmentTransfer
+        }
+      }
     })
 
     const progress = container.querySelector('[role="progressbar"]')
@@ -1244,7 +1479,11 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it('never activates the drop overlay when editing is disabled', () => {
-    renderPanel({ canEditDraft: false })
+    renderPanel({
+      view: {
+        canEditDraft: false
+      }
+    })
 
     dispatchDrag('dragenter', ['Files'])
     expect(hasDropOverlay()).toBe(false)
@@ -1252,7 +1491,18 @@ describe('ConversationPanel composer intake', () => {
 
   it('submits on Enter through the editor with the picked skill ids', () => {
     const onSendMessage = vi.fn()
-    renderPanel({ canSendMessage: true, onSendMessage })
+    renderPanel({
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ send: onSendMessage })
+          }
+        }
+      }
+    })
 
     const editor = getComposerEditor()
     const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
@@ -1267,14 +1517,26 @@ describe('ConversationPanel composer intake', () => {
   it('offers Plan first for a text draft in a new conversation while Branch stays disabled', () => {
     const onPlanFirst = vi.fn()
     renderPanel({
-      canSendMessage: true,
-      draftDoc: {
-        nodes: [
-          { type: 'skill', id: 'skill-analysis', name: 'analysis' },
-          { type: 'text', text: ' analyze this dataset' }
-        ]
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ planFirst: onPlanFirst })
+          }
+        }
       },
-      onPlanFirst
+      composer: {
+        view: {
+          doc: {
+            nodes: [
+              { type: 'skill', id: 'skill-analysis', name: 'analysis' },
+              { type: 'text', text: ' analyze this dataset' }
+            ]
+          }
+        }
+      }
     })
 
     const trigger = container.querySelector(
@@ -1306,11 +1568,24 @@ describe('ConversationPanel composer intake', () => {
       updatedAt: 2
     }
     renderPanel({
-      activeSession: session,
-      canSendMessage: true,
-      draftDoc: { nodes: [{ type: 'text', text: 'analyze this dataset' }] },
-      onPlanFirst: vi.fn(),
-      onBranchInNewSession: vi.fn()
+      view: {
+        activeSession: session
+      },
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ planFirst: vi.fn(), branch: vi.fn() })
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'analyze this dataset' }] }
+        }
+      }
     })
 
     expect(
@@ -1335,12 +1610,27 @@ describe('ConversationPanel composer intake', () => {
       updatedAt: 2
     }
     renderPanel({
-      activeSession: session,
-      canSendMessage: true,
-      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
-      onPlanFirst: vi.fn(),
-      onStartSideChat,
-      onBranchInNewSession: vi.fn()
+      view: {
+        activeSession: session
+      },
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          sideChat: {
+            start: onStartSideChat
+          },
+          submit: {
+            draft: routeDraftSubmit({ planFirst: vi.fn(), branch: vi.fn() })
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'Ask on the side' }] }
+        }
+      }
     })
 
     const items = [...container.querySelectorAll('[role="menuitem"], [data-testid^="menu-"]')]
@@ -1361,20 +1651,34 @@ describe('ConversationPanel composer intake', () => {
   it('keeps Side chat available while the main Session is running', () => {
     const onStartSideChat = vi.fn()
     renderPanel({
-      activeSession: {
-        id: 'session-running',
-        projectId: 'project-a',
-        title: 'Running session',
-        cwd: '/workspace',
-        status: 'running',
-        messages: planOriginMessages(),
-        createdAt: 1,
-        updatedAt: 2
+      view: {
+        activeSession: {
+          id: 'session-running',
+          projectId: 'project-a',
+          title: 'Running session',
+          cwd: '/workspace',
+          status: 'running',
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        },
+        canEditDraft: true
       },
-      canSendMessage: false,
-      canEditDraft: true,
-      draftDoc: { nodes: [{ type: 'text', text: 'Ask while main runs' }] },
-      onStartSideChat
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          sideChat: {
+            start: onStartSideChat
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'Ask while main runs' }] }
+        }
+      }
     })
 
     const trigger = container.querySelector(
@@ -1392,20 +1696,34 @@ describe('ConversationPanel composer intake', () => {
     (status) => {
       const onStartSideChat = vi.fn()
       renderPanel({
-        activeSession: {
-          id: 'session-waiting',
-          projectId: 'project-a',
-          title: 'Waiting session',
-          cwd: '/workspace',
-          status,
-          messages: planOriginMessages(),
-          createdAt: 1,
-          updatedAt: 2
+        view: {
+          activeSession: {
+            id: 'session-waiting',
+            projectId: 'project-a',
+            title: 'Waiting session',
+            cwd: '/workspace',
+            status,
+            messages: planOriginMessages(),
+            createdAt: 1,
+            updatedAt: 2
+          },
+          canEditDraft: true
         },
-        canSendMessage: false,
-        canEditDraft: true,
-        draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
-        onStartSideChat
+        conversation: {
+          availability: {
+            submit: false
+          },
+          actions: {
+            sideChat: {
+              start: onStartSideChat
+            }
+          }
+        },
+        composer: {
+          view: {
+            doc: { nodes: [{ type: 'text', text: 'Ask on the side' }] }
+          }
+        }
       })
 
       const trigger = container.querySelector(
@@ -1422,20 +1740,34 @@ describe('ConversationPanel composer intake', () => {
   it('keeps Side chat disabled while the main Session is waiting-plan-approval', () => {
     const onStartSideChat = vi.fn()
     renderPanel({
-      activeSession: {
-        id: 'session-plan-waiting',
-        projectId: 'project-a',
-        title: 'Waiting Plan',
-        cwd: '/workspace',
-        status: 'waiting-plan-approval',
-        messages: planOriginMessages(),
-        createdAt: 1,
-        updatedAt: 2
+      view: {
+        activeSession: {
+          id: 'session-plan-waiting',
+          projectId: 'project-a',
+          title: 'Waiting Plan',
+          cwd: '/workspace',
+          status: 'waiting-plan-approval',
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        },
+        canEditDraft: true
       },
-      canSendMessage: false,
-      canEditDraft: true,
-      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
-      onStartSideChat
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          sideChat: {
+            start: onStartSideChat
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'Ask on the side' }] }
+        }
+      }
     })
 
     const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
@@ -1447,20 +1779,34 @@ describe('ConversationPanel composer intake', () => {
   it('explains why strict Side chat is unavailable for an unsupported backend', () => {
     const reason = 'Strict tool isolation is unavailable.'
     renderPanel({
-      activeSession: {
-        id: 'session-existing',
-        projectId: 'project-a',
-        title: 'Existing session',
-        cwd: '/workspace',
-        status: 'idle',
-        messages: planOriginMessages(),
-        createdAt: 1,
-        updatedAt: 2
+      view: {
+        activeSession: {
+          id: 'session-existing',
+          projectId: 'project-a',
+          title: 'Existing session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        },
+        sideChatDisabledReason: reason
       },
-      canSendMessage: true,
-      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
-      onStartSideChat: vi.fn(),
-      sideChatDisabledReason: reason
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          sideChat: {
+            start: vi.fn()
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'Ask on the side' }] }
+        }
+      }
     })
 
     const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
@@ -1470,19 +1816,33 @@ describe('ConversationPanel composer intake', () => {
 
   it('keeps Side chat disabled until the Session has a normal main conversation', () => {
     renderPanel({
-      activeSession: {
-        id: 'session-empty',
-        projectId: 'project-a',
-        title: 'Empty session',
-        cwd: '/workspace',
-        status: 'idle',
-        messages: [],
-        createdAt: 1,
-        updatedAt: 2
+      view: {
+        activeSession: {
+          id: 'session-empty',
+          projectId: 'project-a',
+          title: 'Empty session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 2
+        }
       },
-      canSendMessage: true,
-      draftDoc: { nodes: [{ type: 'text', text: 'Ask on the side' }] },
-      onStartSideChat: vi.fn()
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          sideChat: {
+            start: vi.fn()
+          }
+        }
+      },
+      composer: {
+        view: {
+          doc: { nodes: [{ type: 'text', text: 'Ask on the side' }] }
+        }
+      }
     })
 
     expect(
@@ -1493,28 +1853,32 @@ describe('ConversationPanel composer intake', () => {
   it('replaces the ordinary composer with an in-flow Side chat panel', () => {
     const onCloseSideChat = vi.fn()
     renderPanel({
-      notebookReference: {
-        sessionId: 'session-existing',
-        projectName: 'project-a',
-        workspaceCwd: '/workspace',
-        notebookSessionRoot: '/notebook',
-        dataRoot: '/data',
-        runtimeRoot: '/runtime',
-        runJsonPath: '/notebook/run.json'
+      sessionTools: {
+        notebookReference: {
+          sessionId: 'session-existing',
+          projectName: 'project-a',
+          workspaceCwd: '/workspace',
+          notebookSessionRoot: '/notebook',
+          dataRoot: '/data',
+          runtimeRoot: '/runtime',
+          runJsonPath: '/notebook/run.json'
+        }
       },
       sideChat: {
-        generation: 1,
-        parentSessionId: 'session-existing',
-        projectId: 'project-a',
-        sideSessionId: 'side-1',
-        draft: '',
-        running: false,
-        entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' }]
-      },
-      onSendSideChat: vi.fn(async () => true),
-      onSideChatDraftChange: vi.fn(),
-      onCancelSideChat: vi.fn(),
-      onCloseSideChat
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          draft: '',
+          running: false,
+          entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' }]
+        },
+        send: vi.fn(async () => true),
+        setDraft: vi.fn(),
+        cancel: vi.fn(),
+        close: onCloseSideChat
+      }
     })
 
     const panel = container.querySelector('[data-testid="side-chat-panel"]')
@@ -1551,7 +1915,11 @@ describe('ConversationPanel composer intake', () => {
       (container.querySelector('[aria-label="Close Side chat"]') as HTMLButtonElement).click()
     )
     expect(onCloseSideChat).toHaveBeenCalledOnce()
-    renderPanel({ onCloseSideChat })
+    renderPanel({
+      sideChat: {
+        close: onCloseSideChat
+      }
+    })
     expect(document.activeElement).toBe(getComposerEditor())
 
     const navigationButton = container.querySelector<HTMLButtonElement>(
@@ -1559,8 +1927,12 @@ describe('ConversationPanel composer intake', () => {
     )!
     navigationButton.focus()
     renderPanel({
-      composerFocusKey: 'session-blocked-after-side-chat',
-      pendingPermissions: [{ requestId: 'permission-after-side-chat' } as never]
+      view: {
+        composerFocusKey: 'session-blocked-after-side-chat'
+      },
+      permissions: {
+        requests: [{ requestId: 'permission-after-side-chat' } as never]
+      }
     })
 
     expect(getComposerForm().hidden).toBe(true)
@@ -1569,21 +1941,26 @@ describe('ConversationPanel composer intake', () => {
 
   it('keeps the Side chat input fixed and pins streamed output to the bottom', () => {
     const sideChatProps = {
-      onSendSideChat: vi.fn(async () => true),
-      onSideChatDraftChange: vi.fn(),
-      onCancelSideChat: vi.fn(),
-      onCloseSideChat: vi.fn()
+      sideChat: {
+        send: vi.fn(async () => true),
+        setDraft: vi.fn(),
+        cancel: vi.fn(),
+        close: vi.fn()
+      }
     }
     renderPanel({
       ...sideChatProps,
       sideChat: {
-        generation: 1,
-        parentSessionId: 'session-existing',
-        projectId: 'project-a',
-        sideSessionId: 'side-1',
-        draft: 'Keep this draft',
-        running: true,
-        entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' }]
+        ...sideChatProps.sideChat,
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          draft: 'Keep this draft',
+          running: true,
+          entries: [{ id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' }]
+        }
       }
     })
 
@@ -1625,16 +2002,19 @@ describe('ConversationPanel composer intake', () => {
     renderPanel({
       ...sideChatProps,
       sideChat: {
-        generation: 1,
-        parentSessionId: 'session-existing',
-        projectId: 'project-a',
-        sideSessionId: 'side-1',
-        draft: 'Keep this draft',
-        running: true,
-        entries: [
-          { id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' },
-          { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Streaming output' }
-        ]
+        ...sideChatProps.sideChat,
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          draft: 'Keep this draft',
+          running: true,
+          entries: [
+            { id: 'user-1', kind: 'message', role: 'user', text: 'Side prompt' },
+            { id: 'assistant-1', kind: 'message', role: 'assistant', text: 'Streaming output' }
+          ]
+        }
       }
     })
 
@@ -1657,10 +2037,12 @@ describe('ConversationPanel composer intake', () => {
     )
     vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
     const sideChatProps = {
-      onSendSideChat: vi.fn(async () => true),
-      onSideChatDraftChange: vi.fn(),
-      onCancelSideChat: vi.fn(),
-      onCloseSideChat: vi.fn()
+      sideChat: {
+        send: vi.fn(async () => true),
+        setDraft: vi.fn(),
+        cancel: vi.fn(),
+        close: vi.fn()
+      }
     }
     const entries = [
       { id: 'user-history', kind: 'message' as const, role: 'user' as const, text: 'Old prompt' },
@@ -1682,25 +2064,31 @@ describe('ConversationPanel composer intake', () => {
     renderPanel({
       ...sideChatProps,
       sideChat: {
-        generation: 1,
-        parentSessionId: 'session-existing',
-        projectId: 'project-a',
-        sideSessionId: 'side-1',
-        draft: '',
-        running: true,
-        entries: entries.slice(0, -1)
+        ...sideChatProps.sideChat,
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          draft: '',
+          running: true,
+          entries: entries.slice(0, -1)
+        }
       }
     })
     renderPanel({
       ...sideChatProps,
       sideChat: {
-        generation: 1,
-        parentSessionId: 'session-existing',
-        projectId: 'project-a',
-        sideSessionId: 'side-1',
-        draft: '',
-        running: true,
-        entries
+        ...sideChatProps.sideChat,
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          draft: '',
+          running: true,
+          entries
+        }
       }
     })
 
@@ -1723,22 +2111,25 @@ describe('ConversationPanel composer intake', () => {
     renderPanel({
       ...sideChatProps,
       sideChat: {
-        generation: 1,
-        parentSessionId: 'session-existing',
-        projectId: 'project-a',
-        sideSessionId: 'side-1',
-        draft: '',
-        running: true,
-        entries: [
-          ...entries,
-          {
-            id: 'tool-live',
-            kind: 'tool',
-            title: 'Tool after current answer',
-            status: 'in_progress'
-          },
-          nextAssistant
-        ]
+        ...sideChatProps.sideChat,
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          draft: '',
+          running: true,
+          entries: [
+            ...entries,
+            {
+              id: 'tool-live',
+              kind: 'tool',
+              title: 'Tool after current answer',
+              status: 'in_progress'
+            },
+            nextAssistant
+          ]
+        }
       }
     })
     expect(container.textContent).not.toContain('Tool after current answer')
@@ -1762,10 +2153,12 @@ describe('ConversationPanel composer intake', () => {
     )
     vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
     const sideChatProps = {
-      onSendSideChat: vi.fn(async () => true),
-      onSideChatDraftChange: vi.fn(),
-      onCancelSideChat: vi.fn(),
-      onCloseSideChat: vi.fn()
+      sideChat: {
+        send: vi.fn(async () => true),
+        setDraft: vi.fn(),
+        cancel: vi.fn(),
+        close: vi.fn()
+      }
     }
     const userEntry = {
       id: 'user-reopen',
@@ -1789,14 +2182,32 @@ describe('ConversationPanel composer intake', () => {
       entries: [userEntry, assistantEntry]
     }
 
-    renderPanel({ ...sideChatProps, sideChat: { ...sideChat, entries: [userEntry] } })
-    renderPanel({ ...sideChatProps, sideChat })
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        ...sideChatProps.sideChat,
+        view: { ...sideChat, entries: [userEntry] }
+      }
+    })
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        ...sideChatProps.sideChat,
+        view: sideChat
+      }
+    })
     await act(async () => vi.advanceTimersByTimeAsync(512))
     expect(container.textContent).toContain('R')
     expect(container.textContent).not.toContain(assistantEntry.text)
 
     renderPanel()
-    renderPanel({ ...sideChatProps, sideChat })
+    renderPanel({
+      ...sideChatProps,
+      sideChat: {
+        ...sideChatProps.sideChat,
+        view: sideChat
+      }
+    })
 
     expect(container.textContent).toContain(assistantEntry.text)
 
@@ -1804,8 +2215,11 @@ describe('ConversationPanel composer intake', () => {
     renderPanel({
       ...sideChatProps,
       sideChat: {
-        ...sideChat,
-        entries: [userEntry, { ...assistantEntry, text: continuedAnswer }]
+        ...sideChatProps.sideChat,
+        view: {
+          ...sideChat,
+          entries: [userEntry, { ...assistantEntry, text: continuedAnswer }]
+        }
       }
     })
     expect(container.textContent).not.toContain(continuedAnswer)
@@ -1829,22 +2243,30 @@ describe('ConversationPanel composer intake', () => {
     const pendingElicitations = [{} as never]
 
     renderPanel({
-      activeSession,
-      pendingPermissions,
-      pendingElicitations,
-      sideChat: {
-        generation: 1,
-        parentSessionId: 'session-existing',
-        projectId: 'project-a',
-        sideSessionId: 'side-1',
-        draft: '',
-        running: false,
-        entries: []
+      view: {
+        activeSession: activeSession
       },
-      onSendSideChat: vi.fn(async () => true),
-      onSideChatDraftChange: vi.fn(),
-      onCancelSideChat: vi.fn(),
-      onCloseSideChat: vi.fn()
+      permissions: {
+        requests: pendingPermissions
+      },
+      elicitation: {
+        requests: pendingElicitations
+      },
+      sideChat: {
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          draft: '',
+          running: false,
+          entries: []
+        },
+        send: vi.fn(async () => true),
+        setDraft: vi.fn(),
+        cancel: vi.fn(),
+        close: vi.fn()
+      }
     })
 
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).toBeNull()
@@ -1854,7 +2276,17 @@ describe('ConversationPanel composer intake', () => {
     ).toBe('0')
     expect(getComposerForm().hidden).toBe(true)
 
-    renderPanel({ activeSession, pendingPermissions, pendingElicitations })
+    renderPanel({
+      view: {
+        activeSession: activeSession
+      },
+      permissions: {
+        requests: pendingPermissions
+      },
+      elicitation: {
+        requests: pendingElicitations
+      }
+    })
 
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
@@ -1881,44 +2313,64 @@ describe('ConversationPanel composer intake', () => {
     }
 
     renderPanel({
-      activeSession,
-      sideChat: {
-        generation: 1,
-        parentSessionId: activeSession.id,
-        projectId: activeSession.projectId,
-        sideSessionId: 'side-plan',
-        draft: '',
-        running: false,
-        entries: []
+      view: {
+        activeSession: activeSession
       },
-      onSendSideChat: vi.fn(async () => true),
-      onSideChatDraftChange: vi.fn(),
-      onCancelSideChat: vi.fn(),
-      onCloseSideChat: vi.fn()
+      sideChat: {
+        view: {
+          generation: 1,
+          parentSessionId: activeSession.id,
+          projectId: activeSession.projectId,
+          sideSessionId: 'side-plan',
+          draft: '',
+          running: false,
+          entries: []
+        },
+        send: vi.fn(async () => true),
+        setDraft: vi.fn(),
+        cancel: vi.fn(),
+        close: vi.fn()
+      }
     })
 
     expect(container.querySelector('[data-testid="plan-composer"]')).toBeNull()
 
-    renderPanel({ activeSession })
+    renderPanel({
+      view: {
+        activeSession: activeSession
+      }
+    })
 
     expect(container.querySelector('[data-testid="plan-composer"]')).not.toBeNull()
   })
 
   it('disables Plan first for an attachment-only draft', () => {
     renderPanel({
-      canSendMessage: true,
-      attachments: [
-        {
-          id: 'upload-1',
-          sessionId: '.pending',
-          name: 'data.csv',
-          originalName: 'data.csv',
-          path: '/uploads/data.csv',
-          size: 12,
-          mimeType: 'text/csv'
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ planFirst: vi.fn() })
+          }
         }
-      ],
-      onPlanFirst: vi.fn()
+      },
+      composer: {
+        view: {
+          attachments: [
+            {
+              id: 'upload-1',
+              sessionId: '.pending',
+              name: 'data.csv',
+              originalName: 'data.csv',
+              path: '/uploads/data.csv',
+              size: 12,
+              mimeType: 'text/csv'
+            }
+          ]
+        }
+      }
     })
 
     expect(
@@ -1928,7 +2380,22 @@ describe('ConversationPanel composer intake', () => {
 
   it('adds a branch option beside Send only when a branch handler is available', () => {
     const onBranchInNewSession = vi.fn()
-    renderPanel({ canSendMessage: true, onBranchInNewSession })
+    const activeSession = delegatedQuestionSession()
+    renderPanel({
+      view: {
+        activeSession
+      },
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ branch: onBranchInNewSession })
+          }
+        }
+      }
+    })
 
     const trigger = container.querySelector(
       '[data-testid="branch-send-menu-trigger"]'
@@ -1990,7 +2457,22 @@ describe('ConversationPanel composer intake', () => {
 
   it('disables the branch option whenever Send is disabled', () => {
     const onBranchInNewSession = vi.fn()
-    renderPanel({ canSendMessage: false, onBranchInNewSession })
+    const activeSession = delegatedQuestionSession()
+    renderPanel({
+      view: {
+        activeSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ branch: onBranchInNewSession })
+          }
+        }
+      }
+    })
 
     const trigger = container.querySelector(
       '[data-testid="branch-send-menu-trigger"]'
@@ -2010,7 +2492,13 @@ describe('ConversationPanel composer intake', () => {
 
   it('persists typed text as a doc via onDraftDocChange', () => {
     const onDraftDocChange = vi.fn()
-    renderPanel({ onDraftDocChange })
+    renderPanel({
+      composer: {
+        actions: {
+          changeDoc: onDraftDocChange
+        }
+      }
+    })
 
     const editor = getComposerEditor()
     editor.textContent = 'hello'
@@ -2043,7 +2531,16 @@ describe('ConversationPanel interrupted Session recovery', () => {
       updatedAt: Date.now()
     }
 
-    renderPanel({ activeSession: interruptedSession, onResumeSession })
+    renderPanel({
+      view: {
+        activeSession: interruptedSession
+      },
+      conversation: {
+        actions: {
+          resume: onResumeSession
+        }
+      }
+    })
 
     const resumeButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Resume session"]'
@@ -2078,15 +2575,30 @@ describe('ConversationPanel interrupted Session recovery', () => {
       updatedAt: Date.now()
     }
 
-    renderPanel({ activeSession: interruptedSession, onResumeSession })
+    renderPanel({
+      view: {
+        activeSession: interruptedSession
+      },
+      conversation: {
+        actions: {
+          resume: onResumeSession
+        }
+      }
+    })
     await act(async () =>
       container.querySelector<HTMLButtonElement>('button[aria-label="Resume session"]')?.click()
     )
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).not.toBeNull()
 
     renderPanel({
-      activeSession: { ...interruptedSession, id: 'session-other', interrupted: undefined },
-      onResumeSession
+      view: {
+        activeSession: { ...interruptedSession, id: 'session-other', interrupted: undefined }
+      },
+      conversation: {
+        actions: {
+          resume: onResumeSession
+        }
+      }
     })
     expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
 
@@ -2108,9 +2620,17 @@ describe('ConversationPanel interrupted Session recovery', () => {
     }
 
     renderPanel({
-      activeSession: interruptedSession,
-      canResumeSession: false,
-      onResumeSession
+      view: {
+        activeSession: interruptedSession
+      },
+      conversation: {
+        availability: {
+          resume: false
+        },
+        actions: {
+          resume: onResumeSession
+        }
+      }
     })
 
     const resumeButton = container.querySelector<HTMLButtonElement>(
@@ -2175,16 +2695,20 @@ describe('ConversationPanel + menu', () => {
     }
     mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: 1 }]
     renderPanel({
-      activeSession: session,
-      canEditDraft: false,
-      notebookReference: {
-        sessionId: session.id,
-        projectName: session.projectId,
-        workspaceCwd: '/workspace',
-        notebookSessionRoot: '/notebook',
-        dataRoot: '/data',
-        runtimeRoot: '/runtime',
-        runJsonPath: '/notebook/run.json'
+      view: {
+        activeSession: session,
+        canEditDraft: false
+      },
+      sessionTools: {
+        notebookReference: {
+          sessionId: session.id,
+          projectName: session.projectId,
+          workspaceCwd: '/workspace',
+          notebookSessionRoot: '/notebook',
+          dataRoot: '/data',
+          runtimeRoot: '/runtime',
+          runJsonPath: '/notebook/run.json'
+        }
       }
     })
 
@@ -2257,10 +2781,12 @@ describe('ConversationPanel + menu', () => {
     expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
 
     renderPanel({
-      activeSession: {
-        ...session,
-        status: 'idle',
-        activePlanProjection: completedPlanProjection
+      view: {
+        activeSession: {
+          ...session,
+          status: 'idle',
+          activePlanProjection: completedPlanProjection
+        }
       }
     })
     expect(container.textContent).not.toContain('Plan approved')
@@ -2287,7 +2813,12 @@ describe('ConversationPanel + menu', () => {
         lifecycle: 'awaiting_approval'
       }
     }
-    renderPanel({ activeSession: session, canEditDraft: false })
+    renderPanel({
+      view: {
+        activeSession: session,
+        canEditDraft: false
+      }
+    })
 
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement
     await act(async () => {
@@ -2323,7 +2854,12 @@ describe('ConversationPanel + menu', () => {
         lifecycle: 'awaiting_approval'
       }
     }
-    renderPanel({ activeSession: session, canEditDraft: false })
+    renderPanel({
+      view: {
+        activeSession: session,
+        canEditDraft: false
+      }
+    })
 
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement
     await act(async () => {
@@ -2360,7 +2896,19 @@ describe('ConversationPanel + menu', () => {
       }
     }
 
-    renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
+    renderPanel({
+      view: {
+        activeSession: session,
+        canEditDraft: false
+      },
+      conversation: {
+        actions: {
+          submit: {
+            restoredPlan: onRespondToRestoredPlan
+          }
+        }
+      }
+    })
 
     expect(container.textContent).toContain('Plan ready for review')
     expect(container.querySelector('[role="textbox"]')?.closest('form')?.classList).toContain(
@@ -2413,19 +2961,21 @@ describe('ConversationPanel + menu', () => {
     }
 
     renderPanel({
-      activeSession: {
-        ...baseSession,
-        messages: [
-          {
-            id: 'prompt-b',
-            role: 'user',
-            content: 'Plan branch B',
-            status: 'complete',
-            eventIds: [],
-            createdAt: 1,
-            updatedAt: 1
-          }
-        ]
+      view: {
+        activeSession: {
+          ...baseSession,
+          messages: [
+            {
+              id: 'prompt-b',
+              role: 'user',
+              content: 'Plan branch B',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        }
       }
     })
 
@@ -2447,19 +2997,21 @@ describe('ConversationPanel + menu', () => {
     )
 
     renderPanel({
-      activeSession: {
-        ...baseSession,
-        messages: [
-          {
-            id: 'prompt-a',
-            role: 'user',
-            content: 'Historical Plan branch A',
-            status: 'complete',
-            eventIds: [],
-            createdAt: 1,
-            updatedAt: 1
-          }
-        ]
+      view: {
+        activeSession: {
+          ...baseSession,
+          messages: [
+            {
+              id: 'prompt-a',
+              role: 'user',
+              content: 'Historical Plan branch A',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        }
       }
     })
 
@@ -2487,7 +3039,19 @@ describe('ConversationPanel + menu', () => {
       }
     }
     const onRespondToRestoredPlan = vi.fn().mockResolvedValue(undefined)
-    renderPanel({ activeSession: session, canEditDraft: false, onRespondToRestoredPlan })
+    renderPanel({
+      view: {
+        activeSession: session,
+        canEditDraft: false
+      },
+      conversation: {
+        actions: {
+          submit: {
+            restoredPlan: onRespondToRestoredPlan
+          }
+        }
+      }
+    })
 
     await act(async () => {
       ;[...container.querySelectorAll<HTMLButtonElement>('button')]
@@ -2511,7 +3075,12 @@ describe('ConversationPanel + menu', () => {
 
   it('Request review calls onRequestReview when enabled', () => {
     const onRequestReview = vi.fn()
-    renderPanel({ onRequestReview, isRequestReviewDisabled: false })
+    renderPanel({
+      review: {
+        request: onRequestReview,
+        disabled: false
+      }
+    })
 
     const reviewItem = container.querySelector('[data-testid="menu-request-review"]')
     expect(reviewItem).not.toBeNull()
@@ -2524,7 +3093,12 @@ describe('ConversationPanel + menu', () => {
 
   it('Request review is disabled when isRequestReviewDisabled is true', () => {
     const onRequestReview = vi.fn()
-    renderPanel({ onRequestReview, isRequestReviewDisabled: true })
+    renderPanel({
+      review: {
+        request: onRequestReview,
+        disabled: true
+      }
+    })
 
     const reviewItem = container.querySelector(
       '[data-testid="menu-request-review"]'
@@ -2541,7 +3115,12 @@ describe('ConversationPanel + menu', () => {
 
   it('Request review is not called when disabled is true (onSelect guard)', () => {
     const onRequestReview = vi.fn()
-    renderPanel({ onRequestReview, isRequestReviewDisabled: true })
+    renderPanel({
+      review: {
+        request: onRequestReview,
+        disabled: true
+      }
+    })
 
     const reviewItem = container.querySelector(
       '[data-testid="menu-request-review"]'
@@ -2594,7 +3173,13 @@ describe('ConversationPanel Your files menu', () => {
 
   it('appends a linked-folder mention to the owned draft doc when a file is sent', async () => {
     const onDraftDocChange = vi.fn()
-    renderPanel({ onDraftDocChange })
+    renderPanel({
+      composer: {
+        actions: {
+          changeDoc: onDraftDocChange
+        }
+      }
+    })
 
     await act(async () => {
       ;(
@@ -2637,7 +3222,13 @@ describe('ConversationPanel Your files menu', () => {
         }
       ]
     }
-    renderPanel({ draftDoc })
+    renderPanel({
+      composer: {
+        view: {
+          doc: draftDoc
+        }
+      }
+    })
 
     const chip = container.querySelector('[data-mention-source="linked-folder"]')
     expect(chip?.className).toContain('bg-path-chip')
@@ -2739,7 +3330,16 @@ describe('ConversationPanel fix loop lock', () => {
 
   it('send button is disabled when canSendMessage is false (fix loop active)', () => {
     // canSendMessage is passed from outside (computed by WorkspacePage)
-    renderPanel({ activeSession: idleSession, canSendMessage: false })
+    renderPanel({
+      view: {
+        activeSession: idleSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        }
+      }
+    })
 
     const sendButton = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
     expect(sendButton).not.toBeNull()
@@ -2747,7 +3347,16 @@ describe('ConversationPanel fix loop lock', () => {
   })
 
   it('send button is enabled when canSendMessage is true (no fix loop)', () => {
-    renderPanel({ activeSession: idleSession, canSendMessage: true })
+    renderPanel({
+      view: {
+        activeSession: idleSession
+      },
+      conversation: {
+        availability: {
+          submit: true
+        }
+      }
+    })
 
     const sendButton = container.querySelector('[aria-label="Send message"]') as HTMLButtonElement
     expect(sendButton).not.toBeNull()
@@ -2757,9 +3366,19 @@ describe('ConversationPanel fix loop lock', () => {
   it('send button stays disabled when typing does not change canSendMessage (fix loop active)', () => {
     const onDraftDocChange = vi.fn()
     renderPanel({
-      activeSession: lockedSession,
-      canSendMessage: false,
-      onDraftDocChange
+      view: {
+        activeSession: lockedSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        }
+      },
+      composer: {
+        actions: {
+          changeDoc: onDraftDocChange
+        }
+      }
     })
 
     // Simulate typing — the doc change is fired but canSendMessage remains false (external prop)
@@ -2785,7 +3404,19 @@ describe('ConversationPanel fix loop lock', () => {
       status: 'running',
       activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
     }
-    renderPanel({ activeSession: runningSession, canSendMessage: false, onCancelRun })
+    renderPanel({
+      view: {
+        activeSession: runningSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          cancel: onCancelRun
+        }
+      }
+    })
 
     const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     expect(cancelButton).not.toBeNull()
@@ -2800,10 +3431,20 @@ describe('ConversationPanel fix loop lock', () => {
     const onCancelRun = vi.fn()
     const onStopSubagents = vi.fn()
     renderPanel({
-      activeSession: detachedChildSession,
-      canSendMessage: true,
-      onCancelRun,
-      onStopSubagents
+      view: {
+        activeSession: detachedChildSession
+      },
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          cancel: onCancelRun
+        }
+      },
+      subagents: {
+        stop: onStopSubagents
+      }
     })
 
     expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
@@ -2831,7 +3472,19 @@ describe('ConversationPanel fix loop lock', () => {
           rejectStop = reject
         })
     )
-    renderPanel({ activeSession: detachedChildSession, canSendMessage: true, onStopSubagents })
+    renderPanel({
+      view: {
+        activeSession: detachedChildSession
+      },
+      conversation: {
+        availability: {
+          submit: true
+        }
+      },
+      subagents: {
+        stop: onStopSubagents
+      }
+    })
 
     const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
     act(() => {
@@ -2858,10 +3511,22 @@ describe('ConversationPanel fix loop lock', () => {
     const onSendMessage = vi.fn()
     const onStopSubagents = vi.fn(() => new Promise<void>(() => undefined))
     renderPanel({
-      activeSession: detachedChildSession,
-      canSendMessage: true,
-      onSendMessage,
-      onStopSubagents
+      view: {
+        activeSession: detachedChildSession
+      },
+      conversation: {
+        availability: {
+          submit: true
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ send: onSendMessage })
+          }
+        }
+      },
+      subagents: {
+        stop: onStopSubagents
+      }
     })
     const stop = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
     act(() => stop.click())
@@ -2890,7 +3555,19 @@ describe('ConversationPanel fix loop lock', () => {
       status: 'running',
       activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
     }
-    renderPanel({ activeSession: runningSession, canSendMessage: false, onCancelRun })
+    renderPanel({
+      view: {
+        activeSession: runningSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          cancel: onCancelRun
+        }
+      }
+    })
 
     const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     act(() => {
@@ -2919,9 +3596,19 @@ describe('ConversationPanel fix loop lock', () => {
       activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
     }
     renderPanel({
-      activeSession: runningSession,
-      canSendMessage: false,
-      onBranchInNewSession: vi.fn()
+      view: {
+        activeSession: runningSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          submit: {
+            draft: routeDraftSubmit({ branch: vi.fn() })
+          }
+        }
+      }
     })
 
     const slot = container.querySelector(
@@ -2944,9 +3631,17 @@ describe('ConversationPanel fix loop lock', () => {
     // When the fix loop is active and session is running, onCancelRun handles both
     // ACP cancel and fix loop abort (wired in WorkspacePage)
     renderPanel({
-      activeSession: runningLockedSession,
-      canSendMessage: false,
-      onCancelRun
+      view: {
+        activeSession: runningLockedSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          cancel: onCancelRun
+        }
+      }
     })
 
     const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
@@ -2964,7 +3659,19 @@ describe('ConversationPanel fix loop lock', () => {
     // Reviewer-review sub-phase: the fix loop is active but the main agent is idle (the reviewer runs in
     // a separate ACP session, so the main session's status is not 'running'). The cancel affordance
     // must still be reachable so the user can abort the loop during this window.
-    renderPanel({ activeSession: lockedSession, canSendMessage: false, onCancelRun })
+    renderPanel({
+      view: {
+        activeSession: lockedSession
+      },
+      conversation: {
+        availability: {
+          submit: false
+        },
+        actions: {
+          cancel: onCancelRun
+        }
+      }
+    })
 
     const cancelButton = container.querySelector('[aria-label="Cancel run"]') as HTMLButtonElement
     expect(cancelButton).not.toBeNull()
@@ -2996,9 +3703,15 @@ describe('ConversationPanel compacting state', () => {
     // The raw overflow error is still present as a global actionError, but must be suppressed while the
     // session is compacting so the user sees the recovery affordance, not a dead-end.
     renderPanel({
-      activeSession: compactingSession,
-      actionError: 'Internal error: Request too large (max 32MB).',
-      onCancelRun
+      view: {
+        activeSession: compactingSession,
+        actionError: 'Internal error: Request too large (max 32MB).'
+      },
+      conversation: {
+        actions: {
+          cancel: onCancelRun
+        }
+      }
     })
 
     expect(container.textContent).toContain('Compacting conversation to fit the context limit')
@@ -3034,7 +3747,14 @@ describe('ConversationPanel notebook bar', () => {
 
   it('hides the notebook bar when there is no notebookReference and no running job', () => {
     mockHasRunningJobs = false
-    renderPanel({ activeSession: session, notebookReference: undefined })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: undefined
+      }
+    })
 
     expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
@@ -3042,14 +3762,28 @@ describe('ConversationPanel notebook bar', () => {
 
   it('shows only the Notebook button when notebookReference exists and no running job', () => {
     mockHasRunningJobs = false
-    renderPanel({ activeSession: session, notebookReference })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: notebookReference
+      }
+    })
 
     expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
   })
 
   it('animates the notebook bar upward when it appears', () => {
-    renderPanel({ activeSession: session, notebookReference })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: notebookReference
+      }
+    })
 
     const notebookBar = container.querySelector('[aria-label="Open notebook"]')?.parentElement
 
@@ -3059,7 +3793,14 @@ describe('ConversationPanel notebook bar', () => {
   })
 
   it('shows a pointer cursor over the Notebook button', () => {
-    renderPanel({ activeSession: session, notebookReference })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: notebookReference
+      }
+    })
 
     const notebookButton = container.querySelector('[aria-label="Open notebook"]')
 
@@ -3069,7 +3810,14 @@ describe('ConversationPanel notebook bar', () => {
   it('shows only the job badge when there is no notebookReference but there are running jobs', () => {
     mockHasRunningJobs = true
     mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
-    renderPanel({ activeSession: session, notebookReference: undefined })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: undefined
+      }
+    })
 
     expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
@@ -3077,7 +3825,14 @@ describe('ConversationPanel notebook bar', () => {
 
   it('keeps the job-only bar compact and static', () => {
     mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
-    renderPanel({ activeSession: session, notebookReference: undefined })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: undefined
+      }
+    })
 
     const jobBar = container.querySelector('[data-testid="remote-job-badge"]')?.parentElement
 
@@ -3088,10 +3843,24 @@ describe('ConversationPanel notebook bar', () => {
 
   it('remounts the bar when a Notebook appears after jobs', () => {
     mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
-    renderPanel({ activeSession: session, notebookReference: undefined })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: undefined
+      }
+    })
     const jobBar = container.querySelector('[data-testid="remote-job-badge"]')?.parentElement
 
-    renderPanel({ activeSession: session, notebookReference })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: notebookReference
+      }
+    })
     const notebookBar = container.querySelector('[aria-label="Open notebook"]')?.parentElement
 
     expect(notebookBar).not.toBe(jobBar)
@@ -3099,7 +3868,14 @@ describe('ConversationPanel notebook bar', () => {
   })
 
   it('does not layer card shadows behind the composer border', () => {
-    renderPanel({ activeSession: session, notebookReference })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: notebookReference
+      }
+    })
 
     const notebookBar = container.querySelector('[aria-label="Open notebook"]')?.parentElement
     const composerBackdrop = getComposerForm().previousElementSibling
@@ -3111,7 +3887,14 @@ describe('ConversationPanel notebook bar', () => {
   it('shows both the Notebook button and the job badge when both are present', () => {
     mockHasRunningJobs = true
     mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
-    renderPanel({ activeSession: session, notebookReference })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: notebookReference
+      }
+    })
 
     expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).not.toBeNull()
@@ -3120,7 +3903,14 @@ describe('ConversationPanel notebook bar', () => {
   it('keeps the notebook bar visible when there are finished jobs but no running jobs', () => {
     mockHasRunningJobs = false
     mockAllJobs = [{ job_id: 'job-1', status: 'done', created_at: Date.now() }]
-    renderPanel({ activeSession: session, notebookReference: undefined })
+    renderPanel({
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: undefined
+      }
+    })
 
     // The badge's parent is the shared notebook/job bar.
     const notebookBar = container.querySelector('[data-testid="remote-job-badge"]')?.parentElement
@@ -3134,9 +3924,13 @@ describe('ConversationPanel notebook bar', () => {
     mockAllJobs = [{ job_id: 'job-1', status: 'running', created_at: Date.now() }]
     const handleOpenJobList = vi.fn()
     renderPanel({
-      activeSession: session,
-      notebookReference: undefined,
-      onOpenJobList: handleOpenJobList
+      view: {
+        activeSession: session
+      },
+      sessionTools: {
+        notebookReference: undefined,
+        openJobs: handleOpenJobList
+      }
     })
 
     const badge = container.querySelector('[data-testid="remote-job-badge"]')
@@ -3170,13 +3964,21 @@ describe('ConversationPanel error box + report affordance', () => {
   const errorBoxText = (): string => container.querySelector('.border-red-200')?.textContent ?? ''
 
   it('shows the error and a Report button for a failed run (status === error)', () => {
-    renderPanel({ activeSession: errorSession })
+    renderPanel({
+      view: {
+        activeSession: errorSession
+      }
+    })
     expect(errorBoxText()).toContain('Run failed: connection reset')
     expect(reportButton()).not.toBeNull()
   })
 
   it('renders the error box for a failed run even when it has no error text', () => {
-    renderPanel({ activeSession: { ...errorSession, error: undefined } })
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, error: undefined }
+      }
+    })
     // The shown fallback equals the text seeded into the report (single RUN_FAILED_FALLBACK_ERROR),
     // upholding the "shown == reported" invariant when a failed run carries no error message.
     expect(errorBoxText()).toContain('The run failed with no error message.')
@@ -3186,8 +3988,10 @@ describe('ConversationPanel error box + report affordance', () => {
 
   it('shows only the transient actionError, without a Report button, for a non-failed session', () => {
     renderPanel({
-      activeSession: { ...errorSession, status: 'idle', error: undefined },
-      actionError: 'Could not send message'
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        actionError: 'Could not send message'
+      }
     })
     expect(errorBoxText()).toContain('Could not send message')
     expect(reportButton()).toBeNull()
@@ -3196,7 +4000,12 @@ describe('ConversationPanel error box + report affordance', () => {
   it('shows both a transient actionError and the run failure, keeping the Report button', () => {
     // Both present: each error gets its own row, and the run failure keeps its report entry — a
     // transient error must not suppress the ability to report the actual failure.
-    renderPanel({ activeSession: errorSession, actionError: 'Could not send message' })
+    renderPanel({
+      view: {
+        activeSession: errorSession,
+        actionError: 'Could not send message'
+      }
+    })
     const text = errorBoxText()
     expect(text).toContain('Could not send message')
     expect(text).toContain('Run failed: connection reset')
@@ -3204,7 +4013,11 @@ describe('ConversationPanel error box + report affordance', () => {
   })
 
   it('opens the report dialog when the Report button is clicked', () => {
-    renderPanel({ activeSession: errorSession })
+    renderPanel({
+      view: {
+        activeSession: errorSession
+      }
+    })
     act(() => {
       reportButton()?.click()
     })
@@ -3217,7 +4030,11 @@ describe('ConversationPanel error box + report affordance', () => {
 
   it('seeds the dialog with the same fallback text the box shows when a run has no error', () => {
     // shown == reported: the textarea the user reviews must carry the exact string shown in the box.
-    renderPanel({ activeSession: { ...errorSession, error: undefined } })
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, error: undefined }
+      }
+    })
     const shown = errorBoxText()
     act(() => {
       reportButton()?.click()
@@ -3230,7 +4047,11 @@ describe('ConversationPanel error box + report affordance', () => {
   })
 
   it('uses the shared fallback for a whitespace-only persisted error', () => {
-    renderPanel({ activeSession: { ...errorSession, error: '   ' } })
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, error: '   ' }
+      }
+    })
     expect(errorBoxText()).toContain('The run failed with no error message.')
 
     act(() => {
@@ -3246,9 +4067,11 @@ describe('ConversationPanel error box + report affordance', () => {
   it('hides the Report button for an app-crafted, actionable failure', () => {
     // A recognized failure keeps its message but is not a bug worth a GitHub issue.
     renderPanel({
-      activeSession: {
-        ...errorSession,
-        error: 'Session workspace is missing; start a new conversation.'
+      view: {
+        activeSession: {
+          ...errorSession,
+          error: 'Session workspace is missing; start a new conversation.'
+        }
       }
     })
     expect(errorBoxText()).toContain('Session workspace is missing')
@@ -3259,10 +4082,12 @@ describe('ConversationPanel error box + report affordance', () => {
     // A provider/model failure is tagged structurally (errorReportable: false), not by its text —
     // the raw provider message is kept visible but is not a bug worth a GitHub issue.
     renderPanel({
-      activeSession: {
-        ...errorSession,
-        error: 'Invalid API key',
-        errorReportable: false
+      view: {
+        activeSession: {
+          ...errorSession,
+          error: 'Invalid API key',
+          errorReportable: false
+        }
       }
     })
     expect(errorBoxText()).toContain('Invalid API key')
@@ -3273,10 +4098,12 @@ describe('ConversationPanel error box + report affordance', () => {
     // Old sessions have no errorReportable; fall back to classifying the text — an opaque failure
     // stays reportable, an app-crafted reminder does not.
     renderPanel({
-      activeSession: {
-        ...errorSession,
-        error: 'Run failed: connection reset',
-        errorReportable: undefined
+      view: {
+        activeSession: {
+          ...errorSession,
+          error: 'Run failed: connection reset',
+          errorReportable: undefined
+        }
       }
     })
     expect(reportButton()).not.toBeNull()

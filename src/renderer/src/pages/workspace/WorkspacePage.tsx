@@ -31,7 +31,6 @@ import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import {
   appendArtifactMention,
   docArtifactCount,
-  docToSkillIds,
   MAX_COMPOSER_ARTIFACT_MENTIONS
 } from './composer/composer-doc'
 import {
@@ -269,7 +268,6 @@ const WorkspacePage = ({
     deleteRuntimeSession: runtime.deleteRuntimeSession
   })
   const historySpecialistId = sessionController.view.specialist.historyId
-  const newConversationSpecialistId = sessionController.view.specialist.newConversationId
   const catalogSkillIds = useMemo(
     () => new Set(catalogSkills.map((skill) => skill.id)),
     [catalogSkills]
@@ -334,23 +332,8 @@ const WorkspacePage = ({
     supportsImageInput,
     uploads: window.api.uploads
   })
-  const {
-    doc: draftDoc,
-    attachments,
-    transfers: attachmentTransfers,
-    error: attachmentError,
-    historyStatus,
-    isHistoryBrowsing,
-    isUploading: isUploadingAttachments
-  } = composer.view
-  const {
-    changeDoc: changeComposerDraftDoc,
-    navigateHistory: navigateComposerHistory,
-    stageFiles: stageAttachmentFiles,
-    cancelTransfer: cancelAttachmentTransfer,
-    removeAttachment: removeComposerAttachment,
-    setError: setAttachmentError
-  } = composer.actions
+  const { doc: draftDoc, error: attachmentError } = composer.view
+  const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
   const sideChat = useSideChatController(
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
@@ -497,8 +480,6 @@ const WorkspacePage = ({
     return false
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
-  const canSendMessage = conversation.availability.submit
-
   // Make the composer-owned mention capability available to Global Search without exposing its draft.
   // The value is transient and Project-scoped; cleanup prevents a stale Project from accepting an
   // Artifact after navigation.
@@ -1015,101 +996,70 @@ const WorkspacePage = ({
           openMobileSidebar
         }) => (
           <ConversationPanel
-            activeSession={activeSession}
-            composerFocusKey={currentDraftKey}
-            draftDoc={draftDoc}
-            canSendMessage={canSendMessage}
-            canEditDraft={canEditDraft}
-            canResumeSession={conversation.availability.resume}
-            actionError={visibleActionError}
-            isPreviewPanelCollapsed={isPreviewPanelCollapsed}
-            attachments={attachments}
-            attachmentTransfers={attachmentTransfers}
-            isUploadingAttachments={isUploadingAttachments}
-            notebookReference={activeNotebookReference}
-            pendingPermissions={visiblePermissionRequests}
-            subagentUnavailableReason={
-              activeSession ? delegatedWorkUnavailableBySession[activeSession.id] : undefined
-            }
-            pendingElicitations={visibleElicitationRequests}
-            permissionProfile={activePermissionProfile}
-            permissionProfileState={activePermissionProfileState}
-            permissionGrants={activePermissionGrants}
-            contextUsage={activeContextUsage}
-            canCompactContext={canCompactContext}
-            compactContextDisabledReason={compactContextDisabledReason}
-            onCompactContext={compactActiveContext}
-            canChangeAgentControls={canChangeAgentControls}
-            canChangePermissionProfile={canChangePermissionProfile}
-            autoReviewEnabled={activeAutoReviewEnabled}
-            onDraftDocChange={changeComposerDraftDoc}
-            isHistoryBrowsing={isHistoryBrowsing}
-            historyStatus={historyStatus}
-            onNavigateHistory={navigateComposerHistory}
-            onSendMessage={(forcedSkillIds) =>
-              conversation.actions.submit.draft({ forcedSkillIds })
-            }
-            onPlanFirst={(forcedSkillIds) =>
-              conversation.actions.submit.draft({ forcedSkillIds, mode: 'plan-first' })
-            }
-            sideChat={sideChat.view}
-            onStartSideChat={conversation.actions.sideChat.start}
-            sideChatDisabledReason={sideChatDisabledReason}
-            onSendSideChat={sideChat.send}
-            onSideChatDraftChange={sideChat.setDraft}
-            onCancelSideChat={sideChat.cancel}
-            onCloseSideChat={sideChat.close}
-            onRespondToRestoredPlan={conversation.actions.submit.restoredPlan}
-            onBranchInNewSession={
-              activeSession
-                ? (forcedSkillIds) =>
-                    conversation.actions.submit.draft({ forcedSkillIds, mode: 'branch' })
-                : undefined
-            }
-            onStageAttachmentFiles={stageAttachmentFiles}
-            onRemoveAttachment={removeComposerAttachment}
-            onCancelAttachmentTransfer={cancelAttachmentTransfer}
-            onCancelRun={conversation.actions.cancel}
-            onStopSubagents={() => {
-              if (!activeSession) return
-              return window.api.acp
-                .cancel({ sessionId: activeSession.id, scope: 'subagents' })
-                .then(() => undefined)
+            view={{
+              activeSession,
+              composerFocusKey: currentDraftKey,
+              canEditDraft,
+              actionError: visibleActionError,
+              sideChatDisabledReason
             }}
-            onResumeSession={conversation.actions.resume}
-            onOpenNotebook={openNotebookPreview}
-            onTogglePreviewPanel={togglePreviewPanelFromLayout}
-            onOpenSidebar={openMobileSidebar}
-            onRespondToPermission={respondToVisiblePermission}
-            onRespondToElicitation={respondToElicitation}
-            onPermissionProfileChange={changePermissionProfile}
-            onRevokePermissionGrant={revokeActivePermissionGrant}
-            onClearPermissionGrants={clearActivePermissionGrants}
-            onAutoReviewToggle={changeAutoReviewEnabled}
-            enabledComputeHosts={activeEnabledComputeHosts}
-            onComputeHostToggle={handleComputeHostToggle}
-            onRequestReview={requestManualReview}
-            isRequestReviewDisabled={isRequestReviewDisabled}
-            canEditMessage={canEditMessage}
-            onSendEditedMessage={conversation.actions.revise}
-            onOpenJobList={sessionController.actions.openJobList}
-            specialistId={
-              // For existing sessions: badge shows the currently-effective specialist (session
-              // binding). A pending switch is signalled by the chip, not by overriding the badge.
-              activeSession ? activeSession.specialistId : newConversationSpecialistId
-            }
-            specialistUnavailable={sessionController.view.specialist.unavailable}
-            specialistHasPendingSwitch={sessionController.view.specialist.hasPendingSwitch}
-            reconfigureError={sessionController.view.specialist.reconfigureError}
-            onReconfigureRetry={() =>
-              conversation.actions.submit.draft({
-                forcedSkillIds: docToSkillIds(draftDoc),
-                mode: 'retry-reconfigure'
-              })
-            }
-            onReconfigureChooseOther={sessionController.actions.chooseOtherSpecialist}
-            onReconfigureUseNone={sessionController.actions.useMainAgent}
-            onSpecialistChange={sessionController.actions.selectSpecialist}
+            composer={composer}
+            conversation={conversation}
+            sideChat={sideChat}
+            specialist={sessionController}
+            layout={{
+              isPreviewPanelCollapsed,
+              togglePreviewPanel: togglePreviewPanelFromLayout,
+              openSidebar: openMobileSidebar
+            }}
+            permissions={{
+              requests: visiblePermissionRequests,
+              permissionProfile: activePermissionProfile,
+              permissionProfileState: activePermissionProfileState,
+              permissionGrants: activePermissionGrants,
+              canChangePermissionProfile,
+              respond: respondToVisiblePermission,
+              changeProfile: changePermissionProfile,
+              revokeGrant: revokeActivePermissionGrant,
+              clearGrants: clearActivePermissionGrants
+            }}
+            elicitation={{
+              requests: visibleElicitationRequests,
+              respond: respondToElicitation
+            }}
+            agentControls={{
+              canChange: canChangeAgentControls,
+              autoReviewEnabled: activeAutoReviewEnabled,
+              enabledComputeHosts: activeEnabledComputeHosts,
+              toggleAutoReview: changeAutoReviewEnabled,
+              toggleComputeHost: handleComputeHostToggle
+            }}
+            contextWindow={{
+              usage: activeContextUsage,
+              canCompact: canCompactContext,
+              compactDisabledReason: compactContextDisabledReason,
+              compact: compactActiveContext
+            }}
+            review={{
+              disabled: isRequestReviewDisabled,
+              request: requestManualReview
+            }}
+            sessionTools={{
+              notebookReference: activeNotebookReference,
+              openNotebook: openNotebookPreview,
+              openJobs: sessionController.actions.openJobList
+            }}
+            subagents={{
+              unavailableReason: activeSession
+                ? delegatedWorkUnavailableBySession[activeSession.id]
+                : undefined,
+              stop: () => {
+                if (!activeSession) return
+                return window.api.acp
+                  .cancel({ sessionId: activeSession.id, scope: 'subagents' })
+                  .then(() => undefined)
+              }
+            }}
           />
         )}
       />
