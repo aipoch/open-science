@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useCallback, useEffect } from 'react'
+import { act, forwardRef, useCallback, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import {
@@ -85,6 +85,26 @@ vi.mock('@/components/streamdown/AgentMarkdown', () => ({
 
 vi.mock('@/components/ui/message-scroller', () => {
   const Wrapper = ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
+  const Viewport = forwardRef<
+    HTMLDivElement,
+    PropsWithChildren<React.HTMLAttributes<HTMLDivElement>>
+  >(function MockMessageScrollerViewport({ children, ...props }, ref) {
+    return (
+      <div ref={ref} data-testid="message-scroller-viewport" {...props}>
+        {children}
+      </div>
+    )
+  })
+  const Content = forwardRef<
+    HTMLDivElement,
+    PropsWithChildren<React.HTMLAttributes<HTMLDivElement>>
+  >(function MockMessageScrollerContent({ children, ...props }, ref) {
+    return (
+      <div ref={ref} {...props}>
+        {children}
+      </div>
+    )
+  })
   const Item = ({
     children,
     messageId
@@ -106,8 +126,8 @@ vi.mock('@/components/ui/message-scroller', () => {
   return {
     MessageScrollerProvider: Wrapper,
     MessageScroller: Wrapper,
-    MessageScrollerViewport: Wrapper,
-    MessageScrollerContent: Wrapper,
+    MessageScrollerViewport: Viewport,
+    MessageScrollerContent: Content,
     MessageScrollerItem: Item,
     MessageScrollerButton: Button
   }
@@ -2066,21 +2086,51 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
   })
 
-  it('offers scrolling to the first message only while the Session is idle or terminal', async () => {
+  it('offers scrolling to the first message only for long, sufficiently scrolled idle Sessions', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
-    const render = async (status: ChatSession['status']): Promise<void> => {
+    const messages = [
+      createMessage({ id: 'prompt-1' }),
+      createMessage({ id: 'reply-1', role: 'agent' }),
+      createMessage({ id: 'prompt-2' }),
+      createMessage({ id: 'reply-2', role: 'agent' })
+    ]
+    const render = async (
+      status: ChatSession['status'],
+      sessionMessages: ChatMessage[] = messages
+    ): Promise<void> => {
       await act(async () => {
         root.render(
           <WorkspaceMessageScroller
-            activeSession={createSession({ status })}
+            activeSession={createSession({ status, messages: sessionMessages })}
             onSendEditedMessage={vi.fn()}
           />
         )
       })
     }
+    const scrollTo = async (
+      scrollTop: number,
+      { clientHeight = 400, scrollHeight = 1000 } = {}
+    ): Promise<void> => {
+      const viewport = container.querySelector<HTMLElement>(
+        '[data-testid="message-scroller-viewport"]'
+      )
+      Object.defineProperties(viewport, {
+        clientHeight: { configurable: true, value: clientHeight },
+        scrollHeight: { configurable: true, value: scrollHeight },
+        scrollTop: { configurable: true, writable: true, value: scrollTop }
+      })
+      await act(async () => viewport?.dispatchEvent(new Event('scroll', { bubbles: true })))
+    }
 
     root = createRoot(container)
     await render('idle')
+    await scrollTo(0, { clientHeight: 400, scrollHeight: 400 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await scrollTo(59)
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await scrollTo(60)
     const firstMessageButton = container.querySelector('[aria-label="Scroll to first message"]')
     const lastMessageButton = container.querySelector('[data-direction="end"]')
     expect(firstMessageButton).not.toBeNull()
@@ -2091,6 +2141,16 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       expect(button?.classList.contains('border-border-200')).toBe(false)
     }
 
+    await scrollTo(400, { clientHeight: 400, scrollHeight: 10_000 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+
+    await render('idle', messages.slice(0, 2))
+    await scrollTo(200, { clientHeight: 400, scrollHeight: 700 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+
+    await scrollTo(40, { clientHeight: 400, scrollHeight: 800 })
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+
     for (const status of [
       'running',
       'waiting-for-user',
@@ -2098,10 +2158,12 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       'waiting-plan-approval'
     ] as const) {
       await render(status)
+      await scrollTo(400)
       expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
     }
 
     await render('error')
+    await scrollTo(60)
     expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
   })
 
