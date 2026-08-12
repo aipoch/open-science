@@ -1730,7 +1730,7 @@ const createApplicationModules = async (
   // Reconcile an existing legacy AppImage shim before startup completes. The owner scopes the
   // operation to Linux AppImage and records any filesystem failure without aborting the app.
   await cliCommandOwner.ensureCurrent()
-  const githubCommandOwner = createGithubCommandOwner()
+  const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })
   const logsCommandOwner = createLogsCommandOwner()
   declareElectronAdapter('desktop-utilities', () => {
     registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })

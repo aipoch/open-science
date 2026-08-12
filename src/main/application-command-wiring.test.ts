@@ -124,6 +124,9 @@ describe('production application command wiring', () => {
     expect(dependencyBlock).toContain('compute: computeIpcModule.handlers')
     expect(ipcSource).toContain('await cliCommandOwner.ensureCurrent()')
     expect(dependencyBlock).toContain('enabledHosts: sessionEnabledComputeHostsOwner')
+    expect(ipcSource).toContain(
+      'const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })'
+    )
   })
 
   it('keeps native-only commands inside the Electron owner adapter and exposes only narrow views', () => {
