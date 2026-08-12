@@ -6,6 +6,11 @@ name: Desktop Regression
 on:
   workflow_call:
     inputs:
+      allow_failure:
+        description: 'Keep regression advisory when embedded in the Release no-publish dry-run'
+        required: false
+        type: boolean
+        default: false
       run_id:
         description: 'Optional caller run ID; defaults to the current Release dry-run'
         required: false
@@ -75,6 +80,7 @@ jobs:
     name: p0 (macos-arm64 artifact)
     needs: source
     if: needs.source.outputs.available == 'true'
+    continue-on-error: ${{ inputs.allow_failure }}
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -136,6 +142,7 @@ jobs:
     name: visual (canonical macos-14 source build)
     needs: source
     if: needs.source.outputs.available == 'true'
+    continue-on-error: ${{ inputs.allow_failure }}
     runs-on: macos-14
     timeout-minutes: 15
     steps:

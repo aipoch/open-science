@@ -203,7 +203,7 @@ describe('post-merge Windows validation', () => {
     expect(uploadEvidence.with?.['retention-days']).toBe(7)
     expect(p0Regression).toMatchObject({ needs: 'source', 'runs-on': 'macos-26' })
     expect(p0Regression.if).toBe("needs.source.outputs.available == 'true'")
-    expect(p0Regression['continue-on-error']).toBeUndefined()
+    expect(p0Regression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
     expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.name).toBe('macos-arm64')
     expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.['run-id']).toBe(
       '${{ needs.source.outputs.run_id }}'
@@ -216,7 +216,7 @@ describe('post-merge Windows validation', () => {
     expect(findStep(p0Regression, 'Upload P0 diagnostics').if).toBe('always()')
     expect(visualRegression).toMatchObject({ needs: 'source', 'runs-on': 'macos-14' })
     expect(visualRegression.if).toBe("needs.source.outputs.available == 'true'")
-    expect(visualRegression['continue-on-error']).toBeUndefined()
+    expect(visualRegression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
     expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
     expect(findStep(visualRegression, 'Run visual regression')).toMatchObject({
       if: "github.event_name != 'workflow_run'",
@@ -287,7 +287,8 @@ describe('post-merge Windows validation', () => {
     expect(release.jobs['regression-dry-run']).toMatchObject({
       needs: ['build', 'package-smoke'],
       if: "github.event_name == 'workflow_dispatch'",
-      uses: './.github/workflows/desktop-regression.yml'
+      uses: './.github/workflows/desktop-regression.yml',
+      with: { allow_failure: true }
     })
     expect(release.jobs.regression).toBeUndefined()
     expect(nightly.jobs.regression).toBeUndefined()

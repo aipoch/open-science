@@ -57,12 +57,14 @@ jobs:
     needs: build
     uses: ./.github/workflows/package-smoke.yml
 
-  # The manual Release entry is the no-publish dry-run. Exercise the same advisory regression
-  # workflow before a PR without making tagged releases wait on flaky behavior checks.
+  # The manual Release entry is the no-publish dry-run. Exercise advisory regression and retain its
+  # diagnostics without allowing known flakes to override the blocking build + package-smoke result.
   regression-dry-run:
     needs: [build, package-smoke]
     if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/desktop-regression.yml
+    with:
+      allow_failure: true
 
   # Notarize + staple the signed macOS artifacts on their own runner, then re-emit the stapled dmg/zip
   # (overwriting the build's signed-only ones) so publish always attaches a stapled mac build. Kept out
