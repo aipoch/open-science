@@ -305,7 +305,7 @@ export const ComposerYourFilesMenu = ({
                         event.preventDefault()
                         void remove(root.id).catch(() => undefined)
                       }}
-                      className="flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 opacity-0 transition-opacity hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100"
+                      className="flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 opacity-0 transition-opacity duration-150 hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100"
                     >
                       <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
                     </button>

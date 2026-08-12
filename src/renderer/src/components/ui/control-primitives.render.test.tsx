@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { Badge } from './badge'
 import { Button } from './button'
 import {
   DropdownMenu,
@@ -145,5 +146,21 @@ describe('shared control interaction styling', () => {
     expect(thumb?.className).toContain('motion-reduce:transition-none')
     expect(textarea?.disabled).toBe(true)
     expect(textarea?.className).toContain('focus-visible:ring-3')
+  })
+
+  it('keeps badge focus rings instant while limiting hover motion to colors', () => {
+    act(() => {
+      root.render(
+        <Badge asChild>
+          <a href="#status">Connected</a>
+        </Badge>
+      )
+    })
+
+    const badge = document.body.querySelector<HTMLElement>('[data-slot="badge"]')
+    expect(badge?.className).toContain('transition-colors')
+    expect(badge?.className).toContain('motion-reduce:transition-none')
+    expect(badge?.className).toContain('focus-visible:ring-[3px]')
+    expect(badge?.className).not.toContain('transition-all')
   })
 })

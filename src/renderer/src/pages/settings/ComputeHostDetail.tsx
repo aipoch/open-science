@@ -1,4 +1,14 @@
-import { AlertTriangle, ChevronDown, ChevronUp, Cpu, HardDrive, MemoryStick, Pin, RefreshCw, Zap } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Cpu,
+  HardDrive,
+  MemoryStick,
+  Pin,
+  RefreshCw,
+  Zap
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import type { ComputeHost } from '../../../../shared/compute'
@@ -220,9 +230,9 @@ export function ComputeHostDetail({
             className={cn(
               'flex size-10 shrink-0 items-center justify-center rounded-lg',
               status === 'connected'
-                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+                ? 'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground'
                 : status === 'failed'
-                  ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400'
+                  ? 'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground'
                   : 'bg-muted text-muted-foreground'
             )}
             aria-hidden="true"
@@ -233,11 +243,11 @@ export function ComputeHostDetail({
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="truncate text-lg font-semibold text-foreground">{host.displayName}</h3>
               {status === 'connected' ? (
-                <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+                <Badge className="bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">
                   Connected
                 </Badge>
               ) : status === 'failed' ? (
-                <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400">
+                <Badge className="bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground">
                   Probe failed
                 </Badge>
               ) : (
@@ -278,14 +288,14 @@ export function ComputeHostDetail({
       {status === 'failed' && probed ? (
         <div
           role="alert"
-          className="mt-5 rounded-xl border border-rose-200 bg-rose-50/50 px-3 py-3 dark:border-rose-800/50 dark:bg-rose-950/20"
+          className="mt-5 rounded-xl border border-status-failure-border bg-status-failure-subtle/50 px-3 py-3 dark:border-status-failure-dark-border/50 dark:bg-status-failure-dark-surface/20"
         >
           <div className="flex items-center gap-2">
             <AlertTriangle
-              className="size-4 shrink-0 text-rose-600 dark:text-rose-400"
+              className="size-4 shrink-0 text-status-failure-accent dark:text-status-failure-dark-foreground"
               aria-hidden="true"
             />
-            <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+            <span className="text-sm font-semibold text-status-failure-foreground dark:text-status-failure-dark-emphasis">
               Probe failed
             </span>
             <Button
@@ -295,7 +305,7 @@ export function ComputeHostDetail({
               onClick={() => void handleProbe()}
               disabled={isProbing}
               aria-label="Retry probe"
-              className="ml-auto text-rose-600 hover:bg-rose-100 dark:text-rose-400"
+              className="ml-auto text-status-failure-accent hover:bg-status-failure-surface dark:text-status-failure-dark-foreground"
             >
               <RefreshCw
                 className={cn('size-3.5', isProbing && 'animate-spin')}
@@ -304,7 +314,7 @@ export function ComputeHostDetail({
             </Button>
           </div>
           {probed.errorTail ? (
-            <pre className="mt-2 overflow-x-auto rounded bg-rose-100/50 px-2 py-1.5 font-mono text-xs text-rose-800 dark:bg-rose-900/30 dark:text-rose-300">
+            <pre className="mt-2 overflow-x-auto rounded bg-status-failure-surface/50 px-2 py-1.5 font-mono text-xs text-status-failure-strong dark:bg-status-failure-dark-code/30 dark:text-status-failure-dark-emphasis">
               {probed.errorTail}
             </pre>
           ) : null}
@@ -450,7 +460,7 @@ export function ComputeHostDetail({
               <pre
                 ref={detailsRef}
                 className={cn(
-                  'overflow-x-auto whitespace-pre-wrap px-4 py-3 font-mono text-xs text-foreground/80 transition-all',
+                  'overflow-x-auto whitespace-pre-wrap px-4 py-3 font-mono text-xs text-foreground/80 transition-opacity duration-150 motion-reduce:transition-none',
                   !isDetailsExpanded && 'max-h-[200px]',
                   isSkeleton && 'opacity-70'
                 )}

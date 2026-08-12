@@ -74,6 +74,7 @@ describe('AgentMarkdown fullscreen chrome', () => {
 
   it('uses theme-aware shared chrome for table fullscreen without changing table rendering', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const themeCss = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     const blockEnd = css.indexOf('/* Mermaid fullscreen portal')
     const blockStart = css.lastIndexOf("[data-streamdown='table-fullscreen'] {", blockEnd)
     const tableFullscreenBlock = css.slice(blockStart, blockEnd)
@@ -88,6 +89,10 @@ describe('AgentMarkdown fullscreen chrome', () => {
     expect(tableFullscreenBlock).toContain('z-[80]!')
     expect(tableFullscreenBlock).toContain('pointer-events: auto !important')
     expect(tableFullscreenBlock).toContain('pointer-events: none !important')
+    expect(css).toContain('z-markdown-menu')
+    expect(css).not.toContain('z-[10000]')
+    expect(themeCss).toContain('--z-index-markdown-menu: 200')
+    expect(themeCss).not.toContain('--z-index-markdown-menu: 10000')
   })
 
   it('disables both fullscreen animations when reduced motion is requested', () => {

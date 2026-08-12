@@ -231,7 +231,11 @@ describe('ComposerYourFilesMenu', () => {
   it('removes access via the store from the hover × action', async () => {
     renderMenu()
 
-    await click(container.querySelector('[data-testid="your-files-remove-root-1"]'))
+    const removeButton = container.querySelector('[data-testid="your-files-remove-root-1"]')
+    expect(removeButton?.className).toContain('focus-visible:opacity-100')
+    expect(removeButton?.className).toContain('[@media(hover:none)]:opacity-100')
+    expect(removeButton?.className).toContain('motion-reduce:transition-none')
+    await click(removeButton)
     await flush()
 
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })

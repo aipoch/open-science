@@ -17,10 +17,10 @@ export const DownloadProgressLine = ({
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
         <div
-          className={`h-full rounded-full bg-primary transition-all duration-150 ease-out ${
+          className={`h-full origin-left rounded-full bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none ${
             reconnecting ? 'animate-pulse' : ''
-          } ${known ? '' : 'w-1/3 animate-pulse'}`}
-          style={known ? { width: `${progress.percent}%` } : undefined}
+          } ${known ? 'w-full' : 'w-1/3 animate-pulse'}`}
+          style={known ? { transform: `scaleX(${progress.percent! / 100})` } : undefined}
         />
       </div>
     </div>

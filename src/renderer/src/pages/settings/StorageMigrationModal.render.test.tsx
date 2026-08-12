@@ -112,6 +112,10 @@ describe('StorageMigrationModal', () => {
 
     expect(document.body.textContent).toContain('/home/u/.open-science/artifacts/report.pdf')
     expect(document.body.textContent).toMatch(/50%/)
+    const progressBar = document.body.querySelector<HTMLElement>('[style*="scaleX"]')
+    expect(progressBar?.className).toContain('transition-transform')
+    expect(progressBar?.className).toContain('motion-reduce:transition-none')
+    expect(progressBar?.className).not.toContain('transition-all')
 
     // The migrating stage shows a running elapsed clock and a don't-quit warning (design follow-up).
     expect(document.body.textContent).toMatch(/Elapsed 0:00/)
@@ -135,6 +139,8 @@ describe('StorageMigrationModal', () => {
 
     // Done stage: copy is complete but nothing is committed. "Restart now" commits + relaunches.
     expect(document.body.textContent).toMatch(/data copied/i)
+    expect(document.body.querySelector('.bg-status-success-accent\\/10')).not.toBeNull()
+    expect(document.body.querySelector('.text-emerald-600')).toBeNull()
     expect(api.commitAndRelaunch).not.toHaveBeenCalled()
     await act(async () => {
       clickButton((button) => button.textContent?.trim() === 'Restart now')

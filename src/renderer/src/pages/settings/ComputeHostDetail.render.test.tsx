@@ -142,6 +142,30 @@ describe('ComputeHostDetail', () => {
     expect(container.textContent).toContain('10')
   })
 
+  it('uses semantic failure roles for a failed probe', () => {
+    useComputeStore.setState({
+      hosts: [
+        host({
+          probeResult: {
+            ok: false,
+            probedAt: new Date().toISOString(),
+            exitCode: 255,
+            errorTail: 'offline'
+          }
+        })
+      ],
+      isLoaded: true
+    })
+
+    act(() => {
+      root.render(<ComputeHostDetail providerId="ssh:biowulf" onRemoved={vi.fn()} />)
+    })
+
+    const failure = container.querySelector<HTMLElement>('[role="alert"]')
+    expect(failure?.className).toContain('border-status-failure-border')
+    expect(failure?.className).toContain('bg-status-failure-subtle/50')
+  })
+
   it('calls saveDetails with author=user when Save is clicked in details editor', async () => {
     const saveDetails = vi.fn(() => Promise.resolve())
     useComputeStore.setState({ hosts: [host()], isLoaded: true, saveDetails })
@@ -155,6 +179,10 @@ describe('ComputeHostDetail', () => {
     await act(async () => {
       await Promise.resolve()
     })
+    const details = container.querySelector<HTMLElement>('pre')
+    expect(details?.className).toContain('transition-opacity')
+    expect(details?.className).toContain('motion-reduce:transition-none')
+    expect(details?.className).not.toContain('transition-all')
 
     const editButton = Array.from(container.querySelectorAll('button')).find(
       (b) => b.textContent?.trim() === 'Edit' && b.closest('div')?.textContent?.includes('Details')

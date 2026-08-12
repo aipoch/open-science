@@ -51,6 +51,31 @@
   --color-danger-900: var(--danger-900);
   --color-warning-100: var(--warning-100);
   --color-warning-900: var(--warning-900);
+  /* Settings-only categorical and status roles. These aliases preserve the established palette
+     while keeping feature components independent from raw Tailwind color names. */
+  --color-storage-artifacts: var(--color-sky-500);
+  --color-storage-delegation: var(--color-cyan-500);
+  --color-storage-runtime: var(--color-violet-500);
+  --color-storage-uploads: var(--color-amber-500);
+  --color-storage-notebooks: var(--color-emerald-500);
+  --color-storage-workspaces: var(--color-rose-500);
+  --color-status-success-surface: var(--color-emerald-100);
+  --color-status-success-foreground: var(--color-emerald-700);
+  --color-status-success-accent: var(--color-emerald-500);
+  --color-status-success-accent-foreground: var(--color-emerald-600);
+  --color-status-success-dark-surface: var(--color-emerald-950);
+  --color-status-success-dark-foreground: var(--color-emerald-400);
+  --color-status-failure-surface: var(--color-rose-100);
+  --color-status-failure-subtle: var(--color-rose-50);
+  --color-status-failure-border: var(--color-rose-200);
+  --color-status-failure-foreground: var(--color-rose-700);
+  --color-status-failure-accent: var(--color-rose-600);
+  --color-status-failure-strong: var(--color-rose-800);
+  --color-status-failure-dark-surface: var(--color-rose-950);
+  --color-status-failure-dark-border: var(--color-rose-800);
+  --color-status-failure-dark-foreground: var(--color-rose-400);
+  --color-status-failure-dark-emphasis: var(--color-rose-300);
+  --color-status-failure-dark-code: var(--color-rose-900);
   --color-success-000: var(--success-000);
   --color-syntax-keyword: var(--syntax-keyword);
   --color-syntax-string: var(--syntax-string);
@@ -73,6 +98,7 @@
   --shadow-dialog: var(--shadow-dialog-value);
   --z-index-modal: 50;
   --z-index-toast: 70;
+  --z-index-markdown-menu: 200;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

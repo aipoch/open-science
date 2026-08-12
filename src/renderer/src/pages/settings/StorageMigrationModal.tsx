@@ -265,8 +265,8 @@ const StorageMigrationModal = ({
               </Dialog.Description>
               <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
                 <div
-                  className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
-                  style={{ width: `${percent}%` }}
+                  className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none"
+                  style={{ transform: `scaleX(${percent / 100})` }}
                 />
               </div>
               <p className="mt-1.5 text-xs tabular-nums text-muted-foreground">{percent}%</p>
@@ -302,7 +302,7 @@ const StorageMigrationModal = ({
             <>
               <div className="flex items-start gap-3">
                 <span
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-status-success-accent/10 text-status-success-accent-foreground dark:text-status-success-dark-foreground"
                   aria-hidden="true"
                 >
                   <Check className="size-[18px]" />

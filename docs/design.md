@@ -212,7 +212,7 @@ Target values for dark mode. Apply under `.dark` when dark theme is enabled:
 
 1. Default to shadcn semantic classes for new UI: `bg-background`, `text-foreground`, `bg-card`, `bg-accent`, `text-muted-foreground`, and so on.
 2. Use workspace classes only where this document names a workspace surface (shell, sidebar rows, composer, session menus, markdown blocks, and similar).
-3. Do not add new color token names. Extend styling only through the shadcn and workspace token sets below.
+3. Add color roles only when an existing semantic token cannot preserve the intended meaning and visual value. Register the role in `main.css` and document it here before using it in components.
 
 ### shadcn Semantic Tokens
 
@@ -259,6 +259,31 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | `--shadow-card`                     | `shadow-card`                      | `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)` | Sidebar rail card and composer dock         |
 | `--shadow-card-opaque`              | `shadow-card-opaque`               | `0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1)`  | Composer form                               |
 | `--shadow-menu` / `--shadow-dialog` | `shadow-menu`, `shadow-dialog`     | `0 2px 8px rgb(0 0 0 / 0.08)`, `0 8px 32px rgb(10 10 10 / 12%)`   | Menus and modal dialogs                     |
+
+### Settings Status and Category Tokens
+
+Settings views use named aliases for categorical data and host status. The aliases in `main.css`
+resolve to the established Tailwind palette values, so semantic cleanup does not change the rendered
+colors.
+
+| Semantic role        | Tailwind classes                                                                                                                             | Usage                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Storage categories   | `bg-storage-artifacts`, `bg-storage-delegation`, `bg-storage-runtime`, `bg-storage-uploads`, `bg-storage-notebooks`, `bg-storage-workspaces` | Disk-usage bar segments and legend swatches    |
+| Success surface      | `bg-status-success-surface`, `text-status-success-foreground`                                                                                | Reachable Compute host icon and badge          |
+| Success accent       | `bg-status-success-accent/10`, `text-status-success-accent-foreground`                                                                       | Completed storage migration icon               |
+| Failure surface      | `bg-status-failure-surface`, `text-status-failure-foreground`                                                                                | Failed Compute host icon and badge             |
+| Failure detail       | `border-status-failure-border`, `bg-status-failure-subtle/50`, `text-status-failure-accent`, `text-status-failure-strong`                    | Compute probe failure panel                    |
+| Dark status variants | `dark:*-status-success-dark-*`, `dark:*-status-failure-dark-*`                                                                               | Preserve the existing dark-mode status palette |
+
+Do not use these tokens as general brand accents. Storage colors distinguish categories; status
+colors communicate a successful or failed probe/migration result.
+
+### Named Layer Tokens
+
+| Token                     | Tailwind class    | Value | Usage                                                              |
+| ------------------------- | ----------------- | ----- | ------------------------------------------------------------------ |
+| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content |
+| -----                     | --------------    | ----- | -----                                                              |
 
 ### Border Opacity
 

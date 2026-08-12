@@ -99,4 +99,36 @@ describe('ComputePanel', () => {
     expect(deleteHost).toHaveBeenCalledWith('ssh:biowulf')
     expect(container.textContent).toContain('Removed biowulf.')
   })
+
+  it('uses semantic success and failure roles for probed hosts', () => {
+    useComputeStore.setState({
+      hosts: [
+        host({
+          probeResult: {
+            ok: true,
+            probedAt: new Date().toISOString(),
+            exitCode: 0,
+            errorTail: null
+          }
+        }),
+        host({
+          id: 'host-2',
+          providerId: 'ssh:failed',
+          displayName: 'failed',
+          probeResult: {
+            ok: false,
+            probedAt: new Date().toISOString(),
+            exitCode: 255,
+            errorTail: 'offline'
+          }
+        })
+      ],
+      isLoaded: true
+    })
+
+    act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
+
+    expect(container.querySelector('.bg-status-success-surface')).not.toBeNull()
+    expect(container.querySelector('.bg-status-failure-surface')).not.toBeNull()
+  })
 })

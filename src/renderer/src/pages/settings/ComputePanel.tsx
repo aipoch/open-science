@@ -64,9 +64,9 @@ const HostCard = ({
         className={cn(
           'flex size-9 shrink-0 items-center justify-center rounded-lg',
           status === 'connected'
-            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+            ? 'bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground'
             : status === 'failed'
-              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400'
+              ? 'bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground'
               : 'bg-muted text-muted-foreground'
         )}
         aria-hidden="true"
@@ -137,11 +137,11 @@ const HostCard = ({
       </TooltipProvider>
 
       {status === 'connected' ? (
-        <Badge className="shrink-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+        <Badge className="shrink-0 bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">
           Connected
         </Badge>
       ) : status === 'failed' ? (
-        <Badge className="shrink-0 bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400">
+        <Badge className="shrink-0 bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground">
           Probe failed
         </Badge>
       ) : (

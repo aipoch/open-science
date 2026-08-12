@@ -74,6 +74,10 @@ describe('EnvProvisionOverlay', () => {
     act(() => root.render(<EnvProvisionOverlay ui={ui} />))
     const gate = container.querySelector('[data-testid="notebook-env-gate"]')
     expect(gate?.textContent).toContain('Preparing Python environment')
+    const progressBar = gate?.querySelector<HTMLElement>('[style*="scaleX"]')
+    expect(progressBar?.className).toContain('transition-transform')
+    expect(progressBar?.className).toContain('motion-reduce:transition-none')
+    expect(progressBar?.className).not.toContain('transition-all')
   })
 
   it('renders a retry affordance in the error state', () => {

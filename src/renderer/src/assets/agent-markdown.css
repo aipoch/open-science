@@ -149,7 +149,7 @@
     }
 
     [data-streamdown='mermaid-block-actions'] .relative > .absolute {
-      @apply fixed! z-[200] m-0! min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu break-normal;
+      @apply fixed! z-markdown-menu m-0! min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu break-normal;
       top: var(--sd-menu-top, 0) !important;
       right: var(--sd-menu-right, 0) !important;
       left: auto !important;
@@ -198,18 +198,18 @@
   }
 
   .agent-markdown-root [data-streamdown='mermaid-block-actions'] .relative > .absolute {
-    @apply z-[200] min-w-[7.5rem] w-max shadow-sd-menu;
+    @apply z-markdown-menu min-w-[7.5rem] w-max shadow-sd-menu;
   }
 
   [data-streamdown='table-fullscreen'] .relative > .absolute {
-    @apply z-[10000]! min-w-32! w-max! max-w-[calc(100vw-1rem)]! transform-none!;
+    @apply z-markdown-menu! min-w-32! w-max! max-w-[calc(100vw-1rem)]! transform-none!;
   }
 
   body
     > div.fixed.inset-0.z-50.flex.items-center.justify-center[role='button']:not([data-streamdown])
     .relative
     > .absolute {
-    @apply absolute! right-0! left-auto! z-[200] m-0 min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu-lg break-normal;
+    @apply absolute! right-0! left-auto! z-markdown-menu m-0 min-w-[7.5rem] w-max overflow-hidden rounded-md border border-sd-border bg-sd-surface! shadow-sd-menu-lg break-normal;
     top: auto !important;
     bottom: calc(100% + 4px) !important;
   }
@@ -236,7 +236,7 @@
 
   /* Inline chat table format menu (plain DOM portal — avoids scroll clipping). */
   .sd-table-format-menu {
-    @apply fixed z-[10000] min-w-32 overflow-hidden rounded-md border border-sd-border bg-sd-surface shadow-sd-menu-lg;
+    @apply fixed z-markdown-menu min-w-32 overflow-hidden rounded-md border border-sd-border bg-sd-surface shadow-sd-menu-lg;
 
     & > button {
       @apply block box-border w-full min-w-32 cursor-pointer border-0 bg-sd-surface px-3 py-2 text-left text-sm leading-5 whitespace-nowrap text-sd-ink transition-colors duration-150;

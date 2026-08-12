@@ -51,12 +51,12 @@ const CATEGORY_LABELS: Record<UsageCategoryKey, string> = {
 // Fixed swatch palette keyed by category so the stacked bar and legend always agree on color,
 // even though the bar only renders non-zero segments while the legend lists every category.
 const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
-  artifacts: 'bg-sky-500',
-  delegation: 'bg-cyan-500',
-  runtime: 'bg-violet-500',
-  uploads: 'bg-amber-500',
-  notebooks: 'bg-emerald-500',
-  workspaces: 'bg-rose-500'
+  artifacts: 'bg-storage-artifacts',
+  delegation: 'bg-storage-delegation',
+  runtime: 'bg-storage-runtime',
+  uploads: 'bg-storage-uploads',
+  notebooks: 'bg-storage-notebooks',
+  workspaces: 'bg-storage-workspaces'
 }
 
 // Shared path-pill style, matching GeneralPanel's log-file display so every settings path reads the same.

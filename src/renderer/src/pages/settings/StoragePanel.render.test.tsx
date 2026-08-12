@@ -496,6 +496,10 @@ describe('StoragePanel', () => {
     expect(container.textContent).toContain('Total')
     expect(container.textContent).toContain('Available on disk')
     expect(container.textContent).toMatch(/530\.6 GB/)
+    expect(container.querySelector('.bg-storage-artifacts')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-runtime')).not.toBeNull()
+    expect(container.querySelector('.bg-sky-500')).toBeNull()
+    expect(container.querySelector('.bg-violet-500')).toBeNull()
 
     // Children are collapsed until the runtime row is expanded.
     expect(container.textContent).not.toContain('python')
