@@ -157,6 +157,9 @@ const moveCaretToEnd = (root: HTMLElement): void => {
   selection?.addRange(range)
 }
 
+const canReceiveFocus = (root: HTMLElement): boolean =>
+  root.getAttribute('contenteditable') === 'true' && root.closest('[hidden]') === null
+
 // A contenteditable composer driven by a pure ComposerDoc model. External doc changes flow into the
 // DOM via applyDocToDom; user edits flow out via domToDoc. A `/` mention trigger mounts a skill popup.
 export const ComposerEditor = ({
@@ -211,7 +214,8 @@ export const ComposerEditor = ({
   useLayoutEffect(() => {
     const root = editorRef.current
     if (!root) return
-    const shouldPreserveFocus = focusRequest !== undefined && document.activeElement === root
+    const shouldPreserveFocus =
+      focusRequest !== undefined && canReceiveFocus(root) && document.activeElement === root
     const docChanged = !nodesEqual(domToDoc(root).nodes, doc.nodes)
     if (docChanged) applyDocToDom(root, doc)
     if (restoreHistoryCaretRef.current || (docChanged && shouldPreserveFocus)) {
@@ -221,9 +225,12 @@ export const ComposerEditor = ({
   }, [doc, focusRequest])
 
   useLayoutEffect(() => {
-    if ((focusRequest !== undefined || restoreFocusRequest !== undefined) && editorRef.current) {
-      moveCaretToEnd(editorRef.current)
-    }
+    const root = editorRef.current
+    if (
+      root &&
+      (restoreFocusRequest !== undefined || (focusRequest !== undefined && canReceiveFocus(root)))
+    )
+      moveCaretToEnd(root)
   }, [focusRequest, restoreFocusRequest])
 
   const handleInput = useCallback((): void => emitDocFromDom(), [emitDocFromDom])

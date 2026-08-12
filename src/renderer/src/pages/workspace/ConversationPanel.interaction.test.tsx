@@ -484,6 +484,18 @@ describe('ConversationPanel composer intake', () => {
     expect(document.activeElement).toBe(navigationButton)
   })
 
+  it('does not refocus the composer when draft editing becomes available', () => {
+    renderPanel({ composerFocusKey: 'session-preparing', canEditDraft: false })
+    const navigationButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open navigation"]'
+    )!
+    navigationButton.focus()
+
+    renderPanel({ composerFocusKey: 'session-preparing', canEditDraft: true })
+
+    expect(document.activeElement).toBe(navigationButton)
+  })
+
   it('keeps the Main composer available while a delegated question is pending', () => {
     renderPanel({
       activeSession: delegatedQuestionSession(),

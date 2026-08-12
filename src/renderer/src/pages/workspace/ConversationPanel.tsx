@@ -503,8 +503,6 @@ const ConversationPanel = ({
   const ordinaryComposerBlocked = Boolean(
     sideChat || hasPendingPermission || pendingElicitation || pendingPlan
   )
-  const composerFocusRequest =
-    canEditDraft && !ordinaryComposerBlocked ? composerFocusKey : undefined
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
   const handleResume = async (): Promise<void> => {
@@ -1124,7 +1122,7 @@ const ConversationPanel = ({
                               ? { sessionId: activeSession.id, projectId: activeSession.projectId }
                               : undefined
                           }
-                          focusRequest={composerFocusRequest}
+                          focusRequest={composerFocusKey}
                           restoreFocusRequest={composerRestoreFocusRequest}
                         />
                       </div>
