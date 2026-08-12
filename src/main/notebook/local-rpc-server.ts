@@ -329,6 +329,13 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
   response.end(`${JSON.stringify(payload)}\n`)
 }
 
+const closeRequestAfterResponse = (request: IncomingMessage, response: ServerResponse): void => {
+  response.shouldKeepAlive = false
+  if (!response.headersSent) response.setHeader('connection', 'close')
+  if (response.writableFinished) request.destroy()
+  else response.once('finish', () => request.destroy())
+}
+
 // Hosts an authenticated app-local bridge between MCP stdio tools and the runtime service. The wire
 // protocol is HTTP/JSON; Windows carries it over a named pipe instead of loopback TCP.
 class NotebookLocalRpcServer {
@@ -1040,15 +1047,31 @@ class NotebookLocalRpcServer {
         writeJson(response, 405, { error: 'Notebook RPC only accepts POST requests.' })
         return
       }
+      const authorization = request.headers.authorization
+      const bearerToken = authorization?.startsWith('Bearer ')
+        ? authorization.slice('Bearer '.length)
+        : ''
+      const artifactCapability = this.artifactRpcCapabilities.get(bearerToken)
+      if (artifactCapability && artifactCapability.expiresAt <= this.now()) {
+        void this.revokeArtifactRunCapability(bearerToken)
+        closeRequestAfterResponse(request, response)
+        writeJson(response, 401, { error: 'Artifact RPC capability expired.' })
+        return
+      }
+      const hasKnownToken =
+        authorization === `Bearer ${this.token}` ||
+        this.sessionRpcCapabilities.has(bearerToken) ||
+        Boolean(artifactCapability)
+      if (!hasKnownToken) {
+        closeRequestAfterResponse(request, response)
+        writeJson(response, 401, { error: 'Invalid notebook RPC token.' })
+        return
+      }
       const payload = await readJsonBody(request)
       activeRequest.bodyComplete = true
       const method = typeof payload.method === 'string' ? payload.method : ''
       activeRequest.method = method
       let params = isRecord(payload.params) ? payload.params : {}
-      const authorization = request.headers.authorization
-      const bearerToken = authorization?.startsWith('Bearer ')
-        ? authorization.slice('Bearer '.length)
-        : ''
       let hostCapabilities:
         | Record<
             'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts' | 'lineage' | 'frames' | 'llm',

@@ -77,6 +77,46 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('rejects an invalid token before reading the request body', async () => {
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
+    const connection = await server.ensureStarted()
+    const underlying = (server as unknown as { server?: Server }).server
+    if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+    const accepted = once(underlying, 'request')
+    let responseStatus: number | undefined
+    let responseConnection: string | undefined
+    const request = httpRequest(
+      connection.endpoint,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer invalid-token',
+          'content-type': 'application/json',
+          'content-length': 1024
+        }
+      },
+      (response) => {
+        responseStatus = response.statusCode
+        responseConnection = response.headers.connection
+        response.resume()
+      }
+    )
+    request.once('error', () => undefined)
+
+    try {
+      request.write('{')
+      await accepted
+      await vi.waitFor(() => expect(responseStatus).toBe(401), { timeout: 500 })
+      expect(responseConnection).toBe('close')
+    } finally {
+      request.destroy()
+      await server.close()
+    }
+  })
+
   it('fails closed when a Session capability omits its Frame owner', async () => {
     const server = new NotebookLocalRpcServer({} as never)
 
@@ -1750,7 +1790,7 @@ describe('notebook local RPC server', () => {
       server.revokeArtifactRunCapability(revokedToken)
       const revoked = await call(revokedToken)
       expect(revoked.status).toBe(401)
-      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid Artifact RPC capability.' })
+      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid notebook RPC token.' })
       expect(createVersion).not.toHaveBeenCalled()
     } finally {
       await server.close()
