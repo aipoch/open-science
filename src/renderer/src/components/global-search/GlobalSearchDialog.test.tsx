@@ -235,7 +235,9 @@ describe('GlobalSearchDialog', () => {
 
     expect(document.body.textContent).toContain('Searching…')
     expect(document.body.querySelector('[role="group"][aria-label="Sessions"]')).toBeNull()
-    expect(document.body.querySelector('[role="option"][aria-selected="true"]')).toBeNull()
+    expect(
+      document.body.querySelector('[role="option"][aria-selected="true"]')?.textContent
+    ).toContain('New session')
 
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 170))
@@ -243,7 +245,9 @@ describe('GlobalSearchDialog', () => {
 
     expect(document.body.textContent).toContain('Searching…')
     expect(document.body.querySelector('[role="group"][aria-label="Sessions"]')).toBeNull()
-    expect(document.body.querySelector('[role="option"][aria-selected="true"]')).toBeNull()
+    expect(
+      document.body.querySelector('[role="option"][aria-selected="true"]')?.textContent
+    ).toContain('New session')
 
     await act(async () => {
       resolveSearch(delayedResult)

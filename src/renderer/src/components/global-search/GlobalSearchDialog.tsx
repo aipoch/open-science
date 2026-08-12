@@ -387,7 +387,7 @@ export const GlobalSearchDialog = ({
       ? ({ kind: 'new-session' } as const)
       : ({ kind: 'new-project' } as const)
     if (!primaryProject) return isProjectScope ? [] : [command]
-    if (isSearchPending) return []
+    if (isSearchPending) return [command]
     if (!isSearchMode) {
       return [
         ...displayedArtifacts.map((artifact) => ({ kind: 'artifact' as const, artifact })),
