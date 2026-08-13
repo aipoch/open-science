@@ -306,6 +306,22 @@ export type AcpTurnTokenUsage = {
   turnCount?: number
 }
 
+export type AcpSessionNamingUsage =
+  | Readonly<{
+      source: 'app-generated'
+      usage?: AcpTurnTokenUsage
+      unavailable?: true
+    }>
+  | Readonly<{ source: 'framework'; unavailable: true }>
+  | Readonly<{
+      source: 'combined'
+      appGenerated: Readonly<{
+        usage?: AcpTurnTokenUsage
+        unavailable?: true
+      }>
+      frameworkUnavailable: true
+    }>
+
 export type AcpModelStepTokenUsage = Omit<AcpTurnTokenUsage, 'turnCount'>
 
 export type AcpPromptStopReason = PromptResponse['stopReason']
@@ -473,6 +489,15 @@ export type AcpRuntimeEvent = {
   // Present only on a usage_update-derived event; the runtime records it per session and does not push
   // the event into the visible conversation.
   contextUsage?: AcpContextUsage
+  // A framework-owned Session title update. This is structured control data, never transcript text,
+  // and ACP does not attach independent usage to session_info_update notifications.
+  sessionTitleUpdate?: Readonly<{
+    title: string
+    source?: 'app-generated' | 'framework'
+  }>
+  // Naming is part of the first visible Conversation Turn. App inference reports its real usage;
+  // framework-owned session_info_update has no usage field and is explicitly marked unavailable.
+  sessionNamingUsage?: AcpSessionNamingUsage
   // Present on a completed prompt's stop event when the Agent reports whole-turn token totals.
   turnUsage?: AcpTurnTokenUsage
   // Frozen last-model-step context facts for a visible prompt stop/error. Renderer discards an
@@ -759,6 +784,9 @@ export type AcpSetPermissionProfileRequest = {
 export type AcpPromptRequest = {
   sessionId: string
   text: string
+  // Renderer/Main-owned capability bit set only for the first prompt of a newly-created Session.
+  // Resumes, retries, continuations, and restricted internal inference omit it.
+  autoTitle?: true
   // Closed, application-owned behavior requested for this Conversation Turn only.
   turnIntent?: 'plan-first'
   // Explicit, immutable identity for a Plan-bound interaction. Main validates it before admitting

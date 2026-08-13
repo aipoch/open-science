@@ -447,10 +447,15 @@ const toAcpRuntimeEvent = (
           size: update.size
         }
       }
+    case 'session_info_update':
+      return {
+        ...base,
+        kind: 'system',
+        sessionTitleUpdate: typeof update.title === 'string' ? { title: update.title } : undefined
+      }
     case 'available_commands_update':
     case 'config_option_update':
     case 'current_mode_update':
-    case 'session_info_update':
       return {
         ...base,
         kind: 'system',

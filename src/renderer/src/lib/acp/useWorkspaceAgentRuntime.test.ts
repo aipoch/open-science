@@ -2026,7 +2026,10 @@ describe('workspace agent message sending', () => {
       [],
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
-      true
+      true,
+      undefined,
+      undefined,
+      undefined
     )
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
   })
@@ -2506,7 +2509,10 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
-      false
+      false,
+      undefined,
+      undefined,
+      true
     )
   })
 
@@ -2678,7 +2684,8 @@ describe('workspace agent message sending', () => {
       expect.objectContaining({ promptMessageId: branched?.messageId }),
       true,
       undefined,
-      'plan-first'
+      'plan-first',
+      true
     )
   })
 
@@ -2964,6 +2971,9 @@ describe('workspace agent message sending', () => {
       [],
       undefined,
       expect.objectContaining({ promptMessageId: branched?.messageId }),
+      true,
+      undefined,
+      undefined,
       true
     )
   })
@@ -3093,6 +3103,9 @@ describe('workspace agent message sending', () => {
       [],
       undefined,
       expect.objectContaining({ promptMessageId: branched?.messageId }),
+      true,
+      undefined,
+      undefined,
       true
     )
   })
@@ -3474,7 +3487,10 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
-      false
+      false,
+      undefined,
+      undefined,
+      true
     )
     expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0]).not.toHaveProperty(
       'path'
@@ -3581,7 +3597,10 @@ describe('workspace agent message sending', () => {
       undefined,
       undefined,
       expect.objectContaining({ promptMessageId: expect.any(String) }),
-      false
+      false,
+      undefined,
+      undefined,
+      true
     )
     expect(useSessionStore.getState().selectedSessionId).toBe('transport-session-1')
     expect(useSessionStore.getState().sessions[0]).toMatchObject({

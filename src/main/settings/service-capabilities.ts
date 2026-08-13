@@ -6,6 +6,7 @@ import type { SettingsService } from './service'
 export type AcpSettingsCapabilities = Pick<
   SettingsService,
   | 'captureActiveAgentBackendSelection'
+  | 'captureActiveExplicitAgentBackendTarget'
   | 'resolveAgentBackend'
   | 'skillsNeedingForceLoad'
   | 'skillNudgeNamesForIds'
@@ -16,8 +17,9 @@ export type AcpSettingsCapabilities = Pick<
   | 'getConnectors'
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'
+  | 'resolveExplicitAgentBackend'
 > &
-  Partial<Pick<SettingsService, 'resolveExplicitAgentBackend' | 'resolveAdmittedSubagentBackend'>>
+  Partial<Pick<SettingsService, 'resolveAdmittedSubagentBackend'>>
 
 export type WindowSettingsCapabilities = Pick<
   SettingsService,

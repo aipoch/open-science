@@ -2477,18 +2477,36 @@ describe('AcpRuntimeCoordinator', () => {
     await resumeRequest
 
     created[0].emitEvent(compactionEvent('late-retired-compaction', 'failed'))
+    created[0].emitEvent({
+      id: 'late-retired-title',
+      timestamp: 2,
+      kind: 'system',
+      level: 'info',
+      sessionId: session.sessionId,
+      sessionTitleUpdate: { title: 'Stale title' }
+    })
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-compaction'))
     ])
     expect(coordinator.getSnapshot().events).toEqual([])
 
     created[1].emitEvent(compactionEvent('fresh-owner-compaction', 'completed'))
+    created[1].emitEvent({
+      id: 'fresh-owner-title',
+      timestamp: 3,
+      kind: 'system',
+      level: 'info',
+      sessionId: session.sessionId,
+      sessionTitleUpdate: { title: 'Fresh title' }
+    })
     expect(forwardedEvents.map((event) => event.id)).toEqual([
       expect.stringMatching(runtimeEventId(1, 'owner-compaction')),
-      expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction'))
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction')),
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-title'))
     ])
     expect(coordinator.getSnapshot().events.map((event) => event.id)).toEqual([
-      expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction'))
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-compaction')),
+      expect.stringMatching(runtimeEventId(2, 'fresh-owner-title'))
     ])
 
     retirement.resolve()

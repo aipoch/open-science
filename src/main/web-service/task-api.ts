@@ -71,11 +71,14 @@ class HeadlessTaskApi {
           }
           return result.sessions
         },
-        save: async (session) => {
-          await this.invoke('sessions:save-session', session)
+        save: async (session, options) => {
+          await this.invoke('sessions:save-session', session, options)
         },
         setDelegationPolicy: async (projectId, sessionId, policy) => {
           await this.invoke('sessions:set-delegation-policy', projectId, sessionId, policy)
+        },
+        applyAgentTitle: async (request) => {
+          await this.invoke('sessions:apply-agent-title', request)
         }
       },
       agent: {

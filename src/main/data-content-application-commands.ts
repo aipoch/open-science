@@ -251,6 +251,7 @@ const dataContentApplicationCommands = Object.freeze({
     'update',
     Projects.projectApplicationCommandContracts.update
   ),
+  sessionApplyAgentTitle: sessionCommand('sessions:apply-agent-title', 'applyAgentSessionTitle'),
   sessionDelete: sessionCommand(
     'sessions:delete-session',
     'deleteSession',
@@ -335,6 +336,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.projectUpdate
   ] as const),
   defineApplicationCommandGroup('sessions', [
+    dataContentApplicationCommands.sessionApplyAgentTitle,
     dataContentApplicationCommands.sessionDelete,
     dataContentApplicationCommands.sessionExportConversation,
     dataContentApplicationCommands.sessionLoadAll,
@@ -507,6 +509,17 @@ const registerDataContentApplicationCommands = (
       }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[6], {
+      'sessions:apply-agent-title': (invocation) => {
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(async () => {
+          const session = await dependencies.sessions.applyAgentSessionTitle(invocation.args[0])
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+            session,
+            originClientId
+          })
+          return session
+        })
+      },
       'sessions:delete-session': async ({ args }) => {
         const result = await dependencies.sessions.deleteSession(args[0])
         if (result.status === 'deleted') {

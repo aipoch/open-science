@@ -919,6 +919,10 @@ const createApplicationModules = async (
       await projectDeletionCoordinator.recoverPendingDeletions()
       return archiveCoordinator.updateSessionArchive(request)
     },
+    applyAgentSessionTitle: async (request) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.applyAgentSessionTitle(request)
+    },
     deleteSession: async (projectId, sessionId) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
       const result = await sessionPersistenceCoordinator.deleteSession(projectId, sessionId)

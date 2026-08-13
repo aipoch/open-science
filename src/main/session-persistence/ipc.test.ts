@@ -434,6 +434,11 @@ describe('session persistence IPC handlers', () => {
         .mockResolvedValueOnce({ created: true, session: durableSession })
         .mockResolvedValueOnce({ created: false, session: durableSession }),
       updateArchive: vi.fn().mockResolvedValue({ ...durableSession, archivedAt: 3 }),
+      applyAgentSessionTitle: vi.fn().mockResolvedValue({
+        ...durableSession,
+        title: 'Generated title',
+        titleSource: 'framework'
+      }),
       deleteSession: vi.fn().mockResolvedValue(undefined),
       saveManifest: vi.fn().mockResolvedValue(undefined)
     }
@@ -445,6 +450,7 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-one',
       'sessions:save-session',
       'sessions:update-archive',
+      'sessions:apply-agent-title',
       'sessions:save-manifest'
     ])
 
@@ -454,6 +460,12 @@ describe('session persistence IPC handlers', () => {
       sessionId: 'session-1',
       archived: true,
       expectedArchivedAt: null
+    }
+    const agentTitleRequest = {
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      title: 'Generated title',
+      source: 'framework' as const
     }
     const manifestRequest = { lastProjectId: 'project-a', lastSessionId: 'session-1' }
     const event = { sender: { id: 2 } }
@@ -467,11 +479,13 @@ describe('session persistence IPC handlers', () => {
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
     await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
+    await ipcHandlers.get('sessions:apply-agent-title')?.(event, agentTitleRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
     expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
+    expect(repository.applyAgentSessionTitle).toHaveBeenCalledWith(agentTitleRequest)
     expect(repository.deleteSession).not.toHaveBeenCalled()
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
@@ -485,6 +499,10 @@ describe('session persistence IPC handlers', () => {
     })
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
       session: { ...durableSession, archivedAt: 3 },
+      originClientId: 'electron:2'
+    })
+    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:updated', {
+      session: { ...durableSession, title: 'Generated title', titleSource: 'framework' },
       originClientId: 'electron:2'
     })
   })
@@ -504,6 +522,7 @@ describe('session persistence IPC handlers', () => {
       saveSession: vi.fn(),
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
+      applyAgentSessionTitle: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }
@@ -534,6 +553,7 @@ describe('session persistence IPC handlers', () => {
       }),
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
+      applyAgentSessionTitle: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }
@@ -563,6 +583,7 @@ describe('session persistence IPC handlers', () => {
       saveSession: vi.fn(),
       setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
+      applyAgentSessionTitle: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
     }

@@ -135,6 +135,7 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'projects:list',
   'projects:create',
   'sessions:load-all',
+  'sessions:apply-agent-title',
   'sessions:save-session',
   'sessions:set-delegation-policy',
   'acp:get-plan-projection',

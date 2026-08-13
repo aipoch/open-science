@@ -441,6 +441,29 @@ describe('WorkspaceMessageItem turn token usage', () => {
     ).toContain('border-t')
   })
 
+  it('does not expose session naming metadata as additional response UI', async () => {
+    await renderMessageItem(
+      createMessage({
+        role: 'agent',
+        content: 'Done',
+        completedAt: 1710000125000,
+        turnUsage: { inputTokens: 100, cacheTokens: 0, outputTokens: 10 },
+        sessionNamingUsage: { source: 'framework', unavailable: true }
+      })
+    )
+
+    const usageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="turn-token-usage"] button'
+    )
+    await act(async () => {
+      usageTrigger?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[data-slot="session-naming-usage"]')).toBeNull()
+    expect(document.body.textContent).not.toContain('session naming')
+  })
+
   it('resolves the completed turn framework and model provider icons from stored runtime codes', async () => {
     useSettingsStore.setState({
       agentFrameworks: [

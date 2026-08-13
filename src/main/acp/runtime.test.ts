@@ -248,6 +248,9 @@ const startFakeAgent = (
       numTurns: number
       origin?: string
     }>
+    sessionTitleBeforePromptStop?: string
+    sessionTitleAfterPrompt?: string
+    sessionTitleAfterPromptDelayMs?: number
   } = {}
 ): {
   authRequests: unknown[]
@@ -486,7 +489,28 @@ const startFakeAgent = (
           }
         }
       })
-      return promptResponse ?? { stopReason: 'end_turn' }
+      if (options.sessionTitleBeforePromptStop) {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update: {
+            sessionUpdate: 'session_info_update',
+            title: options.sessionTitleBeforePromptStop
+          }
+        })
+      }
+      const response = promptResponse ?? { stopReason: 'end_turn' }
+      if (options.sessionTitleAfterPrompt) {
+        setTimeout(() => {
+          void ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: {
+              sessionUpdate: 'session_info_update',
+              title: options.sessionTitleAfterPrompt
+            }
+          })
+        }, options.sessionTitleAfterPromptDelayMs ?? 0)
+      }
+      return response
     })
     .onNotification(acp.methods.agent.session.cancel, (ctx) => {
       cancelledSessions.push(ctx.params.sessionId)
@@ -1316,6 +1340,42 @@ describe('ACP runtime migration write-gate', () => {
       status: 'connected',
       sessionIds: ['replacement-session']
     })
+    expect(events).toEqual([])
+    await runtime.disconnect()
+  })
+
+  it('ignores a title notification from an old connection generation after resume', async () => {
+    const oldProcess = new FakeAgentProcess()
+    const replacementProcess = new FakeAgentProcess()
+    startFakeAgent(oldProcess, ['stable-session'])
+    startFakeAgent(replacementProcess, [])
+    const events: AcpRuntimeEvent[] = []
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(spawnCount++ === 0 ? oldProcess : replacementProcess),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+    const adapter = (runtime as unknown as { connectionAdapter: AcpAgentConnectionAdapter })
+      .connectionAdapter
+    const open = adapter.open.bind(adapter)
+    const capturedHooks: Parameters<AcpAgentConnectionAdapter['open']>[1][] = []
+    vi.spyOn(adapter, 'open').mockImplementation((input, hooks) => {
+      capturedHooks.push(hooks)
+      return open(input, hooks)
+    })
+
+    await runtime.createSession({ cwd: '/workspace' })
+    await runtime.disconnect()
+    await runtime.resumeSession({ sessionId: 'stable-session', cwd: '/workspace' })
+    events.length = 0
+
+    capturedHooks[0]?.observeSessionUpdate({
+      sessionId: 'stable-session',
+      update: { sessionUpdate: 'session_info_update', title: 'Stale framework title' }
+    })
+
     expect(events).toEqual([])
     await runtime.disconnect()
   })
@@ -5242,6 +5302,313 @@ describe('ACP runtime session management', () => {
         { sessionId: 'remote-session-2', text: 'reply for remote-session-2' }
       ])
     )
+  })
+
+  it('projects a framework session title published after the prompt has stopped', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['titled-session'], {
+      sessionTitleAfterPrompt: 'Late framework title'
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'name this conversation' })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          sessionId: 'titled-session',
+          sessionTitleUpdate: { title: 'Late framework title', source: 'framework' }
+        })
+      )
+    )
+  })
+
+  it('publishes a framework session title once when it arrives before prompt stop', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['titled-session'], {
+      sessionTitleBeforePromptStop: 'Framework title'
+    })
+    const events: AcpRuntimeEvent[] = []
+    const generate = vi.fn(async () => ({ title: 'Fallback title' }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      sessionAutoTitle: { graceMs: 0, generate },
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'name this conversation',
+      autoTitle: true
+    })
+
+    expect(generate).not.toHaveBeenCalled()
+    expect(events.filter((event) => event.sessionTitleUpdate)).toEqual([
+      expect.objectContaining({
+        sessionId: 'titled-session',
+        sessionTitleUpdate: { title: 'Framework title', source: 'framework' },
+        sessionNamingUsage: { source: 'framework', unavailable: true }
+      })
+    ])
+    expect(events.find((event) => event.kind === 'stop')?.sessionNamingUsage).toEqual({
+      source: 'framework',
+      unavailable: true
+    })
+  })
+
+  it('projects OpenCode native title metadata as a framework title after the first turn', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['opencode-titled-session'])
+    const events: AcpRuntimeEvent[] = []
+    const generate = vi.fn(async () => ({ title: 'App fallback title' }))
+    let titleReadCount = 0
+    const opencodeUsageFetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (new URL(String(input)).pathname.endsWith('/message')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      titleReadCount += 1
+      return new Response(
+        JSON.stringify({
+          id: 'opencode-titled-session',
+          title:
+            titleReadCount === 1 ? 'Explain OpenCode session naming' : 'OpenCode Session Naming'
+        }),
+        { status: 200 }
+      )
+    })
+    const framework = { ...opencodeFramework, spawn: () => asAgentProcess(process) }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework,
+        executablePath: '/bin/opencode',
+        env: {},
+        opencodeUsageApi: {
+          baseUrl: 'http://127.0.0.1:4242',
+          authorization: 'Basic generation-1'
+        }
+      }),
+      framework,
+      opencodeUsageFetch,
+      sessionAutoTitle: { graceMs: 0, generate },
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Explain OpenCode session naming',
+      autoTitle: true
+    })
+
+    expect(generate).not.toHaveBeenCalled()
+    expect(events.filter((event) => event.sessionTitleUpdate)).toEqual([
+      expect.objectContaining({
+        sessionId: 'opencode-titled-session',
+        sessionTitleUpdate: { title: 'OpenCode Session Naming', source: 'framework' }
+      })
+    ])
+  })
+
+  it('keeps a framework title that arrives while app naming is in flight', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['racing-title-session'], {
+      sessionTitleAfterPrompt: 'Framework wins',
+      sessionTitleAfterPromptDelayMs: 25
+    })
+    const events: AcpRuntimeEvent[] = []
+    const generate = vi.fn(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      sessionAutoTitle: { graceMs: 0, generate },
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    const prompt = runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'name this conversation',
+      autoTitle: true
+    })
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.sessionTitleUpdate?.source === 'framework')).toBe(true)
+    )
+    await prompt
+
+    expect(events.filter((event) => event.sessionTitleUpdate)).toEqual([
+      expect.objectContaining({
+        sessionTitleUpdate: { title: 'Framework wins', source: 'framework' }
+      })
+    ])
+    expect(events.find((event) => event.kind === 'stop')?.sessionNamingUsage).toEqual({
+      source: 'framework',
+      unavailable: true
+    })
+  })
+
+  it('falls back to app naming once for a new Session and includes its usage in the first turn', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['app-named-session'])
+    const events: AcpRuntimeEvent[] = []
+    const generate = vi.fn(async () => ({
+      title: 'Evidence synthesis',
+      usage: { inputTokens: 7, cacheTokens: 2, outputTokens: 1, turnCount: 1 }
+    }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      sessionAutoTitle: { graceMs: 0, generate },
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'Compare the evidence',
+      autoTitle: true
+    })
+
+    expect(events.find((event) => event.kind === 'stop')?.sessionNamingUsage).toEqual({
+      source: 'app-generated',
+      usage: { inputTokens: 7, cacheTokens: 2, outputTokens: 1, turnCount: 1 }
+    })
+    expect(events.find((event) => event.kind === 'stop')).toMatchObject({
+      turnUsage: undefined,
+      sessionNamingUsage: {
+        source: 'app-generated',
+        usage: { inputTokens: 7, cacheTokens: 2, outputTokens: 1, turnCount: 1 }
+      }
+    })
+  })
+
+  it('does not auto-name an existing Session when the prompt omits new-Session authority', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['existing-session'])
+    const generate = vi.fn(async () => ({ title: 'Must not run' }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      sessionAutoTitle: { graceMs: 0, generate }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Continue this Session' })
+
+    expect(generate).not.toHaveBeenCalled()
+  })
+
+  it('preserves the main answer when app session naming fails', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['naming-failure-session'])
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      sessionAutoTitle: {
+        graceMs: 0,
+        generate: async () => {
+          throw new Error('naming backend unavailable')
+        }
+      },
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: session.sessionId, text: 'Answer me', autoTitle: true })
+    ).resolves.toMatchObject({ stopReason: 'end_turn' })
+    expect(events.some((event) => event.role === 'assistant')).toBe(true)
+    expect(events.some((event) => event.sessionTitleUpdate)).toBe(false)
+    expect(events.find((event) => event.kind === 'stop')?.sessionNamingUsage).toEqual({
+      source: 'app-generated',
+      unavailable: true
+    })
+  })
+
+  it('awaits app title inference cleanup during disconnect', async () => {
+    let finishCleanup = (): void => undefined
+    const dispose = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve
+        })
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      sessionAutoTitle: {
+        graceMs: 0,
+        generate: async () => ({ title: 'Unused' }),
+        dispose
+      }
+    })
+
+    let disconnected = false
+    const disconnect = runtime.disconnect().then(() => {
+      disconnected = true
+    })
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
+    expect(disconnected).toBe(false)
+
+    finishCleanup()
+    await disconnect
+    expect(disconnected).toBe(true)
+  })
+
+  it('maps a late framework title from an adopted provider id to the app session id', async () => {
+    const process = new FakeAgentProcess()
+    startFakeAgent(process, ['provider-title-session'], {
+      resumeNotFound: true,
+      sessionTitleAfterPrompt: 'Adopted framework title'
+    })
+    const events: AcpRuntimeEvent[] = []
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      callbacks: { onEvent: (event) => events.push(event) }
+    })
+
+    await expect(
+      runtime.resumeSession({ sessionId: 'app-title-session', cwd: '/workspace' })
+    ).resolves.toMatchObject({ sessionId: 'app-title-session', contextReset: true })
+    await runtime.sendPrompt({ sessionId: 'app-title-session', text: 'name this conversation' })
+
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          sessionId: 'app-title-session',
+          sessionTitleUpdate: { title: 'Adopted framework title', source: 'framework' }
+        })
+      )
+    )
+    expect(
+      events.filter((event) => event.sessionTitleUpdate).map((event) => event.sessionId)
+    ).toEqual(['app-title-session'])
   })
 
   it('adds the hidden Plan mode context only to the requested turn and preserves user Messages', async () => {

@@ -1,6 +1,7 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
+  ApplyAgentSessionTitleRequest,
   DeleteSessionRequest,
   LoadAllSessionsResult,
   LoadSessionRequest,
@@ -35,6 +36,7 @@ type SessionPersistenceBackend = {
     policy: DelegationPolicy
   ) => Promise<PersistedChatSession>
   updateArchive?: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
+  applyAgentSessionTitle?: (request: ApplyAgentSessionTitleRequest) => Promise<PersistedChatSession>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
@@ -52,6 +54,7 @@ type SessionPersistenceHandlers = {
     policy: DelegationPolicy
   ) => Promise<PersistedChatSession>
   updateArchive: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
+  applyAgentSessionTitle: (request: ApplyAgentSessionTitleRequest) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
@@ -155,6 +158,12 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
       if (!repository.updateArchive) throw new Error('Session archive is unavailable.')
       return repository.updateArchive(request)
     },
+    applyAgentSessionTitle: (request) => {
+      if (!repository.applyAgentSessionTitle) {
+        throw new Error('Agent Session title persistence is unavailable.')
+      }
+      return repository.applyAgentSessionTitle(request)
+    },
     // A session delete tombstones its origin graph but deliberately retains Review rows, findings and
     // scope snapshots. Provenance remains readable from Files; project deletion owns final cleanup.
     deleteSession: (request) => repository.deleteSession(request.projectId, request.sessionId),
@@ -224,6 +233,17 @@ const registerSessionPersistenceIpcHandlers = (
       return session
     })
   })
+  ipcMainHandle(
+    'sessions:apply-agent-title',
+    async (event, request: ApplyAgentSessionTitleRequest) => {
+      const originClientId = getLifecycleClientId(event)
+      return withDataRootWrite(async () => {
+        const session = await handlers.applyAgentSessionTitle(request)
+        broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionUpdated, { session, originClientId })
+        return session
+      })
+    }
+  )
   ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )

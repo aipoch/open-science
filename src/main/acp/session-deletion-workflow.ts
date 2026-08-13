@@ -12,6 +12,7 @@ import type { AcpSessionCapabilityOwner } from './session-capability-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { AcpSessionRegistry, AcpSessionRegistryEntry } from './session-registry'
 import type { AcpSessionUpdateProjector } from './session-update-projector'
+import type { SessionAutoTitleOwner } from './session-auto-title-owner'
 
 type SessionDeletedEvent = Omit<AcpRuntimeEvent, 'id' | 'timestamp'>
 type OperationLease = <Result>(work: () => Promise<Result>) => Promise<Result>
@@ -32,6 +33,7 @@ type AcpSessionDeletionWorkflowDependencies = Readonly<{
   handoff: Pick<AcpHandoffContinuityOwner, 'clearSession'>
   contextUsage: Pick<ContextUsageTracker, 'deleteSession'>
   projector: Pick<AcpSessionUpdateProjector, 'clearSession'>
+  sessionAutoTitle?: Pick<SessionAutoTitleOwner, 'clearSession'>
   pushEvent: (event: SessionDeletedEvent) => void
   emitState: () => void
   getSnapshot: () => AcpStateSnapshot
@@ -64,6 +66,7 @@ class AcpSessionDeletionWorkflow {
     this.deps.clearUserChoiceProvenanceForSession(appSessionId)
     this.deps.elicitation.cancelForSession(appSessionId)
     this.deps.appContinuations.delete(appSessionId)
+    this.deps.sessionAutoTitle?.clearSession(appSessionId)
     if (attachment) await this.deleteProviderSession(attachment.session.sessionId)
 
     if (attachment) {

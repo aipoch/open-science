@@ -50,6 +50,7 @@ import { AcpRuntime, type AcpRuntimeCallbacks, type AcpRuntimeOptions } from './
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
+import { RestrictedInferenceRunner } from './restricted-inference-runner'
 
 const log = createLogger('acp')
 
@@ -153,6 +154,38 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
 }
 
+type AcpBackendAdmission = Readonly<{
+  target: () => ReturnType<AcpSettingsCapabilities['captureActiveExplicitAgentBackendTarget']>
+  resolve: (
+    context: Parameters<AcpSettingsCapabilities['resolveExplicitAgentBackend']>[1]
+  ) => ReturnType<AcpSettingsCapabilities['resolveExplicitAgentBackend']>
+}>
+
+const captureAcpBackendAdmission = (
+  settingsService: AcpSettingsCapabilities
+): AcpBackendAdmission => {
+  type Target = Awaited<
+    ReturnType<AcpSettingsCapabilities['captureActiveExplicitAgentBackendTarget']>
+  >
+  let latestAdmission = 0
+  let acceptedTarget: Target | undefined
+  return Object.freeze({
+    target: async () => {
+      if (!acceptedTarget) throw new Error('ACP backend generation has not been admitted.')
+      return acceptedTarget
+    },
+    resolve: async (
+      context: Parameters<AcpSettingsCapabilities['resolveExplicitAgentBackend']>[1]
+    ) => {
+      const admission = ++latestAdmission
+      const target = await settingsService.captureActiveExplicitAgentBackendTarget()
+      const backend = await settingsService.resolveExplicitAgentBackend(target, context)
+      if (admission === latestAdmission) acceptedTarget = target
+      return backend
+    }
+  })
+}
+
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
 const createAcpRuntime = ({
   mcpEntryPath,
@@ -233,15 +266,54 @@ const createAcpRuntime = ({
 
   const runtimeCoordinator = new AcpRuntimeCoordinator(
     (runtimeCallbacks, permissionGrantStore) => {
-      const selection = fixedBackend
+      // Capture a complete target for each backend connection generation. The accepted target also
+      // pins its restricted title tail, while reconnects read the newly selected provider/model.
+      const backendAdmission = fixedBackend
         ? undefined
-        : settingsService.captureActiveAgentBackendSelection()
+        : captureAcpBackendAdmission(settingsService)
+      let titleInference: RestrictedInferenceRunner | undefined
+      const acquireTitleInference = (): RestrictedInferenceRunner => {
+        titleInference ??= new RestrictedInferenceRunner({
+          appVersion: app.getVersion(),
+          configRoot,
+          profileNamespace: 'session-auto-title',
+          resolveTarget: (target, context) =>
+            settingsService.resolveExplicitAgentBackend(target, context)
+        })
+        return titleInference
+      }
+      const disposeTitleInference = async (): Promise<void> => {
+        const inference = titleInference
+        titleInference = undefined
+        await inference?.shutdown()
+      }
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: app.getVersion(),
         // Packaged macOS apps often start with cwd at "/" or the app bundle; use home instead.
         defaultCwd,
-        resolveBackend: async (context) =>
-          fixedBackend ?? settingsService.resolveAgentBackend(await selection!, context),
+        resolveBackend: async (context) => fixedBackend ?? backendAdmission!.resolve(context),
+        ...(!fixedBackend
+          ? {
+              sessionAutoTitle: {
+                dispose: disposeTitleInference,
+                onCleanupTimeout: ({ activeAttempts }) =>
+                  log.warn('session auto-title cleanup timed out', { activeAttempts }),
+                generate: async ({ prompt, signal }) => {
+                  const result = await acquireTitleInference().run({
+                    target: await backendAdmission!.target(),
+                    signal,
+                    agentName: 'Open Science Session Namer',
+                    description: 'Generates one short Session title without tools.',
+                    systemPrompt:
+                      'Create a concise title for a conversation from its first user message. Return only the title, with no quotes, markdown, explanation, or trailing punctuation. Use the user message language. Keep it under 60 characters. Never use tools.',
+                    prompt: `First user message:\n${prompt}`,
+                    outputLimitBytes: 512
+                  })
+                  return { title: result.text, ...(result.usage ? { usage: result.usage } : {}) }
+                }
+              }
+            }
+          : {}),
         ...(spawnAgent ? { spawnAgent } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
         skills: {
@@ -520,5 +592,10 @@ const createAcpRuntime = ({
   return runtimeCoordinator
 }
 
-export { createAcpRuntime, createProjectAgentContextResolver, sessionHasReplayableImageHistory }
+export {
+  captureAcpBackendAdmission,
+  createAcpRuntime,
+  createProjectAgentContextResolver,
+  sessionHasReplayableImageHistory
+}
 export type { AcpRuntimeCompositionOptions }

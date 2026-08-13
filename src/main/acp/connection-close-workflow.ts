@@ -26,6 +26,7 @@ type CloseState = Readonly<{
   clearHandoffContinuity: () => void
   clearSessionProjection: () => void
   disposeSessionProjection: () => void
+  disposeSessionAutoTitle?: () => void | Promise<void>
   clearHttpRoutes: () => void
   selectSession: () => void
   publishInterruptedPromptFailures: (prompts: readonly unknown[]) => void
@@ -121,6 +122,13 @@ class AcpConnectionCloseWorkflow {
     this.options.state.disposeActiveSessions((stage, error) => recordFailure(stage, error))
     this.options.state.detachSessionConnections(true)
     this.options.state.clearSessionProjection()
+    if (this.options.state.disposeSessionAutoTitle) {
+      try {
+        await this.options.state.disposeSessionAutoTitle()
+      } catch (error) {
+        recordFailure('session-auto-title', error)
+      }
+    }
     runCleanup('MCP HTTP routes', this.options.state.clearHttpRoutes)
     this.options.state.selectSession()
     await this.options.resources.teardown(teardownGeneration, recordFailure)
@@ -156,6 +164,13 @@ class AcpConnectionCloseWorkflow {
     this.options.state.clearPromptContent(teardownGeneration)
     this.options.state.clearHandoffContinuity()
     this.options.state.disposeSessionProjection()
+    try {
+      void Promise.resolve(this.options.state.disposeSessionAutoTitle?.()).catch((error) =>
+        this.reportFailure('session-auto-title cleanup after unexpected close failed', error)
+      )
+    } catch (error) {
+      this.reportFailure('session-auto-title cleanup after unexpected close failed', error)
+    }
     this.options.state.clearContextUsage()
     this.options.state.clearHttpRoutes()
     this.options.state.selectSession()
@@ -182,6 +197,13 @@ class AcpConnectionCloseWorkflow {
     this.options.state.clearSessionProjection()
     this.options.state.clearContextUsage()
     this.options.state.clearAppliedSessionModels()
+    try {
+      void Promise.resolve(this.options.state.disposeSessionAutoTitle?.()).catch((error) =>
+        this.reportFailure('session-auto-title cleanup during shutdown failed', error)
+      )
+    } catch (error) {
+      this.reportFailure('session-auto-title cleanup during shutdown failed', error)
+    }
   }
   async shutdownForQuit(): Promise<{ reaped: boolean }> {
     this.candidateTreeKillReaped = true

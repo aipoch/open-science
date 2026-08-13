@@ -311,6 +311,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ],
   ]),
   group('sessions', 'sessions', [
+    ['applyAgentTitle', 'sessions:apply-agent-title'],
     ['exportConversation', 'sessions:export-conversation', MAPPED_ELECTRON], ['onCreated', 'session:created', EVENT], ['onDeleted', 'session:deleted', EVENT],
     ['onFlushRequest', 'sessions:flush-request', ELECTRON_EVENT], ['onUpdated', 'session:updated', EVENT], ['deleteSession', 'sessions:delete-session', WEB, undefined, undefined, RUNTIME_VALIDATED],
     ['loadAll', 'sessions:load-all'], ['loadOne', 'sessions:load-one'], ['saveManifest', 'sessions:save-manifest'],

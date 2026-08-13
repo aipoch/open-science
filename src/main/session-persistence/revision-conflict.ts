@@ -20,6 +20,7 @@ export const rebaseSafeSessionFields = (
     switch (field) {
       case 'title':
         rebased.title = submitted.title
+        rebased.titleSource = submitted.titleSource
         break
       case 'permissionProfile':
         rebased.permissionProfile = submitted.permissionProfile

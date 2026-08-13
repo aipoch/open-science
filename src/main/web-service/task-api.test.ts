@@ -398,7 +398,8 @@ describe('HeadlessTaskApi adapter', () => {
       {
         sessionId: 'session-context',
         promptMessageId: expect.any(String),
-        text: 'Research with remote context.'
+        text: 'Research with remote context.',
+        autoTitle: true
       },
       { onProviderPromptAccepted: expect.any(Function) }
     )

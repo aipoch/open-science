@@ -1,20 +1,41 @@
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-index f247a7e..266f90d 100644
+index f247a7e..703b16d 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-@@ -13,6 +13,7 @@ export interface Logger {
+@@ -13,6 +13,11 @@ export interface Logger {
      log: (...args: any[]) => void;
      error: (...args: any[]) => void;
  }
++export type ClaudeAcpAgentSdk = {
++    query: typeof import("@anthropic-ai/claude-agent-sdk").query;
++    getSessionInfo: typeof import("@anthropic-ai/claude-agent-sdk").getSessionInfo;
++};
 +export declare function waitForMcpServers(query: Pick<Query, "mcpServerStatus" | "close">, serverNames: string[], timeoutMs?: number, logger?: Pick<Logger, "error">): Promise<void>;
  type AccumulatedUsage = {
      inputTokens: number;
      outputTokens: number;
+@@ -577,6 +582,7 @@ export declare class ClaudeAcpAgent {
+         [key: string]: Session;
+     };
+     client: AcpClient;
++    sdk: ClaudeAcpAgentSdk;
+     clientCapabilities?: ClientCapabilities;
+     logger: Logger;
+     gatewayAuthRequest?: GatewayAuthRequest;
+@@ -588,7 +594,7 @@ export declare class ClaudeAcpAgent {
+      *  return "cancelled". See {@link DEFAULT_FORCE_CANCEL_GRACE_MS}. Mutable so
+      *  tests can shrink it. */
+     forceCancelGraceMs: number;
+-    constructor(client: AcpClient, logger?: Logger);
++    constructor(client: AcpClient, logger?: Logger, sdk?: ClaudeAcpAgentSdk);
+     initialize(request: InitializeRequest): Promise<InitializeResponse>;
+     newSession(params: NewSessionRequest): Promise<NewSessionResponse>;
+     unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse>;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-index 361d032..69371ea 100644
+index 361d032..8960b6f 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-@@ -438,6 +438,62 @@ class ClientConnection {
+@@ -438,9 +438,67 @@ class ClientConnection {
          return this.ctx.notify(method, params);
      }
  }
@@ -22,6 +43,7 @@ index 361d032..69371ea 100644
 +// supplied by the ACP client before returning session/new so the first prompt cannot race startup.
 +const MCP_STARTUP_TIMEOUT_MS = 10000;
 +const MCP_STATUS_POLL_INTERVAL_MS = 50;
++const SESSION_TITLE_READ_TIMEOUT_MS = 250;
 +const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 +const withTimeout = (promise, milliseconds, timeoutError) => new Promise((resolve, reject) => {
 +    const timer = setTimeout(() => reject(timeoutError()), milliseconds);
@@ -77,7 +99,94 @@ index 361d032..69371ea 100644
  export class ClaudeAcpAgent {
      sessions;
      client;
-@@ -2353,7 +2409,7 @@ export class ClaudeAcpAgent {
++    sdk;
+     clientCapabilities;
+     logger;
+     gatewayAuthRequest;
+@@ -452,9 +510,10 @@ export class ClaudeAcpAgent {
+      *  return "cancelled". See {@link DEFAULT_FORCE_CANCEL_GRACE_MS}. Mutable so
+      *  tests can shrink it. */
+     forceCancelGraceMs = DEFAULT_FORCE_CANCEL_GRACE_MS;
+-    constructor(client, logger) {
++    constructor(client, logger, sdk = { query, getSessionInfo }) {
+         this.sessions = {};
+         this.client = client;
++        this.sdk = sdk;
+         this.logger = logger ?? console;
+     }
+     async initialize(request) {
+@@ -665,33 +724,31 @@ export class ClaudeAcpAgent {
+      *  we pull it at turn-end. A missing session file or read error is non-fatal:
+      *  the title is best-effort and another turn will retry. */
+     async maybeUpdateSessionTitle(sessionId, session) {
+-        let info;
+         try {
+-            info = await getSessionInfo(sessionId, { dir: session.cwd });
+-        }
+-        catch (error) {
+-            this.logger.error(`Session ${sessionId}: failed to read session info: ${error}`);
+-            return;
+-        }
+-        // `customTitle` is a user-set `/rename`; `summary` is the auto-generated
+-        // title (or first prompt). Prefer the explicit title when present.
+-        const rawTitle = info?.customTitle ?? info?.summary;
+-        if (!rawTitle) {
+-            return;
+-        }
+-        const title = sanitizeTitle(rawTitle);
+-        if (title === session.lastTitle) {
+-            return;
++            const info = await withTimeout(this.sdk.getSessionInfo(sessionId, { dir: session.cwd }), SESSION_TITLE_READ_TIMEOUT_MS, () => new Error(`Timed out reading title for session ${sessionId}`));
++            if (!info)
++                return;
++            // The SDK folds both a user `/rename` and a persisted `ai-title` into
++            // `customTitle`. Its `summary` deliberately falls back through the last
++            // prompt and first prompt, so it is not evidence of an actual title and
++            // must never be published as one.
++            const customTitle = info.customTitle ? sanitizeTitle(info.customTitle) : undefined;
++            const title = customTitle;
++            if (!title)
++                return;
++            if (title === session.lastTitle)
++                return;
++            await this.client.sessionUpdate({
++                sessionId,
++                update: {
++                    sessionUpdate: "session_info_update",
++                    title,
++                    updatedAt: new Date(info.lastModified).toISOString(),
++                },
++            });
++            session.lastTitle = title;
+         }
+-        session.lastTitle = title;
+-        await this.client.sessionUpdate({
+-            sessionId,
+-            update: {
+-                sessionUpdate: "session_info_update",
+-                title,
+-                updatedAt: new Date(info.lastModified).toISOString(),
+-            },
+-        });
++        catch { }
+     }
+     async authenticate(_params) {
+         if (_params.methodId === "gateway" || _params.methodId === "gateway-bedrock") {
+@@ -2136,6 +2193,13 @@ export class ClaudeAcpAgent {
+                                 }
+                                 break;
+                             }
++                            // The CLI persists its native title alongside the terminal
++                            // result on the normal user-turn path. Pull it before settling
++                            // the ACP prompt so clients observe the title without depending
++                            // on the trailing idle, which can arrive late or be missed after
++                            // prompt teardown. Idle retains the same call as a retry for a
++                            // genuinely later background ai-title write.
++                            await this.maybeUpdateSessionTitle(params.sessionId, session);
+                             // A refusal can arrive on any result subtype (and may even set
+                             // is_error), so handle it before the subtype switch — otherwise the
+                             // is_error throw below would surface it as an internal error. The
+@@ -2353,7 +2417,7 @@ export class ClaudeAcpAgent {
                                      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
                                  };
                              }
@@ -86,7 +195,7 @@ index 361d032..69371ea 100644
                              if (nextUsage !== lastAssistantTotalUsage) {
                                  lastAssistantTotalUsage = nextUsage;
                                  await sendUpdate({
-@@ -2465,7 +2521,7 @@ export class ClaudeAcpAgent {
+@@ -2465,7 +2529,7 @@ export class ClaudeAcpAgent {
                          // aligned with what the user's current selection is producing.
                          if (message.type === "assistant" && message.parent_tool_use_id === null) {
                              lastAssistantUsage = snapshotFromUsage(message.message.usage);
@@ -95,7 +204,15 @@ index 361d032..69371ea 100644
                              if (message.message.model && message.message.model !== "<synthetic>") {
                                  lastAssistantModel = message.message.model;
                              }
-@@ -4067,6 +4123,7 @@ export class ClaudeAcpAgent {
+@@ -4060,13 +4124,14 @@ export class ClaudeAcpAgent {
+         if (abortController?.signal.aborted) {
+             throw new Error("Cancelled");
+         }
+-        const q = query({
++        const q = this.sdk.query({
+             prompt: input,
+             options,
+         });
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
@@ -103,7 +220,7 @@ index 361d032..69371ea 100644
          }
          catch (error) {
              if (creationOpts.resume &&
-@@ -4282,15 +4339,10 @@ function sessionUsage(session) {
+@@ -4282,15 +4347,10 @@ function sessionUsage(session) {
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -123,7 +240,7 @@ index 361d032..69371ea 100644
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -4307,7 +4359,7 @@ function errorKindData(errorKind) {
+@@ -4307,7 +4367,7 @@ function errorKindData(errorKind) {
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`

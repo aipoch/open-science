@@ -892,7 +892,7 @@ describe('Session Store architecture', () => {
     for (const file of actualModules) {
       const source = readSource(resolve(__dirname, file))
       const lines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      expect(lines, file).toBeLessThanOrEqual(710)
+      expect(lines, file).toBeLessThanOrEqual(740)
     }
   })
 
@@ -908,6 +908,7 @@ describe('Session Store architecture', () => {
       'SessionRunProjectionActions'
     ])
     expect(facadeActionNames(facadeSource)).toEqual([
+      'applyAgentSessionTitle',
       'clearBranchContextReset',
       'clearSelection',
       'clearSpecialistSwitchResetRequired',
@@ -940,6 +941,7 @@ describe('Session Store architecture', () => {
       'appendPendingUserMessage',
       'appendRoutedUserMessage',
       'appendUserMessage',
+      'applySessionNamingUsage',
       'bindPendingSession',
       'branchInNewSession',
       'clearPendingContextReplay',

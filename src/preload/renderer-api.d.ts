@@ -205,6 +205,7 @@ import type {
   SearchArtifactsResult
 } from '../shared/project-files'
 import type {
+  ApplyAgentSessionTitleRequest,
   DeleteSessionRequest,
   SessionDeletionResult,
   LoadAllSessionsResult,
@@ -470,6 +471,7 @@ export interface OpenScienceAPI {
     onChanged(listener: AcpListener<PermissionGrantsChangedEvent>): RemoveListener
   }
   sessions: {
+    applyAgentTitle(request: ApplyAgentSessionTitleRequest): Promise<PersistedChatSession>
     loadAll(): Promise<LoadAllSessionsResult>
     loadOne(request: LoadSessionRequest): Promise<PersistedChatSession | undefined>
     saveSession(

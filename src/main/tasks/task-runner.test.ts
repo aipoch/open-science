@@ -387,14 +387,24 @@ describe('TaskRunner', () => {
     temporaryRoots.push(requestedCwd)
     const canonicalCwd = await realpath(requestedCwd)
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
-    const savedSessions: PersistedChatSession[] = []
     const createRequests: unknown[] = []
+    let durableSession: PersistedChatSession | undefined
+    const appliedTitles: Array<{ title: string; source: 'app-generated' | 'framework' }> = []
     const ids = ['user-message-1', 'run-1', 'assistant-message-1']
     const runner = createRunner({
       sessions: {
         list: async () => [],
-        save: async (saved) => {
-          savedSessions.push(structuredClone(saved))
+        save: async (saved, options) => {
+          durableSession = {
+            ...structuredClone(saved),
+            ...(options?.preserveTitle && durableSession
+              ? { title: durableSession.title, titleSource: durableSession.titleSource }
+              : {})
+          }
+        },
+        applyAgentTitle: async ({ title, source }) => {
+          appliedTitles.push({ title, source })
+          durableSession = { ...durableSession!, title, titleSource: source }
         }
       },
       agent: {
@@ -413,6 +423,22 @@ describe('TaskRunner', () => {
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
         prompt: async () => {
+          emitEvent?.({
+            id: 'title-1',
+            timestamp: 9,
+            kind: 'system',
+            level: 'info',
+            sessionId: 'session-1',
+            sessionTitleUpdate: { title: 'Initial framework title' }
+          })
+          emitEvent?.({
+            id: 'title-2',
+            timestamp: 9,
+            kind: 'system',
+            level: 'info',
+            sessionId: 'session-1',
+            sessionTitleUpdate: { title: 'Evidence synthesis' }
+          })
           emitEvent?.({
             id: 'event-1',
             timestamp: 10,
@@ -466,11 +492,13 @@ describe('TaskRunner', () => {
       output: 'Research complete.',
       cwd: canonicalCwd
     })
-    expect(savedSessions.at(-1)).toMatchObject({
+    expect(durableSession).toMatchObject({
       id: 'session-1',
       projectId: project.id,
       cwd: canonicalCwd,
       status: 'idle',
+      title: 'Evidence synthesis',
+      titleSource: 'framework',
       permissionProfile: 'auto',
       messages: [
         { id: 'user-message-1', role: 'user', content: 'Review these papers.' },
@@ -482,6 +510,10 @@ describe('TaskRunner', () => {
         }
       ]
     })
+    expect(appliedTitles).toEqual([
+      { title: 'Initial framework title', source: 'framework' },
+      { title: 'Evidence synthesis', source: 'framework' }
+    ])
   })
 
   it('applies Plan, review, Specialist, and delegation controls to a new Session', async () => {
@@ -1277,6 +1309,234 @@ describe('TaskRunner', () => {
     })
     expect(resumeSession).not.toHaveBeenCalled()
     expect(save).not.toHaveBeenCalled()
+  })
+
+  it('does not let a framework title replace an existing user-authored title', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let durable: PersistedChatSession = {
+      ...session,
+      title: 'Manual literature review',
+      titleSource: 'user'
+    }
+    const applyAgentTitle = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: {
+        list: async () => [structuredClone(durable)],
+        save: async (value, options) => {
+          durable = {
+            ...structuredClone(value),
+            ...(options?.preserveTitle
+              ? { title: durable.title, titleSource: durable.titleSource }
+              : {})
+          }
+        },
+        applyAgentTitle
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [durable.id],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          durable = {
+            ...durable,
+            title: 'Manual rename during run',
+            titleSource: 'user',
+            updatedAt: durable.updatedAt + 1
+          }
+          emitEvent?.({
+            id: 'framework-title',
+            timestamp: 10,
+            kind: 'system',
+            level: 'info',
+            sessionId: durable.id,
+            promptMessageId: request.promptMessageId,
+            sessionTitleUpdate: { title: 'Generated replacement', source: 'framework' }
+          })
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: durable.id,
+      prompt: 'Continue'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(durable).toMatchObject({
+      title: 'Manual rename during run',
+      titleSource: 'user'
+    })
+    expect(applyAgentTitle).toHaveBeenCalledWith({
+      projectId: project.id,
+      sessionId: durable.id,
+      title: 'Generated replacement',
+      source: 'framework',
+      promptMessageId: 'generated-id'
+    })
+  })
+
+  it('persists a framework title that arrives after the provider prompt and Run have completed', async () => {
+    vi.useFakeTimers()
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const applyAgentTitle = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => undefined,
+        setDelegationPolicy: async () => undefined,
+        applyAgentTitle
+      } as TaskSessionPort,
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-created' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          setTimeout(() => {
+            emitEvent?.({
+              id: 'late-framework-title',
+              timestamp: 10,
+              kind: 'system',
+              level: 'info',
+              sessionId: 'session-created',
+              sessionTitleUpdate: { title: 'Evidence synthesis' }
+            })
+          }, 0)
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    })
+
+    try {
+      const started = await runner.startRun({ project: project.id, prompt: 'Review these papers.' })
+      await runner.waitForRun(started.id)
+      expect(applyAgentTitle).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() =>
+        expect(applyAgentTitle).toHaveBeenCalledWith({
+          projectId: project.id,
+          sessionId: started.sessionId,
+          title: 'Evidence synthesis',
+          source: 'framework',
+          promptMessageId: 'generated-id'
+        })
+      )
+    } finally {
+      runner.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps an unscoped late first-turn title out of a running second turn', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let durable: PersistedChatSession | undefined
+    const promptRequests: Array<{ promptMessageId: string }> = []
+    let releaseSecondPrompt!: () => void
+    const secondPromptGate = new Promise<void>((resolve) => {
+      releaseSecondPrompt = resolve
+    })
+    const applyAgentTitle = vi.fn(async () => undefined)
+    let id = 0
+    const runner = createRunner({
+      sessions: {
+        list: async () => (durable ? [structuredClone(durable)] : []),
+        save: async (value, options) => {
+          durable = {
+            ...structuredClone(value),
+            ...(options?.preserveTitle && durable
+              ? { title: durable.title, titleSource: durable.titleSource }
+              : {})
+          }
+        },
+        applyAgentTitle
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => (durable ? [durable.id] : []),
+        createSession: async () => ({ sessionId: 'session-created' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async (request) => {
+          promptRequests.push(request)
+          if (promptRequests.length === 2) await secondPromptGate
+        }
+      },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => `id-${++id}`,
+      now: () => id
+    })
+
+    const first = await runner.startRun({ project: project.id, prompt: 'First question' })
+    await runner.waitForRun(first.id)
+    const second = await runner.startRun({
+      project: project.id,
+      sessionId: first.sessionId,
+      prompt: 'Second question'
+    })
+    await vi.waitFor(() => expect(promptRequests).toHaveLength(2))
+
+    emitEvent?.({
+      id: 'late-first-title',
+      timestamp: 20,
+      kind: 'system',
+      level: 'info',
+      sessionId: first.sessionId,
+      sessionTitleUpdate: { title: 'First-turn title', source: 'app-generated' },
+      sessionNamingUsage: {
+        source: 'app-generated',
+        usage: { inputTokens: 7, cacheTokens: 0, outputTokens: 3 }
+      }
+    })
+    emitEvent?.({
+      id: 'second-answer',
+      timestamp: 21,
+      kind: 'message',
+      level: 'info',
+      sessionId: first.sessionId,
+      promptMessageId: promptRequests[1].promptMessageId,
+      role: 'assistant',
+      text: 'Second answer'
+    })
+    releaseSecondPrompt()
+    await runner.waitForRun(second.id)
+
+    expect(applyAgentTitle).toHaveBeenCalledWith({
+      projectId: project.id,
+      sessionId: first.sessionId,
+      title: 'First-turn title',
+      source: 'app-generated',
+      promptMessageId: promptRequests[0].promptMessageId,
+      sessionNamingUsage: {
+        source: 'app-generated',
+        usage: { inputTokens: 7, cacheTokens: 0, outputTokens: 3 }
+      }
+    })
+    expect(durable?.messages.at(-1)).toMatchObject({ content: 'Second answer' })
+    expect(durable?.messages.at(-1)).not.toHaveProperty('sessionNamingUsage')
   })
 
   it('checks archive admission before an existing session is resumed or saved', async () => {

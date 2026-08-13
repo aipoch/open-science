@@ -96,6 +96,7 @@ const composeAcpRuntimeLifecycleOwners = (
     clearHandoffContinuity: () => base.handoffContinuity.clearGeneration(),
     clearSessionProjection: () => session.sessionUpdateProjector.clearGeneration(),
     disposeSessionProjection: () => session.sessionUpdateProjector.dispose(),
+    disposeSessionAutoTitle: () => session.sessionAutoTitle?.shutdown(),
     clearHttpRoutes: () => base.sessionCapabilities.clearHttpRoutes(),
     selectSession: () => session.sessionRegistry.select(undefined),
     publishInterruptedPromptFailures: (prompts) => {

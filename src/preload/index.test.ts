@@ -55,6 +55,7 @@ type PreloadApi = {
     getClientId: () => unknown
   }
   sessions: {
+    applyAgentTitle: (request: unknown) => unknown
     loadAll: () => unknown
     loadOne: (request: unknown) => unknown
     saveSession: (session: unknown, options?: unknown) => unknown
@@ -424,6 +425,7 @@ describe('preload bridge — public surface inventory', () => {
       'saveManagedFile',
       'saveProjectArtifacts',
       'saveSessionArtifacts',
+      'sessions.applyAgentTitle',
       'sessions.deleteSession',
       'sessions.exportConversation',
       'sessions.loadAll',
@@ -963,6 +965,12 @@ type ForwardingCase = {
 
 const sampleSession = { id: 's-1', projectId: 'p-1', title: 't' }
 const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
+const sampleAgentTitle = {
+  projectId: 'p-1',
+  sessionId: 's-1',
+  title: 'Generated title',
+  source: 'framework'
+}
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleConversationExport = {
   projectId: 'p-1',
@@ -1070,6 +1078,12 @@ const cases: ForwardingCase[] = [
     args: []
   },
   // sessions block
+  {
+    name: 'sessions.applyAgentTitle → sessions:apply-agent-title',
+    invoke: (a) => a.sessions.applyAgentTitle(sampleAgentTitle),
+    channel: 'sessions:apply-agent-title',
+    args: [sampleAgentTitle]
+  },
   {
     name: 'sessions.loadAll → sessions:load-all (no args)',
     invoke: (a) => a.sessions.loadAll(),
