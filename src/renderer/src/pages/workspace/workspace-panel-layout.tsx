@@ -1,6 +1,7 @@
 import { animate } from 'motion'
 import { PanelLeft, PanelRight } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
@@ -251,6 +252,7 @@ type PreviewPanelLayoutPort = {
 
 // Presents one layout contract to WorkspacePage across desktop and mobile surfaces.
 const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): WorkspacePanelLayout => {
+  const { t } = useTranslation()
   const [sidebarState, setSidebarState] = useState<ResizablePanelState>('open')
   const sidebarToggleRef = useRef<HTMLButtonElement | null>(null)
   const previewToggleRef = useRef<HTMLButtonElement | null>(null)
@@ -393,12 +395,14 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
             left: `calc(${SIDEBAR_PANEL_DEFAULT_SIZE_CSS} - ${SIDEBAR_TOGGLE_RIGHT_INSET}px)`
           }}
           aria-label={
-            sidebarState === 'collapsed' ? 'Expand sidebar panel' : 'Collapse sidebar panel'
+            sidebarState === 'collapsed' ? t('Expand sidebar panel') : t('Collapse sidebar panel')
           }
           aria-expanded={sidebarState !== 'collapsed'}
           aria-controls="left-panel"
           aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
-          title={sidebarState === 'collapsed' ? 'Expand sidebar panel' : 'Collapse sidebar panel'}
+          title={
+            sidebarState === 'collapsed' ? t('Expand sidebar panel') : t('Collapse sidebar panel')
+          }
           onClick={toggleSidebar}
         >
           <PanelLeft className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
@@ -422,12 +426,16 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
               : 'bg-primary/20 shadow-card backdrop-blur text-action-panel-toggle'
           }`}
           aria-label={
-            previewPort.state === 'collapsed' ? 'Expand preview panel' : 'Collapse preview panel'
+            previewPort.state === 'collapsed'
+              ? t('Expand preview panel')
+              : t('Collapse preview panel')
           }
           aria-expanded={previewPort.state !== 'collapsed'}
           aria-controls="right-panel"
           title={
-            previewPort.state === 'collapsed' ? 'Expand preview panel' : 'Collapse preview panel'
+            previewPort.state === 'collapsed'
+              ? t('Expand preview panel')
+              : t('Collapse preview panel')
           }
           onClick={previewPort.toggle}
         >
@@ -468,6 +476,7 @@ const WorkspacePanelLayout = ({
   renderMobileSidebar,
   renderConversation
 }: WorkspacePanelLayoutProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const { isMobile, mobileSidebar, sidebar, preview } = useWorkspacePanelLayout(previewPort)
 
   return (
@@ -477,7 +486,7 @@ const WorkspacePanelLayout = ({
           <button
             type="button"
             className="fixed inset-0 z-[65] bg-black/45 md:hidden"
-            aria-label="Close navigation"
+            aria-label={t('Close navigation')}
             onClick={mobileSidebar.close}
           />
         ) : null}
@@ -511,7 +520,7 @@ const WorkspacePanelLayout = ({
 
               <ResizableHandle
                 elementRef={sidebar.separatorRef}
-                aria-label="Resize left panel"
+                aria-label={t('Resize left panel')}
                 disabled={sidebar.state === 'collapsed'}
                 aria-hidden={sidebar.state === 'collapsed'}
                 className={`before:left-auto before:right-full before:mr-[3px] before:translate-x-0 transition-opacity duration-200 ease-out ${
@@ -531,7 +540,7 @@ const WorkspacePanelLayout = ({
             <>
               <ResizableHandle
                 elementRef={preview.separatorRef}
-                aria-label="Resize right panel"
+                aria-label={t('Resize right panel')}
                 disabled={preview.state === 'collapsed'}
                 aria-hidden={preview.state === 'collapsed'}
                 className={`bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] before:left-auto before:right-full before:mr-0.5 before:w-1 before:translate-x-0 transition-opacity duration-200 ease-out ${

@@ -6,6 +6,7 @@
  * slop test: pass · component scope, existing workspace chrome and tokens preserved
  */
 import { useState } from 'react'
+import type { TFunction } from 'i18next'
 import {
   CornerDownLeft,
   Download,
@@ -15,6 +16,7 @@ import {
   Minimize2,
   Pencil
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -27,6 +29,8 @@ import {
   type PlanDocumentV1
 } from '../../../../../shared/session-plan/contract'
 
+import { planConfidenceLabelKey } from './plan-confidence-label'
+
 type PlanSurfaceProps = Readonly<{ projection: ActivePlanProjection; stale?: boolean }>
 
 type RestoredPlanResponder = Readonly<{
@@ -34,27 +38,45 @@ type RestoredPlanResponder = Readonly<{
   respond: (response: { decision: 'approved' | 'rejected' }) => Promise<void>
 }>
 
-const lifecycleLabel = (projection: ActivePlanProjection): string => {
+const lifecycleLabel = (projection: ActivePlanProjection, t: TFunction): string => {
   switch (projection.lifecycle) {
     case 'awaiting_approval':
-      return 'Plan ready for review'
+      return t('Plan ready for review')
     case 'completed':
-      return 'Plan completed'
+      return t('Plan completed')
     case 'blocked':
-      return 'Plan blocked'
+      return t('Plan blocked')
     case 'rejected':
-      return 'Plan rejected'
+      return t('Plan rejected')
     case 'approved':
-      return 'Plan approved'
+      return t('Plan approved')
     case 'interrupted':
-      return 'Plan interrupted'
+      return t('Plan interrupted')
     default:
-      return 'Plan in progress'
+      return t('Plan in progress')
   }
 }
 
-const stepStatusLabel = (status: ActivePlanProjection['stepStates'][string]['status']): string =>
-  status.replaceAll('_', ' ')
+// The projection's status is a protocol value (`in_progress`); these are its display forms.
+const stepStatusLabel = (
+  status: ActivePlanProjection['stepStates'][string]['status'],
+  t: TFunction
+): string => {
+  switch (status) {
+    case 'completed':
+      return t('completed')
+    case 'in_progress':
+      return t('in progress')
+    case 'blocked':
+      return t('blocked')
+    case 'skipped':
+      return t('skipped')
+    case 'not_run':
+      return t('not run')
+    case 'not_started':
+      return t('not started')
+  }
+}
 
 type StepProjectionStatus = ActivePlanProjection['stepStates'][string]['status']
 
@@ -94,6 +116,8 @@ const WorkspacePlanCard = ({
     embedded?: boolean
     className?: string
   }>): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const decisionPending = projection.approval === 'pending' && !stale
   const [responseText, setResponseText] = useState('')
   const [decisionBusy, setDecisionBusy] = useState(false)
@@ -109,7 +133,7 @@ const WorkspacePlanCard = ({
       setResolvedProjectionKey(projectionKey)
       onResolved?.()
     } catch (error) {
-      setDecisionError(error instanceof Error ? error.message : 'Unable to update the Plan.')
+      setDecisionError(error instanceof Error ? error.message : t('Unable to update the Plan.'))
     } finally {
       setDecisionBusy(false)
     }
@@ -126,7 +150,7 @@ const WorkspacePlanCard = ({
     >
       {stale ? (
         <div className="border-b border-border bg-muted px-3.5 py-2 text-xs text-muted-foreground">
-          ⚠ A newer plan is active. This plan can no longer be approved.
+          {t('⚠ A newer plan is active. This plan can no longer be approved.')}
         </div>
       ) : null}
       <div className="p-4 sm:p-5">
@@ -134,7 +158,7 @@ const WorkspacePlanCard = ({
           <div className="min-w-56 flex-1">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <ListChecks className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
-              <span>{lifecycleLabel(projection)}</span>
+              <span>{lifecycleLabel(projection, t)}</span>
             </div>
             <div className="mt-1 min-w-0 break-words text-[17px] font-semibold leading-6 text-foreground">
               {projection.document.task_summary}
@@ -147,7 +171,7 @@ const WorkspacePlanCard = ({
               className="[@media(pointer:coarse)]:h-11"
               onClick={onOpen}
             >
-              Open
+              {t('Open')}
             </Button>
             {decisionPending ? (
               <Button
@@ -156,14 +180,14 @@ const WorkspacePlanCard = ({
                 disabled={decisionBusy}
                 onClick={() => void respond('approved')}
               >
-                Approve
+                {t('Approve')}
               </Button>
             ) : null}
           </div>
         </div>
         <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-text-100">
           <span className="size-1.5 rounded-full bg-text-300" aria-hidden="true" />
-          {projection.document.feasibility.confidence} confidence
+          {t(planConfidenceLabelKey(projection.document.feasibility.confidence))}
         </div>
         {decisionPending ? (
           <form
@@ -177,7 +201,7 @@ const WorkspacePlanCard = ({
               setDecisionError(undefined)
               void (
                 onSubmitResponse?.(text) ??
-                Promise.reject(new Error('Unable to send Plan feedback.'))
+                Promise.reject(new Error(t('Unable to send Plan feedback.')))
               )
                 .then(() => {
                   setResponseText('')
@@ -186,14 +210,14 @@ const WorkspacePlanCard = ({
                 })
                 .catch((error: unknown) =>
                   setDecisionError(
-                    error instanceof Error ? error.message : 'Unable to update the Plan.'
+                    error instanceof Error ? error.message : t('Unable to update the Plan.')
                   )
                 )
                 .finally(() => setDecisionBusy(false))
             }}
           >
             <label className="sr-only" htmlFor={`plan-response-${projection.artifactVersionId}`}>
-              Respond to Plan
+              {t('Respond to Plan')}
             </label>
             <div className="flex items-start gap-2">
               <span
@@ -210,7 +234,7 @@ const WorkspacePlanCard = ({
                   decisionError ? `plan-response-error-${projection.artifactVersionId}` : undefined
                 }
                 className="max-h-40 min-h-9 min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 shadow-none focus-visible:border-transparent dark:bg-transparent"
-                placeholder="Describe changes to the Plan…"
+                placeholder={t('Describe changes to the Plan…')}
                 value={responseText}
                 disabled={decisionBusy}
                 onChange={(event) => setResponseText(event.target.value)}
@@ -219,7 +243,7 @@ const WorkspacePlanCard = ({
                 type="submit"
                 variant="outline"
                 size="icon-lg"
-                aria-label="Send Plan feedback"
+                aria-label={t('Send Plan feedback')}
                 disabled={decisionBusy || responseText.trim().length === 0}
               >
                 <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
@@ -245,11 +269,19 @@ const PlanProgressChip = ({
   projection,
   onOpen
 }: PlanSurfaceProps & Readonly<{ onOpen: () => void }>): React.JSX.Element => {
+  const { t } = useTranslation()
   const running = projection.counts.inProgress
   const isRunning = projection.lifecycle === 'in_progress' && running > 0
-  const accessibleName = `Open plan, step ${projection.counts.completed} of ${projection.counts.steps}${
-    isRunning ? `, ${running} running` : ''
-  }`
+  const accessibleName = isRunning
+    ? t('Open plan, step {{completed}} of {{steps}}, {{running}} running', {
+        completed: projection.counts.completed,
+        steps: projection.counts.steps,
+        running
+      })
+    : t('Open plan, step {{completed}} of {{steps}}', {
+        completed: projection.counts.completed,
+        steps: projection.counts.steps
+      })
   return (
     <Button
       type="button"
@@ -266,8 +298,15 @@ const PlanProgressChip = ({
         />
       ) : null}
       <ListChecks className="size-3.5" strokeWidth={2} aria-hidden="true" />
-      step {projection.counts.completed}/{projection.counts.steps}
-      {isRunning ? <span className="font-medium text-primary">· {running} running</span> : null}
+      {t('step {{completed}}/{{steps}}', {
+        completed: projection.counts.completed,
+        steps: projection.counts.steps
+      })}
+      {isRunning ? (
+        <span className="font-medium text-primary">
+          {t('· {{count}} running', { count: running })}
+        </span>
+      ) : null}
     </Button>
   )
 }
@@ -288,10 +327,6 @@ const validatedPreviewDocument = (value: unknown): PlanDocumentV1 | null => {
   }
 }
 
-const countLabel = (count: number): string =>
-  ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'][count] ??
-  String(count)
-
 const PlanPreviewSurface = ({
   projection,
   stale = false,
@@ -300,6 +335,8 @@ const PlanPreviewSurface = ({
   onRespond,
   onToggleFullScreen
 }: PlanPreviewSurfaceProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const planDocument = validatedPreviewDocument(projection.document)
 
   const download =
@@ -327,20 +364,20 @@ const PlanPreviewSurface = ({
         <div className="flex items-center gap-1">
           <Button
             type="button"
-            aria-label="Download Plan"
+            aria-label={t('Download Plan')}
             variant="ghost"
             onClick={() => void download()}
           >
             <Download className="size-4" aria-hidden="true" />
-            Download
+            {t('Download')}
           </Button>
           {planDocument && !stale && projection.approval === 'pending' && onRespond ? (
             <>
               <Button type="button" variant="outline" onClick={() => void onRespond('rejected')}>
-                Dismiss
+                {t('Dismiss')}
               </Button>
               <Button type="button" onClick={() => void onRespond('approved')}>
-                Approve
+                {t('Approve')}
               </Button>
             </>
           ) : null}
@@ -350,7 +387,7 @@ const PlanPreviewSurface = ({
                 <TooltipTrigger asChild>
                   <Button
                     type="button"
-                    aria-label={isFullScreen ? 'Exit full screen' : 'Enter full screen'}
+                    aria-label={isFullScreen ? t('Exit full screen') : t('Enter full screen')}
                     variant="ghost"
                     size="icon-sm"
                     onClick={onToggleFullScreen}
@@ -363,7 +400,7 @@ const PlanPreviewSurface = ({
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent className="z-[70]">
-                  {isFullScreen ? 'Exit full screen' : 'Enter full screen'}
+                  {isFullScreen ? t('Exit full screen') : t('Enter full screen')}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -372,30 +409,40 @@ const PlanPreviewSurface = ({
       </header>
       {stale ? (
         <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
-          ⚠ This plan has been replaced by another plan and is no longer current.
+          {t('⚠ This plan has been replaced by another plan and is no longer current.')}
         </div>
       ) : null}
       {!stale && projection.approval === 'pending' && !onRespond ? (
         <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
-          This Plan is still pending, but its original Agent interaction has ended. Send a normal
-          message to let the Agent decide how to continue.
+          {t(
+            'This Plan is still pending, but its original Agent interaction has ended. Send a normal message to let the Agent decide how to continue.'
+          )}
         </div>
       ) : null}
       {!stale && projection.requiresExplicitContinuation ? (
         <div className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground">
           {projection.approval === 'approved' && projection.continuationState === 'interrupted'
-            ? 'Plan approved, but execution was interrupted. Send a message to continue.'
-            : 'Plan execution is not active. Send a message to continue this approved Plan.'}
+            ? t('Plan approved, but execution was interrupted. Send a message to continue.')
+            : t('Plan execution is not active. Send a message to continue this approved Plan.')}
         </div>
       ) : null}
       {planDocument ? (
         <ScrollArea className="min-h-0 flex-1">
           <div className="px-8 py-8">
             <h1 className="text-[22px] font-semibold">{planDocument.task_summary}</h1>
+            {/* One sentence, one key. It used to be assembled from three pieces — a spelled-out
+                count, a hand-picked 'phase'/'phases', and a bare tail — which pins English word
+                order and leaves the tail untranslatable. The count is now a number so i18next
+                selects the plural form, and zh, having one plural category, needs a single entry. */}
             <p className="mt-1 text-sm text-muted-foreground">
-              Complete {countLabel(planDocument.phases.length)}{' '}
-              {planDocument.phases.length === 1 ? 'phase' : 'phases'} in order. Delegations within a
-              phase may run in parallel.
+              {t(
+                'Complete {{count}} phases in order. Delegations within a phase may run in parallel.',
+                {
+                  count: planDocument.phases.length,
+                  defaultValue_one:
+                    'Complete {{count}} phase in order. Delegations within a phase may run in parallel.'
+                }
+              )}
             </p>
             {planDocument.phases.map((phase, phaseIndex) => (
               <section
@@ -403,7 +450,7 @@ const PlanPreviewSurface = ({
                 className="mt-7 border-t border-border pt-6"
               >
                 <div className="text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
-                  PHASE {phaseIndex + 1}
+                  {t('PHASE {{number}}', { number: phaseIndex + 1 })}
                 </div>
                 <h2 className="mt-1 text-lg font-medium">{phase.name}</h2>
                 {phase.delegations.map((delegation, delegationIndex) => (
@@ -418,7 +465,9 @@ const PlanPreviewSurface = ({
                     <div className="flex items-baseline gap-2">
                       <span className="font-medium">{delegation.name}</span>
                       <span className="text-[11px] text-muted-foreground">
-                        {phase.delegations.length === 1 ? 'primary agent' : 'runs in parallel'}
+                        {phase.delegations.length === 1
+                          ? t('primary agent')
+                          : t('runs in parallel')}
                       </span>
                     </div>
                     {delegation.steps.map((step) => {
@@ -436,7 +485,10 @@ const PlanPreviewSurface = ({
                       return (
                         <div key={step.title} className="mt-3 grid grid-cols-[18px_1fr] gap-2">
                           <span
-                            aria-label={`${step.title} status: ${stepStatusLabel(state.status)}`}
+                            aria-label={t('{{step}} status: {{status}}', {
+                              step: step.title,
+                              status: stepStatusLabel(state.status, t)
+                            })}
                             className={`mt-0.5 grid size-4 place-items-center rounded border text-[10px] ${presentation.className}`}
                           >
                             {presentation.mark}
@@ -459,7 +511,7 @@ const PlanPreviewSurface = ({
               </section>
             ))}
             <section className="mt-7 border-t border-border pt-6">
-              <h2 className="text-sm font-medium">Desired outputs</h2>
+              <h2 className="text-sm font-medium">{t('Desired outputs')}</h2>
               {planDocument.desired_outputs.length > 0 ? (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
                   {planDocument.desired_outputs.map((output) => (
@@ -467,13 +519,16 @@ const PlanPreviewSurface = ({
                   ))}
                 </ul>
               ) : (
-                <p className="mt-2 text-xs text-muted-foreground">No desired outputs specified.</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t('No desired outputs specified.')}
+                </p>
               )}
             </section>
             <div className="mt-7 rounded-lg bg-muted p-4">
               <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">
                 <Info className="size-3 shrink-0" aria-hidden="true" />
-                SCOPE &amp; FEASIBILITY · {planDocument.feasibility.confidence} confidence
+                {t('SCOPE & FEASIBILITY')} ·{' '}
+                {t(planConfidenceLabelKey(planDocument.feasibility.confidence))}
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 {planDocument.feasibility.rationale}
@@ -487,7 +542,7 @@ const PlanPreviewSurface = ({
             role="alert"
             className="max-w-sm rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
           >
-            Invalid Plan document. This preview cannot be displayed.
+            {t('Invalid Plan document. This preview cannot be displayed.')}
           </div>
         </div>
       )}

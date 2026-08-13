@@ -1,9 +1,12 @@
+import { useTranslation } from 'react-i18next'
+
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
 
 export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -13,7 +16,7 @@ export const FastaPreviewRenderer = ({ item }: PreviewFileRendererProps): React.
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="FASTA couldn't be read for preview"
+        fallbackMessage={t("FASTA couldn't be read for preview")}
       />
     )
   }

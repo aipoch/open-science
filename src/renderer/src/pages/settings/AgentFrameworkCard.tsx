@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Badge } from '@/components/ui/badge'
@@ -101,6 +102,7 @@ const AgentFrameworkCard = ({
   blockedInstallSources,
   onInstall
 }: AgentFrameworkCardProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [showLog, setShowLog] = useState(false)
 
   // A runtime with a resolved path (even a broken one) shows its path/link and the Uninstall control.
@@ -124,9 +126,9 @@ const AgentFrameworkCard = ({
   // Show the bar while this card's install runs; fall back to an indeterminate label before the
   // first progress tick arrives.
   const progress = install.installProgress
-    ? describeInstallProgress(install.installProgress)
+    ? describeInstallProgress(install.installProgress, t)
     : installing
-      ? { label: 'Starting…' }
+      ? { label: t('Starting…') }
       : null
   const percent = progress?.fraction != null ? Math.round(progress.fraction * 100) : undefined
 
@@ -138,7 +140,11 @@ const AgentFrameworkCard = ({
       role={ready ? 'radio' : canRequestRepair ? 'button' : undefined}
       aria-checked={ready ? active : undefined}
       aria-label={
-        ready ? `Use ${name}` : canRequestRepair ? `Repair required for ${name}` : undefined
+        ready
+          ? t('Use {{name}}', { name })
+          : canRequestRepair
+            ? t('Repair required for {{name}}', { name })
+            : undefined
       }
       aria-disabled={(ready || canRequestRepair) && selectDisabled ? true : undefined}
       tabIndex={ready || canRequestRepair ? 0 : undefined}
@@ -201,9 +207,9 @@ const AgentFrameworkCard = ({
               ) : null}
               {ready ? (
                 active ? (
-                  <Badge>Active</Badge>
+                  <Badge>{t('Active', { context: 'inUse' })}</Badge>
                 ) : (
-                  <Badge variant="secondary">Installed</Badge>
+                  <Badge variant="secondary">{t('Installed')}</Badge>
                 )
               ) : repair ? (
                 // A detected-but-broken runtime (preflight failed) is not "not installed".
@@ -211,11 +217,11 @@ const AgentFrameworkCard = ({
                   variant="outline"
                   className="border-amber-500/40 text-amber-600 dark:text-amber-400"
                 >
-                  Needs repair
+                  {t('Needs repair')}
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-muted-foreground">
-                  Not installed
+                  {t('Not installed')}
                 </Badge>
               )}
             </div>
@@ -261,7 +267,7 @@ const AgentFrameworkCard = ({
               ) : (
                 <AgentInstallSourceMenu
                   name={name}
-                  label={repair ? 'Repair' : 'Install'}
+                  intent={repair ? 'repair' : 'install'}
                   sources={installSources}
                   installing={installing}
                   disabled={installLocked}
@@ -288,7 +294,7 @@ const AgentFrameworkCard = ({
                 </div>
                 <div
                   role="progressbar"
-                  aria-label="Install progress"
+                  aria-label={t('Install progress')}
                   aria-valuemin={0}
                   aria-valuemax={100}
                   aria-valuenow={percent}
@@ -321,13 +327,13 @@ const AgentFrameworkCard = ({
                     onClick={() => setShowLog((visible) => !visible)}
                     className="text-xs font-medium text-muted-foreground hover:text-foreground"
                   >
-                    {logVisible ? 'Hide log' : 'Show log'}
+                    {logVisible ? t('Hide log') : t('Show log')}
                   </button>
                 ) : null}
                 {logVisible ? (
                   <pre
                     className="mt-2 max-h-48 overflow-auto rounded-lg bg-foreground/5 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-foreground/80"
-                    aria-label="Install log"
+                    aria-label={t('Install log')}
                   >
                     {installLogs.join('')}
                   </pre>

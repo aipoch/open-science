@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next'
+
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import {
   projectConversationMessage,
@@ -243,18 +245,25 @@ const selectSubagentFrame = (
   }
 }
 
+// Takes `t` rather than reaching for the i18next singleton, keeping it a pure function of
+// (input, locale) — the same shape as the other view describers in this codebase.
 const resolveDelegatedWorkAvailability = (
   frameworkId: AgentFrameworkId,
-  frameworks: readonly AgentFrameworkView[]
+  frameworks: readonly AgentFrameworkView[],
+  t: TFunction
 ): DelegatedWorkAvailability => {
   const framework = frameworks.find(({ id }) => id === frameworkId)
   if (framework?.supportsDelegatedWork === true) return { available: true }
 
   return {
     available: false,
-    title: `Subagents unavailable for ${framework?.displayName ?? frameworkId}`,
-    description:
+    // The framework's display name is vendor copy and interpolates unchanged.
+    title: t('Subagents unavailable for {{name}}', {
+      name: framework?.displayName ?? frameworkId
+    }),
+    description: t(
       'Choose a certified agent framework in Settings before asking the Main Agent to delegate work.'
+    )
   }
 }
 

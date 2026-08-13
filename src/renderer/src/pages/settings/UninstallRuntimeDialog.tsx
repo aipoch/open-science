@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -41,6 +42,7 @@ const UninstallRuntimeDialog = ({
   onCancel,
   onConfirm
 }: UninstallRuntimeDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogFramework = useRetainedDialogValue(framework)
   const dialogIsUninstalling =
     useRetainedDialogValue(framework ? isUninstalling : undefined) ?? isUninstalling
@@ -55,36 +57,17 @@ const UninstallRuntimeDialog = ({
     >
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content
-          className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
-        >
-          <div className={dialogHeaderClassName}>
-            <div className="min-w-0">
-              <AlertDialog.Title className={dialogTitleClassName}>
-                Uninstall {name}?
-              </AlertDialog.Title>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Close"
-              className={dialogCloseButtonClassName}
-              disabled={dialogIsUninstalling}
-              onClick={onCancel}
-            >
-              <X className="size-4" aria-hidden="true" />
-            </Button>
-          </div>
-
-          <div className={dialogBodyClassName}>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              This removes the {name} runtime this app downloaded and manages. A separate {name} you
-              installed yourself is not affected. You can reinstall it here at any time.
-            </AlertDialog.Description>
-          </div>
-
-          <div className={dialogFooterClassName}>
+        <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
+          <AlertDialog.Title className={dialogTitleClassName}>
+            {t('Uninstall {{name}}?', { name })}
+          </AlertDialog.Title>
+          <AlertDialog.Description className={dialogDescriptionClassName}>
+            {t(
+              'This removes the {{name}} runtime this app downloaded and manages. A separate {{name}} you installed yourself is not affected. You can reinstall it here at any time.',
+              { name }
+            )}
+          </AlertDialog.Description>
+          <div className="mt-6 flex justify-end gap-2">
             <AlertDialog.Cancel asChild>
               <Button
                 type="button"
@@ -92,7 +75,7 @@ const UninstallRuntimeDialog = ({
                 className={dialogCancelButtonClassName}
                 disabled={dialogIsUninstalling}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <Button
@@ -101,7 +84,7 @@ const UninstallRuntimeDialog = ({
               disabled={dialogIsUninstalling}
               onClick={onConfirm}
             >
-              {dialogIsUninstalling ? 'Uninstalling…' : 'Uninstall'}
+              {dialogIsUninstalling ? t('Uninstalling…') : t('Uninstall')}
             </Button>
           </div>
         </AlertDialog.Content>

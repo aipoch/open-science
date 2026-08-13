@@ -1,7 +1,9 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
+import type { TFunction } from 'i18next'
 import { Check, ChevronDown, ChevronRight, Info } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { NotebookSessionRequest } from '../../../../shared/notebook'
@@ -56,6 +58,8 @@ type PendingScopeConfirmation = PermissionScopeConfirmation & {
 
 type ScopeOption = { scope: PermissionScope; label: string; subtitle: string }
 
+// English source text for the scope menu. It stays here as literals so it reads in the diff, but it
+// travels to the menu as *data* rather than as JSX, so the read sites below call t() on it.
 const SCOPE_OPTIONS: ScopeOption[] = [
   { scope: 'once', label: 'Once', subtitle: 'This call only' },
   { scope: 'session', label: 'This conversation', subtitle: 'Remembered for this conversation' },
@@ -131,19 +135,21 @@ const getExtraOptions = (
 // Canonical, protocol-derived action word for a known option kind; undefined for unknown kinds.
 // The kind is trusted protocol semantics; the provider-supplied name is NOT, so an untrusted
 // allow_always named "Reject" must still read as an Allow action.
-const CANONICAL_ACTION_LABEL: Record<string, string> = {
+// `as const` keeps the values as literal catalog keys so the t() lookup below stays type-checked.
+const CANONICAL_ACTION_LABEL_KEY = {
   allow_once: 'Allow once',
   allow_always: 'Allow always',
   reject_once: 'Reject once',
   reject_always: 'Reject always'
-}
+} as const
 
 // Label for an extra-option button. For a known kind, use the canonical action word and append the
 // provider name only to disambiguate (never as the action itself). For an unknown kind, the
 // provider name is all we have, so show it verbatim.
-const getExtraOptionLabel = (option: PermissionOption): string => {
-  const canonical = CANONICAL_ACTION_LABEL[option.kind.toLowerCase()]
-  if (!canonical) return option.name
+const getExtraOptionLabel = (option: PermissionOption, t: TFunction): string => {
+  const kind = option.kind.toLowerCase()
+  if (!(kind in CANONICAL_ACTION_LABEL_KEY)) return option.name
+  const canonical = t(CANONICAL_ACTION_LABEL_KEY[kind as keyof typeof CANONICAL_ACTION_LABEL_KEY])
   const provider = option.name.trim()
   return provider && provider.toLowerCase() !== canonical.toLowerCase()
     ? `${canonical} · ${provider}`
@@ -252,11 +258,15 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 }
 
 // A friendly action title for the code card header, matching the transcript's activity phrasing.
-const getPermissionActionTitle = (request: AcpPermissionRequest, fallback: string): string => {
-  if (resolveNotebookToolName(request)) return 'Run notebook cell'
-  if (isArtifactWriteRequest(request)) return 'Artifact file input'
-  if (isMcpPermissionRequest(request)) return 'External service input'
-  if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return 'Run command'
+const getPermissionActionTitle = (
+  request: AcpPermissionRequest,
+  fallback: string,
+  t: TFunction
+): string => {
+  if (resolveNotebookToolName(request)) return t('Run notebook cell')
+  if (isArtifactWriteRequest(request)) return t('Artifact file input')
+  if (isMcpPermissionRequest(request)) return t('External service input')
+  if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return t('Run command')
   return fallback
 }
 
@@ -383,28 +393,32 @@ const PermissionImpactTip = ({
 }: {
   description: string
   detail?: string
-}): React.JSX.Element => (
-  <TooltipProvider delayDuration={200}>
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label="Permission impact information"
-          data-testid="permission-impact-info"
-          className="flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <Info className="size-3.5" aria-hidden="true" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-none whitespace-nowrap">
-        <div className="space-y-1">
-          {detail ? <p>{detail}</p> : null}
-          <p className={detail ? 'text-muted-foreground' : undefined}>{description}</p>
-        </div>
-      </TooltipContent>
-    </Tooltip>
-  </TooltipProvider>
-)
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={t('Permission impact information')}
+            data-testid="permission-impact-info"
+            className="flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Info className="size-3.5" aria-hidden="true" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-none whitespace-nowrap">
+          <div className="space-y-1">
+            {detail ? <p>{detail}</p> : null}
+            <p className={detail ? 'text-muted-foreground' : undefined}>{description}</p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
 
 // Header cluster for permission prompts: a user-facing category, an available notebook environment,
 // and the authorization-scope information affordance.
@@ -419,6 +433,7 @@ const PermissionHeaderBadges = ({
   categoryLabel: string
   scopeDescription: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const kernelKind = runtime === 'python' ? 'python' : runtime === 'r' ? 'r' : undefined
   const envName = useNotebookEnvironment(lookup, kernelKind)
 
@@ -437,7 +452,7 @@ const PermissionHeaderBadges = ({
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label="Permission information"
+              aria-label={t('Permission information')}
               data-testid="permission-tool-info"
               className="flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
@@ -467,6 +482,7 @@ const ScopeDropdown = ({
   onClose: (restoreTriggerFocus?: boolean) => void
   portaled: boolean
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const ref = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
   const options = SCOPE_OPTIONS.filter(({ scope }) => available.has(scope))
@@ -541,8 +557,8 @@ const ScopeDropdown = ({
         >
           {/* Label column: left-aligned flush to padding so both rows line up */}
           <div className="flex min-w-0 flex-1 flex-col">
-            <span className="text-xs font-medium text-foreground">{label}</span>
-            <span className="text-[11px] leading-tight text-muted-foreground">{subtitle}</span>
+            <span className="text-xs font-medium text-foreground">{t(label)}</span>
+            <span className="text-[11px] leading-tight text-muted-foreground">{t(subtitle)}</span>
           </div>
           {/* Check column: right side, fixed slot so selection never shifts the label */}
           <span className="flex w-3.5 shrink-0 justify-center text-primary">
@@ -557,7 +573,7 @@ const ScopeDropdown = ({
     <PopoverContent
       ref={ref}
       role="menu"
-      aria-label="Authorization scope"
+      aria-label={t('Authorization scope')}
       side="top"
       align="end"
       sideOffset={6}
@@ -572,7 +588,7 @@ const ScopeDropdown = ({
     <div
       ref={ref}
       role="menu"
-      aria-label="Authorization scope"
+      aria-label={t('Authorization scope')}
       className="absolute bottom-full right-0 z-10 mb-1.5 min-w-44 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none"
     >
       {items}
@@ -588,6 +604,7 @@ const PermissionApprovalCard = ({
   disabled = false,
   onSubmitted
 }: PermissionApprovalCardProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [scope, setScope] = useState<PermissionScope>('session')
   const [scopeOpen, setScopeOpen] = useState(false)
   const [scopeConfirmation, setScopeConfirmation] = useState<PendingScopeConfirmation | undefined>(
@@ -623,29 +640,34 @@ const PermissionApprovalCard = ({
   const presentation = describePermissionRequest(request)
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
+  // The trailing clause of the Allow button ("Allow for this project"). Kept as a per-scope key so
+  // translations can reorder the phrase instead of appending an English-shaped suffix.
   const scopeLabel: Record<PermissionScope, string> = {
-    once: 'once',
-    session: 'for this conversation',
-    project: 'for this project',
-    global: 'globally'
+    once: t('once'),
+    session: t('for this conversation'),
+    project: t('for this project'),
+    global: t('globally')
   }
   const notebookRuntimeLabel: Partial<Record<NotebookRuntime, string>> = {
-    python: 'Python',
-    r: 'R',
-    js: 'JavaScript REPL',
-    bash: 'notebook shell'
+    python: t('Python'),
+    r: t('R'),
+    js: t('JavaScript REPL'),
+    bash: t('notebook shell')
   }
   const scopeDescription = !allowOptionId
-    ? 'No approval scope is available for this request.'
+    ? t('No approval scope is available for this request.')
     : effectiveScope === 'once'
-      ? 'Approval applies to this call only.'
+      ? t('Approval applies to this call only.')
       : effectiveScope === 'project'
-        ? 'Approval applies to matching calls in this project.'
+        ? t('Approval applies to matching calls in this project.')
         : effectiveScope === 'global'
-          ? 'Approval applies to matching calls in every project.'
+          ? t('Approval applies to matching calls in every project.')
           : presentation.notebookRuntime
-            ? `Approval covers later ${notebookRuntimeLabel[presentation.notebookRuntime]} calls in this conversation, including across restarts.`
-            : 'Approval remains attached to this conversation across restarts.'
+            ? t(
+                'Approval covers later {{runtime}} calls in this conversation, including across restarts.',
+                { runtime: notebookRuntimeLabel[presentation.notebookRuntime] }
+              )
+            : t('Approval remains attached to this conversation across restarts.')
   const hasScopePicker = availableScopes.size > 1
   const isSubmitting = submittingRequestId === request.requestId
   const respondOnce = (optionId?: string, broadScopeConfirmed = false): void => {
@@ -744,8 +766,11 @@ const PermissionApprovalCard = ({
       role="group"
       aria-label={
         request.delegated
-          ? `${request.delegated.childTitle} permission request: ${presentation.actionTitle}`
-          : `Permission request: ${presentation.actionTitle}`
+          ? t('{{child}} permission request: {{action}}', {
+              child: request.delegated.childTitle,
+              action: presentation.actionTitle
+            })
+          : t('Permission request: {{action}}', { action: presentation.actionTitle })
       }
       className={cn(
         'flex w-full max-w-full flex-col gap-3 bg-card p-4 text-xs leading-5 text-card-foreground outline-none sm:p-5',
@@ -801,7 +826,7 @@ const PermissionApprovalCard = ({
 
       {request.commandPrefix?.length ? (
         <p className="break-all text-xs text-muted-foreground">
-          Remembered scopes apply to commands starting with:{' '}
+          {t('Remembered scopes apply to commands starting with:')}{' '}
           <code className="rounded-md bg-accent/50 px-1.5 py-0.5 font-mono text-sm text-primary">
             {JSON.stringify(request.commandPrefix)}
           </code>
@@ -819,7 +844,8 @@ const PermissionApprovalCard = ({
           key={requestId}
           title={getPermissionActionTitle(
             request,
-            presentation.actionDetail ?? presentation.actionTitle
+            presentation.actionDetail ?? presentation.actionTitle,
+            t
           )}
           code={permCode.code}
           language={permCode.language}
@@ -875,10 +901,10 @@ const PermissionApprovalCard = ({
                   }}
                 >
                   {isDeleteRequest ? (
-                    <span className="font-semibold">Delete</span>
+                    <span className="font-semibold">{t('Delete')}</span>
                   ) : (
                     <>
-                      <span className="font-semibold">Allow</span>{' '}
+                      <span className="font-semibold">{t('Allow')}</span>{' '}
                       <span className="font-normal">{scopeLabel[effectiveScope]}</span>
                     </>
                   )}
@@ -897,7 +923,7 @@ const PermissionApprovalCard = ({
                       ref={scopeTriggerRef}
                       type="button"
                       data-testid="scope-chevron"
-                      aria-label="Choose authorization scope"
+                      aria-label={t('Choose authorization scope')}
                       aria-expanded={scopeOpen}
                       aria-haspopup="menu"
                       className={cn(
@@ -936,7 +962,7 @@ const PermissionApprovalCard = ({
             disabled={disabled || isSubmitting}
             onClick={() => respondOnce(option.optionId)}
           >
-            {getExtraOptionLabel(option)}
+            {getExtraOptionLabel(option, t)}
           </Button>
         ))}
         <Button
@@ -947,7 +973,7 @@ const PermissionApprovalCard = ({
           disabled={disabled || isSubmitting}
           onClick={() => respondOnce(denyOptionId)}
         >
-          Deny
+          {t('Deny')}
         </Button>
       </div>
       <PermissionScopeConfirmationDialog

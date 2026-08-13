@@ -71,8 +71,10 @@ describe('workspace page component boundaries', () => {
     }
 
     expect(rawLineCount(facadeSource)).toBeLessThanOrEqual(900)
-    // The granted-roots menu rows (access badge, manage submenu) added 90 presentation lines.
-    expect(rawLineCount(presentationSource)).toBeLessThanOrEqual(750)
+    // The granted-roots menu rows (access badge, manage submenu) added 90 presentation lines, and
+    // localizing the relative-file-time labels added ~30 more: a natural-language key has to be a
+    // literal, so each plural bucket spells out its own English text instead of interpolating a unit.
+    expect(rawLineCount(presentationSource)).toBeLessThanOrEqual(800)
     expect(facadeSource).toContain("from './project-files-presentation-owner'")
     expect(presentationSource).not.toContain("from './ProjectFilesView'")
     expect(facadeSource.match(/export \{ ProjectFilesView \}/g)).toHaveLength(1)
@@ -500,14 +502,14 @@ describe('conversation message scroller integration', () => {
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group-header"')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceWebSearchActivityRow')
     expect(workspaceActivityGroupSource).toContain(
-      'formatActivityGroupTitle(group.activities, group.title)'
+      'formatActivityGroupTitle(group.activities, group.title, t)'
     )
     expect(workspaceActivityGroupSource).toContain('getRenderableActivityEntries(group.activities)')
     expect(workspaceWebSearchActivityRowSource).toContain('const WorkspaceWebSearchActivityRow')
     expect(workspaceWebSearchActivityRowSource).toContain('<WorkspaceToolActivityRowButton')
     expect(workspaceWebSearchActivityRowSource).toContain('panelTestId="tool-search-details"')
     expect(workspaceWebSearchActivityRowSource).toContain(
-      'formatResultCountLabel(details.resultCount)'
+      'formatResultCountLabel(details.resultCount, t)'
     )
     expect(workspaceWebSearchActivityRowSource).toContain(
       'canExpand={Boolean(details.query || details.resultCount)}'
@@ -517,6 +519,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain('content={assistantPresentation.content}')
     expect(workspaceAgentLoadingRowSource).toContain('const WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
+    expect(workspaceAgentLoadingRowSource).toContain("t('Thinking')")
   })
 
   // Non-search tool calls render an expandable details row backed by a dedicated parser module.
@@ -541,7 +544,7 @@ describe('conversation message scroller integration', () => {
     const workspaceToolCodeBlockSource = readFileSync(workspaceToolCodeBlockPath, 'utf8')
     const workspaceToolRowButtonSource = readFileSync(workspaceToolRowButtonPath, 'utf8')
 
-    expect(workspaceActivityGroupSource).toContain('buildToolActivityDetails(activity)')
+    expect(workspaceActivityGroupSource).toContain('buildToolActivityDetails(activity, t)')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('const WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('<WorkspaceToolActivityRowButton')
@@ -595,6 +598,7 @@ describe('conversation message scroller integration', () => {
     expect(workspaceAgentLoadingRowSource).toContain('role="status"')
     expect(workspaceAgentLoadingRowSource).toContain('aria-live="polite"')
     expect(workspaceAgentLoadingRowSource).toContain('thinking')
+    expect(workspaceAgentLoadingRowSource).toContain("t('Thinking')")
     expect(workspaceMessageItemSource).toContain('isAnimating={isAssistantPresenting}')
   })
 })

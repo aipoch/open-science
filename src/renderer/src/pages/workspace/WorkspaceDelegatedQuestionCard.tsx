@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,11 @@ import type {
   DelegatedQuestionAnswer,
   DelegatedQuestionRequest
 } from '../../../../shared/session-persistence'
+
+// Answer values travel to the agent and are compared against on read-back, so they stay English no
+// matter the UI language. Only the buttons' visible labels are translated.
+const AGENT_DECIDES_ANSWER = 'Let the agent decide'
+const SKIPPED_ANSWER = 'Skipped'
 
 type Props = Readonly<{
   projectId: string
@@ -23,6 +29,7 @@ const WorkspaceDelegatedQuestionCard = ({
   request,
   onRespond
 }: Props): React.JSX.Element => {
+  const { t } = useTranslation()
   const [answers, setAnswers] = useState<DelegatedQuestionAnswer[]>(() => [...request.draftAnswers])
   const [questionIndex, setQuestionIndex] = useState(request.draftQuestionIndex)
   const [submitting, setSubmitting] = useState(false)
@@ -53,7 +60,7 @@ const WorkspaceDelegatedQuestionCard = ({
     try {
       await operation
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not save the response.')
+      setError(caught instanceof Error ? caught.message : t('Could not save the response.'))
       throw caught
     }
   }
@@ -86,15 +93,20 @@ const WorkspaceDelegatedQuestionCard = ({
     <section
       data-testid="delegated-question-card"
       className="relative z-10 mb-2 rounded-2xl border border-border-200 bg-bg-000 p-4 text-text-000 shadow-card"
-      aria-label={`Question from ${request.sourceName}`}
+      aria-label={t('Question from {{name}}', { name: request.sourceName })}
     >
-      <p className="mb-1 text-xs font-medium text-text-100">Asked by {request.sourceName}</p>
+      <p className="mb-1 text-xs font-medium text-text-100">
+        {t('Asked by {{name}}', { name: request.sourceName })}
+      </p>
       <div className="flex items-start justify-between gap-3">
         <h3 className="min-w-0 flex-1 whitespace-pre-wrap text-base font-semibold">
           {question.question}
         </h3>
         <span className="shrink-0 text-xs text-text-300">
-          {questionIndex + 1} of {request.questions.length}
+          {t('{{current}} of {{total}}', {
+            current: questionIndex + 1,
+            total: request.questions.length
+          })}
         </span>
       </div>
       <div className="mt-3">
@@ -118,7 +130,7 @@ const WorkspaceDelegatedQuestionCard = ({
                   selected ? 'bg-primary text-primary-foreground' : 'bg-bg-000 text-text-100'
                 )}
               >
-                {selected ? <Check className="size-4" aria-label="Selected" /> : index + 1}
+                {selected ? <Check className="size-4" aria-label={t('Selected')} /> : index + 1}
               </span>
               <span>
                 <span className="block text-sm font-medium">{option.label}</span>
@@ -132,20 +144,20 @@ const WorkspaceDelegatedQuestionCard = ({
         <button
           type="button"
           className="w-full border-b border-border-200 px-3 py-3 text-left text-sm font-medium hover:bg-bg-200"
-          onClick={() => choose('Let the agent decide')}
+          onClick={() => choose(AGENT_DECIDES_ANSWER)}
         >
-          Let the agent decide
+          {t('Let the agent decide')}
         </button>
         <div className="flex items-start gap-2 border-b border-border-200 px-3 py-2">
           <Textarea
-            aria-label="Type your own answer"
-            placeholder="Or type your own answer…"
+            aria-label={t('Type your own answer')}
+            placeholder={t('Or type your own answer…')}
             rows={1}
             maxLength={4_000}
             value={
               currentAnswer &&
-              currentAnswer !== 'Let the agent decide' &&
-              currentAnswer !== 'Skipped' &&
+              currentAnswer !== AGENT_DECIDES_ANSWER &&
+              currentAnswer !== SKIPPED_ANSWER &&
               !question.options.some((option) => option.label === currentAnswer)
                 ? currentAnswer
                 : ''
@@ -153,8 +165,8 @@ const WorkspaceDelegatedQuestionCard = ({
             className="min-h-9 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
             onChange={(event) => choose(event.currentTarget.value)}
           />
-          <Button type="button" variant="ghost" onClick={() => choose('Skipped')}>
-            Skip
+          <Button type="button" variant="ghost" onClick={() => choose(SKIPPED_ANSWER)}>
+            {t('Skip')}
           </Button>
         </div>
       </div>
@@ -162,7 +174,7 @@ const WorkspaceDelegatedQuestionCard = ({
         {questionIndex > 0 ? (
           <Button type="button" variant="ghost" onClick={() => move(questionIndex - 1)}>
             <ChevronLeft className="size-4" aria-hidden="true" />
-            Back
+            {t('Back')}
           </Button>
         ) : null}
         {currentAnswer ? (
@@ -174,7 +186,7 @@ const WorkspaceDelegatedQuestionCard = ({
               else move(questionIndex + 1)
             }}
           >
-            {questionIndex === request.questions.length - 1 ? 'Finish' : 'Next'}
+            {questionIndex === request.questions.length - 1 ? t('Finish') : t('Next')}
             <ChevronRight className="size-4" aria-hidden="true" />
           </Button>
         ) : null}

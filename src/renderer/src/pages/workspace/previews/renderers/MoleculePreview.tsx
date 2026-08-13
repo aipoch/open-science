@@ -1,5 +1,6 @@
 import { FlaskConical } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 
@@ -26,6 +27,7 @@ const MoleculePreviewCanvas = ({
   extension: string
   name: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const oclRef = useRef<OclModule | undefined>(undefined)
   // OCL namespaces the SVG's internal ids with this string; useId() carries colons that are invalid there.
@@ -61,9 +63,9 @@ const MoleculePreviewCanvas = ({
       setError(undefined)
     } catch (renderError) {
       container.replaceChildren()
-      setError(renderError instanceof Error ? renderError.message : 'Could not render structure')
+      setError(renderError instanceof Error ? renderError.message : t('Could not render structure'))
     }
-  }, [content, extension, svgId])
+  }, [content, extension, svgId, t])
 
   useEffect(() => {
     let canceled = false
@@ -76,13 +78,13 @@ const MoleculePreviewCanvas = ({
       })
       .catch((importError) => {
         console.error('Failed to load molecule renderer', importError)
-        if (!canceled) setError('Molecule renderer failed to load')
+        if (!canceled) setError(t('Molecule renderer failed to load'))
       })
 
     return () => {
       canceled = true
     }
-  }, [renderStructure])
+  }, [renderStructure, t])
 
   useEffect(() => {
     const container = containerRef.current
@@ -102,13 +104,13 @@ const MoleculePreviewCanvas = ({
       <div className="flex shrink-0 items-center gap-2 border-b border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
         <FlaskConical className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         <span className="truncate" title={name}>
-          Using OpenChemLib viewer
+          {t('Using OpenChemLib viewer')}
         </span>
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden bg-bg-000">
         {error ? (
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-[12px] text-danger-000">
-            Structure could not be rendered: {error}
+            {t('Structure could not be rendered: {{error}}', { error })}
           </div>
         ) : null}
         <div
@@ -117,7 +119,7 @@ const MoleculePreviewCanvas = ({
             'absolute inset-0 flex items-center justify-center p-3 [&>svg]:max-h-full [&>svg]:max-w-full',
             error && 'opacity-20'
           )}
-          aria-label={`Structure preview of ${name}`}
+          aria-label={t('Structure preview of {{name}}', { name })}
         />
       </div>
     </div>
@@ -125,6 +127,7 @@ const MoleculePreviewCanvas = ({
 }
 
 export const MoleculePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -134,7 +137,7 @@ export const MoleculePreviewRenderer = ({ item }: PreviewFileRendererProps): Rea
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="Structure file couldn't be read for preview"
+        fallbackMessage={t("Structure file couldn't be read for preview")}
       />
     )
   }

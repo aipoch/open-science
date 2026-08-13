@@ -5,6 +5,7 @@ import type {
   PermissionGrantSnapshot,
   PermissionGrantView
 } from '../../../shared/permission-grants'
+import { i18next } from '../i18n'
 
 const EMPTY_SNAPSHOT: PermissionGrantSnapshot = {
   version: 0,
@@ -206,9 +207,9 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
       const oneFamily = new Set(revoked.map((grant) => grant.family)).size === 1
       const message = `${
         revokedCount === 1
-          ? `Revoked ${FAMILY_LABELS[revoked[0].family]} · ${revoked[0].capabilityLabel}`
-          : `Revoked ${revokedCount} permissions${oneFamily && revoked[0] ? ` in ${FAMILY_LABELS[revoked[0].family]}` : ''}`
-      }${conflictCount > 0 ? `; ${conflictCount} changed before it could be revoked` : ''}`
+          ? `${i18next.t('Revoked')} ${i18next.t(FAMILY_LABELS[revoked[0].family])} · ${i18next.t(revoked[0].capabilityLabel)}`
+          : `${i18next.t('Revoked {{count}} permissions', { count: revokedCount })}${oneFamily && revoked[0] ? ` ${i18next.t('in')} ${i18next.t(FAMILY_LABELS[revoked[0].family])}` : ''}`
+      }${conflictCount > 0 ? `; ${i18next.t('{{count}} changed before it could be revoked', { count: conflictCount })}` : ''}`
       pendingRevocations.delete(requestId)
       set((state) => {
         const current =

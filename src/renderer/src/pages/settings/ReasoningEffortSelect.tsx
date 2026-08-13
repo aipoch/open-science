@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -13,6 +14,7 @@ import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effo
 // applies to open sessions live where the framework allows it (Claude Code, Codex), otherwise on
 // the next reconnect (opencode).
 const ReasoningEffortSelect = (): React.JSX.Element => {
+  const { t } = useTranslation()
   const reasoningEffort = useSettingsStore((state) => state.reasoningEffort)
   const setReasoningEffort = useSettingsStore((state) => state.setReasoningEffort)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
@@ -22,8 +24,11 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
   const effectiveModel = resolveProviderEffectiveModel(activeProvider, activeModel)
   const profile = resolveProviderReasoningEffortProfile(activeProvider, effectiveModel)
   const control = resolveReasoningEffortControl(reasoningEffort, profile)
+  // Only 'Default' is translated. The rest of the ladder (Low / Medium / High / XHigh / Max) comes from
+  // resolveReasoningEffortControl and is the literal effort value sent on the wire, so it reads the same
+  // in every locale — and src/shared has no i18n access by design.
   const options = [
-    { value: undefined, label: 'Default', intent: 'default' as const },
+    { value: undefined, label: t('Default'), intent: 'default' as const },
     ...control.options
   ]
   // The slide is a click affordance: enable it only after the user interacts, so the thumb never
@@ -41,7 +46,7 @@ const ReasoningEffortSelect = (): React.JSX.Element => {
   return (
     <div
       role="radiogroup"
-      aria-label="Reasoning effort"
+      aria-label={t('Reasoning effort')}
       className="relative grid w-fit rounded-lg bg-muted p-0.5"
       style={{ gridTemplateColumns: `repeat(${options.length}, 4rem)` }}
     >

@@ -3,6 +3,7 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../../shared/compute'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
@@ -75,6 +76,7 @@ const WorkspaceActivityGroup = ({
   jobsByActivityId,
   onOpenJobDetail
 }: WorkspaceActivityGroupProps): React.JSX.Element => {
+  const { t } = useTranslation()
   // ToolSearch wrapper rows are hidden when concrete search rows are present.
   const renderableActivityEntries = getRenderableActivityEntries(group.activities)
   const visibleActivities = renderableActivityEntries.map(({ activity }) => activity)
@@ -102,10 +104,10 @@ const WorkspaceActivityGroup = ({
               <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
             </span>
             <span className="min-w-0 truncate text-left font-medium text-text-000">
-              {formatActivityGroupTitle(group.activities, group.title)}
+              {formatActivityGroupTitle(group.activities, group.title, t)}
             </span>
             <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-100">
-              {formatStepCount(visibleActivities)} ·{' '}
+              {formatStepCount(visibleActivities, t)} ·{' '}
               <ActivityGroupElapsed activities={visibleActivities} />
             </span>
           </button>
@@ -116,7 +118,7 @@ const WorkspaceActivityGroup = ({
                   // Search rows get bespoke query/result details; other tools reuse the shared builder.
                   const isSearch = isSearchActivity(activity, group.activities, activityIndex)
                   const searchDetails = isSearch ? formatWebSearchDetails(activity) : undefined
-                  const toolDetails = isSearch ? undefined : buildToolActivityDetails(activity)
+                  const toolDetails = isSearch ? undefined : buildToolActivityDetails(activity, t)
                   // All tool rows — notebook cells included — default collapsed (meaningful title
                   // only); clicking the title reveals the code and output. A user toggle still wins.
                   const isRowExpanded = expansionOverrides[activity.id] ?? false

@@ -1,5 +1,6 @@
 import { Box } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { GLViewer } from '3dmol'
 
 import { cn } from '@/lib/utils'
@@ -12,15 +13,16 @@ import { SourcePreviewContent } from './SourcePreview'
 type ThreeDmolModule = typeof import('3dmol')
 type PdbStyle = 'cartoon' | 'stick' | 'sphere' | 'surface' | 'line'
 
-const PDB_STYLE_OPTIONS: { id: PdbStyle; label: string }[] = [
-  { id: 'cartoon', label: 'Cartoon' },
-  { id: 'stick', label: 'Stick' },
-  { id: 'sphere', label: 'Sphere' },
-  { id: 'surface', label: 'Surface' },
-  { id: 'line', label: 'Line' }
-]
+// Catalog keys rather than text so the style buttons relabel on a language switch.
+const PDB_STYLE_OPTIONS = [
+  { id: 'cartoon', labelKey: 'Cartoon' },
+  { id: 'stick', labelKey: 'Stick' },
+  { id: 'sphere', labelKey: 'Sphere' },
+  { id: 'surface', labelKey: 'Surface' },
+  { id: 'line', labelKey: 'Line' }
+] as const satisfies readonly { id: PdbStyle; labelKey: string }[]
 
-const CARTOON_UNAVAILABLE_MESSAGE = 'Cartoon requires a protein or nucleic-acid backbone'
+const CARTOON_UNAVAILABLE_MESSAGE_KEY = 'Cartoon requires a protein or nucleic-acid backbone'
 
 const PROTEIN_RESIDUE_NAMES = new Set([
   'ALA',
@@ -135,6 +137,7 @@ const PdbPreviewViewer = ({
   content: string
   name: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const viewerElementRef = useRef<HTMLDivElement | null>(null)
   const viewerStateRef = useRef<{ viewer: GLViewer; threeDmol: ThreeDmolModule } | undefined>(
     undefined
@@ -209,7 +212,7 @@ const PdbPreviewViewer = ({
       })
       .catch((error) => {
         console.error('Failed to initialize PDB preview', error)
-        if (!canceled) setViewerError(error instanceof Error ? error.message : 'Viewer failed')
+        if (!canceled) setViewerError(error instanceof Error ? error.message : t('Viewer failed'))
       })
 
     return () => {
@@ -220,7 +223,7 @@ const PdbPreviewViewer = ({
       viewerStateRef.current = undefined
       viewerElement.replaceChildren()
     }
-  }, [content, renderCurrentStyle])
+  }, [content, renderCurrentStyle, t])
 
   useEffect(() => {
     const viewerElement = viewerElementRef.current
@@ -254,16 +257,18 @@ const PdbPreviewViewer = ({
         <div className="flex min-w-0 items-center gap-2 text-[12px] text-text-300">
           <Box className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
           <span className="truncate" title={name}>
-            Using 3Dmol.js viewer
+            {t('Using 3Dmol.js viewer')}
           </span>
         </div>
-        <div className="shrink-0 text-[12px] text-text-300">{atomCount.toLocaleString()} atoms</div>
+        <div className="shrink-0 text-[12px] text-text-300">
+          {t('{{count}} atoms', { count: atomCount })}
+        </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 border-b border-border-300 bg-bg-000 px-3 py-2">
-        <span className="text-[12px] text-text-300">Style:</span>
+        <span className="text-[12px] text-text-300">{t('Style:')}</span>
         {!supportsCartoon ? (
           <span id={cartoonUnavailableDescriptionId} className="sr-only">
-            {CARTOON_UNAVAILABLE_MESSAGE}
+            {t(CARTOON_UNAVAILABLE_MESSAGE_KEY)}
           </span>
         ) : null}
         <div className="flex min-w-0 flex-wrap items-center gap-1">
@@ -278,7 +283,7 @@ const PdbPreviewViewer = ({
                 aria-pressed={isActive}
                 aria-disabled={isDisabled || undefined}
                 aria-describedby={isDisabled ? cartoonUnavailableDescriptionId : undefined}
-                title={isDisabled ? CARTOON_UNAVAILABLE_MESSAGE : option.label}
+                title={t(isDisabled ? CARTOON_UNAVAILABLE_MESSAGE_KEY : option.labelKey)}
                 className={cn(
                   'h-6 rounded-md px-2.5 text-[12px] text-text-300 transition-colors hover:bg-bg-300 hover:text-text-000',
                   isActive &&
@@ -291,7 +296,7 @@ const PdbPreviewViewer = ({
                   setSelectedStyle(option.id)
                 }}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             )
           })}
@@ -300,23 +305,24 @@ const PdbPreviewViewer = ({
       <div className="relative min-h-0 flex-1 overflow-hidden bg-bg-000">
         {viewerError ? (
           <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-[12px] text-danger-000">
-            PDB viewer could not be initialized: {viewerError}
+            {t('PDB viewer could not be initialized: {{error}}', { error: viewerError })}
           </div>
         ) : null}
         <div
           ref={viewerElementRef}
           className={cn('absolute inset-0', viewerError && 'opacity-20')}
-          aria-label={`3D preview of ${name}`}
+          aria-label={t('3D preview of {{name}}', { name })}
         />
       </div>
       <div className="flex shrink-0 items-center border-t border-border-300 bg-bg-000 px-3 py-1.5 text-[11px] leading-4 text-text-300">
-        Drag to rotate · Scroll to zoom · Shift + drag to pan
+        {t('Drag to rotate · Scroll to zoom · Shift + drag to pan')}
       </div>
     </div>
   )
 }
 
 export const PdbPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -326,7 +332,7 @@ export const PdbPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="PDB couldn't be read for preview"
+        fallbackMessage={t("PDB couldn't be read for preview")}
       />
     )
   }

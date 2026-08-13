@@ -1,6 +1,7 @@
 import { AlertDialog } from 'radix-ui'
 import { FolderInput, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -13,7 +14,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import { cn } from '@/lib/utils'
+import { APP } from '../../../shared/app-config'
 
 type DataRootMissingDialogProps = {
   open: boolean
@@ -32,6 +33,7 @@ const DataRootMissingDialog = ({
   dataRoot,
   onResolved
 }: DataRootMissingDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [isRetrying, setIsRetrying] = useState(false)
   const [stillMissing, setStillMissing] = useState(false)
   const [isChoosing, setIsChoosing] = useState(false)
@@ -60,7 +62,7 @@ const DataRootMissingDialog = ({
     const inspection = await window.api.storage.inspectDataRoot(picked)
     if (inspection.kind === 'invalid') {
       setIsChoosing(false)
-      setChooseError(inspection.error ?? 'The selected folder is not usable.')
+      setChooseError(inspection.error ?? t('The selected folder is not usable.'))
       return
     }
 
@@ -69,7 +71,7 @@ const DataRootMissingDialog = ({
     const result = await window.api.storage.setDataRootAndRelaunch(picked, false)
     if (!result.ok) {
       setIsChoosing(false)
-      setChooseError(result.error ?? 'Could not switch to this folder.')
+      setChooseError(result.error ?? t('Could not switch to this folder.'))
     }
     // On success the app relaunches; nothing left to update here.
   }
@@ -78,20 +80,23 @@ const DataRootMissingDialog = ({
     <AlertDialog.Root open={open}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content
-          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
-        >
-          <div className={dialogHeaderClassName}>
-            <AlertDialog.Title className={dialogTitleClassName}>
-              Data folder not found
-            </AlertDialog.Title>
-          </div>
+        <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>
+          <AlertDialog.Title className={dialogTitleClassName}>
+            {t('Data folder not found')}
+          </AlertDialog.Title>
+          <AlertDialog.Description className={dialogDescriptionClassName}>
+            <Trans
+              i18nKey="Your data folder <path>{{path}}</path> can't be found. It may have been deleted, or it's on a drive that isn't connected."
+              values={{ path: dialogDataRoot }}
+              components={{ path: <span className="font-mono" /> }}
+            />
+          </AlertDialog.Description>
 
-          <div className={dialogBodyClassName}>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              Your data folder <span className="font-mono">{dialogDataRoot}</span> can&apos;t be
-              found. It may have been deleted, or it&apos;s on a drive that isn&apos;t connected.
-            </AlertDialog.Description>
+          {stillMissing ? (
+            <p className="mt-3 text-xs text-destructive" role="alert">
+              {t('Still not found. Reconnect the drive and try again, or choose another location.')}
+            </p>
+          ) : null}
 
             {stillMissing ? (
               <p className="mt-3 text-xs text-destructive" role="alert">
@@ -113,7 +118,7 @@ const DataRootMissingDialog = ({
               onClick={() => void handleRetry()}
             >
               <RefreshCw aria-hidden="true" />
-              {isRetrying ? 'Checking…' : 'Reconnect & retry'}
+              {isRetrying ? t('Checking…') : t('Reconnect & retry')}
             </Button>
             <Button
               type="button"
@@ -122,7 +127,7 @@ const DataRootMissingDialog = ({
               onClick={() => void handleChooseAnotherLocation()}
             >
               <FolderInput aria-hidden="true" />
-              {isChoosing ? 'Switching…' : 'Choose another location'}
+              {isChoosing ? t('Switching…') : t('Choose another location')}
             </Button>
             <AlertDialog.Cancel asChild>
               <Button
@@ -131,12 +136,14 @@ const DataRootMissingDialog = ({
                 disabled={isRetrying || isChoosing}
                 onClick={onResolved}
               >
-                Continue with an empty folder
+                {t('Continue with an empty folder')}
               </Button>
             </AlertDialog.Cancel>
             <p className="text-xs text-muted-foreground">
-              Open Science will recreate the folder as you use it. Files from the old location
-              won&apos;t be available until it&apos;s reconnected.
+              {t(
+                "{{appName}} will recreate the folder as you use it. Files from the old location won't be available until it's reconnected.",
+                { appName: APP.name }
+              )}
             </p>
           </div>
         </AlertDialog.Content>

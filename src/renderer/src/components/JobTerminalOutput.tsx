@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 // Dark terminal output box for job stdout/stderr (design.md §6 JobTerminalOutput).
 // Background #0d1117 and color #c9d1d9 are component-local — not in global CSS tokens.
 type JobTerminalOutputProps = {
@@ -6,11 +8,15 @@ type JobTerminalOutputProps = {
 }
 
 // Renders the tail of stdout or stderr in a dark terminal-style box.
-// Shows a dim empty-state prompt when no content is available.
+// Shows a dim empty-state prompt when no content is available. The empty message defaults inside the
+// body rather than in the parameter list — a default value can't call a hook.
 export function JobTerminalOutput({
   content,
-  emptyMessage = 'No output yet.'
+  emptyMessage
 }: JobTerminalOutputProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const emptyText = emptyMessage ?? t('No output yet.')
+
   if (!content || content.trim().length === 0) {
     return (
       <div
@@ -28,7 +34,7 @@ export function JobTerminalOutput({
           textAlign: 'center'
         }}
       >
-        {emptyMessage}
+        {emptyText}
       </div>
     )
   }

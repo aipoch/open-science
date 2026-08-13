@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
 import {
@@ -36,6 +37,7 @@ import {
 } from '../../../../shared/remote-fs'
 import { Button } from '@/components/ui/button'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -45,17 +47,35 @@ import { useProjectStore } from '@/stores/project-store'
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Returns a human-readable relative time string from a mtime timestamp.
-const relativeTime = (mtimeMs: number): string => {
+type AgeUnit = 'second' | 'minute' | 'hour' | 'day'
+
+// Compact age labels, indexed by bucket so a new bucket cannot be added without a label.
+const AGE_LABELS = {
+  second: '{{count}}s',
+  minute: '{{count}}m',
+  hour: '{{count}}h',
+  day: '{{count}}d'
+} as const satisfies Record<AgeUnit, string>
+
+// Bucketed age of an mtime timestamp. Returns the label plus its count so the text is resolved at
+// render time rather than frozen in the language active when the listing loaded.
+const entryAge = (mtimeMs: number): { key: (typeof AGE_LABELS)[AgeUnit]; count: number } => {
   const ageMs = Date.now() - mtimeMs
   const sec = Math.round(ageMs / 1000)
-  if (sec < 60) return `${sec}s`
+  if (sec < 60) return { key: AGE_LABELS.second, count: sec }
   const min = Math.round(sec / 60)
-  if (min < 60) return `${min}m`
+  if (min < 60) return { key: AGE_LABELS.minute, count: min }
   const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr}h`
-  const days = Math.round(hr / 24)
-  return `${days}d`
+  if (hr < 24) return { key: AGE_LABELS.hour, count: hr }
+  return { key: AGE_LABELS.day, count: Math.round(hr / 24) }
+}
+
+// Renders a bucketed mtime age. A component rather than a string helper so the label follows a
+// language switch without the listing having to be re-fetched.
+const EntryAge = ({ mtimeMs }: { mtimeMs: number }): React.ReactElement => {
+  const { t } = useTranslation()
+  const { key, count } = entryAge(mtimeMs)
+  return <>{t(key, { count })}</>
 }
 
 // Formats a byte count as a short human-readable string.
@@ -68,16 +88,37 @@ const formatSize = (bytes: number): string => {
   return `${(mb / 1024).toFixed(1)} GB`
 }
 
-// Infers a file type label from the extension. Purely presentational.
-const inferType = (name: string): string => {
+type InferredType = { kind: 'key'; key: string } | { kind: 'literal'; value: string }
+
+// Infers a file type label from the extension. Purely presentational. Generic words are translated
+// ('kind'); format and language names (Python, CSV, HDF5, …) stay verbatim in every locale ('literal').
+const inferType = (name: string): InferredType => {
   const dot = name.lastIndexOf('.')
-  if (dot === -1 || dot === name.length - 1) return 'file'
+  if (dot === -1 || dot === name.length - 1) return { kind: 'key', key: 'file' }
   const ext = name.slice(dot + 1).toLowerCase()
-  const map: Record<string, string> = {
+  // The extension maps straight to English text, which is also the catalog key.
+  const keyed: Record<string, string> = {
+    txt: 'Text',
+    png: 'Image',
+    jpg: 'Image',
+    jpeg: 'Image',
+    gif: 'Image',
+    zip: 'Archive',
+    tar: 'Archive',
+    gz: 'Archive',
+    bz2: 'Archive',
+    rds: 'R Data',
+    exe: 'Binary',
+    so: 'Library',
+    dylib: 'Library',
+    log: 'Log'
+  }
+  const key = keyed[ext]
+  if (key !== undefined) return { kind: 'key', key }
+  const literal: Record<string, string> = {
     py: 'Python',
     ipynb: 'Notebook',
     sh: 'Shell',
-    txt: 'Text',
     csv: 'CSV',
     tsv: 'TSV',
     json: 'JSON',
@@ -85,26 +126,13 @@ const inferType = (name: string): string => {
     yml: 'YAML',
     md: 'Markdown',
     pdf: 'PDF',
-    png: 'Image',
-    jpg: 'Image',
-    jpeg: 'Image',
-    gif: 'Image',
     svg: 'SVG',
-    zip: 'Archive',
-    tar: 'Archive',
-    gz: 'Archive',
-    bz2: 'Archive',
     h5: 'HDF5',
     hdf5: 'HDF5',
     nc: 'NetCDF',
-    r: 'R',
-    rds: 'R Data',
-    exe: 'Binary',
-    so: 'Library',
-    dylib: 'Library',
-    log: 'Log'
+    r: 'R'
   }
-  return map[ext] ?? ext.toUpperCase()
+  return { kind: 'literal', value: literal[ext] ?? ext.toUpperCase() }
 }
 
 // Returns the parent path (removes the last path component). Returns '/' at the root.
@@ -119,12 +147,29 @@ const parentPath = (p: string): string => {
 // Types
 // ---------------------------------------------------------------------------
 
+// Text that outlives the event that produced it (an error, a success toast) is stored as a catalog
+// key plus params — never as a resolved string — so switching language re-renders it. Backend and
+// IPC messages have no catalog entry and pass through verbatim under 'message'.
+type LocalizedText =
+  | { kind: 'key'; key: FileBrowserTextKey; params?: Record<string, string | number> }
+  | { kind: 'message'; message: string }
+
+type FileBrowserTextKey =
+  | 'Unknown error'
+  | 'Path must be absolute and contain no control characters.'
+  | 'Download failed'
+  | 'Saved to Downloads: {{name}}'
+
 type BrowserState =
   | { kind: 'loading' }
   | { kind: 'ok'; listing: DirListing }
-  | { kind: 'error'; detail: string; kind_hint?: string }
+  | { kind: 'error'; detail: LocalizedText; kind_hint?: string }
 
-type GoToItem = { label: string; path: string; icon: React.ReactNode }
+type GoToItem = {
+  labelKey: 'Scratch' | 'Home'
+  path: string
+  icon: React.ReactNode
+}
 
 // ---------------------------------------------------------------------------
 // DetailPanel — right-side file detail panel (no remote content requests)
@@ -145,8 +190,8 @@ type DetailPanelProps = {
 type ActionStatus =
   | { kind: 'idle' }
   | { kind: 'loading'; action: 'download' | 'import' }
-  | { kind: 'success'; action: 'download' | 'import'; message: string; filePath?: string }
-  | { kind: 'error'; message: string }
+  | { kind: 'success'; action: 'download' | 'import'; message: LocalizedText; filePath?: string }
+  | { kind: 'error'; message: LocalizedText }
 
 function DetailPanel({
   entry,
@@ -155,9 +200,15 @@ function DetailPanel({
   activeProjectId,
   onClose
 }: DetailPanelProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   const [copied, setCopied] = useState(false)
   const [actionStatus, setActionStatus] = useState<ActionStatus>({ kind: 'idle' })
   const remoteAbsPath = `${resolvedDir.replace(/\/$/, '')}/${entry.name}`
+
+  // Resolves stored text at render time: catalog keys go through t(), backend messages pass through.
+  const text = (value: LocalizedText): string =>
+    value.kind === 'message' ? value.message : t(value.key, value.params)
 
   const copyPath = async (): Promise<void> => {
     await navigator.clipboard.writeText(remoteAbsPath)
@@ -175,14 +226,23 @@ function DetailPanel({
       setActionStatus({
         kind: 'success',
         action: 'download',
-        message: `Saved to Downloads: ${result.name}`,
+        message: {
+          kind: 'key',
+          key: 'Saved to Downloads: {{name}}',
+          params: { name: result.name }
+        },
         filePath: result.path
       })
     } catch (err) {
       const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
       const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
-      const detail = fsErr?.detail ?? e.message ?? 'Download failed'
-      setActionStatus({ kind: 'error', message: detail })
+      const backend = fsErr?.detail ?? e.message
+      setActionStatus({
+        kind: 'error',
+        message: backend
+          ? { kind: 'message', message: backend }
+          : { kind: 'key', key: 'Download failed' }
+      })
     }
   }
 
@@ -196,17 +256,19 @@ function DetailPanel({
   // exists but no caller persists the temp file into the project artifact store.
 
   const isLoading = actionStatus.kind === 'loading'
+  const inferred = inferType(entry.name)
+  const typeLabel = inferred.kind === 'key' ? t(inferred.key) : inferred.value
 
   return (
     <div className="flex w-52 shrink-0 flex-col border-l border-border">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-          Details
+          {t('Details')}
         </span>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close detail panel"
+          aria-label={t('Close detail panel')}
           className="rounded p-0.5 text-muted-foreground hover:bg-accent"
         >
           <X className="size-3.5" />
@@ -220,27 +282,29 @@ function DetailPanel({
         </div>
 
         <div className="space-y-1.5">
-          <MetaRow label="SIZE" value={formatSize(entry.size)} />
-          <MetaRow label="MODIFIED" value={new Date(entry.mtimeMs).toLocaleString()} />
-          <MetaRow label="TYPE" value={inferType(entry.name)} />
+          <MetaRow label={t('SIZE')} value={formatSize(entry.size)} />
+          <MetaRow label={t('MODIFIED')} value={formatDate(entry.mtimeMs, 'dateTime')} />
+          <MetaRow label={t('TYPE')} value={typeLabel} />
         </div>
 
         {/* No preview placeholder */}
         <div className="rounded border border-dashed border-border bg-muted/30 px-3 py-4 text-center">
-          <p className="text-xs text-muted-foreground">No preview · {formatSize(entry.size)}</p>
+          <p className="text-xs text-muted-foreground">
+            {t('No preview · {{size}}', { size: formatSize(entry.size) })}
+          </p>
         </div>
 
         {/* Action status banner */}
         {actionStatus.kind === 'success' && (
           <div className="rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-2 py-1.5 text-xs text-emerald-700 dark:text-emerald-300 space-y-1">
-            <p>{actionStatus.message}</p>
+            <p>{text(actionStatus.message)}</p>
             {actionStatus.action === 'download' && actionStatus.filePath && (
               <button
                 type="button"
                 className="underline text-xs"
                 onClick={() => handleReveal(actionStatus.filePath!)}
               >
-                Show in Finder
+                {t('Show in Finder')}
               </button>
             )}
           </div>
@@ -250,7 +314,7 @@ function DetailPanel({
             role="alert"
             className="rounded bg-destructive/10 border border-destructive/30 px-2 py-1.5 text-xs text-destructive"
           >
-            {actionStatus.message}
+            {text(actionStatus.message)}
           </div>
         )}
 
@@ -262,12 +326,12 @@ function DetailPanel({
           className="w-full gap-1.5 text-xs"
           disabled={isLoading}
           onClick={() => void handleDownload()}
-          aria-label="Download file to OS Downloads folder"
+          aria-label={t('Download file to OS Downloads folder')}
         >
           <Download className="size-3.5" />
           {actionStatus.kind === 'loading' && actionStatus.action === 'download'
-            ? 'Downloading…'
-            : 'Download'}
+            ? t('Downloading…')
+            : t('Download')}
         </Button>
 
         {/* Add to project → artifact. Disabled until artifact persistence is wired: the download
@@ -281,11 +345,11 @@ function DetailPanel({
             size="sm"
             className="w-full gap-1.5 text-xs"
             disabled
-            title="Coming soon — remote import to project artifacts is not yet available"
-            aria-label="Add file to current project as artifact (coming soon)"
+            title={t('Coming soon — remote import to project artifacts is not yet available')}
+            aria-label={t('Add file to current project as artifact (coming soon)')}
           >
             <FolderOpen className="size-3.5" />
-            Add to project
+            {t('Add to project')}
           </Button>
         )}
 
@@ -296,10 +360,10 @@ function DetailPanel({
           size="sm"
           className="w-full gap-1.5 text-xs"
           onClick={() => void copyPath()}
-          aria-label="Copy remote absolute path to clipboard"
+          aria-label={t('Copy remote absolute path to clipboard')}
         >
           <ClipboardCopy className="size-3.5" />
-          {copied ? 'Copied!' : 'Copy path'}
+          {copied ? t('Copied!') : t('Copy path')}
         </Button>
       </div>
     </div>
@@ -331,12 +395,17 @@ export function FileBrowserModal({
   initialProviderId,
   initialPath
 }: FileBrowserModalProps): React.JSX.Element | null {
+  const { t } = useTranslation()
   const hosts = useComputeStore((s) => s.hosts)
   const probeHost = useComputeStore((s) => s.probeHost)
   // Active project for "Add to project" — derived from navigation state.
   const activeProjectId = useNavigationStore((s) => s.activeProjectId)
   const projects = useProjectStore((s) => s.projects)
   const activeProject = projects.find((p) => p.id === activeProjectId)
+
+  // Resolves stored text at render time: catalog keys go through t(), backend messages pass through.
+  const text = (value: LocalizedText): string =>
+    value.kind === 'message' ? value.message : t(value.key, value.params)
 
   // Active host — defaults to initialProviderId or first reachable host.
   const [activeProviderId, setActiveProviderId] = useState<string | undefined>(
@@ -389,7 +458,10 @@ export function FileBrowserModal({
       } catch (err) {
         const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
         const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
-        const detail = fsErr?.detail ?? e.message ?? 'Unknown error'
+        const backend = fsErr?.detail ?? e.message
+        const detail: LocalizedText = backend
+          ? { kind: 'message', message: backend }
+          : { kind: 'key', key: 'Unknown error' }
         setBrowserState({ kind: 'error', detail, kind_hint: fsErr?.remoteKind })
         // Connection failure means the probe result is stale — re-probe in the background so
         // the host chip reflects the current unreachable state (green → grey).
@@ -470,7 +542,7 @@ export function FileBrowserModal({
     if (validateRemotePath(resolved) === 'outside_roots') {
       setBrowserState({
         kind: 'error',
-        detail: 'Path must be absolute and contain no control characters.',
+        detail: { kind: 'key', key: 'Path must be absolute and contain no control characters.' },
         kind_hint: 'outside_roots'
       })
       return
@@ -513,10 +585,22 @@ export function FileBrowserModal({
 
   const goToItems: GoToItem[] = [
     ...(roots?.scratch
-      ? [{ label: 'Scratch', path: roots.scratch, icon: <Folder className="size-3.5" /> }]
+      ? [
+          {
+            labelKey: 'Scratch' as const,
+            path: roots.scratch,
+            icon: <Folder className="size-3.5" />
+          }
+        ]
       : []),
     ...(roots?.home
-      ? [{ label: 'Home', path: roots.home, icon: <Folder className="size-3.5" /> }]
+      ? [
+          {
+            labelKey: 'Home' as const,
+            path: roots.home,
+            icon: <Folder className="size-3.5" />
+          }
+        ]
       : [])
   ]
 
@@ -533,12 +617,12 @@ export function FileBrowserModal({
           className={dialogPanelClassName(
             'z-[70] flex w-[min(860px,calc(100vw-2rem))] h-[min(600px,calc(100vh-4rem))] flex-col overflow-hidden p-0'
           )}
-          aria-label="Remote file browser"
+          aria-label={t('Remote file browser')}
         >
           {/* Header: host chips + close */}
           <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mr-1">
-              Host
+              {t('Host')}
             </span>
             {hosts.map((h) => (
               <button
@@ -565,7 +649,12 @@ export function FileBrowserModal({
             ))}
             <div className="flex-1" />
             <Dialog.Close asChild>
-              <Button type="button" variant="ghost" size="icon-sm" aria-label="Close file browser">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close file browser')}
+              >
                 <X className="size-4" />
               </Button>
             </Dialog.Close>
@@ -580,7 +669,7 @@ export function FileBrowserModal({
               size="icon-sm"
               disabled={history.length === 0}
               onClick={handleBack}
-              aria-label="Go back"
+              aria-label={t('Go back')}
             >
               <ArrowLeft className="size-4" />
             </Button>
@@ -591,7 +680,7 @@ export function FileBrowserModal({
               size="icon-sm"
               disabled={isAtRoot()}
               onClick={handleUp}
-              aria-label="Go up one level"
+              aria-label={t('Go up one level')}
             >
               <ArrowUp className="size-4" />
             </Button>
@@ -608,14 +697,14 @@ export function FileBrowserModal({
                 aria-expanded={gotoOpen}
               >
                 <MapPin className="size-3.5" />
-                Go to
+                {t('Go to')}
                 <ChevronDown className="size-3.5 opacity-60" />
               </Button>
               {gotoOpen && (
                 <div
                   className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-md"
                   role="listbox"
-                  aria-label="Go-to locations"
+                  aria-label={t('Go-to locations')}
                 >
                   {goToItems.map((item) => (
                     <button
@@ -629,7 +718,7 @@ export function FileBrowserModal({
                       }}
                     >
                       {item.icon}
-                      <span className="flex-1">{item.label}</span>
+                      <span className="flex-1">{t(item.labelKey)}</span>
                       <span className="truncate max-w-[100px] text-muted-foreground font-mono">
                         {item.path}
                       </span>
@@ -643,14 +732,14 @@ export function FileBrowserModal({
                     onClick={() => void handlePinCurrent()}
                   >
                     <MapPin className="size-3.5 text-muted-foreground" />
-                    <span>Pin current folder</span>
+                    <span>{t('Pin current folder')}</span>
                   </button>
                   {/* Bookmarks */}
                   {bookmarks.length > 0 && (
                     <>
                       <div className="my-1 border-t border-border" />
                       <p className="px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        Bookmarks
+                        {t('Bookmarks')}
                       </p>
                       {bookmarks.map((bm) => (
                         <div key={bm} className="flex items-center gap-1">
@@ -667,7 +756,7 @@ export function FileBrowserModal({
                           </button>
                           <button
                             type="button"
-                            aria-label={`Remove bookmark ${bm}`}
+                            aria-label={t('Remove bookmark {{path}}', { path: bm })}
                             className="mr-1 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
                             onClick={() => void handleRemoveBookmark(bm)}
                           >
@@ -693,7 +782,7 @@ export function FileBrowserModal({
                 }}
                 onBlur={() => setAddressEditing(false)}
                 className="h-7 w-full rounded border border-border bg-muted/40 px-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                aria-label="Current directory path"
+                aria-label={t('Current directory path')}
                 spellCheck={false}
               />
             </form>
@@ -704,7 +793,7 @@ export function FileBrowserModal({
               variant="ghost"
               size="icon-sm"
               onClick={handleRefresh}
-              aria-label="Refresh directory listing"
+              aria-label={t('Refresh directory listing')}
             >
               <RefreshCw className="size-4" />
             </Button>
@@ -721,8 +810,8 @@ export function FileBrowserModal({
                   className="m-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive"
                 >
                   <div className="flex-1">
-                    <p className="font-semibold">Couldn&apos;t open this path.</p>
-                    <p className="mt-0.5 text-muted-foreground">{browserState.detail}</p>
+                    <p className="font-semibold">{t("Couldn't open this path.")}</p>
+                    <p className="mt-0.5 text-muted-foreground">{text(browserState.detail)}</p>
                   </div>
                   <div className="flex gap-1.5">
                     <Button
@@ -732,7 +821,7 @@ export function FileBrowserModal({
                       className="text-xs"
                       onClick={handleRefresh}
                     >
-                      Retry
+                      {t('Retry')}
                     </Button>
                     {roots?.home && (
                       <Button
@@ -742,7 +831,7 @@ export function FileBrowserModal({
                         className="text-xs"
                         onClick={() => void navigate(roots.scratch ?? roots.home ?? '~')}
                       >
-                        Go to home
+                        {t('Go to home')}
                       </Button>
                     )}
                   </div>
@@ -754,23 +843,23 @@ export function FileBrowserModal({
                 <div className="flex flex-1 items-center justify-center">
                   <RefreshCw
                     className="size-5 animate-spin text-muted-foreground"
-                    aria-label="Loading"
+                    aria-label={t('Loading')}
                   />
                 </div>
               )}
 
               {/* Entry list */}
               {browserState.kind === 'ok' && (
-                <div role="listbox" aria-label="Directory contents">
+                <div role="listbox" aria-label={t('Directory contents')}>
                   {/* Header row */}
                   <div className="grid grid-cols-[1fr_80px_80px] border-b border-border bg-muted/30 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    <span>Name</span>
-                    <span className="text-right">Size</span>
-                    <span className="text-right">Modified</span>
+                    <span>{t('Name')}</span>
+                    <span className="text-right">{t('Size')}</span>
+                    <span className="text-right">{t('Modified')}</span>
                   </div>
                   {listing?.entries.length === 0 && (
                     <p className="py-6 text-center text-xs text-muted-foreground">
-                      Empty directory
+                      {t('Empty directory')}
                     </p>
                   )}
                   {listing?.entries.map((entry) => (
@@ -801,13 +890,13 @@ export function FileBrowserModal({
                         {entry.isDirectory ? '—' : formatSize(entry.size)}
                       </span>
                       <span className="text-right text-muted-foreground">
-                        {relativeTime(entry.mtimeMs)}
+                        <EntryAge mtimeMs={entry.mtimeMs} />
                       </span>
                     </button>
                   ))}
                   {listing?.truncated && (
                     <p className="border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
-                      Showing first 5,000 entries. Navigate into a subdirectory to see more.
+                      {t('Showing first 5,000 entries. Navigate into a subdirectory to see more.')}
                     </p>
                   )}
                 </div>

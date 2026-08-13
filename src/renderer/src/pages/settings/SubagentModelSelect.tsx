@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import {
   Select,
   SelectContent,
@@ -25,6 +27,7 @@ import { SettingsField, SettingsRow } from './SettingsLayout'
 const INHERIT_KEY = 'same-as-main-model'
 
 const SubagentModelSelect = (): React.JSX.Element => {
+  const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
@@ -79,7 +82,7 @@ const SubagentModelSelect = (): React.JSX.Element => {
 
   return (
     <SettingsRow layout="model-effort">
-      <SettingsField label="Model">
+      <SettingsField label={t('Model')}>
         <Select
           value={selectedKey}
           disabled={pending}
@@ -105,7 +108,7 @@ const SubagentModelSelect = (): React.JSX.Element => {
             void setConfiguration({ mode: 'fixed', ...identity, reasoningEffort })
           }}
         >
-          <SelectTrigger aria-label="Subagent model Model">
+          <SelectTrigger aria-label={t('Subagent model Model')}>
             <span className="flex items-center gap-2 truncate">
               {configuration.mode === 'fixed' && selectedEntry ? (
                 <>
@@ -122,18 +125,18 @@ const SubagentModelSelect = (): React.JSX.Element => {
                 </>
               ) : unavailable ? (
                 <span className="truncate">
-                  {configuration.model} · {configuration.providerId} · Unavailable
+                  {configuration.model} · {configuration.providerId} · {t('Unavailable')}
                 </span>
               ) : (
-                <span className="truncate">Same as main model</span>
+                <span className="truncate">{t('Same as main model')}</span>
               )}
             </span>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={INHERIT_KEY}>Same as main model</SelectItem>
+            <SelectItem value={INHERIT_KEY}>{t('Same as main model')}</SelectItem>
             {unavailable ? (
               <SelectItem value={selectedKey} disabled>
-                {configuration.model} · {configuration.providerId} · Unavailable
+                {configuration.model} · {configuration.providerId} · {t('Unavailable')}
               </SelectItem>
             ) : null}
             {groups.map(({ provider, entries }) => (
@@ -159,23 +162,23 @@ const SubagentModelSelect = (): React.JSX.Element => {
         </Select>
       </SettingsField>
 
-      <SettingsField label="Reasoning effort">
+      <SettingsField label={t('Reasoning effort')}>
         {configuration.mode === 'inherit' ? (
           <Select value={INHERIT_KEY} disabled>
-            <SelectTrigger aria-label="Subagent model Reasoning effort">
+            <SelectTrigger aria-label={t('Subagent model Reasoning effort')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={INHERIT_KEY}>Same as main model</SelectItem>
+              <SelectItem value={INHERIT_KEY}>{t('Same as main model')}</SelectItem>
             </SelectContent>
           </Select>
         ) : effortProfile && !effortProfile.supported ? (
           <Select value="not-supported" disabled>
-            <SelectTrigger aria-label="Subagent model Reasoning effort">
+            <SelectTrigger aria-label={t('Subagent model Reasoning effort')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="not-supported">Not supported</SelectItem>
+              <SelectItem value="not-supported">{t('Not supported')}</SelectItem>
             </SelectContent>
           </Select>
         ) : (
@@ -195,11 +198,11 @@ const SubagentModelSelect = (): React.JSX.Element => {
               void setConfiguration({ ...configuration, reasoningEffort })
             }}
           >
-            <SelectTrigger aria-label="Subagent model Reasoning effort">
+            <SelectTrigger aria-label={t('Subagent model Reasoning effort')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="default">Default</SelectItem>
+              <SelectItem value="default">{t('Default')}</SelectItem>
               {effortControl?.options.map((option) => (
                 <SelectItem key={option.intent} value={option.intent}>
                   {option.label}

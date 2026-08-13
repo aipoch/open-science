@@ -6,6 +6,7 @@ import {
   isActivityActive,
   type ConversationItem
 } from './workspace-conversation-items'
+import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 import { isEditActivity, isSkillActivity } from './workspace-tool-activity-details'
 import { hasWebSearchContentEvidence } from './workspace-web-search-details'
 
@@ -209,42 +210,45 @@ const categorizeActivity = (
   return 'other'
 }
 
+// Plural key + English singular as defaultValue_one: English has no catalog, so the singular has to
+// travel with the call rather than live in one.
+const CATEGORY_CLAUSE_KEYS: Record<ActivityCategory, readonly [string, string]> = {
+  command: ['ran {{count}} commands', 'ran a command'],
+  search: ['ran {{count}} searches', 'ran a search'],
+  toolSearch: ['ran {{count}} tool searches', 'ran a tool search'],
+  fetch: ['fetched {{count}} pages', 'fetched a page'],
+  read: ['read {{count}} files', 'read a file'],
+  edit: ['edited {{count}} files', 'edited a file'],
+  skill: ['loaded {{count}} skills', 'loaded a skill'],
+  environment: ['managed environments', 'managed an environment'],
+  call: ['made {{count}} calls', 'made a call'],
+  artifact: ['saved {{count}} files', 'saved a file'],
+  notebook: ['ran {{count}} notebook cells', 'ran a notebook cell'],
+  other: ['ran {{count}} tools', 'ran a tool']
+}
+
 // Builds one natural-language clause (verb + count) for a category present in the group.
-const formatCategoryClause = (category: ActivityCategory, count: number): string => {
-  switch (category) {
-    case 'command':
-      return count === 1 ? 'ran a command' : `ran ${count} commands`
-    case 'search':
-      return count === 1 ? 'ran a search' : `ran ${count} searches`
-    case 'toolSearch':
-      return count === 1 ? 'ran a tool search' : `ran ${count} tool searches`
-    case 'fetch':
-      return count === 1 ? 'fetched a page' : `fetched ${count} pages`
-    case 'read':
-      return count === 1 ? 'read a file' : `read ${count} files`
-    case 'edit':
-      return count === 1 ? 'edited a file' : `edited ${count} files`
-    case 'skill':
-      return count === 1 ? 'loaded a skill' : `loaded ${count} skills`
-    case 'environment':
-      return count === 1 ? 'managed an environment' : 'managed environments'
-    case 'call':
-      return count === 1 ? 'made a call' : `made ${count} calls`
-    case 'artifact':
-      return count === 1 ? 'saved a file' : `saved ${count} files`
-    case 'notebook':
-      return count === 1 ? 'ran a notebook cell' : `ran ${count} notebook cells`
-    default:
-      return count === 1 ? 'ran a tool' : `ran ${count} tools`
-  }
+const formatCategoryClause = (
+  category: ActivityCategory,
+  count: number,
+  t: TranslateClause = identityTranslate
+): string => {
+  const [pluralKey, singular] = CATEGORY_CLAUSE_KEYS[category]
+
+  return t(pluralKey, { count, defaultValue_one: singular })
 }
 
 // Uppercases the first character so the joined lowercase clauses read as a sentence fragment.
+// Scripts without case (Chinese) are returned unchanged by toUpperCase(), so this is a no-op there.
 const capitalizeFirst = (value: string): string =>
   value.length > 0 ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value
 
 // Summarizes a group as "Ran 2 commands, loaded a skill, made a call" style category clauses.
-const formatActivityGroupTitle = (activities: ToolActivity[], declaredTitle?: string): string => {
+const formatActivityGroupTitle = (
+  activities: ToolActivity[],
+  declaredTitle?: string,
+  t: TranslateClause = identityTranslate
+): string => {
   const groupTitle = declaredTitle?.trim()
   if (groupTitle) return groupTitle
 
@@ -262,11 +266,12 @@ const formatActivityGroupTitle = (activities: ToolActivity[], declaredTitle?: st
 
   const clauses = ACTIVITY_CATEGORY_ORDER.filter(
     (category) => (categoryCounts.get(category) ?? 0) > 0
-  ).map((category) => formatCategoryClause(category, categoryCounts.get(category) ?? 0))
+  ).map((category) => formatCategoryClause(category, categoryCounts.get(category) ?? 0, t))
 
-  if (clauses.length === 0) return 'Ran a tool'
+  if (clauses.length === 0) return capitalizeFirst(t('ran a tool'))
 
-  return capitalizeFirst(clauses.join(', '))
+  // The separator itself is a key (its English text is ", ") so CJK can use a full-width comma.
+  return capitalizeFirst(clauses.join(t(', ')))
 }
 
 // Removes ToolSearch wrapper rows from rendering once concrete search rows are available.
@@ -279,12 +284,20 @@ const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableAct
 }
 
 // Formats the group header's total visible-step count, flagging any failed steps.
-const formatStepCount = (activities: ToolActivity[]): string => {
+const formatStepCount = (
+  activities: ToolActivity[],
+  t: TranslateClause = identityTranslate
+): string => {
   const activityCount = activities.length
-  const stepLabel = activityCount === 1 ? '1 step' : `${activityCount} steps`
+  const stepLabel = t('{{count}} steps', {
+    count: activityCount,
+    defaultValue_one: '{{count}} step'
+  })
   const failedCount = activities.filter((activity) => activity.status === 'failed').length
 
-  return failedCount > 0 ? `${stepLabel} · ${failedCount} failed` : stepLabel
+  return failedCount > 0
+    ? `${stepLabel} · ${t('{{count}} failed', { count: failedCount })}`
+    : stepLabel
 }
 
 // Adds each tool's own runtime, excluding idle gaps between tools in the same group.

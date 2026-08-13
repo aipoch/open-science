@@ -527,11 +527,6 @@ class ElectronAppHarness implements ElectronApp {
       this.roots.fakeRemoteItRoot,
       this.windowMode
     )
-    this.currentPage = await openMainWindow(
-      this.application,
-      this.rendererFailures,
-      this.windowMode
-    )
   }
 
   private get runningApplication(): ElectronApplication {

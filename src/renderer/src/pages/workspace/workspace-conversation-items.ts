@@ -7,6 +7,7 @@ import {
   type HandoffTranscriptProjection
 } from './handoff-lifecycle-projection'
 import { getLoadedSkillName, isSkillActivity } from './workspace-tool-activity-details'
+import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 import {
   projectInlineParentMessages,
   type InlineParentMessageProjection
@@ -152,33 +153,37 @@ const formatActivityToolName = (activity: ToolActivity): string => {
   return formatToolKindName(activity.toolKind)
 }
 
-// Builds the status-sensitive text for non-search activity chips.
-const formatActivityTitle = (activity: ToolActivity): string => {
+// Builds the status-sensitive text for non-search activity chips. The tool and skill names are
+// identities, so they interpolate into the translated frame rather than being translated.
+const formatActivityTitle = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): string => {
   if (isContextCompactionActivity(activity)) {
     const title = trimDetail(activity.title)
 
     if (title) return title
-    if (activity.status === 'failed') return 'Context compaction failed'
-    if (activity.status === 'completed') return 'Context compacted'
-    return 'Compacting context'
+    if (activity.status === 'failed') return t('Context compaction failed')
+    if (activity.status === 'completed') return t('Context compacted')
+    return t('Compacting context')
   }
 
   if (isSkillActivity(activity)) {
     const skillName = getLoadedSkillName(activity)
 
     if (activity.status === 'failed')
-      return skillName ? `Skill failed: ${skillName}` : 'Skill failed'
+      return skillName ? t('Skill failed: {{name}}', { name: skillName }) : t('Skill failed')
     if (activity.status === 'completed')
-      return skillName ? `Loaded skill: ${skillName}` : 'Loaded skill'
-    return skillName ? `Loading skill: ${skillName}` : 'Loading skill'
+      return skillName ? t('Loaded skill: {{name}}', { name: skillName }) : t('Loaded skill')
+    return skillName ? t('Loading skill: {{name}}', { name: skillName }) : t('Loading skill')
   }
 
   const toolName = formatActivityToolName(activity)
 
-  if (activity.status === 'failed') return `Tool failed: ${toolName}`
-  if (activity.status === 'completed') return `Used tool: ${toolName}`
+  if (activity.status === 'failed') return t('Tool failed: {{name}}', { name: toolName })
+  if (activity.status === 'completed') return t('Used tool: {{name}}', { name: toolName })
 
-  return `Using tool: ${toolName}`
+  return t('Using tool: {{name}}', { name: toolName })
 }
 
 // Projects persisted chat messages and transient tool activities into one sortable transcript list.

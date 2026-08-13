@@ -9,6 +9,8 @@ import {
   webRpcResponseSchema
 } from '../../shared/web-rpc-contract'
 import { installWebRendererContracts } from './api-installer'
+import { initI18n } from '@/i18n'
+import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
 
@@ -16,6 +18,12 @@ import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?ra
 // doesn't paint in light mode and then flip to dark. The Electron renderer does the same at the top
 // of main.tsx; the web build reaches main.tsx only after an async round trip, so it must apply here.
 applyTheme(resolveInitialTheme())
+
+// Language, for the same reason. Detection reads the *browser's* language list, which describes the
+// person reading the page — the backend host's OS locale may be something else entirely.
+const initialLocale = resolveInitialLocale()
+initI18n(initialLocale)
+applyHtmlLang(initialLocale)
 
 const REMOTE_ACCESS_OFF_MESSAGE =
   'Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.'

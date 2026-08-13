@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, GitBranch, Maximize2, MoreHorizontal, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -44,25 +45,29 @@ const PreviewProvenanceButton = ({
   item: PreviewFileItem
   onOpenProvenance: () => void
   tooltipClassName?: string
-}): React.JSX.Element => (
-  <TooltipProvider delayDuration={300}>
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="text-text-100 hover:text-text-000"
-          aria-label={`Open Provenance for ${item.title}`}
-          onClick={onOpenProvenance}
-        >
-          <GitBranch aria-hidden="true" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent className={tooltipClassName}>Provenance</TooltipContent>
-    </Tooltip>
-  </TooltipProvider>
-)
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="text-text-100 hover:text-text-000"
+            aria-label={t('Open Provenance for {{title}}', { title: item.title })}
+            onClick={onOpenProvenance}
+          >
+            <GitBranch aria-hidden="true" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className={tooltipClassName}>{t('Provenance')}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
 
 // The optional callback makes the maximize action available only in the compact workbench panel;
 // the dialog reuses this header without exposing a nested full-screen action.
@@ -83,98 +88,123 @@ const PreviewFileHeader = ({
   | 'onReload'
   | 'provenanceEntry'
   | 'tooltipClassName'
->): React.JSX.Element => (
-  <header
-    data-testid="preview-card-header"
-    className={`flex shrink-0 items-center gap-1 border-b border-border-300/50 px-2 ${
-      // The local header carries the file path on a second line, so it grows past one row.
-      item.source === 'local' ? 'min-h-8 py-0.5' : 'h-8'
-    }`}
-  >
-    {onOpenProvenance && provenanceEntry === 'leading' ? (
-      <PreviewProvenanceButton
-        item={item}
-        onOpenProvenance={onOpenProvenance}
-        tooltipClassName={tooltipClassName}
-      />
-    ) : null}
-    <TooltipProvider delayDuration={300}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
-            <ExtensionPreservingFileName name={item.name} className="flex-1" />
-            {item.source === 'local' ? (
-              <span
-                data-testid="local-file-path"
-                className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
-              >
-                <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">This computer</span>
-                <span className="truncate">{item.path}</span>
-              </span>
-            ) : null}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className={tooltipClassName}>
-          {item.source === 'local' ? item.path : item.title}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-    {/* A local file has no managed provenance or origin Session, so it takes the reload/copy/open
-        actions in place of the whole managed action row. */}
-    {item.source === 'local' ? (
-      <LocalFileHeaderActions
-        path={item.path}
-        name={item.name}
-        onReload={onReload}
-        tooltipClassName={tooltipClassName}
-      />
-    ) : (
-      <>
-        {onOpenProvenance && provenanceEntry === 'trailing' ? (
-          <PreviewProvenanceButton
-            item={item}
-            onOpenProvenance={onOpenProvenance}
-            tooltipClassName={tooltipClassName}
-          />
-        ) : null}
-        <ManagedFileDownloadButton
-          source={item.source ?? 'artifact'}
-          path={item.path}
-          suggestedName={item.name}
-          className="bg-transparent shadow-none"
+>): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <header
+      data-testid="preview-card-header"
+      className={`flex shrink-0 items-center gap-1 border-b border-border-300/50 px-2 ${
+        // The local header carries the file path on a second line, so it grows past one row.
+        item.source === 'local' ? 'min-h-8 py-0.5' : 'h-8'
+      }`}
+    >
+      {onOpenProvenance && provenanceEntry === 'leading' ? (
+        <PreviewProvenanceButton
+          item={item}
+          onOpenProvenance={onOpenProvenance}
+          tooltipClassName={tooltipClassName}
         />
-        {item.originSession?.state === 'deleted' ? (
-          <span
-            data-testid="deleted-origin-session"
-            className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
-          >
-            Source session deleted
-          </span>
-        ) : null}
-        {onOpenProvenance && provenanceEntry === 'menu' ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
+      ) : null}
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
+              <ExtensionPreservingFileName name={item.name} className="flex-1" />
+              {item.source === 'local' ? (
+                <span
+                  data-testid="local-file-path"
+                  className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
+                >
+                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">
+                    {t('This computer')}
+                  </span>
+                  <span className="truncate">{item.path}</span>
+                </span>
+              ) : null}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className={tooltipClassName}>
+            {item.source === 'local' ? item.path : item.title}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      {/* A local file has no managed provenance or origin Session, so it takes the reload/copy/open
+          actions in place of the whole managed action row. */}
+      {item.source === 'local' ? (
+        <LocalFileHeaderActions
+          path={item.path}
+          name={item.name}
+          onReload={onReload}
+          tooltipClassName={tooltipClassName}
+        />
+      ) : (
+        <>
+          {onOpenProvenance && provenanceEntry === 'trailing' ? (
+            <PreviewProvenanceButton
+              item={item}
+              onOpenProvenance={onOpenProvenance}
+              tooltipClassName={tooltipClassName}
+            />
+          ) : null}
+          <ManagedFileDownloadButton
+            source={item.source ?? 'artifact'}
+            path={item.path}
+            suggestedName={item.name}
+            className="bg-transparent shadow-none"
+          />
+          {item.originSession?.state === 'deleted' ? (
+            <span
+              data-testid="deleted-origin-session"
+              className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
+            >
+              {t('Source session deleted')}
+            </span>
+          ) : null}
+          {onOpenProvenance && provenanceEntry === 'menu' ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-text-100 hover:text-text-000"
+                  aria-label={t('File actions for {{title}}', { title: item.title })}
+                >
+                  <MoreHorizontal aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="z-[70] min-w-36">
+                <DropdownMenuItem onSelect={onOpenProvenance}>
+                  <GitBranch className="mr-2 size-4" aria-hidden="true" />
+                  {t('Provenance')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </>
+      )}
+      {onOpenFullScreen ? (
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
                 className="text-text-100 hover:text-text-000"
-                aria-label={`File actions for ${item.title}`}
+                aria-label={t('Open full screen preview of {{title}}', { title: item.title })}
+                onClick={onOpenFullScreen}
               >
-                <MoreHorizontal aria-hidden="true" />
+                <Maximize2 aria-hidden="true" />
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="z-[70] min-w-36">
-              <DropdownMenuItem onSelect={onOpenProvenance}>
-                <GitBranch className="mr-2 size-4" aria-hidden="true" />
-                Provenance
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
-      </>
-    )}
-    {onOpenFullScreen ? (
+            </TooltipTrigger>
+            <TooltipContent className={tooltipClassName}>
+              {t('Open full screen preview')}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : null}
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -183,39 +213,20 @@ const PreviewFileHeader = ({
               variant="ghost"
               size="icon-xs"
               className="text-text-100 hover:text-text-000"
-              aria-label={`Open full screen preview of ${item.title}`}
-              onClick={onOpenFullScreen}
+              aria-label={t('Close preview of {{title}}', { title: item.title })}
+              onClick={onClose}
             >
-              <Maximize2 aria-hidden="true" />
+              <X aria-hidden="true" />
             </Button>
           </TooltipTrigger>
           <TooltipContent className={tooltipClassName}>
-            {`Open full screen preview of ${item.title}`}
+            {t('Close preview of {{title}}', { title: item.title })}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
-    ) : null}
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-text-100 hover:text-text-000"
-            aria-label={`Close preview of ${item.title}`}
-            onClick={onClose}
-          >
-            <X aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent className={tooltipClassName}>
-          {`Close preview of ${item.title}`}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  </header>
-)
+    </header>
+  )
+}
 
 const ArtifactVersionNavigation = ({
   lineage,
@@ -226,6 +237,8 @@ const ArtifactVersionNavigation = ({
   selectedVersionId: string | undefined
   onSelect: (versionId: string) => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   const selectedIndex = lineage.versions.findIndex(
     (version) => version.versionId === selectedVersionId
   )
@@ -240,7 +253,7 @@ const ArtifactVersionNavigation = ({
         type="button"
         variant="ghost"
         size="icon-xs"
-        aria-label="Previous Artifact version"
+        aria-label={t('Previous Artifact version')}
         disabled={selectedIndex <= 0}
         onClick={() => {
           const versionId = lineage.versions[selectedIndex - 1]?.versionId
@@ -256,7 +269,7 @@ const ArtifactVersionNavigation = ({
         type="button"
         variant="ghost"
         size="icon-xs"
-        aria-label="Next Artifact version"
+        aria-label={t('Next Artifact version')}
         disabled={selectedIndex >= lineage.versions.length - 1}
         onClick={() => {
           const versionId = lineage.versions[selectedIndex + 1]?.versionId

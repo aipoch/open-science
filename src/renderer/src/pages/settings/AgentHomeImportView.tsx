@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import type {
   AgentFrameworkId,
@@ -15,11 +16,19 @@ type AgentHomeImportViewProps = {
   onImported: () => void
 }
 
-const SOURCE_INFO: Record<AgentHomeSkillSource, { label: string; path: string }> = {
-  agents: { label: 'Shared', path: '~/.agents/skills' },
+// Paths are filesystem locations and are never translated. Labels are split by kind: 'Shared'
+// describes the vendor-neutral folder and is translated (held as a catalog key, since this constant
+// is evaluated once at import and a resolved string would pin the first render's language), while
+// 'Claude Code' and 'Codex' are product names that stay in English per docs/i18n-glossary.md.
+// `satisfies` rather than a `:` annotation so labelKey keeps its literal type for t()'s key check.
+const SOURCE_INFO = {
+  agents: { labelKey: 'Shared', path: '~/.agents/skills' },
   claude: { label: 'Claude Code', path: '~/.claude/skills' },
   codex: { label: 'Codex', path: '~/.codex/skills' }
-}
+} as const satisfies Record<
+  AgentHomeSkillSource,
+  { path: string } & ({ labelKey: string } | { label: string })
+>
 
 const skillKey = (skill: AgentHomeSkillRef): string => `${skill.source}:${skill.slug}`
 
@@ -27,6 +36,7 @@ const skillKey = (skill: AgentHomeSkillRef): string => `${skill.source}:${skill.
 // directories through the existing imported-skill pipeline. Main owns source routing and path
 // containment; this view handles only renderer-safe source ids, slugs, and display metadata.
 const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const listAgentHomeSkills = useSettingsStore((state) => state.listAgentHomeSkills)
   const importAgentHomeSkills = useSettingsStore((state) => state.importAgentHomeSkills)
   const previewAgentHomeSkill = useSettingsStore((state) => state.previewAgentHomeSkill)
@@ -47,6 +57,13 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
       : activeFrameworkId === 'claude-code'
         ? SOURCE_INFO.claude
         : undefined
+
+  // Resolves a source badge on every render: translated for the shared folder, verbatim for the
+  // product-named ones.
+  const sourceLabel = (source: AgentHomeSkillSource): string => {
+    const info = SOURCE_INFO[source]
+    return 'labelKey' in info ? t(info.labelKey) : info.label
+  }
 
   const applyScan = useCallback(
     (items: AgentHomeSkillView[], frameworkId: AgentFrameworkId): void => {
@@ -83,12 +100,12 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
         setSkills(null)
         setSkillsFrameworkId(frameworkId)
         setSelected(new Set())
-        setMessage(error instanceof Error ? error.message : 'Scan failed.')
+        setMessage(error instanceof Error ? error.message : t('Scan failed.'))
       } finally {
         if (isCurrent()) setScanning(false)
       }
     },
-    [applyScan, invalidateCandidatePreview, listAgentHomeSkills]
+    [applyScan, invalidateCandidatePreview, listAgentHomeSkills, t]
   )
 
   // Discovery is local and bounded to one directory per visible source, so load eagerly. Including
@@ -164,16 +181,27 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
       if (useSettingsStore.getState().agentFrameworkId !== frameworkId) return
 
       if (failures.length === 0) {
-        setMessage(`Imported ${importedCount} skill${importedCount === 1 ? '' : 's'}.`)
+        setMessage(
+          t('Imported {{count}} skills.', {
+            defaultValue_one: 'Imported {{count}} skill.',
+            count: importedCount
+          })
+        )
       } else {
         setMessage(
-          `Imported ${importedCount}; ${failures.length} failed. ${failures[0]?.error ?? ''}`.trim()
+          t('Imported {{count}}; {{failureCount}} failed. {{error}}', {
+            count: importedCount,
+            failureCount: failures.length,
+            error: failures[0]?.error ?? ''
+          }).trim()
         )
       }
       await runScan(frameworkId, { preserveMessage: true })
     } catch (error) {
       if (useSettingsStore.getState().agentFrameworkId === frameworkId) {
-        setMessage(error instanceof Error ? error.message : 'Could not import the selected skills.')
+        setMessage(
+          error instanceof Error ? error.message : t('Could not import the selected skills.')
+        )
       }
     } finally {
       setImporting(false)
@@ -182,16 +210,22 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
 
   return (
     <div className="p-5">
-      <h2 className="text-base font-semibold text-foreground">Import installed skills</h2>
+      <h2 className="text-base font-semibold text-foreground">{t('Import installed skills')}</h2>
+      {/* Two whole sentences rather than one with a conditional clause: the "and <path>" fragment
+          cannot be spliced into a translated sentence without assuming English word order. */}
       <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-        Scan <code className="font-mono">{SOURCE_INFO.agents.path}</code>
-        {frameworkSource ? (
-          <>
-            {' and '}
-            <code className="font-mono">{frameworkSource.path}</code>
-          </>
-        ) : null}{' '}
-        on this computer. Check skills to copy into Open Science; the originals stay in place.
+        <Trans
+          i18nKey={
+            frameworkSource
+              ? 'Scan <code>{{path}}</code> and <code>{{frameworkPath}}</code> on this computer. Check skills to copy into Open Science; the originals stay in place.'
+              : 'Scan <code>{{path}}</code> on this computer. Check skills to copy into Open Science; the originals stay in place.'
+          }
+          values={{
+            path: SOURCE_INFO.agents.path,
+            frameworkPath: frameworkSource?.path
+          }}
+          components={{ code: <code className="font-mono" /> }}
+        />
       </p>
 
       <div className="mt-4 flex items-center gap-2">
@@ -201,11 +235,14 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
           onClick={() => void rescan()}
           disabled={isScanning || importing}
         >
-          {isScanning ? 'Scanning…' : 'Rescan'}
+          {isScanning ? t('Scanning…') : t('Rescan')}
         </Button>
         {currentSkills ? (
           <span className="text-xs text-muted-foreground">
-            {currentSkills.length} skill{currentSkills.length === 1 ? '' : 's'} found
+            {t('{{count}} skills found', {
+              defaultValue_one: '{{count}} skill found',
+              count: currentSkills.length
+            })}
           </span>
         ) : null}
       </div>
@@ -220,13 +257,13 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <input
                   type="checkbox"
-                  aria-label="Select all installed skills"
+                  aria-label={t('Select all installed skills')}
                   checked={allSelected}
                   onChange={toggleAll}
                   disabled={isScanning || selectable.length === 0 || importing}
                   className="size-4 shrink-0"
                 />
-                Select all
+                {t('Select all')}
               </label>
               <Button
                 type="button"
@@ -235,7 +272,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                 onClick={invertSelection}
                 disabled={isScanning || selectable.length === 0 || importing}
               >
-                Invert
+                {t('Invert')}
               </Button>
             </div>
             <Button
@@ -244,7 +281,9 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
               onClick={() => void importSelected()}
               disabled={isScanning || importing || selected.size === 0}
             >
-              {importing ? 'Importing…' : `Import selected (${selected.size})`}
+              {importing
+                ? t('Importing…')
+                : t('Import selected ({{count}})', { count: selected.size })}
             </Button>
           </div>
 
@@ -255,7 +294,9 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                 <li key={skillKey(skill)} className="flex items-center gap-3 py-2.5">
                   <input
                     type="checkbox"
-                    aria-label={`Select ${skill.name}`}
+                    aria-label={t('Select {{name}}', {
+                      name: skill.name
+                    })}
                     checked={selected.has(skillKey(skill))}
                     onChange={() => toggle(skill)}
                     disabled={isScanning || skill.alreadyImported || importing}
@@ -263,7 +304,9 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                   />
                   <button
                     type="button"
-                    aria-label={`Preview ${skill.name}`}
+                    aria-label={t('Preview {{name}}', {
+                      name: skill.name
+                    })}
                     onClick={() =>
                       candidatePreview.openPreview(() =>
                         previewAgentHomeSkill({ source: skill.source, slug: skill.slug })
@@ -278,7 +321,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
                       </span>
                     </span>
                     <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      {skill.alreadyImported ? 'Imported' : source.label}
+                      {skill.alreadyImported ? t('Imported') : sourceLabel(skill.source)}
                     </span>
                   </button>
                 </li>
@@ -288,7 +331,7 @@ const AgentHomeImportView = ({ onImported }: AgentHomeImportViewProps): React.JS
         </div>
       ) : !isScanning && currentSkills && currentSkills.length === 0 ? (
         <p className="mt-5 text-xs text-muted-foreground">
-          No installed skills found in the scanned global folders.
+          {t('No installed skills found in the scanned global folders.')}
         </p>
       ) : null}
 

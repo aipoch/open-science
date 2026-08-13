@@ -1,12 +1,14 @@
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+import type { TFunction } from 'i18next'
 import { ChevronDown, LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
 import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { formatRelativeTime } from '@/lib/format-relative-time'
+import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -46,7 +48,27 @@ type FilePageLoadMode = 'manual' | 'scroll'
 // Keeps manual pagination recognizable without the outline competing with the surrounding file tiles.
 const loadMoreButtonClassName = 'bg-bg-200 text-text-100 hover:bg-bg-300 hover:text-text-000'
 // Shares count grammar between the toolbar summary and independently paginated section headers.
-const formatFileCount = (count: number): string => `${count} file${count === 1 ? '' : 's'}`
+const formatFileCount = (count: number, t: TFunction): string =>
+  t('{{count}} files', { defaultValue_one: '{{count}} file', count })
+
+// Compact elapsed labels that keep the trailing "ago", unlike the home page's bare `{{count}}d`: a
+// section header shows this next to a file count, so the suffix is what marks it as a timestamp.
+// Each bucket names its own English text because a natural-language key has to be a literal — the
+// unit cannot be interpolated into it. `satisfies` turns a new RelativeTimeUnit into a compile error
+// rather than an undefined label.
+const ELAPSED_AGO = {
+  minute: '{{count}}m ago',
+  hour: '{{count}}h ago',
+  day: '{{count}}d ago',
+  week: '{{count}}w ago',
+  month: '{{count}}mo ago',
+  year: '{{count}}y ago'
+} as const satisfies Record<Exclude<RelativeTimeUnit, 'now'>, string>
+
+const formatElapsedAgo = (timestamp: number, t: TFunction): string => {
+  const { unit, count } = relativeTimeParts(timestamp)
+  return unit === 'now' ? t('now') : t(ELAPSED_AGO[unit], { count })
+}
 
 const SectionHeader = ({
   id,
@@ -121,6 +143,8 @@ const FilePageFooter = ({
   loadMoreLabel: string
   onLoadMore: () => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   if (!page?.isLoaded || page.error || page.items.length === 0) return null
 
   const hasMore = visibleItemCount < page.items.length || Boolean(page.nextCursor)
@@ -131,7 +155,7 @@ const FilePageFooter = ({
         data-testid="project-files-end"
         className="px-4 py-2 text-center text-[11px] text-text-000"
       >
-        No more
+        {t('No more')}
       </div>
     )
   }
@@ -149,7 +173,7 @@ const FilePageFooter = ({
         disabled={page.isLoading}
         onClick={onLoadMore}
       >
-        {page.isLoading ? 'Loading...' : 'Load more'}
+        {t(page.isLoading ? 'Loading...' : 'Load more')}
       </Button>
     </div>
   )
@@ -190,8 +214,9 @@ const ProjectArtifactGroupSection = ({
   onPreview: (file: ProjectFileItem) => void
   onOpenInPanel: (file: ProjectFileItem) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const sectionId = `session:${group.sessionId}`
-  const relativeTimeLabel = timestamp === undefined ? undefined : formatRelativeTime(timestamp)
+  const elapsedLabel = timestamp === undefined ? undefined : formatElapsedAgo(timestamp, t)
   const loadPage = useCallback(() => loadMore(group.sessionId), [group.sessionId, loadMore])
   const supportsIntersectionObserver = typeof IntersectionObserver !== 'undefined'
   const effectiveLoadMode =
@@ -213,9 +238,9 @@ const ProjectArtifactGroupSection = ({
         id={sectionId}
         title={title}
         countLabel={
-          relativeTimeLabel
-            ? `${group.artifactCount} · ${relativeTimeLabel}${relativeTimeLabel === 'now' ? '' : ' ago'}`
-            : formatFileCount(group.artifactCount)
+          elapsedLabel
+            ? `${group.artifactCount} · ${elapsedLabel}`
+            : formatFileCount(group.artifactCount, t)
         }
         isCollapsed={isCollapsed}
         hideTopBorder={hideTopBorder}
@@ -239,7 +264,7 @@ const ProjectArtifactGroupSection = ({
             page={page}
             mode={effectiveLoadMode}
             visibleItemCount={visibleItems.length}
-            loadMoreLabel={`Load more files from ${title}`}
+            loadMoreLabel={t('Load more files from {{title}}', { title })}
             onLoadMore={loadMode === 'manual' ? onManualLoadMore : () => void loadPage()}
           />
           <div
@@ -262,6 +287,7 @@ const ProjectFilesViewContent = ({
   activeProjectId: string | undefined
   previewReader: ProjectFilePreviewReader
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const isFilesExpanded = usePreviewWorkbenchStore(
     (state) => state.expandedToolItemId === PROJECT_FILES_PREVIEW_ID
   )
@@ -469,9 +495,9 @@ const ProjectFilesViewContent = ({
         <ProjectFilesFilterMenu
           label={
             isLocalMode
-              ? (selectedLocalRoot?.name ?? localMachineName ?? 'This computer')
+              ? (selectedLocalRoot?.name ?? localMachineName ?? t('This computer'))
               : isAllFilter
-                ? 'Artifacts'
+                ? t('Artifacts')
                 : selectedFilterOption.label
           }
           options={filterOptions}
@@ -500,13 +526,13 @@ const ProjectFilesViewContent = ({
             {/* Local mode has no search row, so its file count stays in the header. */}
             {isLocalMode ? (
               <div className="text-[11px] tabular-nums text-text-000">
-                {formatFileCount(localEntryCount ?? 0)}
+                {formatFileCount(localEntryCount ?? 0, t)}
               </div>
             ) : (
               <ToggleGroup.Root
                 type="single"
                 value={viewMode}
-                aria-label="File view"
+                aria-label={t('File view')}
                 className="flex h-8 shrink-0 items-center rounded-lg border border-border bg-card p-0.5"
                 onValueChange={(value) => {
                   if (value === 'grid' || value === 'list') setViewMode(value)
@@ -516,25 +542,25 @@ const ProjectFilesViewContent = ({
                   <TooltipTrigger asChild>
                     <ToggleGroup.Item
                       value="grid"
-                      aria-label="Grid view"
+                      aria-label={t('Grid view')}
                       className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
                     >
                       <LayoutGrid className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                     </ToggleGroup.Item>
                   </TooltipTrigger>
-                  <TooltipContent className="z-[70]">Grid view</TooltipContent>
+                  <TooltipContent className="z-[70]">{t('Grid view')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <ToggleGroup.Item
                       value="list"
-                      aria-label="List view"
+                      aria-label={t('List view')}
                       className="flex size-7 items-center justify-center rounded-md text-text-300 outline-none hover:bg-muted hover:text-text-000 focus-visible:ring-3 focus-visible:ring-ring/50 aria-checked:bg-bg-400 aria-checked:text-text-000 aria-checked:shadow-sm aria-checked:hover:bg-bg-400"
                     >
                       <List className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                     </ToggleGroup.Item>
                   </TooltipTrigger>
-                  <TooltipContent className="z-[70]">List view</TooltipContent>
+                  <TooltipContent className="z-[70]">{t('List view')}</TooltipContent>
                 </Tooltip>
               </ToggleGroup.Root>
             )}
@@ -574,8 +600,8 @@ const ProjectFilesViewContent = ({
             />
             <Input
               type="search"
-              aria-label="Search project files"
-              placeholder="Search artifacts..."
+              aria-label={t('Search project files')}
+              placeholder={t('Search artifacts...')}
               value={searchQuery}
               maxLength={256}
               className="h-[30px] border-0 bg-transparent pl-8 pr-8 shadow-none [&::-webkit-search-cancel-button]:hidden"
@@ -589,7 +615,7 @@ const ProjectFilesViewContent = ({
                       type="button"
                       variant="ghost"
                       size="icon-xs"
-                      aria-label="Clear file search"
+                      aria-label={t('Clear file search')}
                       className="absolute right-1 top-1/2 -translate-y-1/2 text-text-100 hover:bg-bg-200 hover:text-text-100"
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => setSearchQuery('')}
@@ -603,7 +629,7 @@ const ProjectFilesViewContent = ({
             ) : null}
           </div>
           <div className="shrink-0 text-[11px] tabular-nums text-text-000">
-            {formatFileCount(visibleFileCount)}
+            {formatFileCount(visibleFileCount, t)}
           </div>
         </div>
       ) : null}
@@ -618,17 +644,17 @@ const ProjectFilesViewContent = ({
           {!catalogIndex.overview.isIndexComplete ? (
             <div className="mx-4 mb-2 flex items-center justify-between gap-3 border-l-2 border-warning-000 px-3 py-2 text-[11px] text-text-200">
               <span className="min-w-0 flex-1">
-                {catalogIndex.repairError ?? 'Some files could not be indexed yet.'}
+                {catalogIndex.repairError ?? t('Some files could not be indexed yet.')}
               </span>
               <Button
                 type="button"
                 variant="outline"
                 size="xs"
-                aria-label="Retry indexing project files"
+                aria-label={t('Retry indexing project files')}
                 disabled={catalogIndex.isRepairing}
                 onClick={() => void catalogIndex.repairIndex()}
               >
-                {catalogIndex.isRepairing ? 'Retrying...' : 'Retry'}
+                {t(catalogIndex.isRepairing ? 'Retrying...' : 'Retry')}
               </Button>
             </div>
           ) : null}
@@ -646,7 +672,9 @@ const ProjectFilesViewContent = ({
           visibleFileCount === 0 &&
           !hasPageError ? (
             <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-text-300">
-              {isSearchActive ? `No files match “${debouncedSearchQuery}”` : 'No files yet'}
+              {isSearchActive
+                ? t('No files match “{{query}}”', { query: debouncedSearchQuery })
+                : t('No files yet')}
             </div>
           ) : null}
 
@@ -654,7 +682,7 @@ const ProjectFilesViewContent = ({
             <section>
               <SectionHeader
                 id="uploads"
-                title="Your uploads"
+                title={t('Your uploads')}
                 countLabel={`${index.uploads.totalCount}`}
                 isCollapsed={uploadsCollapsed}
                 hideTopBorder
@@ -686,7 +714,7 @@ const ProjectFilesViewContent = ({
                     page={index.uploads}
                     mode={isAllFilter || !supportsIntersectionObserver ? 'manual' : 'scroll'}
                     visibleItemCount={visibleUploadFiles.length}
-                    loadMoreLabel="Load more uploaded files"
+                    loadMoreLabel={t('Load more uploaded files')}
                     onLoadMore={() =>
                       isAllFilter
                         ? revealNextAllPage(
@@ -714,7 +742,7 @@ const ProjectFilesViewContent = ({
             <section>
               {isAllFilter ? (
                 <div className="px-4 pb-1 pt-3 text-[11px] font-medium uppercase tracking-normal text-text-300">
-                  Generated files
+                  {t('Generated files')}
                 </div>
               ) : null}
               {visibleArtifactGroups.map((group, groupIndex) => (
@@ -762,7 +790,7 @@ const ProjectFilesViewContent = ({
                     className={loadMoreButtonClassName}
                     onClick={() => void index.loadMoreGroups()}
                   >
-                    Load more sessions
+                    {t('Load more sessions')}
                   </Button>
                 </div>
               ) : null}

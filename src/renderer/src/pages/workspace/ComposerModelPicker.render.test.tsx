@@ -1,3 +1,5 @@
+import { i18next } from '@/i18n'
+
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -223,7 +225,8 @@ describe('ComposerModelPicker', () => {
     const expectedReason = incompatibilityReason(
       { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic']
+      ['anthropic'],
+      i18next.getFixedT('en')
     )
     expect(expectedReason).toContain('/v1/messages')
     expect(expectedReason).toContain('/v1/chat/completions')
@@ -324,7 +327,8 @@ describe('ComposerModelPicker', () => {
     const reason = incompatibilityReason(
       { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic']
+      ['anthropic'],
+      i18next.getFixedT('en')
     )
 
     expect(reason).toContain('OpenAI Gateway')

@@ -1,4 +1,5 @@
 import { CircleHelp, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -41,12 +42,13 @@ const RuntimeUninstallControl = ({
   promptInFlight,
   onUninstall
 }: RuntimeUninstallControlProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const busy = isUninstalling || isDetecting || isInstalling
   // Busy takes priority: during detect/uninstall the button is natively disabled with no explainer, even
   // if a standing reason (non-managed / active) also applies — that reason is stale mid-operation.
   const hint = busy
     ? null
-    : uninstallDisabledHint(label, uninstallCommand, { managed, active, promptInFlight })
+    : uninstallDisabledHint(label, uninstallCommand, { managed, active, promptInFlight }, t)
 
   const button = (
     <Button
@@ -63,7 +65,7 @@ const RuntimeUninstallControl = ({
       )}
     >
       <Trash2 aria-hidden="true" />
-      Uninstall
+      {t('Uninstall')}
       {hint ? <CircleHelp aria-hidden="true" /> : null}
     </Button>
   )

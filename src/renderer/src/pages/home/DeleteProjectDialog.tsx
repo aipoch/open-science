@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -41,6 +42,7 @@ const DeleteProjectDialog = ({
   onCancel,
   onConfirmDelete
 }: DeleteProjectDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogProject = useRetainedDialogValue(project)
   const dialogSessionCount =
     useRetainedDialogValue(project ? sessionCount : undefined) ?? sessionCount
@@ -63,14 +65,39 @@ const DeleteProjectDialog = ({
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
-                Delete project?
+                {t('Delete project?')}
               </AlertDialog.Title>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {/* Whole sentences per branch rather than a spliced-in clause: the session count
+                    sits mid-sentence in English but not in every language. */}
+                {dialogHasCompleteSessionCatalog
+                  ? dialogSessionCount > 0
+                    ? t(
+                        'This will permanently delete "{{name}}" and its {{count}} sessions. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                        {
+                          defaultValue_one:
+                            'This will permanently delete "{{name}}" and its {{count}} session. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                          name: dialogProject?.name,
+                          count: dialogSessionCount
+                        }
+                      )
+                    : t(
+                        'This will permanently delete "{{name}}". Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                        { name: dialogProject?.name }
+                      )
+                  : t(
+                      'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open Science will also be deleted. Files in the project\'s working folder are not deleted. This action cannot be undone.',
+                      {
+                        name: dialogProject?.name
+                      }
+                    )}
+              </AlertDialog.Description>
             </div>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               disabled={isDeleting}
               onClick={onCancel}
@@ -98,13 +125,8 @@ const DeleteProjectDialog = ({
           </div>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                className={dialogCancelButtonClassName}
-                disabled={isDeleting}
-              >
-                Cancel
+              <Button type="button" variant="outline" disabled={isDeleting}>
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             {/* Async confirmation owns dialog closure so a failed deletion remains visible. */}
@@ -114,7 +136,7 @@ const DeleteProjectDialog = ({
               disabled={!canDelete || isDeleting}
               onClick={onConfirmDelete}
             >
-              {isDeleting ? 'Deleting…' : 'Delete'}
+              {isDeleting ? t('Deleting…') : t('Delete')}
             </Button>
           </div>
         </AlertDialog.Content>

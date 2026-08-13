@@ -112,10 +112,25 @@ describe('session job store — runningJobsForSession', () => {
 
 describe('session job store — allJobsForSession', () => {
   it('returns all jobs for the session regardless of status, sorted by created_at descending', () => {
-    const job1 = makeJob({ job_id: 'j1', session_id: 'sess-A', status: 'success', created_at: 1000 })
-    const job2 = makeJob({ job_id: 'j2', session_id: 'sess-A', status: 'running', created_at: 3000 })
+    const job1 = makeJob({
+      job_id: 'j1',
+      session_id: 'sess-A',
+      status: 'success',
+      created_at: 1000
+    })
+    const job2 = makeJob({
+      job_id: 'j2',
+      session_id: 'sess-A',
+      status: 'running',
+      created_at: 3000
+    })
     const job3 = makeJob({ job_id: 'j3', session_id: 'sess-A', status: 'failed', created_at: 2000 })
-    const otherSession = makeJob({ job_id: 'o', session_id: 'sess-B', status: 'success', created_at: 4000 })
+    const otherSession = makeJob({
+      job_id: 'o',
+      session_id: 'sess-B',
+      status: 'success',
+      created_at: 4000
+    })
 
     useSessionJobStore.getState().applyUpdate(job1)
     useSessionJobStore.getState().applyUpdate(job2)

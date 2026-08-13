@@ -35,12 +35,15 @@ const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] 
   return captured
 }
 
-const formatNotebookRunFigureMeta = (run: NotebookRunRecord): string | undefined => {
+const formatNotebookRunFigureMeta = (
+  run: NotebookRunRecord,
+  t: (key: string, options?: { count: number; defaultValue_one?: string }) => string = (key) => key
+): string | undefined => {
   const figureCount = resolveNotebookRunFigures(run).length
 
   if (figureCount === 0) return undefined
 
-  return `${figureCount} figure${figureCount === 1 ? '' : 's'}`
+  return t('{{count}} figures', { count: figureCount, defaultValue_one: '{{count}} figure' })
 }
 
 export { formatNotebookRunFigureMeta, resolveNotebookRunFigures }

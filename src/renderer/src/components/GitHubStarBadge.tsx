@@ -1,5 +1,6 @@
 import { Star } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { formatStarCount } from '@/lib/format-star-count'
 import { cn } from '@/lib/utils'
@@ -22,6 +23,7 @@ type GitHubStarBadgeProps = {
 // unavailable it degrades to an icon-only link. Clicking opens the repo in the system browser via
 // the window-open handler in src/main/windows.ts.
 const GitHubStarBadge = ({ className }: GitHubStarBadgeProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [stars, setStars] = useState<number | null>(null)
 
   useEffect(() => {
@@ -43,7 +45,9 @@ const GitHubStarBadge = ({ className }: GitHubStarBadgeProps): React.JSX.Element
   }, [])
 
   const label =
-    stars === null ? `Open ${APP.name} on GitHub` : `Star ${APP.name} on GitHub, ${stars} stars`
+    stars === null
+      ? t('Open {{app}} on GitHub', { app: APP.name })
+      : t('Star {{app}} on GitHub, {{count}} stars', { app: APP.name, count: stars })
 
   return (
     <a

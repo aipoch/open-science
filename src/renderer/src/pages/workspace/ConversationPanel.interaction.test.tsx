@@ -461,7 +461,6 @@ const createPanelDefaults = (): PanelProps => ({
   },
   review: {
     disabled: false,
-    running: false,
     request: vi.fn()
   },
   sessionTools: {

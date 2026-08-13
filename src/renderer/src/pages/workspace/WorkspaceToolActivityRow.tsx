@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import type { ToolActivity } from '@/stores/session-store'
 
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
@@ -12,6 +14,7 @@ type WorkspaceToolActivityRowProps = {
 const WorkspaceToolActivityRow = ({
   activity
 }: WorkspaceToolActivityRowProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isActive = isActivityActive(activity)
 
   return (
@@ -24,7 +27,7 @@ const WorkspaceToolActivityRow = ({
       <span className="mt-0.5 inline-flex shrink-0 items-center md:mt-0">
         <WorkspaceActivityIcon activity={activity} />
       </span>
-      <span className="min-w-0 flex-1 truncate text-left">{formatActivityTitle(activity)}</span>
+      <span className="min-w-0 flex-1 truncate text-left">{formatActivityTitle(activity, t)}</span>
     </div>
   )
 }

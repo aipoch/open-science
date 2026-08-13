@@ -18,8 +18,9 @@ import {
   X
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { formatRelativeTime } from '@/lib/format-relative-time'
+import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,6 +39,7 @@ import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
+import { LanguagePreferenceMenu } from '@/components/LanguageControls'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
@@ -56,6 +58,19 @@ import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
 
 const RECENT_SESSION_LIMIT = 5
+
+// Compact labels for dense rows ("3d"), unlike the verbose wording in global search ("3 days ago").
+// The unit is a runtime value, so it maps to its English text rather than being interpolated into a
+// key. Every entry carries the 'ago' context: Chinese needs "3 天前" here, where the file browser's
+// bare-age column says "3 天" for the same unit.
+const COMPACT_ELAPSED = {
+  minute: '{{count}}m',
+  hour: '{{count}}h',
+  day: '{{count}}d',
+  week: '{{count}}w',
+  month: '{{count}}mo',
+  year: '{{count}}y'
+} as const satisfies Record<Exclude<RelativeTimeUnit, 'now'>, string>
 
 type ProjectSummary = {
   project: Project
@@ -123,6 +138,7 @@ const HomePage = ({
   hasCompleteSessionCatalog,
   onOpenGlobalSearch
 }: HomePageProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
   const updateProject = useProjectStore((state) => state.updateProject)
@@ -377,7 +393,9 @@ const HomePage = ({
     void updateProjectArchive({ id: project.id, archived: true, expectedArchivedAt: null })
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
-        setProjectActionError(error instanceof Error ? error.message : 'Could not archive project.')
+        setProjectActionError(
+          error instanceof Error ? error.message : t('Could not archive project.')
+        )
       )
       .finally(() => {
         setArchivingProjectIds((current) => {
@@ -418,7 +436,7 @@ const HomePage = ({
     void updateProject({ id: project.id, pinned: !project.pinned })
       .catch((error: unknown) =>
         setProjectActionError(
-          error instanceof Error ? error.message : 'Could not update project pin.'
+          error instanceof Error ? error.message : t('Could not update project pin.')
         )
       )
       .finally(() => {
@@ -452,12 +470,20 @@ const HomePage = ({
         // Durable deletion failed; keep the target and in-memory sessions visible so the user can
         // inspect the failure and retry or cancel explicitly.
         setDeleteProjectError(
-          error instanceof Error ? error.message : 'Could not delete the project. Please try again.'
+          error instanceof Error
+            ? error.message
+            : t('Could not delete the project. Please try again.')
         )
       })
       .finally(() => {
         setIsDeletingProject(false)
       })
+  }
+
+  // The bucket comes from a pure helper; the wording is per-locale ("3d" vs "3 天前").
+  const relativeTime = (timestamp: number): string => {
+    const { unit, count } = relativeTimeParts(timestamp)
+    return unit === 'now' ? t('now') : t(COMPACT_ELAPSED[unit], { count, context: 'ago' })
   }
 
   return (
@@ -479,7 +505,7 @@ const HomePage = ({
                 <div className="flex items-center gap-1.5 text-xs font-medium">
                   {activeSessionCounts.needsYou > 0 ? (
                     <span className="text-session-waiting">
-                      {activeSessionCounts.needsYou} waiting on you
+                      {t('{{count}} waiting on you', { count: activeSessionCounts.needsYou })}
                     </span>
                   ) : null}
                   {activeSessionCounts.needsYou > 0 && activeSessionCounts.running > 0 ? (
@@ -489,13 +515,13 @@ const HomePage = ({
                   ) : null}
                   {activeSessionCounts.running > 0 ? (
                     <span className="text-session-running">
-                      {activeSessionCounts.running} running
+                      {t('{{count}} running', { count: activeSessionCounts.running })}
                     </span>
                   ) : null}
                 </div>
               ) : null}
             </div>
-            <div className="mt-1 text-[11px] text-muted-foreground">Beta</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">{t('Beta')}</div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
             {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
@@ -503,15 +529,19 @@ const HomePage = ({
                 type="button"
                 onClick={() => openSettingsToPanel(environmentRepairPanel)}
                 className="inline-flex h-8 items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 transition-colors duration-150 ease-out hover:border-danger-000/55 hover:bg-danger-900/80"
-                aria-label="Open environment repair"
+                aria-label={t('Open environment repair')}
               >
                 <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
                 <span className="hidden sm:inline">
                   {requiredEnvironmentFailures.length === 1
-                    ? `${requiredEnvironmentFailures[0].label} needs attention`
-                    : `${requiredEnvironmentFailures.length} environment items need attention`}
+                    ? t('{{label}} needs attention', {
+                        label: requiredEnvironmentFailures[0].label
+                      })
+                    : t('{{count}} environment items need attention', {
+                        count: requiredEnvironmentFailures.length
+                      })}
                 </span>
-                <span className="sm:hidden">Environment</span>
+                <span className="sm:hidden">{t('Environment')}</span>
               </button>
             ) : null}
             <NetworkStatusIndicator variant="pill" />
@@ -523,16 +553,17 @@ const HomePage = ({
               size="icon"
               className="size-9 rounded-lg text-text-300"
               onClick={onOpenGlobalSearch}
-              aria-label="Search"
-              title="Search (Cmd/Ctrl+K)"
+              aria-label={t('Search')}
+              title={t('Search (Cmd/Ctrl+K)')}
             >
               <Search className="size-4" strokeWidth={2} aria-hidden="true" />
             </Button>
+            <LanguagePreferenceMenu />
             <ThemePreferenceMenu />
             <NotificationBell />
             <button
               type="button"
-              aria-label="Model settings"
+              aria-label={t('Model settings')}
               onClick={openSettings}
               className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000"
             >
@@ -547,18 +578,21 @@ const HomePage = ({
               onClick={openCreateDialog}
             >
               <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-              <span className="hidden sm:inline">New project</span>
+              <span className="hidden sm:inline">{t('New project')}</span>
             </Button>
           </div>
         </header>
 
         {sessionUpdates.length > 0 ? (
-          <section className="mt-8 sm:mt-10" aria-label="Session updates">
+          <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
             <div className="grid grid-cols-1 gap-3 py-1 md:grid-cols-2">
               {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
                 const needsYou = activity === 'needs-you'
                 const completed = activity === 'completed'
-                const relativeActivityTime = formatRelativeTime(activityTimestamp)
+                // A finished session reads "just now" rather than the bare bucket, so the two cases
+                // stay separate keys instead of being assembled from a translated fragment.
+                const isJustNow = relativeTimeParts(activityTimestamp).unit === 'now'
+                const relativeActivityTime = relativeTime(activityTimestamp)
                 const markingRead = markingReadSessionIds.has(session.id)
                 const markReadFailed = markReadErrorSessionIds.has(session.id)
 
@@ -568,7 +602,13 @@ const HomePage = ({
                       type="button"
                       className="flex min-h-36 w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
                       onClick={() => openSession(session.projectId, session.id, 'user')}
-                      aria-label={`Open session ${session.title}, ${needsYou ? 'needs you' : completed ? 'completed' : 'running'}`}
+                      aria-label={
+                        needsYou
+                          ? t('Open session {{title}}, needs you', { title: session.title })
+                          : completed
+                            ? t('Open session {{title}}, completed', { title: session.title })
+                            : t('Open session {{title}}, running', { title: session.title })
+                      }
                     >
                       <span
                         className={cn(
@@ -580,7 +620,7 @@ const HomePage = ({
                         {session.title}
                       </span>
                       <span className="mt-1 truncate text-xs text-text-100">
-                        {projectNames.get(session.projectId) ?? 'Unknown project'}
+                        {projectNames.get(session.projectId) ?? t('Unknown project')}
                       </span>
                       <span className="mt-auto flex w-full items-end justify-between gap-3 pt-6">
                         <span
@@ -607,14 +647,16 @@ const HomePage = ({
                               aria-hidden="true"
                             />
                           )}
-                          {needsYou ? 'Needs you' : completed ? 'Completed' : 'Running'}
+                          {t(needsYou ? 'Needs you' : completed ? 'Completed' : 'Running')}
                         </span>
                         <span className="shrink-0 text-xs text-text-100">
                           {completed
-                            ? relativeActivityTime === 'now'
-                              ? 'just now'
+                            ? isJustNow
+                              ? t('just now')
                               : relativeActivityTime
-                            : `${needsYou ? 'waiting' : 'running'} ${relativeActivityTime}`}
+                            : needsYou
+                              ? t('waiting {{time}}', { time: relativeActivityTime })
+                              : t('running {{time}}', { time: relativeActivityTime })}
                         </span>
                       </span>
                     </button>
@@ -628,8 +670,16 @@ const HomePage = ({
                         onClick={() => void dismissCompletedSession(session.id)}
                         disabled={markingRead}
                         aria-busy={markingRead}
-                        aria-label={`${markReadFailed ? 'Retry marking' : 'Mark'} completed session ${session.title} as read`}
-                        title={markReadFailed ? 'Could not mark as read. Try again.' : undefined}
+                        aria-label={
+                          markReadFailed
+                            ? t('Retry marking completed session {{title}} as read', {
+                                title: session.title
+                              })
+                            : t('Mark completed session {{title}} as read', {
+                                title: session.title
+                              })
+                        }
+                        title={markReadFailed ? t('Could not mark as read. Try again.') : undefined}
                       >
                         {markingRead ? (
                           <LoaderCircle
@@ -642,7 +692,7 @@ const HomePage = ({
                         )}
                         {markReadFailed ? (
                           <span className="sr-only" role="alert">
-                            Could not mark this completed session as read. Try again.
+                            {t('Could not mark this completed session as read. Try again.')}
                           </span>
                         ) : null}
                       </button>
@@ -660,14 +710,14 @@ const HomePage = ({
             sessionUpdates.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
           )}
         >
-          <section className="min-w-0" aria-label="Projects">
+          <section className="min-w-0" aria-label={t('Projects')}>
             <h2 className={sectionHeadingClassName}>
               <GalleryVerticalEnd
                 className="size-4 text-text-100"
                 strokeWidth={2}
                 aria-hidden="true"
               />
-              Projects
+              {t('Projects')}
             </h2>
             {projectActionError ? (
               <div
@@ -682,11 +732,11 @@ const HomePage = ({
                 className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
                 role="alert"
               >
-                Could not load projects: {loadError}
+                {t('Could not load projects: {{error}}', { error: loadError })}
               </div>
             ) : projectSummaries.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                No projects yet. Create one to get started.
+                {t('No projects yet. Create one to get started.')}
               </div>
             ) : (
               <div className={listCardClassName}>
@@ -712,18 +762,18 @@ const HomePage = ({
                               strokeWidth={2}
                               aria-hidden="true"
                             />
-                            <span className="sr-only">Pinned project</span>
+                            <span className="sr-only">{t('Pinned project')}</span>
                           </>
                         ) : null}
                         {project.isExample ? (
                           <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
-                            Example
+                            {t('Example')}
                           </span>
                         ) : null}
                         {hasCompleteSessionCatalog && needsYouCount > 0 ? (
                           <span
                             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-waiting"
-                            aria-label={`${needsYouCount} waiting on you`}
+                            aria-label={t('{{count}} waiting on you', { count: needsYouCount })}
                           >
                             <span
                               className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
@@ -735,7 +785,7 @@ const HomePage = ({
                         {hasCompleteSessionCatalog && runningCount > 0 ? (
                           <span
                             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-running"
-                            aria-label={`${runningCount} running`}
+                            aria-label={t('{{count}} running', { count: runningCount })}
                           >
                             <LoaderCircle
                               className="size-3 animate-spin motion-reduce:animate-none"
@@ -748,30 +798,35 @@ const HomePage = ({
                       </button>
                       <span className="hidden shrink-0 text-xs text-text-100 sm:inline">
                         {hasCompleteSessionCatalog
-                          ? `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`
-                          : 'Session count unavailable'}
+                          ? t('{{count}} sessions', {
+                              defaultValue_one: '{{count}} session',
+                              count: sessionCount
+                            })
+                          : t('Session count unavailable')}
                       </span>
                       {showArtifactCounts && artifactCounts.has(project.id) ? (
                         <span className="hidden shrink-0 tabular-nums text-xs text-text-100 sm:inline">
-                          {artifactCounts.get(project.id)}{' '}
-                          {artifactCounts.get(project.id) === 1 ? 'artifact' : 'artifacts'}
+                          {t('{{count}} artifacts', {
+                            defaultValue_one: '{{count}} artifact',
+                            count: artifactCounts.get(project.id)
+                          })}
                         </span>
                       ) : null}
                       <span className="hidden w-8 shrink-0 text-right text-xs text-text-000 sm:inline">
-                        {formatRelativeTime(lastActivityAt)}
+                        {relativeTime(lastActivityAt)}
                       </span>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
                             className={rowActionClassName}
-                            aria-label={`Open actions for ${project.name}`}
+                            aria-label={t('Open actions for {{name}}', { name: project.name })}
                           >
                             <MoreVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent
-                          aria-label="Project actions"
+                          aria-label={t('Project actions')}
                           className="w-max min-w-0"
                           align="end"
                           sideOffset={6}
@@ -786,14 +841,14 @@ const HomePage = ({
                               strokeWidth={2}
                               aria-hidden="true"
                             />
-                            {project.pinned ? 'Unpin project' : 'Pin project'}
+                            {t(project.pinned ? 'Unpin project' : 'Pin project')}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="gap-2"
                             onSelect={() => openEditDialog(project)}
                           >
                             <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Settings
+                            {t('Settings')}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="gap-2"
@@ -803,7 +858,10 @@ const HomePage = ({
                             onSelect={() => archiveProject(project)}
                           >
                             <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                            {archivingProjectIds.has(project.id) ? 'Archiving…' : 'Archive'}
+                            {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
+                            {archivingProjectIds.has(project.id)
+                              ? t('Archiving…')
+                              : t('Archive', { context: 'verb' })}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
@@ -812,7 +870,7 @@ const HomePage = ({
                             onSelect={() => openDeleteDialog(project)}
                           >
                             <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                            Delete
+                            {t('Delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -823,14 +881,14 @@ const HomePage = ({
             )}
           </section>
 
-          <section className="min-w-0" aria-label="Recent sessions">
+          <section className="min-w-0" aria-label={t('Recent sessions')}>
             <h2 className={sectionHeadingClassName}>
               <Clock className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
-              Recent sessions
+              {t('Recent sessions')}
             </h2>
             {recentSessions.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                Sessions you start will appear here.
+                {t('Sessions you start will appear here.')}
               </div>
             ) : (
               <div className={listCardClassName}>
@@ -853,11 +911,11 @@ const HomePage = ({
                         {session.title}
                       </span>
                       <span className="truncate text-xs text-text-100">
-                        {projectNames.get(session.projectId) ?? 'Unknown project'}
+                        {projectNames.get(session.projectId) ?? t('Unknown project')}
                       </span>
                     </span>
                     <span className="shrink-0 text-xs text-text-000">
-                      {formatRelativeTime(session.updatedAt)}
+                      {relativeTime(session.updatedAt)}
                     </span>
                   </button>
                 ))}

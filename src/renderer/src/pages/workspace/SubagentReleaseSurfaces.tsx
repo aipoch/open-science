@@ -1,5 +1,6 @@
 import { AlertCircle, Bot, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { AgentFrameworkId, AgentFrameworkView } from '../../../../shared/settings'
@@ -33,6 +34,17 @@ import {
 
 const returnFocusBySession = new Map<string, HTMLElement>()
 
+// The raw status is rendered with CSS `capitalize`, which is a no-op outside Latin scripts, so each
+// value maps to its own catalog key. `satisfies` keeps the map exhaustive: a new SubagentRawStatus
+// added upstream fails to compile here instead of rendering a raw enum value.
+const SUBAGENT_STATUS_LABELS = {
+  running: 'running',
+  awaiting_user: 'awaiting user',
+  completed: 'completed',
+  cancelled: 'cancelled',
+  error: 'error'
+} as const satisfies Record<SubagentRawStatus, string>
+
 const statusDotClassName: Record<SubagentRawStatus, string> = {
   running: 'bg-primary',
   awaiting_user: 'bg-warning-100',
@@ -47,17 +59,24 @@ const SubagentStatus = ({
 }: {
   status: SubagentRawStatus
   awaitingPermission?: boolean
-}): React.JSX.Element => (
-  <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-text-300">
-    <span className={cn('size-1.5 rounded-full', statusDotClassName[status])} aria-hidden="true" />
-    <span className="capitalize" data-subagent-status={status}>
-      {status}
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-text-300">
+      <span
+        className={cn('size-1.5 rounded-full', statusDotClassName[status])}
+        aria-hidden="true"
+      />
+      <span className="capitalize" data-subagent-status={status}>
+        {t(SUBAGENT_STATUS_LABELS[status])}
+      </span>
+      {awaitingPermission ? (
+        <span className="text-[9px] font-normal text-primary">{t('Waiting for permission')}</span>
+      ) : null}
     </span>
-    {awaitingPermission ? (
-      <span className="text-[9px] font-normal text-primary">Waiting for permission</span>
-    ) : null}
-  </span>
-)
+  )
+}
 
 const openSubagentPreview = (
   session: ChatSession,
@@ -78,6 +97,7 @@ type SubagentSurfaceProps = {
 }
 
 const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const summaryTriggerRef = useRef<HTMLButtonElement>(null)
@@ -109,10 +129,28 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
   if (!session || summary.children.length === 0) return null
 
   const single = summary.children.length === 1 ? summary.children[0] : undefined
-  const label = single?.title ?? `${summary.children.length} subagents`
+  const label =
+    single?.title ??
+    t('{{count}} subagents', {
+      defaultValue_one: '{{count}} subagent',
+      count: summary.children.length
+    })
+  // Built by composing whole clauses rather than concatenating fragments: a locale that puts the
+  // count first or drops the comma can express that inside its own catalog entry.
   const accessibleLabel = single
-    ? `${single.title}${single.status === 'running' ? ', running' : ''}`
-    : `${summary.children.length} subagents${summary.runningCount ? `, ${summary.runningCount} running` : ''}`
+    ? single.status === 'running'
+      ? t('{{name}}, running', { name: single.title })
+      : single.title
+    : summary.runningCount
+      ? t('{{count}} subagents, {{running}} running', {
+          defaultValue_one: '{{count}} subagent, {{running}} running',
+          count: summary.children.length,
+          running: summary.runningCount
+        })
+      : t('{{count}} subagents', {
+          defaultValue_one: '{{count}} subagent',
+          count: summary.children.length
+        })
 
   const selectChild = (child: SessionSubagentChild): void => {
     setExpanded(false)
@@ -143,10 +181,16 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
         {single?.status === 'running' ? (
           <Loader2
             className="size-3 shrink-0 animate-spin text-primary motion-reduce:animate-none"
-            aria-label="Running"
+            aria-label={t('Running')}
           />
         ) : !single && summary.runningCount > 0 ? (
-          <span className="shrink-0">· {summary.runningCount} running</span>
+          <span className="shrink-0">
+            ·{' '}
+            {t('{{count}} running', {
+              defaultValue_one: '{{count}} running',
+              count: summary.runningCount
+            })}
+          </span>
         ) : null}
         {single ? null : (
           <ChevronDown
@@ -159,14 +203,24 @@ const SubagentsBar = ({ session, permissions }: SubagentSurfaceProps): React.JSX
       {expanded ? (
         <div
           id={`subagents-bar-list-${session.id}`}
-          aria-label="Subagents"
+          aria-label={t('Subagents')}
           className="absolute bottom-full left-0 z-40 mb-1 max-h-72 w-[min(32rem,calc(100vw-4rem))] overflow-y-auto rounded-xl border border-border-300/20 bg-bg-000 shadow-card"
         >
           {summary.children.map((child) => (
             <button
               key={child.frameId}
               type="button"
-              aria-label={`${child.title}, ${child.status}${child.awaitingPermission ? ', waiting for permission' : ''}`}
+              aria-label={
+                child.awaitingPermission
+                  ? t('{{name}}, {{status}}, waiting for permission', {
+                      name: child.title,
+                      status: t(SUBAGENT_STATUS_LABELS[child.status])
+                    })
+                  : t('{{name}}, {{status}}', {
+                      name: child.title,
+                      status: t(SUBAGENT_STATUS_LABELS[child.status])
+                    })
+              }
               className="grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-border-300/15 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-bg-100/60 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50"
               onClick={() => selectChild(child)}
             >
@@ -202,13 +256,14 @@ const SubagentAvailabilityNotice = ({
   unavailableReason?: string
   onOpenSettings: () => void
 }): React.JSX.Element | null => {
-  const availability = resolveDelegatedWorkAvailability(frameworkId, frameworks)
+  const { t } = useTranslation()
+  const availability = resolveDelegatedWorkAvailability(frameworkId, frameworks, t)
   if (availability.available && !unavailableReason) return null
   const framework = frameworks.find(({ id }) => id === frameworkId)
   const title = unavailableReason
-    ? 'Subagents unavailable for this configuration'
+    ? t('Subagents unavailable for this configuration')
     : availability.available
-      ? `Subagents unavailable for ${framework?.displayName ?? frameworkId}`
+      ? t('Subagents unavailable for {{name}}', { name: framework?.displayName ?? frameworkId })
       : availability.title
   const description = unavailableReason ?? (availability.available ? '' : availability.description)
 
@@ -227,7 +282,7 @@ const SubagentAvailabilityNotice = ({
         className="shrink-0 rounded-md border border-border-200 bg-bg-000 px-2 py-1 text-text-100 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         onClick={onOpenSettings}
       >
-        Open Settings
+        {t('Open Settings')}
       </button>
     </div>
   )
@@ -258,6 +313,7 @@ const SubagentPreview = ({
   item: PreviewToolItem
   returnFocus?: HTMLElement
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const session = useSessionStore((state) =>
     state.sessions.find((candidate) => candidate.id === item.sessionId)
   )
@@ -297,15 +353,15 @@ const SubagentPreview = ({
   }
 
   return (
-    <section className="flex size-full min-h-0 flex-col bg-bg-000" aria-label="Subagents">
+    <section className="flex size-full min-h-0 flex-col bg-bg-000" aria-label={t('Subagents')}>
       <header className="flex min-w-0 shrink-0 items-center gap-2 border-b border-border-200 bg-bg-10 px-3 py-2">
         <label htmlFor={`subagent-frame-${item.sessionId}`} className="sr-only">
-          Subagent Frame
+          {t('Subagent Frame')}
         </label>
         <Select value={effectiveFrameId} onValueChange={selectFrame}>
           <SelectTrigger
             id={`subagent-frame-${item.sessionId}`}
-            aria-label="Subagent Frame"
+            aria-label={t('Subagent Frame')}
             className="min-w-0 flex-1 text-xs"
           >
             <SelectValue />
@@ -324,14 +380,14 @@ const SubagentPreview = ({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label="Close Subagents preview"
+                aria-label={t('Close Subagents preview')}
                 className="grid size-8 shrink-0 place-items-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 onClick={close}
               >
                 <X className="size-4" aria-hidden="true" />
               </button>
             </TooltipTrigger>
-            <TooltipContent>Close Subagents preview</TooltipContent>
+            <TooltipContent>{t('Close Subagents preview')}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </header>
@@ -339,15 +395,15 @@ const SubagentPreview = ({
       {!detail || !session ? (
         <div role="alert" className="m-auto max-w-sm p-6 text-center text-[12px] text-text-300">
           <AlertCircle className="mx-auto mb-2 size-5" aria-hidden="true" />
-          <p>This Subagent conversation could not be read.</p>
+          <p>{t('This Subagent conversation could not be read.')}</p>
           <button
             type="button"
-            aria-label="Retry Subagent preview"
+            aria-label={t('Retry Subagent preview')}
             disabled={isRetrying}
             className="mt-3 rounded-md border border-border-200 px-3 py-1.5 text-text-100 hover:bg-bg-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
             onClick={() => void retryRead()}
           >
-            {isRetrying ? 'Retrying…' : 'Retry'}
+            {isRetrying ? t('Retrying…') : t('Retry')}
           </button>
         </div>
       ) : (

@@ -1,5 +1,6 @@
 import { BookOpen, File, FolderOpen, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
@@ -40,10 +41,12 @@ const PreviewActiveContent = ({
   item: PreviewItem | undefined
   restoredPlanResponder?: RestoredPlanResponder
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   if (!item) {
     return (
       <div className="flex size-full items-center justify-center text-[12px] text-text-300">
-        No preview content
+        {t('No preview content')}
       </div>
     )
   }
@@ -102,61 +105,65 @@ const PreviewTab = ({
   onActivate: (id: string) => void
   onClose: (id: string) => void
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
-}): React.JSX.Element => (
-  <div
-    ref={containerRef}
-    role="presentation"
-    className={cn(
-      previewTabClassName,
-      isActive ? 'bg-bg-300 text-text-000' : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
-    )}
-  >
-    <button
-      ref={tabRef}
-      type="button"
-      role="tab"
-      id={getPreviewTabId(tab.id)}
-      aria-controls={getPreviewPanelId(tab.id)}
-      aria-selected={isActive}
-      aria-keyshortcuts="Delete Backspace"
-      tabIndex={isActive ? 0 : -1}
-      className="flex min-w-0 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
-      onClick={(event) => {
-        if (event.target instanceof Element && event.target.closest('[data-preview-close]')) {
-          onClose(tab.id)
-          return
-        }
-        onActivate(tab.id)
-      }}
-      onKeyDown={onKeyDown}
-      title={tab.title}
-    >
-      {tab.type === 'file' ? (
-        <File className="size-3.5 shrink-0" aria-hidden="true" />
-      ) : tab.toolKind === 'files' ? (
-        <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
-      ) : tab.toolKind === 'notebook' ? (
-        <BookOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-      ) : null}
-      {tab.type === 'file' ? (
-        <ExtensionPreservingFileName name={tab.name} />
-      ) : (
-        <span className="min-w-0 truncate">{tab.title}</span>
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <div
+      ref={containerRef}
+      role="presentation"
+      className={cn(
+        previewTabClassName,
+        isActive ? 'bg-bg-300 text-text-000' : 'text-text-300 hover:bg-bg-200 hover:text-text-100'
       )}
-      <span
-        data-preview-close={tab.title}
-        aria-hidden="true"
-        title={`Close preview of ${tab.title}`}
-        className={cn(
-          'shrink-0 rounded-sm p-0.5 hover:bg-bg-000/60',
-          isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-        )}
+    >
+      <button
+        ref={tabRef}
+        type="button"
+        role="tab"
+        id={getPreviewTabId(tab.id)}
+        aria-controls={getPreviewPanelId(tab.id)}
+        aria-selected={isActive}
+        aria-keyshortcuts="Delete Backspace"
+        tabIndex={isActive ? 0 : -1}
+        className="flex min-w-0 items-center gap-1 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+        onClick={(event) => {
+          if (event.target instanceof Element && event.target.closest('[data-preview-close]')) {
+            onClose(tab.id)
+            return
+          }
+          onActivate(tab.id)
+        }}
+        onKeyDown={onKeyDown}
+        title={tab.title}
       >
-        <X className="size-3.5" />
-      </span>
-    </button>
-  </div>
-)
+        {tab.type === 'file' ? (
+          <File className="size-3.5 shrink-0" aria-hidden="true" />
+        ) : tab.toolKind === 'files' ? (
+          <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
+        ) : tab.toolKind === 'notebook' ? (
+          <BookOpen className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+        ) : null}
+        {tab.type === 'file' ? (
+          <ExtensionPreservingFileName name={tab.name} />
+        ) : (
+          <span className="min-w-0 truncate">{tab.title}</span>
+        )}
+        <span
+          data-preview-close={tab.title}
+          aria-hidden="true"
+          title={t('Close preview of {{title}}', { title: tab.title })}
+          className={cn(
+            'shrink-0 rounded-sm p-0.5 hover:bg-bg-000/60',
+            isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          )}
+        >
+          <X className="size-3.5" />
+        </span>
+      </button>
+    </div>
+  )
+}
 
 // Horizontal, scrollable strip of every file the user has asked to preview this session.
 const PreviewTabBar = ({
@@ -172,6 +179,7 @@ const PreviewTabBar = ({
 }): React.JSX.Element => {
   const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
+  const { t } = useTranslation()
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
   const scrollActiveTabIntoView = useCallback(
@@ -247,7 +255,7 @@ const PreviewTabBar = ({
     <div
       ref={tabListRef}
       role="tablist"
-      aria-label="Open previews"
+      aria-label={t('Open previews')}
       aria-orientation="horizontal"
       className="scroll-fade-x flex min-w-0 flex-1 basis-0 shrink-0 items-center gap-1 overflow-x-auto pb-2"
     >
@@ -348,6 +356,7 @@ const PreviewFilePanel = ({
   contentKey: string
   onClose: (id: string) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
   const surfaceRef = useRef<HTMLElement | null>(null)
 
@@ -381,7 +390,7 @@ const PreviewFilePanel = ({
         data-testid="preview-card"
         role={isFullScreenOpen ? 'dialog' : 'tabpanel'}
         aria-modal={isFullScreenOpen || undefined}
-        aria-label={isFullScreenOpen ? `Preview ${item.title}` : undefined}
+        aria-label={isFullScreenOpen ? t('Preview {{title}}', { title: item.title }) : undefined}
         id={isFullScreenOpen ? undefined : getPreviewPanelId(item.id)}
         aria-labelledby={isFullScreenOpen ? undefined : getPreviewTabId(item.id)}
         tabIndex={isFullScreenOpen ? -1 : 0}

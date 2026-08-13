@@ -10,13 +10,14 @@ import {
   Zap
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import type { ComputeHost } from '../../../../shared/compute'
 import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
+import { probedLabel } from './compute-probed-label'
 
 type ComputeHostDetailProps = {
   providerId: string
@@ -24,20 +25,25 @@ type ComputeHostDetailProps = {
   onRemoved: () => void
 }
 
-// Renders a "probed X ago" relative label from an ISO timestamp.
-const probedLabel = (host: ComputeHost): string | null => {
-  const probedAt = host.probeResult?.probedAt
-  if (!probedAt) return null
-  const then = Date.parse(probedAt)
-  if (Number.isNaN(then)) return null
-  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000))
-  if (seconds < 60) return 'probed just now'
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `probed ${minutes} min ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `probed ${hours} h ago`
-  return `probed ${Math.round(hours / 24)} d ago`
-}
+// The four error slots on this page survive the action that produced them — they sit in state until the
+// user retries. Storing a rendered sentence would freeze it in the language that was active when the
+// failure happened, so a slot holds either a catalog key (+ params) resolved at render, or a message
+// handed up verbatim from main, which is passed through untranslated in every locale.
+type DetailError =
+  | { kind: 'key'; key: DetailErrorKey; params?: Record<string, string | number> }
+  | { kind: 'message'; message: string }
+
+type DetailErrorKey =
+  | 'Probe failed unexpectedly.'
+  | 'Details must be {{limit}} characters or fewer.'
+  | 'Failed to save details.'
+  | 'Failed to set scratch root.'
+  | 'Must be an integer between 1 and 500.'
+  | 'Failed to set concurrency limit.'
+
+// Wraps a caught error: a real Error keeps its message, anything else falls back to the catalog.
+const failure = (err: unknown, key: DetailErrorKey): DetailError =>
+  err instanceof Error ? { kind: 'message', message: err.message } : { kind: 'key', key }
 
 // Host detail page for issues 02 + 03: probe button, probe failure banner, resource summary,
 // details editor, scratch root editor, and concurrent job limit editor.
@@ -45,6 +51,15 @@ export function ComputeHostDetail({
   providerId,
   onRemoved
 }: ComputeHostDetailProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
+  // Resolves a stored error slot at render time, so a language switch re-renders it in the new language.
+  const errorText = (error: DetailError | undefined): string | undefined =>
+    error === undefined
+      ? undefined
+      : error.kind === 'message'
+        ? error.message
+        : t(error.key, error.params)
   const hosts = useComputeStore((state) => state.hosts)
   const isLoaded = useComputeStore((state) => state.isLoaded)
   const loadHosts = useComputeStore((state) => state.loadHosts)
@@ -55,14 +70,14 @@ export function ComputeHostDetail({
   const setScratch = useComputeStore((state) => state.setScratch)
   const setConcurrency = useComputeStore((state) => state.setConcurrency)
 
-  const [probeError, setProbeError] = useState<string | undefined>(undefined)
+  const [probeError, setProbeError] = useState<DetailError | undefined>(undefined)
 
   // Details editor state
   const [detailsDoc, setDetailsDoc] = useState<string>('')
   const [originalDoc, setOriginalDoc] = useState<string>('')
   const [isEditingDetails, setIsEditingDetails] = useState(false)
   const [detailsSaving, setDetailsSaving] = useState(false)
-  const [detailsError, setDetailsError] = useState<string | undefined>(undefined)
+  const [detailsError, setDetailsError] = useState<DetailError | undefined>(undefined)
   const [isSkeleton, setIsSkeleton] = useState(false)
   const detailsLoadedRef = useRef(false)
 
@@ -70,13 +85,13 @@ export function ComputeHostDetail({
   const [isEditingScratch, setIsEditingScratch] = useState(false)
   const [scratchInput, setScratchInput] = useState('')
   const [scratchSaving, setScratchSaving] = useState(false)
-  const [scratchError, setScratchError] = useState<string | undefined>(undefined)
+  const [scratchError, setScratchError] = useState<DetailError | undefined>(undefined)
 
   // Concurrency editor state
   const [isEditingConcurrency, setIsEditingConcurrency] = useState(false)
   const [concurrencyInput, setConcurrencyInput] = useState('')
   const [concurrencySaving, setConcurrencySaving] = useState(false)
-  const [concurrencyError, setConcurrencyError] = useState<string | undefined>(undefined)
+  const [concurrencyError, setConcurrencyError] = useState<DetailError | undefined>(undefined)
 
   // Details expand/collapse state
   const [isDetailsExpanded, setIsDetailsExpanded] = useState(false)
@@ -120,7 +135,7 @@ export function ComputeHostDetail({
     return (
       <div className="p-5">
         <p className="py-8 text-center text-sm text-muted-foreground">
-          {isLoaded ? 'This host no longer exists.' : 'Loading host…'}
+          {isLoaded ? t('This host no longer exists.') : t('Loading host…')}
         </p>
       </div>
     )
@@ -147,15 +162,17 @@ export function ComputeHostDetail({
       // After a probe, reset the details-loaded flag so skeleton is re-fetched.
       detailsLoadedRef.current = false
     } catch (err) {
-      setProbeError(err instanceof Error ? err.message : 'Probe failed unexpectedly.')
+      setProbeError(failure(err, 'Probe failed unexpectedly.'))
     }
   }
 
   const handleDetailsSave = async (): Promise<void> => {
     if (detailsDoc.length > DETAILS_DOC_MAX_LENGTH) {
-      setDetailsError(
-        `Details must be ${DETAILS_DOC_MAX_LENGTH.toLocaleString()} characters or fewer.`
-      )
+      setDetailsError({
+        kind: 'key',
+        key: 'Details must be {{limit}} characters or fewer.',
+        params: { limit: DETAILS_DOC_MAX_LENGTH.toLocaleString() }
+      })
       return
     }
     setDetailsSaving(true)
@@ -166,7 +183,7 @@ export function ComputeHostDetail({
       setIsSkeleton(false)
       setIsEditingDetails(false)
     } catch (err) {
-      setDetailsError(err instanceof Error ? err.message : 'Failed to save details.')
+      setDetailsError(failure(err, 'Failed to save details.'))
     } finally {
       setDetailsSaving(false)
     }
@@ -191,7 +208,7 @@ export function ComputeHostDetail({
       await setScratch(providerId, scratchInput)
       setIsEditingScratch(false)
     } catch (err) {
-      setScratchError(err instanceof Error ? err.message : 'Failed to set scratch root.')
+      setScratchError(failure(err, 'Failed to set scratch root.'))
     } finally {
       setScratchSaving(false)
     }
@@ -206,7 +223,7 @@ export function ComputeHostDetail({
   const handleConcurrencySave = async (): Promise<void> => {
     const n = Number.parseInt(concurrencyInput, 10)
     if (!Number.isInteger(n) || n < 1 || n > 500) {
-      setConcurrencyError('Must be an integer between 1 and 500.')
+      setConcurrencyError({ kind: 'key', key: 'Must be an integer between 1 and 500.' })
       return
     }
     setConcurrencySaving(true)
@@ -215,7 +232,7 @@ export function ComputeHostDetail({
       await setConcurrency(providerId, n)
       setIsEditingConcurrency(false)
     } catch (err) {
-      setConcurrencyError(err instanceof Error ? err.message : 'Failed to set concurrency limit.')
+      setConcurrencyError(failure(err, 'Failed to set concurrency limit.'))
     } finally {
       setConcurrencySaving(false)
     }
@@ -251,12 +268,14 @@ export function ComputeHostDetail({
                   Probe failed
                 </Badge>
               ) : (
-                <Badge variant="outline">Not probed</Badge>
+                <Badge variant="outline">{t('Not probed')}</Badge>
               )}
             </div>
             <p className="mt-0.5 font-mono text-xs text-muted-foreground">{host.providerId}</p>
             {probedAgo ? (
-              <p className="mt-0.5 font-mono text-xs text-muted-foreground">{probedAgo}</p>
+              <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                {t(probedAgo.key, { count: probedAgo.count })}
+              </p>
             ) : null}
           </div>
         </div>
@@ -271,7 +290,7 @@ export function ComputeHostDetail({
             aria-busy={isProbing}
           >
             <RefreshCw className={cn('size-3.5', isProbing && 'animate-spin')} aria-hidden="true" />
-            {isProbing ? 'Probing…' : 'Probe'}
+            {isProbing ? t('Probing…') : t('Probe')}
           </Button>
           <Button
             type="button"
@@ -279,7 +298,7 @@ export function ComputeHostDetail({
             onClick={() => void handleRemove()}
             className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
-            Remove
+            {t('Remove')}
           </Button>
         </div>
       </div>
@@ -324,21 +343,21 @@ export function ComputeHostDetail({
       {/* IPC / unexpected probe error banner */}
       {probeError ? (
         <p role="alert" className="mt-4 text-sm text-destructive">
-          {probeError}
+          {errorText(probeError)}
         </p>
       ) : null}
 
       {/* Resource summary — shown only when a successful probe has populated resource fields */}
       {status === 'connected' && probed ? (
         <div className="mt-6 flex flex-col gap-2">
-          <h4 className="text-sm font-medium text-foreground">Resources</h4>
+          <h4 className="text-sm font-medium text-foreground">{t('Resources')}</h4>
           <div className="flex flex-wrap gap-3">
             {probed.cpus != null ? (
               <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 py-1.5 text-sm">
                 <Cpu className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span>
                   <span className="font-semibold">{probed.cpus}</span>{' '}
-                  <span className="text-muted-foreground">CPUs</span>
+                  <span className="text-muted-foreground">{t('CPUs')}</span>
                 </span>
               </div>
             ) : null}
@@ -350,7 +369,7 @@ export function ComputeHostDetail({
                 />
                 <span>
                   <span className="font-semibold">{Math.round(probed.memMib / 1024)}</span>{' '}
-                  <span className="text-muted-foreground">GB RAM</span>
+                  <span className="text-muted-foreground">{t('GB RAM')}</span>
                 </span>
               </div>
             ) : null}
@@ -374,7 +393,7 @@ export function ComputeHostDetail({
             {probed.detectedScheduler && probed.detectedScheduler !== 'none' ? (
               <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-2.5 py-1.5 text-sm">
                 <span className="font-semibold capitalize">{probed.detectedScheduler}</span>
-                <span className="text-muted-foreground">scheduler</span>
+                <span className="text-muted-foreground">{t('scheduler')}</span>
               </div>
             ) : null}
           </div>
@@ -385,9 +404,11 @@ export function ComputeHostDetail({
       <div className="mt-8">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h4 className="text-sm font-medium text-foreground">Details</h4>
+            <h4 className="text-sm font-medium text-foreground">{t('Details')}</h4>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Free-form notes about this provider. Open Science reads and adds to them as it learns.
+              {t(
+                'Free-form notes about this provider. Open Science reads and adds to them as it learns.'
+              )}
             </p>
           </div>
           {!isEditingDetails ? (
@@ -398,7 +419,7 @@ export function ComputeHostDetail({
               onClick={() => setIsEditingDetails(true)}
               className="shrink-0"
             >
-              Edit
+              {t('Edit')}
             </Button>
           ) : null}
         </div>
@@ -412,7 +433,7 @@ export function ComputeHostDetail({
                 setDetailsDoc(e.target.value)
                 setDetailsError(undefined)
               }}
-              aria-label="Details document"
+              aria-label={t('Details document')}
               aria-describedby={detailsError ? 'details-error' : undefined}
             />
             <div className="flex items-center justify-between gap-2">
@@ -424,8 +445,10 @@ export function ComputeHostDetail({
                     : 'text-muted-foreground'
                 )}
               >
-                {detailsDoc.length.toLocaleString()} / {DETAILS_DOC_MAX_LENGTH.toLocaleString()}{' '}
-                chars
+                {t('{{used}} / {{limit}} chars', {
+                  used: detailsDoc.length.toLocaleString(),
+                  limit: DETAILS_DOC_MAX_LENGTH.toLocaleString()
+                })}
               </span>
               <div className="flex gap-2">
                 <Button
@@ -435,7 +458,7 @@ export function ComputeHostDetail({
                   onClick={handleDetailsCancel}
                   disabled={detailsSaving}
                 >
-                  Cancel
+                  {tCommon('Cancel')}
                 </Button>
                 <Button
                   type="button"
@@ -444,13 +467,13 @@ export function ComputeHostDetail({
                   disabled={detailsSaving || detailsDoc.length > DETAILS_DOC_MAX_LENGTH}
                   aria-busy={detailsSaving}
                 >
-                  {detailsSaving ? 'Saving…' : 'Save'}
+                  {detailsSaving ? t('Saving…') : t('Save')}
                 </Button>
               </div>
             </div>
             {detailsError ? (
               <p id="details-error" role="alert" className="text-xs text-destructive">
-                {detailsError}
+                {errorText(detailsError)}
               </p>
             ) : null}
           </div>
@@ -467,7 +490,9 @@ export function ComputeHostDetail({
               >
                 {detailsDoc}
                 {isSkeleton ? (
-                  <span className="ml-2 text-muted-foreground">(auto-generated from probe)</span>
+                  <span className="ml-2 text-muted-foreground">
+                    {t('(auto-generated from probe)')}
+                  </span>
                 ) : null}
               </pre>
               {!isDetailsExpanded && needsExpand ? (
@@ -484,11 +509,11 @@ export function ComputeHostDetail({
               >
                 {isDetailsExpanded ? (
                   <>
-                    Show less <ChevronUp className="ml-1 size-3" />
+                    {t('Show less')} <ChevronUp className="ml-1 size-3" />
                   </>
                 ) : (
                   <>
-                    Show more <ChevronDown className="ml-1 size-3" />
+                    {t('Show more')} <ChevronDown className="ml-1 size-3" />
                   </>
                 )}
               </Button>
@@ -496,7 +521,7 @@ export function ComputeHostDetail({
           </div>
         ) : (
           <p className="mt-3 text-xs italic text-muted-foreground">
-            No notes yet. Click Edit to add details about this provider.
+            {t('No notes yet. Click Edit to add details about this provider.')}
           </p>
         )}
       </div>
@@ -505,9 +530,11 @@ export function ComputeHostDetail({
       <div className="mt-7">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h4 className="text-sm font-medium text-foreground">Scratch root</h4>
+            <h4 className="text-sm font-medium text-foreground">{t('Scratch root')}</h4>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Working directory for remote jobs. Pinned paths are never overwritten by re-probe.
+              {t(
+                'Working directory for remote jobs. Pinned paths are never overwritten by re-probe.'
+              )}
             </p>
           </div>
           {!isEditingScratch ? (
@@ -518,7 +545,7 @@ export function ComputeHostDetail({
               onClick={handleScratchEdit}
               className="shrink-0"
             >
-              Edit
+              {t('Edit')}
             </Button>
           ) : null}
         </div>
@@ -533,13 +560,13 @@ export function ComputeHostDetail({
                 setScratchInput(e.target.value)
                 setScratchError(undefined)
               }}
-              placeholder="/scratch/username"
-              aria-label="Scratch root path"
+              placeholder={t('/scratch/username')}
+              aria-label={t('Scratch root path')}
               aria-describedby={scratchError ? 'scratch-error' : undefined}
             />
             {scratchError ? (
               <p id="scratch-error" role="alert" className="text-xs text-destructive">
-                {scratchError}
+                {errorText(scratchError)}
               </p>
             ) : null}
             <div className="flex justify-end gap-2">
@@ -553,7 +580,7 @@ export function ComputeHostDetail({
                 }}
                 disabled={scratchSaving}
               >
-                Cancel
+                {tCommon('Cancel')}
               </Button>
               <Button
                 type="button"
@@ -562,7 +589,7 @@ export function ComputeHostDetail({
                 disabled={scratchSaving}
                 aria-busy={scratchSaving}
               >
-                {scratchSaving ? 'Saving…' : 'Save'}
+                {scratchSaving ? t('Saving…') : t('Save')}
               </Button>
             </div>
           </div>
@@ -574,13 +601,13 @@ export function ComputeHostDetail({
             {host.scratchPinned ? (
               <Badge variant="secondary" className="flex items-center gap-1 py-0 text-[10px]">
                 <Pin className="size-3" aria-hidden="true" />
-                PINNED
+                {t('PINNED')}
               </Badge>
             ) : null}
           </div>
         ) : (
           <p className="mt-3 text-xs italic text-muted-foreground">
-            Not set. Will be updated from $SCRATCH on next probe.
+            {t('Not set. Will be updated from $SCRATCH on next probe.')}
           </p>
         )}
       </div>
@@ -589,7 +616,7 @@ export function ComputeHostDetail({
       <div className="mt-7">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h4 className="text-sm font-medium text-foreground">Concurrent job limit</h4>
+            <h4 className="text-sm font-medium text-foreground">{t('Concurrent job limit')}</h4>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Maximum jobs running at the same time on this host (1–500).
             </p>
@@ -602,7 +629,7 @@ export function ComputeHostDetail({
               onClick={handleConcurrencyEdit}
               className="shrink-0"
             >
-              Edit
+              {t('Edit')}
             </Button>
           ) : null}
         </div>
@@ -620,12 +647,12 @@ export function ComputeHostDetail({
                 setConcurrencyError(undefined)
               }}
               placeholder="10"
-              aria-label="Concurrent job limit"
+              aria-label={t('Concurrent job limit')}
               aria-describedby={concurrencyError ? 'concurrency-error' : undefined}
             />
             {concurrencyError ? (
               <p id="concurrency-error" role="alert" className="text-xs text-destructive">
-                {concurrencyError}
+                {errorText(concurrencyError)}
               </p>
             ) : null}
             <div className="flex justify-end gap-2">
@@ -639,7 +666,7 @@ export function ComputeHostDetail({
                 }}
                 disabled={concurrencySaving}
               >
-                Cancel
+                {tCommon('Cancel')}
               </Button>
               <Button
                 type="button"
@@ -648,14 +675,16 @@ export function ComputeHostDetail({
                 disabled={concurrencySaving}
                 aria-busy={concurrencySaving}
               >
-                {concurrencySaving ? 'Saving…' : 'Save'}
+                {concurrencySaving ? t('Saving…') : t('Save')}
               </Button>
             </div>
           </div>
         ) : (
           <div className="mt-3 rounded-lg border border-border bg-muted/20 px-3.5 py-2.5">
             <span className="font-mono text-xs text-muted-foreground">
-              {host.concurrencyLimit != null ? host.concurrencyLimit : '10 (default)'}
+              {host.concurrencyLimit != null
+                ? host.concurrencyLimit
+                : t('{{value}} (default)', { value: 10 })}
             </span>
           </div>
         )}

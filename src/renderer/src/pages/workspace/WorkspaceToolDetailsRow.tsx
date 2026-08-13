@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
@@ -31,10 +33,15 @@ type WorkspaceToolDetailsRowProps = {
 const sectionLabelClassName = 'text-[11px] font-medium uppercase tracking-wide text-text-300'
 
 // Renders a code block plus its optional truncation note.
-const renderCodeBody = (section: ToolCodeSection): React.JSX.Element => (
+const renderCodeBody = (
+  section: ToolCodeSection,
+  t: ReturnType<typeof useTranslation<'workspace'>>['t']
+): React.JSX.Element => (
   <>
     <WorkspaceToolCodeBlock code={section.text} language={section.language} />
-    {section.truncated ? <div className="text-[11px] text-text-300">Output truncated</div> : null}
+    {section.truncated ? (
+      <div className="text-[11px] text-text-300">{t('Output truncated')}</div>
+    ) : null}
   </>
 )
 
@@ -45,6 +52,7 @@ const WorkspaceToolImageOutput = ({
 }: {
   section: ToolImageSection
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent({
     path: section.path,
     maxBytes: PREVIEW_PANEL_IMAGE_MAX_BYTES,
@@ -56,7 +64,7 @@ const WorkspaceToolImageOutput = ({
         <img
           data-testid="tool-output-image"
           src={`data:${section.mimeType};base64,${state.preview.content}`}
-          alt={section.name ?? 'Tool output image'}
+          alt={section.name ?? t('Tool output image')}
           className="max-h-64 max-w-full rounded-md border border-border-200 object-contain"
           draggable={false}
         />
@@ -73,7 +81,7 @@ const WorkspaceToolImageOutput = ({
 
   const fallbackText =
     state.status === 'loading'
-      ? 'Loading preview…'
+      ? t('Loading preview…')
       : (section.name ?? (section.path.split(/[\\/]/u).at(-1) || section.path))
 
   return (
@@ -89,8 +97,13 @@ const WorkspaceToolImageOutput = ({
 
 // Renders one detail section as a diff, an image preview, a collapsible code panel, or a plain
 // code block.
-const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
+const renderSection = (
+  section: ToolDetailSection,
+  index: number,
+  t: ReturnType<typeof useTranslation<'workspace'>>['t']
+): React.JSX.Element => {
   if (section.kind === 'diff') {
+    // A diff's label is the edited file's basename, so it stays verbatim.
     return (
       <div key={index} className="space-y-1">
         <div className={sectionLabelClassName}>{section.label}</div>
@@ -102,7 +115,7 @@ const renderSection = (section: ToolDetailSection, index: number): React.JSX.Ele
   if (section.kind === 'image') {
     return (
       <div key={index} className="space-y-1">
-        <div className={sectionLabelClassName}>{section.label}</div>
+        <div className={sectionLabelClassName}>{t(section.label)}</div>
         <WorkspaceToolImageOutput section={section} />
       </div>
     )
@@ -113,17 +126,17 @@ const renderSection = (section: ToolDetailSection, index: number): React.JSX.Ele
     return (
       <details key={index} className="space-y-1">
         <summary className={`${sectionLabelClassName} cursor-pointer select-none`}>
-          {section.label}
+          {t(section.label)}
         </summary>
-        <div className="mt-1">{renderCodeBody(section)}</div>
+        <div className="mt-1">{renderCodeBody(section, t)}</div>
       </details>
     )
   }
 
   return (
     <div key={index} className="space-y-1">
-      <div className={sectionLabelClassName}>{section.label}</div>
-      {renderCodeBody(section)}
+      <div className={sectionLabelClassName}>{t(section.label)}</div>
+      {renderCodeBody(section, t)}
     </div>
   )
 }
@@ -136,12 +149,16 @@ const WorkspaceToolDetailsRow = ({
   isExpanded,
   onToggle
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
-  const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun) : undefined
+  const { t } = useTranslation()
+  const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun, t) : undefined
 
   return (
     <WorkspaceToolActivityRowButton
       activity={activity}
-      label={details.displayName}
+      // displayName is a provider tool name ("Write", "Bash") for most rows and app prose for the
+      // rest ("Write file", "Notebook cell"). Only the prose has catalog entries; provider names
+      // miss the lookup and render verbatim, which is what a tool identity should do.
+      label={t(details.displayName)}
       subtitle={
         details.displayName === 'Write file' && details.subtitle ? (
           <ExtensionPreservingFileName name={details.subtitle} />
@@ -155,7 +172,7 @@ const WorkspaceToolDetailsRow = ({
       panelTestId="tool-details"
       onToggle={onToggle}
     >
-      {details.sections.map(renderSection)}
+      {details.sections.map((section, index) => renderSection(section, index, t))}
       {notebookRun ? <NotebookRunFigureOutputs run={notebookRun} align="start" /> : null}
     </WorkspaceToolActivityRowButton>
   )

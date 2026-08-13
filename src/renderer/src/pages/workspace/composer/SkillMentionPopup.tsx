@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { SkillSource, SkillView } from '../../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -25,12 +26,13 @@ type SkillMentionPopupProps = {
   onClose: () => void
 }
 
-// Human-readable badge label per skill source.
-const SOURCE_LABELS: Record<SkillSource, string> = {
+// Catalog key for the badge label per skill source. `as const` keeps the values literal so the t()
+// lookup in the row stays compile-time checked.
+const SOURCE_LABEL_KEYS = {
   featured: 'Featured',
   imported: 'Imported',
   personal: 'Personal'
-}
+} as const satisfies Record<SkillSource, string>
 
 export const SkillMentionPopup = ({
   query,
@@ -40,6 +42,7 @@ export const SkillMentionPopup = ({
   onSelect,
   onClose
 }: SkillMentionPopupProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const generatedListboxId = useId()
@@ -148,7 +151,7 @@ export const SkillMentionPopup = ({
       <ul
         id={resolvedListboxId}
         role="listbox"
-        aria-label="Skill suggestions"
+        aria-label={t('Skill suggestions')}
         className="overflow-y-auto max-h-[min(45vh,18rem)]"
       >
         {matches.map(({ skill, positions }, index) => {
@@ -174,7 +177,7 @@ export const SkillMentionPopup = ({
                   </span>
                   <div className="flex-1" />
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground">
-                    {SOURCE_LABELS[skill.source]}
+                    {t(SOURCE_LABEL_KEYS[skill.source])}
                   </span>
                 </div>
                 <div className="text-xs text-text-300 line-clamp-2 mt-0.5">{skill.description}</div>
@@ -185,13 +188,13 @@ export const SkillMentionPopup = ({
       </ul>
       <div className="mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
         <span>
-          <span className="text-text-300">↑↓</span> navigate
+          <span className="text-text-300">↑↓</span> {t('navigate')}
         </span>
         <span>
-          <span className="text-text-300">Enter / Tab</span> select
+          <span className="text-text-300">Enter / Tab</span> {t('select')}
         </span>
         <span>
-          <span className="text-text-300">Esc</span> close
+          <span className="text-text-300">Esc</span> {t('close')}
         </span>
       </div>
     </div>

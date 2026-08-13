@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -61,6 +62,10 @@ const ProviderStep = ({
   onBack,
   onAdvance
 }: ProviderStepProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  // Validation copy is shared with the settings page and lives in the `settings` namespace, so this
+  // step holds a second, settings-scoped t for describeValidation.
+  const { t: tSettings } = useTranslation()
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
@@ -137,15 +142,16 @@ const ProviderStep = ({
     try {
       const result = await loginIsolatedClaude(token)
       if (result.applied === false) {
-        const message =
+        const message = t(
           'The Claude provider changed during sign-in. Review the selection and try again.'
+        )
         setValidationOk(false)
         setValidationMessage(message)
         return { ...result, ok: false, message }
       }
 
       setValidationOk(result.ok)
-      setValidationMessage(describeValidation(result))
+      setValidationMessage(describeValidation(result, tSettings))
 
       if (result.ok) {
         if (claudeProviderIdRef.current) {
@@ -157,7 +163,7 @@ const ProviderStep = ({
 
       return result
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not save the Claude token.'
+      const message = error instanceof Error ? error.message : t('Could not save the Claude token.')
       setValidationOk(false)
       setValidationMessage(message)
       return { ok: false, category: 'unknown', message }
@@ -211,13 +217,13 @@ const ProviderStep = ({
         if (validation.applied === false) {
           setValidationOk(false)
           setValidationMessage(
-            'The Codex provider changed during sign-in. Review the selection and try again.'
+            t('The Codex provider changed during sign-in. Review the selection and try again.')
           )
           return
         }
 
         setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation))
+        setValidationMessage(describeValidation(validation, tSettings))
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
@@ -249,13 +255,13 @@ const ProviderStep = ({
           setIsClaudeSignInOpen(false)
           setValidationOk(false)
           setValidationMessage(
-            'The Claude provider changed during sign-in. Review the selection and try again.'
+            t('The Claude provider changed during sign-in. Review the selection and try again.')
           )
           return
         }
 
         setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation))
+        setValidationMessage(describeValidation(validation, tSettings))
 
         if (validation.ok) {
           setIsClaudeSignInOpen(false)
@@ -281,13 +287,13 @@ const ProviderStep = ({
         if (validation.applied === false) {
           setValidationOk(false)
           setValidationMessage(
-            'The Claude provider changed during sign-in. Review the selection and try again.'
+            t('The Claude provider changed during sign-in. Review the selection and try again.')
           )
           return
         }
 
         setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation))
+        setValidationMessage(describeValidation(validation, tSettings))
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
@@ -303,19 +309,19 @@ const ProviderStep = ({
       // received.
       if (validation.applied === false) {
         setValidationOk(false)
-        setValidationMessage('The provider changed during testing. Try again.')
+        setValidationMessage(t('The provider changed during testing. Try again.'))
         return
       }
 
       setValidationOk(validation.ok)
-      setValidationMessage(describeValidation(validation))
+      setValidationMessage(describeValidation(validation, tSettings))
 
       if (validation.ok) {
         onAdvance()
       }
     } catch (error) {
       setValidationOk(false)
-      setValidationMessage(error instanceof Error ? error.message : 'Could not save provider.')
+      setValidationMessage(error instanceof Error ? error.message : t('Could not save provider.'))
     } finally {
       setIsSaving(false)
     }
@@ -324,19 +330,20 @@ const ProviderStep = ({
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 py-5">
-        <CardTitle className="text-[15px] font-semibold">Connect a model</CardTitle>
+        <CardTitle className="text-[15px] font-semibold">{t('Connect a model')}</CardTitle>
         <CardDescription className="text-xs leading-5">
-          Choose the provider Open Science should use for new research sessions.
+          {t('Choose the provider Open Science should use for new research sessions.')}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />
 
       <CardContent className="flex-1 px-6 py-5">
-        <section aria-label="Configure model">
+        <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
             <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              Secure key storage is unavailable. API keys cannot be saved until the system keychain
-              is unlocked or authorized.
+              {t(
+                'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
+              )}
             </p>
           ) : null}
           <ProviderForm
@@ -353,8 +360,9 @@ const ProviderStep = ({
           />
           {formValue.type === 'claude-isolated' ? (
             <p className="mt-4 text-sm text-muted-foreground">
-              Sign in with your browser to connect your Claude subscription. We&apos;ll open Claude
-              in your browser to authorize, then bring you right back.
+              {t(
+                "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back."
+              )}
             </p>
           ) : null}
           {validationMessage ? (
@@ -370,19 +378,19 @@ const ProviderStep = ({
       <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
         {isSaving && formValue.type === 'codex-isolated' ? (
           <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
-            Cancel sign-in
+            {t('Cancel sign-in')}
           </Button>
         ) : isSaving && formValue.type === 'claude-isolated' ? (
           <Button type="button" variant="outline" onClick={() => void cancelIsolatedClaudeLogin()}>
-            Cancel sign-in
+            {t('Cancel sign-in')}
           </Button>
         ) : isSaving && formValue.type === 'claude-shared' ? (
           <Button type="button" variant="outline" onClick={() => void cancelSharedClaudeLogin()}>
-            Cancel sign-in
+            {t('Cancel sign-in')}
           </Button>
         ) : (
           <Button type="button" variant="outline" onClick={onBack}>
-            Back
+            {t('Back', { context: 'step' })}
           </Button>
         )}
         <Button
@@ -393,11 +401,11 @@ const ProviderStep = ({
         >
           {isSaving
             ? isBrowserSignInProvider(formValue.type)
-              ? 'Waiting for sign-in…'
-              : 'Testing connection…'
+              ? t('Waiting for sign-in…')
+              : t('Testing connection…')
             : isBrowserSignInProvider(formValue.type)
-              ? 'Sign in & continue'
-              : 'Test & continue'}
+              ? t('Sign in & continue')
+              : t('Test & continue')}
         </Button>
       </CardFooter>
       <ClaudeIsolatedSignInModal
