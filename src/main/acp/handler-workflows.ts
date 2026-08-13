@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 
 import type {
   AcpCreateSessionRequest,
@@ -50,6 +51,7 @@ type AcpHandlerWorkflowRuntime = {
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
   startContinuation(request: AcpPromptRequest): Promise<void>
+  startContinuationWhen(request: AcpPromptRequest, validate: () => Promise<void>): Promise<unknown>
 }
 
 type PromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -126,6 +128,116 @@ const resolveSaveAsSkillReplay = (
     },
     ...(typeof supportsImageInput === 'boolean' ? { supportsImageInput } : {}),
     contextReset: contextReset === true
+  }
+}
+
+type SaveAsSkillReplayPolicy = ReturnType<typeof resolveSaveAsSkillReplay>
+
+const frameworkForSaveAsSkillReplayTarget = (
+  target: HistoryReplayTarget
+): NonNullable<PersistedChatSession['agentFrameworkId']> => {
+  if (target === 'opencode') return 'opencode'
+  if (target === 'codex-response' || target === 'codex-bridge') return 'codex'
+  return 'claude-code'
+}
+
+const prepareSaveAsSkillContinuation = (
+  runtime: Pick<AcpHandlerWorkflowRuntime, 'hasLiveSession'>,
+  session: PersistedChatSession | undefined,
+  request: AcpSaveAsSkillRequest,
+  replayPolicy: SaveAsSkillReplayPolicy
+): { session: PersistedChatSession; continuation: AcpPromptRequest } => {
+  if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
+    throw new Error('Save as skill Session is unavailable.')
+  }
+  const preparedControlRun =
+    session.status === 'running' && session.activeRun?.promptMessageId === request.promptMessageId
+  const recoveredPreparedControlRun =
+    session.resumeRecovery?.kind === 'resume-required' &&
+    session.resumeRecovery.promptMessageId === request.promptMessageId &&
+    !session.pendingHistoryReplay &&
+    runtime.hasLiveSession(session.projectId, session.id)
+  if (session.pendingHistoryReplay || (session.resumeRecovery && !recoveredPreparedControlRun)) {
+    throw new Error('Save as skill requires a prepared Session.')
+  }
+  if (hasCurrentRunningDelegatedAttempt(session)) {
+    throw new Error('Save as skill is unavailable while delegated work is still running.')
+  }
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+  if (
+    !graph ||
+    !frame ||
+    frame.id !== request.agentFrameId ||
+    frame.activeBranchId !== request.messageBranchId
+  ) {
+    throw new Error('Save as skill stopped because the active conversation branch changed.')
+  }
+  const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
+  const controlMessage = activeBranchMessages.at(-1)
+  const previousMessage = activeBranchMessages.at(-2)
+  if (
+    (!preparedControlRun && !recoveredPreparedControlRun) ||
+    controlMessage?.id !== request.promptMessageId ||
+    controlMessage.role !== 'user' ||
+    controlMessage.turnIntent !== 'save-as-skill' ||
+    previousMessage?.role !== 'agent' ||
+    previousMessage.status !== 'complete'
+  ) {
+    throw new Error('Save as skill requires a prepared control turn.')
+  }
+
+  const controlRuntimeSegment = graph.runtimeSegments.find(
+    ({ id }) => id === controlMessage.runtimeSegmentId
+  )
+  const latestFrameRuntimeSegment = graph.runtimeSegments
+    .filter(({ agentFrameId }) => agentFrameId === frame.id)
+    .at(-1)
+  const expectedFramework = frameworkForSaveAsSkillReplayTarget(replayPolicy.descriptor.target)
+  const verifiedContextReset = Boolean(
+    controlMessage.runtimeSegmentId &&
+    previousMessage.runtimeSegmentId &&
+    controlMessage.runtimeSegmentId !== previousMessage.runtimeSegmentId &&
+    controlRuntimeSegment?.id === latestFrameRuntimeSegment?.id &&
+    controlRuntimeSegment?.agentFrameId === frame.id &&
+    controlRuntimeSegment?.frameworkId === expectedFramework &&
+    (!session.agentFrameworkId || session.agentFrameworkId === expectedFramework)
+  )
+  if (replayPolicy.contextReset !== verifiedContextReset) {
+    throw new Error('Save as skill context reset does not match the durable Runtime Segment.')
+  }
+
+  const historyReplay = buildSessionHistoryReplay(
+    activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),
+    replayPolicy.descriptor,
+    session.projectId,
+    replayPolicy.supportsImageInput
+  )
+  if (!historyReplay) {
+    throw new Error('Save as skill conversation history could not be replayed.')
+  }
+  const provenanceContext = getActiveConversationContext(graph, request.promptMessageId)
+  return {
+    session,
+    continuation: {
+      sessionId: session.id,
+      text: SAVE_AS_SKILL_PROMPT,
+      suppressUserMessage: true,
+      provenanceContext,
+      resumeFallback: {
+        historyPreamble: historyReplay.historyPreamble,
+        historyAttachments: historyReplay.historyAttachments,
+        historyImages: historyReplay.historyImages
+      },
+      ...(verifiedContextReset
+        ? {
+            historyPreamble: historyReplay.historyPreamble,
+            historyAttachments: historyReplay.historyAttachments,
+            historyImages: historyReplay.historyImages,
+            contextReset: true
+          }
+        : {})
+    }
   }
 }
 
@@ -255,88 +367,30 @@ const createAcpHandlerWorkflows = (
     const save = async (): Promise<AcpStateSnapshot> => {
       if (!interruptedTurnSessions) throw new Error('Save as skill is not available.')
       const replayPolicy = resolveSaveAsSkillReplay(request.historyReplay)
-      const session = await interruptedTurnSessions.loadSession(
-        request.projectId,
-        request.sessionId
+      const prepared = prepareSaveAsSkillContinuation(
+        runtime,
+        await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
+        request,
+        replayPolicy
       )
-      if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
-        throw new Error('Save as skill Session is unavailable.')
-      }
-      const preparedControlRun =
-        session.status === 'running' &&
-        session.activeRun?.promptMessageId === request.promptMessageId
-      const recoveredPreparedControlRun =
-        session.resumeRecovery?.kind === 'resume-required' &&
-        session.resumeRecovery.promptMessageId === request.promptMessageId &&
-        !session.pendingHistoryReplay &&
-        runtime.hasLiveSession(session.projectId, session.id)
-      if (
-        session.pendingHistoryReplay ||
-        (session.resumeRecovery && !recoveredPreparedControlRun)
-      ) {
-        throw new Error('Save as skill requires a prepared Session.')
-      }
-      if (hasCurrentRunningDelegatedAttempt(session)) {
-        throw new Error('Save as skill is unavailable while delegated work is still running.')
-      }
-      const graph = session.conversationGraph
-      const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-      if (
-        !graph ||
-        !frame ||
-        frame.id !== request.agentFrameId ||
-        frame.activeBranchId !== request.messageBranchId
-      ) {
-        throw new Error('Save as skill stopped because the active conversation branch changed.')
-      }
-      const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
-      const controlMessage = activeBranchMessages.at(-1)
-      const previousMessage = activeBranchMessages.at(-2)
-      if (
-        (!preparedControlRun && !recoveredPreparedControlRun) ||
-        controlMessage?.id !== request.promptMessageId ||
-        controlMessage.role !== 'user' ||
-        controlMessage.turnIntent !== 'save-as-skill' ||
-        previousMessage?.role !== 'agent' ||
-        previousMessage.status !== 'complete'
-      ) {
-        throw new Error('Save as skill requires a prepared control turn.')
-      }
-      const historyReplay = buildSessionHistoryReplay(
-        activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),
-        replayPolicy.descriptor,
-        session.projectId,
-        replayPolicy.supportsImageInput
-      )
-      if (!historyReplay) {
-        throw new Error('Save as skill conversation history could not be replayed.')
-      }
       const tracked = taskNotifications?.trackPrompt({
-        sessionId: session.id,
+        sessionId: prepared.session.id,
         text: 'Save as skill'
       })
       try {
-        await runtime.startContinuation({
-          sessionId: session.id,
-          text: SAVE_AS_SKILL_PROMPT,
-          suppressUserMessage: true,
-          provenanceContext: getActiveConversationContext(graph, request.promptMessageId),
-          resumeFallback: {
-            historyPreamble: historyReplay.historyPreamble,
-            historyAttachments: historyReplay.historyAttachments,
-            historyImages: historyReplay.historyImages
-          },
-          ...(replayPolicy.contextReset
-            ? {
-                historyPreamble: historyReplay.historyPreamble,
-                historyAttachments: historyReplay.historyAttachments,
-                historyImages: historyReplay.historyImages,
-                contextReset: true
-              }
-            : {})
+        await runtime.startContinuationWhen(prepared.continuation, async () => {
+          const admitted = prepareSaveAsSkillContinuation(
+            runtime,
+            await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
+            request,
+            replayPolicy
+          )
+          if (!isDeepStrictEqual(admitted.continuation, prepared.continuation)) {
+            throw new Error('Save as skill Session changed before provider admission.')
+          }
         })
       } catch (error) {
-        if (tracked) taskNotifications?.untrackPrompt(session.id, tracked)
+        if (tracked) taskNotifications?.untrackPrompt(prepared.session.id, tracked)
         throw error
       }
       return runtime.getSnapshot()

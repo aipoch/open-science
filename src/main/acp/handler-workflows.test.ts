@@ -79,6 +79,7 @@ const createHarness = (
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
   startContinuation: ReturnType<typeof vi.fn>
+  startContinuationWhen: ReturnType<typeof vi.fn>
   hasLiveSession: ReturnType<typeof vi.fn>
   session: PersistedChatSession
   request: {
@@ -93,9 +94,13 @@ const createHarness = (
   const session = createSession()
   mutate?.(session)
   prepareControlTurn(session)
-  const startContinuation = vi.fn(async () => undefined)
+  const startContinuation = vi.fn(async (_request: unknown) => undefined)
   const hasLiveSession = vi.fn(() => true)
   const snapshot = { status: 'connected' } as never
+  const startContinuationWhen = vi.fn(async (request: unknown, validate: () => Promise<void>) => {
+    await validate()
+    return startContinuation(request)
+  })
   const workflows = createAcpHandlerWorkflows(
     {
       getSnapshot: () => snapshot,
@@ -103,7 +108,8 @@ const createHarness = (
       resumeSession: vi.fn(),
       sendPrompt: vi.fn(),
       getLatestUserPrompt: vi.fn(),
-      startContinuation
+      startContinuation,
+      startContinuationWhen
     },
     { create: vi.fn() } as never,
     taskNotifications,
@@ -115,6 +121,7 @@ const createHarness = (
   return {
     workflows,
     startContinuation,
+    startContinuationWhen,
     hasLiveSession,
     session,
     request: {
@@ -249,11 +256,17 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it('binds context-reset hidden-turn provenance to the fresh runtime segment', async () => {
+  it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget]>([
+    ['Claude Code', 'claude-code', 'claude-code'],
+    ['OpenCode', 'opencode', 'opencode'],
+    ['Codex Responses', 'codex', 'codex-response'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ])('binds context-reset hidden-turn provenance on %s', async (_name, frameworkId, target) => {
     const harness = createHarness((session) => {
+      session.agentFrameworkId = frameworkId
       session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
         id: 'runtime-segment-after-context-reset',
-        frameworkId: 'claude-code',
+        frameworkId,
         startedAt: 3,
         forceNew: true
       })
@@ -261,7 +274,7 @@ describe('ACP Save as skill workflow', () => {
 
     await harness.workflows.saveAsSkill({
       ...harness.request,
-      historyReplay: { target: 'claude-code', contextReset: true }
+      historyReplay: { target, contextReset: true }
     })
 
     expect(harness.startContinuation).toHaveBeenCalledWith(
@@ -272,6 +285,49 @@ describe('ACP Save as skill workflow', () => {
         })
       })
     )
+  })
+
+  it('rejects when the prepared control changes before runtime admission', async () => {
+    const harness = createHarness()
+    harness.startContinuationWhen.mockImplementationOnce(
+      async (_request: unknown, validate: () => Promise<void>) => {
+        harness.session.activeRun = { promptMessageId: 'newer-prompt', startedAt: 4 }
+        await validate()
+      }
+    )
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
+      'prepared control turn'
+    )
+    expect(harness.startContinuation).not.toHaveBeenCalled()
+  })
+
+  it('rejects forged context reset without a fresh durable Runtime Segment', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.workflows.saveAsSkill({
+        ...harness.request,
+        historyReplay: { target: 'claude-code', contextReset: true }
+      })
+    ).rejects.toThrow('context reset does not match the durable Runtime Segment')
+    expect(harness.startContinuation).not.toHaveBeenCalled()
+  })
+
+  it('rejects a fresh durable Runtime Segment without context reset authority', async () => {
+    const harness = createHarness((session) => {
+      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+        id: 'runtime-segment-after-context-reset',
+        frameworkId: 'claude-code',
+        startedAt: 3,
+        forceNew: true
+      })
+    })
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
+      'context reset does not match the durable Runtime Segment'
+    )
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('filters earlier hidden Save as skill controls from replay', async () => {
@@ -316,7 +372,14 @@ describe('ACP Save as skill workflow', () => {
   })
 
   it('fails closed when conversation history cannot fit the replay budget', async () => {
-    const harness = createHarness()
+    const harness = createHarness((session) => {
+      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+        id: 'runtime-segment-after-context-reset',
+        frameworkId: 'claude-code',
+        startedAt: 3,
+        forceNew: true
+      })
+    })
 
     await expect(
       harness.workflows.saveAsSkill({
