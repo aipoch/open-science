@@ -27,7 +27,7 @@ describe('renderer contract catalog', () => {
   it('separates actual Web installation from the generated compatibility projection', () => {
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb !== 'unavailable')
-    ).toHaveLength(285)
+    ).toHaveLength(286)
 
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'browser-native')
