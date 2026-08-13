@@ -115,27 +115,54 @@ const UpdateCapsule = ({
 
   if (variant === 'session') {
     return (
-      <button
-        type="button"
-        data-variant="session"
-        data-state={status.state}
-        onClick={() => openDialog()}
-        aria-label={label}
-        className={cn(
-          'update-reminder relative isolate inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-primary px-2 text-xs font-semibold whitespace-nowrap text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11 motion-reduce:transform-none motion-reduce:transition-none',
-          hasError && 'bg-danger-000 text-white hover:bg-danger-000/90',
-          className
-        )}
-      >
-        {drawsAttention ? <UpdateAttention key={`${attentionKey}:attention`} /> : null}
-        <UpdateMark
-          key={drawsAttention ? `${attentionKey}:mark` : undefined}
-          Icon={Icon}
-          status={status}
-        />
-        <span className="relative z-10">{copy.action}</span>
-        {drawsAttention ? <span className="update-reminder-status-dot" aria-hidden="true" /> : null}
-      </button>
+      <TooltipProvider delayDuration={300}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              data-variant="session"
+              data-state={status.state}
+              onClick={() => openDialog()}
+              aria-label={label}
+              className={cn(
+                'update-reminder relative isolate inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-primary text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:size-11 motion-reduce:transform-none motion-reduce:transition-none',
+                hasError && 'bg-danger-000 text-white hover:bg-danger-000/90',
+                className
+              )}
+            >
+              {drawsAttention ? <UpdateAttention key={`${attentionKey}:attention`} /> : null}
+              <UpdateMark
+                key={drawsAttention ? `${attentionKey}:mark` : undefined}
+                Icon={Icon}
+                status={status}
+              />
+              {drawsAttention ? (
+                <span className="update-reminder-status-dot" aria-hidden="true" />
+              ) : null}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent
+            data-update-details
+            side="top"
+            align="start"
+            sideOffset={6}
+            className={cn(
+              'flex w-28 flex-col border border-border bg-popover px-2 py-1.5 text-left text-popover-foreground shadow-menu',
+              hasError && 'border-danger-000/30'
+            )}
+          >
+            <span
+              className={cn(
+                'text-[10px] font-medium leading-4 text-muted-foreground',
+                hasError && 'text-danger-000'
+              )}
+            >
+              {copy.title}
+            </span>
+            <span className="text-xs font-semibold leading-4">{copy.action}</span>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     )
   }
 

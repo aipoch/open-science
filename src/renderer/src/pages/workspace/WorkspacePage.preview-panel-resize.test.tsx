@@ -893,11 +893,11 @@ describe('WorkspacePage preview panel resize sync', () => {
   })
 
   // Open sidebar keeps enough room for its navigation content while remaining collapsible.
-  it('keeps the open sidebar min size at sixteen percent', async () => {
+  it('keeps a 16% default sidebar with a 220px open-state floor', async () => {
     await renderPage()
 
     expect(workspacePageHarness.sidebarPanelDefaultSize).toBe('16%')
-    expect(workspacePageHarness.sidebarPanelMinSize).toBe('16%')
+    expect(workspacePageHarness.sidebarPanelMinSize).toBe('220px')
 
     const toggleButton = getSidebarToggle()
     await act(async () => {
@@ -913,7 +913,7 @@ describe('WorkspacePage preview panel resize sync', () => {
       animationOptions?.onComplete?.()
     })
 
-    expect(workspacePageHarness.sidebarPanelMinSize).toBe('16%')
+    expect(workspacePageHarness.sidebarPanelMinSize).toBe('220px')
   })
 
   it('keeps the sidebar open when an expand animation reports a near-zero resize', async () => {

@@ -473,7 +473,8 @@ colors communicate a successful or failed probe/migration result.
 - Active item: `bg-sidebar-accent text-sidebar-accent-foreground font-medium`.
 - Category label: `px-2 pt-3 text-xs text-muted-foreground`.
 - Sidebar border: `border-sidebar-border`.
-- Workspace sidebar outer slot: `z-10 flex h-full w-[220px] min-w-0 shrink-0 flex-col`.
+- Workspace sidebar opens at `16%` of the desktop panel group with a true `220px` minimum; its
+  inner slot remains `z-10 flex h-full w-full min-w-0 flex-col`.
 - Workspace rail card: `m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card`.
 - Workspace brand title uses `text-text-000`; beta and section labels use `text-text-100`.
 - `Cmd+B` on macOS and `Ctrl+B` on Windows/Linux toggle the Workspace sidebar. At mobile widths, the same shortcut toggles the navigation drawer.
@@ -485,7 +486,11 @@ colors communicate a successful or failed probe/migration result.
 - In the `Active` group, running and user-waiting Session titles use `font-semibold`; recently completed idle Sessions keep the regular title weight.
 - Session status dots are decorative and `aria-hidden`; provide adjacent `sr-only` text such as `Session status: Running`.
 - Session groups appear in `Pinned`, `Active`, `Today`, `Yesterday`, `This week`, `Older` order and omit empty headings. Pinning has priority over every activity or date group. `Active` includes running and user-waiting Sessions plus idle Sessions for 15 minutes after their latest activity; selection and Side chat activity alone do not make a Session active. Date groups use the device's local calendar, with `This week` beginning Monday at 00:00, and refresh at local midnight.
-- Footer settings area uses a top fade `bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0` and a `h-8 w-8` icon button.
+- Footer settings area uses a top fade `bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0` and
+  `size-8 shrink-0` icon buttons. Dynamic GitHub copy sits in a real viewport with `min-w-0`,
+  `flex-1`, and `overflow-hidden`; a pointer-transparent right-edge gradient from transparent to
+  `rail-card-bg` covers clipped content without an ellipsis while fixed actions remain outside that
+  viewport.
 
 ### Message Center
 

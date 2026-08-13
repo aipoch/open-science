@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { act, Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { Toolbox } from 'lucide-react'
 import type { ChatSession } from '@/stores/session-store'
+import { useNetworkStore } from '@/stores/network-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -104,6 +105,7 @@ beforeEach(() => {
     status: { state: 'up-to-date', current: '0.2.0', latest: '0.2.0' },
     isDialogOpen: false
   })
+  useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
 })
 
 describe('WorkspaceSidebar accessible render', () => {
@@ -122,10 +124,11 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).not.toContain('-top-6 h-6 bg-gradient-to-t from-rail-card-bg')
   })
 
-  it('docks the update action on the row above Settings', async () => {
+  it('keeps the icon-only update action in the footer row between Settings and GitHub', async () => {
     useUpdateStore.setState({
       status: { state: 'available', current: '0.2.0', latest: '0.3.0' }
     })
+    useNetworkStore.setState({ isOnline: false, connectivity: 'unreachable' })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -160,14 +163,67 @@ describe('WorkspaceSidebar accessible render', () => {
       })
       const update = container.querySelector('[data-variant="session"]')
       const settings = container.querySelector('[aria-label="Settings"]')
+      const github = container.querySelector('a[target="_blank"]')
+      const communityViewport = container.querySelector('[data-sidebar-community-viewport]')
+      const network = container.querySelector('[aria-label="No internet connection"]')
 
       expect(update).not.toBeNull()
       expect(settings).not.toBeNull()
-      expect(update?.compareDocumentPosition(settings!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+      expect(github).not.toBeNull()
+      expect(communityViewport).not.toBeNull()
+      expect(network).not.toBeNull()
+      expect(update?.parentElement).toBe(settings?.parentElement)
+      expect(update?.compareDocumentPosition(settings!)).toBe(Node.DOCUMENT_POSITION_PRECEDING)
+      expect(update?.compareDocumentPosition(github!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+      ;[settings, update, network].forEach((action) => {
+        expect(action!.classList).toContain('shrink-0')
+      })
+      expect(communityViewport?.parentElement).toBe(network?.parentElement)
+      expect(communityViewport?.compareDocumentPosition(network!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      )
     } finally {
       act(() => root.unmount())
       container.remove()
     }
+  })
+
+  it('clips dynamic footer content through a real viewport and covers its edge with a fade', async () => {
+    useUpdateStore.setState({
+      status: { state: 'available', current: '0.2.0', latest: '0.3.0' }
+    })
+    const container = document.createElement('div')
+    container.innerHTML = await renderSidebar([createSession({ id: 'session-a' })])
+
+    const footer = container.querySelector<HTMLElement>('[data-sidebar-footer]')
+    const actions = container.querySelector<HTMLElement>('[data-sidebar-footer-actions]')
+    const communityViewport = container.querySelector<HTMLElement>(
+      '[data-sidebar-community-viewport]'
+    )
+    const github = communityViewport?.querySelector<HTMLElement>('a[target="_blank"]')
+    const fade = communityViewport?.querySelector<HTMLElement>('[data-sidebar-community-fade]')
+
+    expect(footer).not.toBeNull()
+    expect(actions).not.toBeNull()
+    expect(communityViewport).not.toBeNull()
+    expect(github).not.toBeNull()
+    expect(fade).not.toBeNull()
+    expect(footer!.classList).toContain('w-full')
+    expect(footer!.classList).toContain('min-w-0')
+    expect(footer!.classList).not.toContain('overflow-hidden')
+    expect(actions!.classList).not.toContain('overflow-hidden')
+    expect(communityViewport!.classList).toContain('min-w-0')
+    expect(communityViewport!.classList).toContain('flex-1')
+    expect(communityViewport!.classList).toContain('overflow-hidden')
+    expect(github!.classList).toContain('w-max')
+    expect(github!.classList).toContain('shrink-0')
+    expect(github!.classList).not.toContain('truncate')
+    expect(fade!.tagName).toBe('SPAN')
+    expect(fade!.getAttribute('aria-hidden')).toBe('true')
+    expect(fade!.classList).toContain('pointer-events-none')
+    expect(fade!.classList).toContain('from-transparent')
+    expect(fade!.classList).toContain('via-rail-card-bg')
+    expect(fade!.classList).toContain('to-rail-card-bg')
   })
 
   it('keeps the header row free of floating-toggle padding now that the toggle sits inline', async () => {

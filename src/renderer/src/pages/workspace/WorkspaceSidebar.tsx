@@ -639,13 +639,15 @@ const WorkspaceSidebarView = ({
             ))}
           </div>
 
-          <div className="relative shrink-0 px-2 pt-2">
+          <div data-sidebar-footer className="relative w-full min-w-0 shrink-0 px-2 pt-2">
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-x-0 -top-12 h-12 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
             />
-            <UpdateCapsule variant="session" className="mb-1.5" />
-            <div className="flex items-center gap-1 pb-2">
+            <div
+              data-sidebar-footer-actions
+              className="flex w-full min-w-0 items-center gap-1 pb-2"
+            >
               <NotificationBell
                 side="top"
                 align="start"
@@ -656,14 +658,26 @@ const WorkspaceSidebarView = ({
                 type="button"
                 onClick={onOpenSettings}
                 className={cn(
-                  'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
+                  'inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
                   sidebarInteractiveTransitionClassName
                 )}
                 aria-label="Settings"
               >
                 <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
               </button>
-              <GitHubStarBadge />
+              <UpdateCapsule variant="session" />
+              {/* Dynamic community copy owns the negative space; fixed actions never shrink. */}
+              <div
+                data-sidebar-community-viewport
+                className="relative min-w-0 flex-1 overflow-hidden"
+              >
+                <GitHubStarBadge className="w-max max-w-none shrink-0 whitespace-nowrap" />
+                <span
+                  data-sidebar-community-fade
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-2 bg-gradient-to-r from-transparent via-rail-card-bg to-rail-card-bg"
+                />
+              </div>
               <NetworkStatusIndicator variant="icon" />
             </div>
           </div>

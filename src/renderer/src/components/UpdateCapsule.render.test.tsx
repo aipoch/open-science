@@ -104,19 +104,32 @@ describe('UpdateCapsule', () => {
     expect(button?.querySelector('.update-reminder-attention')).toBeNull()
   })
 
-  it('renders the persistent Session action with the ready-state copy', () => {
+  it('renders the Session action as an icon-only button with discoverable ready-state details', async () => {
     useUpdateStore.setState({
       status: { state: 'ready', current: '0.2.0', latest: '0.3.0', applyKind: 'restart' }
     })
 
-    act(() => {
+    await act(async () => {
       root.render(<UpdateCapsule variant="session" />)
     })
 
-    const button = container.querySelector('button[aria-label="Update ready: Restart (v0.3.0)"]')
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Update ready: Restart (v0.3.0)"]'
+    )
     expect(button?.getAttribute('data-variant')).toBe('session')
-    expect(button?.textContent).toBe('Restart')
+    expect(button?.textContent).toBe('')
+    expect(button?.classList).toContain('size-8')
+    expect(button?.classList).toContain('shrink-0')
     expect(button?.querySelector('.update-reminder-sheen')).not.toBeNull()
+
+    await act(async () => button?.focus())
+
+    const details = document.body.querySelector('[data-update-details]')
+    expect(details?.textContent).toContain('Update ready')
+    expect(details?.textContent).toContain('Restart')
+
+    act(() => button?.click())
+    expect(useUpdateStore.getState().isDialogOpen).toBe(true)
   })
 
   it('replays the finite attention cue after a visible window regains focus past the cooldown', () => {

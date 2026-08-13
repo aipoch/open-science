@@ -58,7 +58,7 @@ const NetworkStatusIndicator = ({
                     pillToneClasses[tone]
                   )
                 : cn(
-                    'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 ease-out',
+                    'inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 ease-out',
                     iconToneClasses[tone]
                   )
             }
