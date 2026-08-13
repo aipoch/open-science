@@ -223,28 +223,11 @@ Review connector parameters and tool activity before approving them. Never inclu
 
 ## Project Status
 
-Open Science is available as a released desktop application and is actively developed. Recent releases have focused on reproducible artifacts, workspace extensibility, and session reliability.
+Open Science is an actively developed desktop application available for macOS, Windows, and Linux. Development focuses on reliable local-first research workflows, extensible scientific capabilities, traceable research artifacts, and user-controlled execution.
 
-- **v0.8.0** established immutable artifact versioning and inspectable provenance as shipped foundations.
-- **v0.9.0** added personal specialist agents with scoped capabilities, scoped permission management, conversation and artifact export, TIFF previews, collapsible side panels, and per-turn token usage.
-- **v0.9.1** added mobile remote access through Remote.It, conversational specialist customization, and message timing metadata.
-- **v0.9.2** added immediate specialist handoff, completed-turn agent and model identification, context-usage persistence across restarts, and Windows renderer crash recovery.
-- **v0.10.0** adds a project-scoped command palette, code syntax highlighting in previews and notebook cells, read-only package inventories per runtime environment, conversational skill imports from GitHub URLs, direct file preview beside the session, and Bailian as a built-in model provider.
-- **v0.10.1** adds branching a conversation into a new session, GitHub skill search by keyword, specialist package import/export with contribution channels, and session-age metadata in the artifact list, while keeping oversized data files out of model context and hardening branch replay, reviewer correction provenance, and Codex prompt-runtime ownership.
-- **v0.11.0** adds review-gated session plans with durable execution contracts, hot-switching ACP models and providers without reconnecting the agent process, agent-aware context replay that respects each framework's context path, prompt history navigation in the composer, session link favicons, and a settings keyboard shortcut, while hardening Windows auto-update and local RPC, logger data redaction, artifact provenance binding, and notebook process-group cleanup.
-- **v0.11.1** adds on-demand artifact code reconstruction, live permission profile changes during a running turn, project and session archiving with undo, MCP connector OAuth and portable configuration import/export, tool-activity elapsed time in the transcript, persistent plan call records, and branded loading indicators, while hardening Windows runtime recovery, session-plan turn completion, and cross-platform release certification.
-- **v0.11.2** adds kernel image-output previews for R and Python notebooks, an offline detection indicator with a Network status panel, Task API run-progress liveness and explicit run cancellation, isolated unavailable custom MCP server discovery, artifact finalization proof-failure diagnostics, and Windows updater certification stabilization.
-- **v0.12.0** adds a cross-surface notification message center with durable read state, a structured agent clarification workflow, authenticated GitHub skill imports, live session status on the Home dashboard, session-resume continuation for interrupted turns, and notebook output-artifact separation.
-- **v0.12.1** adds workspace sidebar sessions grouped by live activity and calendar buckets, visible context compaction activity in the transcript, and keyboard-driven search navigation, while fixing Codex MCP approvals, ask-user question presentation, thinking elapsed time, artifact finalization stalls, and Windows notebook runner crashes.
-- **v0.13.0** adds persistent side conversations alongside sessions, a conversational skill creator, project pinning, a unified plan-approval composer, branch-aware context-window run trends, session keyboard shortcuts, and notebook host capability introspection, while restoring missing upload bytes, preserving continuation provenance, hardening compute job transitions, and continuing the settings and skills ownership refactor.
-- **v0.13.1** adds local folder access via `@path` mentions, bounded REPL inference, project-scoped frame reads, artifact lineage access, connector runtime status and recovery, refined session sidebar rows with project actions and agent context, and notebook artifact read access, while hardening database migrations, repairing Windows upload publication, fixing connector login recovery and custom skill exposure, and resolving workspace interaction and session-plan persistence issues.
-- **v0.14.0** adds production subagent delegation workflows with durable messaging and recovery, immutable resource identities for connectors and specialists with camelCase Host JavaScript APIs, smooth live response rendering, a new-conversation keyboard shortcut, and durable permission request serialization, while restoring connector CLI paths for custom MCP servers, stabilizing global search and project files during terminal streaming, refreshing bundled skill content, and fixing mention filename handling and composer focus after navigation.
+See the [latest release](https://github.com/aipoch/open-science/releases/latest) for current downloads and version-specific changes. For shipped, partial, and planned capabilities, see the [Capability Map](ROADMAP.md#capability-map).
 
-Deterministic reconstruction, portable environment restoration, and full-fidelity session replay remain on the roadmap.
-
-For version-specific features, provider and catalog changes, platform packaging, and recent fixes, use the [latest release notes](https://github.com/aipoch/open-science/releases/latest) and the installed app. For a maintained shipped/partial/planned breakdown, see the [Capability Map](ROADMAP.md#capability-map).
-
-Open Science assists execution and record-keeping; researchers remain responsible for methods, interpretation, privacy, and scientific validity.
+Open Science assists research execution and record-keeping; researchers remain responsible for methods, interpretation, privacy, and scientific validity.
 
 ## Development & Packaging
 
