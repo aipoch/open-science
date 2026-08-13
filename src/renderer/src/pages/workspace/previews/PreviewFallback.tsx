@@ -1,5 +1,6 @@
 import { FileWarning, FileX, RefreshCw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import type { PreviewFileFormat, PreviewFileSource } from '@/stores/preview-workbench-store'
@@ -8,8 +9,8 @@ import { LocalFileFallbackAction } from '../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../ManagedFileDownloadButton'
 import { getFileExtension } from '../preview-support'
 import {
-  FILE_MISSING_MESSAGE,
-  FILE_OUTSIDE_STORAGE_MESSAGE,
+  FILE_MISSING_MESSAGE_KEY,
+  FILE_OUTSIDE_STORAGE_MESSAGE_KEY,
   isMissingFileError,
   isOutsideStorageError
 } from './preview-errors'
@@ -17,10 +18,11 @@ import { usePreviewRuntime } from './preview-runtime-context'
 
 type PreviewFormatPresentation = {
   badge: string
-  loadingTitle: string
+  loadingTitleKey: (typeof FORMAT_LOADING_TITLE_KEYS)[PreviewFileFormat]
 }
 
-const FORMAT_LOADING_TITLES: Record<PreviewFileFormat, string> = {
+// Catalog keys, not text: the loading title is resolved per render so a language switch relabels it.
+const FORMAT_LOADING_TITLE_KEYS = {
   code: 'Preparing code file',
   csv: 'Preparing data',
   fasta: 'Preparing sequence',
@@ -37,7 +39,7 @@ const FORMAT_LOADING_TITLES: Record<PreviewFileFormat, string> = {
   tiff: 'Preparing image',
   unknown: 'Preparing preview',
   word: 'Preparing document'
-}
+} as const satisfies Record<PreviewFileFormat, string>
 
 const FORMAT_BADGES: Record<PreviewFileFormat, string> = {
   code: 'CODE',
@@ -68,7 +70,7 @@ const getFormatPresentation = (
 
   return {
     badge,
-    loadingTitle: FORMAT_LOADING_TITLES[format ?? 'unknown']
+    loadingTitleKey: FORMAT_LOADING_TITLE_KEYS[format ?? 'unknown']
   }
 }
 
@@ -100,9 +102,10 @@ export const PreviewLoadingContent = ({
   title?: string
   description?: string
 } = {}): React.JSX.Element => {
+  const { t } = useTranslation()
   const runtime = usePreviewRuntime()
   const presentation = getFormatPresentation(runtime?.item.format, runtime?.item.name)
-  const loadingTitle = title ?? presentation.loadingTitle
+  const loadingTitle = title ?? t(presentation.loadingTitleKey)
   const loadingDescription = description ?? runtime?.item.name
 
   if (compact) {
@@ -111,7 +114,7 @@ export const PreviewLoadingContent = ({
         data-preview-status="compact-loading"
         className="flex size-full items-center justify-center"
         role="status"
-        aria-label="Rendering preview"
+        aria-label={t('Rendering preview')}
       >
         <PreviewActivityDots />
       </div>
@@ -151,7 +154,7 @@ export const PreviewLoadingContent = ({
 export const PreviewFallbackCard = ({
   icon: Icon,
   name,
-  title = 'Preview unavailable',
+  title,
   message,
   retryable = false,
   action
@@ -163,7 +166,10 @@ export const PreviewFallbackCard = ({
   retryable?: boolean
   action?: React.ReactNode
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const runtime = usePreviewRuntime()
+  // Defaulted here rather than in the signature so the fallback follows the active language.
+  const cardTitle = title ?? t('Preview unavailable')
 
   return (
     <div
@@ -175,7 +181,7 @@ export const PreviewFallbackCard = ({
           <Icon className="size-4" aria-hidden />
         </div>
         <div className="min-w-0 pt-px">
-          <div className="text-[12px] font-medium text-text-000">{title}</div>
+          <div className="text-[12px] font-medium text-text-000">{cardTitle}</div>
           <p className="mt-0.5 text-[10px] leading-4 text-text-300">{message}</p>
           {retryable && runtime ? (
             <Button
@@ -186,7 +192,7 @@ export const PreviewFallbackCard = ({
               onClick={runtime.retry}
             >
               <RefreshCw aria-hidden />
-              Retry
+              {t('Retry')}
             </Button>
           ) : null}
           {action}
@@ -206,22 +212,23 @@ export const PreviewErrorCard = (props: {
   error?: unknown
   fallbackMessage: string
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const { name, error, fallbackMessage } = props
   const missing = isMissingFileError(error)
   const outside = !missing && isOutsideStorageError(error)
   const unavailable = missing || outside
 
   const message = missing
-    ? FILE_MISSING_MESSAGE
+    ? t(FILE_MISSING_MESSAGE_KEY)
     : outside
-      ? FILE_OUTSIDE_STORAGE_MESSAGE
+      ? t(FILE_OUTSIDE_STORAGE_MESSAGE_KEY)
       : fallbackMessage
 
   return (
     <PreviewFallbackCard
       icon={unavailable ? FileX : FileWarning}
       name={name}
-      title={unavailable ? 'File unavailable' : 'Preview unavailable'}
+      title={t(unavailable ? 'File unavailable' : 'Preview unavailable')}
       message={message}
       retryable
     />
@@ -237,6 +244,7 @@ export const PreviewUnsupportedContent = ({
   name: string
   source?: PreviewFileSource
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const runtime = usePreviewRuntime()
   const presentation = getFormatPresentation(runtime?.item.format ?? 'unknown', name)
 
@@ -248,9 +256,9 @@ export const PreviewUnsupportedContent = ({
       <div className="grid w-full max-w-[19rem] grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-x-3">
         <PreviewFormatTile badge={presentation.badge} />
         <div className="min-w-0 pt-px">
-          <div className="text-[12px] font-medium text-text-000">Preview unavailable</div>
+          <div className="text-[12px] font-medium text-text-000">{t('Preview unavailable')}</div>
           <p className="mt-0.5 text-[10px] leading-4 text-text-300">
-            This file type isn&apos;t supported for preview
+            {t("This file type isn't supported for preview")}
           </p>
           {source === 'local' ? (
             <LocalFileFallbackAction path={path} className="mt-3" />

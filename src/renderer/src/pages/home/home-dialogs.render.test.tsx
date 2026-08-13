@@ -3,7 +3,12 @@ import { AlertDialog } from 'radix-ui'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
-import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
+import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
+
+// These tests call the components as plain functions, so there is no React context for a real hook.
+// The stub resolves against the actual English catalog rather than echoing keys back: a renamed or
+// deleted key surfaces here as a failed text assertion instead of silently passing.
+vi.mock('react-i18next', () => createI18nTestStub())
 
 vi.mock('@/components/ui/button', () => ({
   Button: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
@@ -132,7 +137,7 @@ describe('home dialogs shared chrome', () => {
 
     expectSettingsDialogChrome(tree, 'w-[min(460px,calc(100vw-2rem))]', onCancel)
     expect(getTextContent(tree)).toContain(
-      'Shown in the project list for your reference — not included in the agent’s prompt.'
+      "Shown in the project list for your reference — not included in the agent's prompt."
     )
     const elements = collectElements(tree)
     const descriptionField = elements.find((element) => element.type === 'textarea')

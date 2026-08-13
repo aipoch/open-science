@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import type { ProvisionUiState } from './provisioning-view'
 
@@ -14,6 +16,7 @@ const EnvStatusBanner = ({
   ui: ProvisionUiState
   onRetry?: () => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const show = (ui.kind === 'preparing' && ui.scope === 'upgrade') || ui.kind === 'error'
   if (!show) return null
 
@@ -37,7 +40,7 @@ const EnvStatusBanner = ({
       {ui.kind === 'error' ? (
         <>
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-foreground">Environment update failed</p>
+            <p className="font-medium text-foreground">{t('Environment update failed')}</p>
             <p className="mt-0.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">
               {ui.message}
             </p>
@@ -49,7 +52,7 @@ const EnvStatusBanner = ({
               onClick={onRetry}
               className="shrink-0 rounded-lg border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted"
             >
-              Retry
+              {t('Retry')}
             </button>
           ) : null}
         </>
@@ -57,11 +60,19 @@ const EnvStatusBanner = ({
         // Task 8: keep the existing overall provision phase text (with its percent), and render the
         // shared DownloadProgressLine (speed/ETA + resume bar) BELOW it — not a second overall bar.
         <div className="flex min-w-56 flex-col text-left">
-          <span>Updating the notebook environment… {Math.round(ui.progress * 100)}%</span>
+          <span>
+            {t('Updating the notebook environment… {{percent}}%', {
+              percent: Math.round(ui.progress * 100)
+            })}
+          </span>
           <DownloadProgressLine progress={ui.download} />
         </div>
       ) : (
-        <span>Updating the notebook environment… {Math.round(ui.progress * 100)}%</span>
+        <span>
+          {t('Updating the notebook environment… {{percent}}%', {
+            percent: Math.round(ui.progress * 100)
+          })}
+        </span>
       )}
     </div>
   )

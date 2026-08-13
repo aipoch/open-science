@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -57,6 +58,7 @@ const TiffPageControls = ({
   pageCount: number
   onPageChange: (pageIndex: number) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const actions = [
     {
       label: 'Previous TIFF page',
@@ -94,7 +96,7 @@ const TiffPageControls = ({
           </Tooltip>
         ))}
         <span className="px-1 text-[11px] tabular-nums text-text-100">
-          Page {pageIndex + 1} of {pageCount}
+          {t('Page {{current}} of {{total}}', { current: pageIndex + 1, total: pageCount })}
         </span>
       </div>
     </TooltipProvider>
@@ -124,6 +126,8 @@ const TiffPreviewContent = ({
   variant?: 'interactive' | 'thumbnail'
   align?: 'start' | 'center'
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const resourceKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -300,7 +304,7 @@ const TiffPreviewContent = ({
     result?.status !== 'ready' ||
     result.requestKey !== requestKey
   ) {
-    return <PreviewLoadingContent title="Decoding TIFF image" />
+    return <PreviewLoadingContent title={t('Decoding TIFF image')} />
   }
 
   if (variant === 'thumbnail') {

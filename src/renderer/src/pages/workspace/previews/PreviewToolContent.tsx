@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { type PreviewToolItem, usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
@@ -23,6 +25,7 @@ const SessionReviewerContent = ({
   item: PreviewToolItem
   projectId?: string
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const sessionId = item.reviewerSessionId ?? ''
   const reviews = useReviewStore((state) =>
     selectProjectSessionReviews(state.reviewsBySession, projectId, sessionId)
@@ -34,7 +37,7 @@ const SessionReviewerContent = ({
   if (!review) {
     return (
       <div className="flex size-full items-center justify-center text-[12px] text-text-300">
-        No review available for this session.
+        {t('No review available for this session.')}
       </div>
     )
   }

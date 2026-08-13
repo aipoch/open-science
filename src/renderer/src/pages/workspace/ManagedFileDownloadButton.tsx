@@ -1,5 +1,6 @@
 import { Check, CircleAlert, Download, LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -29,6 +30,7 @@ const ManagedFileDownloadButtonState = ({
   revealOnParentHover = false,
   wrapperClassName
 }: ManagedFileDownloadButtonProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [status, setStatus] = useState<DownloadStatus>('idle')
   const activeSaveRef = useRef<symbol | undefined>(undefined)
   const resetTimerRef = useRef<number | undefined>(undefined)
@@ -78,31 +80,31 @@ const ManagedFileDownloadButtonState = ({
 
   const label =
     status === 'saving'
-      ? `Saving ${suggestedName}`
+      ? t('Saving {{name}}', { name: suggestedName })
       : status === 'saved'
-        ? `Saved ${suggestedName}`
+        ? t('Saved {{name}}', { name: suggestedName })
         : status === 'error'
-          ? `Download failed for ${suggestedName}`
-          : `Download ${suggestedName}`
+          ? t('Download failed for {{name}}', { name: suggestedName })
+          : t('Download {{name}}', { name: suggestedName })
   const tooltip =
     status === 'saving'
-      ? 'Saving'
+      ? t('Saving')
       : status === 'saved'
-        ? 'Saved'
+        ? t('Saved')
         : status === 'error'
-          ? 'Download failed. Try again'
+          ? t('Download failed. Try again')
           : disabled
-            ? 'File unavailable'
-            : 'Download'
+            ? t('File unavailable')
+            : t('Download')
   // The labeled fallback action mirrors save state without changing its fixed button geometry.
   const visibleLabel =
     status === 'saving'
-      ? 'Saving...'
+      ? t('Saving...')
       : status === 'saved'
-        ? 'Saved'
+        ? t('Saved')
         : status === 'error'
-          ? 'Try again'
-          : 'Download'
+          ? t('Try again')
+          : t('Download')
   const isPrimary = appearance === 'primary'
 
   return (

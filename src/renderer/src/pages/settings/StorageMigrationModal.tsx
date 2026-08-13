@@ -1,6 +1,7 @@
 import { Dialog } from 'radix-ui'
 import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { dialogCancelButtonClassName } from '@/components/ui/dialog-chrome'
@@ -22,12 +23,15 @@ type StorageMigrationModalProps = {
   onClose: () => void
 }
 
-const PHASE_LABELS: Record<MigrationPhase, string> = {
+// Catalog keys, not resolved strings: this constant is evaluated once at import, so translated text
+// stored here would pin the language of the first render. Resolution happens in the component.
+// `as const` keeps the values literal so t() can still key-check them.
+const PHASE_LABEL_KEYS = {
   scan: 'Scanning files…',
   copy: 'Copying files…',
   verify: 'Verifying…',
   delete: 'Cleaning up…'
-}
+} as const satisfies Record<MigrationPhase, string>
 
 // One readable line per running session: the human project name + title (resolved from the stores),
 // not the raw ids main sends.
@@ -54,6 +58,8 @@ const StorageMigrationModal = ({
   targetPath,
   onClose
 }: StorageMigrationModalProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const [stage, setStage] = useState<Stage>('detecting')
   const [active, setActive] = useState<ActiveSessionInfo[]>([])
   const [progress, setProgress] = useState<MigrationProgress | null>(null)
@@ -230,17 +236,17 @@ const StorageMigrationModal = ({
           {stage === 'detecting' ? (
             <>
               <Dialog.Title className="text-sm font-semibold">
-                Checking for running sessions…
+                {t('Checking for running sessions…')}
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-                One moment.
+                {t('One moment.')}
               </Dialog.Description>
             </>
           ) : null}
 
           {stage === 'confirm' ? (
             <>
-              <Dialog.Title className="text-sm font-semibold">Move app data?</Dialog.Title>
+              <Dialog.Title className="text-sm font-semibold">{t('Move app data?')}</Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-muted-foreground">
                 {hasDelegatedWork
                   ? 'Subagents are still running. Return to each task below, stop its subagents, then try moving app data again.'
@@ -254,12 +260,7 @@ const StorageMigrationModal = ({
                 ))}
               </ul>
               <div className="mt-4 flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant={hasDelegatedWork ? 'outline' : 'ghost'}
-                  className={hasDelegatedWork ? undefined : dialogCancelButtonClassName}
-                  onClick={onClose}
-                >
+                <Button type="button" variant="outline" onClick={onClose}>
                   {hasDelegatedWork ? 'Return to tasks' : 'Cancel'}
                 </Button>
                 {!hasDelegatedWork ? (
@@ -273,9 +274,9 @@ const StorageMigrationModal = ({
 
           {stage === 'migrating' ? (
             <>
-              <Dialog.Title className="text-sm font-semibold">Moving app data…</Dialog.Title>
+              <Dialog.Title className="text-sm font-semibold">{t('Moving app data…')}</Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-                {progress ? PHASE_LABELS[progress.phase] : 'Preparing…'}
+                {progress ? t(PHASE_LABEL_KEYS[progress.phase]) : t('Preparing…')}
               </Dialog.Description>
               <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
                 <div
@@ -294,24 +295,19 @@ const StorageMigrationModal = ({
               ) : null}
               <p
                 className="mt-2 text-xs tabular-nums text-muted-foreground"
-                aria-label="Elapsed time"
+                aria-label={t('Elapsed time')}
               >
-                Elapsed {formatElapsed(elapsedMs)}
+                {t('Elapsed {{time}}', { time: formatElapsed(elapsedMs) })}
               </p>
               <p
                 role="alert"
                 className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
               >
-                Don&apos;t quit Open Science or turn off your computer until this finishes.
+                {t("Don't quit Open Science or turn off your computer until this finishes.")}
               </p>
               <div className="mt-4 flex justify-end">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={dialogCancelButtonClassName}
-                  onClick={handleCancel}
-                >
-                  Cancel
+                <Button type="button" variant="outline" onClick={handleCancel}>
+                  {tCommon('Cancel')}
                 </Button>
               </div>
             </>
@@ -328,11 +324,12 @@ const StorageMigrationModal = ({
                 </span>
                 <div className="min-w-0 flex-1">
                   <Dialog.Title className="text-sm font-semibold text-foreground">
-                    Data copied
+                    {t('Data copied')}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    Restart to switch to the new location. Nothing is changed until you do — choose
-                    Keep current location to stay where you are and discard the copy.
+                    {t(
+                      'Restart to switch to the new location. Nothing is changed until you do — choose Keep current location to stay where you are and discard the copy.'
+                    )}
                   </Dialog.Description>
                 </div>
               </div>
@@ -343,11 +340,11 @@ const StorageMigrationModal = ({
                   disabled={isDiscarding}
                   onClick={handleKeepCurrent}
                 >
-                  {isDiscarding ? 'Discarding…' : 'Keep current location'}
+                  {isDiscarding ? t('Discarding…') : t('Keep current location')}
                 </Button>
                 <Button type="button" disabled={isDiscarding} onClick={handleRestart}>
                   <RefreshCw aria-hidden="true" />
-                  Restart now
+                  {t('Restart now')}
                 </Button>
               </div>
             </>
@@ -355,9 +352,9 @@ const StorageMigrationModal = ({
 
           {stage === 'committing' ? (
             <>
-              <Dialog.Title className="text-sm font-semibold">Switching over…</Dialog.Title>
+              <Dialog.Title className="text-sm font-semibold">{t('Switching over…')}</Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-                Finishing up and restarting. This can take a moment — please don&apos;t quit.
+                {t("Finishing up and restarting. This can take a moment — please don't quit.")}
               </Dialog.Description>
               <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
                 <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
@@ -385,14 +382,15 @@ const StorageMigrationModal = ({
                 </span>
                 <div className="min-w-0 flex-1">
                   <Dialog.Title className="text-sm font-semibold text-foreground">
-                    {isSwitchover ? 'Data moved — please restart' : 'Move failed'}
+                    {isSwitchover ? t('Data moved — please restart') : t('Move failed')}
                   </Dialog.Title>
                   <Dialog.Description
                     className="mt-1 text-xs leading-relaxed text-muted-foreground"
                     role="alert"
                   >
+                    {/* outcome.error is backend-supplied and passes through verbatim. */}
                     {ipcError
-                      ? 'Something went wrong. Please close and try again.'
+                      ? t('Something went wrong. Please close and try again.')
                       : outcome && !outcome.ok
                         ? outcome.error
                         : null}
@@ -401,7 +399,7 @@ const StorageMigrationModal = ({
               </div>
               <div className="mt-5 flex justify-end">
                 <Button type="button" variant="outline" onClick={onClose}>
-                  Close
+                  {tCommon('Close')}
                 </Button>
               </div>
             </>

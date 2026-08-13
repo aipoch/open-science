@@ -1,5 +1,6 @@
 import { Archive, KeyRound, LoaderCircle, RotateCcw, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -20,6 +21,8 @@ const PermissionUndoItem = ({
   dismiss: (token: string) => void
   isRestoring: boolean
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
   const paused = pointerPaused || focusPaused
@@ -90,7 +93,13 @@ const PermissionUndoItem = ({
           ) : (
             <RotateCcw className="size-4" aria-hidden="true" />
           )}
-          {isRestoring ? (undo.retry ? 'Retrying…' : 'Restoring…') : undo.retry ? 'Retry' : 'Undo'}
+          {isRestoring
+            ? undo.retry
+              ? t('Retrying…')
+              : t('Restoring…')
+            : undo.retry
+              ? t('Retry')
+              : t('Undo')}
         </Button>
       ) : null}
       <TooltipProvider delayDuration={200}>
@@ -101,14 +110,14 @@ const PermissionUndoItem = ({
               variant="ghost"
               size="icon"
               className="relative size-8 shrink-0 before:absolute before:-inset-1.5 before:content-['']"
-              aria-label="Dismiss permission Undo"
+              aria-label={t('Dismiss permission Undo')}
               disabled={isRestoring}
               onClick={() => dismiss(undo.token)}
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Dismiss</TooltipContent>
+          <TooltipContent>{t('Dismiss')}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </div>
@@ -126,6 +135,8 @@ const ArchiveUndoItem = ({
   restore: (key: string) => Promise<void>
   isRestoring: boolean
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
   const paused = pointerPaused || focusPaused
@@ -154,7 +165,9 @@ const ArchiveUndoItem = ({
       className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl border border-border/80 bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg shadow-black/10"
     >
       <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="max-w-[min(28rem,55vw)] truncate">{undo.message}</span>
+      <span className="max-w-[min(28rem,55vw)] truncate">
+        {'messageKey' in undo ? t(undo.messageKey, undo.messageParams) : undo.message}
+      </span>
       <Button
         type="button"
         variant="ghost"
@@ -171,7 +184,13 @@ const ArchiveUndoItem = ({
         ) : (
           <RotateCcw className="size-4" aria-hidden="true" />
         )}
-        {isRestoring ? (undo.retry ? 'Retrying…' : 'Restoring…') : undo.retry ? 'Retry' : 'Undo'}
+        {isRestoring
+          ? undo.retry
+            ? t('Retrying…')
+            : t('Restoring…')
+          : undo.retry
+            ? t('Retry')
+            : t('Undo')}
       </Button>
       <TooltipProvider delayDuration={200}>
         <Tooltip>
@@ -181,14 +200,14 @@ const ArchiveUndoItem = ({
               variant="ghost"
               size="icon"
               className="relative size-8 shrink-0 before:absolute before:-inset-1.5 before:content-['']"
-              aria-label="Dismiss archive Undo"
+              aria-label={t('Dismiss archive Undo')}
               disabled={isRestoring}
               onClick={() => dismiss(undo.key)}
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Dismiss</TooltipContent>
+          <TooltipContent>{t('Dismiss')}</TooltipContent>
         </Tooltip>
       </TooltipProvider>
     </div>

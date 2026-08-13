@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next'
+
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ChatSession } from '@/stores/session-store'
 
@@ -55,12 +57,14 @@ const filterNotebookRunsForSessionBranch = (
   )
 }
 
-const notebookFrameLabels = (session: ChatSession): Record<string, string> => {
+// Takes `t` because the root frame's label is catalog copy while every delegate label is the user's
+// own name for its Subagent, which interpolates unchanged.
+const notebookFrameLabels = (session: ChatSession, t: TFunction): Record<string, string> => {
   const graph = session.conversationGraph
   if (!graph) return {}
   return Object.fromEntries(
     graph.frames.flatMap((frame) => {
-      if (frame.id === graph.rootFrameId) return [[frame.id, 'Main Agent']]
+      if (frame.id === graph.rootFrameId) return [[frame.id, t('Main Agent')]]
       if (frame.kind !== 'delegate' || !frame.delegateName) return []
       return [[frame.id, frame.delegateName]]
     })

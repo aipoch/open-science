@@ -67,7 +67,31 @@ vi.mock('radix-ui', () => ({
       <button type="button" disabled={disabled} onClick={onSelect}>
         {children}
       </button>
-    )
+    ),
+    Group: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Label: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Sub: ({ children }: { children: ReactNode }) => <>{children}</>,
+    SubContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+    SubTrigger: ({ children }: { children: ReactNode }) => <>{children}</>
+  },
+  // The header's language picker is built on the Select primitive. This suite is about persistence
+  // recovery, so the picker only has to mount — passthroughs keep it out of the way.
+  Select: {
+    Root: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Group: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Value: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Trigger: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
+    Icon: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Portal: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Content: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Viewport: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Label: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Item: ({ children }: { children: ReactNode }) => <>{children}</>,
+    ItemText: ({ children }: { children: ReactNode }) => <>{children}</>,
+    ItemIndicator: ({ children }: { children: ReactNode }) => <>{children}</>,
+    Separator: () => null,
+    ScrollUpButton: () => null,
+    ScrollDownButton: () => null
   }
 }))
 

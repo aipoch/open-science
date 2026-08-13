@@ -1,5 +1,6 @@
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -42,10 +43,11 @@ const PdfZoomControls = ({
   onZoomOut: () => void
   onReset: () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const actions = [
-    { label: 'Zoom out', icon: ZoomOut, onClick: onZoomOut, disabled: zoom <= MIN_ZOOM },
-    { label: 'Reset zoom', icon: Maximize2, onClick: onReset, disabled: zoom === 1 },
-    { label: 'Zoom in', icon: ZoomIn, onClick: onZoomIn, disabled: zoom >= MAX_ZOOM }
+    { label: t('Zoom out'), icon: ZoomOut, onClick: onZoomOut, disabled: zoom <= MIN_ZOOM },
+    { label: t('Reset zoom'), icon: Maximize2, onClick: onReset, disabled: zoom === 1 },
+    { label: t('Zoom in'), icon: ZoomIn, onClick: onZoomIn, disabled: zoom >= MAX_ZOOM }
   ]
 
   return (
@@ -103,6 +105,7 @@ const PdfPageCanvas = ({
   pageWidth: number
   registerDisposer: (dispose: () => void) => () => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const [setNearViewportRef, isNearViewport] = useNearViewport<HTMLDivElement>()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const pageRef = useRef<Awaited<ReturnType<PdfDocument['getPage']>> | undefined>(undefined)
@@ -248,7 +251,7 @@ const PdfPageCanvas = ({
       ) : null}
       {displayedStatus === 'error' ? (
         <div className="absolute inset-0 flex items-center justify-center text-[12px] text-text-300">
-          Page {pageNumber} could not be rendered
+          {t('Page {{page}} could not be rendered', { page: pageNumber })}
         </div>
       ) : null}
       {isNearViewport ? (
@@ -277,6 +280,7 @@ export const PdfPreviewContent = ({
   size?: number
   mtimeMs?: number
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const requestKey = createPreviewResourceKey({
     projectId,
     sessionId,
@@ -436,7 +440,7 @@ export const PdfPreviewContent = ({
       <PreviewErrorCard
         name={name}
         error={currentDocumentState.error}
-        fallbackMessage="This PDF couldn't be rendered for preview"
+        fallbackMessage={t("This PDF couldn't be rendered for preview")}
       />
     )
   }
@@ -455,7 +459,7 @@ export const PdfPreviewContent = ({
         className="size-full overflow-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
         tabIndex={0}
         role="region"
-        aria-label={`${name} scrollable preview`}
+        aria-label={t('{{name}} scrollable preview', { name })}
       >
         {/* Zero-height probe: reports the content-box width even when pages overflow horizontally. */}
         <div ref={measureRef} className="h-0 w-full" aria-hidden="true" />

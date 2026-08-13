@@ -142,7 +142,13 @@ Use one of these standard type prefixes:
 - Formatting is handled by Prettier. `npm run format` is optional; review its
   changes before committing because it rewrites files across the repository.
 - Linting is enforced by ESLint; run `npm run lint`.
-- Keep user-facing strings, comments, and documentation in English.
+- Keep comments and documentation in English.
+- User-facing strings go through i18next, not JSX literals. Author the copy in
+  `src/renderer/src/locales/en/`, then translate it in the `zh-Hans` and
+  `zh-Hant` folders — `docs/i18n-glossary.md` is the binding terminology
+  reference, and the catalog-parity tests fail on a missing or inconsistent
+  translation. Keys are semantic paths (`general.appearance.title`), never the
+  English source text.
 
 ## Verification Policy
 

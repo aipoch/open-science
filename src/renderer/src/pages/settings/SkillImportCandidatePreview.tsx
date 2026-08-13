@@ -1,5 +1,6 @@
 import { FileText, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
 
 import type { SkillImportPreviewContent } from '../../../../shared/settings'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
@@ -30,6 +31,7 @@ const SkillImportCandidatePreview = ({
   error,
   content
 }: SkillImportCandidatePreviewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const metadata = content ? Object.entries(content.metadata) : []
 
   return (
@@ -46,11 +48,11 @@ const SkillImportCandidatePreview = ({
               <div className="flex items-center gap-2">
                 <FileText className="size-5 shrink-0 text-primary" aria-hidden="true" />
                 <Dialog.Title className="truncate text-base font-semibold text-foreground">
-                  {content?.name ?? 'Skill preview'}
+                  {content?.name ?? t('Skill preview')}
                 </Dialog.Title>
               </div>
               <Dialog.Description className="mt-1 break-all text-xs text-muted-foreground">
-                {content?.sourceLabel ?? 'Loading candidate content…'}
+                {content?.sourceLabel ?? t('Loading candidate content…')}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -58,7 +60,7 @@ const SkillImportCandidatePreview = ({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close preview"
+                aria-label={t('Close preview')}
                 className={dialogCloseButtonClassName}
               >
                 <X className="size-4" aria-hidden="true" />
@@ -76,7 +78,7 @@ const SkillImportCandidatePreview = ({
                   className="size-4 animate-spin motion-reduce:animate-none"
                   aria-hidden
                 />
-                Loading preview…
+                {t('Loading preview…')}
               </div>
             ) : error ? (
               <div
@@ -100,7 +102,7 @@ const SkillImportCandidatePreview = ({
 
                 {metadata.length > 0 ? (
                   <section className="mt-5 border-t border-border pt-4">
-                    <h2 className="mb-2 text-sm font-semibold text-foreground">Metadata</h2>
+                    <h2 className="mb-2 text-sm font-semibold text-foreground">{t('Metadata')}</h2>
                     <dl className="grid gap-x-5 gap-y-2 sm:grid-cols-2">
                       {metadata.map(([key, value]) => (
                         <div key={key} className="min-w-0">
@@ -116,7 +118,7 @@ const SkillImportCandidatePreview = ({
 
                 {content.files.length > 0 ? (
                   <section className="mt-5 border-t border-border pt-4">
-                    <h2 className="mb-2 text-sm font-semibold text-foreground">Files</h2>
+                    <h2 className="mb-2 text-sm font-semibold text-foreground">{t('Files')}</h2>
                     <ul className="flex flex-col gap-1 font-mono text-xs text-muted-foreground">
                       {content.files.map((file) => (
                         <li key={file} className="break-all rounded bg-muted/50 px-2 py-1">

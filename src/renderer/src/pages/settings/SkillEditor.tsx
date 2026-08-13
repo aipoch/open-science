@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import { ChevronDown, FileUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import type { SkillReference } from '../../../../shared/settings'
 import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
@@ -46,6 +47,8 @@ type SkillEditorProps = {
 // Create/edit form for a personal skill: Identity (name/description) + Content (SKILL.md body).
 // Pasting a full SKILL.md with a frontmatter block auto-fills name/description.
 const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX.Element => {
+  const { t, i18n } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const isCreate = !initial.id
   const skills = useSettingsStore((state) => state.skills)
   const [name, setName] = useState(initial.name)
@@ -66,18 +69,24 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   // collision check against already-loaded personal skills. Only meaningful when creating.
   const nameError = useMemo((): string | null => {
     if (!isCreate) return null
-    if (!currentName) return 'Name is required.'
+    if (!currentName) return t('Name is required.')
     if (!SKILL_NAME_PATTERN.test(currentName) || currentName.length > SKILL_NAME_MAX_LENGTH) {
-      return 'Use up to 64 lowercase letters, numbers, and single hyphens.'
+      return t('Use up to 64 lowercase letters, numbers, and single hyphens.')
     }
     if (RESERVED_SKILL_NAME_PREFIXES.some((prefix) => currentName.startsWith(prefix))) {
-      return `Can't start with ${RESERVED_SKILL_NAME_PREFIXES.join(' or ')}.`
+      // Intl joins the prefixes with the locale's own "or" — a hardcoded ' or ' would leak
+      // English into the zh sentence, which uses 「或」 with no surrounding spaces.
+      const prefixes = new Intl.ListFormat(i18n.language, {
+        style: 'short',
+        type: 'disjunction'
+      }).format(RESERVED_SKILL_NAME_PREFIXES)
+      return t("Can't start with {{prefixes}}.", { prefixes })
     }
     if (skills.some((entry) => entry.id === `personal-${currentName}`)) {
-      return 'A skill with this name already exists.'
+      return t('A skill with this name already exists.')
     }
     return null
-  }, [isCreate, currentName, skills])
+  }, [isCreate, currentName, skills, t, i18n.language])
 
   const importedContent = frontmatterImportMode ? parseSkillDocument(body) : undefined
   const persistedBody = importedContent?.hasFrontmatter ? importedContent.body : body
@@ -196,42 +205,44 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex flex-col gap-4 p-5">
           <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
-            <span className="text-sm font-medium text-foreground">Name</span>
+            <span className="text-sm font-medium text-foreground">{t('Name')}</span>
             <Input
-              aria-label="Skill name"
+              aria-label={t('Skill name')}
               value={name}
               onChange={isCreate ? (event) => setName(event.target.value) : undefined}
               disabled={!isCreate}
               aria-invalid={nameError ? true : undefined}
-              placeholder="e.g. changelog-style"
+              placeholder={t('e.g. changelog-style')}
             />
             {nameError ? <span className="text-xs text-danger-000">{nameError}</span> : null}
           </label>
           <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
-            <span className="text-sm font-medium text-foreground">Description</span>
+            <span className="text-sm font-medium text-foreground">{t('Description')}</span>
             <Textarea
-              aria-label="Skill description"
+              aria-label={t('Skill description')}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               rows={2}
-              placeholder="One sentence — what does this skill teach the agent, and when does it apply?"
+              placeholder={t(
+                'One sentence — what does this skill teach the agent, and when does it apply?'
+              )}
               className="resize-none text-sm"
             />
             <span className="text-xs text-muted-foreground">
-              This is how the agent decides when to use the skill — be specific.
+              {t('This is how the agent decides when to use the skill — be specific.')}
             </span>
           </label>
           <div data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-foreground">Content</p>
+                <p className="text-sm font-medium text-foreground">{t('Content')}</p>
                 <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                  Markdown shown to the agent when the skill is invoked.
+                  {t('Markdown shown to the agent when the skill is invoked.')}
                 </p>
               </div>
               <div
                 role="radiogroup"
-                aria-label="Content mode"
+                aria-label={t('Content mode')}
                 className="inline-flex shrink-0 items-center rounded-lg bg-muted p-0.5"
               >
                 <button
@@ -245,7 +256,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  Write
+                  {t('Write')}
                 </button>
                 <button
                   type="button"
@@ -258,7 +269,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  Upload
+                  {t('Upload')}
                 </button>
               </div>
             </div>
@@ -266,7 +277,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
             {contentMode === 'write' ? (
               <>
                 <Textarea
-                  aria-label="Skill body"
+                  aria-label={t('Skill body')}
                   value={body}
                   onChange={(event) => handleBodyChange(event.target.value)}
                   onPaste={handleBodyPaste}
@@ -275,16 +286,18 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   className="min-h-64 resize-y font-mono text-[13px]"
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">
-                  Paste a full SKILL.md — if it has a <code className="font-mono">---</code>{' '}
-                  metadata block at the top, the fields above auto-fill.
+                  <Trans
+                    i18nKey="Paste a full SKILL.md — if it has a <code>---</code> metadata block at the top, the fields above auto-fill."
+                    components={{ code: <code className="font-mono" /> }}
+                  />
                 </p>
                 {!frontmatterImportMode && metadataEntries.length > 0 ? (
                   <div
-                    aria-label="Skill metadata"
+                    aria-label={t('Skill metadata')}
                     className="mt-3 flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2"
                   >
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground">Saved metadata</p>
+                      <p className="text-xs font-medium text-foreground">{t('Saved metadata')}</p>
                       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                         {metadataEntries.map(([key, value]) => (
                           <span key={key} className="break-all">
@@ -297,10 +310,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                       type="button"
                       variant="ghost"
                       size="sm"
-                      aria-label="Clear skill metadata"
+                      aria-label={t('Clear skill metadata')}
                       onClick={() => setMetadata(undefined)}
                     >
-                      Clear
+                      {t('Clear')}
                     </Button>
                   </div>
                 ) : null}
@@ -313,14 +326,14 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 className="relative flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-8 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50"
               >
                 {contentDrop.isDragging ? (
-                  <FileDropOverlay label="Drop to upload" className="rounded-lg" />
+                  <FileDropOverlay label={t('Drop to upload')} className="rounded-lg" />
                 ) : null}
                 <Upload className="size-5 text-muted-foreground" aria-hidden="true" />
                 <span className="text-sm font-medium text-foreground">
-                  Upload a SKILL.md or text file
+                  {t('Upload a SKILL.md or text file')}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  Its contents fill the editor; switch back to Write to tweak.
+                  {t('Its contents fill the editor; switch back to Write to tweak.')}
                 </span>
               </button>
             )}
@@ -340,15 +353,17 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 }`}
                 aria-hidden="true"
               />
-              Advanced settings
+              {t('Advanced settings')}
             </button>
 
             {advancedOpen ? (
               <section id="skill-advanced-settings" className="mt-3">
                 <div>
-                  <h2 className="text-sm font-medium text-foreground">References</h2>
+                  <h2 className="text-sm font-medium text-foreground">{t('References')}</h2>
                   <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                    Supporting files (scripts, templates, data) the skill can read at runtime.
+                    {t(
+                      'Supporting files (scripts, templates, data) the skill can read at runtime.'
+                    )}
                   </p>
                 </div>
 
@@ -368,10 +383,13 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   />
                   <FileUp className="size-5 text-muted-foreground" aria-hidden="true" />
                   <span className="text-sm font-medium text-foreground">
-                    Drop reference files or click to browse
+                    {t('Drop reference files or click to browse')}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    Saved under <code className="font-mono">references/</code> in the skill.
+                    <Trans
+                      i18nKey="Saved under <code>references/</code> in the skill."
+                      components={{ code: <code className="font-mono" /> }}
+                    />
                   </span>
                 </label>
 
@@ -403,10 +421,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
 
       <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-card px-5 py-3">
         <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
+          {tCommon('Cancel')}
         </Button>
         <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-          {saving ? 'Saving…' : initial.id ? 'Save' : 'Publish'}
+          {saving ? t('Saving…') : initial.id ? t('Save') : t('Publish')}
         </Button>
       </div>
     </div>
@@ -420,6 +438,7 @@ type SkillEditLoaderProps = {
 
 // Loads an existing personal skill's content, then renders the editor pre-filled.
 const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const updateSkill = useSettingsStore((state) => state.updateSkill)
   const [draft, setDraft] = useState<SkillDraft | null>(null)
 
@@ -442,7 +461,9 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
     }
   }, [skillId])
 
-  if (!draft) return <div className="p-5 text-sm text-muted-foreground">Loading…</div>
+  if (!draft) {
+    return <div className="p-5 text-sm text-muted-foreground">{t('Loading…')}</div>
+  }
 
   return (
     <SkillEditor

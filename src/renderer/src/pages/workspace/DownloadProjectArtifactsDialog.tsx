@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Archive, Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -49,8 +51,6 @@ const getFileType = (file: ProjectFileItem): string => {
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-const pluralizeArtifact = (count: number): string => `${count} artifact${count === 1 ? '' : 's'}`
-
 // Paths can collide across sessions and sources, so failures match on the full identity the save
 // contract reports back, not on path alone.
 const fileKey = (file: Pick<ProjectFileItem, 'source' | 'sessionId' | 'path'>): string =>
@@ -58,10 +58,10 @@ const fileKey = (file: Pick<ProjectFileItem, 'source' | 'sessionId' | 'path'>): 
 
 // Generated output is the primary product of a Project, so it leads; Uploads follow. Empty groups
 // are dropped entirely, and rows stay flat inside a group — no per-session nesting.
-const groupFiles = (files: ProjectFileItem[]): FileGroup[] =>
+const groupFiles = (files: ProjectFileItem[], t: TFunction): FileGroup[] =>
   [
-    { label: 'Generated', files: files.filter((file) => file.source === 'artifact') },
-    { label: 'Uploads', files: files.filter((file) => file.source === 'upload') }
+    { label: t('Generated'), files: files.filter((file) => file.source === 'artifact') },
+    { label: t('Uploads'), files: files.filter((file) => file.source === 'upload') }
   ].filter((group) => group.files.length > 0)
 
 const DownloadProjectArtifactsDialog = ({
@@ -69,6 +69,7 @@ const DownloadProjectArtifactsDialog = ({
   onClose,
   onDownloadingChange
 }: DownloadProjectArtifactsDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const dialogProject = useRetainedDialogValue(project)
   const [settledFileList, setSettledFileList] = useState<SettledFileList>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -132,7 +133,7 @@ const DownloadProjectArtifactsDialog = ({
     }
   }
 
-  const groups = useMemo(() => groupFiles(files), [files])
+  const groups = useMemo(() => groupFiles(files, t), [files, t])
   const selectedFiles = useMemo(
     () => files.filter((file) => selectedIds.has(file.id)),
     [files, selectedIds]
@@ -216,15 +217,18 @@ const DownloadProjectArtifactsDialog = ({
               <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0">
                 <Dialog.Title className="text-sm font-semibold text-foreground">
-                  Download project artifacts
+                  {t('Download project artifacts')}
                 </Dialog.Title>
                 <Dialog.Description className="truncate text-xs text-muted-foreground">
-                  {dialogProject?.name ?? 'Project'}
+                  {dialogProject?.name ?? t('Project')}
                 </Dialog.Description>
               </div>
               {status === 'ready' ? (
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {selectedFiles.length} of {files.length} selected
+                  {t('{{selected}} of {{total}} selected', {
+                    selected: selectedFiles.length,
+                    total: files.length
+                  })}
                 </span>
               ) : null}
             </div>
@@ -232,7 +236,7 @@ const DownloadProjectArtifactsDialog = ({
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               disabled={isDownloading}
               onClick={onClose}
@@ -245,27 +249,27 @@ const DownloadProjectArtifactsDialog = ({
             {status === 'loading' ? (
               <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                Loading artifacts…
+                {t('Loading artifacts…')}
               </div>
             ) : status === 'error' ? (
               <div className="flex min-h-32 flex-col items-center justify-center gap-3 px-6 text-center">
                 <p role="alert" className="text-sm text-danger-000">
-                  {loadError ?? 'Could not load project artifacts.'}
+                  {loadError ?? t('Could not load project artifacts.')}
                 </p>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setRetryVersion((v) => v + 1)}
                 >
-                  Retry
+                  {t('Retry')}
                 </Button>
               </div>
             ) : files.length === 0 ? (
               <div className="flex min-h-32 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-                No downloadable artifacts in this project.
+                {t('No downloadable artifacts in this project.')}
               </div>
             ) : (
-              <div role="group" aria-label="Project artifacts" className="pb-2">
+              <div role="group" aria-label={t('Project artifacts')} className="pb-2">
                 {groups.map((group) => (
                   <div
                     key={group.label}
@@ -313,7 +317,7 @@ const DownloadProjectArtifactsDialog = ({
               disabled={status !== 'ready' || files.length === 0 || isDownloading}
               onClick={toggleAll}
             >
-              {allSelected ? 'Uncheck all' : 'Check all'}
+              {allSelected ? t('Uncheck all') : t('Check all')}
             </Button>
             <div className="flex min-w-0 items-center gap-3">
               {status === 'ready' && downloadError ? (
@@ -329,7 +333,7 @@ const DownloadProjectArtifactsDialog = ({
                 disabled={isDownloading}
                 onClick={onClose}
               >
-                Cancel
+                {t('Cancel')}
               </Button>
               <Button
                 type="button"
@@ -344,8 +348,11 @@ const DownloadProjectArtifactsDialog = ({
                   <Download className="size-4" aria-hidden="true" />
                 )}
                 {isDownloading
-                  ? 'Downloading…'
-                  : `Download ${pluralizeArtifact(selectedFiles.length)}`}
+                  ? t('Downloading…')
+                  : t('Download {{count}} artifacts', {
+                      defaultValue_one: 'Download {{count}} artifact',
+                      count: selectedFiles.length
+                    })}
               </Button>
             </div>
           </div>

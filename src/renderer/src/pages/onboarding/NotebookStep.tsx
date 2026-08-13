@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { CardContent, CardFooter } from '@/components/ui/card'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -13,6 +15,7 @@ type NotebookStepProps = {
 // except a runtime setup the user explicitly started: it must finish (or be cancelled) before
 // leaving, otherwise a half-built env would be stranded.
 const NotebookStep = ({ onBack, onContinue }: NotebookStepProps): React.JSX.Element => {
+  const { t } = useTranslation()
   // The per-language flag flips synchronously on click, before the main-process status/progress event
   // arrives. Combining both signals closes the window where Continue could leave a fresh setup behind.
   const envProvisioning = useNotebookEnvStore(
@@ -25,19 +28,23 @@ const NotebookStep = ({ onBack, onContinue }: NotebookStepProps): React.JSX.Elem
         {/* Reuse the complete Settings surface so discovery, interpreter controls, language logos,
             managed setup, progress, recovery, and cancellation stay identical in both places. */}
         <RuntimesPanel
-          title="Notebook runtime (optional)"
-          description="Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes."
+          title={t('Notebook runtime (optional)')}
+          description={t(
+            'Notebooks run in an app-managed Python environment by default. You can change any of this later in Settings → Runtimes.'
+          )}
         />
       </CardContent>
       <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
         <p className="text-xs leading-5 text-text-100">
           {envProvisioning
-            ? 'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.'
-            : 'Optional — nothing here is required to finish setup.'}
+            ? t(
+                'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.'
+              )
+            : t('Optional — nothing here is required to finish setup.')}
         </p>
         <div className="flex items-center gap-2">
           <Button type="button" variant="outline" onClick={onBack} disabled={envProvisioning}>
-            Back
+            {t('Back', { context: 'step' })}
           </Button>
           <Button
             type="button"
@@ -47,7 +54,7 @@ const NotebookStep = ({ onBack, onContinue }: NotebookStepProps): React.JSX.Elem
             disabled={envProvisioning}
             className="px-4"
           >
-            Continue
+            {t('Continue')}
           </Button>
         </div>
       </CardFooter>

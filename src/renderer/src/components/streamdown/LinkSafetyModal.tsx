@@ -2,6 +2,7 @@ import type { LinkSafetyModalProps } from 'streamdown'
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { Check, Copy, ExternalLink, X } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 
 import { Button } from '@/components/ui/button'
@@ -18,6 +19,8 @@ const LinkSafetyModal = ({
   onClose,
   onConfirm
 }: LinkSafetyModalProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const { t: tCommon } = useTranslation()
   const [copied, setCopied] = useState(false)
   const [isMounted, setIsMounted] = useState(isOpen)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -121,7 +124,7 @@ const LinkSafetyModal = ({
           data-streamdown="link-safety-panel"
           inert={!isOpen}
           ref={panelRef}
-          aria-label="Open external link?"
+          aria-label={t('Open external link?')}
           aria-hidden={!isOpen}
           aria-modal="true"
           role="dialog"
@@ -139,7 +142,7 @@ const LinkSafetyModal = ({
               size="icon-sm"
               className={dialogCloseButtonClassName}
               onClick={closeModal}
-              aria-label="Close"
+              aria-label={tCommon('Close')}
             >
               <X className="size-4" strokeWidth={2} aria-hidden />
             </Button>
@@ -147,7 +150,7 @@ const LinkSafetyModal = ({
 
           <div className="sd-link-safety-body">
             <p className="sd-link-safety-description">
-              You are about to visit an external website.
+              {t('You are about to visit an external website.')}
             </p>
 
             <div
@@ -161,12 +164,12 @@ const LinkSafetyModal = ({
                 {copied && isOpen ? (
                   <>
                     <Check className="size-3.5" aria-hidden />
-                    Copied
+                    {t('Copied')}
                   </>
                 ) : (
                   <>
                     <Copy className="size-3.5" aria-hidden />
-                    Copy link
+                    {t('Copy link')}
                   </>
                 )}
               </button>
@@ -179,7 +182,7 @@ const LinkSafetyModal = ({
                 }}
               >
                 <ExternalLink className="size-3.5" aria-hidden />
-                Open link
+                {t('Open link')}
               </button>
             </div>
           </div>

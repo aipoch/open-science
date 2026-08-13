@@ -1,4 +1,5 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { SkillView } from '../../../../../shared/settings'
 import { resolveLocalPath } from '../../../../../shared/local-fs'
@@ -179,6 +180,8 @@ export const ComposerEditor = ({
   focusRequest,
   restoreFocusRequest
 }: ComposerEditorProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const editorRef = useRef<HTMLDivElement>(null)
   const historyDescriptionId = useId()
   const historyStatusId = useId()
@@ -411,7 +414,7 @@ export const ComposerEditor = ({
         }}
       />
       <span id={historyDescriptionId} className="sr-only">
-        At the start of the input, use Up and Down Arrow to browse prompt history.
+        {t('At the start of the input, use Up and Down Arrow to browse prompt history.')}
       </span>
       <span id={historyStatusId} role="status" aria-live="polite" className="sr-only">
         {historyStatus}

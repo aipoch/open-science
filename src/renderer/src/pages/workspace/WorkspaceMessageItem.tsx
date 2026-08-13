@@ -3,6 +3,7 @@ import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-st
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
@@ -21,7 +22,8 @@ import {
   MessageCircleMore,
   Pencil
 } from 'lucide-react'
-import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
@@ -47,7 +49,7 @@ import {
   getArtifactName,
   shouldReadArtifactPreview
 } from './artifact-preview-utils'
-import { FILE_MISSING_TAG, isUnavailableFileError } from './previews/preview-errors'
+import { FILE_MISSING_TAG_KEY, isUnavailableFileError } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 import { resolveSessionProviderId } from './error-report'
@@ -99,16 +101,6 @@ type WorkspaceMessageItemProps = {
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
 const tokenCountFormatter = new Intl.NumberFormat('en-US')
-const messageTimestampFormatter = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit'
-})
-const messageTimestampTitleFormatter = new Intl.DateTimeFormat('en-US', {
-  dateStyle: 'full',
-  timeStyle: 'long'
-})
 
 const toMessageDate = (timestamp: number | undefined): Date | undefined => {
   if (timestamp === undefined) return undefined
@@ -120,12 +112,15 @@ const MessageTimestamp = ({
   label,
   date
 }: {
-  label: 'Sent' | 'Completed' | 'Failed'
+  // Already-resolved copy: the caller owns which of sent/completed/failed applies.
+  label: string
   date: Date
 }): React.JSX.Element => {
+  const formatDate = useDateTimeFormat()
+
   return (
-    <time dateTime={date.toISOString()} title={messageTimestampTitleFormatter.format(date)}>
-      {label} {messageTimestampFormatter.format(date)}
+    <time dateTime={date.toISOString()} title={formatDate(date, 'full')}>
+      {label} {formatDate(date)}
     </time>
   )
 }
@@ -154,6 +149,7 @@ const TurnTokenUsage = ({
   usage?: AcpTurnTokenUsage
   runtimeIdentity?: MessageRuntimeIdentity
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const frameworks = useSettingsStore((state) =>
     open && runtimeIdentity ? state.agentFrameworks : undefined
@@ -174,30 +170,33 @@ const TurnTokenUsage = ({
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const openedFromPointerRef = useRef(false)
   const accessibleLabel = usage
-    ? 'Token usage for this response'
-    : 'Token usage unavailable for this response'
+    ? t('Token usage for this response')
+    : t('Token usage unavailable for this response')
   const hasCacheBreakdown =
     usage?.cachedReadTokens !== undefined && usage.cachedWriteTokens !== undefined
   const entries: readonly TurnTokenUsageEntry[] = hasCacheBreakdown
     ? [
-        ['Input', usage.inputTokens, 'bg-chart-2'],
-        ['Cache read', usage.cachedReadTokens, 'bg-chart-4'],
-        ['Cache write', usage.cachedWriteTokens, 'bg-chart-3'],
-        ['Output', usage.outputTokens, 'bg-chart-1']
+        [t('Input'), usage.inputTokens, 'bg-chart-2'],
+        [t('Cache read'), usage.cachedReadTokens, 'bg-chart-4'],
+        [t('Cache write'), usage.cachedWriteTokens, 'bg-chart-3'],
+        [t('Output'), usage.outputTokens, 'bg-chart-1']
       ]
     : [
-        ['Input', usage?.inputTokens, 'bg-chart-2'],
-        ['Cache', usage?.cacheTokens, 'bg-chart-4'],
-        ['Output', usage?.outputTokens, 'bg-chart-1']
+        [t('Input'), usage?.inputTokens, 'bg-chart-2'],
+        [t('Cache'), usage?.cacheTokens, 'bg-chart-4'],
+        [t('Output'), usage?.outputTokens, 'bg-chart-1']
       ]
   const totalTokens = usage ? usage.inputTokens + usage.cacheTokens + usage.outputTokens : undefined
   const safeTotalTokens = Number.isSafeInteger(totalTokens) ? totalTokens : undefined
   const breakdownLabel =
     usage && safeTotalTokens !== undefined
-      ? `${entries
-          .map(([label, value]) => `${label} ${tokenCountFormatter.format(value ?? 0)}`)
-          .join(', ')}; Total ${tokenCountFormatter.format(safeTotalTokens)} tokens`
-      : 'Token usage breakdown unavailable'
+      ? t('{{entries}}; Total {{total}} tokens', {
+          entries: entries
+            .map(([label, value]) => `${label} ${tokenCountFormatter.format(value ?? 0)}`)
+            .join(', '),
+          total: tokenCountFormatter.format(safeTotalTokens)
+        })
+      : t('Token usage breakdown unavailable')
 
   const keepOpen = (): void => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
@@ -262,7 +261,7 @@ const TurnTokenUsage = ({
               strokeWidth={2}
               aria-hidden="true"
             />
-            Usage
+            {t('Usage')}
           </button>
         </span>
       </PopoverAnchor>
@@ -285,15 +284,15 @@ const TurnTokenUsage = ({
       >
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
-            <div className="text-[13px] font-medium">Usage</div>
+            <div className="text-[13px] font-medium">{t('Usage')}</div>
             {frameworkName || provider ? (
               <div data-slot="turn-runtime-icons" className="flex items-center gap-1">
                 {frameworkName && runtimeIdentity?.frameworkId ? (
                   <span
                     data-slot="turn-runtime-framework"
                     role="img"
-                    aria-label={`Agent framework: ${frameworkName}`}
-                    title={`Agent framework: ${frameworkName}`}
+                    aria-label={t('Agent framework: {{name}}', { name: frameworkName })}
+                    title={t('Agent framework: {{name}}', { name: frameworkName })}
                     className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
                   >
                     <AgentFrameworkIcon frameworkId={runtimeIdentity.frameworkId} size={12} />
@@ -303,8 +302,22 @@ const TurnTokenUsage = ({
                   <span
                     data-slot="turn-runtime-model"
                     role="img"
-                    aria-label={`Model provider: ${provider.name}${model ? `; model: ${model}` : ''}`}
-                    title={`Model provider: ${provider.name}${model ? `; model: ${model}` : ''}`}
+                    aria-label={
+                      model
+                        ? t('Model provider: {{name}}; model: {{model}}', {
+                            name: provider.name,
+                            model
+                          })
+                        : t('Model provider: {{name}}', { name: provider.name })
+                    }
+                    title={
+                      model
+                        ? t('Model provider: {{name}}; model: {{model}}', {
+                            name: provider.name,
+                            model
+                          })
+                        : t('Model provider: {{name}}', { name: provider.name })
+                    }
                     className="inline-flex size-5 items-center justify-center rounded-full border border-border bg-background"
                   >
                     <ProviderKindIcon kindKey={kindKey} className="size-3" />
@@ -318,7 +331,7 @@ const TurnTokenUsage = ({
               data-slot="turn-token-usage-turn-count"
               className="text-[10px] font-normal text-muted-foreground tabular-nums"
             >
-              {usage.turnCount} {usage.turnCount === 1 ? 'turn' : 'turns'}
+              {t('{{count}} turns', { defaultValue_one: '{{count}} turn', count: usage.turnCount })}
             </div>
           ) : null}
         </div>
@@ -363,7 +376,7 @@ const TurnTokenUsage = ({
           data-slot="turn-token-usage-total"
           className="mt-2 flex items-center justify-between gap-4 border-t border-border pt-2 font-medium whitespace-nowrap"
         >
-          <span>Total</span>
+          <span>{t('Total')}</span>
           <span className="tabular-nums">
             {safeTotalTokens !== undefined ? tokenCountFormatter.format(safeTotalTokens) : '—'}
           </span>
@@ -382,7 +395,7 @@ const TurnTokenUsage = ({
                 >
                   <Bot className="size-2.5" strokeWidth={2} />
                 </span>
-                <span className="truncate">Agent: {frameworkName}</span>
+                <span className="truncate">{t('Agent: {{name}}', { name: frameworkName })}</span>
               </div>
             ) : null}
             {model ? (
@@ -394,7 +407,7 @@ const TurnTokenUsage = ({
                 >
                   <Brain className="size-2.5" strokeWidth={2} />
                 </span>
-                <span className="truncate">Model: {model}</span>
+                <span className="truncate">{t('Model: {{model}}', { model })}</span>
               </div>
             ) : null}
           </div>
@@ -458,6 +471,8 @@ const assistantMessageSurfaceClassName =
 
 // ACP message images are already MIME- and size-checked at runtime and persistence boundaries.
 const MessageImageList = ({ images }: { images: MessageImage[] }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   if (images.length === 0) return null
 
   return (
@@ -466,7 +481,7 @@ const MessageImageList = ({ images }: { images: MessageImage[] }): React.JSX.Ele
         <img
           key={image.id}
           src={`data:${image.mimeType};base64,${image.data}`}
-          alt={`Agent-generated image ${index + 1}`}
+          alt={t('Agent-generated image {{number}}', { number: index + 1 })}
           className="max-h-[40rem] w-auto max-w-full rounded-lg border border-border-200 bg-bg-000 object-contain"
           loading="lazy"
           decoding="async"
@@ -522,6 +537,7 @@ const ArtifactCard = ({
   artifact: MessageArtifact
   onPreviewArtifact: (artifact: MessageArtifact) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const artifactName = getArtifactName(artifact)
   const sizeLabel = formatByteSize(artifact.size) ?? ''
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
@@ -545,7 +561,7 @@ const ArtifactCard = ({
       onClick={() => {
         onPreviewArtifact(artifact)
       }}
-      aria-label={`Preview generated file ${artifactName}`}
+      aria-label={t('Preview generated file {{name}}', { name: artifactName })}
       title={artifact.path}
     >
       <div className={cn('relative', artifactPreviewClassName)}>
@@ -559,7 +575,7 @@ const ArtifactCard = ({
         </span>
         {missing ? (
           <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
-            {FILE_MISSING_TAG}
+            {t(FILE_MISSING_TAG_KEY)}
           </span>
         ) : null}
       </div>
@@ -585,6 +601,7 @@ const MessageArtifactList = ({
   onPreviewArtifact: (artifact: MessageArtifact) => void
   artifacts: MessageArtifact[]
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const visibleCount = expanded ? artifacts.length : ARTIFACT_GALLERY_VISIBLE_COUNT
   const visibleArtifacts = artifacts.slice(0, visibleCount)
@@ -595,7 +612,7 @@ const MessageArtifactList = ({
   return (
     <div className="mt-3 border-t border-border-200 pt-3">
       <div className="mb-2 text-[11px] font-medium uppercase text-text-300">
-        GENERATED · {artifacts.length}
+        {t('GENERATED · {{count}}', { count: artifacts.length })}
       </div>
       <Collapsible.Root open={expanded} onOpenChange={setExpanded}>
         <div className={artifactGalleryClassName}>
@@ -614,9 +631,9 @@ const MessageArtifactList = ({
                   'flex items-center justify-center text-[13px] font-semibold',
                   artifactCardClassName
                 )}
-                aria-label="Expand generated files"
+                aria-label={t('Expand generated files')}
               >
-                +{remainingCount} more
+                {t('+{{count}} more', { context: 'files', count: remainingCount })}
               </button>
             </Collapsible.Trigger>
           ) : null}
@@ -628,9 +645,9 @@ const MessageArtifactList = ({
                   'flex items-center justify-center text-[13px]',
                   artifactCardClassName
                 )}
-                aria-label="Collapse generated files"
+                aria-label={t('Collapse generated files')}
               >
-                Show less
+                {t('Show less')}
               </button>
             </Collapsible.Trigger>
           ) : null}
@@ -648,6 +665,8 @@ const MessageUploadAttachmentList = ({
   attachments: MessageUploadAttachment[]
   onPreviewUploadAttachment: (attachment: MessageUploadAttachment) => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   if (attachments.length === 0) return null
 
   return (
@@ -665,7 +684,7 @@ const MessageUploadAttachmentList = ({
             onClick={() => {
               onPreviewUploadAttachment(attachment)
             }}
-            aria-label={`Preview uploaded attachment ${attachmentName}`}
+            aria-label={t('Preview uploaded attachment {{name}}', { name: attachmentName })}
             title={attachment.path}
           >
             <Icon className="h-3.5 w-3.5 shrink-0 text-text-300" aria-hidden="true" />
@@ -688,95 +707,102 @@ const MessagePartsContent = ({
   isStatic?: boolean
   onOpenSkillMention: (skillId: string, name: string) => void
   onPreviewMentionArtifact: (part: ArtifactMentionPart) => void
-}): React.JSX.Element => (
-  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-    {parts.map((part, index) => {
-      if (part.type === 'skill') {
-        if (isStatic || !('id' in part)) {
-          return (
-            <span
-              key={index}
-              className={cn(mentionPillClassName, 'bg-skill-chip text-skill-chip-foreground')}
-            >
-              /{part.name}
-            </span>
-          )
-        }
-        return (
-          <button
-            key={index}
-            type="button"
-            className={cn(
-              mentionPillClassName,
-              mentionButtonClassName,
-              'bg-skill-chip text-skill-chip-foreground'
-            )}
-            onClick={() => onOpenSkillMention(part.id, part.name)}
-            aria-label={`Open skill ${part.name}`}
-          >
-            /{part.name}
-          </button>
-        )
-      }
-      if (part.type === 'artifact') {
-        if (isStatic || !('source' in part)) {
-          return (
-            <span
-              key={index}
-              className={cn(mentionPillClassName, 'bg-mention-chip text-mention-chip-foreground')}
-            >
-              @{part.name}
-            </span>
-          )
-        }
-        // Linked-folder mentions read as a dark-gray `@` pill over the relative path; other
-        // sources keep the green `@<name>` pill.
-        if (part.source === 'linked-folder') {
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+      {parts.map((part, index) => {
+        if (part.type === 'skill') {
+          // A static (provenance) part carries no id, so it renders as a plain pill.
+          if (isStatic || !('id' in part)) {
+            return (
+              <span
+                key={index}
+                className={cn(mentionPillClassName, 'bg-skill-chip text-skill-chip-foreground')}
+              >
+                /{part.name}
+              </span>
+            )
+          }
           return (
             <button
               key={index}
               type="button"
               className={cn(
-                artifactMentionPillClassName,
+                mentionPillClassName,
                 mentionButtonClassName,
-                'bg-path-chip text-path-chip-foreground'
+                'bg-skill-chip text-skill-chip-foreground'
               )}
-              onClick={() => onPreviewMentionArtifact(part)}
-              aria-label={`Preview ${part.name}`}
-              title={`@${part.relativePath}`}
+              onClick={() => onOpenSkillMention(part.id, part.name)}
+              aria-label={t('Open skill {{name}}', { name: part.name })}
             >
-              @{part.relativePath}
+              /{part.name}
             </button>
           )
         }
-        return (
-          <button
-            key={index}
-            type="button"
-            className={cn(
-              artifactMentionPillClassName,
-              mentionButtonClassName,
-              'bg-mention-chip text-mention-chip-foreground'
-            )}
-            onClick={() => onPreviewMentionArtifact(part)}
-            aria-label={`Preview ${part.name}`}
-          >
-            @<ExtensionPreservingFileName name={part.name} />
-          </button>
-        )
-      }
+        if (part.type === 'artifact') {
+          if (isStatic) {
+            return (
+              <span
+                key={index}
+                className={cn(mentionPillClassName, 'bg-mention-chip text-mention-chip-foreground')}
+              >
+                @{part.name}
+              </span>
+            )
+          }
+          // Linked-folder mentions read as a dark-gray `@` pill over the relative path; other
+          // sources keep the green `@<name>` pill.
+          if ('source' in part && part.source === 'linked-folder') {
+            return (
+              <button
+                key={index}
+                type="button"
+                className={cn(
+                  artifactMentionPillClassName,
+                  mentionButtonClassName,
+                  'bg-path-chip text-path-chip-foreground'
+                )}
+                onClick={() => onPreviewMentionArtifact(part as ArtifactMentionPart)}
+                aria-label={t('Preview {{name}}', { name: part.name })}
+                title={`@${part.relativePath}`}
+              >
+                @{part.relativePath}
+              </button>
+            )
+          }
+          if ('source' in part) {
+            return (
+              <button
+                key={index}
+                type="button"
+                className={cn(
+                  artifactMentionPillClassName,
+                  mentionButtonClassName,
+                  'bg-mention-chip text-mention-chip-foreground'
+                )}
+                onClick={() => onPreviewMentionArtifact(part as ArtifactMentionPart)}
+                aria-label={t('Preview {{name}}', { name: part.name })}
+              >
+                @<ExtensionPreservingFileName name={part.name} />
+              </button>
+            )
+          }
+        }
 
-      return (
-        <span key={index} className="whitespace-pre-wrap">
-          {part.text}
-        </span>
-      )
-    })}
-  </p>
-)
+        return (
+          <span key={index} className="whitespace-pre-wrap">
+            {'text' in part ? part.text : ''}
+          </span>
+        )
+      })}
+    </p>
+  )
+}
 
 // Renders one chat message with user bubbles and full-width assistant markdown surfaces.
-const WorkspaceMessageItemImpl = ({
+const WorkspaceMessageItem = ({
   message,
   onPreviewArtifact,
   onPreviewUploadAttachment,
@@ -797,6 +823,7 @@ const WorkspaceMessageItemImpl = ({
   presentationSourceOpen,
   presentationAnimateOnMount = true
 }: WorkspaceMessageItemProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isUserMessage = message.role === 'user'
   const isSideChatAdvisory =
     message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
@@ -830,7 +857,7 @@ const WorkspaceMessageItemImpl = ({
   const sentDate = toMessageDate(message.createdAt)
   const terminalDate = toMessageDate(terminalTimestamp)
   const turnStartedDate = toMessageDate(turnStartedAt)
-  const terminalLabel = message.status === 'error' ? 'Failed' : 'Completed'
+  const terminalLabel = message.status === 'error' ? t('Failed') : t('Completed')
   const showRevisionNavigation =
     showUserActions && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
@@ -910,7 +937,7 @@ const WorkspaceMessageItemImpl = ({
             className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
           >
             <MessageCircleMore className="size-4 shrink-0 text-text-300" aria-hidden="true" />
-            <span className="shrink-0 font-medium">Side chat</span>
+            <span className="shrink-0 font-medium">{t('Side chat')}</span>
             <span className="min-w-0 truncate">{message.content}</span>
           </div>
         ) : isUserMessage ? (
@@ -923,8 +950,8 @@ const WorkspaceMessageItemImpl = ({
                   onDocChange={setEditDoc}
                   onSubmit={handleConfirmEdit}
                   onPaste={ignoreEditPaste}
-                  placeholder="Edit your message"
-                  ariaLabel="Edit message"
+                  placeholder={t('Edit your message')}
+                  ariaLabel={t('Edit message')}
                 />
                 <div className="flex items-center justify-end gap-1">
                   <button
@@ -932,7 +959,7 @@ const WorkspaceMessageItemImpl = ({
                     className={editCancelButtonClassName}
                     onClick={handleCancelEdit}
                   >
-                    Cancel
+                    {t('Cancel')}
                   </button>
                   <button
                     type="button"
@@ -940,7 +967,7 @@ const WorkspaceMessageItemImpl = ({
                     disabled={!canEditMessage || docIsEmpty(editDoc)}
                     onClick={handleConfirmEdit}
                   >
-                    Send
+                    {t('Send')}
                   </button>
                 </div>
               </div>
@@ -955,11 +982,11 @@ const WorkspaceMessageItemImpl = ({
                 {showUserActions ? (
                   <TooltipProvider delayDuration={200}>
                     <div data-slot="user-message-actions" className={userMessageActionsClassName}>
-                      <UserMessageActionTooltip label={copied ? 'Copied' : 'Copy message'}>
+                      <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
                         <button
                           type="button"
                           className={userMessageActionButtonClassName}
-                          aria-label={copied ? 'Copied' : 'Copy message'}
+                          aria-label={copied ? t('Copied') : t('Copy message')}
                           onClick={handleCopyMessage}
                         >
                           {copied ? (
@@ -969,11 +996,11 @@ const WorkspaceMessageItemImpl = ({
                           )}
                         </button>
                       </UserMessageActionTooltip>
-                      <UserMessageActionTooltip label="Edit message">
+                      <UserMessageActionTooltip label={t('Edit message')}>
                         <button
                           type="button"
                           className={userMessageActionButtonClassName}
-                          aria-label="Edit message"
+                          aria-label={t('Edit message')}
                           disabled={!canEditMessage}
                           onClick={handleStartEdit}
                         >
@@ -1019,21 +1046,21 @@ const WorkspaceMessageItemImpl = ({
                       data-slot="user-message-interrupted"
                       className="italic text-amber-600 dark:text-amber-400"
                     >
-                      This turn was interrupted.
+                      {t('This turn was interrupted.')}
                     </span>
                   ) : null}
-                  {sentDate ? <MessageTimestamp label="Sent" date={sentDate} /> : null}
+                  {sentDate ? <MessageTimestamp label={t('Sent')} date={sentDate} /> : null}
                   {showRevisionNavigation ? (
                     <TooltipProvider delayDuration={200}>
                       <div
                         data-slot="user-message-revision-navigation"
                         className="flex items-center gap-0.5 text-[13px] text-text-100"
                       >
-                        <UserMessageActionTooltip label="Previous message revision">
+                        <UserMessageActionTooltip label={t('Previous message revision')}>
                           <button
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label="Previous message revision"
+                            aria-label={t('Previous message revision')}
                             disabled={!revisionNavigation.onPrevious || !canEditMessage}
                             onClick={revisionNavigation.onPrevious}
                           >
@@ -1045,14 +1072,14 @@ const WorkspaceMessageItemImpl = ({
                           className="size-3.5 text-text-300"
                           aria-hidden="true"
                         />
-                        <span aria-label="Message revision" className="min-w-7 text-center">
+                        <span aria-label={t('Message revision')} className="min-w-7 text-center">
                           {revisionNavigation.index + 1}/{revisionNavigation.total}
                         </span>
-                        <UserMessageActionTooltip label="Next message revision">
+                        <UserMessageActionTooltip label={t('Next message revision')}>
                           <button
                             type="button"
                             className={userMessageActionButtonClassName}
-                            aria-label="Next message revision"
+                            aria-label={t('Next message revision')}
                             disabled={!revisionNavigation.onNext || !canEditMessage}
                             onClick={revisionNavigation.onNext}
                           >
@@ -1089,9 +1116,12 @@ const WorkspaceMessageItemImpl = ({
                 ) : null}
                 {terminalDate && turnStartedDate ? (
                   <span data-slot="assistant-message-elapsed-segment" className="whitespace-nowrap">
-                    <span aria-label="Elapsed run time">
-                      Elapsed{' '}
-                      {formatElapsedDuration(terminalDate.getTime() - turnStartedDate.getTime())}
+                    <span aria-label={t('Elapsed run time')}>
+                      {t('Elapsed {{duration}}', {
+                        duration: formatElapsedDuration(
+                          terminalDate.getTime() - turnStartedDate.getTime()
+                        )
+                      })}
                     </span>
                   </span>
                 ) : null}
@@ -1112,78 +1142,6 @@ const WorkspaceMessageItemImpl = ({
     </MessageScrollerItem>
   )
 }
-
-// The scroller resolves artifacts fresh on every transcript rebuild, but the referenced artifact
-// objects keep their identity (the store projects immutably), so compare element by element.
-const areMessageArtifactsEqual = (
-  previous: MessageArtifact[] | undefined,
-  next: MessageArtifact[] | undefined
-): boolean => {
-  if (previous === next) return true
-  const previousArtifacts = previous ?? []
-  const nextArtifacts = next ?? []
-  return (
-    previousArtifacts.length === nextArtifacts.length &&
-    previousArtifacts.every((artifact, index) => artifact === nextArtifacts[index])
-  )
-}
-
-// Only these three fields are rendered (turn usage popover); the scroller may pass a whole
-// runtime segment whose other fields are irrelevant here.
-const areRuntimeIdentitiesEqual = (
-  previous: MessageRuntimeIdentity | undefined,
-  next: MessageRuntimeIdentity | undefined
-): boolean =>
-  previous === next ||
-  (previous !== undefined &&
-    next !== undefined &&
-    previous.frameworkId === next.frameworkId &&
-    previous.backendId === next.backendId &&
-    previous.model === next.model)
-
-// The scroller rebuilds this object (with fresh closures) on every render. The closures only
-// capture the session id and a revision's branch id, both of which change only together with
-// index/total or the message itself, so those fields fully determine what a re-render would show.
-const areRevisionNavigationsEqual = (
-  previous: WorkspaceMessageItemProps['revisionNavigation'],
-  next: WorkspaceMessageItemProps['revisionNavigation']
-): boolean =>
-  previous === next ||
-  (previous !== undefined &&
-    next !== undefined &&
-    previous.index === next.index &&
-    previous.total === next.total &&
-    (previous.onPrevious === undefined) === (next.onPrevious === undefined) &&
-    (previous.onNext === undefined) === (next.onNext === undefined))
-
-// Streaming rebuilds the transcript once per chunk; a message whose object identity is unchanged
-// renders identically, so bail out before re-running the Markdown pipeline for it.
-const areWorkspaceMessageItemPropsEqual = (
-  previous: WorkspaceMessageItemProps,
-  next: WorkspaceMessageItemProps
-): boolean =>
-  previous.message === next.message &&
-  previous.onPreviewArtifact === next.onPreviewArtifact &&
-  previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&
-  previous.onOpenSkillMention === next.onOpenSkillMention &&
-  previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
-  previous.onSendEditedMessage === next.onSendEditedMessage &&
-  (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
-  (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
-  previous.contentPaddingClassName === next.contentPaddingClassName &&
-  previous.turnStartedAt === next.turnStartedAt &&
-  (previous.showAssistantFooter ?? true) === (next.showAssistantFooter ?? true) &&
-  (previous.subsequentTurns ?? 0) === (next.subsequentTurns ?? 0) &&
-  previous.staticParts === next.staticParts &&
-  areMessageArtifactsEqual(previous.artifacts, next.artifacts) &&
-  areRuntimeIdentitiesEqual(previous.runtimeIdentity, next.runtimeIdentity) &&
-  areRevisionNavigationsEqual(previous.revisionNavigation, next.revisionNavigation) &&
-  previous.onPresentationChange === next.onPresentationChange &&
-  (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
-  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true)
-
-const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
-WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'
 
 export { MessageArtifactList, WorkspaceMessageItem }
 export type { ArtifactMentionPart }

@@ -255,7 +255,7 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByText('PHASE 2')).toBeTruthy()
     expect(
       screen.getByText(
-        'Complete two phases in order. Delegations within a phase may run in parallel.'
+        'Complete 2 phases in order. Delegations within a phase may run in parallel.'
       )
     ).toBeTruthy()
     expect(screen.getByText('Data intake')).toBeTruthy()

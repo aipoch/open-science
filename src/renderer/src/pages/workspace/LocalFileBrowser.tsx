@@ -1,33 +1,18 @@
 // Local ("This computer") file browser. Rendered as one of the two containers the Files tab can show:
 // the source dropdown swaps between the artifacts list and this browser, so it owns no tab or modal
 // chrome of its own. Forked from the remote FileBrowserModal chrome (editable address bar, Go-to
-// dropdown with mounted drives/volumes, a fixed Home, and pin/unpin bookmarks) but:
+// dropdown with a fixed Home + pin/unpin bookmarks) but:
 //   - transport is window.api.localFs (node:fs in main), not SSH
 //   - the toolbar has a single arrow, which goes to the parent directory; there is no history stack
 //   - opening a file does NOT show an inline detail panel; it opens a standalone preview-workbench
 //     tab (source:'local') that renders through the shared preview pipeline with a dedicated header
 //   - bookmarks persist under the reserved LOCAL_BOOKMARKS_KEY in the compute bookmark store
-import {
-  ArrowLeft,
-  ChevronDown,
-  Folder,
-  File,
-  HardDrive,
-  Home,
-  Pin,
-  PinOff,
-  RefreshCw
-} from 'lucide-react'
+import { ArrowLeft, ChevronDown, Folder, File, Home, Pin, PinOff, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import type {
-  LocalDirEntry,
-  LocalDrive,
-  LocalListingProblem,
-  LocalRoots
-} from '../../../../shared/local-fs'
+import type { LocalDirEntry, LocalListingProblem, LocalRoots } from '../../../../shared/local-fs'
 import {
-  describeInvalidLocalPath,
   describeLocalListingError,
   isLocalPathRoot,
   isSensitiveLocalPath,
@@ -98,29 +83,20 @@ const Hint = ({
 
 // Body of one Go-to row: the label plus the absolute path it resolves to. Without the path, "Home"
 // says nothing about where it lands and two folders pinned from different trees look identical when
-// they share a basename (…/2024/data vs …/2025/data). Labels truncate by default (title carries the
-// full text); rows whose label is itself the identifying name — drive/volume names — pass wrapLabel
-// to show it in full, wrapping instead of clipping.
+// they share a basename (…/2024/data vs …/2025/data).
 const GoToRow = ({
   icon,
   label,
-  path,
-  wrapLabel = false
+  path
 }: {
   icon: React.ReactNode
   label: string
   path: string
-  wrapLabel?: boolean
 }): React.JSX.Element => (
   <>
     <span className="mt-0.5 shrink-0">{icon}</span>
     <span className="flex min-w-0 flex-1 flex-col">
-      <span
-        title={wrapLabel ? undefined : label}
-        className={wrapLabel ? 'break-words' : 'truncate'}
-      >
-        {label}
-      </span>
+      <span className="truncate">{label}</span>
       {/* title carries the untruncated path: CSS clips the tail, which is the part that identifies
           a deeply nested folder. */}
       <span
@@ -133,12 +109,10 @@ const GoToRow = ({
   </>
 )
 
-// Go-to dropdown: Home stands alone at the top (no category); mounted drives/volumes form their
-// own group; the Pinned group lists bookmarked folders and always closes with the Pin-current
-// action. Built on the shared shadcn DropdownMenu, so click-outside, Escape, focus trapping and
-// the trigger's aria-expanded all come from Radix instead of hand-rolled open state.
+// Go-to dropdown: Home is fixed at the top (never removable); pinned folders follow with Unpin.
+// Built on the shared shadcn DropdownMenu, so click-outside, Escape, focus trapping and the
+// trigger's aria-expanded all come from Radix instead of hand-rolled open state.
 const GoToMenu = ({
-  drives,
   home,
   bookmarks,
   currentPath,
@@ -147,7 +121,6 @@ const GoToMenu = ({
   onPinCurrent,
   onRemoveBookmark
 }: {
-  drives: LocalDrive[]
   home: string | undefined
   bookmarks: string[]
   currentPath: string
@@ -155,107 +128,87 @@ const GoToMenu = ({
   onNavigate: (path: string) => void
   onPinCurrent: () => void
   onRemoveBookmark: (path: string) => void
-}): React.JSX.Element => (
-  <DropdownMenu>
-    <Hint label="Jump to Home, a drive, or a pinned folder">
-      {/* Label at the default 13px: at text-xs it was the smallest type in the row despite being
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <DropdownMenu>
+      <Hint label={t('Jump to Home or a pinned folder')}>
+        {/* Label at the default 13px: at text-xs it was the smallest type in the row despite being
           the only worded control there. */}
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="gap-1 text-sm font-normal text-text-000"
-        >
-          Go to
-          <ChevronDown className="size-3.5 text-text-300" strokeWidth={TOOLBAR_ICON_STROKE} />
-        </Button>
-      </DropdownMenuTrigger>
-    </Hint>
-    <DropdownMenuContent align="start" className="w-[300px] max-w-[70vw]">
-      {/* Home stands alone at the top: a fixed shortcut that belongs to no category. */}
-      {home ? (
-        <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={() => onNavigate(home)}>
-          <GoToRow
-            icon={<Home className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-            label="Home"
-            path={home}
-          />
-        </DropdownMenuItem>
-      ) : null}
-      {drives.length > 0 ? (
-        <>
-          <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
-            {window.api.platform === 'win32' ? 'Drives' : 'Volumes'}
-          </DropdownMenuLabel>
-          {drives.map((drive) => (
-            <DropdownMenuItem
-              key={drive.path}
-              data-testid={`go-to-drive-${drive.path}`}
-              className="items-start gap-2 text-xs"
-              onSelect={() => onNavigate(drive.path)}
-            >
-              <GoToRow
-                wrapLabel
-                icon={<HardDrive className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-                label={drive.label}
-                path={drive.path}
-              />
-            </DropdownMenuItem>
-          ))}
-        </>
-      ) : null}
-      {bookmarks.length > 0 || (!isBookmarked && currentPath) ? (
-        <>
-          <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
-            Pinned
-          </DropdownMenuLabel>
-          {bookmarks.map((path) => (
-            <DropdownMenuItem
-              key={path}
-              className="items-start gap-2 pr-1 text-xs"
-              onSelect={() => onNavigate(path)}
-            >
-              <GoToRow
-                icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-                label={path.split('/').pop() || path}
-                path={path}
-              />
-              {/* The crossed-out pushpin can read as "delete this folder", so the hint says it
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-sm font-normal text-text-000"
+          >
+            {t('Go to')}
+            <ChevronDown className="size-3.5 text-text-300" strokeWidth={TOOLBAR_ICON_STROKE} />
+          </Button>
+        </DropdownMenuTrigger>
+      </Hint>
+      <DropdownMenuContent align="start" className="w-[300px] max-w-[70vw]">
+        {home ? (
+          <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={() => onNavigate(home)}>
+            <GoToRow
+              icon={<Home className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+              label={t('Home')}
+              path={home}
+            />
+          </DropdownMenuItem>
+        ) : null}
+        {!isBookmarked && currentPath ? (
+          <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={onPinCurrent}>
+            <GoToRow
+              icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+              label={t('Pin current folder')}
+              path={currentPath}
+            />
+          </DropdownMenuItem>
+        ) : null}
+        {bookmarks.length > 0 ? (
+          <>
+            <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
+              {t('Pinned')}
+            </DropdownMenuLabel>
+            {bookmarks.map((path) => (
+              <DropdownMenuItem
+                key={path}
+                className="items-start gap-2 pr-1 text-xs"
+                onSelect={() => onNavigate(path)}
+              >
+                <GoToRow
+                  icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+                  label={path.split('/').pop() || path}
+                  path={path}
+                />
+                {/* The crossed-out pushpin can read as "delete this folder", so the hint says it
                   unpins. Its hover fill is surface-control-hover, a step darker than the muted fill
                   the highlighted row already shows, so the square reads as its own control.
                   stopPropagation keeps the click from selecting the row (which would navigate and
                   close the menu) — unpinning leaves the list open so several can go at once. */}
-              <Hint label="Remove from Go to (the folder is not deleted)">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onRemoveBookmark(path)
-                  }}
-                  aria-label={`Unpin ${path}`}
-                  className="flex size-6 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors hover:bg-surface-control-hover hover:text-text-000"
-                >
-                  <PinOff className="size-3.5" strokeWidth={1.5} />
-                </button>
-              </Hint>
-            </DropdownMenuItem>
-          ))}
-          {/* The pin action belongs to the Pinned category and always closes it. */}
-          {!isBookmarked && currentPath ? (
-            <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={onPinCurrent}>
-              <GoToRow
-                icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-                label="Pin current folder"
-                path={currentPath}
-              />
-            </DropdownMenuItem>
-          ) : null}
-        </>
-      ) : null}
-    </DropdownMenuContent>
-  </DropdownMenu>
-)
+                <Hint label={t('Remove from Go to (the folder is not deleted)')}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemoveBookmark(path)
+                    }}
+                    aria-label={t('Unpin {{path}}', { path })}
+                    className="flex size-6 shrink-0 items-center justify-center self-center rounded-md text-muted-foreground transition-colors hover:bg-surface-control-hover hover:text-text-000"
+                  >
+                    <PinOff className="size-3.5" strokeWidth={1.5} />
+                  </button>
+                </Hint>
+              </DropdownMenuItem>
+            ))}
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 // Directory listing table: dirs first, single-click opens (navigate for dirs, preview tab for files).
 const LocalListing = ({
@@ -265,10 +218,12 @@ const LocalListing = ({
   state: BrowserState
   onOpenEntry: (entry: LocalDirEntry) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   if (state.kind === 'loading') {
     return (
       <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-        Loading…
+        {t('Loading…')}
       </div>
     )
   }
@@ -290,15 +245,15 @@ const LocalListing = ({
     <div className="min-h-0 flex-1 overflow-auto">
       {state.truncated ? (
         <div className="bg-amber-50 px-4 py-1.5 text-[11px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
-          Showing the first entries only — this directory is very large.
+          {t('Showing the first entries only — this directory is very large.')}
         </div>
       ) : null}
       {state.entries.length === 0 ? (
         <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-          Empty folder
+          {t('Empty folder')}
         </div>
       ) : (
-        <ul role="listbox" aria-label="Directory contents">
+        <ul role="listbox" aria-label={t('Directory contents')}>
           {state.entries.map((entry) => (
             <li key={entry.name} className="border-b border-border-300/40 last:border-b-0">
               <button
@@ -341,8 +296,9 @@ export const LocalFileBrowser = ({
   // requests observable even for the same path; requests for the current directory are no-ops.
   requestedPath?: { path: string; nonce: number }
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const [roots, setRoots] = useState<LocalRoots | null>(null)
-  const [drives, setDrives] = useState<LocalDrive[]>([])
   const [cwd, setCwd] = useState('')
   const [state, setState] = useState<BrowserState>({ kind: 'loading' })
   const [addressInput, setAddressInput] = useState('')
@@ -399,19 +355,15 @@ export const LocalFileBrowser = ({
     }
   }, [])
 
-  // On mount: fetch roots + drives + bookmarks, then land in Home — or in a path already requested
-  // before the browser mounted (its nonce is marked handled so the effect below doesn't
-  // re-navigate).
+  // On mount: fetch roots + bookmarks, then land in Home — or in a path already requested before
+  // the browser mounted (its nonce is marked handled so the effect below doesn't re-navigate).
   useEffect(() => {
     void (async () => {
-      const [fetchedRoots, fetchedDrives, fetchedBookmarks] = await Promise.all([
+      const [fetchedRoots, fetchedBookmarks] = await Promise.all([
         window.api.localFs.getRoots(),
-        // A drive-enumeration failure must not take the whole browser down with it.
-        window.api.localFs.listDrives().catch(() => []),
         window.api.compute.bookmarksGet(LOCAL_BOOKMARKS_KEY)
       ])
       setRoots(fetchedRoots)
-      setDrives(fetchedDrives)
       setBookmarks(fetchedBookmarks)
       const pendingRequest = initialRequestedPathRef.current
       await navigate(pendingRequest?.path ?? fetchedRoots.home)
@@ -440,14 +392,17 @@ export const LocalFileBrowser = ({
     if (invalid) {
       setState({
         kind: 'error',
-        problem: { summary: describeInvalidLocalPath(invalid, window.api.platform) }
+        problem: {
+          summary:
+            invalid === 'not_absolute'
+              ? 'Enter an absolute path, starting at /.'
+              : 'That path contains invalid characters.'
+        }
       })
       return
     }
     if (sameLocalDirectory(resolved, currentPath, window.api.platform)) {
       setAddressInput(currentPath)
-      // A no-op submit while an error is showing re-reads the folder so the error clears.
-      if (state.kind === 'error') void navigate(currentPath)
       return
     }
     void navigate(resolved)
@@ -497,14 +452,14 @@ export const LocalFileBrowser = ({
   return (
     <div
       className="mx-4 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border-300/50 bg-bg-000"
-      aria-label="Local file browser"
+      aria-label={t('Local file browser')}
     >
       {/* Toolbar */}
       <TooltipProvider delayDuration={200}>
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border-300/40 px-3 py-1.5">
           {/* One arrow only: it goes to the parent directory. A separate up-arrow beside it read as a
               duplicate of the same action, so this is the single way to move a level out. */}
-          <Hint label="Go to the parent folder">
+          <Hint label={t('Go to the parent folder')}>
             <Button
               type="button"
               variant="ghost"
@@ -512,16 +467,15 @@ export const LocalFileBrowser = ({
               className={TOOLBAR_ICON_BUTTON}
               disabled={isAtRoot}
               onClick={() => void navigate(parentLocalPath(currentPath, window.api.platform))}
-              aria-label="Go to parent directory"
+              aria-label={t('Go to parent directory')}
             >
               <ArrowLeft className="size-4" strokeWidth={TOOLBAR_ICON_STROKE} />
             </Button>
           </Hint>
 
-          {/* Go-to dropdown: mounted drives, fixed Home, pinned bookmarks. Selecting an item
-              closes the menu itself, so nothing here tracks open state. */}
+          {/* Go-to dropdown: fixed Home + pinned bookmarks. Selecting an item closes the menu
+              itself, so nothing here tracks open state. */}
           <GoToMenu
-            drives={drives}
             home={roots?.home}
             bookmarks={bookmarks}
             currentPath={currentPath}
@@ -539,25 +493,27 @@ export const LocalFileBrowser = ({
               onBlur={handleAddressSubmit}
               spellCheck={false}
               className="w-full rounded-md border border-border bg-bg-000 px-2 py-1 font-mono text-xs text-text-100 outline-none focus:text-text-000 focus:ring-2 focus:ring-ring/50"
-              aria-label="Directory path"
+              aria-label={t('Directory path')}
             />
           </form>
 
-          <Hint label="Re-read this folder from disk">
+          <Hint label={t('Re-read this folder from disk')}>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
               onClick={() => void navigate(currentPath)}
-              aria-label="Refresh directory"
+              aria-label={t('Refresh directory')}
             >
               <RefreshCw className="size-4" strokeWidth={TOOLBAR_ICON_STROKE} />
             </Button>
           </Hint>
           <Hint
             label={
-              isBookmarked ? 'Unpin this folder from Go to' : 'Pin this folder to the Go to menu'
+              isBookmarked
+                ? t('Unpin this folder from Go to')
+                : t('Pin this folder to the Go to menu')
             }
           >
             <Button
@@ -566,7 +522,7 @@ export const LocalFileBrowser = ({
               size="icon-sm"
               className={TOOLBAR_ICON_BUTTON}
               onClick={() => void handleToggleBookmark()}
-              aria-label={isBookmarked ? 'Remove bookmark' : 'Pin this folder'}
+              aria-label={isBookmarked ? t('Remove bookmark') : t('Pin this folder')}
             >
               {/* Pushpin for the action in both directions: PinOff (crossed-out pin) is what a click
                   will do next, so a pinned folder reads as "click to unpin". */}

@@ -73,7 +73,7 @@ describe('DatabaseStartupGate', () => {
         }
       })
     )
-    expect(screen.getByText('Open Science couldn’t start')).toBeTruthy()
+    expect(screen.getByText("Open Science couldn't start")).toBeTruthy()
     expect(screen.getByText(/database_newer_than_app/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
 

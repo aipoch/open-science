@@ -16,6 +16,8 @@ import {
   DropdownMenuSubTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useTranslation } from 'react-i18next'
+
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 
@@ -35,6 +37,7 @@ export const ComposerYourFilesMenu = ({
 }: {
   onInsertFileReference: (reference: LinkedFolderFileReference) => void
 }): React.JSX.Element => {
+  const { t } = useTranslation()
   const roots = useGrantedFoldersStore((state) => state.roots)
   const loaded = useGrantedFoldersStore((state) => state.loaded)
   const refresh = useGrantedFoldersStore((state) => state.refresh)
@@ -240,7 +243,9 @@ export const ComposerYourFilesMenu = ({
           className="items-center gap-2"
         >
           <Folder className="size-4 shrink-0 text-text-200" strokeWidth={2} aria-hidden="true" />
-          <span className="min-w-0 flex-1 text-[13px] font-medium leading-5">Your files</span>
+          <span className="min-w-0 flex-1 text-[13px] font-medium leading-5">
+            {t('Your files')}
+          </span>
           <ChevronRight className="size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className="max-h-[340px] w-[300px] overflow-y-auto">
@@ -255,12 +260,12 @@ export const ComposerYourFilesMenu = ({
                 className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] font-medium text-text-100 hover:bg-bg-200 hover:text-text-000"
               >
                 <FolderPlus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-                Grant folder…
+                {t('Grant folder…')}
               </button>
             </div>
             {loaded && roots.length === 0 ? (
               <div className="px-2 py-1.5 text-[12px] leading-4 text-text-300">
-                No folders granted yet.
+                {t('No folders granted yet.')}
               </div>
             ) : null}
             {roots.map((root) => {
@@ -299,7 +304,7 @@ export const ComposerYourFilesMenu = ({
                     <button
                       type="button"
                       data-testid={`your-files-remove-${root.id}`}
-                      aria-label={`Remove access to ${root.name}`}
+                      aria-label={t('Remove access to {{name}}', { name: root.name })}
                       onClick={(event) => {
                         event.stopPropagation()
                         event.preventDefault()

@@ -1,4 +1,5 @@
 import { WifiOff } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -32,6 +33,7 @@ const iconToneClasses = {
 const NetworkStatusIndicator = ({
   variant
 }: NetworkStatusIndicatorProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const isOnline = useNetworkStore((state) => state.isOnline)
   const connectivity = useNetworkStore((state) => state.connectivity)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
@@ -40,8 +42,11 @@ const NetworkStatusIndicator = ({
 
   const unreachable = isOnline // online but unreachable: amber instead of red
   const tone = unreachable ? 'warning' : 'danger'
-  const label = unreachable ? 'Internet unreachable' : 'No internet connection'
-  const text = unreachable ? 'Unreachable' : 'Offline'
+  // Both of these reach the screen as data rather than as JSX text — one through aria-label and the
+  // tooltip body, one through a <span>. Translated here because the scan for bare copy only sees
+  // literals at the call site, so a bare English variable would slip past it.
+  const label = unreachable ? t('Internet unreachable') : t('No internet connection')
+  const text = unreachable ? t('Unreachable') : t('Offline')
 
   return (
     <TooltipProvider delayDuration={300}>

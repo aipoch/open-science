@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import type { TFunction } from 'i18next'
 
 import { formatEta, formatProgressLine, formatSpeed } from './download-progress'
+
+const mockT: TFunction = ((key: string, params?: Record<string, unknown>) => {
+  if (key === 'Connection lost, resuming… (attempt {{attempt}})')
+    return `Connection lost, resuming… (attempt ${params?.attempt})`
+  if (key === 'downloaded') return 'downloaded'
+  return key
+}) as TFunction
 
 describe('download-progress formatters', () => {
   it('formats speed with binary units', () => {
@@ -16,7 +24,7 @@ describe('download-progress formatters', () => {
   })
 
   it('composes a downloading line with total known', () => {
-    const line = formatProgressLine({
+    const line = formatProgressLine(mockT, {
       phase: 'downloading',
       transferred: 47_400_000,
       total: 335_500_000,
@@ -31,7 +39,7 @@ describe('download-progress formatters', () => {
   })
 
   it('composes a downloading line when total unknown', () => {
-    const line = formatProgressLine({
+    const line = formatProgressLine(mockT, {
       phase: 'downloading',
       transferred: 47_400_000,
       bytesPerSecond: 2_411_724,
@@ -42,7 +50,7 @@ describe('download-progress formatters', () => {
   })
 
   it('composes a reconnecting line with attempt number', () => {
-    const line = formatProgressLine({
+    const line = formatProgressLine(mockT, {
       phase: 'reconnecting',
       transferred: 47_400_000,
       bytesPerSecond: 0,

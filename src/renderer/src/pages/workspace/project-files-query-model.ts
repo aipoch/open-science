@@ -8,6 +8,7 @@ import {
   type RefObject,
   type SetStateAction
 } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
@@ -131,6 +132,7 @@ const readPersistedProjectFilesFilter = (): ProjectFilesFilterPreference | undef
  * commands; local browsing, preview reads, and grid/list rendering stay outside this owner.
  */
 const useProjectFilesQueryModel = (activeProjectId: string | undefined): ProjectFilesQueryModel => {
+  const { t } = useTranslation()
   const allSessions = useSessionStore((state) => state.sessions)
   const [collapsedSectionIds, setCollapsedSectionIds] = useState<Set<string>>(() => new Set())
   // Restore the persisted artifact filter as initial state; an option id that no longer exists
@@ -253,8 +255,8 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
   )
   const getSessionTitle = useCallback(
     (sessionId: string): string =>
-      sessionById.get(sessionId)?.title ?? `Session ${sessionId.slice(0, 8)}`,
-    [sessionById]
+      sessionById.get(sessionId)?.title ?? t('Session {{id}}', { id: sessionId.slice(0, 8) }),
+    [sessionById, t]
   )
   const filterGroupItems =
     showAllSessionOptions && sessionOptionsIndex.groups.items.length > 0
@@ -263,21 +265,23 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
   const getArtifactGroupTitle = useCallback(
     (group: ArtifactGroupItem): string => {
       const title = group.originSession?.title ?? getSessionTitle(group.sessionId)
-      return group.originSession?.state === 'deleted' ? `${title} · Source session deleted` : title
+      return group.originSession?.state === 'deleted'
+        ? t('{{title}} · Source session deleted', { title })
+        : title
     },
-    [getSessionTitle]
+    [getSessionTitle, t]
   )
   const filterOptions = useMemo<ProjectFilesFilterOption[]>(() => {
     const options: ProjectFilesFilterOption[] = [
       {
         id: 'all',
-        label: 'All artifacts',
+        label: t('All artifacts'),
         count: catalogIndex.overview.totalCount,
         kind: 'all'
       },
       {
         id: 'uploads',
-        label: 'Your uploads',
+        label: t('Your uploads'),
         count: catalogIndex.overview.uploadCount,
         kind: 'uploads'
       },
@@ -313,7 +317,8 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
     filterGroupItems,
     archivedSessionIdSet,
     isVisibleArtifactGroup,
-    selectedSessionFallback
+    selectedSessionFallback,
+    t
   ])
   const selectedSessionId = selectedFilterId.startsWith('session:')
     ? selectedFilterId.slice('session:'.length)

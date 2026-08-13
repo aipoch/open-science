@@ -7,26 +7,34 @@ import { useSessionStore } from './session-store'
 
 const ARCHIVE_UNDO_DURATION_MS = 8_000
 
-type ArchiveUndo =
-  | {
-      key: string
-      kind: 'project'
-      projectId: string
-      archivedAt: number
-      message: string
-      expiresAt: number
-      retry?: boolean
-    }
-  | {
-      key: string
-      kind: 'session'
-      projectId: string
-      sessionId: string
-      archivedAt: number
-      message: string
-      expiresAt: number
-      retry?: boolean
-    }
+// Notices outlive the render that created them and must follow a language switch, so they carry a
+// translation key plus its interpolation values rather than a resolved string. A `message` is only
+// present for a restore failure, where the text comes from the backend and passes through verbatim.
+type ArchiveUndoText =
+  | { messageKey: 'Archived project “{{name}}”.'; messageParams: { name: string } }
+  | { messageKey: 'Archived session “{{title}}”.'; messageParams: { title: string } }
+  | { message: string }
+
+type ArchiveUndo = ArchiveUndoText &
+  (
+    | {
+        key: string
+        kind: 'project'
+        projectId: string
+        archivedAt: number
+        expiresAt: number
+        retry?: boolean
+      }
+    | {
+        key: string
+        kind: 'session'
+        projectId: string
+        sessionId: string
+        archivedAt: number
+        expiresAt: number
+        retry?: boolean
+      }
+  )
 
 type ArchiveUndoStore = {
   notices: ArchiveUndo[]
@@ -62,7 +70,8 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
       kind: 'project',
       projectId: project.id,
       archivedAt: project.archivedAt,
-      message: `Archived project “${project.name}”.`,
+      messageKey: 'Archived project “{{name}}”.',
+      messageParams: { name: project.name },
       expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS
     }
     set((state) => ({
@@ -79,7 +88,8 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
       projectId: session.projectId,
       sessionId: session.id,
       archivedAt: session.archivedAt,
-      message: `Archived session “${session.title}”.`,
+      messageKey: 'Archived session “{{title}}”.',
+      messageParams: { title: session.title },
       expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS
     }
     set((state) => ({
@@ -168,16 +178,17 @@ export const useArchiveUndoStore = create<ArchiveUndoStore>((set, get) => ({
       }))
     } catch (error) {
       set((state) => ({
-        notices: state.notices.map((item) =>
-          item.key === key
-            ? {
-                ...item,
-                retry: true,
-                message: errorMessage(error),
-                expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS
-              }
-            : item
-        ),
+        notices: state.notices.map((item) => {
+          if (item.key !== key) return item
+          // A failure replaces the localized archive text with the backend's own message, so the
+          // key/params pair is dropped to keep exactly one text source on the notice.
+          const failed = { ...item, retry: true, expiresAt: Date.now() + ARCHIVE_UNDO_DURATION_MS }
+          if ('messageKey' in failed) {
+            delete (failed as { messageKey?: unknown }).messageKey
+            delete (failed as { messageParams?: unknown }).messageParams
+          }
+          return { ...failed, message: errorMessage(error) }
+        }),
         restoringKey: undefined
       }))
     }

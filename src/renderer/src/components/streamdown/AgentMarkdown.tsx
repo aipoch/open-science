@@ -8,6 +8,7 @@ import {
   type ErrorInfo,
   type ReactNode
 } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { code } from '@streamdown/code'
 import { cjk } from '@streamdown/cjk'
 import { createMathPlugin } from '@streamdown/math'
@@ -146,35 +147,41 @@ type MermaidErrorPanelProps = {
   retry: () => void
 }
 
-const MermaidErrorPanel = ({ chart, error, retry }: MermaidErrorPanelProps): React.JSX.Element => (
-  <div className="my-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] leading-5 text-amber-950 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-100">
-    <p className="font-medium">Mermaid syntax could not be rendered</p>
-    <p className="mt-1 text-[12px] text-amber-900/90 dark:text-amber-200/90">{error}</p>
-    <p className="mt-2 text-[12px] text-amber-800/80 dark:text-amber-300/80">
-      Common causes: an xychart is missing the{' '}
-      <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/50">title</code> keyword, axis
-      labels are not quoted, or{' '}
-      <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/50">y-axis</code> or{' '}
-      <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/50">bar/line</code> data rows
-      are missing.
-    </p>
-    <details className="mt-2">
-      <summary className="cursor-pointer text-[12px] text-amber-900/90 dark:text-amber-200/90">
-        View source
-      </summary>
-      <pre className="mt-2 max-h-40 overflow-auto rounded-md border border-amber-200/80 bg-white/70 p-2 font-mono text-[11px] leading-relaxed text-[#1a1a1a] dark:border-amber-800/40 dark:bg-amber-950/40 dark:text-amber-100">
-        {chart}
-      </pre>
-    </details>
-    <button
-      type="button"
-      className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[12px] text-amber-950 hover:bg-amber-100/80 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/40"
-      onClick={retry}
-    >
-      Retry
-    </button>
-  </div>
-)
+const MermaidErrorPanel = ({ chart, error, retry }: MermaidErrorPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div className="my-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] leading-5 text-amber-950 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-100">
+      <p className="font-medium">{t('Mermaid syntax could not be rendered')}</p>
+      <p className="mt-1 text-[12px] text-amber-900/90 dark:text-amber-200/90">{error}</p>
+      <p className="mt-2 text-[12px] text-amber-800/80 dark:text-amber-300/80">
+        <Trans
+          t={t}
+          i18nKey="Common causes: an xychart is missing the <kw1>title</kw1> keyword, axis labels are not quoted, or <kw2>y-axis</kw2> or <kw3>bar/line</kw3> data rows are missing."
+          components={{
+            kw1: <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/50" />,
+            kw2: <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/50" />,
+            kw3: <code className="rounded bg-amber-100/80 px-1 dark:bg-amber-900/50" />
+          }}
+        />
+      </p>
+      <details className="mt-2">
+        <summary className="cursor-pointer text-[12px] text-amber-900/90 dark:text-amber-200/90">
+          {t('View source')}
+        </summary>
+        <pre className="mt-2 max-h-40 overflow-auto rounded-md border border-amber-200/80 bg-white/70 p-2 font-mono text-[11px] leading-relaxed text-[#1a1a1a] dark:border-amber-800/40 dark:bg-amber-950/40 dark:text-amber-100">
+          {chart}
+        </pre>
+      </details>
+      <button
+        type="button"
+        className="mt-2 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[12px] text-amber-950 hover:bg-amber-100/80 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/40"
+        onClick={retry}
+      >
+        {t('Retry')}
+      </button>
+    </div>
+  )
+}
 
 const math = createMathPlugin({ singleDollarTextMath: true })
 const plugins = { code, math, mermaid, cjk } as const

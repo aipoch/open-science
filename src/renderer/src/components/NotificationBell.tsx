@@ -13,10 +13,12 @@ import {
   useState
 } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 
 import type { NotificationInboxItem } from '../../../shared/notifications'
+
 import { useMediaQuery } from '@/hooks/useMediaQuery'
-import { formatRelativeTime } from '@/lib/format-relative-time'
+import { relativeTimeParts } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -40,17 +42,20 @@ const iconFor = (item: NotificationInboxItem): React.JSX.Element => {
   return <CircleAlert className="size-4" strokeWidth={2} aria-hidden="true" />
 }
 
-const actionLabel = (item: NotificationInboxItem): string | undefined => {
+const actionLabel = (
+  item: NotificationInboxItem,
+  t: ReturnType<typeof useTranslation>['t']
+): string | undefined => {
   if (item.source === 'agent-question') {
-    if (item.actionState === 'pending') return 'Needs response'
-    if (item.actionState === 'resolved') return 'Answered'
-    if (item.actionState === 'rejected') return 'Skipped'
+    if (item.actionState === 'pending') return t('Needs response')
+    if (item.actionState === 'resolved') return t('Answered')
+    if (item.actionState === 'rejected') return t('Skipped')
   }
-  if (item.actionState === 'pending') return 'Needs approval'
-  if (item.actionState === 'expired') return 'Expired'
-  if (item.actionState === 'cancelled') return 'Cancelled'
-  if (item.actionState === 'rejected') return 'Rejected'
-  if (item.actionState === 'resolved') return 'Resolved'
+  if (item.actionState === 'pending') return t('Needs approval')
+  if (item.actionState === 'expired') return t('Expired')
+  if (item.actionState === 'cancelled') return t('Cancelled')
+  if (item.actionState === 'rejected') return t('Rejected')
+  if (item.actionState === 'resolved') return t('Resolved')
   return undefined
 }
 
@@ -87,6 +92,20 @@ const NotificationBell = ({
   align = 'end',
   onOpen
 }: NotificationBellProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const relativeTime = (timestamp: number): string => {
+    const { unit, count } = relativeTimeParts(timestamp)
+    if (unit === 'now') return t('just now')
+    const labels = {
+      minute: t('{{count}} minutes ago', { count }),
+      hour: t('{{count}} hours ago', { count }),
+      day: t('{{count}} days ago', { count }),
+      week: t('{{count}} weeks ago', { count }),
+      month: t('{{count}} months ago', { count }),
+      year: t('{{count}} years ago', { count })
+    }
+    return labels[unit]
+  }
   const [open, setOpen] = useState(false)
   const isMobile = useMediaQuery(MOBILE_MESSAGE_CENTER_QUERY)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -218,7 +237,9 @@ const NotificationBell = ({
         ref={triggerRef}
         type="button"
         aria-label={
-          unreadCount > 0 ? `Messages, ${unreadCount} unread` : 'Messages, no unread messages'
+          unreadCount > 0
+            ? t('Messages, {{count}} unread', { count: unreadCount })
+            : t('Messages, no unread messages')
         }
         aria-expanded={open}
         aria-controls={panelId}
@@ -249,7 +270,7 @@ const NotificationBell = ({
               {isMobile ? (
                 <button
                   type="button"
-                  aria-label="Dismiss messages"
+                  aria-label={t('Dismiss messages')}
                   onClick={() => setOpen(false)}
                   className="fixed inset-0 z-[80] bg-black/45 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200 active:bg-black/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:animate-none"
                 />
@@ -258,7 +279,7 @@ const NotificationBell = ({
                 ref={panelRef}
                 id={panelId}
                 role="dialog"
-                aria-label="Message center"
+                aria-label={t('Message center')}
                 aria-modal={isMobile || undefined}
                 tabIndex={-1}
                 style={isMobile ? undefined : position}
@@ -285,7 +306,7 @@ const NotificationBell = ({
                     {isMobile ? (
                       <button
                         type="button"
-                        aria-label="Close messages"
+                        aria-label={t('Close messages')}
                         onClick={() => {
                           setOpen(false)
                           triggerRef.current?.focus()
@@ -297,10 +318,12 @@ const NotificationBell = ({
                     ) : null}
                     <div className="min-w-0">
                       <div className={cn('font-semibold', isMobile ? 'text-base' : 'text-sm')}>
-                        Messages
+                        {t('Messages')}
                       </div>
                       <div className={cn('text-text-300', isMobile ? 'text-xs' : 'text-[11px]')}>
-                        {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
+                        {unreadCount > 0
+                          ? t('{{count}} unread', { count: unreadCount })
+                          : t('All caught up')}
                       </div>
                     </div>
                   </div>
@@ -314,7 +337,7 @@ const NotificationBell = ({
                     )}
                   >
                     <CheckCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                    Mark all read
+                    {t('Mark all read')}
                   </button>
                 </div>
 
@@ -330,11 +353,11 @@ const NotificationBell = ({
                     </div>
                   ) : items.length === 0 ? (
                     <div className="px-3 py-10 text-center text-sm text-text-300">
-                      {status === 'loading' ? 'Loading messages…' : 'No messages yet.'}
+                      {status === 'loading' ? t('Loading messages…') : t('No messages yet.')}
                     </div>
                   ) : (
                     items.map((item) => {
-                      const label = actionLabel(item)
+                      const label = actionLabel(item, t)
                       return (
                         <button
                           key={item.id}
@@ -364,7 +387,7 @@ const NotificationBell = ({
                                   isMobile ? 'text-sm' : 'text-xs'
                                 )}
                               >
-                                {item.title}
+                                {t(item.title)}
                               </span>
                               <span
                                 className={cn(
@@ -372,7 +395,7 @@ const NotificationBell = ({
                                   isMobile ? 'text-xs' : 'text-[10px]'
                                 )}
                               >
-                                {formatRelativeTime(item.createdAt)}
+                                {relativeTime(item.createdAt)}
                               </span>
                             </span>
                             <span
@@ -381,7 +404,7 @@ const NotificationBell = ({
                                 isMobile ? 'text-sm leading-5' : 'text-[11px] leading-4'
                               )}
                             >
-                              {item.summary}
+                              {t(item.summary)}
                             </span>
                             {label ? (
                               <span

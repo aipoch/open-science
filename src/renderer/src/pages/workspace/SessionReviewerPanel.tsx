@@ -13,6 +13,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { CheckCircle, AlertTriangle, XCircle, ChevronRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 
 import type { ReviewWithChecks, ReviewCheck, ReviewerLogEntry } from '../../../../shared/reviewer'
@@ -56,6 +58,7 @@ const CheckRow = ({
   isActive: boolean
 }): React.JSX.Element => {
   const rowRef = useRef<HTMLDivElement | null>(null)
+  const { t } = useTranslation()
 
   // Scroll this row into view when it becomes the active check.
   useEffect(() => {
@@ -103,8 +106,10 @@ const CheckRow = ({
       {/* Locator reference — only shown for warn/fail checks that have a locator */}
       {isWarnOrFail && locatorRef && (
         <div className="mt-2 text-[10px] text-text-400">
-          <span className="font-medium">Ref:</span> {locatorRef}{' '}
-          <span className="text-text-500/60">· hash {check.locator!.contentHash.slice(0, 8)}</span>
+          <span className="font-medium">{t('Ref:')}</span> {locatorRef}{' '}
+          <span className="text-text-500/60">
+            {t('· hash {{hash}}', { hash: check.locator!.contentHash.slice(0, 8) })}
+          </span>
         </div>
       )}
     </div>
@@ -122,6 +127,7 @@ const LogEntryIcon = ({ kind }: { kind: 'thought' | 'message' }): React.JSX.Elem
 // One row in the reviewer log. Reuses the same visual vocabulary as the workspace activity rows
 // but de-emphasized: muted colors, no colored severity badges, smaller font.
 const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Element => {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const rowClassName = 'flex items-start gap-1.5 py-0.5 text-[11px] leading-[1.45]'
 
@@ -150,9 +156,9 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
   // tool entry: collapsible row with real tool name + one-line summary + status dot
   const statusDot =
     entry.status === 'ok' ? (
-      <span className="shrink-0 text-[10px] text-green-600 dark:text-green-400">● ok</span>
+      <span className="shrink-0 text-[10px] text-green-600 dark:text-green-400">{t('● ok')}</span>
     ) : entry.status === 'error' ? (
-      <span className="shrink-0 text-[10px] text-red-500">● error</span>
+      <span className="shrink-0 text-[10px] text-red-500">{t('● error')}</span>
     ) : null
 
   // One-line summary: prefer title, fall back to rawInput (first line only)
@@ -190,7 +196,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
           {entry.rawInput ? (
             <div>
               <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-400">
-                Input
+                {t('Input')}
               </div>
               <pre className="overflow-auto rounded border border-border-200 bg-bg-100 p-1.5 text-[10px] leading-[1.5] text-text-300 whitespace-pre-wrap break-words max-h-36">
                 {entry.rawInput}
@@ -200,7 +206,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
           {entry.rawOutput ? (
             <div>
               <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-400">
-                Output
+                {t('Output')}
               </div>
               <pre className="overflow-auto rounded border border-border-200 bg-bg-100 p-1.5 text-[10px] leading-[1.5] text-text-300 whitespace-pre-wrap break-words max-h-36">
                 {entry.rawOutput}
@@ -211,7 +217,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
                       entry.exitCode === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500'
                     )}
                   >
-                    {`exit ${entry.exitCode}`}
+                    {t('exit {{code}}', { code: entry.exitCode })}
                   </span>
                 ) : null}
               </pre>
@@ -226,6 +232,7 @@ const ReviewerLogRow = ({ entry }: { entry: ReviewerLogEntry }): React.JSX.Eleme
 // The "Reviewer log" section: collapsed by default, visually de-emphasized with muted left-rule.
 // Reuses WorkspaceMessageItem/activity-style patterns adapted to ReviewerLogEntry (props-driven).
 const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
 
   // If the log is empty, show nothing (graceful empty state per acceptance criterion).
@@ -234,7 +241,7 @@ const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Ele
   return (
     <section>
       <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-300">
-        Reviewer log
+        {t('Reviewer log')}
       </h3>
       <button
         type="button"
@@ -247,7 +254,7 @@ const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Ele
           className={cn('h-3 w-3 transition-transform duration-150', expanded ? 'rotate-90' : '')}
           aria-hidden
         />
-        {expanded ? 'Collapse Reviewer log' : 'Expand Reviewer log'}
+        {expanded ? t('Collapse Reviewer log') : t('Expand Reviewer log')}
       </button>
 
       {expanded && (
@@ -270,6 +277,8 @@ const SessionReviewerPanel = ({
   review,
   activeFindingId
 }: SessionReviewerPanelProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
   // Sort checks by sortIndex for stable display order.
   const sortedChecks = [...review.checks].sort((a, b) => a.sortIndex - b.sortIndex)
 
@@ -277,17 +286,18 @@ const SessionReviewerPanel = ({
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="shrink-0 border-b border-border-200 px-4 py-3">
-        <h2 className="text-[13px] font-semibold text-text-000">Session Reviewer</h2>
+        <h2 className="text-[13px] font-semibold text-text-000">{t('Session Reviewer')}</h2>
         <p className="mt-0.5 text-[11px] text-text-300">
-          {review.model} &middot; {new Date(review.createdAt).toLocaleString()}
+          {review.model} &middot; {formatDate(review.createdAt, 'dateTime')}
         </p>
         {review.stale && (
           <p
             data-testid="reviewer-stale-notice"
             className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-300"
           >
-            This turn changed after the review ran (e.g. an artifact was edited). The result below
-            may be out of date — re-run the review to refresh it.
+            {t(
+              'This turn changed after the review ran (e.g. an artifact was edited). The result below may be out of date — re-run the review to refresh it.'
+            )}
           </p>
         )}
       </div>
@@ -297,13 +307,13 @@ const SessionReviewerPanel = ({
         {/* Unified Checks list */}
         <section data-testid="reviewer-checks">
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-300">
-            Checks
+            {t('Checks')}
             {sortedChecks.length > 0 && (
               <span className="font-normal text-text-400"> &middot; {sortedChecks.length}</span>
             )}
           </h3>
           {sortedChecks.length === 0 ? (
-            <p className="text-xs text-text-400">No checks recorded.</p>
+            <p className="text-xs text-text-400">{t('No checks recorded.')}</p>
           ) : (
             <div className="space-y-2">
               {sortedChecks.map((check) => (

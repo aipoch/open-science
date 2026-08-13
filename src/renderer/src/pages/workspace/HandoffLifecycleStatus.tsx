@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { HandoffTranscriptProjection } from './handoff-lifecycle-projection'
 
@@ -32,6 +33,8 @@ const HandoffLifecycleStatus = ({
   handoff: HandoffTranscriptProjection
   onRetry?: () => Promise<void>
 }): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const isFailure = handoff.phase === 'failed'
   const [isRetrying, setIsRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | undefined>()
@@ -65,7 +68,7 @@ const HandoffLifecycleStatus = ({
     >
       <span className="font-medium text-foreground">{statusCopy(handoff)}</span>
       {handoff.phase === 'continued' ? (
-        <span className="ml-1">The original task continues in this turn.</span>
+        <span className="ml-1">{t('The original task continues in this turn.')}</span>
       ) : null}
       {handoff.failure ? <span className="ml-1">{handoff.failure.message}</span> : null}
       {isFailure && onRetry ? (

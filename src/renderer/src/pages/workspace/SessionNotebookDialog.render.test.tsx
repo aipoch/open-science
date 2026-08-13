@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
+
 import { SessionNotebookContent } from './SessionNotebookDialog'
 import {
   createNotebookFrameFilterOptions,
@@ -187,16 +189,20 @@ describe('Session Notebook producer projection', () => {
 
   it('names only the Main Agent and delegated Subagents from the Session graph', () => {
     expect(
-      notebookFrameLabels({
-        conversationGraph: {
-          rootFrameId: 'root-frame-s1',
-          frames: [
-            { id: 'root-frame-s1', kind: 'root' },
-            { id: 'frame-one', kind: 'delegate', delegateName: 'Evidence check' },
-            { id: 'review-frame', kind: 'review', agentName: 'Reviewer' }
-          ]
-        }
-      } as never)
+      notebookFrameLabels(
+        {
+          conversationGraph: {
+            rootFrameId: 'root-frame-s1',
+            frames: [
+              { id: 'root-frame-s1', kind: 'root' },
+              { id: 'frame-one', kind: 'delegate', delegateName: 'Evidence check' },
+              { id: 'review-frame', kind: 'review', agentName: 'Reviewer' }
+            ]
+          }
+        } as never,
+        // Pinned to English so the copy assertion below stays readable.
+        i18next.getFixedT('en')
+      )
     ).toEqual({
       'root-frame-s1': 'Main Agent',
       'frame-one': 'Evidence check'

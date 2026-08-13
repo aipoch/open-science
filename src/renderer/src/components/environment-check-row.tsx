@@ -8,6 +8,7 @@ import {
   Wifi,
   XCircle
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import type { EnvironmentCheckId, EnvironmentCheckItem } from '../../../shared/settings'
 import { cn } from '@/lib/utils'
@@ -45,11 +46,8 @@ type PendingCheckRowProps = {
   pendingText?: string
 }
 
-const PendingCheckRow = ({
-  id,
-  label,
-  pendingText = 'Waiting to check…'
-}: PendingCheckRowProps): React.JSX.Element => {
+const PendingCheckRow = ({ id, label, pendingText }: PendingCheckRowProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const Icon = CHECK_ICONS[id] ?? MonitorCog
 
   return (
@@ -59,7 +57,9 @@ const PendingCheckRow = ({
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-foreground">{label}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{pendingText}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {pendingText ?? t('Waiting to check…')}
+        </p>
       </div>
       <Loader2 className="mt-1 size-4 animate-spin text-muted-foreground" aria-hidden="true" />
     </li>
@@ -74,6 +74,7 @@ type EnvironmentCheckRowProps = {
 }
 
 const EnvironmentCheckRow = ({ check, icon }: EnvironmentCheckRowProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const Icon = icon ?? CHECK_ICONS[check.id] ?? MonitorCog
 
   return (
@@ -100,7 +101,7 @@ const EnvironmentCheckRow = ({ check, icon }: EnvironmentCheckRowProps): React.J
             )}
           >
             {statusIcon(check.status)}
-            {STATUS_COPY[check.status]}
+            {t(STATUS_COPY[check.status])}
           </span>
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">{check.summary}</p>

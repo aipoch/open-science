@@ -603,16 +603,32 @@ export type ClaudeInstallSource = 'managed' | 'npm' | 'official-script'
 export type ManagedClaudeRegistry = 'npmjs' | 'npmmirror'
 
 // Static, non-secret description of an install source shown in the UI (command is copyable).
+// Install-source copy carried as the English text itself, which under natural-language keys is also
+// its own catalog key. This module is shared with the main process and has no i18n access, so it
+// passes the English through unresolved and the renderer's picker maps it via t(). Spelled as literal
+// unions rather than `string` so a typo in the English fails typecheck at the call site.
+export type InstallSourceLabelKey =
+  | 'App-managed download (recommended)'
+  | 'npm (global install)'
+  | 'Official install.ps1'
+  | 'Official install.sh'
+  | 'Official install script'
+
+export type InstallSourceDescriptionKey =
+  | 'Downloads a self-contained Claude — no Node.js or npm required.'
+  | 'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.'
+  | 'Downloads a self-contained OpenCode — no Node.js or npm required.'
+
 export type ClaudeInstallSourceInfo = {
   id: ClaudeInstallSource
-  label: string
+  labelKey: InstallSourceLabelKey
   // Human-readable command shown in the UI and safe to copy/paste. Empty for the app-managed source,
-  // which has no shell command (the app performs the install itself).
+  // which has no shell command (the app performs the install itself). Shell text, never translated.
   displayCommand: string
   // Whether this source needs npm on PATH (drives default selection + disabled state).
   requiresNpm: boolean
   // Optional one-line explanation shown under the picker (used by the app-managed source).
-  description?: string
+  descriptionKey?: InstallSourceDescriptionKey
 }
 
 // The ordered install sources for a given host platform. The app-managed download is the default and
@@ -626,20 +642,20 @@ export const getClaudeInstallSources = (platform: string = 'linux'): ClaudeInsta
   return [
     {
       id: 'managed',
-      label: 'App-managed download (recommended)',
+      labelKey: 'App-managed download (recommended)',
       displayCommand: '',
       requiresNpm: false,
-      description: 'Downloads a self-contained Claude — no Node.js or npm required.'
+      descriptionKey: 'Downloads a self-contained Claude — no Node.js or npm required.'
     },
     {
       id: 'npm',
-      label: 'npm (global install)',
+      labelKey: 'npm (global install)',
       displayCommand: 'npm i -g @anthropic-ai/claude-code',
       requiresNpm: true
     },
     {
       id: 'official-script',
-      label: isWindows ? 'Official install.ps1' : 'Official install.sh',
+      labelKey: isWindows ? 'Official install.ps1' : 'Official install.sh',
       displayCommand: isWindows
         ? 'irm https://claude.ai/install.ps1 | iex'
         : 'curl -fsSL https://claude.ai/install.sh | bash',
@@ -696,14 +712,14 @@ export type InstallCodexRequest = {
 export const getCodexInstallSources = (): ClaudeInstallSourceInfo[] => [
   {
     id: 'managed',
-    label: 'App-managed download (recommended)',
+    labelKey: 'App-managed download (recommended)',
     displayCommand: '',
     requiresNpm: false,
-    description: 'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.'
+    descriptionKey: 'Downloads a self-contained Codex ACP runtime — no Node.js or npm required.'
   },
   {
     id: 'npm',
-    label: 'npm (global install)',
+    labelKey: 'npm (global install)',
     displayCommand: 'npm i -g @agentclientprotocol/codex-acp',
     requiresNpm: true
   }
@@ -721,14 +737,14 @@ export const getOpencodeInstallSources = (
   const sources: ClaudeInstallSourceInfo[] = [
     {
       id: 'managed',
-      label: 'App-managed download (recommended)',
+      labelKey: 'App-managed download (recommended)',
       displayCommand: '',
       requiresNpm: false,
-      description: 'Downloads a self-contained OpenCode — no Node.js or npm required.'
+      descriptionKey: 'Downloads a self-contained OpenCode — no Node.js or npm required.'
     },
     {
       id: 'npm',
-      label: 'npm (global install)',
+      labelKey: 'npm (global install)',
       displayCommand: 'npm i -g opencode-ai',
       requiresNpm: true
     }
@@ -737,7 +753,7 @@ export const getOpencodeInstallSources = (
   if (!isWindows) {
     sources.push({
       id: 'official-script',
-      label: 'Official install script',
+      labelKey: 'Official install script',
       displayCommand: 'curl -fsSL https://opencode.ai/install | bash',
       requiresNpm: false
     })

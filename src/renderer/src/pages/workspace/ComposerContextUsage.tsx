@@ -3,6 +3,7 @@
 // once an Agent total exists it remains the numerator until a fresher usage_update arrives. The
 // denominator is bound to the selected model and agent-context generation when that window is known.
 
+import { useTranslation } from 'react-i18next'
 import { Gauge, Minimize2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
 
@@ -21,6 +22,8 @@ type ComposerContextUsageProps = {
 
 const COMPACT_ACTION_THRESHOLD_PERCENT = 30
 
+// `label` holds a catalog key, not display text: this map is module-level, so a resolved string
+// would freeze the first language the module loaded under. Both render sites pass it through t().
 const CATEGORY_PRESENTATION: Record<AcpContextUsageCategoryKey, { label: string; color: string }> =
   {
     system: { label: 'System prompt', color: 'bg-emerald-500' },
@@ -31,11 +34,12 @@ const CATEGORY_PRESENTATION: Record<AcpContextUsageCategoryKey, { label: string;
     other: { label: 'Agent/framework overhead', color: 'bg-slate-400' }
   }
 
-const TOKENIZER_LABELS = {
+// Tokenizer ids are protocol values and stay English; only the Anthropic row is prose.
+const TOKENIZER_LABELS: Record<string, string> = {
   anthropic: 'Anthropic approx.',
   o200k_base: 'o200k_base',
   cl100k_base: 'cl100k_base'
-} as const
+}
 
 // Compact token count: 1_000_000 -> "1M", 24_890 -> "25k", 512 -> "512".
 const formatTokens = (tokens: number): string => {
@@ -63,6 +67,7 @@ const ComposerContextUsage = ({
   compactDisabledReason,
   onCompact
 }: ComposerContextUsageProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const contentId = useId()
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -109,6 +114,11 @@ const ComposerContextUsage = ({
   const breakdown = contextUsage.breakdown
   const estimating = breakdown?.status === 'preflight'
   const hasAgentTotal = !estimating || contextUsage.agentUsed !== undefined
+  // Whole sentences per branch rather than a swapped-in noun: a pre-Agent snapshot is announced as an
+  // estimate, not as settled usage, and that distinction has to survive translation.
+  const triggerAriaLabel = hasAgentTotal
+    ? t('Context used: {{label}}', { label })
+    : t('Estimated context: {{label}}', { label })
   const showCompactAction =
     compacting ||
     (!estimating && usagePercent !== undefined && usagePercent >= COMPACT_ACTION_THRESHOLD_PERCENT)
@@ -124,14 +134,14 @@ const ComposerContextUsage = ({
   const compactButton = (
     <button
       type="button"
-      aria-label={compacting ? 'Compacting context' : 'Compact context'}
+      aria-label={compacting ? t('Compacting context') : t('Compact context')}
       aria-disabled={compactUnavailable ? true : undefined}
       disabled={compacting || (compactUnavailable && !compactHint)}
       onClick={compacting || compactUnavailable ? undefined : onCompact}
       className={`inline-flex h-6 w-full items-center justify-center gap-1 rounded-lg bg-bg-200 px-2 text-[11px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-300 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-400 disabled:cursor-not-allowed disabled:opacity-50 ${compactHint ? 'cursor-not-allowed opacity-50 hover:bg-bg-200' : ''}`}
     >
       <Minimize2 className="size-3" aria-hidden="true" />
-      {compacting ? 'Compacting…' : 'Compact'}
+      {compacting ? t('Compacting…') : t('Compact')}
     </button>
   )
 
@@ -142,7 +152,7 @@ const ComposerContextUsage = ({
           ref={triggerRef}
           type="button"
           className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-text-000 outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-bg-200 focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-bg-300"
-          aria-label={`${hasAgentTotal ? 'Context used' : 'Estimated context'}: ${label}`}
+          aria-label={triggerAriaLabel}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? contentId : undefined}
@@ -185,7 +195,7 @@ const ComposerContextUsage = ({
       >
         <div className="space-y-2.5 text-[12px]">
           <div>
-            <div className="text-[13px] font-medium">Context window</div>
+            <div className="text-[13px] font-medium">{t('Context window')}</div>
             <div
               data-slot="context-usage-summary"
               className="mt-1 flex min-w-0 items-baseline gap-2 whitespace-nowrap"
@@ -194,7 +204,7 @@ const ComposerContextUsage = ({
                 {usagePercent !== undefined ? `${usagePercent.toFixed(1)}%` : formatTokens(used)}
               </span>
               <span className="min-w-0 truncate text-muted-foreground tabular-nums">
-                {hasAgentTotal ? 'Agent used' : 'Local estimate'}
+                {hasAgentTotal ? t('Agent used') : t('Local estimate')}
                 {hasKnownSize
                   ? ` ${formatDetailedTokens(used)} / ${formatDetailedTokens(size)}`
                   : null}
@@ -207,8 +217,13 @@ const ComposerContextUsage = ({
                 className="flex h-2 overflow-hidden rounded-full bg-bg-200"
                 aria-label={
                   hasKnownSize
-                    ? `Estimated category occupancy: ${formatDetailedTokens(visualUsed)} of ${formatDetailedTokens(size)} tokens`
-                    : `Estimated category distribution: ${formatDetailedTokens(visualUsed)} tokens`
+                    ? t('Estimated category occupancy: {{used}} of {{size}} tokens', {
+                        used: formatDetailedTokens(visualUsed),
+                        size: formatDetailedTokens(size)
+                      })
+                    : t('Estimated category distribution: {{used}} tokens', {
+                        used: formatDetailedTokens(visualUsed)
+                      })
                 }
               >
                 {categories.map((category) => {
@@ -220,7 +235,7 @@ const ComposerContextUsage = ({
                       key={category.key}
                       className={`${presentation.color} h-full border-r border-bg-000/80 last:border-r-0`}
                       style={{ width: `${width}%` }}
-                      title={`${presentation.label}: ${formatDetailedTokens(category.tokens)}`}
+                      title={`${t(presentation.label)}: ${formatDetailedTokens(category.tokens)}`}
                     />
                   )
                 })}
@@ -235,7 +250,7 @@ const ComposerContextUsage = ({
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <span className={`${presentation.color} size-2 shrink-0 rounded-full`} />
-                        <span className="truncate">{presentation.label}</span>
+                        <span className="truncate">{t(presentation.label)}</span>
                       </span>
                       <span className="shrink-0 tabular-nums text-muted-foreground">
                         {category.estimated ? '~' : ''}
@@ -251,26 +266,34 @@ const ComposerContextUsage = ({
                 title={
                   estimating
                     ? contextUsage.agentUsed === undefined
-                      ? 'Local estimate updates while the Agent is generating.'
-                      : 'The latest Agent total remains authoritative while local categories update.'
-                    : 'Agent total is authoritative; category values are local estimates.'
+                      ? t('Local estimate updates while the Agent is generating.')
+                      : t(
+                          'The latest Agent total remains authoritative while local categories update.'
+                        )
+                    : t('Agent total is authoritative; category values are local estimates.')
                 }
               >
                 {estimating && contextUsage.agentUsed !== undefined ? (
                   <div className="whitespace-nowrap tabular-nums">
-                    Local {formatDetailedTokens(breakdown.estimatedTokens)} · Latest Agent{' '}
-                    {formatDetailedTokens(contextUsage.agentUsed)}
+                    {t('Local {{local}} · Latest Agent {{agent}}', {
+                      local: formatDetailedTokens(breakdown.estimatedTokens),
+                      agent: formatDetailedTokens(contextUsage.agentUsed)
+                    })}
                   </div>
                 ) : estimating ? null : (
                   <div className="whitespace-nowrap tabular-nums">
-                    Local {formatDetailedTokens(breakdown.estimatedTokens)} · Agent{' '}
-                    {formatDetailedTokens(used)} · Δ {breakdown.difference > 0 ? '+' : ''}
-                    {formatDetailedTokens(breakdown.difference)}
+                    {t('Local {{local}} · Agent {{agent}} · Δ {{difference}}', {
+                      local: formatDetailedTokens(breakdown.estimatedTokens),
+                      agent: formatDetailedTokens(used),
+                      difference: `${breakdown.difference > 0 ? '+' : ''}${formatDetailedTokens(breakdown.difference)}`
+                    })}
                   </div>
                 )}
                 <div className="truncate whitespace-nowrap">
-                  {estimating ? 'Estimating' : 'Reconciled'}
-                  {breakdown.tokenizer ? ` · ${TOKENIZER_LABELS[breakdown.tokenizer]}` : ''}
+                  {estimating ? t('Estimating') : t('Reconciled')}
+                  {breakdown.tokenizer
+                    ? ` · ${breakdown.tokenizer === 'anthropic' ? t(TOKENIZER_LABELS[breakdown.tokenizer]) : TOKENIZER_LABELS[breakdown.tokenizer]}`
+                    : ''}
                   {breakdown.model ? ` · ${breakdown.model}` : ''}
                 </div>
               </div>

@@ -1,4 +1,5 @@
 import { Ban, CircleCheck, Hand } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import type { ToolPermission } from '../../../../shared/settings'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -16,6 +17,8 @@ export function ToolPermissionControl({
   onChange,
   label
 }: ToolPermissionControlProps): React.JSX.Element {
+  const { t } = useTranslation()
+
   const segment = (active: boolean, allow: boolean): string => {
     const base =
       'grid h-6 w-7 place-items-center rounded-md transition-colors motion-reduce:transition-none'
@@ -38,14 +41,14 @@ export function ToolPermissionControl({
               type="button"
               role="radio"
               aria-checked={value === 'allow'}
-              aria-label="Always allow"
+              aria-label={t('Always allow')}
               onClick={() => onChange('allow')}
               className={segment(value === 'allow', true)}
             >
               <CircleCheck className="size-3.5" aria-hidden />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Always allow</TooltipContent>
+          <TooltipContent>{t('Always allow')}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -53,14 +56,14 @@ export function ToolPermissionControl({
               type="button"
               role="radio"
               aria-checked={value === 'ask'}
-              aria-label="Require approval"
+              aria-label={t('Require approval')}
               onClick={() => onChange('ask')}
               className={segment(value === 'ask', false)}
             >
               <Hand className="size-3.5" aria-hidden />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Require approval</TooltipContent>
+          <TooltipContent>{t('Require approval')}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -68,14 +71,14 @@ export function ToolPermissionControl({
               type="button"
               role="radio"
               aria-checked={value === 'block'}
-              aria-label="Block"
+              aria-label={t('Block')}
               onClick={() => onChange('block')}
               className={segment(value === 'block', false)}
             >
               <Ban className="size-3.5" aria-hidden />
             </button>
           </TooltipTrigger>
-          <TooltipContent>Block</TooltipContent>
+          <TooltipContent>{t('Block')}</TooltipContent>
         </Tooltip>
       </div>
     </TooltipProvider>

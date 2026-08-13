@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Archive, Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 
@@ -47,6 +48,8 @@ const DownloadSessionArtifactsDialog = ({
   session,
   onClose
 }: DownloadSessionArtifactsDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const dialogSession = useRetainedDialogValue(session)
   const [settledArtifactList, setSettledArtifactList] = useState<SettledArtifactList>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -176,7 +179,7 @@ const DownloadSessionArtifactsDialog = ({
               <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0">
                 <Dialog.Title className="text-sm font-semibold text-foreground">
-                  Download session artifacts
+                  {t('Download session artifacts')}
                 </Dialog.Title>
                 <Dialog.Description className="truncate text-xs text-muted-foreground">
                   {dialogSession?.title ?? 'Session'}
@@ -192,7 +195,7 @@ const DownloadSessionArtifactsDialog = ({
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               onClick={onClose}
             >
@@ -204,7 +207,7 @@ const DownloadSessionArtifactsDialog = ({
             {status === 'loading' ? (
               <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-                Loading artifacts…
+                {t('Loading artifacts…')}
               </div>
             ) : status === 'error' ? (
               <div className="flex min-h-32 flex-col items-center justify-center gap-3 px-6 text-center">
@@ -216,15 +219,15 @@ const DownloadSessionArtifactsDialog = ({
                   variant="outline"
                   onClick={() => setRetryVersion((v) => v + 1)}
                 >
-                  Retry
+                  {t('Retry')}
                 </Button>
               </div>
             ) : artifacts.length === 0 ? (
               <div className="flex min-h-32 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-                No downloadable artifacts in this session.
+                {t('No downloadable artifacts in this session.')}
               </div>
             ) : (
-              <div role="group" aria-label="Session artifacts">
+              <div role="group" aria-label={t('Session artifacts')}>
                 {artifacts.map((artifact) => (
                   <label
                     key={artifact.id}

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import type { ExternalSessionNotice } from '@/hooks/useLifecycleSync'
 
@@ -14,6 +15,8 @@ const LifecycleToast = ({
   onDismiss: () => void
   onView: () => void
 }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+
   useEffect(() => {
     if (!notice) return
     const timeout = window.setTimeout(onDismiss, AUTO_DISMISS_MS)
@@ -29,7 +32,7 @@ const LifecycleToast = ({
       className="fixed right-3 top-3 z-50 flex max-w-sm items-center gap-3 rounded-lg border border-border-100 bg-bg-200 px-3 py-2 text-sm text-text-100 shadow-lg"
     >
       <span className="min-w-0 flex-1">
-        <span className="block">Session created externally</span>
+        <span className="block">{t('Session created externally')}</span>
         <span className="block truncate text-xs text-text-300" title={notice.title}>
           {notice.title}
         </span>
@@ -39,11 +42,11 @@ const LifecycleToast = ({
         onClick={onView}
         className="shrink-0 rounded px-2 py-1 text-xs font-medium text-accent-main-100 hover:bg-bg-300"
       >
-        View
+        {t('View')}
       </button>
       <button
         type="button"
-        aria-label="Dismiss"
+        aria-label={t('Dismiss')}
         onClick={onDismiss}
         className="shrink-0 rounded p-1 text-text-300 hover:bg-bg-300 hover:text-text-100"
       >

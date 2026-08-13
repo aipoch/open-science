@@ -2,6 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import i18next from 'i18next'
 
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
@@ -255,6 +256,7 @@ describe('WorkspaceToolDetailsRow', () => {
       }
     })
     const details = buildToolActivityDetails(activity)
+    const notebookRun = createNotebookRun()
 
     root = createRoot(container)
     await act(async () => {
@@ -262,7 +264,7 @@ describe('WorkspaceToolDetailsRow', () => {
         <WorkspaceToolDetailsRow
           activity={activity}
           details={details!}
-          notebookRun={createNotebookRun()}
+          notebookRun={notebookRun}
           isExpanded={true}
           onToggle={vi.fn()}
         />
@@ -280,7 +282,47 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(figure?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,QUJD')
     expect(figure?.firstElementChild?.className).toContain('justify-start')
     expect(textOutput?.contains(figure)).toBe(false)
-    expect(container.textContent).toContain('1 figure')
+    expect(container.textContent).toMatch(/1 figure/)
     expect(container.textContent).not.toContain('Saved:')
+  })
+
+  it('translates figure count meta', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      rawInput: { code: 'plot(1:3)', kernelKind: 'r' },
+      rawOutput: {
+        runId: 'notebook-run-1',
+        status: 'completed',
+        text: { stdout: 'saved: plot.png\n', stderr: '', traceback: '' }
+      }
+    })
+    const details = buildToolActivityDetails(activity)
+    const notebookRun = createNotebookRun()
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={details!}
+          notebookRun={notebookRun}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toMatch(/1 figure/)
+
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+
+    expect(container.textContent).toContain('1 个图表')
+    expect(container.textContent).not.toMatch(/\d+ figures?/)
+
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
   })
 })

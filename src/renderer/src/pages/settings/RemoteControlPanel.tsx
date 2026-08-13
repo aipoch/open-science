@@ -15,6 +15,8 @@ import {
   Trash2
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import type { TFunction } from 'i18next'
+import { useTranslation, Trans } from 'react-i18next'
 
 import type {
   RemoteAccessMode,
@@ -22,6 +24,7 @@ import type {
   RemotePairingDecision
 } from '../../../../shared/remote-access'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -36,16 +39,16 @@ import { SettingsIconAction, SettingsSection } from './SettingsLayout'
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
 type CopyStatus = 'idle' | 'copied' | 'error'
 
-const lifecycleLabel = (snapshot: RemoteAccessSnapshot): string => {
-  if (snapshot.lifecycle === 'starting') return 'Starting…'
-  if (snapshot.lifecycle === 'stopping') return 'Stopping…'
-  if (snapshot.mode === 'off') return 'Remote access is off'
-  if (snapshot.lifecycle === 'running' && snapshot.mode === 'remoteit') return 'App access is on'
+const lifecycleLabel = (snapshot: RemoteAccessSnapshot, t: TFunction): string => {
+  if (snapshot.lifecycle === 'starting') return t('Starting…')
+  if (snapshot.lifecycle === 'stopping') return t('Stopping…')
+  if (snapshot.mode === 'off') return t('Remote access is off')
+  if (snapshot.lifecycle === 'running' && snapshot.mode === 'remoteit') return t('App access is on')
   if (snapshot.lifecycle === 'running' && snapshot.mode === 'remoteit-public') {
-    return 'Browser access is on'
+    return t('Browser access is on')
   }
-  if (snapshot.lifecycle === 'error') return 'Needs attention'
-  return 'Remote access is off'
+  if (snapshot.lifecycle === 'error') return t('Needs attention')
+  return t('Remote access is off')
 }
 
 const ACCESS_MODES: {
@@ -74,18 +77,22 @@ const ACCESS_MODES: {
   }
 ]
 
-const timeLabel = (timestamp: number): string =>
-  new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(timestamp)
+const providerStatus = (snapshot: RemoteAccessSnapshot, t: TFunction): string => {
+  if (!snapshot.remoteIt.installed) return t('Not installed')
+  if (!snapshot.remoteIt.registered) return t('Device setup required')
+  if (!snapshot.remoteIt.loggedIn) return t('Sign-in required')
+  if (snapshot.enabled && snapshot.lifecycle === 'running') return t('Connected')
+  return t('Ready')
+}
 
-const providerStatus = (snapshot: RemoteAccessSnapshot): string => {
-  if (!snapshot.remoteIt.installed) return 'Not installed'
-  if (!snapshot.remoteIt.registered) return 'Device setup required'
-  if (!snapshot.remoteIt.loggedIn) return 'Sign-in required'
-  if (snapshot.enabled && snapshot.lifecycle === 'running') return 'Connected'
-  return 'Ready'
+const loadRemoteAccessSnapshot = async (
+  onInitial: (snapshot: RemoteAccessSnapshot) => void = () => undefined,
+  isActive: () => boolean = () => true
+): Promise<RemoteAccessSnapshot> => {
+  const initial = await window.api.remoteAccess.getSnapshot()
+  if (!isActive()) return initial
+  onInitial(initial)
+  return initial.canManage ? window.api.remoteAccess.detect() : initial
 }
 
 const loadRemoteAccessSnapshot = async (
@@ -119,6 +126,9 @@ const BrowserAccessSteps = (): React.JSX.Element => (
 )
 
 export const RemoteControlPanel = (): React.JSX.Element => {
+  const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
+
   const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(null)
   const [busy, setBusy] = useState<string | null>('loading')
   const [actionError, setActionError] = useState<string | undefined>()
@@ -259,7 +269,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     return (
       <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">
         <LoaderCircle className="mr-2 size-4 animate-spin" aria-hidden="true" />
-        Loading remote access…
+        {t('Loading remote access…')}
       </div>
     )
   }
@@ -272,9 +282,11 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const accessIsApp = snapshot.mode === 'remoteit'
   const accessIsBrowser = snapshot.mode === 'remoteit-public'
   const accessUsesPairing = snapshot.mode === 'remoteit' || snapshot.mode === 'remoteit-public'
-  const statusLabel = providerStatus(snapshot)
+  const statusLabel = providerStatus(snapshot, t)
   const statusClassName =
-    statusLabel === 'Connected' ? 'border-0 bg-primary/10 text-primary' : undefined
+    snapshot.enabled && snapshot.lifecycle === 'running'
+      ? 'border-0 bg-primary/10 text-primary'
+      : undefined
 
   const detectButton = snapshot.canManage ? (
     <Button
@@ -293,7 +305,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         className={`size-3.5 ${busy === 'detect' ? 'animate-spin' : ''}`}
         aria-hidden="true"
       />
-      Detect again
+      {t('Detect again')}
     </Button>
   ) : null
 
@@ -334,18 +346,23 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       <SettingsSection
         className="relative"
         contentClassName="space-y-3"
-        title="Remote browser access"
+        title={t('Remote browser access')}
         description={
           <>
-            Choose who can reach this computer&apos;s Open Science workspace. All projects, agents,
-            files, and notebook runtimes continue to run on this computer. Install and sign in to
-            the Remote.It desktop app before enabling access.{' '}
-            <ExternalTextLink
-              href={REMOTE_IT_DOWNLOAD_URL}
-              className="box-decoration-clone rounded-sm bg-primary/10 px-1 py-0.5 font-medium text-primary underline decoration-primary/50 underline-offset-2 transition-colors hover:bg-primary/15 hover:decoration-primary"
-            >
-              Download Remote.It App
-            </ExternalTextLink>
+            <Trans
+              i18nKey="Choose who can reach this computer's Open Science workspace. All projects, agents, files, and notebook runtimes continue to run on this computer. Install and sign in to the Remote.It desktop app before enabling access. <lnk>Download Remote.It App</lnk>"
+              components={{
+                lnk: (
+                  <ExternalTextLink
+                    href={REMOTE_IT_DOWNLOAD_URL}
+                    className="box-decoration-clone rounded-sm bg-primary/10 px-1 py-0.5 font-medium text-primary underline decoration-primary/50 underline-offset-2 transition-colors hover:bg-primary/15 hover:decoration-primary"
+                  >
+                    {/* placeholder — Trans injects children */}
+                    {''}
+                  </ExternalTextLink>
+                )
+              }}
+            />
           </>
         }
         actionClassName="w-full sm:w-auto"
@@ -358,17 +375,17 @@ export const RemoteControlPanel = (): React.JSX.Element => {
             variant={hasModeError ? 'destructive' : snapshot.enabled ? 'secondary' : 'outline'}
           >
             {changingMode
-              ? 'Changing access mode…'
+              ? t('Changing access mode…')
               : detectingAndRepairing
-                ? 'Checking access…'
-                : lifecycleLabel(snapshot)}
+                ? t('Checking access…')
+                : lifecycleLabel(snapshot, t)}
           </Badge>
         }
       >
         <div
           className="grid grid-cols-1 gap-2 sm:grid-cols-3"
           role="radiogroup"
-          aria-label="Remote access mode"
+          aria-label={t('Remote access mode')}
         >
           {ACCESS_MODES.map((option) => {
             const selected = snapshot.mode === option.mode
@@ -407,11 +424,11 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                     aria-hidden="true"
                   />
                   <span className="min-w-0 text-sm font-medium text-foreground">
-                    {option.title}
+                    {t(option.title)}
                   </span>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                  {option.description}
+                  {t(option.description)}
                 </p>
                 <span
                   className="pointer-events-none absolute inset-0 rounded-xl ring-primary peer-focus-visible:ring-2 peer-focus-visible:ring-offset-2"
@@ -424,15 +441,17 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
         {modeError ? (
           <div className="rounded-lg border border-destructive/35 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-            {modeError}
+            {t(modeError)}
           </div>
         ) : null}
 
         {!snapshot.canManage ? (
           <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            {snapshot.canManagePairing && accessUsesPairing
-              ? 'Remote access settings can only be changed from the Open Science desktop window on the home computer. Two-step verification requests and trusted browsers can be managed below.'
-              : 'Remote access settings can only be changed from the Open Science desktop window on the home computer.'}
+            {t(
+              snapshot.canManagePairing && accessUsesPairing
+                ? 'Remote access settings can only be changed from the Open Science desktop window on the home computer. Two-step verification requests and trusted browsers can be managed below.'
+                : 'Remote access settings can only be changed from the Open Science desktop window on the home computer.'
+            )}
           </div>
         ) : null}
       </SettingsSection>
@@ -440,7 +459,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       {accessIsApp ? (
         <SettingsSection
           contentClassName="space-y-3"
-          title="Remote App Access"
+          title={t('Remote App Access')}
           action={
             <Badge variant="outline" className={statusClassName}>
               {statusLabel}
@@ -449,8 +468,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
-              Open this computer from the signed-in mobile app. Open Science creates and maintains
-              the local service automatically after this computer is added once.
+              {t(
+                'Open this computer from the signed-in mobile app. Open Science creates and maintains the local service automatically after this computer is added once.'
+              )}
             </p>
             {detectButton}
           </div>
@@ -467,20 +487,24 @@ export const RemoteControlPanel = (): React.JSX.Element => {
               />
               <ol className="min-w-0 space-y-2 text-sm leading-relaxed text-foreground">
                 <li>
-                  <span className="font-medium">1.</span> Open the mobile app and sign in to the
-                  same account as this computer.
+                  <span className="font-medium">1.</span>{' '}
+                  {t('Open the mobile app and sign in to the same account as this computer.')}
                 </li>
                 <li>
-                  <span className="font-medium">2.</span> Select this computer, then select{' '}
+                  <span className="font-medium">2.</span> {t('Select this computer, then select')}{' '}
                   <span className="font-medium">Open Science Remote</span>.
                 </li>
                 <li>
-                  <span className="font-medium">3.</span> Tap Connect or Launch, match the six-digit
-                  code, then approve the request from this computer or an already trusted browser.
+                  <span className="font-medium">3.</span>{' '}
+                  {t(
+                    'Tap Connect or Launch, match the six-digit code, then approve the request from this computer or an already trusted browser.'
+                  )}
                 </li>
                 <li>
-                  <span className="font-medium">4.</span> Choose “Always trust this browser” to skip
-                  approval on future visits to the same remote address.
+                  <span className="font-medium">4.</span>{' '}
+                  {t(
+                    'Choose “Always trust this browser” to skip approval on future visits to the same remote address.'
+                  )}
                 </li>
               </ol>
             </div>
@@ -491,7 +515,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       {accessIsBrowser ? (
         <SettingsSection
           contentClassName="space-y-3"
-          title="Remote Browser Access"
+          title={t('Remote Browser Access')}
           action={
             <Badge variant="outline" className={statusClassName}>
               {statusLabel}
@@ -500,8 +524,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <p className="max-w-2xl text-[13px] leading-5 text-muted-foreground">
-              Open a persistent HTTPS address from any modern browser. Open Science creates and
-              maintains the public browser service automatically.
+              {t(
+                'Open a persistent HTTPS address from any modern browser. Open Science creates and maintains the public browser service automatically.'
+              )}
             </p>
             {detectButton}
           </div>
@@ -521,7 +546,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-sm font-medium text-foreground">
-                          Browser link is ready
+                          {t('Browser link is ready')}
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <Button
@@ -536,7 +561,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                           <Button type="button" variant="outline" size="sm" asChild>
                             <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
                               <ExternalLink className="size-3.5" aria-hidden="true" />
-                              Open
+                              {t('Open')}
                             </a>
                           </Button>
                         </div>
@@ -577,17 +602,17 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                     marginSize={2}
                     bgColor="#ffffff"
                     fgColor="#111827"
-                    title="Scan to open Open Science"
+                    title={t('Scan to open Open Science')}
                   />
                   <div className="mt-1 text-center text-[11px] font-medium text-slate-700">
-                    Scan to open
+                    {t('Scan to open')}
                   </div>
                 </div>
               </div>
             ) : (
               <div>
                 <div className="text-sm text-muted-foreground">
-                  The browser link and QR code appear here after setup is complete.
+                  {t('The browser link and QR code appear here after setup is complete.')}
                 </div>
                 <BrowserAccessSteps />
               </div>
@@ -598,12 +623,14 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
       {snapshot.canManagePairing && accessUsesPairing ? (
         <SettingsSection
-          title="Trusted browsers"
-          description="Always-trusted browsers can reconnect while the same remote address remains available. Revoking one takes effect on its next request or WebSocket reconnect."
+          title={t('Trusted browsers')}
+          description={t(
+            'Always-trusted browsers can reconnect while the same remote address remains available. Revoking one takes effect on its next request or WebSocket reconnect.'
+          )}
         >
           {snapshot.trustedBrowsers.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-              No browser has permanent access.
+              {t('No browser has permanent access.')}
             </div>
           ) : (
             <div className="divide-y divide-border rounded-xl border border-border">
@@ -615,7 +642,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       {browser.browser} · {browser.platform}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      Last used {timeLabel(browser.lastSeenAt)}
+                      {t('Last used {{time}}', {
+                        time: formatDate(browser.lastSeenAt, 'dateTime')
+                      })}
                     </div>
                   </div>
                   <SettingsIconAction
@@ -638,12 +667,14 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
       {snapshot.canManagePairing && accessUsesPairing ? (
         <SettingsSection
-          title={`Pairing requests${snapshot.pendingRequests.length ? ` (${snapshot.pendingRequests.length})` : ''}`}
-          description="Two-step verification uses a six-digit code. Approve a new remote session only when its code matches the request shown here."
+          title={`${t('Pairing requests')}${snapshot.pendingRequests.length ? ` (${snapshot.pendingRequests.length})` : ''}`}
+          description={t(
+            'Two-step verification uses a six-digit code. Approve a new remote session only when its code matches the request shown here.'
+          )}
         >
           {snapshot.pendingRequests.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-              No browsers are waiting for approval.
+              {t('No browsers are waiting for approval.')}
             </div>
           ) : (
             <div className="space-y-3">
@@ -658,7 +689,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                         {request.browser} · {request.platform}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        Requested {timeLabel(request.requestedAt)}
+                        {t('Requested {{time}}', {
+                          time: formatDate(request.requestedAt, 'dateTime')
+                        })}
                         {request.address ? ` · ${request.address}` : ''}
                       </div>
                     </div>
@@ -678,7 +711,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                         )
                       }
                     >
-                      Reject
+                      {t('Reject')}
                     </Button>
                     <Button
                       type="button"
@@ -687,7 +720,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       disabled={busy !== null}
                       onClick={() => approve(request.id, 'once')}
                     >
-                      Allow once
+                      {t('Allow once')}
                     </Button>
                     <Button
                       type="button"
@@ -695,7 +728,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       disabled={busy !== null}
                       onClick={() => approve(request.id, 'always')}
                     >
-                      Always trust this browser
+                      {t('Always trust this browser')}
                     </Button>
                   </div>
                 </div>
@@ -706,8 +739,9 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       ) : null}
 
       <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-        Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI
-        and does not include, redistribute, register, or create an account for it.
+        {t(
+          'Remote.It is a third-party service. Open Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.'
+        )}
       </p>
     </div>
   )

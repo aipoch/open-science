@@ -1,5 +1,6 @@
 import { ScrollText } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { SkillDetailView as SkillDetail } from '../../../../shared/settings'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
@@ -10,14 +11,13 @@ type SkillDetailViewProps = {
   skillId: string
 }
 
-// Formats an ISO date as a coarse "Updated N days ago" string for the detail header.
-const formatUpdated = (iso: string): string => {
+// Elapsed whole days since an ISO date, or null when it can't be parsed. Stays pure and locale-free
+// like relativeTimeParts: the caller picks the wording through the catalog, because "Updated today"
+// vs "{{count}} 天前更新" differ in word order, not just in a suffix.
+const daysSince = (iso: string): number | null => {
   const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
-  const days = Math.max(0, Math.round((Date.now() - then) / 86_400_000))
-  if (days === 0) return 'Updated today'
-  if (days === 1) return 'Updated 1 day ago'
-  return `Updated ${days} days ago`
+  if (Number.isNaN(then)) return null
+  return Math.max(0, Math.round((Date.now() - then) / 86_400_000))
 }
 
 // One label/value row in the Details section.
@@ -43,6 +43,7 @@ const DEDICATED_METADATA_KEYS = new Set([
 // rendered SKILL.md under "Files", and frontmatter metadata under "Details". The breadcrumb and back
 // control live in the settings header, not here.
 const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const skill = useSettingsStore((state) => state.skills.find((item) => item.id === skillId))
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
   const [detail, setDetail] = useState<SkillDetail | null>(null)
@@ -60,11 +61,20 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const enabled = skill?.enabled ?? detail?.enabled ?? false
   const name = skill?.name ?? detail?.name ?? ''
   const description = detail?.description ?? skill?.description ?? ''
-  const updated = detail ? formatUpdated(detail.updatedAt) : ''
+  const elapsedDays = detail ? daysSince(detail.updatedAt) : null
+  const updated =
+    elapsedDays === null
+      ? ''
+      : elapsedDays === 0
+        ? t('Updated today')
+        : t('Updated {{count}} days ago', {
+            defaultValue_one: 'Updated {{count}} day ago',
+            count: elapsedDays
+          })
   // Badge reflects the skill's actual source; imported and personal skills are not "Featured".
   const source = skill?.source ?? detail?.source
   const sourceLabel =
-    source === 'imported' ? 'Imported' : source === 'personal' ? 'Personal' : 'Featured'
+    source === 'imported' ? t('Imported') : source === 'personal' ? t('Personal') : t('Featured')
   const genericMetadata = Object.entries(detail?.metadata ?? {}).filter(
     ([key]) => !DEDICATED_METADATA_KEYS.has(key.toLowerCase())
   )
@@ -84,7 +94,7 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
         </div>
         <SettingsToggle
           enabled={enabled}
-          aria-label={`Toggle ${name}`}
+          aria-label={t('Toggle {{name}}', { name })}
           onToggle={() => void setSkillEnabled(skillId, !enabled)}
         />
       </div>
@@ -96,7 +106,7 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
 
       {/* Files: the rendered SKILL.md body. */}
       <section className="mt-6 border-t border-border pt-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Files</h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">{t('Files')}</h2>
         {detail ? <AgentMarkdown content={detail.body} /> : null}
       </section>
 
@@ -104,12 +114,12 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
       {detail &&
       (detail.author || detail.license || detail.thirdParty || genericMetadata.length > 0) ? (
         <section className="mt-6 border-t border-border pt-4">
-          <h2 className="mb-1 text-sm font-semibold text-foreground">Details</h2>
-          {detail.author ? <DetailRow label="Author" value={detail.author} /> : null}
-          {detail.license ? <DetailRow label="License" value={detail.license} /> : null}
+          <h2 className="mb-1 text-sm font-semibold text-foreground">{t('Details')}</h2>
+          {detail.author ? <DetailRow label={t('Author')} value={detail.author} /> : null}
+          {detail.license ? <DetailRow label={t('License')} value={detail.license} /> : null}
           {detail.thirdParty ? (
             <DetailRow
-              label="Third-party software, content, terms, and information"
+              label={t('Third-party software, content, terms, and information')}
               value={detail.thirdParty}
             />
           ) : null}

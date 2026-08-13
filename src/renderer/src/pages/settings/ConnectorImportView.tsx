@@ -2,6 +2,7 @@
 
 import { AlertTriangle, FileJson, Upload } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import {
   CONNECTOR_TEMPLATE_MAX_BYTES,
@@ -35,6 +36,8 @@ export function ConnectorImportView({
   onUse,
   onCancel
 }: ConnectorImportViewProps): React.JSX.Element {
+  const { t } = useTranslation()
+
   const [selection, setSelection] = useState<ConnectorTemplateSelectionResult>()
   const [selecting, setSelecting] = useState(false)
   const [error, setError] = useState<string>()
@@ -90,11 +93,12 @@ export function ConnectorImportView({
       <div className="flex w-full flex-col gap-5">
         <div>
           <h2 className="text-base font-semibold text-foreground">
-            Import Connector configuration
+            {t('Import Connector configuration')}
           </h2>
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
-            Add one credential-free Connector configuration from your computer. You will review the
-            settings and enter any required credentials before it is added.
+            {t(
+              'Add one credential-free Connector configuration from your computer. You will review the settings and enter any required credentials before it is added.'
+            )}
           </p>
         </div>
 
@@ -105,16 +109,20 @@ export function ConnectorImportView({
           onClick={() => void applySelection()}
           className="relative flex w-full cursor-pointer flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-6 py-10 text-center transition-colors motion-reduce:transition-none hover:bg-muted/40 disabled:cursor-default disabled:opacity-60"
         >
-          {isDragging ? <FileDropOverlay label="Drop to validate" className="rounded-lg" /> : null}
+          {isDragging ? (
+            <FileDropOverlay label={t('Drop to validate')} className="rounded-lg" />
+          ) : null}
           <span className="inline-flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <Upload className="size-5" aria-hidden="true" />
           </span>
           <span className="text-sm font-medium text-foreground">
-            {selecting ? 'Validating…' : 'Drag and drop or click to choose'}
+            {selecting ? t('Validating…') : t('Drag and drop or click to choose')}
           </span>
           <span className="max-w-sm text-xs text-muted-foreground">
-            Choose one .json file up to {kb(CONNECTOR_TEMPLATE_MAX_BYTES)}. Credentials are never
-            imported from the file.
+            {t(
+              'Choose one .json file up to {{size}}. Credentials are never imported from the file.',
+              { size: kb(CONNECTOR_TEMPLATE_MAX_BYTES) }
+            )}
           </span>
         </button>
 
@@ -138,19 +146,19 @@ export function ConnectorImportView({
           <div>
             <div className="mb-2 flex items-center gap-2">
               <FileJson className="size-4 text-muted-foreground" aria-hidden="true" />
-              <h3 className="text-sm font-medium text-foreground">Configuration preview</h3>
+              <h3 className="text-sm font-medium text-foreground">{t('Configuration preview')}</h3>
             </div>
             <dl className="divide-y divide-border border-y border-border text-sm">
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Display name</dt>
+                <dt className="text-muted-foreground">{t('Display name')}</dt>
                 <dd className="min-w-0 break-words text-foreground">{definition.displayName}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Connector name</dt>
+                <dt className="text-muted-foreground">{t('Connector ID')}</dt>
                 <dd className="min-w-0 break-words text-foreground">{definition.name}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Transport</dt>
+                <dt className="text-muted-foreground">{t('Transport')}</dt>
                 <dd className="text-foreground">{transportLabel(definition)}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
@@ -164,7 +172,7 @@ export function ConnectorImportView({
                 </dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Credentials</dt>
+                <dt className="text-muted-foreground">{t('Credentials')}</dt>
                 <dd className="text-foreground">
                   {definition.oauth
                     ? 'OAuth browser sign-in after adding'
@@ -178,7 +186,7 @@ export function ConnectorImportView({
         ) : null}
 
         {preview?.diagnostics.length ? (
-          <div className="space-y-2" aria-label="Configuration diagnostics">
+          <div className="space-y-2" aria-label={t('Configuration diagnostics')}>
             {preview.diagnostics.map((item) => (
               <div
                 key={`${item.code}:${item.path ?? ''}`}
@@ -193,7 +201,7 @@ export function ConnectorImportView({
 
         <div className={selection ? 'flex items-center justify-end gap-2' : 'text-center'}>
           <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
+            {t('Cancel')}
           </Button>
           {selection ? (
             <Button
@@ -201,7 +209,7 @@ export function ConnectorImportView({
               disabled={!preview?.ready || !definition}
               onClick={() => definition && onUse(definition)}
             >
-              Use configuration
+              {t('Use configuration')}
             </Button>
           ) : null}
         </div>

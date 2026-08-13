@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
 import { MANAGED_PREVIEW_LOAD_ERROR } from '../../../../../../shared/preview-resources'
@@ -12,15 +13,17 @@ import { SourcePreviewContent } from './SourcePreview'
 
 type HtmlPreviewMode = 'render' | 'source'
 
-const HTML_PREVIEW_MODES: { id: HtmlPreviewMode; label: string; ariaLabel: string }[] = [
-  { id: 'render', label: 'Render', ariaLabel: 'Show rendered HTML' },
-  { id: 'source', label: 'Source', ariaLabel: 'Show HTML source' }
-]
+// Catalog keys rather than text so the toggle relabels on a language switch.
+const HTML_PREVIEW_MODES = [
+  { id: 'render', labelKey: 'Render', ariaLabelKey: 'Show rendered HTML' },
+  { id: 'source', labelKey: 'Source', ariaLabelKey: 'Show HTML source' }
+] as const satisfies readonly { id: HtmlPreviewMode; labelKey: string; ariaLabelKey: string }[]
 
 const HtmlSourceContent = ({
   item,
   topContent
 }: PreviewFileRendererProps & { topContent: React.ReactNode }): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -29,7 +32,7 @@ const HtmlSourceContent = ({
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="HTML couldn't be read for preview"
+        fallbackMessage={t("HTML couldn't be read for preview")}
       />
     )
   }
@@ -44,6 +47,7 @@ const HtmlSourceContent = ({
 }
 
 export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [mode, setMode] = useState<HtmlPreviewMode>('render')
   const requestKey = createPreviewResourceKey(item)
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
@@ -75,7 +79,7 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
           <button
             key={option.id}
             type="button"
-            aria-label={option.ariaLabel}
+            aria-label={t(option.ariaLabelKey)}
             aria-pressed={mode === option.id}
             className={cn(
               'h-6 rounded px-2 text-[12px] text-text-300 transition-colors hover:bg-bg-000 hover:text-text-000',
@@ -83,7 +87,7 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
             )}
             onClick={() => setMode(option.id)}
           >
-            {option.label}
+            {t(option.labelKey)}
           </button>
         ))}
       </div>
@@ -103,7 +107,7 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
           <PreviewErrorCard
             name={item.name}
             error={resourceState.status === 'error' ? resourceState.error : undefined}
-            fallbackMessage="HTML couldn't be read for preview"
+            fallbackMessage={t("HTML couldn't be read for preview")}
           />
         </div>
       </div>
@@ -115,7 +119,7 @@ export const HtmlPreviewRenderer = ({ item }: PreviewFileRendererProps): React.J
       {modeToggle}
       <iframe
         ref={iframeRef}
-        title={`Preview of ${item.name}`}
+        title={t('Preview of {{name}}', { name: item.name })}
         sandbox="allow-scripts"
         referrerPolicy="no-referrer"
         src={resourceState.resource.url}

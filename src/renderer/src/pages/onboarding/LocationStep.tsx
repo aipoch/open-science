@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useRef, useState } from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -60,6 +61,7 @@ const LocationStep = ({
   onBack,
   setIsRelaunching
 }: LocationStepProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const completeOnboarding = useSettingsStore((state) => state.completeOnboarding)
   const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
@@ -163,11 +165,12 @@ const LocationStep = ({
     <>
       <CardHeader className="gap-1 rounded-t-lg px-4 py-5 sm:px-6">
         <CardTitle className="text-[15px] font-semibold">
-          Where should Open Science store your data?
+          {t('Where should Open Science store your data?')}
         </CardTitle>
         <CardDescription className="text-xs leading-5">
-          Large files (artifacts, notebooks, environments) go here. Your settings and history always
-          stay in the default location. You can change this later in Settings.
+          {t(
+            'Large files (artifacts, notebooks, environments) go here. Your settings and history always stay in the default location. You can change this later in Settings.'
+          )}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -216,28 +219,36 @@ const LocationStep = ({
                 onClick={() => void handleBrowseLocation()}
                 className="inline-flex shrink-0 items-center justify-center rounded-lg border border-border-200 px-3 py-1.5 text-sm font-medium text-text-000 transition-colors hover:bg-bg-10"
               >
-                Browse…
+                {t('Browse…')}
               </button>
             </div>
 
             {chosenDataRoot ? (
               <p className="mt-2 text-xs text-text-100">
-                Your data will be stored in <span className="font-mono">{chosenDataRoot}</span>.
-                Open Science will restart to set this up.{' '}
-                <button
-                  type="button"
-                  onClick={handleResetLocation}
-                  className="underline underline-offset-2 hover:text-text-000"
-                >
-                  Use default location instead
-                </button>
+                {/* Trans keeps the path's mono styling and the reset button inline while letting each
+                    locale place them where its own word order needs them. */}
+                <Trans
+                  i18nKey="Your data will be stored in <path>{{path}}</path>. Open Science will restart to set this up. <reset>Use default location instead</reset>"
+                  values={{ path: chosenDataRoot }}
+                  components={{
+                    path: <span className="font-mono" />,
+                    reset: (
+                      <button
+                        type="button"
+                        onClick={handleResetLocation}
+                        className="underline underline-offset-2 hover:text-text-000"
+                      />
+                    )
+                  }}
+                />
               </p>
             ) : null}
 
             {chosenKind === 'adopt' ? (
               <p className="mt-2 text-xs text-text-100">
-                This folder already contains Open Science data — it will be used as-is (nothing is
-                moved).
+                {t(
+                  'This folder already contains Open Science data — it will be used as-is (nothing is moved).'
+                )}
               </p>
             ) : null}
 
@@ -253,10 +264,10 @@ const LocationStep = ({
       </CardContent>
       <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-4 py-3 sm:px-6">
         <Button type="button" variant="outline" onClick={onBack}>
-          Back
+          {t('Back', { context: 'step' })}
         </Button>
         <Button type="button" onClick={() => void handleFinishLocation()} className="px-4">
-          Finish
+          {t('Finish')}
         </Button>
       </CardFooter>
 
@@ -268,15 +279,18 @@ const LocationStep = ({
       >
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content
-            className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}
-          >
-            <div className={dialogHeaderClassName}>
-              <div className="min-w-0">
-                <AlertDialog.Title className={dialogTitleClassName}>
-                  Restart to set up your data?
-                </AlertDialog.Title>
-              </div>
+          <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              {t('Restart to set up your data?')}
+            </AlertDialog.Title>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              <Trans
+                i18nKey="Open Science will restart to set up your data at <path>{{path}}</path>."
+                values={{ path: chosenDataRoot }}
+                components={{ path: <span className="font-mono" /> }}
+              />
+            </AlertDialog.Description>
+            <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
                 <Button
                   type="button"
@@ -285,28 +299,17 @@ const LocationStep = ({
                   aria-label="Close"
                   className={dialogCloseButtonClassName}
                 >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
-              </AlertDialog.Cancel>
-            </div>
-
-            <div className={dialogBodyClassName}>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                Open Science will restart to set up your data at{' '}
-                <span className="font-mono">{chosenDataRoot}</span>.
-              </AlertDialog.Description>
-            </div>
-
-            <div className={dialogFooterClassName}>
-              <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
-                  Keep default
-                </Button>
+                  {t('Keep default')}
+                </button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
-                <Button type="button" onClick={() => void handleRestart()}>
-                  Restart
-                </Button>
+                <button
+                  type="button"
+                  onClick={() => void handleRestart()}
+                  className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  {t('Restart')}
+                </button>
               </AlertDialog.Action>
             </div>
           </AlertDialog.Content>

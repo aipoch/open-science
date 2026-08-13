@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
+import { useTranslation } from 'react-i18next'
 
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
@@ -28,7 +28,6 @@ import {
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
-import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 
 import {
   appendArtifactMention,
@@ -53,15 +52,13 @@ import {
   getVisiblePermissionRequests,
   hasBlockingRootPermissionRequest
 } from './session-permissions'
-import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
-import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from './visible-project-sessions'
+import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
 import { useWorkspaceSessionController } from './workspace-session-controller'
 import { useSideChatController } from './use-side-chat-controller'
-import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -82,6 +79,7 @@ const WorkspacePage = ({
   canDeleteConversations,
   isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
+  const { t } = useTranslation()
   // The active project scopes which sessions are visible and stamps newly created ones. The workspace
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
   // matches no session and triggers the redirect below.
@@ -115,6 +113,7 @@ const WorkspacePage = ({
   const specialistItems = useSpecialistStore((state) => state.items)
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
   const loadSpecialists = useSpecialistStore((state) => state.load)
+  const allSessions = useSessionStore((state) => state.sessions)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
   const newConversationDraftKey = newConversationDraftKeyFor(scopedProjectId)
   const currentDraftKey = selectedSessionId ?? newConversationDraftKey
@@ -122,6 +121,16 @@ const WorkspacePage = ({
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
+  // Only sessions belonging to the active project are shown in this workspace.
+  const sessions = useMemo(
+    () =>
+      activeProject?.archivedAt === undefined
+        ? allSessions.filter(
+            (session) => session.projectId === scopedProjectId && session.archivedAt === undefined
+          )
+        : [],
+    [activeProject?.archivedAt, allSessions, scopedProjectId]
+  )
   const previewItems = usePreviewWorkbenchStore((state) => state.items)
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
@@ -206,7 +215,6 @@ const WorkspacePage = ({
     delegatedWorkUnavailableBySession = {},
     promptInFlightSessionIds = [],
     sendPreparationInFlightSessionIds = [],
-    saveAsSkillInFlightSessionIds = [],
     nativeContextCompactionSessionIds,
     compactContext,
     respondToPermission,
@@ -232,33 +240,17 @@ const WorkspacePage = ({
     Record<string, NotebookSessionReference>
   >({})
 
-  // The selected session is the only conversation rendered in the center panel. Selecting it by
-  // id (instead of deriving it from the full list) keeps chunk commits for other sessions from
-  // re-rendering the page; the active session's own per-chunk identity changes still do.
-  const activeSession = useSessionStore((state) => {
-    if (activeProject?.archivedAt !== undefined) return undefined
-    const selected = state.sessions.find((session) => session.id === selectedSessionId)
-    if (!selected || selected.projectId !== scopedProjectId || selected.archivedAt !== undefined) {
-      return undefined
-    }
-    return selected
-  })
-  // Starter history is only consumed when no session is active, so this subscription collapses to
-  // a stable empty list while a session is selected — background session updates then never
-  // re-render the page through it.
-  const starterHistorySessions = useSessionStore(
-    useShallow((state) =>
-      activeSession === undefined && activeProject?.archivedAt === undefined
-        ? visibleProjectSessions(state.sessions, scopedProjectId)
-        : NO_VISIBLE_SESSIONS
-    )
+  // The selected session is the only conversation rendered in the center panel.
+  const activeSession = useMemo(
+    () => sessions.find((session) => session.id === selectedSessionId),
+    [selectedSessionId, sessions]
   )
   const composerHistoryEntries = useMemo(
     () =>
       activeSession
         ? buildSessionComposerHistory(activeSession)
-        : buildStarterComposerHistory(starterHistorySessions),
-    [activeSession, starterHistorySessions]
+        : buildStarterComposerHistory(sessions),
+    [activeSession, sessions]
   )
   // Composer ports are lazy event-time callbacks. The controller does not invoke them while its hook
   // initializes, so the composer owner below is established before any archive/delete action can run.
@@ -273,7 +265,6 @@ const WorkspacePage = ({
     loadSpecialists,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
-    saveAsSkillInFlightSessionIds,
     hasUnfinishedTransfers: (sessionId) => composer.lifecycle.hasUnfinishedTransfers(sessionId),
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
@@ -281,7 +272,6 @@ const WorkspacePage = ({
     deleteRuntimeSession: runtime.deleteRuntimeSession
   })
   const historySpecialistId = sessionController.view.specialist.historyId
-  const activeSpecialistId = activeSession?.specialistId
   const catalogSkillIds = useMemo(
     () => new Set(catalogSkills.map((skill) => skill.id)),
     [catalogSkills]
@@ -302,32 +292,11 @@ const WorkspacePage = ({
     )
     return effective.kind === 'specialist' ? new Set(effective.skillIds) : new Set<string>()
   }, [catalogSkills, historySpecialistId, specialistItems])
-  const activeSpecialistAllowedSkillIds = useMemo(() => {
-    if (activeSpecialistId === undefined) return undefined
-    const specialist = specialistItems.find(
-      (item) => item.kind === 'custom' && item.enabled && item.id === activeSpecialistId
-    )
-    if (specialist?.kind !== 'custom') return new Set<string>()
-    const effective = resolveEffectiveSpecialistSkills(
-      specialist,
-      catalogSkills.map((skill) => ({
-        id: skill.id,
-        frameworkName: skill.source === 'featured' ? skill.id : skill.name,
-        displayName: skill.name
-      }))
-    )
-    return effective.kind === 'specialist' ? new Set(effective.skillIds) : new Set<string>()
-  }, [activeSpecialistId, catalogSkills, specialistItems])
   const activeSessionHasSendPreparation = activeSession
     ? sendPreparationInFlightSessionIds.includes(activeSession.id)
     : false
-  const activeSessionSaveAsSkillPending = activeSession
-    ? saveAsSkillInFlightSessionIds.includes(activeSession.id)
-    : false
   const activeSessionHasRuntimeInteraction = activeSession
-    ? promptInFlightSessionIds.includes(activeSession.id) ||
-      activeSessionHasSendPreparation ||
-      activeSessionSaveAsSkillPending
+    ? promptInFlightSessionIds.includes(activeSession.id) || activeSessionHasSendPreparation
     : false
   const canEditDraft =
     isSessionPersistenceReady &&
@@ -468,7 +437,6 @@ const WorkspacePage = ({
     isReviewing,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
-    saveAsSkillInFlightSessionIds,
     hasBlockingRootPermissionRequest: hasBlockingRootPermissionRequest(
       pendingPermissions,
       activeSession?.id
@@ -560,11 +528,9 @@ const WorkspacePage = ({
   useEffect(() => {
     const sessionId = activeSession?.id
     if (!sessionId) return
-    useSessionStore
-      .getState()
-      .setBranchSwitchBlocked(sessionId, !canEditMessage || activeSessionSaveAsSkillPending)
+    useSessionStore.getState().setBranchSwitchBlocked(sessionId, !canEditMessage)
     return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
-  }, [activeSession?.id, activeSessionSaveAsSkillPending, canEditMessage])
+  }, [activeSession?.id, canEditMessage])
   const canChangeAgentControls =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
@@ -582,22 +548,6 @@ const WorkspacePage = ({
     !activeSession.interrupted &&
     !activeSession.fixLoopActive &&
     !activeSession.compacting
-  const customizeAvailable =
-    catalogSkillIds.has('customize') &&
-    !sessionController.view.specialist.unavailable &&
-    (!activeSpecialistAllowedSkillIds || activeSpecialistAllowedSkillIds.has('customize'))
-  const activeSessionSaveAsSkillRunning =
-    activeSessionSaveAsSkillPending || isSaveAsSkillRunning(activeSession)
-  const saveAsSkillAvailability = resolveSaveAsSkillAvailability({
-    session: activeSession,
-    persistenceReady: isSessionPersistenceReady,
-    runtimeInteraction: activeSessionHasRuntimeInteraction,
-    pending: activeSessionSaveAsSkillPending,
-    running: activeSessionSaveAsSkillRunning,
-    customizeAvailable,
-    hasRunningSubagents: hasCurrentRunningDelegatedAttempt(activeSession),
-    sideChatOpen: sideChat.view !== undefined
-  })
   const compactContextDisabledReason = !activeSessionSupportsNativeCompaction
     ? 'Send a message to reconnect this session before compacting.'
     : activeSession?.status === 'error'
@@ -864,24 +814,6 @@ const WorkspacePage = ({
     void window.api.reviewer.run({ ...request, origin: 'manual' })
   }
 
-  const requestSaveAsSkill = (): void => {
-    if (!activeSession || !saveAsSkillAvailability.enabled) return
-    const graph = activeSession.conversationGraph
-    const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-    if (!frame) return
-    setAttachmentError(null)
-    void runtime
-      .saveAsSkill({
-        projectId: activeSession.projectId,
-        sessionId: activeSession.id,
-        agentFrameId: frame.id,
-        messageBranchId: frame.activeBranchId
-      })
-      .catch((error: unknown) => {
-        setAttachmentError(error instanceof Error ? error.message : String(error))
-      })
-  }
-
   // Revokes one app-owned grant for the visible Agent session; new conversations have no grants.
   const revokeActivePermissionGrant = (categoryKey: string): void => {
     if (!activeSession) return
@@ -936,10 +868,9 @@ const WorkspacePage = ({
           syncState: syncPreviewPanelState
         }}
         renderDesktopSidebar={({ sidebarToggle, sidebarToggleRef }) => (
-          <WorkspaceSidebarContainer
-            projectId={scopedProjectId}
-            isProjectArchived={activeProject?.archivedAt !== undefined}
-            projectName={activeProject?.name ?? 'Project'}
+          <WorkspaceSidebar
+            projectName={activeProject?.name ?? t('Project')}
+            sessions={sessions}
             activeSessionId={selectedSessionId}
             canCreateConversation={isSessionPersistenceReady}
             canMutateConversations={isSessionPersistenceReady}
@@ -980,10 +911,9 @@ const WorkspacePage = ({
           />
         )}
         renderMobileSidebar={({ isOpen, close }) => (
-          <WorkspaceSidebarContainer
-            projectId={scopedProjectId}
-            isProjectArchived={activeProject?.archivedAt !== undefined}
-            projectName={activeProject?.name ?? 'Project'}
+          <WorkspaceSidebar
+            projectName={activeProject?.name ?? t('Project')}
+            sessions={sessions}
             activeSessionId={selectedSessionId}
             canCreateConversation={isSessionPersistenceReady}
             canMutateConversations={isSessionPersistenceReady}
@@ -1115,18 +1045,9 @@ const WorkspacePage = ({
               compactDisabledReason: compactContextDisabledReason,
               compact: compactActiveContext
             }}
-            workflows={{
-              review: {
-                disabled: isRequestReviewDisabled,
-                running: isReviewing,
-                request: requestManualReview
-              },
-              saveAsSkill: {
-                disabled: !saveAsSkillAvailability.enabled,
-                disabledReason: saveAsSkillAvailability.disabledReason,
-                running: activeSessionSaveAsSkillRunning,
-                request: requestSaveAsSkill
-              }
+            review={{
+              disabled: isRequestReviewDisabled,
+              request: requestManualReview
             }}
             sessionTools={{
               notebookReference: activeNotebookReference,

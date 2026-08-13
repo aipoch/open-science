@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next'
+
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
@@ -6,6 +8,7 @@ import { usePreviewFileContent } from '../usePreviewFileContent'
 import { SourcePreviewContent } from './SourcePreview'
 
 export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const state = usePreviewFileContent(item)
 
   if (state.status === 'loading') return <PreviewLoadingContent />
@@ -15,7 +18,7 @@ export const MarkdownPreviewRenderer = ({ item }: PreviewFileRendererProps): Rea
       <PreviewErrorCard
         name={item.name}
         error={state.status === 'error' ? state.error : undefined}
-        fallbackMessage="Markdown couldn't be read for preview"
+        fallbackMessage={t("Markdown couldn't be read for preview")}
       />
     )
   }

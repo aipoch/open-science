@@ -3,6 +3,7 @@ import type { HighlightResult } from '@streamdown/code'
 import { cn } from '@/lib/utils'
 import { Copy } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { BundledLanguage } from 'shiki'
 
 type WorkspaceToolCodeBlockProps = {
@@ -43,6 +44,7 @@ const WorkspaceToolCodeBlock = ({
   className,
   copyable = false
 }: WorkspaceToolCodeBlockProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const [highlighted, setHighlighted] = useState<HighlightState | null>(null)
   const [copied, setCopied] = useState(false)
   const highlightKey = createHighlightKey(source, language)
@@ -93,7 +95,7 @@ const WorkspaceToolCodeBlock = ({
         <button
           type="button"
           data-testid="code-copy-button"
-          aria-label={copied ? 'Copied' : 'Copy code'}
+          aria-label={copied ? t('Copied') : t('Copy code')}
           onClick={() => void copyCode()}
           className="absolute right-2 top-2 z-10 rounded bg-bg-100/80 p-1.5 text-text-200 backdrop-blur-sm hover:bg-bg-200 hover:text-text-100"
         >

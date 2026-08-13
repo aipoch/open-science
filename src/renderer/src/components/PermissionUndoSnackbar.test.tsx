@@ -120,7 +120,8 @@ describe('PermissionUndoSnackbar', () => {
           projectId: 'project-1',
           archivedAt: 10,
           expiresAt: Date.now() + 8_000,
-          message: 'Archived project “Project”.'
+          messageKey: 'Archived project “{{name}}”.',
+          messageParams: { name: 'Project' }
         }
       ],
       restoringKey: undefined
@@ -131,6 +132,9 @@ describe('PermissionUndoSnackbar', () => {
     expect(snackbar?.className).toContain('rounded-2xl')
     expect(snackbar?.className).toContain('shadow-lg')
     expect(snackbar?.className).not.toContain('shadow-xl')
+    // The notice carries a key plus params, so the interpolated text proves it is translated at
+    // render time rather than frozen into the store when the project was archived.
+    expect(snackbar?.textContent).toContain('Archived project “Project”.')
     const undo = snackbar?.querySelector<HTMLButtonElement>('button:not([aria-label])')
     await act(async () => undo?.click())
 

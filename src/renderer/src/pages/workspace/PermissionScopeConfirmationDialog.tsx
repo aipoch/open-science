@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,8 @@ const PermissionScopeConfirmationDialog = ({
   onCancel,
   onConfirm
 }: PermissionScopeConfirmationDialogProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const retainedConfirmation = useRetainedDialogValue(confirmation)
   const scope = retainedConfirmation?.scope ?? 'project'
   const subject = retainedConfirmation?.subject ?? 'this permission'
@@ -59,43 +61,18 @@ const PermissionScopeConfirmationDialog = ({
           className={dialogPanelClassName('z-[70] w-[min(420px,calc(100vw-2rem))] p-0')}
           data-testid="permission-scope-confirmation"
         >
-          <div className={dialogHeaderClassName}>
-            <div className="min-w-0">
-              <AlertDialog.Title
-                className={`${dialogTitleClassName} min-w-0 [overflow-wrap:anywhere]`}
-              >
-                Allow {subject} {scopePhrase}?
-              </AlertDialog.Title>
-            </div>
-            <AlertDialog.Cancel asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Close"
-                className={dialogCloseButtonClassName}
-              >
-                <X className="size-4" aria-hidden="true" />
-              </Button>
-            </AlertDialog.Cancel>
-          </div>
-
-          <div className={dialogBodyClassName}>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              {effect} You can revoke it in{' '}
-              <strong className="font-semibold text-foreground">Settings → Permissions</strong>.
-            </AlertDialog.Description>
-          </div>
-
+          <AlertDialog.Title className={`${dialogTitleClassName} min-w-0 [overflow-wrap:anywhere]`}>
+            {t('Allow {{subject}} {{scope}}?', { subject, scope: scopePhrase })}
+          </AlertDialog.Title>
+          <AlertDialog.Description className={dialogDescriptionClassName}>
+            {effect} You can revoke it in{' '}
+            <strong className="font-semibold text-foreground">{t('Settings → Permissions')}</strong>
+            .
+          </AlertDialog.Description>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                className={dialogCancelButtonClassName}
-                data-testid="permission-scope-cancel"
-              >
-                Cancel
+              <Button type="button" variant="outline" data-testid="permission-scope-cancel">
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>
@@ -105,7 +82,7 @@ const PermissionScopeConfirmationDialog = ({
                 data-testid="permission-scope-confirm"
                 onClick={onConfirm}
               >
-                {isProject ? 'Allow for this project' : 'Allow globally'}
+                {isProject ? t('Allow for this project') : t('Allow globally')}
               </Button>
             </AlertDialog.Action>
           </div>

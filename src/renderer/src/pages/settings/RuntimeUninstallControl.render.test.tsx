@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { RuntimeUninstallControl } from './RuntimeUninstallControl'
 import { uninstallDisabledHint } from './runtime-uninstall-hint'
 
@@ -128,9 +129,10 @@ describe('RuntimeUninstallControl', () => {
 // so the exact English copy and its branching are verified through the pure helper the control uses.
 describe('uninstallDisabledHint', () => {
   const command = 'npm uninstall -g @anthropic-ai/claude-code'
+  const t = i18next.getFixedT('en')
 
   it('explains manual removal for a non-managed install, naming the command', () => {
-    const hint = uninstallDisabledHint('Claude', command, { managed: false, active: false })
+    const hint = uninstallDisabledHint('Claude', command, { managed: false, active: false }, t)
 
     expect(hint).toContain("Claude was found on your system but isn't managed by the app")
     expect(hint).toContain(command)
@@ -138,7 +140,7 @@ describe('uninstallDisabledHint', () => {
   })
 
   it('tells the user to switch away from an active managed runtime', () => {
-    const hint = uninstallDisabledHint('OpenCode', command, { managed: true, active: true })
+    const hint = uninstallDisabledHint('OpenCode', command, { managed: true, active: true }, t)
 
     expect(hint).toBe(
       "OpenCode is the active agent framework and can't be uninstalled. Switch to another framework first, then uninstall."
@@ -146,6 +148,6 @@ describe('uninstallDisabledHint', () => {
   })
 
   it('returns null for an actionable (non-active managed) runtime', () => {
-    expect(uninstallDisabledHint('Claude', command, { managed: true, active: false })).toBeNull()
+    expect(uninstallDisabledHint('Claude', command, { managed: true, active: false }, t)).toBeNull()
   })
 })

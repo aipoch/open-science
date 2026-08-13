@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { NotebookOutput, NotebookRunRecord } from '../../../../shared/notebook'
 import { resolveNotebookRunFigures } from './notebook-run-figures'
 
@@ -252,6 +253,7 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
 }
 
 const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.Element | null => {
+  const { t } = useTranslation()
   let rendered: React.JSX.Element[]
   const errorClassName = run.status === 'failed' ? 'text-danger-000' : 'text-text-200'
 
@@ -275,8 +277,8 @@ const NotebookRunTextOutputs = ({ run }: { run: NotebookRunRecord }): React.JSX.
         <span aria-hidden="true" className="transition-transform group-open:rotate-90">
           ▸
         </span>
-        <span className="group-open:hidden">Show output</span>
-        <span className="hidden group-open:inline">Hide output</span>
+        <span className="group-open:hidden">{t('Show output')}</span>
+        <span className="hidden group-open:inline">{t('Hide output')}</span>
       </summary>
       <div className="space-y-1 pt-1">{rendered}</div>
     </details>

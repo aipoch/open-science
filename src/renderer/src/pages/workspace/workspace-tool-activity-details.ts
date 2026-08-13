@@ -3,6 +3,7 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
+import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 
 type ToolCodeSection = {
   kind: 'code'
@@ -280,7 +281,10 @@ const formatDiffMeta = (added: number, removed: number): string | undefined => {
 }
 
 // Assembles diff sections for edit-kind tools (Edit/Write) with per-file summaries.
-const buildDiffDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildDiffDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   const diffs = collectDiffs(activity)
 
   if (diffs.length === 0) return undefined
@@ -308,14 +312,18 @@ const buildDiffDetails = (activity: ToolActivity): ToolActivityDetails | undefin
 
   return {
     displayName: getToolDisplayName(activity),
-    subtitle: diffs.length === 1 ? primaryPath : `${diffs.length} files`,
+    // A single diff shows its path; several collapse to a count, which is prose and so translates.
+    subtitle: diffs.length === 1 ? primaryPath : t('{{count}} files', { count: diffs.length }),
     metaLabel: formatDiffMeta(totalAdded, totalRemoved),
     sections
   }
 }
 
 // Assembles command/output code sections for execute-kind tools (Bash, scripts).
-const buildExecuteDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildExecuteDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   const command = getCommandText(activity)
   const output = getOutputText(activity)
   const sections: ToolDetailSection[] = []
@@ -336,7 +344,7 @@ const buildExecuteDetails = (activity: ToolActivity): ToolActivityDetails | unde
   return {
     displayName: getToolDisplayName(activity),
     subtitle: command,
-    metaLabel: typeof exitCode === 'number' ? `exit ${exitCode}` : undefined,
+    metaLabel: typeof exitCode === 'number' ? t('exit {{code}}', { code: exitCode }) : undefined,
     sections
   }
 }
@@ -978,12 +986,16 @@ const buildFetchDetails = (activity: ToolActivity): ToolActivityDetails | undefi
 }
 
 // Projects one tool activity into the structured, expandable detail model, or nothing for chips.
-const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildToolActivityDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   if (isSkillActivity(activity)) return undefined
   // Saved files show a metadata summary instead of dumping their (possibly base64) content.
   if (isArtifactWriteActivity(activity)) return buildArtifactDetails(activity)
   // File edits prefer a diff view, falling back to raw input/output when no diff is provided.
-  if (isEditActivity(activity)) return buildDiffDetails(activity) ?? buildGenericDetails(activity)
+  if (isEditActivity(activity))
+    return buildDiffDetails(activity, t) ?? buildGenericDetails(activity)
   // Package installs show which packages / installer and a cleaned log, not the raw result JSON.
   if (isManagePackagesActivity(activity)) {
     return buildManagePackagesDetails(activity) ?? buildGenericDetails(activity)
@@ -992,7 +1004,7 @@ const buildToolActivityDetails = (activity: ToolActivity): ToolActivityDetails |
   if (isNotebookKernelRunActivity(activity)) {
     return buildNotebookDetails(activity) ?? buildGenericDetails(activity)
   }
-  if (activity.toolKind === 'execute') return buildExecuteDetails(activity)
+  if (activity.toolKind === 'execute') return buildExecuteDetails(activity, t)
   // Tool-discovery steps summarize the tools they found rather than repeating "ToolSearch".
   if (isToolSearchActivity(activity)) return buildToolSearchDetails(activity)
   // WebFetch shows the URL and fetched result; other fetches without a URL stay plain chips.

@@ -1,5 +1,6 @@
 import { ArrowUpRight, ChevronDown, ChevronUp, HelpCircle, MessageSquare } from 'lucide-react'
 import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 
@@ -16,8 +17,13 @@ const WorkspaceSubagentMessageRow = ({
   message,
   onOpenSource
 }: WorkspaceSubagentMessageRowProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const isQuestion = message.kind === 'question'
-  const intentLabel = isQuestion ? 'asked a question' : 'sent a message'
+  // The name and its verb phrase form one sentence, so each locale owns the whole clause instead of
+  // receiving a fragment to concatenate.
+  const heading = isQuestion
+    ? t('{{name}} asked a question', { name: message.sourceName })
+    : t('{{name}} sent a message', { name: message.sourceName })
   const IntentIcon = isQuestion ? HelpCircle : MessageSquare
   const messageBodyId = useId()
   const messageBodyRef = useRef<HTMLParagraphElement>(null)
@@ -54,25 +60,27 @@ const WorkspaceSubagentMessageRow = ({
 
   return (
     <article
-      aria-label={`${message.sourceName} ${intentLabel}.`}
+      aria-label={
+        isQuestion
+          ? t('{{name}} asked a question.', { name: message.sourceName })
+          : t('{{name}} sent a message.', { name: message.sourceName })
+      }
       className="overflow-hidden rounded-xl border border-border-200 bg-bg-000 text-card-foreground shadow-sm"
     >
       <header className="flex min-w-0 items-center gap-2.5 border-b border-border-200 bg-bg-100/60 px-3 py-2.5">
         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <IntentIcon className="size-3.5" aria-hidden="true" />
         </span>
-        <h3 className="min-w-0 flex-1 break-words text-xs font-medium">
-          {message.sourceName} {intentLabel}
-        </h3>
+        <h3 className="min-w-0 flex-1 break-words text-xs font-medium">{heading}</h3>
         <Button
           type="button"
           variant="ghost"
           size="xs"
-          aria-label={`Open Subagent preview for ${message.sourceName}`}
+          aria-label={t('Open Subagent preview for {{name}}', { name: message.sourceName })}
           className="text-primary"
           onClick={onOpenSource}
         >
-          <span>View agent</span>
+          <span>{t('View agent')}</span>
           <ArrowUpRight data-icon="inline-end" className="size-3.5" aria-hidden="true" />
         </Button>
       </header>
@@ -96,7 +104,7 @@ const WorkspaceSubagentMessageRow = ({
               className="-mb-1 -mr-1 text-muted-foreground hover:text-foreground"
               onClick={() => setIsExpanded((expanded) => !expanded)}
             >
-              <span>{isExpanded ? 'Show less' : 'Show more'}</span>
+              <span>{isExpanded ? t('Show less') : t('Show more')}</span>
               {isExpanded ? (
                 <ChevronUp data-icon="inline-end" className="size-3" aria-hidden="true" />
               ) : (

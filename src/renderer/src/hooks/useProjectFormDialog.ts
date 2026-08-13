@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { Project } from '../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -34,6 +35,7 @@ type UseProjectFormDialogResult = {
 // project menu. Submissions go through the project store; a successful create navigates into the new
 // project, matching the original HomePage behavior.
 const useProjectFormDialog = (): UseProjectFormDialogResult => {
+  const { t } = useTranslation()
   const createProject = useProjectStore((state) => state.createProject)
   const updateProject = useProjectStore((state) => state.updateProject)
   const openProject = useNavigationStore((state) => state.openProject)
@@ -101,7 +103,7 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
         // The store resolves undefined when the IPC layer returns no project row; surface that
         // instead of silently swallowing the save.
         if (!project) {
-          setFormError('Could not save project.')
+          setFormError(t('Could not save project.'))
           return
         }
 
@@ -110,7 +112,7 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
         if (isCreate) openProject(project.id, 'user')
       })
       .catch((error: unknown) => {
-        setFormError(error instanceof Error ? error.message : 'Could not save project.')
+        setFormError(error instanceof Error ? error.message : t('Could not save project.'))
       })
       .finally(() => {
         setIsSubmitting(false)
@@ -124,11 +126,11 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
     openEditDialog,
     dialogProps: {
       open: formState !== null,
-      title: isEdit ? 'Project Settings' : 'New project',
+      title: isEdit ? t('Project Settings') : t('New project'),
       description: isEdit
-        ? 'Update this project’s name, description, and agent context.'
-        : 'Group related sessions under a project. You can rename it later.',
-      submitLabel: isEdit ? 'Save' : 'Create project',
+        ? t("Update this project's name, description, and agent context.")
+        : t('Group related sessions under a project. You can rename it later.'),
+      submitLabel: isEdit ? t('Save') : t('Create project'),
       nameDraft,
       descriptionDraft,
       agentContextDraft,

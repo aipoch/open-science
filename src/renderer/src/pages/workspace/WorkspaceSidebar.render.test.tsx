@@ -8,6 +8,9 @@ import type { ChatSession } from '@/stores/session-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
+
+vi.mock('react-i18next', () => createI18nTestStub())
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/lib/utils', () => ({

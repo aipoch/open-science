@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { i18next } from '@/i18n'
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type {
   DelegatedQuestionRequest,
@@ -376,15 +377,22 @@ describe('release-gate Subagent projection', () => {
   })
 
   it('fails closed when framework support is absent and returns actionable availability copy', () => {
+    // Pinned to English so the copy assertions stay readable; the Chinese wiring is covered by the
+    // catalog parity test.
+    const t = i18next.getFixedT('en')
     expect(
-      resolveDelegatedWorkAvailability('opencode', [
-        {
-          id: 'opencode',
-          displayName: 'OpenCode',
-          supportsSkills: true,
-          supportsDelegatedWork: false
-        }
-      ])
+      resolveDelegatedWorkAvailability(
+        'opencode',
+        [
+          {
+            id: 'opencode',
+            displayName: 'OpenCode',
+            supportsSkills: true,
+            supportsDelegatedWork: false
+          }
+        ],
+        t
+      )
     ).toEqual({
       available: false,
       title: 'Subagents unavailable for OpenCode',

@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
+
 import type { NotebookEnvironmentStatus, NotebookRunRecord } from '../../../../shared/notebook'
 import type { ProvisionStatus } from '../../../../shared/notebook-env'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
@@ -352,6 +354,29 @@ describe('NotebookPreview per-kernel tabs', () => {
     expect(
       container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent
     ).toContain('Python kernel')
+  })
+
+  // The header's three strings were unwrapped while their translations already sat in the catalog —
+  // the shape a textual merge leaves behind. English assertions above stay green through that, so
+  // the locale is what has to be asserted.
+  it('translates the terminal header and the resize handle', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+    act(() => {
+      void i18next.changeLanguage('zh-Hans')
+    })
+
+    const header = container.querySelector('[data-testid="notebook-terminal-header"]')
+    expect(header?.textContent).toContain('Python 内核 · 与 Agent 共享')
+    expect(header?.textContent).toContain('空闲')
+    expect(header?.textContent).not.toContain('shared with the agent')
+    expect(header?.textContent).not.toContain('idle')
+    expect(
+      container.querySelector<HTMLElement>('[data-separator]')?.getAttribute('aria-label')
+    ).toBe('调整 Notebook 与终端大小')
+
+    act(() => {
+      void i18next.changeLanguage('en')
+    })
   })
 
   it('shows a tab only for kernel kinds present in the runs (no default python/r tab)', async () => {

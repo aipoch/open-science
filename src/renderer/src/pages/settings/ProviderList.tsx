@@ -11,6 +11,8 @@ import {
   Trash2,
   X
 } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 
 import type {
   ChatApiEndpoint,
@@ -29,6 +31,7 @@ import {
 } from '../../../../shared/settings'
 import { getOfficialVendor } from '../../../../shared/provider-registry'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsIconAction } from './SettingsLayout'
@@ -68,30 +71,38 @@ type ProviderListProps = {
 }
 
 // Concise, actionable reason for a failed connection test, shown on the unverified warning.
-const describeValidationFailure = (failure: ProviderValidationFailure): string => {
+// Gateway-supplied `message` text is interpolated verbatim — it comes from the provider, not from us.
+const describeValidationFailure = (failure: ProviderValidationFailure, t: TFunction): string => {
   switch (failure.category) {
     case 'auth':
       return failure.message
-        ? `Test failed: ${failure.message}`
-        : 'Test failed: authentication rejected — check the API key.'
+        ? t('Test failed: {{message}}', { message: failure.message })
+        : t('Test failed: authentication rejected — check the API key.')
     case 'network':
-      return 'Test failed: could not reach the endpoint — check the base URL/connection.'
+      return t('Test failed: could not reach the endpoint — check the base URL/connection.')
     case 'bad-url':
-      return 'Test failed: the base URL looks invalid.'
+      return t('Test failed: the base URL looks invalid.')
     case 'model-not-found':
-      return 'Test failed: the configured model was not found.'
+      return t('Test failed: the configured model was not found.')
     case 'timeout':
-      return 'Test failed: the connection timed out.'
+      return t('Test failed: the connection timed out.')
     case 'incompatible':
       // The pairing, not the credential, is the problem — carry the specific route-mismatch reason.
-      return failure.message ?? 'Not compatible with the active agent framework.'
+      return failure.message ?? t('Not compatible with the active agent framework.')
     case 'server-error':
       // Gateway or upstream service temporarily unavailable — surface the specific error when present.
-      return failure.message
-        ? `Test failed: ${failure.message}${failure.status ? ` (HTTP ${failure.status})` : ''}`
-        : 'Test failed: the gateway or upstream service is temporarily unavailable.'
+      if (!failure.message)
+        return t('Test failed: the gateway or upstream service is temporarily unavailable.')
+      return failure.status
+        ? t('Test failed: {{message}} (HTTP {{status}})', {
+            message: failure.message,
+            status: failure.status
+          })
+        : t('Test failed: {{message}}', { message: failure.message })
     default:
-      return failure.message ? `Test failed: ${failure.message}` : 'Connection test failed.'
+      return failure.message
+        ? t('Test failed: {{message}}', { message: failure.message })
+        : t('Connection test failed.')
   }
 }
 
@@ -106,15 +117,16 @@ const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
 }
 
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
-const describeType = (provider: ProviderView): string => {
-  if (provider.type === 'custom') return 'Custom'
+// Vendor names and the Codex identity are proper nouns and stay as the registry supplies them.
+const describeType = (provider: ProviderView, t: TFunction): string => {
+  if (provider.type === 'custom') return t('Custom')
   if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
-    return 'Claude subscription'
+    return t('Claude subscription')
   if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
 
   return provider.vendorId
-    ? (getOfficialVendor(provider.vendorId)?.label ?? 'Official')
-    : 'Official'
+    ? (getOfficialVendor(provider.vendorId)?.label ?? t('Official'))
+    : t('Official')
 }
 
 // Lists configured providers with their type, masked key, and model. Each row leads with the
@@ -143,10 +155,13 @@ const ProviderList = ({
   onLoginIsolatedClaudePaste,
   onLogoutIsolatedClaude
 }: ProviderListProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const formatDate = useDateTimeFormat()
+
   if (providers.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-        No providers yet. Add one to choose your model source.
+        {t('No providers yet. Add one to choose your model source.')}
       </div>
     )
   }
@@ -171,7 +186,9 @@ const ProviderList = ({
     ...(selectedCodexProvider
       ? [{ ...selectedCodexProvider, name: codexSubscriptionProviderIdentity().name }]
       : []),
-    ...(selectedClaudeProvider ? [{ ...selectedClaudeProvider, name: 'Claude subscription' }] : [])
+    ...(selectedClaudeProvider
+      ? [{ ...selectedClaudeProvider, name: t('Claude subscription') }]
+      : [])
   ]
 
   return (
@@ -220,30 +237,34 @@ const ProviderList = ({
                         kindKey={providerKindKey(provider.type, provider.vendorId)}
                         className="size-3"
                       />
-                      {describeType(provider)}
+                      {describeType(provider, t)}
                     </span>
                     {!isCodexSubscription ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
                             className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                            aria-label={`Speaks the ${endpoint.full}`}
+                            aria-label={t('Speaks the {{protocol}}', { protocol: endpoint.full })}
                           >
                             <Route className="size-3" strokeWidth={2} aria-hidden="true" />
                             {endpoint.path}
                           </span>
                         </TooltipTrigger>
-                        <TooltipContent>Speaks the {endpoint.full}</TooltipContent>
+                        <TooltipContent>
+                          {t('Speaks the {{protocol}}', { protocol: endpoint.full })}
+                        </TooltipContent>
                       </Tooltip>
                     ) : null}
                     {isBusy ? (
-                      <span className="shrink-0 text-[10px] text-muted-foreground">Testing…</span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {t('Testing…')}
+                      </span>
                     ) : failure ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
                             className="inline-flex shrink-0 text-amber-500"
-                            aria-label={describeValidationFailure(failure)}
+                            aria-label={describeValidationFailure(failure, t)}
                           >
                             <TriangleAlert
                               className="size-3.5"
@@ -252,35 +273,36 @@ const ProviderList = ({
                             />
                           </span>
                         </TooltipTrigger>
-                        <TooltipContent>{describeValidationFailure(failure)}</TooltipContent>
+                        <TooltipContent>{describeValidationFailure(failure, t)}</TooltipContent>
                       </Tooltip>
                     ) : isVerified ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span
                             className="inline-flex shrink-0 text-emerald-500"
-                            aria-label="Connection verified"
+                            aria-label={t('Connection verified')}
                           >
                             <CircleCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
                           </span>
                         </TooltipTrigger>
-                        <TooltipContent>Connection verified</TooltipContent>
+                        <TooltipContent>{t('Connection verified')}</TooltipContent>
                       </Tooltip>
                     ) : null}
                   </div>
                   <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                     {codexSubscriptionType === 'codex-shared' ? (
-                      <div>Authentication imported into Open Science</div>
+                      <div>{t('Authentication imported into Open Science')}</div>
                     ) : codexSubscriptionType === 'codex-isolated' ? (
-                      <div>Codex login stored separately by Open Science</div>
+                      <div>{t('Codex login stored separately by Open Science')}</div>
                     ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
                       // Browser sign-in in flight. `claude setup-token` opens the browser itself and
                       // waits on a localhost callback; when the browser fails to open it stays silent
                       // (no fallback URL), so tell the user the escape hatch up front: cancel and paste
                       // a setup token instead. Without this line a stuck login looks like a hang.
                       <div>
-                        Opening your browser to sign in… Didn&apos;t open? Cancel and use a setup
-                        token.
+                        {t(
+                          "Opening your browser to sign in… Didn't open? Cancel and use a setup token."
+                        )}
                       </div>
                     ) : provider.type === 'claude-isolated' ? (
                       // The Claude subscription card carries an OAuth token, so we surface the masked
@@ -290,40 +312,51 @@ const ProviderList = ({
                       // setup-token lifetime visible on the card.
                       provider.maskedKey ? (
                         <>
-                          <div className="font-mono">Token: {provider.maskedKey}</div>
+                          <div className="font-mono">
+                            {t('Token: {{masked}}', { masked: provider.maskedKey })}
+                          </div>
                           {provider.expiresAt !== undefined ? (
                             <div>
-                              Expires{' '}
+                              {t('Expires')}{' '}
                               <time dateTime={new Date(provider.expiresAt).toISOString()}>
-                                {new Date(provider.expiresAt).toLocaleDateString()}
+                                {formatDate(provider.expiresAt, 'date')}
                               </time>
                             </div>
                           ) : null}
                         </>
                       ) : (
-                        <div>Not signed in</div>
+                        <div>{t('Not signed in')}</div>
                       )
                     ) : (
                       // custom + official both authenticate with a key; official's models come from its
                       // catalog (shown as a count) rather than a single stored model.
                       <>
                         {provider.type === 'custom' && provider.model ? (
-                          <div className="truncate">Model: {provider.model}</div>
+                          <div className="truncate">
+                            {t('Model: {{name}}', { name: provider.model })}
+                          </div>
                         ) : null}
                         {provider.type === 'official' && provider.models.length > 0 ? (
-                          <div className="truncate">{provider.models.length} models</div>
+                          <div className="truncate">
+                            {t('{{count}} models', {
+                              defaultValue_one: '{{count}} model',
+                              count: provider.models.length
+                            })}
+                          </div>
                         ) : null}
                         {provider.maskedKey ? (
-                          <div className="font-mono">Key: {provider.maskedKey}</div>
+                          <div className="font-mono">
+                            {t('Key: {{masked}}', { masked: provider.maskedKey })}
+                          </div>
                         ) : null}
                         {provider.needsKey ? (
-                          <div className="text-destructive">Key needs re-entry</div>
+                          <div className="text-destructive">{t('Key needs re-entry')}</div>
                         ) : null}
                       </>
                     )}
                     {failure ? (
                       <div className="text-amber-600 dark:text-amber-500">
-                        {describeValidationFailure(failure)}
+                        {describeValidationFailure(failure, t)}
                       </div>
                     ) : null}
                   </div>
@@ -331,7 +364,7 @@ const ProviderList = ({
                 <div className="flex shrink-0 items-center gap-1.5">
                   {isCodexSubscription && isCodexLoginPending ? (
                     <SettingsIconAction
-                      label="Cancel sign-in"
+                      label={t('Cancel sign-in')}
                       icon={X}
                       onClick={() => onCancelCodexLogin?.()}
                       className="border border-border text-foreground"
@@ -343,7 +376,7 @@ const ProviderList = ({
                     <></>
                   ) : (
                     <SettingsIconAction
-                      label={isCodexSubscription ? 'Check Codex login' : 'Test connection'}
+                      label={isCodexSubscription ? t('Check Codex login') : t('Test connection')}
                       icon={PlugZap}
                       onClick={() => onTest(provider)}
                       disabled={isBusy}
@@ -352,7 +385,7 @@ const ProviderList = ({
                   )}
                   {codexSubscriptionType === 'codex-shared' && !isCodexLoginPending ? (
                     <SettingsIconAction
-                      label="Re-import Codex login"
+                      label={t('Re-import Codex login')}
                       icon={RefreshCw}
                       onClick={() => onReimportCodexAuthentication?.(provider)}
                       disabled={isBusy}
@@ -363,7 +396,7 @@ const ProviderList = ({
                   !isVerified &&
                   !isCodexLoginPending ? (
                     <SettingsIconAction
-                      label="Sign in"
+                      label={t('Sign in')}
                       icon={LogIn}
                       onClick={() => onLoginIsolatedCodex?.()}
                       disabled={isBusy}
@@ -372,7 +405,7 @@ const ProviderList = ({
                   ) : null}
                   {codexSubscriptionType === 'codex-isolated' && isVerified ? (
                     <SettingsIconAction
-                      label="Sign out"
+                      label={t('Sign out')}
                       icon={LogOut}
                       onClick={() => onLogoutIsolatedCodex?.()}
                       className="border border-border text-foreground"
@@ -383,14 +416,14 @@ const ProviderList = ({
                   !isClaudeIsolatedLoginPending ? (
                     <>
                       <SettingsIconAction
-                        label="Sign in with browser"
+                        label={t('Sign in with browser')}
                         icon={LogIn}
                         onClick={() => onLoginIsolatedClaude?.()}
                         disabled={isBusy}
                         className="border border-border text-foreground"
                       />
                       <SettingsIconAction
-                        label="Use setup token"
+                        label={t('Use setup token')}
                         icon={KeyRound}
                         onClick={() => onLoginIsolatedClaudePaste?.()}
                         disabled={isBusy}
@@ -400,7 +433,7 @@ const ProviderList = ({
                   ) : null}
                   {provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
                     <SettingsIconAction
-                      label="Cancel sign-in"
+                      label={t('Cancel sign-in')}
                       icon={X}
                       onClick={() => onCancelIsolatedClaudeLogin?.()}
                       className="border border-border text-foreground"
@@ -408,7 +441,7 @@ const ProviderList = ({
                   ) : null}
                   {provider.type === 'claude-isolated' && isVerified ? (
                     <SettingsIconAction
-                      label="Sign out"
+                      label={t('Sign out')}
                       icon={LogOut}
                       onClick={() => onLogoutIsolatedClaude?.()}
                       className="border border-border text-foreground"
@@ -420,7 +453,7 @@ const ProviderList = ({
                     // Browser sign-in in flight: swap to Cancel so the user can back out of a login
                     // that won't complete, mirroring codex-isolated (and the OpenAI subscription).
                     <SettingsIconAction
-                      label="Cancel sign-in"
+                      label={t('Cancel sign-in')}
                       icon={X}
                       onClick={() => onCancelSharedClaudeLogin?.()}
                       className="border border-border text-foreground"
@@ -430,7 +463,7 @@ const ProviderList = ({
                   !isVerified &&
                   !isClaudeSharedLoginPending ? (
                     <SettingsIconAction
-                      label="Sign in with browser"
+                      label={t('Sign in with browser')}
                       icon={LogIn}
                       onClick={() => onLoginSharedClaude?.()}
                       disabled={isBusy}
@@ -439,20 +472,20 @@ const ProviderList = ({
                   ) : null}
                   {provider.type === 'claude-shared' && isVerified ? (
                     <SettingsIconAction
-                      label="Disconnect from Open Science"
+                      label={t('Disconnect from Open Science')}
                       icon={LogOut}
                       onClick={() => onLogoutSharedClaude?.()}
                       className="border border-border text-foreground"
                     />
                   ) : null}
                   <SettingsIconAction
-                    label="Edit"
+                    label={t('Edit')}
                     icon={Pencil}
                     onClick={() => onEdit(provider)}
                     className="border border-border text-foreground"
                   />
                   <SettingsIconAction
-                    label="Delete"
+                    label={t('Delete')}
                     icon={Trash2}
                     onClick={() => onDelete(provider)}
                     disabled={!canDelete}
