@@ -174,11 +174,14 @@ export class UserSkillStore {
     })
   }
 
-  async createPersonal(input: WriteSkillInput): Promise<string> {
+  async createPersonal(
+    input: WriteSkillInput,
+    reservedNames: readonly string[] = []
+  ): Promise<string> {
     return this.transactions.runExclusive(async () => {
       const name = input.name.trim()
       assertUsableSkillName(name)
-      if (await this.directoryNameTaken('personal', name)) {
+      if (await this.skillNameTaken(name, reservedNames)) {
         throw new Error(`A skill named "${name}" already exists.`)
       }
       await this.writeSkill('personal', name, { ...input, name })
@@ -190,13 +193,22 @@ export class UserSkillStore {
     name: string,
     sourcePath: string,
     overwrite: boolean,
-    validatePackage: ValidatePackage
+    validatePackage: ValidatePackage,
+    reservedNames: readonly string[] = []
   ): Promise<string> {
     const normalizedName = name.trim()
     assertUsableSkillName(normalizedName)
 
     return this.transactions.runRecovered(async () => {
-      if (!overwrite && (await this.directoryNameTaken('personal', normalizedName))) {
+      const [personalTaken, importedTaken] = await Promise.all([
+        this.directoryNameTaken('personal', normalizedName),
+        this.directoryNameTaken('imported', normalizedName)
+      ])
+      if (
+        reservedNames.includes(normalizedName) ||
+        importedTaken ||
+        (!overwrite && personalTaken)
+      ) {
         throw new Error(`A skill named "${normalizedName}" already exists.`)
       }
 
@@ -246,13 +258,32 @@ export class UserSkillStore {
     })
   }
 
-  async uniqueImportedName(baseName: string): Promise<string> {
-    const taken = new Set(await this.listDirectoryNames('imported'))
+  async uniqueImportedName(
+    baseName: string,
+    reservedNames: readonly string[] = []
+  ): Promise<string> {
+    const taken = new Set([
+      ...reservedNames,
+      ...(await this.listDirectoryNames('imported')),
+      ...(await this.listDirectoryNames('personal'))
+    ])
     if (!taken.has(baseName)) return baseName
     for (let index = 2; ; index += 1) {
-      const candidate = `${baseName}-${index}`
+      const suffix = `-${index}`
+      const candidate = `${baseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
       if (!taken.has(candidate)) return candidate
     }
+  }
+
+  private async skillNameTaken(
+    name: string,
+    reservedNames: readonly string[] = []
+  ): Promise<boolean> {
+    if (reservedNames.includes(name)) return true
+    const taken = await Promise.all(
+      USER_SOURCES.map((source) => this.directoryNameTaken(source, name))
+    )
+    return taken.some(Boolean)
   }
 
   async directoryNameTaken(source: UserSkillSource, directoryName: string): Promise<boolean> {

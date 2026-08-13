@@ -323,8 +323,9 @@ describe('ConnectorsPanel (groups)', () => {
       await Promise.resolve()
     })
     expect(useSettingsStore.getState().removeCustomServer).not.toHaveBeenCalled()
-    expect(document.body.textContent).toContain('This Connector is used by 2 Specialists')
+    expect(document.body.textContent).toContain('This Connector is used by 3 Specialists')
     expect(document.body.textContent).toContain('Selected by ID')
+    expect(document.body.textContent).toContain('Selected by legacy UUID')
     expect(document.body.textContent).toContain('Full access')
 
     const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(

@@ -436,8 +436,8 @@ export const projectConnectorsFromStored = (
         (server.transport !== 'stdio' && !server.url)
       const unauthenticated = Boolean(server.oauth && !server.oauthState?.tokens?.access_token)
       return {
-        // The name is the immutable public route; the UUID remains local Settings/OAuth identity.
-        id: server.name,
+        // Local Specialist references use the UUID; name remains the immutable public route.
+        id: server.id,
         name: server.name,
         displayName: server.displayName,
         description: server.description ?? '',

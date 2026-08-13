@@ -350,6 +350,7 @@ describe('validateSpecialistPackage', () => {
     ])
     expect(result.plan?.skills[0]).toMatchObject({
       id: 'analysis-tools',
+      localId: 'personal-analysis-tools',
       version: '0.1.0',
       disposition: 'install'
     })
@@ -359,7 +360,7 @@ describe('validateSpecialistPackage', () => {
         relatedId: 'analysis-tools'
       })
     )
-    expect(result.plan?.skillIds).toEqual(['analysis-tools'])
+    expect(result.plan?.skillIds).toEqual(['personal-analysis-tools'])
   })
 
   it('keeps valid bundled Skill IDs selected when another bundled Skill cannot be parsed', () => {
@@ -379,7 +380,7 @@ describe('validateSpecialistPackage', () => {
     )
 
     expect(result.preview.installable).toBe(true)
-    expect(result.plan?.skillIds).toEqual(['analysis-tools'])
+    expect(result.plan?.skillIds).toEqual(['personal-analysis-tools'])
     expect(result.preview.diagnostics).toContainEqual(
       expect.objectContaining({
         severity: 'warning',

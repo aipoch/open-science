@@ -148,13 +148,13 @@ describe('AgentsService read surface', () => {
     expect(chemistry).not.toHaveProperty('args')
     expect(connectors.filter((connector) => connector.id === 'chemistry')).toHaveLength(1)
     expect(connectors.some((connector) => connector.displayName === 'Chemistry!')).toBe(false)
-    const custom = connectors.find((c) => c.id === 'my-server')
+    const custom = connectors.find((c) => c.id === 'cust-1')
     expect(custom?.source).toBe('custom')
     expect(custom?.mainEnabled).toBe(true)
     expect(custom).not.toHaveProperty('command')
     expect(custom).not.toHaveProperty('headers')
     expect(custom).not.toHaveProperty('env')
-    const oauth = connectors.find((c) => c.id === 'oauth-server')
+    const oauth = connectors.find((c) => c.id === 'oauth-1')
     expect(oauth?.availability).toBe('unauthenticated')
     expect(oauth?.mainEnabled).toBe(false)
   })
@@ -271,7 +271,7 @@ describe('AgentsService connector runtime availability', () => {
       customServerAvailability: (id) => (id === 'cust-1' ? 'unavailable' : undefined)
     })
 
-    const connector = (await service.listConnectors({})).find((item) => item.id === 'my-server')
+    const connector = (await service.listConnectors({})).find((item) => item.id === 'cust-1')
     expect(connector).toMatchObject({ availability: 'unavailable', mainEnabled: true })
     await expect(
       service.dispatch({

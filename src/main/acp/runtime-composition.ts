@@ -411,8 +411,29 @@ const createAcpRuntime = ({
                   await settingsService.listSpecialistSkillCatalog()
                 )
                 if (effective.kind === 'specialist') {
-                  const provisioned = await settingsService.provisionedConnectorSkillNames()
-                  const connectorSkills = filterSpecialistConnectorSkills(provisioned, profile)
+                  const [provisioned, connectors] = await Promise.all([
+                    settingsService.provisionedConnectorSkillNames(),
+                    settingsService.getConnectors()
+                  ])
+                  const publicNameByLocalId = new Map(
+                    (connectors?.customMcpServers ?? []).map((server) => [server.id, server.name])
+                  )
+                  const publicName = (id: string): string => publicNameByLocalId.get(id) ?? id
+                  const runtimeProfile = {
+                    ...profile,
+                    fullAccess: {
+                      ...profile.fullAccess,
+                      excludedConnectorIds: profile.fullAccess.excludedConnectorIds.map(publicName)
+                    },
+                    selectedCapabilities: {
+                      ...profile.selectedCapabilities,
+                      connectorIds: profile.selectedCapabilities.connectorIds.map(publicName)
+                    }
+                  }
+                  const connectorSkills = filterSpecialistConnectorSkills(
+                    provisioned,
+                    runtimeProfile
+                  )
                   if (connectorSkills.length > 0) {
                     return {
                       ...effective,

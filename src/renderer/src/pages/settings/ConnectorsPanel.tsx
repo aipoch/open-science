@@ -64,7 +64,7 @@ const FILTER_LABELS: Record<GroupFilter, string> = {
 
 const specialistNamesUsingConnector = (
   items: SpecialistListItem[],
-  server: Pick<CustomServerView, 'name'>
+  server: Pick<CustomServerView, 'id' | 'name'>
 ): string[] => {
   return items
     .flatMap((item) => {
@@ -73,8 +73,8 @@ const specialistNamesUsingConnector = (
         item.capabilityMode === 'full'
           ? item.fullAccess.excludedConnectorIds
           : item.selectedCapabilities.connectorIds
-      const usesConnector =
-        item.capabilityMode === 'full' ? !ids.includes(server.name) : ids.includes(server.name)
+      const matches = (id: string): boolean => id === server.id || id === server.name
+      const usesConnector = item.capabilityMode === 'full' ? !ids.some(matches) : ids.some(matches)
       return usesConnector ? [item.displayName?.trim() || item.name] : []
     })
     .sort((a, b) => a.localeCompare(b))

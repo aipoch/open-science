@@ -42,6 +42,7 @@ export type AgentHomeImportOptions = {
   fallbackDirectoryNames?: readonly string[]
   expectedSignature?: string
   expectedImportedIdentity?: ImportedAgentHomeIdentitySnapshot
+  reservedNames?: readonly string[]
 }
 
 export type AgentHomeSkillSummary = {
@@ -501,7 +502,8 @@ class AgentHomeSkillOwner {
         options.aliases ?? []
       )
       const directoryName =
-        existingDirectoryName ?? (await this.store.uniqueImportedName(requestedSlug))
+        existingDirectoryName ??
+        (await this.store.uniqueImportedName(requestedSlug, options.reservedNames))
       const staged = await this.stageAgentHomeSkill(directoryName, sourcePath, skill)
       try {
         if (options.expectedImportedIdentity) {

@@ -58,7 +58,7 @@ const warning = (
   })
 }
 
-const parseOptionalIdList = (
+const parseOptionalNameList = (
   value: Record<string, unknown>,
   field: 'skillIds' | 'connectorIds',
   diagnostics: PackageDiagnostic[]
@@ -68,25 +68,25 @@ const parseOptionalIdList = (
     warning(
       diagnostics,
       `specialist.${field}-invalid`,
-      `${field} must be an array of IDs; the invalid value was ignored.`,
+      `${field} must be an array of names; the invalid value was ignored.`,
       'specialist.json'
     )
     return []
   }
-  const ids: string[] = []
+  const names: string[] = []
   for (const item of value[field]) {
     if (typeof item !== 'string' || !item.trim()) {
       warning(
         diagnostics,
         `specialist.${field}-entry-invalid`,
-        `${field} may contain only non-empty string IDs; the invalid entry was ignored.`,
+        `${field} may contain only non-empty string names; the invalid entry was ignored.`,
         'specialist.json'
       )
       continue
     }
-    if (!ids.includes(item)) ids.push(item)
+    if (!names.includes(item)) names.push(item)
   }
-  return ids
+  return names
 }
 
 const parseJson = (
@@ -302,8 +302,8 @@ const parsePayload = (
       'specialist.json'
     )
   }
-  const skillIds = parseOptionalIdList(value, 'skillIds', diagnostics)
-  const connectorIds = parseOptionalIdList(value, 'connectorIds', diagnostics)
+  const skillIds = parseOptionalNameList(value, 'skillIds', diagnostics)
+  const connectorIds = parseOptionalNameList(value, 'connectorIds', diagnostics)
   if (
     !name ||
     description === undefined ||
@@ -526,7 +526,7 @@ const planBundledSkills = (
     }
     plans.push({
       id,
-      ...(existing && existing.id !== id ? { localId: existing.id } : {}),
+      localId: existing?.id ?? `personal-${id}`,
       version,
       disposition,
       files: files.map((file) => file.path),
@@ -673,6 +673,9 @@ export const validateSpecialistPackage = (
 
   const skillPlans = planBundledSkills(packageFiles, catalog, diagnostics)
   const bundledSkillIds = skillPlans.map((skill) => skill.id)
+  const bundledSkillLocalIdByName = new Map(
+    skillPlans.map((skill) => [skill.id, skill.localId ?? skill.id] as const)
+  )
   const skillIdByName = new Map(
     catalog.skills.map((skill) => [skill.name ?? skill.id, skill.id] as const)
   )
@@ -682,7 +685,8 @@ export const validateSpecialistPackage = (
     ...new Set(
       [...declaredSkillIds, ...bundledSkillIds].flatMap((name) => {
         const localId = skillIdByName.get(name) ?? (catalogSkillIds.has(name) ? name : undefined)
-        if (localId || bundledSkillIds.includes(name)) return [localId ?? name]
+        const bundledLocalId = bundledSkillLocalIdByName.get(name)
+        if (localId || bundledLocalId) return [localId ?? bundledLocalId!]
         warning(
           diagnostics,
           'specialist.skill-unavailable',

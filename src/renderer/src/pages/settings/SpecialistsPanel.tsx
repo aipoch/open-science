@@ -364,9 +364,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               {exportPreview ? 'Choose Skills to include' : 'Preparing export…'}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Builtin and owned Skills are selected by default. Skills copied into the ZIP are
-              discovered automatically on import; Connector names are carried as selected
-              references.
+              Owned Skills are selected by default. Skills copied into the ZIP are discovered
+              automatically on import; Featured Skills and Connector names remain references.
             </p>
           </div>
           <span
@@ -423,7 +422,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                       <strong className="block">{skill.id}</strong>
                       <span className="text-xs text-muted-foreground">
                         {skill.kind === 'builtin'
-                          ? 'Builtin Skill · bundled by default; the original ID is preserved.'
+                          ? 'Featured Skill · referenced by name and not copied into the package.'
                           : skill.kind === 'owned'
                             ? `Owned Skill · v${skill.version} · bundled by default.`
                             : `Installed Skill · v${skill.version} · include it to bundle a copy.`}

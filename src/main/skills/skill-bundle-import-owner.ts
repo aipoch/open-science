@@ -190,7 +190,11 @@ export class SkillBundleImportOwner {
     private readonly transactions: SkillPackageTransactionOwner
   ) {}
 
-  async importFromGitHub(url: string, fetchImpl?: FetchLike): Promise<ImportOutcome> {
+  async importFromGitHub(
+    url: string,
+    fetchImpl?: FetchLike,
+    reservedNames: readonly string[] = []
+  ): Promise<ImportOutcome> {
     const location = parseGitHubSkillUrl(url)
     if (!location) throw new Error('Not a recognizable GitHub URL.')
 
@@ -219,7 +223,7 @@ export class SkillBundleImportOwner {
         return { status: 'updated', id: `imported-${existingDirectoryName}` }
       }
 
-      const name = await this.store.uniqueImportedName(baseName)
+      const name = await this.store.uniqueImportedName(baseName, reservedNames)
       await this.writeImported(name, files, url, signature)
       return { status: 'imported', id: `imported-${name}` }
     })
@@ -284,17 +288,20 @@ export class SkillBundleImportOwner {
 
   async importFromZip(
     zip: Buffer,
-    options: { subPath?: string; replaceId?: string } = {}
+    options: { subPath?: string; replaceId?: string; reservedNames?: readonly string[] } = {}
   ): Promise<ImportOutcome> {
     const { roots } = discoverSkillRoots(zip)
     if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
     const root = this.selectRoot(roots, options.subPath)
-    return this.transactions.runRecovered(() => this.writeRootLocked(root, options.replaceId))
+    return this.transactions.runRecovered(() =>
+      this.writeRootLocked(root, options.replaceId, options.reservedNames)
+    )
   }
 
   async importFromZipBatch(
     zip: Buffer,
-    items: { subPath: string; replaceId?: string }[]
+    items: { subPath: string; replaceId?: string }[],
+    reservedNames: readonly string[] = []
   ): Promise<{ subPath: string; outcome?: ImportOutcome; error?: string }[]> {
     const { roots } = discoverSkillRoots(zip)
     const bySubPath = new Map(roots.map((root) => [root.subPath, root]))
@@ -313,7 +320,7 @@ export class SkillBundleImportOwner {
         try {
           results.push({
             subPath: item.subPath,
-            outcome: await this.writeRootLocked(root, item.replaceId)
+            outcome: await this.writeRootLocked(root, item.replaceId, reservedNames)
           })
         } catch (error) {
           results.push({ subPath: item.subPath, error: reasonFromError(error) })
@@ -353,7 +360,7 @@ export class SkillBundleImportOwner {
   }
 
   private async replaceableImportedId(name: string): Promise<string | undefined> {
-    const target = name.trim().toLowerCase()
+    const target = normalizeSkillName(name)
     const matches = (await this.store.listSkillsLocked()).filter(
       (skill) => skill.source === 'imported' && skill.name.trim().toLowerCase() === target
     )
@@ -372,7 +379,11 @@ export class SkillBundleImportOwner {
     return roots[0]
   }
 
-  private async writeRootLocked(root: SkillRoot, replaceId?: string): Promise<ImportOutcome> {
+  private async writeRootLocked(
+    root: SkillRoot,
+    replaceId?: string,
+    reservedNames: readonly string[] = []
+  ): Promise<ImportOutcome> {
     const files = root.files
     const skillMd = files.find((file) => file.relativePath.toLowerCase() === 'skill.md')!
     const signature = signatureOf(files)
@@ -397,7 +408,7 @@ export class SkillBundleImportOwner {
 
     const name = parseSkillDocument(skillMd.content.toString('utf8')).name?.trim()
     const baseName = normalizeSkillName(name ?? 'skill') || 'skill'
-    const assignedName = await this.store.uniqueImportedName(baseName)
+    const assignedName = await this.store.uniqueImportedName(baseName, reservedNames)
     await this.writeImported(assignedName, files, '', signature)
     return { status: 'imported', id: `imported-${assignedName}` }
   }

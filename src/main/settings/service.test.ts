@@ -4180,7 +4180,8 @@ describe('SettingsService: skills', () => {
 
     expect(importFromGitHub).toHaveBeenCalledWith(
       'https://github.com/o/r/tree/main/skills/demo',
-      netFetch
+      netFetch,
+      ['demo']
     )
   })
 

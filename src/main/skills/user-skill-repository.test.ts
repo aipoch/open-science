@@ -480,6 +480,30 @@ describe('UserSkillRepository', () => {
     expect((await repo.importFromZip(zip)).status).toBe('unchanged')
   })
 
+  it('allocates an imported suffix when a Personal Skill already owns the name', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    await repo.createPersonal({ name: 'bundled', description: 'Personal', body: 'personal' })
+    const zip = buildZip([
+      { path: 'SKILL.md', content: Buffer.from('---\nname: Bundled\n---\nimported') }
+    ])
+
+    await expect(repo.importFromZip(zip)).resolves.toEqual({
+      status: 'imported',
+      id: 'imported-bundled-2'
+    })
+  })
+
+  it('rejects a Personal Skill name already owned by an Imported Skill', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    await repo.importFromZip(
+      buildZip([{ path: 'SKILL.md', content: Buffer.from('---\nname: Shared\n---\nimported') }])
+    )
+
+    await expect(
+      repo.createPersonal({ name: 'shared', description: 'Personal', body: 'personal' })
+    ).rejects.toThrow('A skill named "shared" already exists.')
+  })
+
   it('rejects a zip bundle without a SKILL.md', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const zip = buildZip([{ path: 'readme.md', content: Buffer.from('nope') }])
@@ -934,6 +958,21 @@ describe('UserSkillRepository', () => {
 
     const [preview] = (await repo.previewZip(sharedBundle('v3'))).previews
     expect(preview.replaceableId).toBe('imported-shared')
+  })
+
+  it('normalizes a multi-word preview name before finding its replace target', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const bundle = (body: string): Buffer =>
+      buildZip([
+        {
+          path: 'pack/SKILL.md',
+          content: Buffer.from(`---\nname: Paper Review\ndescription: d\n---\n${body}`)
+        }
+      ])
+    await repo.importFromZip(bundle('v1'))
+
+    const [preview] = (await repo.previewZip(bundle('v2'))).previews
+    expect(preview.replaceableId).toBe('imported-paper-review')
   })
 
   it('replaces an imported skill in place when given a replaceId', async () => {
