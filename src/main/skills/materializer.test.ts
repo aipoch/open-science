@@ -127,6 +127,39 @@ describe('ClaudeCodeSkillMaterializer', () => {
     )
   })
 
+  it('refreshes an unchanged legacy projection whose frontmatter name is not canonical', async () => {
+    const configDir = await skillsDir()
+    const skill = {
+      ...(await makeSkill('paper-review')),
+      id: 'imported-paper-review',
+      compatibility: 'sha256:v1'
+    }
+    await writeFile(
+      join(skill.sourceDir, 'SKILL.md'),
+      '---\nname: paper-review\ndescription: Review papers.\n---\nReview.',
+      'utf8'
+    )
+    const materializer = new ClaudeCodeSkillMaterializer()
+    await materializer.sync(configDir, [skill])
+
+    const projectedDocument = join(configDir, 'skills', 'os-imported-paper-review', 'SKILL.md')
+    await chmod(projectedDocument, 0o644)
+    await writeFile(
+      projectedDocument,
+      '---\nname: imported-paper-review\ndescription: Review papers.\n---\nLegacy projection.',
+      'utf8'
+    )
+
+    // The matching compatibility fingerprint normally skips the copy. A pre-refactor generated
+    // projection with the local ID in frontmatter must instead be rebuilt from its source.
+    await materializer.sync(configDir, [skill])
+
+    const refreshed = await readFile(projectedDocument, 'utf8')
+    expect(refreshed).toContain('name: paper-review')
+    expect(refreshed).toContain('Review.')
+    expect(refreshed).not.toContain('Legacy projection.')
+  })
+
   it('materializes skill files with no write bits', async () => {
     const configDir = await skillsDir()
     const skill = await makeSkill('delta')

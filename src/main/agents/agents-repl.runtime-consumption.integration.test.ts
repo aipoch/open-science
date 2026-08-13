@@ -263,13 +263,21 @@ gate('host.agents repl runtime whitelist consumption', () => {
           )
         ).result ?? '{}'
       )
-      // Read-back resolves the immutable connector name to its public stable id.
-      expect(created.selectedCapabilities.connectorIds).toEqual(['my-server'])
+      // Read-back resolves the immutable connector name to its local stable UUID.
+      expect(created.selectedCapabilities.connectorIds).toEqual(['cust-1'])
       // The Connector gate consumes the post-write config: the provisioned `mcp-my-server` connector
-      // skill is allowed, any other connector is filtered out.
+      // skill is allowed after the runtime boundary maps the local UUID to the public name; any other
+      // connector is filtered out.
+      const runtimeProfile = asProfile({
+        ...created,
+        selectedCapabilities: {
+          ...created.selectedCapabilities,
+          connectorIds: ['my-server']
+        }
+      })
       const allowed = filterSpecialistConnectorSkills(
         ['mcp-my-server', 'mcp-other'],
-        asProfile(created)
+        runtimeProfile
       )
       expect(allowed).toEqual(['mcp-my-server'])
     })

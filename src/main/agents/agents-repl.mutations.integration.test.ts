@@ -193,7 +193,7 @@ gate('host.agents repl mutation integration', () => {
         colorKey: 'green',
         enabled: true,
         capabilityMode: 'selected',
-        selectedCapabilities: { skillIds: ['demo'], connectorIds: ['my-server'] }
+        selectedCapabilities: { skillIds: ['demo'], connectorIds: ['cust-1'] }
       })
     } finally {
       child.kill()
@@ -216,7 +216,7 @@ gate('host.agents repl mutation integration', () => {
     }
   }, 60_000)
 
-  it('create() resolves a connector by exact stable id', async () => {
+  it('create() resolves a connector name to its local stable UUID', async () => {
     const { child, send } = startLoop(env())
     try {
       const r = await send(
@@ -225,7 +225,7 @@ gate('host.agents repl mutation integration', () => {
       expect(r.error).toBeNull()
       const created = JSON.parse(r.result ?? '{}')
       expect(created.capabilityMode).toBe('selected')
-      expect(created.selectedCapabilities.connectorIds).toEqual(['my-server'])
+      expect(created.selectedCapabilities.connectorIds).toEqual(['cust-1'])
     } finally {
       child.kill()
     }
@@ -254,7 +254,7 @@ gate('host.agents repl mutation integration', () => {
       expect(updated.colorKey).toBe('blue')
       expect(updated.capabilityMode).toBe('selected')
       expect(updated.selectedCapabilities.skillIds).toEqual(['demo'])
-      expect(updated.selectedCapabilities.connectorIds).toEqual(['my-server'])
+      expect(updated.selectedCapabilities.connectorIds).toEqual(['cust-1'])
       expect(updated.revision).toBe(created.revision + 1)
     } finally {
       child.kill()
@@ -367,7 +367,7 @@ gate('host.agents repl mutation integration', () => {
           )
         ).result ?? '{}'
       )
-      expect(attached.selectedCapabilities.connectorIds).toEqual(['my-server'])
+      expect(attached.selectedCapabilities.connectorIds).toEqual(['cust-1'])
       const detached = JSON.parse(
         (
           await send(

@@ -28,6 +28,22 @@ const canonicalSkillDocument = (
   return `---\n${dumpYaml(frontmatter, { lineWidth: -1 }).trimEnd()}\n---${separator}${normalized.slice(match[0].length)}`
 }
 
+export const hasCanonicalSkillDocumentName = (raw: string, name: string): boolean => {
+  const normalized = raw.replace(/\r\n?/g, '\n')
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
+  // Legacy fixtures and third-party Skills without frontmatter retain the materializer's existing
+  // fingerprint-only behavior; there is no declared name to diagnose as stale.
+  if (!match) return true
+
+  const parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
+  return Boolean(
+    parsed &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    (parsed as Record<string, unknown>).name === name
+  )
+}
+
 export const normalizeSkillDocumentName = async (path: string, name: string): Promise<void> => {
   const raw = await readFile(path, 'utf8')
   const normalized = canonicalSkillDocument(raw, name)
