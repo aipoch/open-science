@@ -5358,6 +5358,44 @@ describe('recovering from a request-size overflow', () => {
     })
   })
 
+  it('does not retry a hidden Save as skill control as an ordinary prompt', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Analyze the conversation',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Analysis complete'
+    })
+    useSessionStore.getState().finishRun('session-1')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Evaluate this conversation for a reusable skill.',
+      turnIntent: 'save-as-skill'
+    })
+    useSessionStore.getState().failRun('session-1', 'Request too large (max 32MB)')
+
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(false)
+    expect(runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]?.messages.at(-1)).toMatchObject({
+      role: 'user',
+      turnIntent: 'save-as-skill'
+    })
+  })
+
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
     seedOverflowedConversation()
     const staleNativeSnapshot = {

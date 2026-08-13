@@ -1,5 +1,6 @@
 import type { AcpCreateSessionResponse, AcpRuntimeEvent } from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
+import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
@@ -38,7 +39,7 @@ const findUnansweredUserTurn = (messages: ChatMessage[]): ChatMessage | undefine
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
 
-    if (message.role !== 'user') continue
+    if (message.role !== 'user' || isHiddenControlMessage(message)) continue
 
     const hasSuccessfulReply = messages
       .slice(index + 1)
