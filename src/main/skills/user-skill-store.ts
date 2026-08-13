@@ -7,12 +7,12 @@ import type { SkillReference, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import type { BundledSkill } from './registry'
 import { readSkillFile } from './skill-files'
-import { skillPackageCompatibility } from './skill-package-compatibility'
 import {
   SOURCE_MANIFEST,
   type SkillPackageTransactionOwner
 } from './skill-package-transaction-owner'
 import { readSpecialistPackageSkillMetadata } from './specialist-package-adapter'
+import type { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 
 const log = createLogger('skills')
 
@@ -29,12 +29,18 @@ export const SAFE_SKILL_NAME = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/
 const SKILL_NAME_MAX_LENGTH = 64
 const RESERVED_SKILL_NAME_PREFIXES = ['os-', 'mcp-'] as const
 
+export const isReservedSkillName = (name: string): boolean =>
+  RESERVED_SKILL_NAME_PREFIXES.some((prefix) => name.startsWith(prefix))
+
+export const isUsableSkillName = (name: string): boolean =>
+  SAFE_SKILL_NAME.test(name) && !isReservedSkillName(name)
+
 export const assertUsableSkillName = (name: string): void => {
   if (!name) throw new Error('Skill name is required.')
   if (!SAFE_SKILL_NAME.test(name) || name.length > SKILL_NAME_MAX_LENGTH) {
     throw new Error('Skill name must use up to 64 lowercase letters, numbers, and single hyphens.')
   }
-  if (RESERVED_SKILL_NAME_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+  if (!isUsableSkillName(name)) {
     throw new Error(`Skill name may not start with ${RESERVED_SKILL_NAME_PREFIXES.join(' or ')}.`)
   }
 }
@@ -77,7 +83,8 @@ type ValidatePackage = (staging: string) => Promise<void>
 export class UserSkillStore {
   constructor(
     private readonly storageRoot: string,
-    private readonly transactions: SkillPackageTransactionOwner
+    private readonly transactions: SkillPackageTransactionOwner,
+    private readonly compatibilityIndex: UserSkillCompatibilityIndex
   ) {}
 
   sourceDir(source: UserSkillSource): string {
@@ -91,9 +98,7 @@ export class UserSkillStore {
   // Hidden transaction directories never surface as package directory names or Skill ids.
   async listDirectoryNames(source: UserSkillSource): Promise<string[]> {
     try {
-      return (await readdir(this.sourceDir(source))).filter((entry) =>
-        SAFE_SKILL_DIRECTORY_NAME.test(entry)
-      )
+      return (await readdir(this.sourceDir(source))).filter((entry) => SAFE_SKILL_NAME.test(entry))
     } catch {
       return []
     }
@@ -115,32 +120,29 @@ export class UserSkillStore {
 
   // Call only while the shared transaction owner is already locked and recovered.
   async listSkillsLocked(): Promise<BundledSkill[]> {
-    const skills: BundledSkill[] = []
+    const candidates: Array<{
+      source: UserSkillSource
+      directoryName: string
+      sourceDir: string
+      fields: Record<string, string>
+      updatedAt: string
+      packageId?: string
+    }> = []
 
     for (const source of USER_SOURCES) {
       for (const directoryName of await this.listDirectoryNames(source)) {
-        const skillDirectory = this.skillDirectory(source, directoryName)
+        const sourceDir = this.skillDirectory(source, directoryName)
 
         try {
-          const { fields } = await readSkillFile(skillDirectory)
-          const packageMetadata = await readSpecialistPackageSkillMetadata(skillDirectory)
-          const updatedAt = (await stat(join(skillDirectory, 'SKILL.md'))).mtime.toISOString()
-
-          skills.push({
-            id: packageMetadata?.id ?? `${source}-${directoryName}`,
-            // Writable Skill directories predate the explicit id/name model. The safe directory
-            // segment is the canonical invocation/export name; legacy frontmatter remains display
-            // metadata until an ordinary write or export normalizes the package bytes.
-            name: directoryName,
-            displayName: fields.displayname || fields.name || directoryName,
-            description: fields.description ?? '',
+          const { fields } = await readSkillFile(sourceDir)
+          const packageMetadata = await readSpecialistPackageSkillMetadata(sourceDir)
+          candidates.push({
             source,
-            updatedAt,
-            sourceDir: skillDirectory,
-            compatibility: await skillPackageCompatibility(skillDirectory),
-            author: fields.author,
-            license: fields.license,
-            thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty
+            directoryName,
+            sourceDir,
+            fields,
+            updatedAt: (await stat(join(sourceDir, 'SKILL.md'))).mtime.toISOString(),
+            packageId: packageMetadata?.id
           })
         } catch (error) {
           log.warn('skipping user skill with unreadable SKILL.md', {
@@ -150,6 +152,41 @@ export class UserSkillStore {
           })
         }
       }
+    }
+
+    const compatibilityBySourceDir = new Map(
+      (await this.compatibilityIndex.scan(candidates.map((candidate) => candidate.sourceDir))).map(
+        (result) => [result.sourceDir, result]
+      )
+    )
+    const skills: BundledSkill[] = []
+    for (const candidate of candidates) {
+      const compatibility = compatibilityBySourceDir.get(candidate.sourceDir)
+      if (!compatibility || 'error' in compatibility) {
+        log.warn('skipping user skill with unreadable package content', {
+          source: candidate.source,
+          directoryName: candidate.directoryName,
+          error: compatibility && 'error' in compatibility ? compatibility.error : undefined
+        })
+        continue
+      }
+      const { source, directoryName, sourceDir, fields, updatedAt, packageId } = candidate
+      skills.push({
+        id: packageId ?? `${source}-${directoryName}`,
+        // Writable Skill directories predate the explicit id/name model. The safe directory segment
+        // is the canonical invocation/export name; legacy frontmatter remains display metadata until
+        // an ordinary write or export normalizes the package bytes.
+        name: directoryName,
+        displayName: fields.displayname || fields.name || directoryName,
+        description: fields.description ?? '',
+        source,
+        updatedAt,
+        sourceDir,
+        compatibility: compatibility.compatibility,
+        author: fields.author,
+        license: fields.license,
+        thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty
+      })
     }
 
     return skills
@@ -264,6 +301,9 @@ export class UserSkillStore {
     baseName: string,
     reservedNames: readonly string[] = []
   ): Promise<string> {
+    // Every import adapter allocates its destination through this boundary. Reject app-owned
+    // prefixes here so a successful import can never be immediately hidden by catalog policy.
+    assertUsableSkillName(baseName)
     const taken = new Set([
       ...reservedNames,
       ...(await this.listDirectoryNames('imported')),

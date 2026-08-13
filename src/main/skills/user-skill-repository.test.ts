@@ -420,9 +420,30 @@ describe('UserSkillRepository', () => {
       id: 'imported-foo',
       name: 'foo',
       source: 'imported',
-      license: 'MIT'
+      license: 'MIT',
+      compatibility: expect.stringMatching(/^sha256-tree-v2:/)
     })
   })
+
+  it.each(['personal', 'imported'] as const)(
+    'lists only stable invocation-name directories from %s',
+    async (source) => {
+      const storage = await makeStorage()
+      const sourceDir = join(storage, 'skills', source)
+      for (const name of ['valid-name', '-leading', 'double--hyphen', 'a'.repeat(65)]) {
+        const directory = join(sourceDir, name)
+        await mkdir(directory, { recursive: true })
+        await writeFile(
+          join(directory, 'SKILL.md'),
+          `---\nname: ${name}\ndescription: Direct package.\n---\nbody\n`
+        )
+      }
+
+      expect((await new UserSkillRepository(storage).list()).map((skill) => skill.name)).toEqual([
+        'valid-name'
+      ])
+    }
+  )
 
   it('returns empty when no user skills exist', async () => {
     expect(await new UserSkillRepository(await makeStorage()).list()).toEqual([])
@@ -479,6 +500,26 @@ describe('UserSkillRepository', () => {
     // Same content re-imported is a no-op.
     expect((await repo.importFromZip(zip)).status).toBe('unchanged')
   })
+
+  it.each(['os-reserved', 'mcp-reserved'])(
+    'rejects reserved imported name %s before GitHub or archive content is written',
+    async (name) => {
+      const storage = await makeStorage()
+      const repo = new UserSkillRepository(storage)
+      const skillMd = `---\nname: ${name}\ndescription: Reserved.\n---\nbody`
+
+      await expect(repo.importFromGitHub(SKILL_URL, fakeFetch(skillMd))).rejects.toThrow(
+        /os- or mcp-/
+      )
+      await expect(
+        repo.importFromZip(buildZip([{ path: 'SKILL.md', content: Buffer.from(skillMd) }]))
+      ).rejects.toThrow(/os- or mcp-/)
+      expect(await repo.list()).toEqual([])
+      await expect(readdir(join(storage, 'skills', 'imported'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    }
+  )
 
   it('allocates an imported suffix when a Personal Skill already owns the name', async () => {
     const repo = new UserSkillRepository(await makeStorage())
@@ -1538,6 +1579,20 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(items[0].path).toBe(join(home, 'skills', items[0].slug))
   })
 
+  it('hides agent-home directories that cannot be allocated as imported Skill names', async () => {
+    const storage = await makeStorage()
+    const repo = new UserSkillRepository(storage)
+    const home = await mkdtemp(join(tmpdir(), 'os-list-agent-'))
+    await seedSkill(home, 'alpha')
+    await seedSkill(home, 'foo--bar')
+    await seedSkill(home, 'a'.repeat(65))
+    await seedSkill(home, 'os-reserved')
+
+    const items = await repo.listAgentHomeSkills(join(home, 'skills'), 'agents')
+
+    expect(items.map((item) => item.slug)).toEqual(['alpha'])
+  })
+
   it('previews an installed skill body, metadata, and file names without importing it', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     const home = await mkdtemp(join(tmpdir(), 'os-preview-agent-'))
@@ -1683,6 +1738,21 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(skills.find((s) => s.id === 'imported-alpha')).toBeDefined()
   })
 
+  it.each(['os-reserved', 'mcp-reserved'])(
+    'rejects reserved agent-home slug %s before copying it into Imported',
+    async (slug) => {
+      const storage = await makeStorage()
+      const repo = new UserSkillRepository(storage)
+      const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
+      const source = await seedSkill(home, slug)
+
+      await expect(repo.importAgentHomeSkill(source, { source: 'agents', slug })).rejects.toThrow(
+        /os- or mcp-/
+      )
+      expect(await repo.list()).toEqual([])
+    }
+  )
+
   it('throws when the source path does not exist (no half-copied state)', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
@@ -1699,20 +1769,20 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(await repo.list()).toEqual([])
   })
 
-  it('throws when the Agent Home directory name is not a safe external slug', async () => {
-    const storage = await makeStorage()
-    const repo = new UserSkillRepository(storage)
-    const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
-    // Create a directory whose name fails the Agent Home slug guard.
-    await mkdir(join(home, 'skills', 'has spaces'), { recursive: true })
+  it.each(['has spaces', 'foo--bar', 'a'.repeat(65)])(
+    'rejects noncanonical Agent Home slug %s before copying it',
+    async (slug) => {
+      const storage = await makeStorage()
+      const repo = new UserSkillRepository(storage)
+      const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
+      const source = await seedSkill(home, slug)
 
-    await expect(
-      repo.importAgentHomeSkill(join(home, 'skills', 'has spaces'), {
-        source: 'agents',
-        slug: 'has spaces'
-      })
-    ).rejects.toThrow(/unsafe slug/)
-  })
+      await expect(repo.importAgentHomeSkill(source, { source: 'agents', slug })).rejects.toThrow(
+        /must use up to 64/
+      )
+      expect(await repo.list()).toEqual([])
+    }
+  )
 
   it('deduplicates the same installed skill identity while suffixing a cross-source collision', async () => {
     const storage = await makeStorage()

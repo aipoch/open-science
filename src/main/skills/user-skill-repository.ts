@@ -18,12 +18,14 @@ import {
   type SkillMutationOwner
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
+import { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
 import {
   SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,
   UserSkillStore,
   assertUsableSkillName,
   frontmatterBlock,
+  isReservedSkillName,
   parseUserSkillId,
   normalizeSkillName,
   type WriteSkillInput
@@ -34,13 +36,15 @@ export type { ImportOutcome } from './user-skill-import-contracts'
 // Reads and writes user-authored (personal) and imported skills under `<storageRoot>/skills/`.
 class UserSkillRepository {
   private readonly transactions: SkillPackageTransactionOwner
+  private readonly compatibilityIndex: UserSkillCompatibilityIndex
   private readonly store: UserSkillStore
   private readonly bundleImports: SkillBundleImportOwner
   private readonly agentHomeSkills: AgentHomeSkillOwner
 
   constructor(storageRoot: string, mutationOwner?: SkillMutationOwner) {
     this.transactions = new SkillPackageTransactionOwner(storageRoot, mutationOwner)
-    this.store = new UserSkillStore(storageRoot, this.transactions)
+    this.compatibilityIndex = new UserSkillCompatibilityIndex(storageRoot)
+    this.store = new UserSkillStore(storageRoot, this.transactions, this.compatibilityIndex)
     this.bundleImports = new SkillBundleImportOwner(this.store, this.transactions)
     this.agentHomeSkills = new AgentHomeSkillOwner(this.store, this.transactions)
   }
@@ -175,6 +179,7 @@ export {
   UserSkillRepository,
   assertUsableSkillName,
   frontmatterBlock,
+  isReservedSkillName,
   normalizeSkillName,
   parseUserSkillId
 }

@@ -37,6 +37,8 @@ const bundleOwnerPath = resolve(skillsRoot, 'skill-bundle-import-owner.ts')
 const importContractsPath = resolve(skillsRoot, 'user-skill-import-contracts.ts')
 const mutationOwnerPath = resolve(skillsRoot, 'skill-mutation-owner.ts')
 const transactionOwnerPath = resolve(skillsRoot, 'skill-package-transaction-owner.ts')
+const catalogObserverPath = resolve(skillsRoot, 'user-skill-catalog-observer.ts')
+const compatibilityIndexPath = resolve(skillsRoot, 'user-skill-compatibility-index.ts')
 const manifestPath = resolve(projectRoot, 'scripts/ci/module-impact.json')
 
 const readSource = (path: string): string => readFileSync(path, 'utf8')
@@ -200,6 +202,10 @@ describe('User Skill repository architecture', () => {
     expect(rawLineCount(readSource(transactionOwnerPath))).toBeLessThanOrEqual(660)
   })
 
+  it('keeps the compatibility index within the production file budget', () => {
+    expect(rawLineCount(readSource(compatibilityIndexPath))).toBeLessThanOrEqual(360)
+  })
+
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',
@@ -208,6 +214,7 @@ describe('User Skill repository architecture', () => {
       'value:UserSkillRepository',
       'value:assertUsableSkillName',
       'value:frontmatterBlock',
+      'value:isReservedSkillName',
       'value:normalizeSkillName',
       'value:parseUserSkillId'
     ])
@@ -260,13 +267,18 @@ describe('User Skill repository architecture', () => {
       'src/main/skills/user-skill-repository.ts',
       'src/main/skills/user-skill-store.ts'
     ])
+    expect(importersOf(compatibilityIndexPath)).toEqual([
+      'src/main/skills/user-skill-repository.ts',
+      'src/main/skills/user-skill-store.ts'
+    ])
+    expect(importersOf(catalogObserverPath)).toEqual(['src/main/ipc.ts'])
     expect(readSource(repositoryPath)).not.toContain('skillMutationOwnerFor(')
     expect(readSource(repositoryPath)).toContain('mutationOwner?: SkillMutationOwner')
     expect(readSource(repositoryPath)).toContain(
       'new SkillPackageTransactionOwner(storageRoot, mutationOwner)'
     )
     expect(readSource(repositoryPath)).toContain(
-      'new UserSkillStore(storageRoot, this.transactions)'
+      'new UserSkillStore(storageRoot, this.transactions, this.compatibilityIndex)'
     )
     expect(readSource(repositoryPath)).toContain(
       'new SkillBundleImportOwner(this.store, this.transactions)'
@@ -284,6 +296,8 @@ describe('User Skill repository architecture', () => {
     const manifest = JSON.parse(readSource(manifestPath)) as ModuleImpactManifest
     expect(manifest.modules.user_skills_repository).toEqual({
       ownerPaths: [
+        'src/main/skills/user-skill-catalog-observer.ts',
+        'src/main/skills/user-skill-compatibility-index.ts',
         'src/main/skills/user-skill-repository.ts',
         'src/main/skills/user-skill-store.ts',
         'src/main/skills/agent-home-skill-owner.ts',
@@ -292,10 +306,15 @@ describe('User Skill repository architecture', () => {
         'src/main/skills/skill-mutation-owner.ts',
         'src/main/skills/skill-package-transaction-owner.ts'
       ],
-      interfacePaths: ['src/main/skills/user-skill-repository.ts'],
+      interfacePaths: [
+        'src/main/skills/user-skill-repository.ts',
+        'src/main/skills/user-skill-catalog-observer.ts'
+      ],
       consumerModules: ['settings_service_facade'],
       testFiles: {
         owner: [
+          'src/main/skills/user-skill-catalog-observer.test.ts',
+          'src/main/skills/user-skill-compatibility-index.test.ts',
           'src/main/skills/user-skill-repository.architecture.test.ts',
           'src/main/skills/user-skill-repository.atomic.test.ts',
           'src/main/skills/user-skill-repository.test.ts'

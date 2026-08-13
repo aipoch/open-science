@@ -16,10 +16,12 @@ vi.mock('electron', () => ({
 import { SkillRegistry } from '../skills/registry'
 import type { FetchLike } from '../skills/github-import'
 import type { UserSkillRepository } from '../skills/user-skill-repository'
+import { SPECIALIST_PACKAGE_SKILL_METADATA } from '../skills/specialist-package-adapter'
 import { SettingsRepository } from './repository'
 import { SkillCatalogModule } from './skill-catalog'
 
 const roots: string[] = []
+const catalogStorageRoots = new WeakMap<SkillCatalogModule, string>()
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -61,7 +63,7 @@ const createCatalog = async (includeInternal = false): Promise<SkillCatalogModul
       ]
     })
   )
-  return new SkillCatalogModule({
+  const catalog = new SkillCatalogModule({
     repository: new SettingsRepository(storageRoot),
     storageRoot,
     skillRegistry: new SkillRegistry(bundleRoot),
@@ -69,10 +71,15 @@ const createCatalog = async (includeInternal = false): Promise<SkillCatalogModul
     userCodexDir: join(storageRoot, 'user-codex'),
     userAgentsDir: join(storageRoot, 'user-agents')
   })
+  catalogStorageRoots.set(catalog, storageRoot)
+  return catalog
 }
 
+const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'imported'): string =>
+  join(catalogStorageRoots.get(catalog)!, 'skills', source)
+
 describe('SkillCatalogModule', () => {
-  it('keeps only the newest visible Skill when manually placed packages share a name', async () => {
+  it('keeps only the newest user Skill when Personal and Imported packages share a name', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)
     const shared = {
@@ -84,8 +91,11 @@ describe('SkillCatalogModule', () => {
     const skillRegistry = {
       list: async () => [
         {
-          ...shared,
-          id: 'shared',
+          name: 'featured',
+          displayName: 'Featured',
+          description: '',
+          sourceDir: storageRoot,
+          id: 'featured',
           source: 'featured' as const,
           updatedAt: '2026-01-01T00:00:00.000Z'
         }
@@ -114,7 +124,221 @@ describe('SkillCatalogModule', () => {
       userSkills
     })
 
-    expect((await catalog.listHostSkills()).map((skill) => skill.id)).toEqual(['imported-shared'])
+    expect((await catalog.listHostSkills()).map((skill) => skill.id)).toEqual([
+      'featured',
+      'imported-shared'
+    ])
+  })
+
+  it.each(['personal', 'imported'] as const)(
+    'keeps bundled names authoritative over newer %s packages',
+    async (source) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+      roots.push(storageRoot)
+      const shared = {
+        name: 'shared',
+        displayName: 'Shared',
+        description: '',
+        sourceDir: storageRoot
+      }
+      const catalog = new SkillCatalogModule({
+        repository: new SettingsRepository(storageRoot),
+        storageRoot,
+        skillRegistry: {
+          list: async () => [
+            {
+              ...shared,
+              id: 'shared',
+              source: 'featured' as const,
+              updatedAt: '2026-01-01T00:00:00.000Z'
+            }
+          ]
+        } as unknown as SkillRegistry,
+        userSkills: {
+          list: async () => [
+            {
+              ...shared,
+              id: `${source}-shared`,
+              source,
+              updatedAt: '2026-02-01T00:00:00.000Z'
+            }
+          ]
+        } as unknown as UserSkillRepository
+      })
+
+      expect((await catalog.listHostSkills()).map((skill) => skill.id)).toEqual(['shared'])
+      await expect(
+        catalog.withHostSkillRead(`${source}-shared`, async (skill) => skill.id)
+      ).resolves.toBeUndefined()
+    }
+  )
+
+  it('keeps an internal bundled name authoritative over a newer Personal package', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+    roots.push(storageRoot)
+    const shared = {
+      name: 'internal-helper',
+      displayName: 'Internal Helper',
+      description: '',
+      sourceDir: storageRoot
+    }
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: {
+        list: async () => [
+          {
+            ...shared,
+            id: 'internal-helper',
+            source: 'featured' as const,
+            exposure: 'internal' as const,
+            updatedAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      } as unknown as SkillRegistry,
+      userSkills: {
+        list: async () => [
+          {
+            ...shared,
+            id: 'personal-internal-helper',
+            source: 'personal' as const,
+            updatedAt: '2026-02-01T00:00:00.000Z'
+          }
+        ]
+      } as unknown as UserSkillRepository
+    })
+
+    expect((await catalog.listHostSkills()).map((skill) => skill.id)).toEqual(['internal-helper'])
+    expect(await catalog.listSkills()).toEqual([])
+  })
+
+  it.each(['personal', 'imported'] as const)(
+    'excludes %s packages that use app-owned prefixes',
+    async (source) => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+      roots.push(storageRoot)
+      const userSkills = {
+        list: async () =>
+          ['os-private', 'mcp-private', 'ordinary'].map((name) => ({
+            id: `${source}-${name}`,
+            name,
+            displayName: name,
+            description: '',
+            source,
+            updatedAt: '2026-02-01T00:00:00.000Z',
+            sourceDir: storageRoot
+          }))
+      } as unknown as UserSkillRepository
+      const catalog = new SkillCatalogModule({
+        repository: new SettingsRepository(storageRoot),
+        storageRoot,
+        skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
+        userSkills
+      })
+
+      expect((await catalog.listHostSkills()).map((skill) => skill.name)).toEqual(['ordinary'])
+    }
+  )
+
+  it.each(['personal', 'imported'] as const)(
+    'keeps bundled materialization authoritative over a %s sidecar id collision',
+    async (source) => {
+      const catalog = await createCatalog()
+      const userDir = join(userSkillSourceDir(catalog, source), 'innocent-name')
+      await mkdir(userDir, { recursive: true })
+      await writeFile(
+        join(userDir, 'SKILL.md'),
+        '---\nname: innocent-name\ndescription: Manual package.\n---\n\nuser body\n'
+      )
+      await writeFile(
+        join(userDir, SPECIALIST_PACKAGE_SKILL_METADATA),
+        JSON.stringify({
+          id: 'demo',
+          version: '1.0.0',
+          contentHash: 'manual',
+          standalone: true,
+          ownerIds: []
+        })
+      )
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
+      roots.push(runtimeRoot)
+
+      expect((await catalog.listHostSkills()).map((skill) => skill.name)).toEqual(['demo'])
+      await catalog.materializeSkills(runtimeRoot, [])
+      await expect(
+        readFile(join(runtimeRoot, 'skills', 'os-demo', 'SKILL.md'), 'utf8')
+      ).resolves.toContain('demo body')
+      await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
+    }
+  )
+
+  it('excludes every user package when Personal and Imported reuse one sidecar id', async () => {
+    const catalog = await createCatalog()
+    for (const [source, name] of [
+      ['personal', 'personal-package'],
+      ['imported', 'imported-package']
+    ] as const) {
+      const userDir = join(userSkillSourceDir(catalog, source), name)
+      await mkdir(userDir, { recursive: true })
+      await writeFile(
+        join(userDir, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: Duplicate identity.\n---\n\n${source} body\n`
+      )
+      await writeFile(
+        join(userDir, SPECIALIST_PACKAGE_SKILL_METADATA),
+        JSON.stringify({
+          id: 'shared-sidecar-id',
+          version: '1.0.0',
+          contentHash: source,
+          standalone: true,
+          ownerIds: []
+        })
+      )
+    }
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
+    roots.push(runtimeRoot)
+
+    expect((await catalog.listSkills()).map((skill) => skill.name)).toEqual(['demo'])
+    await expect(
+      catalog.withHostSkillRead('shared-sidecar-id', async (skill) => skill.name)
+    ).resolves.toBeUndefined()
+    await catalog.materializeSkills(runtimeRoot, [])
+    await expect(
+      readFile(join(runtimeRoot, 'skills', 'os-shared-sidecar-id', 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
+  })
+
+  it('ignores an unsafe Personal sidecar id instead of materializing outside the Skills root', async () => {
+    const catalog = await createCatalog()
+    const personalDir = join(userSkillSourceDir(catalog, 'personal'), 'safe-name')
+    await mkdir(personalDir, { recursive: true })
+    await writeFile(
+      join(personalDir, 'SKILL.md'),
+      '---\nname: safe-name\ndescription: Manual package.\n---\n\nsafe body\n'
+    )
+    await writeFile(
+      join(personalDir, SPECIALIST_PACKAGE_SKILL_METADATA),
+      JSON.stringify({
+        id: '../../../outside',
+        version: '1.0.0',
+        contentHash: 'manual',
+        standalone: true,
+        ownerIds: []
+      })
+    )
+    const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
+    roots.push(runtimeRoot)
+
+    expect(await catalog.listSkills()).toContainEqual(
+      expect.objectContaining({ id: 'personal-safe-name', name: 'safe-name' })
+    )
+    await catalog.materializeSkills(runtimeRoot, [])
+    await expect(
+      readFile(join(runtimeRoot, 'skills', 'os-personal-safe-name', 'SKILL.md'), 'utf8')
+    ).resolves.toContain('safe body')
+    await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
+    await chmod(join(runtimeRoot, 'skills', 'os-personal-safe-name'), 0o755)
   })
 
   it('suffixes an import that collides with a Featured Skill name', async () => {
@@ -335,6 +559,86 @@ describe('SkillCatalogModule', () => {
       (await catalog.deleteSkill({ id: 'personal-my-skill' })).map((skill) => skill.id)
     ).toEqual(['demo'])
   })
+
+  it.each(['personal', 'imported'] as const)(
+    'projects a directly copied %s package through the shared materializer',
+    async (source) => {
+      const catalog = await createCatalog()
+      const userDir = join(userSkillSourceDir(catalog, source), 'manual-skill')
+      await mkdir(userDir, { recursive: true })
+      await writeFile(
+        join(userDir, 'SKILL.md'),
+        '---\nname: Legacy Label\ndescription: Manually copied.\n---\n\n# Manual\n'
+      )
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
+      roots.push(runtimeRoot)
+
+      expect(await catalog.listSkills()).toContainEqual(
+        expect.objectContaining({
+          id: `${source}-manual-skill`,
+          name: 'manual-skill',
+          source
+        })
+      )
+      await catalog.materializeSkills(runtimeRoot, [])
+      await expect(
+        readFile(join(runtimeRoot, 'skills', `os-${source}-manual-skill`, 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: manual-skill')
+      await chmod(join(runtimeRoot, 'skills', 'os-demo'), 0o755)
+      await chmod(join(runtimeRoot, 'skills', `os-${source}-manual-skill`), 0o755)
+    }
+  )
+
+  it.each(['personal', 'imported'] as const)(
+    'projects a directly copied %s package through every supported execution route',
+    async (source) => {
+      const catalog = await createCatalog()
+      const sourceRoot = userSkillSourceDir(catalog, source)
+      const userDir = join(sourceRoot, 'route-skill')
+      await mkdir(userDir, { recursive: true })
+      await writeFile(
+        join(userDir, 'SKILL.md'),
+        '---\nname: Legacy Route Label\ndescription: Route matrix package.\n---\n\n# Route\n'
+      )
+
+      const projectedId = `${source}-route-skill`
+      const projectedDirectory = `os-${projectedId}`
+      const storageRoot = join(sourceRoot, '..', '..')
+      const claudeRoot = join(storageRoot, 'claude')
+      const opencodeRoot = join(storageRoot, 'opencode', 'config', 'opencode')
+      const codexRoot = join(storageRoot, 'codex')
+
+      // Claude Code receives the package through its settings/plugin provisioning boundary.
+      await catalog.provisionClaudeConfig(claudeRoot, [])
+      await expect(
+        readFile(join(claudeRoot, 'skills', projectedDirectory, 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: route-skill')
+
+      // OpenCode receives the same canonical projection in its isolated app-owned config root.
+      await catalog.materializeSkills(opencodeRoot, [])
+      await expect(
+        readFile(join(opencodeRoot, 'skills', projectedDirectory, 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: route-skill')
+
+      // Both Codex Responses descriptor injection and the Codex Bridge selector consume the
+      // materialized Codex home, but exercise distinct final catalog interfaces.
+      await catalog.materializeSkills(codexRoot, [])
+      const projectedFile = join(codexRoot, 'skills', projectedDirectory, 'SKILL.md')
+      await expect(catalog.codexSkillDescriptorsForIds([projectedId], codexRoot)).resolves.toEqual([
+        { name: 'route-skill', path: projectedFile }
+      ])
+      await expect(catalog.codexSkillCatalog(codexRoot)).resolves.toContainEqual({
+        name: 'route-skill',
+        description: 'Route matrix package.',
+        path: projectedFile
+      })
+
+      for (const root of [claudeRoot, opencodeRoot, codexRoot]) {
+        await chmod(join(root, 'skills', 'os-demo'), 0o755)
+        await chmod(join(root, 'skills', projectedDirectory), 0o755)
+      }
+    }
+  )
 
   it('reads authorized Connector descriptions from generated frontmatter and rejects invalid docs', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-connector-catalog-'))
