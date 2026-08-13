@@ -7,11 +7,42 @@ const streamingMetrics = {
   // zustand commits performed by the presentation-tick applier (appendAgentMessageChunk(s)).
   agentMessageChunkCommits: 0,
   // Individual chunks applied across those commits; chunks/commit is the tick-batching win.
-  agentMessageChunksCommitted: 0
+  agentMessageChunksCommitted: 0,
+  // Ring buffer of recent apply-order events for diagnosing text/tool ordering in real
+  // sessions: read window.__streamingMetrics.events in a dev build after a misordered turn.
+  events: [] as Array<{
+    t: number
+    kind: string
+    id: string
+    len?: number
+    title?: string
+  }>
+}
+
+const MAX_TIMELINE_EVENTS = 200
+
+const pushTimelineEvent = (event: {
+  kind: string
+  id: string
+  len?: number
+  title?: string
+}): void => {
+  streamingMetrics.events.push({ t: Date.now(), ...event })
+  if (streamingMetrics.events.length > MAX_TIMELINE_EVENTS) {
+    streamingMetrics.events.splice(0, streamingMetrics.events.length - MAX_TIMELINE_EVENTS)
+  }
 }
 
 export const recordAcpChunkEventReceived = (): void => {
   streamingMetrics.acpChunkEventsReceived += 1
+}
+
+export const recordTextEventApplied = (streamId: string, textLength: number): void => {
+  pushTimelineEvent({ kind: 'text', id: streamId, len: textLength })
+}
+
+export const recordToolEventApplied = (toolCallId: string, title?: string): void => {
+  pushTimelineEvent({ kind: 'tool', id: toolCallId, title })
 }
 
 export const recordAgentMessageChunkCommit = (chunkCount: number): void => {

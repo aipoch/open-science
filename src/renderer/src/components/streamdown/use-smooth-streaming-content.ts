@@ -11,6 +11,8 @@ const SPEED_DOWN_TO_ONE_GRAPHEMES = 60
 // rate scales to drain within CATCH_UP_FRAMES frames instead of trailing seconds behind.
 const CATCH_UP_GRAPHEMES = 600
 const CATCH_UP_FRAMES = 30
+// Bound a single frame's reveal so draining a large backlog never flashes a huge block.
+const CATCH_UP_MAX_GRAPHEMES_PER_FRAME = 48
 const graphemeSegmenter =
   typeof Intl.Segmenter === 'function'
     ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
@@ -194,7 +196,10 @@ const useSmoothStreamingContent = (
           )
           const frameReveal =
             remaining > CATCH_UP_GRAPHEMES
-              ? Math.max(presentationSpeedRef.current, Math.ceil(remaining / CATCH_UP_FRAMES))
+              ? Math.min(
+                  CATCH_UP_MAX_GRAPHEMES_PER_FRAME,
+                  Math.max(presentationSpeedRef.current, Math.ceil(remaining / CATCH_UP_FRAMES))
+                )
               : presentationSpeedRef.current
           const revealCount = Math.min(releasable, frameReveal)
           const nextIndex = pendingIndexRef.current + revealCount

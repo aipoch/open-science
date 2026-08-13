@@ -33,7 +33,12 @@ import {
   type ChatSession,
   type ToolActivity
 } from '../../stores/session-store'
-import { recordAcpChunkEventReceived, recordAgentMessageChunkCommit } from '../streaming-metrics'
+import {
+  recordAcpChunkEventReceived,
+  recordAgentMessageChunkCommit,
+  recordTextEventApplied,
+  recordToolEventApplied
+} from '../streaming-metrics'
 import { useSettingsStore } from '../../stores/settings-store'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
@@ -562,6 +567,10 @@ const applyWorkspaceRuntimeEvent = async (
     store.completeActivityGroup(event.sessionId, event.promptMessageId)
     recordAcpChunkEventReceived()
     recordAgentMessageChunkCommit(1)
+    recordTextEventApplied(
+      createRuntimeStreamId(event),
+      typeof content === 'string' ? content.length : 0
+    )
     store.appendAgentMessageChunk({
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
@@ -575,6 +584,9 @@ const applyWorkspaceRuntimeEvent = async (
 
   // Tool calls become visible activity rows, including web-search query/result payloads.
   if (event.kind === 'tool' && event.sessionId && event.toolCallId) {
+    if (!isActivityGroupControlEvent(event)) {
+      recordToolEventApplied(event.toolCallId, event.title)
+    }
     if (isActivityGroupControlEvent(event)) {
       const title = getActivityGroupTitleFromToolEvent(event)
       if (title) {
@@ -907,6 +919,10 @@ const applyWorkspaceRuntimeEventBatch = async (events: AcpRuntimeEvent[]): Promi
       content
     })
     recordAcpChunkEventReceived()
+    recordTextEventApplied(
+      createRuntimeStreamId(event),
+      typeof content === 'string' ? content.length : 0
+    )
   }
 
   recordAgentMessageChunkCommit(inputs.length)
