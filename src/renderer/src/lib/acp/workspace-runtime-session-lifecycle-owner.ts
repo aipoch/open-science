@@ -91,8 +91,8 @@ const replaceWorkspaceProviderIdentity = (
 const ensureWorkspaceSessionReady = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string
-): Promise<void> => {
-  if (runtime.state.sessionIds.includes(sessionId)) return
+): Promise<boolean> => {
+  if (runtime.state.sessionIds.includes(sessionId)) return false
   const session = workspaceSession(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)
   const cwd = session.cwd || runtime.state.cwd
@@ -119,6 +119,7 @@ const ensureWorkspaceSessionReady = async (
         }
       : undefined
   )
+  return resumed?.contextReset === true
 }
 
 const continueInterruptedWorkspaceTurn = async (
@@ -618,8 +619,8 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     compact(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<boolean> {
       return compactWorkspaceSession(runtime, sessionId)
     },
-    ensureReady(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<void> {
-      return ensureWorkspaceSessionReady(runtime, sessionId)
+    async ensureReady(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<void> {
+      await ensureWorkspaceSessionReady(runtime, sessionId)
     },
     resume(
       runtime: WorkspaceMessageRuntime,

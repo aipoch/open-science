@@ -34,8 +34,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
       inFlightRef.current.add(request.sessionId)
       setSaveAsSkillInFlightSessionIds((current) => [...current, request.sessionId])
       try {
-        const wasAttached = runtime.state.sessionIds.includes(request.sessionId)
-        await ensureWorkspaceSessionReady(runtime, request.sessionId)
+        const contextReset = await ensureWorkspaceSessionReady(runtime, request.sessionId)
         const session = useSessionStore
           .getState()
           .sessions.find((candidate) => candidate.id === request.sessionId)
@@ -58,7 +57,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           historyReplay: {
             ...getHistoryReplayDescriptor(session.id),
             supportsImageInput,
-            ...(!wasAttached ? { contextReset: true as const } : {})
+            ...(contextReset ? { contextReset: true as const } : {})
           }
         })
       } finally {

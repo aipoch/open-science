@@ -116,4 +116,62 @@ describe('workspace Save as skill owner', () => {
     })
     expect(owner.saveAsSkillInFlightSessionIds).toEqual([])
   })
+
+  it.each([
+    { contextReset: false, expectedContextReset: undefined },
+    { contextReset: true, expectedContextReset: true }
+  ])(
+    'replays history after resume only when contextReset is $contextReset',
+    async ({ contextReset, expectedContextReset }) => {
+      useSessionStore.setState({ sessions: [session] })
+      const saveAsSkill = vi.fn(async () => undefined)
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: { acp: { saveAsSkill } }
+      })
+      const runtime = {
+        state: { cwd: '/workspace', sessionIds: [] },
+        resumeSession: vi.fn(async () => ({
+          sessionId: 'session-1',
+          cwd: '/workspace',
+          contextReset
+        }))
+      } as never
+      let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+      const Harness = (): null => {
+        owner = useWorkspaceRuntimeSaveAsSkillOwner({
+          runtime,
+          supportsImageInput: true,
+          getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+        })
+        return null
+      }
+      root = createRoot(document.createElement('div'))
+      act(() => root?.render(createElement(Harness)))
+      const graph = session.conversationGraph!
+      const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+
+      await act(() =>
+        owner.saveAsSkill({
+          projectId: session.projectId,
+          sessionId: session.id,
+          agentFrameId: frame.id,
+          messageBranchId: frame.activeBranchId
+        })
+      )
+
+      expect(saveAsSkill).toHaveBeenCalledWith({
+        projectId: session.projectId,
+        sessionId: session.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId,
+        historyReplay: {
+          target: 'claude-code',
+          contextWindow: 100_000,
+          supportsImageInput: true,
+          ...(expectedContextReset ? { contextReset: expectedContextReset } : {})
+        }
+      })
+    }
+  )
 })
