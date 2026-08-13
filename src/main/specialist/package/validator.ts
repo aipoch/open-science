@@ -676,11 +676,12 @@ export const validateSpecialistPackage = (
   const skillIdByName = new Map(
     catalog.skills.map((skill) => [skill.name ?? skill.id, skill.id] as const)
   )
+  const catalogSkillIds = new Set(catalog.skills.map((skill) => skill.id))
   const declaredSkillIds = [...new Set(payload?.skillIds ?? [])]
   const skillIds = [
     ...new Set(
       [...declaredSkillIds, ...bundledSkillIds].flatMap((name) => {
-        const localId = skillIdByName.get(name)
+        const localId = skillIdByName.get(name) ?? (catalogSkillIds.has(name) ? name : undefined)
         if (localId || bundledSkillIds.includes(name)) return [localId ?? name]
         warning(
           diagnostics,

@@ -153,6 +153,39 @@ describe('validateSpecialistPackage', () => {
     expect(result.plan?.connectorIds).toEqual(['550e8400-e29b-41d4-a716-446655440000'])
   })
 
+  it('resolves legacy local Skill ids while preferring portable names', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        skillIds: ['personal-paper-review', 'shared-reference']
+      }),
+      {
+        ...catalog,
+        skills: [
+          {
+            id: 'personal-paper-review',
+            name: 'paper-review',
+            builtin: false
+          },
+          {
+            id: 'imported-shared-reference',
+            name: 'shared-reference',
+            builtin: false
+          },
+          {
+            id: 'shared-reference',
+            name: 'different-name',
+            builtin: false
+          }
+        ]
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.skillIds).toEqual(['personal-paper-review', 'imported-shared-reference'])
+  })
+
   it('changes the package content identity when bundled Skill bytes change', () => {
     const bundled = (body: string): ReturnType<typeof validateSpecialistPackage> =>
       validateSpecialistPackage(
