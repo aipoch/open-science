@@ -10,7 +10,7 @@ Open Science is an open-source, local-first, model-agnostic AI research workbenc
 
 Open Science supports computational and data-intensive research across disciplines, including machine learning, statistics, life sciences, chemistry, materials science, physics and environmental science. It supports the research process from literature review and hypothesis development to code execution, data analysis, simulation, visualization, and the production of traceable research outputs.
 
-> 💡 **[Open Science v0.14.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 11, 2026)_. Highlights include production subagent delegation workflows, immutable resource identities with camelCase Host JavaScript APIs, smooth live response rendering, a new-conversation keyboard shortcut, durable permission request serialization, and refreshed bundled skill content — alongside connector CLI path restoration, global search stabilization, preview scheme registration, and project-file stability during terminal streaming. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
+> 💡 **[Open Science v0.14.0 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated August 12, 2026)_. Highlights include production subagent delegation workflows, immutable resource identities with camelCase Host JavaScript APIs, smooth live response rendering, a new-conversation keyboard shortcut, durable permission request serialization, and refreshed bundled skill content — alongside connector CLI path restoration, global search stabilization, preview scheme registration, and project-file stability during terminal streaming. See the [latest release notes](https://github.com/aipoch/open-science/releases/latest) for the full changelog.
 
 <p align="center">
  <img width="1920" height="1140" alt="Open Science open-source AI research workbench desktop app workspace showing an agent session with generated artifacts" src="https://github.com/user-attachments/assets/df59db19-98d7-4071-81f2-c682fbecdf86" />
@@ -150,7 +150,7 @@ Open Science is an independent product built from scratch. It is not a proxy, un
 
 ## Design Principles
 
-Open Science is shaped by a small set of principles that govern how code, data, models, and human oversight fit together.
+Open Science is built on seven design principles that govern how code, data, models, and human oversight fit together: open by default, explicit multi-provider compatibility, local-first data ownership, human-in-the-loop oversight, durable research records, composable capabilities, and honest scientific boundaries.
 
 - **Open by default.** Source code, formats, connectors, and skills should remain inspectable and forkable.
 - **Multi-provider with explicit compatibility.** The app validates provider configuration and makes endpoint requirements visible instead of treating every API protocol as interchangeable.
@@ -340,39 +340,39 @@ Open Science is a research execution and record-keeping tool, not a generic chat
 
 ## Frequently Asked Questions
 
-### **Q: What should I do the first time I open Open Science?**
+### What should I do the first time I open Open Science?
 
 A: Complete the five setup steps: **Environment**, **Agent runtime**, **Model provider**, **Notebook runtime**, and **Data location**. Fix required rows marked `Action needed`, install or repair the selected agent if offered, and test the model connection. Notebook setup and a custom data location are optional.
 
-### **Q: What is an API Key, and where do I get one?**
+### What is an API Key, and where do I get one?
 
 A: An API Key is a secret credential issued by a model provider. Create or copy one from that provider's developer/API console. The provider may bill requests made with the key. Treat it like a password: never share it or commit it to a repository.
 
-### **Q: Do I need an API Key?**
+### Do I need an API Key?
 
 A: Not if you reuse an existing subscription login — a Claude subscription through shared browser login or an isolated app-managed `claude setup-token` flow, or a ChatGPT/Codex subscription login on the Codex backend. Built-in cloud providers and custom gateways require their own keys.
 
-### **Q: Which model providers can I use?**
+### Which model providers can I use?
 
 A: Open the provider picker during setup or under `Settings → Model` for the choices supported by your installed app and selected agent backend. You can use a built-in cloud provider, a compatible Custom Gateway, a Claude subscription through shared or isolated login, or a Codex subscription on the Codex backend.
 
-### **Q: Why does the model connection test fail?**
+### Why does the model connection test fail?
 
 A: Check the API Key for missing characters or spaces, verify the Base URL and region, use the provider's exact model ID, and confirm network access and account balance. For a Claude subscription, retry the shared browser login or refresh the isolated `claude setup-token` credential, depending on the selected mode.
 
-### **Q: Why is `Continue` disabled during setup?**
+### Why is `Continue` disabled during setup?
 
 A: The current step has not met its required condition. Fix any environment row marked `Action needed`, install or repair the selected agent runtime, or validate the model provider, depending on the active step. Notebook setup is optional and only affects Notebook execution.
 
-### **Q: Setup is complete. How do I start a research task?**
+### Setup is complete. How do I start a research task?
 
 A: Create or open a project, start a session, attach any source files, and describe the goal, constraints, expected output, and validation criteria. Use `@` to reference a project file and `/` to select an enabled skill.
 
-### **Q: How do I run jobs on a remote HPC cluster?**
+### How do I run jobs on a remote HPC cluster?
 
 A: Enable the **Remote Compute (SSH)** skill under **Settings → Skills**, register your cluster under **Settings → Compute**, then start a session and select the skill with `/remote-compute-ssh`. The skill handles host registration, short commands via SSH, and fully async job submission — the app automatically starts an analysis turn when the job finishes, so you never write a polling loop.
 
-### **Q: Is there a command-line interface?**
+### Is there a command-line interface?
 
 A: Yes. Install it in one click from **Settings → General → Command line tool → Install command** (adds `open-science` to your PATH; no separate Node.js needed). The CLI controls the local service and submits research tasks without opening a browser:
 
@@ -395,15 +395,15 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 See the [CLI guide](packages/open-science/CLI.md) for the full command reference, JSON/JSONL output formats, exit codes, and headless service options.
 
-### **Q: How do I inspect where a generated result came from?**
+### How do I inspect where a generated result came from?
 
 A: Open the generated artifact and choose **Provenance**. Select a version to inspect the content identity and the available producer code, execution history, inputs, environment inventory, producing conversation context, and reviewer evidence. Evidence Open Science could not verify is marked unavailable.
 
-### **Q: Can I revise an earlier request without losing the conversation that followed?**
+### Can I revise an earlier request without losing the conversation that followed?
 
 A: Yes. Edit a completed user message and resend it to create a new branch from that point. The original later turns remain available, and the revision arrows beside the message switch between the alternative paths.
 
-### **Q: Does my research data stay on my computer?**
+### Does my research data stay on my computer?
 
 A: Projects, sessions, files, settings, and configured credentials are stored locally by default. Content needed for model requests, web searches, or connector calls may still be sent to the external service you selected, so review sensitive inputs and provider policies before running a task.
 
