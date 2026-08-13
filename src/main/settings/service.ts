@@ -486,6 +486,10 @@ class SettingsService {
     return this.skills.listHostSkills()
   }
 
+  async listUserSkills(): Promise<BundledSkill[]> {
+    return this.skills.listUserSkills()
+  }
+
   async withHostSkillRead<T>(
     id: string,
     read: (skill: BundledSkill) => Promise<T>

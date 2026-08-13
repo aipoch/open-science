@@ -7,6 +7,7 @@ import type { SkillReference, SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import type { BundledSkill } from './registry'
 import { readSkillFile } from './skill-files'
+import { skillPackageCompatibility } from './skill-package-compatibility'
 import {
   SOURCE_MANIFEST,
   type SkillPackageTransactionOwner
@@ -136,6 +137,7 @@ export class UserSkillStore {
             source,
             updatedAt,
             sourceDir: skillDirectory,
+            compatibility: await skillPackageCompatibility(skillDirectory),
             author: fields.author,
             license: fields.license,
             thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty

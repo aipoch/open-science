@@ -331,6 +331,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),
     onConnectorRuntimeChanged: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorRuntimeChanged', listener),
+    onSkillCatalogChanged: (listener) =>
+      electronRendererContracts.subscribe('settings.onSkillCatalogChanged', listener),
     onSkillImportApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onSkillImportApprovalRequest', listener),
     onSkillImportApprovalSettled: (listener) =>

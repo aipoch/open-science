@@ -284,6 +284,7 @@ import {
 } from './runtime-electron-wiring'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/conversation-import'
 import { HostSkillsService, type HostSkillsCatalog } from './skills/host-skills-service'
+import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
 import type { TaskAgentPort } from './tasks/task-runner'
 
@@ -428,6 +429,17 @@ const createApplicationModules = async (
   // startup runs before the runtime exists, while later reads must preserve live prompt state.
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
+  }
+  const userSkillCatalogObserverRef: { current: UserSkillCatalogObserver | undefined } = {
+    current: undefined
+  }
+  const requestSkillCatalogRefresh = (): void => {
+    const observer = userSkillCatalogObserverRef.current
+    if (observer) {
+      void observer.notifyCatalogChanged()
+      return
+    }
+    void runtimeRef.current?.requestSkillsReload()
   }
   const sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined } = {
     current: undefined
@@ -1132,7 +1144,7 @@ const createApplicationModules = async (
       skillImportApprovalBroker.request(request, cancellation),
     // If a prompt is active the coordinator defers the reconnect until its terminal event, making the
     // new Skill available on the next user turn without interrupting the importing tool call.
-    onSkillsChanged: () => void runtimeRef.current?.requestSkillsReload()
+    onSkillsChanged: requestSkillCatalogRefresh
   })
   const moleculePreviewHandler = createMoleculePreviewHandler({
     writeArtifactForCurrentRun: (sessionId, input) => {
@@ -1580,7 +1592,7 @@ const createApplicationModules = async (
         rawInput: { skillApproval: { kind: 'delete', ...payload } }
       })
     },
-    onPublishedSkillsChanged: () => void runtimeRef.current?.requestSkillsReload()
+    onPublishedSkillsChanged: requestSkillCatalogRefresh
   })
   const hostLlmLog = createLogger('notebook:host-llm')
   const hostLlmService = new HostLlmService({
@@ -1796,6 +1808,27 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  const userSkillCatalogObserver = await modules.add(
+    {
+      storageRoot: configRoot,
+      catalog: { list: () => settingsService.listUserSkills() },
+      onCatalogChanged: async () => {
+        broadcastToRenderers('skills:catalog-changed', undefined)
+        await runtime.requestSkillsReload()
+      }
+    },
+    (options) => {
+      const observer = new UserSkillCatalogObserver(options)
+      return {
+        name: 'user-skill-catalog-observer',
+        capability: observer,
+        start: () => observer.start(),
+        rollback: () => observer.dispose(),
+        dispose: () => observer.dispose()
+      }
+    }
+  )
+  userSkillCatalogObserverRef.current = userSkillCatalogObserver
   const sideChatLog = createLogger('side-chat')
   const sideChatRuntime = await modules.add(
     {
@@ -2076,7 +2109,10 @@ const createApplicationModules = async (
         return mainApplied && sideChatApplied
       }
     },
-    skills: { requestSkillsReload: () => void runtime.requestSkillsReload() },
+    skills: {
+      requestSkillsReload: () => void runtime.requestSkillsReload(),
+      notifySkillCatalogChanged: requestSkillCatalogRefresh
+    },
     connectors: {
       invalidatePermissionProjection: () => permissionGrantProjection.invalidateProjection(),
       refreshConnectorSkillDocs: (customServerId) =>

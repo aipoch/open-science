@@ -178,6 +178,13 @@ class SkillCatalogModule {
     return this.catalog()
   }
 
+  // Main-process observer adapter. Keeping this read on the existing repository owner avoids a
+  // second production transaction facade while excluding immutable bundled packages from each
+  // writable-directory reconciliation.
+  async listUserSkills(): Promise<BundledSkill[]> {
+    return this.userSkills.list()
+  }
+
   async withHostSkillRead<T>(
     id: string,
     read: (skill: BundledSkill) => Promise<T>

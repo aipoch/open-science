@@ -57,6 +57,7 @@ export type ApplicationEventMap = {
   'connectors:approval-request': ConnectorApprovalRequest
   'skills:conversation-import-request': ConversationSkillImportApprovalRequest
   'skills:conversation-import-settled': string
+  'skills:catalog-changed': undefined
   'compute:approval-request': ComputeApprovalRequest
   'compute:job-updated': JobSummary
   'specialist:catalog-changed': undefined

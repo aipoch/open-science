@@ -261,7 +261,10 @@ const registerTestSettingsIpcHandlers = ({
         applyReasoningEffort: onReasoningEffortChanged ?? (async () => false),
         applyModelChange: async () => false
       },
-      skills: { requestSkillsReload: onSkillsChanged ?? (() => undefined) },
+      skills: {
+        requestSkillsReload: onSkillsChanged ?? (() => undefined),
+        notifySkillCatalogChanged: onSkillsChanged ?? (() => undefined)
+      },
       connectors: {
         invalidatePermissionProjection: onConnectorsChanged ?? (() => undefined),
         refreshConnectorSkillDocs: async () => undefined,

@@ -589,7 +589,10 @@ describe('WorkspacePage draft preservation', () => {
 
   it('does not downgrade Skill history when the catalog fails to load', async () => {
     const listSkills = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
-    window.api = { ...window.api, settings: { listSkills } } as never
+    window.api = {
+      ...window.api,
+      settings: { listSkills, onSkillCatalogChanged: vi.fn(() => vi.fn()) }
+    } as never
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((candidate) =>
         candidate.id === 'sess-a'

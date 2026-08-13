@@ -53,6 +53,7 @@ type SettingsSkillsCommands = Pick<
   | 'listAgentHomeSkills'
   | 'previewAgentHomeSkill'
   | 'importAgentHomeSkills'
+  | 'onSkillCatalogChanged'
 >
 
 type SettingsSkillsSliceOptions = {
@@ -70,20 +71,37 @@ export const createSettingsSkillsSlice = ({
   setState,
   getCommands
 }: SettingsSkillsSliceOptions): SettingsSkillsActions => {
+  let reconcileGeneration = 0
   const reconcileCatalog = async (command: () => Promise<SkillView[]>): Promise<void> => {
-    setState({ skills: await command() })
+    const generation = ++reconcileGeneration
+    const skills = await command()
+    if (generation === reconcileGeneration) setState({ skills })
   }
 
   const reconcileImport = async <Result extends { skills: SkillView[] }>(
     command: () => Promise<Result>
   ): Promise<Result> => {
+    const generation = ++reconcileGeneration
     const result = await command()
-    setState({ skills: result.skills })
+    if (generation === reconcileGeneration) setState({ skills: result.skills })
     return result
   }
 
+  // The settings store is a renderer-window singleton. Keep one listener for that context's lifetime;
+  // Electron releases the preload subscription when the window is destroyed, while retaining the
+  // remover here prevents repeated loadSkills calls from installing duplicate listeners.
+  let removeCatalogChangedListener: (() => void) | undefined
+  const subscribeToCatalogChanges = (): void => {
+    removeCatalogChangedListener ??= getCommands().onSkillCatalogChanged(() => {
+      void reconcileCatalog(() => getCommands().listSkills()).catch(() => undefined)
+    })
+  }
+
   return {
-    loadSkills: () => reconcileCatalog(() => getCommands().listSkills()),
+    loadSkills: () => {
+      subscribeToCatalogChanges()
+      return reconcileCatalog(() => getCommands().listSkills())
+    },
     setSkillEnabled: async (id, enabled) => {
       setState({
         skills: getState().skills.map((skill) => (skill.id === id ? { ...skill, enabled } : skill))

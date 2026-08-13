@@ -470,6 +470,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.onConnectorApprovalRequest',
       'settings.onConnectorRuntimeChanged',
       'settings.onInstallLog',
+      'settings.onSkillCatalogChanged',
       'settings.onSkillImportApprovalRequest',
       'settings.onSkillImportApprovalSettled',
       'settings.previewAgentHomeSkill',
@@ -607,7 +608,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   it('routes every owned method through its cataloged Electron channel', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(194)
+    expect(runtimeContracts).toHaveLength(195)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()

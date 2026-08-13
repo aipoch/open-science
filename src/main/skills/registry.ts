@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { SkillSource } from '../../shared/settings'
 import { createLogger } from '../logger'
 import { parseFrontmatter } from './frontmatter'
 import { resolveBundledSkillsRoot } from './resource-path'
+import { skillPackageCompatibility } from './skill-package-compatibility'
 
 const log = createLogger('skills')
 
@@ -43,28 +43,6 @@ type ManifestEntry = {
 }
 
 const SAFE_ID = /^[a-z0-9-]+$/
-
-const bundledSkillCompatibility = async (sourceDir: string): Promise<string> => {
-  const hash = createHash('sha256')
-  const visit = async (directory: string, prefix = ''): Promise<void> => {
-    const entries = await readdir(directory, { withFileTypes: true })
-    entries.sort((left, right) => left.name.localeCompare(right.name))
-    for (const entry of entries) {
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
-      const absolutePath = join(directory, entry.name)
-      if (entry.isDirectory()) {
-        await visit(absolutePath, relativePath)
-      } else if (entry.isFile()) {
-        hash.update(relativePath)
-        hash.update('\0')
-        hash.update(await readFile(absolutePath))
-        hash.update('\0')
-      }
-    }
-  }
-  await visit(sourceDir)
-  return `sha256:${hash.digest('hex')}`
-}
 
 // Reads and validates the manifest, dropping malformed entries.
 const readManifest = async (rootDir: string): Promise<ManifestEntry[]> => {
@@ -131,7 +109,7 @@ class SkillRegistry {
           source: entry.source,
           updatedAt: entry.updatedAt,
           sourceDir,
-          compatibility: await bundledSkillCompatibility(sourceDir),
+          compatibility: await skillPackageCompatibility(sourceDir),
           author: fields.author,
           license: fields.license,
           // The "Third-party software, content, terms, and information" row; several key spellings.

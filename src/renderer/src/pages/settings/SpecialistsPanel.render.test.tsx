@@ -100,7 +100,8 @@ beforeEach(() => {
     settings: {
       listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [], ncbi: null }),
       onConnectorRuntimeChanged: vi.fn(() => vi.fn()),
-      listSkills: vi.fn().mockResolvedValue([])
+      listSkills: vi.fn().mockResolvedValue([]),
+      onSkillCatalogChanged: vi.fn(() => vi.fn())
     }
   } as unknown as Window['api']
   useSpecialistStore.setState({

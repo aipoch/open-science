@@ -57,6 +57,7 @@ type SettingsApi = {
   deleteProvider: ReturnType<typeof vi.fn>
   markOnboardingComplete: ReturnType<typeof vi.fn>
   listSkills: ReturnType<typeof vi.fn>
+  onSkillCatalogChanged: ReturnType<typeof vi.fn>
   setSkillEnabled: ReturnType<typeof vi.fn>
   createSkill: ReturnType<typeof vi.fn>
   updateSkill: ReturnType<typeof vi.fn>
@@ -227,6 +228,7 @@ beforeEach(() => {
       .fn()
       .mockResolvedValue({ ...snapshot([]), onboardingCompletedAt: 4242 }),
     listSkills: vi.fn().mockResolvedValue([]),
+    onSkillCatalogChanged: vi.fn(() => vi.fn()),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
     createSkill: vi.fn().mockResolvedValue([]),
     updateSkill: vi.fn().mockResolvedValue([]),

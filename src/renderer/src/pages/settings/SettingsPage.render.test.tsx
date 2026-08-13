@@ -66,6 +66,7 @@ const installApi = (): void => {
           enabled: true
         }
       ]),
+      onSkillCatalogChanged: vi.fn(() => vi.fn()),
       getSkillDetail: vi.fn().mockResolvedValue({
         id: 'alpha',
         name: 'Alpha',
