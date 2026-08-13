@@ -111,17 +111,18 @@ vi.mock('@/components/ui/message-scroller', () => {
   }: PropsWithChildren<{ messageId?: string }>): React.JSX.Element => (
     <div data-message-id={messageId}>{children}</div>
   )
-  const Button = ({
-    children,
-    direction = 'end',
-    ...props
-  }: PropsWithChildren<
-    React.ButtonHTMLAttributes<HTMLButtonElement> & { direction?: 'start' | 'end' }
-  >): React.JSX.Element => (
-    <button type="button" data-direction={direction} {...props}>
-      {children ?? `Scroll to ${direction}`}
-    </button>
-  )
+  const Button = forwardRef<
+    HTMLButtonElement,
+    PropsWithChildren<
+      React.ButtonHTMLAttributes<HTMLButtonElement> & { direction?: 'start' | 'end' }
+    >
+  >(function MockMessageScrollerButton({ children, direction = 'end', ...props }, ref) {
+    return (
+      <button ref={ref} type="button" data-direction={direction} {...props}>
+        {children ?? `Scroll to ${direction}`}
+      </button>
+    )
+  })
 
   return {
     MessageScrollerProvider: Wrapper,
@@ -2219,7 +2220,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(announceWindowFindReady).toHaveBeenCalledTimes(1)
   })
 
-  it('offers scrolling to the first message only for long, sufficiently scrolled idle Sessions', async () => {
+  it('reveals scrolling to the first message on upward scroll, then hides it after inactivity', async () => {
+    vi.useFakeTimers()
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const messages = [
       createMessage({ id: 'prompt-1' }),
@@ -2268,6 +2270,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const firstMessageButton = container.querySelector('[aria-label="Scroll to first message"]')
     const lastMessageButton = container.querySelector('[data-direction="end"]')
     expect(firstMessageButton).not.toBeNull()
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('false')
+    expect(firstMessageButton?.getAttribute('aria-hidden')).toBe('true')
+    expect(firstMessageButton?.getAttribute('tabindex')).toBe('-1')
+    expect(firstMessageButton?.classList.contains('gap-1')).toBe(true)
     expect(lastMessageButton).not.toBeNull()
     for (const button of [firstMessageButton, lastMessageButton]) {
       expect(button?.classList.contains('border-transparent')).toBe(true)
@@ -2275,15 +2281,44 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       expect(button?.classList.contains('border-border-200')).toBe(false)
     }
 
-    await scrollTo(400, { clientHeight: 400, scrollHeight: 10_000 })
-    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+    await scrollTo(1200, { clientHeight: 400, scrollHeight: 10_000 })
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('false')
+
+    await scrollTo(1199, { clientHeight: 400, scrollHeight: 10_000 })
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('true')
+    expect(firstMessageButton?.getAttribute('aria-hidden')).toBe('false')
+    expect(firstMessageButton?.getAttribute('tabindex')).toBe('0')
+
+    await act(async () => vi.advanceTimersByTimeAsync(2999))
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('true')
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('false')
+
+    await scrollTo(1198, { clientHeight: 400, scrollHeight: 10_000 })
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('true')
+    await scrollTo(1199, { clientHeight: 400, scrollHeight: 10_000 })
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('false')
+
+    await scrollTo(1198, { clientHeight: 400, scrollHeight: 10_000 })
+    expect(firstMessageButton?.getAttribute('data-revealed')).toBe('true')
+    await render('idle', messages, { id: 'session-2' })
+    expect(
+      container
+        .querySelector('[aria-label="Scroll to first message"]')
+        ?.getAttribute('data-revealed')
+    ).not.toBe('true')
 
     await render('idle', messages.slice(0, 2))
     await scrollTo(200, { clientHeight: 400, scrollHeight: 700 })
     expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
 
+    await scrollTo(80, { clientHeight: 400, scrollHeight: 800 })
     await scrollTo(40, { clientHeight: 400, scrollHeight: 800 })
-    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+    expect(
+      container
+        .querySelector('[aria-label="Scroll to first message"]')
+        ?.getAttribute('data-revealed')
+    ).toBe('true')
 
     await render('idle', messages, { compacting: true })
     await scrollTo(400)
@@ -2302,7 +2337,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
 
     await render('error')
     await scrollTo(60)
-    expect(container.querySelector('[aria-label="Scroll to first message"]')).not.toBeNull()
+    expect(
+      container
+        .querySelector('[aria-label="Scroll to first message"]')
+        ?.getAttribute('data-revealed')
+    ).toBe('true')
   })
 
   it('does not write to the preview store for non-managed-file artifacts', async () => {

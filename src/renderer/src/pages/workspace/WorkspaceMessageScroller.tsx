@@ -137,6 +137,7 @@ const SCROLL_TO_FIRST_MESSAGE_MIN_USER_TURNS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_HEIGHT_VIEWPORTS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS = 0.1
 const SCROLL_TO_FIRST_MESSAGE_MIN_DISTANCE_VIEWPORTS = 1
+const SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS = 3000
 // How long a "no longer available" mention notice stays visible before auto-dismissing.
 const MENTION_NOTICE_TIMEOUT_MS = 3000
 
@@ -301,6 +302,9 @@ const WorkspaceMessageScrollerImpl = ({
   )
   const messageScrollerViewportRef = useRef<HTMLDivElement | null>(null)
   const messageScrollerContentRef = useRef<HTMLDivElement | null>(null)
+  const scrollToFirstMessageButtonRef = useRef<HTMLButtonElement | null>(null)
+  const previousMessageScrollerScrollTopRef = useRef(0)
+  const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
   const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
     (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
@@ -421,11 +425,11 @@ const WorkspaceMessageScrollerImpl = ({
   const userTurnCount = presentedConversationItems.filter(
     (item) => item.type === 'message' && item.message.role === 'user'
   ).length
-  const updateScrollToFirstMessageVisibility = useCallback((): void => {
+  const updateScrollToFirstMessageEligibility = useCallback((): boolean => {
     const viewport = messageScrollerViewportRef.current
     if (!viewport || viewport.clientHeight <= 0) {
       setScrollThresholdAllowsFirstMessage(false)
-      return
+      return false
     }
 
     const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
@@ -437,22 +441,62 @@ const WorkspaceMessageScrollerImpl = ({
       (viewport.scrollTop >= maximumScrollTop * SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS ||
         viewport.scrollTop >=
           viewport.clientHeight * SCROLL_TO_FIRST_MESSAGE_MIN_DISTANCE_VIEWPORTS)
-    setScrollThresholdAllowsFirstMessage(hasEnoughConversation && hasScrolledFarEnough)
+    const eligible = hasEnoughConversation && hasScrolledFarEnough
+    setScrollThresholdAllowsFirstMessage(eligible)
+    return eligible
   }, [userTurnCount])
-  useLayoutEffect(updateScrollToFirstMessageVisibility, [
-    currentSessionId,
-    updateScrollToFirstMessageVisibility,
-    visibleMessageIdsKey
-  ])
+  const clearScrollToFirstMessageHideTimeout = useCallback((): void => {
+    if (scrollToFirstMessageHideTimeoutRef.current !== undefined) {
+      window.clearTimeout(scrollToFirstMessageHideTimeoutRef.current)
+      scrollToFirstMessageHideTimeoutRef.current = undefined
+    }
+  }, [])
+  const setScrollToFirstMessageRevealed = useCallback((revealed: boolean): void => {
+    const button = scrollToFirstMessageButtonRef.current
+    if (!button) return
+    button.dataset.revealed = String(revealed)
+    button.setAttribute('aria-hidden', String(!revealed))
+    button.tabIndex = revealed ? 0 : -1
+  }, [])
+  const hideScrollToFirstMessage = useCallback((): void => {
+    clearScrollToFirstMessageHideTimeout()
+    setScrollToFirstMessageRevealed(false)
+  }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
+  const revealScrollToFirstMessage = useCallback((): void => {
+    clearScrollToFirstMessageHideTimeout()
+    setScrollToFirstMessageRevealed(true)
+    scrollToFirstMessageHideTimeoutRef.current = window.setTimeout(() => {
+      scrollToFirstMessageHideTimeoutRef.current = undefined
+      setScrollToFirstMessageRevealed(false)
+    }, SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS)
+  }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
+  const handleMessageScrollerScroll = useCallback((): void => {
+    const viewport = messageScrollerViewportRef.current
+    if (!viewport) return
+
+    const previousScrollTop = previousMessageScrollerScrollTopRef.current
+    previousMessageScrollerScrollTopRef.current = viewport.scrollTop
+    const eligible = updateScrollToFirstMessageEligibility()
+    if (viewport.scrollTop < previousScrollTop && eligible) revealScrollToFirstMessage()
+    else if (viewport.scrollTop > previousScrollTop) hideScrollToFirstMessage()
+  }, [hideScrollToFirstMessage, revealScrollToFirstMessage, updateScrollToFirstMessageEligibility])
+  useLayoutEffect(() => {
+    updateScrollToFirstMessageEligibility()
+  }, [currentSessionId, updateScrollToFirstMessageEligibility, visibleMessageIdsKey])
+  useLayoutEffect(() => {
+    previousMessageScrollerScrollTopRef.current = messageScrollerViewportRef.current?.scrollTop ?? 0
+    hideScrollToFirstMessage()
+  }, [currentSessionId, hideScrollToFirstMessage])
+  useEffect(() => clearScrollToFirstMessageHideTimeout, [clearScrollToFirstMessageHideTimeout])
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(updateScrollToFirstMessageVisibility)
+    const observer = new ResizeObserver(updateScrollToFirstMessageEligibility)
     const viewport = messageScrollerViewportRef.current
     const content = messageScrollerContentRef.current
     if (viewport) observer.observe(viewport)
     if (content) observer.observe(content)
     return () => observer.disconnect()
-  }, [currentSessionId, updateScrollToFirstMessageVisibility])
+  }, [currentSessionId, updateScrollToFirstMessageEligibility])
   const showScrollToFirstMessage =
     statusAllowsScrollToFirstMessage && scrollThresholdAllowsFirstMessage
   const handleVisibleMessageSnapshotCommit = useCallback(
@@ -800,7 +844,7 @@ const WorkspaceMessageScrollerImpl = ({
           <MessageScrollerViewport
             ref={messageScrollerViewportRef}
             aria-label="Conversation"
-            onScroll={updateScrollToFirstMessageVisibility}
+            onScroll={handleMessageScrollerScroll}
           >
             <MessageScrollerContent ref={messageScrollerContentRef} className="gap-0 px-4">
               <div className={conversationContentClassName}>
@@ -1095,10 +1139,14 @@ const WorkspaceMessageScrollerImpl = ({
 
           {showScrollToFirstMessage ? (
             <MessageScrollerButton
+              ref={scrollToFirstMessageButtonRef}
               direction="start"
               aria-label="Scroll to first message"
+              aria-hidden="true"
+              data-revealed="false"
+              tabIndex={-1}
               size="default"
-              className="z-20 min-h-11 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card hover:bg-bg-200 data-[direction=start]:top-3"
+              className="z-20 min-h-11 gap-1 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none"
             >
               <ArrowDownIcon aria-hidden="true" />
               <span>First message</span>
