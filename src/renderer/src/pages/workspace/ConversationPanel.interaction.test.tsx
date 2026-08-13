@@ -461,6 +461,7 @@ const createPanelDefaults = (): PanelProps => ({
   },
   review: {
     disabled: false,
+    running: false,
     request: vi.fn()
   },
   sessionTools: {
@@ -3104,12 +3105,43 @@ describe('ConversationPanel + menu', () => {
       '[data-testid="menu-request-review"]'
     ) as HTMLButtonElement
     expect(reviewItem.disabled).toBe(true)
+    expect(reviewItem.getAttribute('aria-busy')).toBeNull()
+    expect(reviewItem.textContent).toBe('Request review')
+    expect(reviewItem.querySelector('svg')?.classList.contains('animate-spin')).toBe(false)
 
     act(() => {
       reviewItem.click()
     })
 
     // disabled button click should not call the handler
+    expect(onRequestReview).not.toHaveBeenCalled()
+  })
+
+  it('shows a disabled loading state while the active session is being reviewed', () => {
+    const onRequestReview = vi.fn()
+    renderPanel({
+      review: {
+        disabled: true,
+        running: true,
+        request: onRequestReview
+      }
+    })
+
+    const reviewItem = container.querySelector(
+      '[data-testid="menu-request-review"]'
+    ) as HTMLButtonElement
+    const loadingIcon = reviewItem.querySelector('svg')
+
+    expect(reviewItem.disabled).toBe(true)
+    expect(reviewItem.getAttribute('aria-busy')).toBe('true')
+    expect(reviewItem.textContent).toBe('Reviewing\u2026')
+    expect(loadingIcon?.classList.contains('animate-spin')).toBe(true)
+    expect(loadingIcon?.classList.contains('motion-reduce:animate-none')).toBe(true)
+
+    act(() => {
+      reviewItem.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
     expect(onRequestReview).not.toHaveBeenCalled()
   })
 

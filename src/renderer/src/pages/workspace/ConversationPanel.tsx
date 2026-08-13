@@ -231,6 +231,7 @@ type ConversationPanelContextWindow = {
 
 type ConversationPanelReview = {
   disabled: boolean
+  running: boolean
   request: () => void
 }
 
@@ -344,7 +345,11 @@ const ConversationPanel = ({
     compactDisabledReason: compactContextDisabledReason,
     compact: onCompactContext
   } = contextWindow
-  const { disabled: isRequestReviewDisabled, request: onRequestReview } = review
+  const {
+    disabled: isRequestReviewDisabled,
+    running: isReviewing,
+    request: onRequestReview
+  } = review
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
   const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
   const specialistId = activeSession
@@ -1257,19 +1262,30 @@ const ConversationPanel = ({
                             ) : null}
                             <DropdownMenuItem
                               data-testid="menu-request-review"
-                              disabled={!canEditDraft || isRequestReviewDisabled}
+                              disabled={!canEditDraft || isRequestReviewDisabled || isReviewing}
+                              aria-busy={isReviewing || undefined}
                               onSelect={() => {
-                                if (canEditDraft && !isRequestReviewDisabled) onRequestReview()
+                                if (canEditDraft && !isRequestReviewDisabled && !isReviewing) {
+                                  onRequestReview()
+                                }
                               }}
                               className="items-center gap-2"
                             >
-                              <ScanEye
-                                className="size-4 shrink-0 text-text-200"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
+                              {isReviewing ? (
+                                <Loader2
+                                  className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <ScanEye
+                                  className="size-4 shrink-0 text-text-200"
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                              )}
                               <span className="text-[13px] font-medium leading-5">
-                                Request review
+                                {isReviewing ? 'Reviewing\u2026' : 'Request review'}
                               </span>
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
