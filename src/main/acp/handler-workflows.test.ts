@@ -157,7 +157,7 @@ describe('ACP Save as skill workflow', () => {
     expect(admissionActive).toBe(false)
   })
 
-  it('starts one hidden Customize turn on the exact durable conversation branch', async () => {
+  it('starts one hidden evaluation turn on the exact durable conversation branch', async () => {
     const harness = createHarness()
 
     await expect(harness.workflows.saveAsSkill(harness.request)).resolves.toEqual({
@@ -165,12 +165,12 @@ describe('ACP Save as skill workflow', () => {
     })
 
     expect(harness.startContinuation).toHaveBeenCalledOnce()
-    expect(harness.startContinuation).toHaveBeenCalledWith(
+    const request = harness.startContinuation.mock.calls[0][0]
+    expect(request).toEqual(
       expect.objectContaining({
         sessionId: 'session-1',
         suppressUserMessage: true,
-        forcedSkillIds: ['customize'],
-        text: expect.stringMatching(/reusable Skill.*Customize/s),
+        text: expect.stringMatching(/First evaluate.*Do not load.*If and only if/s),
         provenanceContext: expect.objectContaining({
           agentFrameId: harness.request.agentFrameId,
           messageBranchId: harness.request.messageBranchId,
@@ -181,6 +181,7 @@ describe('ACP Save as skill workflow', () => {
         })
       })
     )
+    expect(request).not.toHaveProperty('forcedSkillIds')
   })
 
   it('accepts the exact prepared control after a live provider adoption normalizes its read', async () => {
@@ -314,7 +315,7 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         suppressUserMessage: true,
-        forcedSkillIds: ['customize'],
+        text: expect.stringMatching(/First evaluate.*If and only if/s),
         resumeFallback: expect.objectContaining({
           historyPreamble: expect.stringContaining('Build a reusable analysis workflow.')
         })

@@ -3,15 +3,18 @@ import type {
   AcpPromptRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import { getActiveConversationContext } from '../../shared/conversation-graph'
+import {
+  getActiveConversationContext,
+  resolveActiveConversationMessages
+} from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../shared/uploads'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 
 const INTERRUPTED_TURN_CONTINUATION_PROMPT =
   'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
-const SAVE_AS_SKILL_PROMPT = `[System] Evaluate the active conversation branch for a reusable Skill. Use the Customize Skill and follow its Skill Creator workflow. Extract the reusable pattern rather than copying the transcript. If the workflow is not reusable, explain why and do not create a draft. If it is reusable, use the conversation as existing context, ask only for gaps that materially change behavior, review the draft with the user, and publish only after the user accepts it.`
+const SAVE_AS_SKILL_PROMPT = `[System] First evaluate whether the active conversation branch contains a reusable workflow worth saving as a Skill. Do not load or invoke Customize, Skill Creator, or any other skill-authoring workflow until this evaluation is complete. A simple one-off task without a settled procedure, user corrections, reusable configuration or house style, reusable helper, or meaningful multi-step workflow is not enough; briefly explain why and stop without creating a draft. If and only if the branch contains a settled procedure the user is likely to run again, load the Customize Skill and follow its Skill Creator workflow. Extract the reusable pattern rather than copying the transcript, ask only for gaps that materially change behavior, review the draft with the user, and publish only after the user accepts it.`
 
 const buildContinuationPrompt = (
   prompt: PersistedChatSession['messages'][number],
@@ -127,8 +130,11 @@ const buildContinuationRequest = (
   const provenanceContext = resolveProvenanceContext(session, request)
   const contextReset = request.contextReset
   const replayMessages = contextReset
-    ? session.messages
-        .filter((message) => message.turnIntent !== 'save-as-skill')
+    ? (session.conversationGraph
+        ? resolveActiveConversationMessages(session.conversationGraph)
+        : session.messages
+      )
+        .filter((message) => !isHiddenControlMessage(message))
         .map((message) =>
           message.role === 'agent' &&
           message.responseToMessageId === request.promptMessageId &&
@@ -167,10 +173,10 @@ const buildContinuationRequest = (
     ...(prompt.turnIntent === 'plan-first' || livePrompt?.turnIntent === 'plan-first'
       ? { turnIntent: 'plan-first' as const }
       : {}),
-    ...(livePrompt?.forcedSkillIds?.length
-      ? { forcedSkillIds: livePrompt.forcedSkillIds }
-      : prompt.turnIntent === 'save-as-skill'
-        ? { forcedSkillIds: ['customize'] }
+    ...(prompt.turnIntent === 'save-as-skill'
+      ? {}
+      : livePrompt?.forcedSkillIds?.length
+        ? { forcedSkillIds: livePrompt.forcedSkillIds }
         : skillIds?.length
           ? { forcedSkillIds: skillIds }
           : {}),

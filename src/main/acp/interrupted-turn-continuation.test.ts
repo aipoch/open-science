@@ -78,14 +78,15 @@ describe('continueInterruptedTurn', () => {
       { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
     )
 
-    expect(startContinuation).toHaveBeenCalledWith(
+    const request = startContinuation.mock.calls[0][0]
+    expect(request).toEqual(
       expect.objectContaining({
-        text: expect.stringContaining('Evaluate the active conversation branch'),
-        forcedSkillIds: ['customize'],
+        text: expect.stringMatching(/First evaluate.*Do not load.*If and only if/s),
         suppressUserMessage: true,
         provenanceContext: expect.objectContaining({ promptMessageId: 'prompt-1' })
       })
     )
+    expect(request).not.toHaveProperty('forcedSkillIds')
   })
 
   it('reconstructs app-owned continuation authority from the durable active user turn', async () => {
@@ -274,6 +275,71 @@ describe('continueInterruptedTurn', () => {
       expect(request.text).not.toContain('Compare the cohorts')
     }
   )
+
+  it('replays only the durable active branch when a hidden turn recovers after context reset', async () => {
+    const durable = session([
+      message('prompt-0', 'user', 'Build the active workflow'),
+      message('answer-0', 'agent', 'The active workflow is ready', {
+        responseToMessageId: 'prompt-0'
+      }),
+      message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
+    ])
+    const graph = durable.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    const inactiveMessage = message('inactive-prompt', 'user', 'Use unrelated branch rules')
+    durable.messages.push(inactiveMessage)
+    graph.messages.push({
+      ...inactiveMessage,
+      agentFrameId: frame.id,
+      introducedOnBranchId: 'inactive-branch',
+      parentMessageId: 'answer-0',
+      revisionRootMessageId: inactiveMessage.id,
+      runtimeSegmentId: graph.runtimeSegments[0].id
+    })
+    graph.branches.push({
+      id: 'inactive-branch',
+      agentFrameId: frame.id,
+      parentBranchId: frame.activeBranchId,
+      forkMessageId: 'answer-0',
+      headMessageId: inactiveMessage.id,
+      createdAt: 2,
+      updatedAt: 2
+    })
+    graph.runtimeSegments.push({
+      id: 'runtime-resumed',
+      agentFrameId: frame.id,
+      frameworkId: 'claude-code',
+      startedAt: 2
+    })
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+    await continueInterruptedTurn(
+      {
+        runtime: {
+          getSnapshot: () => snapshot(),
+          getLatestUserPrompt: () => undefined,
+          startContinuation
+        },
+        loadSession: vi.fn(async () => durable)
+      },
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        promptMessageId: 'prompt-1',
+        contextReset: {
+          runtimeSegmentId: 'runtime-resumed',
+          historyReplayTarget: 'claude-code',
+          contextWindow: 100_000,
+          supportsImageInput: false
+        }
+      }
+    )
+
+    const request = startContinuation.mock.calls[0][0]
+    expect(request.historyPreamble).toContain('Build the active workflow')
+    expect(request.historyPreamble).not.toContain('Use unrelated branch rules')
+    expect(request.historyPreamble).not.toContain('Save as skill')
+  })
 
   it('fails closed after context reset when only hidden controls remain for replay', async () => {
     const durable = session([

@@ -45,6 +45,7 @@ describe('composer history', () => {
       session('session-1', [
         message('first', 'first'),
         message('agent', 'answer', { role: 'agent' }),
+        message('hidden-control', 'Save as skill', { turnIntent: 'save-as-skill' }),
         message('upload', 'analyze this', {
           uploads: [
             {

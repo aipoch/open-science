@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
+import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 
 import {
   projectHandoffLifecycle,
@@ -201,7 +202,7 @@ const createConversationItems = (
 ): ConversationItem[] => {
   const messages: ConversationItem[] =
     session?.messages.flatMap((message, index): ConversationItem[] =>
-      message.turnIntent === 'save-as-skill'
+      isHiddenControlMessage(message)
         ? []
         : [
             {

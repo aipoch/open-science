@@ -380,6 +380,10 @@ export type PersistedChatMessage = {
   updatedAt: number
 }
 
+export const isHiddenControlMessage = (
+  message: Pick<PersistedChatMessage, 'turnIntent'>
+): boolean => message.turnIntent === 'save-as-skill'
+
 export type PersistedActiveRun = {
   promptMessageId: string
   startedAt: number

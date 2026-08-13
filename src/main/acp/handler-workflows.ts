@@ -13,7 +13,7 @@ import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import {
   getActiveConversationContext,
   resolveMessageBranchPath
@@ -303,9 +303,7 @@ const createAcpHandlerWorkflows = (
         throw new Error('Save as skill requires a prepared control turn.')
       }
       const historyReplay = buildSessionHistoryReplay(
-        activeBranchMessages
-          .slice(0, -1)
-          .filter((message) => message.turnIntent !== 'save-as-skill'),
+        activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),
         replayPolicy.descriptor,
         session.projectId,
         replayPolicy.supportsImageInput
@@ -317,7 +315,6 @@ const createAcpHandlerWorkflows = (
         sessionId: session.id,
         text: SAVE_AS_SKILL_PROMPT,
         suppressUserMessage: true,
-        forcedSkillIds: ['customize'],
         provenanceContext: getActiveConversationContext(graph, request.promptMessageId),
         resumeFallback: {
           historyPreamble: historyReplay.historyPreamble,
