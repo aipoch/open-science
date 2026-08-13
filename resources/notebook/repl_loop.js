@@ -2340,6 +2340,47 @@ async function agentsRpc(op, params = {}, sessionId = COMPUTE_SESSION_ID) {
   return body.result
 }
 
+// Delegation services intentionally retain their snake_case RPC/domain contracts. Project only the
+// known public Host method and caller-input labels at this agent-facing seam; domain error codes,
+// enum values, and unrelated diagnostic text must remain byte-for-byte unchanged.
+const HOST_DELEGATION_ERROR_NAMES = Object.freeze([
+  ['host.stop_child', 'host.stopChild'],
+  ['host.send_frame_message', 'host.sendFrameMessage'],
+  ['host.message_receipt', 'host.messageReceipt'],
+  ['host.resolve_message', 'host.resolveMessage'],
+  ['host.submit_output', 'host.submitOutput'],
+  ['stop_child', 'stopChild'],
+  ['send_frame_message', 'sendFrameMessage'],
+  ['message_receipt', 'messageReceipt'],
+  ['resolve_message', 'resolveMessage'],
+  ['submit_output', 'submitOutput'],
+  ['output_schema', 'outputSchema'],
+  ['timeout_seconds', 'timeoutSeconds'],
+  ['frame_ids', 'frameIds'],
+  ['frame_id', 'frameId'],
+  ['attempt_id', 'attemptId'],
+  ['request_id', 'requestId'],
+  ['reply_to_message_id', 'replyToMessageId'],
+  ['message_id', 'messageId']
+])
+
+const projectedHostDelegationErrorText = (value) => {
+  const text = value && typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return HOST_DELEGATION_ERROR_NAMES.reduce((projected, [privateName, publicName]) => {
+    const escaped = privateName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+    return projected.replace(
+      new RegExp(`(^|[^A-Za-z0-9_])${escaped}(?=$|[^A-Za-z0-9_])`, 'gu'),
+      (_, prefix) => prefix + publicName
+    )
+  }, text)
+}
+
+const hostDelegationError = (publicMethod, value) => {
+  const projected = projectedHostDelegationErrorText(value)
+  const detail = projected.replace(new RegExp(`^host\\.${publicMethod}:\\s*`), '')
+  return new Error(`host.${publicMethod}: ${detail}`)
+}
+
 async function delegateRpc(request, options = {}) {
   if (!RPC_ENDPOINT) throw new Error('host.delegate is unavailable: control RPC endpoint not set')
   const delegationCallId = String(++DELEGATE_CALL_SEQUENCE)
@@ -2353,7 +2394,7 @@ async function delegateRpc(request, options = {}) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
-    throw new Error(`host.delegate: ${body.error || 'HTTP ' + res.status}`)
+    throw hostDelegationError('delegate', body.error || 'HTTP ' + res.status)
   }
   const outcome = body.result || {}
   return {
@@ -2395,11 +2436,28 @@ async function hostHelp(query = undefined) {
 }
 
 async function hostDelegate(request, options = {}) {
-  return delegateRpc(request, options)
+  const requests = Array.isArray(request) ? request : [request]
+  const normalizedRequests = requests.map((candidate) =>
+    remappedHostObject(candidate, 'host.delegate request', {
+      task: 'task',
+      name: 'name',
+      profile: 'profile',
+      inputs: 'inputs',
+      outputSchema: 'output_schema'
+    })
+  )
+  const normalizedOptions = remappedHostObject(options, 'host.delegate options', {
+    wait: 'wait',
+    timeoutSeconds: 'timeout_seconds'
+  })
+  return delegateRpc(
+    Array.isArray(request) ? normalizedRequests : normalizedRequests[0],
+    normalizedOptions
+  )
 }
 
 async function hostStopChild(frameIds) {
-  if (!RPC_ENDPOINT) throw new Error('host.stop_child is unavailable: control RPC endpoint not set')
+  if (!RPC_ENDPOINT) throw new Error('host.stopChild is unavailable: control RPC endpoint not set')
   const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
@@ -2410,7 +2468,7 @@ async function hostStopChild(frameIds) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
-    throw new Error(`host.stop_child: ${body.error || 'HTTP ' + res.status}`)
+    throw hostDelegationError('stopChild', body.error || 'HTTP ' + res.status)
   }
   return (body.result || []).map((child) => ({
     frame_id: child.frameId,
@@ -2438,7 +2496,7 @@ async function delegatedObservationRpc(op, selectors = undefined, options = unde
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
-    throw new Error(`host.${op}: ${body.error || 'HTTP ' + res.status}`)
+    throw hostDelegationError(op, body.error || 'HTTP ' + res.status)
   }
   return (body.result || []).map((child) => ({
     frame_id: child.frameId,
@@ -2463,7 +2521,7 @@ async function delegatedObservationRpc(op, selectors = undefined, options = unde
 
 async function hostSubmitOutput(value) {
   if (!RPC_ENDPOINT)
-    throw new Error('host.submit_output is unavailable: control RPC endpoint not set')
+    throw new Error('host.submitOutput is unavailable: control RPC endpoint not set')
   const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
@@ -2471,11 +2529,7 @@ async function hostSubmitOutput(value) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
-    const detail =
-      body.error && typeof body.error === 'object'
-        ? JSON.stringify(body.error)
-        : body.error || 'HTTP ' + res.status
-    throw new Error(`host.submit_output: ${detail}`)
+    throw hostDelegationError('submitOutput', body.error || 'HTTP ' + res.status)
   }
   return body.result
 }
@@ -2485,12 +2539,37 @@ async function hostChildren(frameIds = undefined) {
 }
 
 async function hostCollect(selectors, options = undefined) {
-  return delegatedObservationRpc('collect', selectors, options)
+  if (!Array.isArray(selectors)) {
+    throw new TypeError('host.collect selectors must be an array.')
+  }
+  const normalizedSelectors = selectors.map((selector) =>
+    typeof selector === 'string'
+      ? selector
+      : remappedHostObject(selector, 'host.collect selector', {
+          frameId: 'frame_id',
+          attemptId: 'attempt_id'
+        })
+  )
+  const normalizedOptions =
+    options === undefined
+      ? undefined
+      : remappedHostObject(options, 'host.collect options', {
+          timeoutSeconds: 'timeout_seconds'
+        })
+  return delegatedObservationRpc('collect', normalizedSelectors, normalizedOptions)
 }
 
 async function hostSendFrameMessage(target, message, options = undefined) {
+  const normalizedOptions =
+    options === undefined
+      ? undefined
+      : remappedHostObject(options, 'host.sendFrameMessage options', {
+          kind: 'kind',
+          requestId: 'request_id',
+          replyToMessageId: 'reply_to_message_id'
+        })
   if (!RPC_ENDPOINT) {
-    throw new Error('host.send_frame_message is unavailable: control RPC endpoint not set')
+    throw new Error('host.sendFrameMessage is unavailable: control RPC endpoint not set')
   }
   const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
@@ -2501,37 +2580,52 @@ async function hostSendFrameMessage(target, message, options = undefined) {
         op: 'send_message',
         target,
         message,
-        ...(options !== undefined ? { options } : {})
+        ...(normalizedOptions !== undefined ? { options: normalizedOptions } : {})
       }
     })
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.error) {
-    throw new Error(`host.send_frame_message: ${body.error || 'HTTP ' + res.status}`)
+    throw hostDelegationError('sendFrameMessage', body.error || 'HTTP ' + res.status)
   }
   return body.result
 }
 
 async function hostMessageReceipt(selector, options = undefined) {
-  return delegatedMessageRpc('message_receipt', { selector, options })
-}
-
-async function hostResolveMessage(messageId, options) {
-  return delegatedMessageRpc('resolve_message', {
-    message_id: messageId,
-    action: options && options.action
+  const normalizedOptions =
+    options === undefined
+      ? undefined
+      : remappedHostObject(options, 'host.messageReceipt options', {
+          timeoutSeconds: 'timeout_seconds'
+        })
+  return delegatedMessageRpc('message_receipt', 'messageReceipt', {
+    selector,
+    options: normalizedOptions
   })
 }
 
-async function delegatedMessageRpc(op, params) {
-  if (!RPC_ENDPOINT) throw new Error(`host.${op} is unavailable: control RPC endpoint not set`)
+async function hostResolveMessage(messageId, options) {
+  const normalizedOptions = remappedHostObject(options, 'host.resolveMessage options', {
+    action: 'action'
+  })
+  return delegatedMessageRpc('resolve_message', 'resolveMessage', {
+    message_id: messageId,
+    action: normalizedOptions.action
+  })
+}
+
+async function delegatedMessageRpc(op, publicMethod, params) {
+  if (!RPC_ENDPOINT)
+    throw new Error(`host.${publicMethod} is unavailable: control RPC endpoint not set`)
   const res = await capturedRpcFetch(RPC_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
     body: JSON.stringify({ method: 'delegatedWorkCall', params: { op, ...params } })
   })
   const body = await res.json().catch(() => ({}))
-  if (!res.ok || body.error) throw new Error(`host.${op}: ${body.error || 'HTTP ' + res.status}`)
+  if (!res.ok || body.error) {
+    throw hostDelegationError(publicMethod, body.error || 'HTTP ' + res.status)
+  }
   return body.result
 }
 
@@ -2841,11 +2935,11 @@ const subagentHostOperations = Object.freeze({
   delegate: hostDelegate,
   children: hostChildren,
   collect: hostCollect,
-  stop_child: hostStopChild,
-  send_frame_message: hostSendFrameMessage,
-  message_receipt: hostMessageReceipt,
-  resolve_message: hostResolveMessage,
-  submit_output: hostSubmitOutput
+  stopChild: hostStopChild,
+  sendFrameMessage: hostSendFrameMessage,
+  messageReceipt: hostMessageReceipt,
+  resolveMessage: hostResolveMessage,
+  submitOutput: hostSubmitOutput
 })
 
 // Persistent sandbox: user-declared globals persist across requests (assign to `globalThis`/bare).

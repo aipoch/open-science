@@ -253,7 +253,7 @@ const runProductionDelegation = async (sessionId, task, name, wait) =>
 const runProductionTimedDelegationRequest = async (sessionId, request) =>
   executeControlCode(
     sessionId,
-    `return await host.delegate(${JSON.stringify(request)}, { timeout_seconds: 0 })`
+    `return await host.delegate(${JSON.stringify(request)}, { timeoutSeconds: 0 })`
   )
 
 const waitForSessionCancellation = (sessionId) =>
@@ -528,7 +528,7 @@ if (process.argv.includes('--version')) {
           const dispatched = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeout_seconds: 1 }); return globalThis.s2Pending`
+              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
             )
           )
           if (
@@ -545,7 +545,7 @@ if (process.argv.includes('--version')) {
           const terminal = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frame_id: slow.frame_id, attempt_id: slow.attempt_id }], { timeout_seconds: 30 })`
+              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frameId: slow.frame_id, attemptId: slow.attempt_id }], { timeoutSeconds: 30 })`
             )
           )
           if (terminal.length !== 1 || terminal[0].status !== 'completed') {
@@ -628,7 +628,7 @@ if (process.argv.includes('--version')) {
           const downward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const sent = await host.send_frame_message(${JSON.stringify(child.frame_id)}, ${JSON.stringify(RELIABLE_CHILD_DIRECTIVE)}, { kind: "info", request_id: "e2e-main-to-child" }); return await host.message_receipt(sent.message_id, { timeout_seconds: 30 })`
+              `const sent = await host.sendFrameMessage(${JSON.stringify(child.frame_id)}, ${JSON.stringify(RELIABLE_CHILD_DIRECTIVE)}, { kind: "info", requestId: "e2e-main-to-child" }); return await host.messageReceipt(sent.message_id, { timeoutSeconds: 30 })`
             )
           )
           if (downward.status !== 'accepted' || downward.direction !== 'to_child') {
@@ -656,7 +656,7 @@ if (process.argv.includes('--version')) {
           const receipt = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `return await host.message_receipt("e2e-child-park", { timeout_seconds: 0 })`
+              `return await host.messageReceipt("e2e-child-park", { timeoutSeconds: 0 })`
             )
           )
           if (receipt.status !== 'queued') {
@@ -679,7 +679,7 @@ if (process.argv.includes('--version')) {
           const receipt = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `return await host.message_receipt(${JSON.stringify(messageId)}, { timeout_seconds: 0 })`
+              `return await host.messageReceipt(${JSON.stringify(messageId)}, { timeoutSeconds: 0 })`
             )
           )
           if (receipt.status !== 'uncertain') {
@@ -755,7 +755,7 @@ if (process.argv.includes('--version')) {
           const continued = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const receipt = await host.send_frame_message(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frame_id: receipt.target_frame_id, attempt_id: receipt.continuation_attempt_id }], { timeout_seconds: 30 })`
+              `const receipt = await host.sendFrameMessage(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.target_frame_id, attemptId: receipt.continuation_attempt_id }], { timeoutSeconds: 30 })`
             )
           )
           if (continued.length !== 1 || continued[0].status !== 'completed') {
@@ -791,7 +791,7 @@ if (process.argv.includes('--version')) {
               {
                 task: DELEGATED_STRUCTURED_OUTPUT_TASK,
                 name: DELEGATED_STRUCTURED_OUTPUT_TASK,
-                output_schema: {
+                outputSchema: {
                   type: 'object',
                   required: ['count'],
                   properties: { count: { type: 'number' } },
@@ -817,7 +817,7 @@ if (process.argv.includes('--version')) {
           const submission = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `let invalid = false; try { await host.submit_output({ count: "three" }) } catch { invalid = true }; const receipt = await host.submit_output({ count: 3 }); return { invalid, receipt }`
+              `let invalid = false; try { await host.submitOutput({ count: "three" }) } catch { invalid = true }; const receipt = await host.submitOutput({ count: 3 }); return { invalid, receipt }`
             )
           )
           if (!submission.invalid || submission.receipt?.accepted !== true) {
@@ -830,7 +830,7 @@ if (process.argv.includes('--version')) {
           const upward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const sent = await host.send_frame_message("parent", "Child reliable question reached Main", { kind: "question", request_id: "e2e-child-to-main" }); return await host.message_receipt(sent.message_id, { timeout_seconds: 0 })`
+              `const sent = await host.sendFrameMessage("parent", "Child reliable question reached Main", { kind: "question", requestId: "e2e-child-to-main" }); return await host.messageReceipt(sent.message_id, { timeoutSeconds: 0 })`
             )
           )
           if (upward.status !== 'queued' || upward.direction !== 'to_parent') {
@@ -841,7 +841,7 @@ if (process.argv.includes('--version')) {
           const upward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `return await host.send_frame_message("parent", "Parked reliable child question", { kind: "question", request_id: "e2e-child-park" })`
+              `return await host.sendFrameMessage("parent", "Parked reliable child question", { kind: "question", requestId: "e2e-child-park" })`
             )
           )
           if (upward.status !== 'queued') {
@@ -851,7 +851,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATED_RELIABLE_FAILURE_TASK)) {
           await executeControlCode(
             context.params.sessionId,
-            `return await host.send_frame_message("parent", "Trigger reliable post-fence persistence failure", { kind: "info", request_id: "e2e-child-post-fence" })`
+            `return await host.sendFrameMessage("parent", "Trigger reliable post-fence persistence failure", { kind: "info", requestId: "e2e-child-post-fence" })`
           )
           reply = 'Child queued a post-fence reliable message.'
         } else if (
@@ -861,7 +861,7 @@ if (process.argv.includes('--version')) {
           const suffix = prompt.includes(DELEGATED_RELIABLE_FAIRNESS_TASK_B) ? 'B' : 'A'
           await executeControlCode(
             context.params.sessionId,
-            `return await host.send_frame_message("parent", "Reliable fairness child ${suffix}", { request_id: "e2e-fairness-${suffix.toLowerCase()}" })`
+            `return await host.sendFrameMessage("parent", "Reliable fairness child ${suffix}", { requestId: "e2e-fairness-${suffix.toLowerCase()}" })`
           )
           reply = `Child ${suffix} queued its reliable fairness message.`
         } else if (prompt.includes(RELIABLE_CHILD_DIRECTIVE)) {
@@ -872,7 +872,7 @@ if (process.argv.includes('--version')) {
           const answered = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const sent = await host.send_frame_message(${JSON.stringify(childFrameId)}, "Main answered the reliable child question", { kind: "info", request_id: "e2e-main-reply-to-child" }); return await host.message_receipt(sent.message_id, { timeout_seconds: 30 })`
+              `const sent = await host.sendFrameMessage(${JSON.stringify(childFrameId)}, "Main answered the reliable child question", { kind: "info", requestId: "e2e-main-reply-to-child" }); return await host.messageReceipt(sent.message_id, { timeoutSeconds: 30 })`
             )
           )
           if (answered.status !== 'accepted' || answered.direction !== 'to_child') {

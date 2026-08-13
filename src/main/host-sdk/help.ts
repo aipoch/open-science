@@ -2,11 +2,11 @@ const HOST_SDK_SUBAGENT_OPERATION_IDS = [
   'host.children',
   'host.collect',
   'host.delegate',
-  'host.message_receipt',
-  'host.resolve_message',
-  'host.send_frame_message',
-  'host.stop_child',
-  'host.submit_output'
+  'host.messageReceipt',
+  'host.resolveMessage',
+  'host.sendFrameMessage',
+  'host.stopChild',
+  'host.submitOutput'
 ] as const
 
 type HostSdkSubagentOperation =
@@ -177,10 +177,10 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         description: 'Immutable Version ids staged read-only under ./inputs/.'
       },
       {
-        name: 'output_schema',
+        name: 'outputSchema',
         type: 'JSON Schema',
         required: false,
-        description: 'JSON Schema 2020-12 for host.submit_output.'
+        description: 'JSON Schema 2020-12 for host.submitOutput.'
       }
     ]
   },
@@ -194,7 +194,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         description: 'Wait for all children unless false.'
       },
       {
-        name: 'timeout_seconds',
+        name: 'timeoutSeconds',
         type: 'number',
         required: false,
         range: '0..1800',
@@ -208,7 +208,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       { value: 'receipts', when: 'wait=false', statuses: ['running'] },
       {
         value: 'observations',
-        when: 'timeout_seconds is set',
+        when: 'timeoutSeconds is set',
         statuses: ['running', 'awaiting_user', 'completed', 'cancelled', 'error']
       },
       {
@@ -224,7 +224,7 @@ const DELEGATE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     'Non-empty batches are admitted atomically.',
     'Use host.agents.list() for profiles; omission inherits.',
     'Timeout observes; it does not stop children.',
-    'Async follow-up: host.children() recovers; host.collect(selectors) observes; host.stop_child(frame_ids) cancels.'
+    'Async follow-up: host.children() recovers; host.collect(selectors) observes; host.stopChild(frameIds) cancels.'
   ],
   examples: [
     {
@@ -263,13 +263,11 @@ const CHILDREN_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   path: 'host.children',
   aliases: ['children'],
   summary: 'List current direct-child Attempts on the active Message Branch.',
-  call_forms: [
-    { signature: 'await host.children(frame_ids?)', accepts: 'optional_frame_id_array' }
-  ],
+  call_forms: [{ signature: 'await host.children(frameIds?)', accepts: 'optional_frame_id_array' }],
   request: {
     fields: [
       {
-        name: 'frame_ids',
+        name: 'frameIds',
         type: 'string[]',
         required: false,
         description: 'Selected Frames; omit to list all accessible direct children.'
@@ -304,14 +302,14 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         name: 'selectors',
         type: 'selector[]',
         required: true,
-        description: 'Frame ids or {frame_id, attempt_id} handles; array must be non-empty.'
+        description: 'Frame ids or {frameId, attemptId} handles; array must be non-empty.'
       }
     ]
   },
   options: {
     fields: [
       {
-        name: 'timeout_seconds',
+        name: 'timeoutSeconds',
         type: 'number',
         required: false,
         default: 30,
@@ -328,7 +326,7 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Collect pinned Attempts',
-      code: 'await host.collect(sent.children.map(({ frame_id, attempt_id }) => ({ frame_id, attempt_id })))'
+      code: 'await host.collect(sent.children.map(({ frame_id, attempt_id }) => ({ frameId: frame_id, attemptId: attempt_id })))'
     }
   ],
   resolveAvailability: rootOnlyAvailability('collect', 'Delegate agents cannot collect children.')
@@ -336,17 +334,17 @@ const COLLECT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
 
 const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   kind: 'operation',
-  id: 'host.stop_child',
-  path: 'host.stop_child',
-  aliases: ['stop_child'],
+  id: 'host.stopChild',
+  path: 'host.stopChild',
+  aliases: ['stopChild'],
   summary: 'Stop one or more direct-child Frames.',
   call_forms: [
-    { signature: 'await host.stop_child(frame_ids)', accepts: 'non_empty_frame_id_array' }
+    { signature: 'await host.stopChild(frameIds)', accepts: 'non_empty_frame_id_array' }
   ],
   request: {
     fields: [
       {
-        name: 'frame_ids',
+        name: 'frameIds',
         type: 'string[]',
         required: true,
         description: 'Non-empty direct-child Frame ids.'
@@ -373,29 +371,29 @@ const STOP_CHILD_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Stop children',
-      code: 'await host.stop_child(current.map(({ frame_id }) => frame_id))'
+      code: 'await host.stopChild(current.map(({ frame_id }) => frame_id))'
     }
   ],
   resolveAvailability: rootOnlyAvailability(
-    'stop_child',
+    'stopChild',
     'Delegate agents cannot stop or manage child Frames.'
   )
 }
 
 const SUBMIT_OUTPUT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   kind: 'operation',
-  id: 'host.submit_output',
-  path: 'host.submit_output',
-  aliases: ['submit_output'],
+  id: 'host.submitOutput',
+  path: 'host.submitOutput',
+  aliases: ['submitOutput'],
   summary: 'Submit the authenticated child Attempt structured JSON value.',
-  call_forms: [{ signature: 'await host.submit_output(value)', accepts: 'json_value' }],
+  call_forms: [{ signature: 'await host.submitOutput(value)', accepts: 'json_value' }],
   request: {
     fields: [
       {
         name: 'value',
         type: 'JSON value',
         required: true,
-        description: 'Value validated against this Attempt’s admitted output_schema.'
+        description: 'Value validated against this Attempt’s admitted outputSchema.'
       }
     ]
   },
@@ -407,23 +405,23 @@ const SUBMIT_OUTPUT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     ]
   },
   constraints: [
-    'Available only to a running child delegated with output_schema.',
+    'Available only to a running child delegated with outputSchema.',
     'The first valid value is durable; equal retry is idempotent and different retry is rejected.'
   ],
-  examples: [{ title: 'Submit output', code: 'await host.submit_output({ answer: 42 })' }],
+  examples: [{ title: 'Submit output', code: 'await host.submitOutput({ answer: 42 })' }],
   resolveAvailability: ({ callerRole, capabilities }) => {
     if (callerRole !== 'delegate') {
       return { status: 'unavailable', reason: 'Only a delegated child Attempt can submit output.' }
     }
-    return capabilities.submit_output
+    return capabilities.submitOutput
       ? { status: 'available' }
-      : unavailableProvisioning('submit_output')
+      : unavailableProvisioning('submitOutput')
   }
 }
 
 const messageAvailability =
   (
-    operation: 'send_frame_message' | 'message_receipt'
+    operation: 'sendFrameMessage' | 'messageReceipt'
   ): HostSdkHelpOperationDescriptor['resolveAvailability'] =>
   ({ capabilities }) =>
     capabilities[operation] ? { status: 'available' } : unavailableProvisioning(operation)
@@ -522,13 +520,13 @@ const DELIVERY_DISCRIMINATORS = [
 
 const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   kind: 'operation',
-  id: 'host.send_frame_message',
-  path: 'host.send_frame_message',
-  aliases: ['send_frame_message'],
+  id: 'host.sendFrameMessage',
+  path: 'host.sendFrameMessage',
+  aliases: ['sendFrameMessage'],
   summary: 'Durably queue a reliable message to a direct child or root parent.',
   call_forms: [
     {
-      signature: 'await host.send_frame_message(target, message, options?)',
+      signature: 'await host.sendFrameMessage(target, message, options?)',
       accepts: 'positional_arguments'
     }
   ],
@@ -552,9 +550,9 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         default: 'info',
         description: 'info/question.'
       },
-      { name: 'request_id', type: 'string', required: false, description: 'Idempotency id.' },
+      { name: 'requestId', type: 'string', required: false, description: 'Idempotency id.' },
       {
-        name: 'reply_to_message_id',
+        name: 'replyToMessageId',
         type: 'string',
         required: false,
         description: 'Reply target.'
@@ -566,20 +564,20 @@ const SEND_FRAME_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     fields: DELIVERY_RECEIPT_FIELDS
   },
   constraints: [
-    'Receipt is delivery evidence, not a reply; same request_id recovers, and uncertain is not auto-retried.'
+    'Receipt is delivery evidence, not a reply; same requestId recovers, and uncertain is not auto-retried.'
   ],
   examples: [],
-  resolveAvailability: messageAvailability('send_frame_message')
+  resolveAvailability: messageAvailability('sendFrameMessage')
 }
 
 const MESSAGE_RECEIPT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   kind: 'operation',
-  id: 'host.message_receipt',
-  path: 'host.message_receipt',
-  aliases: ['message_receipt'],
+  id: 'host.messageReceipt',
+  path: 'host.messageReceipt',
+  aliases: ['messageReceipt'],
   summary: 'Observe an owned delivery receipt for a bounded time.',
   call_forms: [
-    { signature: 'await host.message_receipt(selector, options?)', accepts: 'selector_options' }
+    { signature: 'await host.messageReceipt(selector, options?)', accepts: 'selector_options' }
   ],
   request: {
     fields: [
@@ -587,14 +585,14 @@ const MESSAGE_RECEIPT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         name: 'selector',
         type: 'string',
         required: true,
-        description: 'Owned message_id or request_id.'
+        description: 'Owned messageId or requestId.'
       }
     ]
   },
   options: {
     fields: [
       {
-        name: 'timeout_seconds',
+        name: 'timeoutSeconds',
         type: 'number',
         required: false,
         default: 30,
@@ -615,27 +613,27 @@ const MESSAGE_RECEIPT_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Observe delivery',
-      code: 'await host.message_receipt(receipt.message_id, { timeout_seconds: 30 })'
+      code: 'await host.messageReceipt(receipt.message_id, { timeoutSeconds: 30 })'
     }
   ],
-  resolveAvailability: messageAvailability('message_receipt')
+  resolveAvailability: messageAvailability('messageReceipt')
 }
 
 const RESOLVE_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   kind: 'operation',
-  id: 'host.resolve_message',
-  path: 'host.resolve_message',
-  aliases: ['resolve_message'],
+  id: 'host.resolveMessage',
+  path: 'host.resolveMessage',
+  aliases: ['resolveMessage'],
   summary: 'Acknowledge uncertain delivery risk and release its lane fence.',
   call_forms: [
     {
-      signature: "await host.resolve_message(message_id, { action: 'acknowledge_uncertain' })",
+      signature: "await host.resolveMessage(messageId, { action: 'acknowledge_uncertain' })",
       accepts: 'message_resolution'
     }
   ],
   request: {
     fields: [
-      { name: 'message_id', type: 'string', required: true, description: 'Uncertain command id.' }
+      { name: 'messageId', type: 'string', required: true, description: 'Uncertain command id.' }
     ]
   },
   options: {
@@ -662,11 +660,11 @@ const RESOLVE_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   examples: [
     {
       title: 'Release fence',
-      code: "await host.resolve_message(receipt.message_id, { action: 'acknowledge_uncertain' })"
+      code: "await host.resolveMessage(receipt.message_id, { action: 'acknowledge_uncertain' })"
     }
   ],
   resolveAvailability: rootOnlyAvailability(
-    'resolve_message',
+    'resolveMessage',
     'Only root Main can resolve uncertain delivery.'
   )
 }

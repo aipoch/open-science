@@ -70,6 +70,11 @@ describe('repl_loop local RPC transport', () => {
           "detachSkill: 'detachSkill' in host.agents, detach_skill: 'detach_skill' in host.agents, " +
           "attachConnector: 'attachConnector' in host.agents, attach_connector: 'attach_connector' in host.agents, " +
           "detachConnector: 'detachConnector' in host.agents, detach_connector: 'detach_connector' in host.agents, " +
+          "stopChild: 'stopChild' in host, stop_child: 'stop_child' in host, " +
+          "sendFrameMessage: 'sendFrameMessage' in host, send_frame_message: 'send_frame_message' in host, " +
+          "messageReceipt: 'messageReceipt' in host, message_receipt: 'message_receipt' in host, " +
+          "resolveMessage: 'resolveMessage' in host, resolve_message: 'resolve_message' in host, " +
+          "submitOutput: 'submitOutput' in host, submit_output: 'submit_output' in host, " +
           "listCompute: 'listCompute' in host.compute, list_compute: 'list_compute' in host.compute, " +
           "callCommand: 'callCommand' in c, call_command: 'call_command' in c, " +
           "submitJob: 'submitJob' in c, submit_job: 'submit_job' in c, " +
@@ -93,6 +98,16 @@ describe('repl_loop local RPC transport', () => {
         attach_connector: false,
         detachConnector: true,
         detach_connector: false,
+        stopChild: true,
+        stop_child: false,
+        sendFrameMessage: true,
+        send_frame_message: false,
+        messageReceipt: true,
+        message_receipt: false,
+        resolveMessage: true,
+        resolve_message: false,
+        submitOutput: true,
+        submit_output: false,
         listCompute: true,
         list_compute: false,
         callCommand: true,
@@ -125,12 +140,12 @@ describe('repl_loop local RPC transport', () => {
     }
   })
 
-  it('publishes send_frame_message without the legacy send_message alias', async () => {
+  it('does not publish the pre-reliability send_message alias', async () => {
     const { child, send } = startLoop({})
 
     try {
       const result = await send(
-        'return { current: typeof host.send_frame_message, legacy: typeof host.send_message }'
+        'return { current: typeof host.sendFrameMessage, legacy: typeof host.send_message }'
       )
       expect(result.error).toBeNull()
       expect(JSON.parse(result.result ?? '{}')).toEqual({
@@ -206,11 +221,11 @@ describe('repl_loop local RPC transport', () => {
               delegate: true,
               children: true,
               collect: true,
-              stop_child: true,
-              send_frame_message: true,
-              message_receipt: true,
-              resolve_message: true,
-              submit_output: true
+              stopChild: true,
+              sendFrameMessage: true,
+              messageReceipt: true,
+              resolveMessage: true,
+              submitOutput: true
             }
           })
         } else if (call.params?.op === 'children') {
@@ -507,7 +522,7 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const firstCell = await send(
-        "globalThis.pendingDelegation = await host.delegate({ task: 'Trace sources', name: 'Source trace' }, { wait: false }); return { delegated: globalThis.pendingDelegation, children: await host.children() }"
+        "globalThis.pendingDelegation = await host.delegate({ task: 'Trace sources', name: 'Source trace', outputSchema: { type: 'object' } }, { wait: false }); return { delegated: globalThis.pendingDelegation, children: await host.children() }"
       )
       expect(firstCell.error).toBeNull()
       expect(JSON.parse(firstCell.result ?? '{}')).toEqual({
@@ -533,7 +548,7 @@ describe('repl_loop local RPC transport', () => {
         ]
       })
       const secondCell = await send(
-        'return { results: await host.collect(globalThis.pendingDelegation.children.map(({ frame_id, attempt_id }) => ({ frame_id, attempt_id })), { timeout_seconds: 0 }) }'
+        'return { results: await host.collect(globalThis.pendingDelegation.children.map(({ frame_id, attempt_id }) => ({ frameId: frame_id, attemptId: attempt_id })), { timeoutSeconds: 0 }) }'
       )
       expect(secondCell.error).toBeNull()
       expect(JSON.parse(secondCell.result ?? '{}')).toEqual({
@@ -559,7 +574,11 @@ describe('repl_loop local RPC transport', () => {
         {
           method: 'delegatedWorkCall',
           params: {
-            request: { task: 'Trace sources', name: 'Source trace' },
+            request: {
+              task: 'Trace sources',
+              name: 'Source trace',
+              output_schema: { type: 'object' }
+            },
             options: { wait: false },
             delegation_call_id: '1'
           }
@@ -582,7 +601,7 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
-  it('routes host.submit_output through its dedicated child capability method', async () => {
+  it('routes host.submitOutput through its dedicated child capability method', async () => {
     let received: { method?: string; params?: Record<string, unknown> } = {}
     const server = createServer((request, response) => {
       let body = ''
@@ -604,7 +623,7 @@ describe('repl_loop local RPC transport', () => {
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'child-token'
     })
     try {
-      const result = await send('return await host.submit_output({ answer: 42 })')
+      const result = await send('return await host.submitOutput({ answer: 42 })')
       expect(result.error).toBeNull()
       expect(JSON.parse(result.result ?? '{}')).toEqual({ accepted: true })
       expect(received).toEqual({
@@ -619,7 +638,7 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
-  it('routes host.send_frame_message kind through delegated work and projects a continuation receipt', async () => {
+  it('routes host.sendFrameMessage options through delegated work and projects a continuation receipt', async () => {
     let received: { method?: string; params?: Record<string, unknown> } = {}
     const server = createServer((request, response) => {
       let body = ''
@@ -651,7 +670,7 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const result = await send(
-        "return JSON.stringify(await host.send_frame_message('child-frame', 'Check a counterexample', { kind: 'question' }))"
+        "return JSON.stringify(await host.sendFrameMessage('child-frame', 'Check a counterexample', { kind: 'question', requestId: 'request-1', replyToMessageId: 'message-0' }))"
       )
       expect(result.error).toBeNull()
       expect(JSON.parse(result.result as string)).toEqual({
@@ -666,7 +685,11 @@ describe('repl_loop local RPC transport', () => {
           op: 'send_message',
           target: 'child-frame',
           message: 'Check a counterexample',
-          options: { kind: 'question' }
+          options: {
+            kind: 'question',
+            request_id: 'request-1',
+            reply_to_message_id: 'message-0'
+          }
         }
       })
     } finally {
@@ -677,7 +700,7 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
-  it('keeps the two-argument host.send_frame_message call compatible', async () => {
+  it('keeps the two-argument host.sendFrameMessage call compatible', async () => {
     let received: { method?: string; params?: Record<string, unknown> } = {}
     const server = createServer((request, response) => {
       let body = ''
@@ -709,7 +732,7 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const result = await send(
-        "return JSON.stringify(await host.send_frame_message('child-frame', 'Check a counterexample'))"
+        "return JSON.stringify(await host.sendFrameMessage('child-frame', 'Check a counterexample'))"
       )
       expect(result.error).toBeNull()
       expect(JSON.parse(result.result as string)).toEqual({
@@ -735,7 +758,7 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
-  it('projects a Delegate-to-parent queued send_frame_message receipt without a child', async () => {
+  it('projects a Delegate-to-parent queued sendFrameMessage receipt without a child', async () => {
     let received: { method?: string; params?: Record<string, unknown> } = {}
     const server = createServer((request, response) => {
       let body = ''
@@ -769,7 +792,7 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const result = await send(
-        "return JSON.stringify(await host.send_frame_message('parent', 'Which cohort?', { kind: 'question' }))"
+        "return JSON.stringify(await host.sendFrameMessage('parent', 'Which cohort?', { kind: 'question' }))"
       )
       expect(result.error).toBeNull()
       expect(JSON.parse(result.result as string)).toEqual({
@@ -789,6 +812,155 @@ describe('repl_loop local RPC transport', () => {
           options: { kind: 'question' }
         }
       })
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('remaps camelCase stop and message inputs onto the private delegated-work wire', async () => {
+    const received: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const call = JSON.parse(body)
+        received.push(call)
+        const result =
+          call.params.operation === 'stop_children'
+            ? [{ frameId: 'child-frame', status: 'cancelled' }]
+            : { status: 'accepted' }
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegated-message-remap-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const result = await send(
+        "return { stopped: await host.stopChild(['child-frame']), observed: await host.messageReceipt('request-1', { timeoutSeconds: 0 }), resolved: await host.resolveMessage('message-1', { action: 'acknowledge_uncertain' }) }"
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '{}')).toEqual({
+        stopped: [{ frame_id: 'child-frame', status: 'cancelled' }],
+        observed: { status: 'accepted' },
+        resolved: { status: 'accepted' }
+      })
+      expect(received).toEqual([
+        {
+          method: 'delegatedWorkCall',
+          params: { operation: 'stop_children', frame_ids: ['child-frame'] }
+        },
+        {
+          method: 'delegatedWorkCall',
+          params: {
+            op: 'message_receipt',
+            selector: 'request-1',
+            options: { timeout_seconds: 0 }
+          }
+        },
+        {
+          method: 'delegatedWorkCall',
+          params: {
+            op: 'resolve_message',
+            message_id: 'message-1',
+            action: 'acknowledge_uncertain'
+          }
+        }
+      ])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('rejects legacy and mixed-case delegated-work inputs before issuing RPC', async () => {
+    let requestCount = 0
+    const server = createServer((_request, response) => {
+      requestCount += 1
+      response
+        .writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ result: {} }))
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegated-input-rejection-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const result = await send(
+        "const capture = async (call) => { try { await call(); return null } catch (error) { return error.message } }; return await Promise.all([capture(() => host.delegate({ task: 'x', output_schema: {} })), capture(() => host.delegate({ task: 'x' }, { timeout_seconds: 0 })), capture(() => host.collect([{ frameId: 'f', attempt_id: 'a' }], { timeoutSeconds: 0 })), capture(() => host.sendFrameMessage('f', 'x', { requestId: 'r', request_id: 'r' })), capture(() => host.messageReceipt('r', { timeout_seconds: 0 })), capture(() => host.resolveMessage('m', { action: 'acknowledge_uncertain', message_id: 'm' }))])"
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '[]')).toEqual([
+        'host.delegate request unknown option: output_schema',
+        'host.delegate options unknown option: timeout_seconds',
+        'host.collect selector unknown option: attempt_id',
+        'host.sendFrameMessage options unknown option: request_id',
+        'host.messageReceipt options unknown option: timeout_seconds',
+        'host.resolveMessage options unknown option: message_id'
+      ])
+      expect(requestCount).toBe(0)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('projects private delegation parser errors onto public camelCase names only', async () => {
+    const privateErrors = [
+      'host.delegate: options.timeout_seconds is invalid; error_code=timeout_seconds_invalid',
+      'host.collect: selector invalid; use {frame_id, attempt_id}; code=selector_invalid',
+      'host.message_receipt: message_receipt timeout_seconds is invalid; action=acknowledge_uncertain',
+      'database unavailable; enum=acknowledge_uncertain; code=reply_to_message_id_invalid'
+    ]
+    let requestCount = 0
+    const server = createServer((_request, response) => {
+      const error = privateErrors[requestCount++]
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error }))
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-delegated-error-projection-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const result = await send(
+        "const capture = async (call) => { try { await call(); return null } catch (error) { return error.message } }; return [await capture(() => host.delegate({ task: 'x' }, { timeoutSeconds: 1801 })), await capture(() => host.collect([{ frameId: 'f', attemptId: 'a' }])), await capture(() => host.messageReceipt('request-1', { timeoutSeconds: 1801 })), await capture(() => host.sendFrameMessage('f', 'x'))]"
+      )
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '[]')).toEqual([
+        'host.delegate: options.timeoutSeconds is invalid; error_code=timeout_seconds_invalid',
+        'host.collect: selector invalid; use {frameId, attemptId}; code=selector_invalid',
+        'host.messageReceipt: messageReceipt timeoutSeconds is invalid; action=acknowledge_uncertain',
+        'host.sendFrameMessage: database unavailable; enum=acknowledge_uncertain; code=reply_to_message_id_invalid'
+      ])
+      expect(requestCount).toBe(4)
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

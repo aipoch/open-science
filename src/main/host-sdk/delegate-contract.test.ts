@@ -27,11 +27,25 @@ describe('Agent-facing delegate contract', () => {
           type: 'array',
           items: { type: 'string', minLength: 1, identity: 'immutable_upload_or_artifact_version' }
         },
-        output_schema: expect.objectContaining({ description: expect.stringContaining('2020-12') })
+        outputSchema: expect.objectContaining({
+          description: expect.stringMatching(/2020-12.*host\.submitOutput/s)
+        })
       }
     })
     expect(requestArray).toEqual({ type: 'array', minItems: 1, items: singleRequest })
     expect(singleRequest.properties).not.toHaveProperty('context')
+    expect(singleRequest.properties).not.toHaveProperty('output_schema')
+    expect(singleRequest.additionalProperties).toBe(false)
+    expect(DELEGATE_AGENT_CONTRACT.options).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        timeoutSeconds: { minimum: 0, maximum: 1800 }
+      }
+    })
+    expect(DELEGATE_AGENT_CONTRACT.options.properties).not.toHaveProperty('timeout_seconds')
+    expect(DELEGATE_AGENT_CONTRACT.returns.oneOf[0].properties.children.items.required).toContain(
+      'frame_id'
+    )
     expect(singleRequest.properties.profile.description).toContain(
       'Omit to inherit the authenticated parent Specialist'
     )
@@ -46,7 +60,7 @@ describe('Agent-facing delegate contract', () => {
     )
   })
 
-  it('normalizes wire request and options shapes without replacing domain admission validation', () => {
+  it('parses private snake-case wire requests without replacing domain admission validation', () => {
     expect(
       parseDelegateRpcCall({
         request: [{ task: 'Audit', inputs: ['upload-version-1'] }],
@@ -85,11 +99,45 @@ describe('Agent-facing delegate contract', () => {
         options: { wait: false, timeout_seconds: 1 }
       })
     ).toThrow('omit timeout_seconds or set wait:true')
+    expect(() =>
+      parseDelegateRpcCall({ request: { task: 'Extract', outputSchema: { type: 'number' } } })
+    ).toThrow('private RPC requests use output_schema')
+    expect(() =>
+      parseDelegateRpcCall({
+        request: { task: 'Extract', output_schema: {}, outputSchema: {} }
+      })
+    ).toThrow('private RPC requests use output_schema')
+    expect(() =>
+      parseDelegateRpcCall({
+        request: { task: 'Observe' },
+        options: { timeout_seconds: 0, timeoutSeconds: 0 }
+      })
+    ).toThrow('private RPC options use timeout_seconds')
   })
 })
 
 describe('Agent-facing collect contract', () => {
-  it('normalizes string and explicit Attempt selectors with bounded options', () => {
+  it('publishes camel-case selector and option inputs while retaining snake-case returns', () => {
+    const explicitSelector = COLLECT_AGENT_CONTRACT.selectors.items.oneOf[1]
+    expect(explicitSelector).toMatchObject({
+      additionalProperties: false,
+      required: ['frameId', 'attemptId'],
+      properties: { frameId: { type: 'string' }, attemptId: { type: 'string' } }
+    })
+    expect(explicitSelector.properties).not.toHaveProperty('frame_id')
+    expect(explicitSelector.properties).not.toHaveProperty('attempt_id')
+    expect(COLLECT_AGENT_CONTRACT.options.properties.timeoutSeconds).toMatchObject({
+      minimum: 0,
+      maximum: 1800,
+      default: 30
+    })
+    expect(COLLECT_AGENT_CONTRACT.options.properties).not.toHaveProperty('timeout_seconds')
+    expect(COLLECT_AGENT_CONTRACT.options.additionalProperties).toBe(false)
+    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('frame_id')
+    expect(COLLECT_AGENT_CONTRACT.returns.items.oneOf[0].required).toContain('attempt_id')
+  })
+
+  it('parses private snake-case wire selectors with bounded options', () => {
     expect(
       parseCollectRpcCall({
         selectors: ['frame-1', { frame_id: 'frame-2', attempt_id: 'attempt-2' }],
@@ -99,15 +147,31 @@ describe('Agent-facing collect contract', () => {
       selectors: ['frame-1', { frameId: 'frame-2', attemptId: 'attempt-2' }],
       options: { timeoutSeconds: 0 }
     })
-    expect(COLLECT_AGENT_CONTRACT.options.properties.timeout_seconds).toMatchObject({
-      minimum: 0,
-      maximum: 1800,
-      default: 30
-    })
     for (const invalid of [-1, 1801, Number.NaN, Number.POSITIVE_INFINITY, '30']) {
       expect(() =>
         parseCollectRpcCall({ selectors: ['frame-1'], options: { timeout_seconds: invalid } })
       ).toThrow('finite number from 0 through 1800')
     }
+    expect(() =>
+      parseCollectRpcCall({ selectors: [{ frameId: 'frame-1', attemptId: 'attempt-1' }] })
+    ).toThrow('private RPC selectors use {frame_id, attempt_id}')
+    expect(() =>
+      parseCollectRpcCall({
+        selectors: [
+          {
+            frame_id: 'frame-1',
+            attempt_id: 'attempt-1',
+            frameId: 'frame-1',
+            attemptId: 'attempt-1'
+          }
+        ]
+      })
+    ).toThrow('private RPC selectors use {frame_id, attempt_id}')
+    expect(() =>
+      parseCollectRpcCall({
+        selectors: ['frame-1'],
+        options: { timeout_seconds: 0, timeoutSeconds: 0 }
+      })
+    ).toThrow('private RPC options use timeout_seconds')
   })
 })

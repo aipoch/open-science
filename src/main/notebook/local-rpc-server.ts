@@ -1821,11 +1821,11 @@ class NotebookLocalRpcServer {
           delegate: Boolean(this.delegatedWorkService?.delegate),
           children: Boolean(this.delegatedWorkService?.children),
           collect: Boolean(this.delegatedWorkService?.collect),
-          stop_child: Boolean(this.delegatedWorkService?.stopChildren),
-          send_frame_message: Boolean(this.delegatedWorkService?.sendMessage),
-          message_receipt: Boolean(this.delegatedWorkService?.messageReceipt),
-          resolve_message: Boolean(this.delegatedWorkService?.resolveMessage),
-          submit_output: Boolean(this.delegatedWorkService?.submitOutput)
+          stopChild: Boolean(this.delegatedWorkService?.stopChildren),
+          sendFrameMessage: Boolean(this.delegatedWorkService?.sendMessage),
+          messageReceipt: Boolean(this.delegatedWorkService?.messageReceipt),
+          resolveMessage: Boolean(this.delegatedWorkService?.resolveMessage),
+          submitOutput: Boolean(this.delegatedWorkService?.submitOutput)
         }
       })
     }

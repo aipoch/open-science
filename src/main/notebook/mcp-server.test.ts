@@ -146,7 +146,7 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/do not prefetch.*topics/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Delegate agents should use the same catalog')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('unavailable root-only topics remain visible')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_frame_message(')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.sendFrameMessage(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_message(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('{task')
 
@@ -415,7 +415,7 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('field descriptions')
     expect(tool?.description).toMatch(/do not prefetch.*topics/i)
     expect(tool?.description).toContain('Delegate agents should use the same catalog')
-    expect(tool?.description).not.toContain('host.send_frame_message(')
+    expect(tool?.description).not.toContain('host.sendFrameMessage(')
     expect(tool?.description).not.toContain('host.send_message(')
   })
 

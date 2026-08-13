@@ -115,19 +115,19 @@ describe('delegated Notebook lane capability', () => {
           kind: 'catalog',
           topics: expect.arrayContaining([
             expect.objectContaining({ id: 'host.children' }),
-            expect.objectContaining({ id: 'host.stop_child' }),
+            expect.objectContaining({ id: 'host.stopChild' }),
             expect.objectContaining({
-              id: 'host.send_frame_message',
+              id: 'host.sendFrameMessage',
               availability: { status: 'available' }
             }),
             expect.objectContaining({
-              id: 'host.message_receipt',
+              id: 'host.messageReceipt',
               availability: { status: 'available' }
             })
           ])
         }
       })
-      for (const topic of ['children', 'stop_child']) {
+      for (const topic of ['children', 'stopChild']) {
         const help = await request(child, 'hostSdkHelp', { query: topic, caller_role: 'main' })
         expect(help.status).toBe(200)
         await expect(help.json()).resolves.toMatchObject({
@@ -195,7 +195,7 @@ describe('delegated Notebook lane capability', () => {
     }
   })
 
-  it('binds submit_output ownership to the child capability and fences revoked writes', async () => {
+  it('binds submitOutput ownership to the child capability and fences revoked writes', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'delegated-output-capability-'))
     const submitOutput = vi.fn(async () => ({ accepted: true as const }))
     const service = new NotebookRuntimeService({

@@ -883,12 +883,12 @@ describe('production delegated-work composition', () => {
       const initialPrompt = control.prompts[0]
       expect(initialPrompt).toContain('Return a structured count')
       expect(initialPrompt).toContain('read-only ./inputs/')
-      expect(initialPrompt).toContain('host.submit_output(value)')
+      expect(initialPrompt).toContain('host.submitOutput(value)')
       expect(initialPrompt.indexOf('Return a structured count')).toBeLessThan(
         initialPrompt.indexOf('read-only ./inputs/')
       )
       expect(initialPrompt.indexOf('read-only ./inputs/')).toBeLessThan(
-        initialPrompt.indexOf('host.submit_output(value)')
+        initialPrompt.indexOf('host.submitOutput(value)')
       )
       expect(initialPrompt).not.toContain(control.input.workspaceCwd!)
       expect(initialPrompt).not.toContain('upload-version:framework-input')
