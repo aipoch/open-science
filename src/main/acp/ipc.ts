@@ -17,6 +17,7 @@ import type {
   ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest
 } from '../../shared/acp'
@@ -63,6 +64,9 @@ const registerAcpIpcHandlerSet = (
     }
     return workflows.sendPrompt(rendererRequest)
   })
+  ipcMainHandle('acp:save-as-skill', (_event, request: AcpSaveAsSkillRequest) =>
+    workflows.saveAsSkill(request)
+  )
   ipcMainHandle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
     runtime.cancelPrompt(request)
   )

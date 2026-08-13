@@ -13,6 +13,7 @@ import type {
   ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
@@ -387,6 +388,7 @@ export interface OpenScienceAPI {
     continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
     resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
     sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
+    saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpStateSnapshot>
     compactSession(request: AcpCompactSessionRequest): Promise<AcpStateSnapshot>
     cancel(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot>
     deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot>

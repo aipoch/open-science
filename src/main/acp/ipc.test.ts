@@ -275,6 +275,7 @@ describe('ACP module transport seam', () => {
       'acp:respond-plan',
       'acp:resume-session',
       'acp:revoke-permission-grant',
+      'acp:save-as-skill',
       'acp:send-prompt',
       'acp:set-permission-profile'
     ])

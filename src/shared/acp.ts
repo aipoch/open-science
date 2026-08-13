@@ -728,6 +728,22 @@ export type AcpCompactSessionRequest = {
   reason?: 'manual' | 'overflow-recovery'
 }
 
+export type AcpSaveAsSkillRequest = {
+  projectId: string
+  sessionId: string
+  agentFrameId: string
+  messageBranchId: string
+  // A detached provider needs the durable active Branch replayed after fresh adoption. Main builds
+  // the replay from persisted messages; renderer supplies only the framework-specific budget policy.
+  historyReplay: Pick<
+    import('./history-preamble').HistoryReplayDescriptor,
+    'target' | 'contextWindow'
+  > & {
+    supportsImageInput?: boolean
+    contextReset?: true
+  }
+}
+
 export type AcpSetPermissionProfileRequest = {
   sessionId: string
   profile: PermissionProfileId

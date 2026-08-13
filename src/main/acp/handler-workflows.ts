@@ -6,6 +6,7 @@ import type {
   AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSaveAsSkillRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
@@ -13,6 +14,13 @@ import type { TaskNotificationService } from '../notifications/task-notification
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import { continueInterruptedTurn } from './interrupted-turn-continuation'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  getActiveConversationContext,
+  resolveMessageBranchPath
+} from '../../shared/conversation-graph'
+import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
+import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
+import type { HistoryReplayDescriptor, HistoryReplayTarget } from '../../shared/history-preamble'
 
 const log = createLogger('acp')
 const resumeLogHashKey = randomBytes(32)
@@ -28,6 +36,13 @@ const SAFE_RESUME_ERROR_KINDS = new Set([
   'conversation_restore_failed'
 ])
 const SAFE_RESUME_SERVICES = new Set(['session', 'provider', 'mcp', 'transport'])
+const SAVE_AS_SKILL_PROMPT = `[System] Evaluate the active conversation branch for a reusable Skill. Use the Customize Skill and follow its Skill Creator workflow. Extract the reusable pattern rather than copying the transcript. If the workflow is not reusable, explain why and do not create a draft. If it is reusable, use the conversation as existing context, ask only for gaps that materially change behavior, review the draft with the user, and publish only after the user accepts it.`
+const SAVE_AS_SKILL_REPLAY_TARGETS = new Set<HistoryReplayTarget>([
+  'claude-code',
+  'opencode',
+  'codex-response',
+  'codex-bridge'
+])
 
 type AcpHandlerWorkflowRuntime = {
   getSnapshot(): AcpStateSnapshot
@@ -55,6 +70,7 @@ type AcpHandlerWorkflows = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
+  saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpStateSnapshot>
   sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
 }
 
@@ -67,6 +83,49 @@ const safeRead = (value: object, key: string): unknown => {
     return (value as Record<string, unknown>)[key]
   } catch {
     return undefined
+  }
+}
+
+const resolveSaveAsSkillReplay = (
+  value: unknown
+): {
+  descriptor: HistoryReplayDescriptor
+  supportsImageInput?: boolean
+  contextReset: boolean
+} => {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error('Save as skill history replay policy is invalid.')
+  }
+  const target = safeRead(value, 'target')
+  if (
+    typeof target !== 'string' ||
+    !SAVE_AS_SKILL_REPLAY_TARGETS.has(target as HistoryReplayTarget)
+  ) {
+    throw new Error('Save as skill history replay target is invalid.')
+  }
+  const contextWindow = safeRead(value, 'contextWindow')
+  if (
+    contextWindow !== undefined &&
+    (typeof contextWindow !== 'number' || !Number.isFinite(contextWindow) || contextWindow <= 0)
+  ) {
+    throw new Error('Save as skill history replay context window is invalid.')
+  }
+  const supportsImageInput = safeRead(value, 'supportsImageInput')
+  if (supportsImageInput !== undefined && typeof supportsImageInput !== 'boolean') {
+    throw new Error('Save as skill image replay policy is invalid.')
+  }
+  const contextReset = safeRead(value, 'contextReset')
+  if (contextReset !== undefined && contextReset !== true) {
+    throw new Error('Save as skill context reset policy is invalid.')
+  }
+
+  return {
+    descriptor: {
+      target: target as HistoryReplayTarget,
+      ...(typeof contextWindow === 'number' ? { contextWindow } : {})
+    },
+    ...(typeof supportsImageInput === 'boolean' ? { supportsImageInput } : {}),
+    contextReset: contextReset === true
   }
 }
 
@@ -190,6 +249,73 @@ const createAcpHandlerWorkflows = (
     return archiveAvailability
       ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, run)
       : run()
+  },
+
+  async saveAsSkill(request): Promise<AcpStateSnapshot> {
+    if (!interruptedTurnSessions) throw new Error('Save as skill is not available.')
+    const replayPolicy = resolveSaveAsSkillReplay(request.historyReplay)
+    const session = await interruptedTurnSessions.loadSession(request.projectId, request.sessionId)
+    if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
+      throw new Error('Save as skill Session is unavailable.')
+    }
+    if (
+      session.status !== 'idle' ||
+      session.activeRun ||
+      session.resumeRecovery ||
+      session.pendingHistoryReplay
+    ) {
+      throw new Error('Save as skill requires an idle Session.')
+    }
+    if (hasCurrentRunningDelegatedAttempt(session)) {
+      throw new Error('Save as skill is unavailable while delegated work is still running.')
+    }
+    const graph = session.conversationGraph
+    const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+    if (
+      !graph ||
+      !frame ||
+      frame.id !== request.agentFrameId ||
+      frame.activeBranchId !== request.messageBranchId
+    ) {
+      throw new Error('Save as skill stopped because the active conversation branch changed.')
+    }
+    const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
+    const lastMessage = activeBranchMessages.at(-1)
+    if (lastMessage?.role !== 'agent' || lastMessage.status !== 'complete') {
+      throw new Error('Save as skill requires a completed Agent turn.')
+    }
+    const promptMessageId = `message-${randomUUID()}`
+    const historyReplay = buildSessionHistoryReplay(
+      activeBranchMessages,
+      replayPolicy.descriptor,
+      session.projectId,
+      replayPolicy.supportsImageInput
+    )
+    await runtime.sendPrompt({
+      sessionId: session.id,
+      text: SAVE_AS_SKILL_PROMPT,
+      suppressUserMessage: true,
+      forcedSkillIds: ['customize'],
+      provenanceContext: getActiveConversationContext(graph, promptMessageId),
+      ...(historyReplay
+        ? {
+            resumeFallback: {
+              historyPreamble: historyReplay.historyPreamble,
+              historyAttachments: historyReplay.historyAttachments,
+              historyImages: historyReplay.historyImages
+            },
+            ...(replayPolicy.contextReset
+              ? {
+                  historyPreamble: historyReplay.historyPreamble,
+                  historyAttachments: historyReplay.historyAttachments,
+                  historyImages: historyReplay.historyImages,
+                  contextReset: true
+                }
+              : {})
+          }
+        : {})
+    })
+    return runtime.getSnapshot()
   },
 
   async sendPrompt(request): Promise<AcpStateSnapshot> {

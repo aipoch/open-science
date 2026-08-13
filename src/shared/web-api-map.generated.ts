@@ -15,6 +15,7 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.respondToPermission': 'acp:respond-permission',
   'acp.resumeSession': 'acp:resume-session',
   'acp.revokePermissionGrant': 'acp:revoke-permission-grant',
+  'acp.saveAsSkill': 'acp:save-as-skill',
   'acp.sendPrompt': 'acp:send-prompt',
   'acp.setPermissionProfile': 'acp:set-permission-profile',
   'artifacts.finalizeRunArtifacts': 'artifacts:finalize-run',

@@ -67,6 +67,7 @@ type WorkspaceConversationControllerOptions = {
   isReviewing: boolean
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
+  saveAsSkillInFlightSessionIds: string[]
   hasBlockingRootPermissionRequest: boolean
   newConversationAutoReviewEnabled: boolean
   newConversationEnabledComputeHosts: string[]
@@ -108,7 +109,8 @@ const hasRuntimeInteraction = (options: WorkspaceConversationControllerOptions):
   return Boolean(
     sessionId &&
     (options.promptInFlightSessionIds.includes(sessionId) ||
-      options.sendPreparationInFlightSessionIds.includes(sessionId))
+      options.sendPreparationInFlightSessionIds.includes(sessionId) ||
+      options.saveAsSkillInFlightSessionIds.includes(sessionId))
   )
 }
 

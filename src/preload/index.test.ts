@@ -254,6 +254,7 @@ describe('preload bridge — public surface inventory', () => {
       'acp.respondToPermission',
       'acp.resumeSession',
       'acp.revokePermissionGrant',
+      'acp.saveAsSkill',
       'acp.sendPrompt',
       'acp.setPermissionProfile',
       'artifacts.finalizeRunArtifacts',

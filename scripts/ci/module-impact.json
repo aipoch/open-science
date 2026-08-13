@@ -35,6 +35,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",
         "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
       ],
       "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
@@ -44,6 +45,7 @@
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
+          "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
           "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
         "contract": [
