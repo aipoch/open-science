@@ -58,7 +58,7 @@ describe('planCliLauncher', () => {
     expect(plan.shim).toContain('ELECTRON_RUN_AS_NODE=1')
     // Packaged: pins the app path and single-quotes both paths (they contain a space).
     expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/Open Science/open-science'")
-    expect(plan.shim).toContain("'/opt/Open Science/resources/cli/index.mjs' \"$@\"")
+    expect(plan.shim).toContain('\'/opt/Open Science/resources/cli/index.mjs\' "$@"')
   })
 
   it('omits OPEN_SCIENCE_APP_PATH for a development (unpackaged) build', () => {
@@ -84,9 +84,7 @@ describe('planCliLauncher', () => {
     )
 
     // The shim uses the current FUSE mount paths directly (no -e bootstrap).
-    expect(plan.shim).toContain(
-      "OPEN_SCIENCE_APP_PATH='/tmp/.mount_open-scienceOLD/open-science'"
-    )
+    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/tmp/.mount_open-scienceOLD/open-science'")
     expect(plan.shim).toContain(
       "exec '/tmp/.mount_open-scienceOLD/open-science' '/tmp/.mount_open-scienceOLD/resources/cli/index.mjs' \"$@\""
     )

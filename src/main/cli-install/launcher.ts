@@ -42,7 +42,6 @@ const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): b
     .some((entry) => entry === binDir)
 }
 
-
 // POSIX: a /bin/sh shim in ~/.local/bin. Single-quote every path so it survives spaces and shell
 // metacharacters: inside single quotes nothing is special (no $, backtick, or backslash expansion),
 // so the only thing to escape is an embedded single quote, via the standard '\'' close-escape-reopen
