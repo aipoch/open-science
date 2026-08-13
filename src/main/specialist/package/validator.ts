@@ -700,6 +700,9 @@ export const validateSpecialistPackage = (
   ]
   const connectorIdByName = new Map<string, string>()
   for (const id of catalog.connectorIds) {
+    // Accept legacy/local package references without changing the portable export contract. Custom
+    // Connector UUIDs remain local IDs after validation; current packages still export `name`.
+    connectorIdByName.set(id, id)
     connectorIdByName.set(catalog.connectorAliases?.[id] ?? id, id)
   }
   for (const [legacyAlias, localId] of Object.entries(catalog.connectorAliases ?? {})) {

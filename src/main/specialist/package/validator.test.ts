@@ -99,25 +99,26 @@ describe('validateSpecialistPackage', () => {
   })
 
   it('resolves portable and legacy Connector names to the local Connector id', () => {
+    const localConnectorId = '550e8400-e29b-41d4-a716-446655440000'
     const result = validateSpecialistPackage(
       packageFiles(validManifest, {
         ...validSpecialist,
-        connectorIds: ['Example Connector', 'installed-uuid', 'example-connector']
+        connectorIds: ['Example Connector', 'installed-uuid', 'example-connector', localConnectorId]
       }),
       {
         ...catalog,
-        connectorIds: ['550e8400-e29b-41d4-a716-446655440000'],
+        connectorIds: [localConnectorId],
         connectorAliases: {
-          '550e8400-e29b-41d4-a716-446655440000': 'example-connector',
-          'Example Connector': '550e8400-e29b-41d4-a716-446655440000',
-          'installed-uuid': '550e8400-e29b-41d4-a716-446655440000'
+          [localConnectorId]: 'example-connector',
+          'Example Connector': localConnectorId,
+          'installed-uuid': localConnectorId
         }
       },
       'zip'
     )
 
     expect(result.preview.installable).toBe(true)
-    expect(result.plan?.connectorIds).toEqual(['550e8400-e29b-41d4-a716-446655440000'])
+    expect(result.plan?.connectorIds).toEqual([localConnectorId])
   })
 
   it('resolves portable Skill and Connector names to local installation ids', () => {
