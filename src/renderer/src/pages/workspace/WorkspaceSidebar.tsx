@@ -671,7 +671,7 @@ const WorkspaceSidebarView = ({
                 data-sidebar-community-viewport
                 className="relative min-w-0 flex-1 overflow-hidden"
               >
-                <GitHubStarBadge className="w-max max-w-none shrink-0 whitespace-nowrap" />
+                <GitHubStarBadge />
                 <span
                   data-sidebar-community-fade
                   aria-hidden="true"

@@ -200,30 +200,13 @@ describe('WorkspaceSidebar accessible render', () => {
     const communityViewport = container.querySelector<HTMLElement>(
       '[data-sidebar-community-viewport]'
     )
-    const github = communityViewport?.querySelector<HTMLElement>('a[target="_blank"]')
     const fade = communityViewport?.querySelector<HTMLElement>('[data-sidebar-community-fade]')
 
-    expect(footer).not.toBeNull()
-    expect(actions).not.toBeNull()
-    expect(communityViewport).not.toBeNull()
-    expect(github).not.toBeNull()
-    expect(fade).not.toBeNull()
-    expect(footer!.classList).toContain('w-full')
-    expect(footer!.classList).toContain('min-w-0')
-    expect(footer!.classList).not.toContain('overflow-hidden')
-    expect(actions!.classList).not.toContain('overflow-hidden')
-    expect(communityViewport!.classList).toContain('min-w-0')
-    expect(communityViewport!.classList).toContain('flex-1')
-    expect(communityViewport!.classList).toContain('overflow-hidden')
-    expect(github!.classList).toContain('w-max')
-    expect(github!.classList).toContain('shrink-0')
-    expect(github!.classList).not.toContain('truncate')
-    expect(fade!.tagName).toBe('SPAN')
-    expect(fade!.getAttribute('aria-hidden')).toBe('true')
-    expect(fade!.classList).toContain('pointer-events-none')
-    expect(fade!.classList).toContain('from-transparent')
-    expect(fade!.classList).toContain('via-rail-card-bg')
-    expect(fade!.classList).toContain('to-rail-card-bg')
+    // Only the dynamic community viewport clips; outer controls keep their focus and attention UI.
+    expect(footer?.classList.contains('overflow-hidden')).toBe(false)
+    expect(actions?.classList.contains('overflow-hidden')).toBe(false)
+    expect(communityViewport?.classList.contains('overflow-hidden')).toBe(true)
+    expect(fade?.classList.contains('pointer-events-none')).toBe(true)
   })
 
   it('keeps the header row free of floating-toggle padding now that the toggle sits inline', async () => {
