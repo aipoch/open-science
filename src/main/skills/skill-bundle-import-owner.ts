@@ -19,6 +19,7 @@ import {
   type ScannedSkill
 } from './github-import'
 import { parseSkillDocument } from './frontmatter'
+import { canonicalSkillDocument } from './skill-document-name'
 import { selectSkillManifestRoots } from './skill-bundle-paths'
 import { extractZip, extractZipLenient } from './zip-extract'
 import {
@@ -26,7 +27,7 @@ import {
   type SkillPackageTransactionOwner
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
-import { UserSkillStore, parseUserSkillId, toSlug } from './user-skill-store'
+import { UserSkillStore, normalizeSkillName, parseUserSkillId } from './user-skill-store'
 
 type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
 type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }
@@ -55,6 +56,10 @@ const parsedSkillPreview = (
     body,
     files: [...files].sort()
   }
+}
+
+const canonicalImportedSkillDocument = (content: Buffer, name: string): Buffer => {
+  return Buffer.from(canonicalSkillDocument(content.toString('utf8'), name), 'utf8')
 }
 
 const findSkillRoots = (entries: { path: string; content: Buffer }[]): SkillRoot[] => {
@@ -194,22 +199,29 @@ export class SkillBundleImportOwner {
 
     const files = await fetchSkillFiles(location, fetcher)
     const signature = signatureOf(files)
-    const base = toSlug(location.path.split('/').filter(Boolean).pop() ?? location.repo) || 'skill'
+    const preview = parsedSkillPreview(
+      files
+        .find((file) => file.relativePath.toLowerCase() === 'skill.md')!
+        .content.toString('utf8'),
+      files.map((file) => file.relativePath),
+      location.path.split('/').filter(Boolean).pop() ?? location.repo
+    )
+    const baseName = normalizeSkillName(preview.name) || 'skill'
 
     return this.transactions.runRecovered(async () => {
-      const existingSlug = await this.findImportedSlugByUrl(url)
-      if (existingSlug) {
-        const existing = await this.transactions.readImportedSource(existingSlug)
+      const existingDirectoryName = await this.findImportedDirectoryNameByUrl(url)
+      if (existingDirectoryName) {
+        const existing = await this.transactions.readImportedSource(existingDirectoryName)
         if (existing?.signature === signature) {
-          return { status: 'unchanged', id: `imported-${existingSlug}` }
+          return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
         }
-        await this.writeImported(existingSlug, files, url, signature)
-        return { status: 'updated', id: `imported-${existingSlug}` }
+        await this.writeImported(existingDirectoryName, files, url, signature)
+        return { status: 'updated', id: `imported-${existingDirectoryName}` }
       }
 
-      const slug = await this.store.uniqueSlug('imported', base)
-      await this.writeImported(slug, files, url, signature)
-      return { status: 'imported', id: `imported-${slug}` }
+      const name = await this.store.uniqueImportedName(baseName)
+      await this.writeImported(name, files, url, signature)
+      return { status: 'imported', id: `imported-${name}` }
     })
   }
 
@@ -244,7 +256,7 @@ export class SkillBundleImportOwner {
           }
 
           const alreadyImported = Boolean(
-            await this.findImportedSlugBySignature(signatureOf(root.files))
+            await this.findImportedDirectoryNameBySignature(signatureOf(root.files))
           )
           const replaceableId = alreadyImported ? undefined : await this.replaceableImportedId(name)
 
@@ -327,14 +339,15 @@ export class SkillBundleImportOwner {
     ])
     return found.map((skill) => ({
       ...skill,
-      alreadyImported: index.urls.has(skill.url) || index.slugs.has(toSlug(skill.name))
+      alreadyImported:
+        index.urls.has(skill.url) || index.directoryNames.has(normalizeSkillName(skill.name))
     }))
   }
 
-  private async findImportedSlugByUrl(url: string): Promise<string | undefined> {
-    for (const slug of await this.store.listSlugs('imported')) {
-      const source = await this.transactions.readImportedSource(slug)
-      if (source?.url === url) return slug
+  private async findImportedDirectoryNameByUrl(url: string): Promise<string | undefined> {
+    for (const directoryName of await this.store.listDirectoryNames('imported')) {
+      const source = await this.transactions.readImportedSource(directoryName)
+      if (source?.url === url) return directoryName
     }
     return undefined
   }
@@ -369,50 +382,54 @@ export class SkillBundleImportOwner {
       if (
         !parsed ||
         parsed.source !== 'imported' ||
-        !(await this.store.slugTaken('imported', parsed.slug))
+        !(await this.store.directoryNameTaken('imported', parsed.directoryName))
       ) {
         throw new Error(`Not an imported skill to replace: ${replaceId}`)
       }
-      await this.writeImported(parsed.slug, files, '', signature)
-      return { status: 'updated', id: `imported-${parsed.slug}` }
+      await this.writeImported(parsed.directoryName, files, '', signature)
+      return { status: 'updated', id: `imported-${parsed.directoryName}` }
     }
 
-    const existingSlug = await this.findImportedSlugBySignature(signature)
-    if (existingSlug) return { status: 'unchanged', id: `imported-${existingSlug}` }
+    const existingDirectoryName = await this.findImportedDirectoryNameBySignature(signature)
+    if (existingDirectoryName) {
+      return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
+    }
 
     const name = parseSkillDocument(skillMd.content.toString('utf8')).name?.trim()
-    const base = toSlug(name ?? 'skill') || 'skill'
-    const slug = await this.store.uniqueSlug('imported', base)
-    await this.writeImported(slug, files, '', signature)
-    return { status: 'imported', id: `imported-${slug}` }
+    const baseName = normalizeSkillName(name ?? 'skill') || 'skill'
+    const assignedName = await this.store.uniqueImportedName(baseName)
+    await this.writeImported(assignedName, files, '', signature)
+    return { status: 'imported', id: `imported-${assignedName}` }
   }
 
-  private async findImportedSlugBySignature(signature: string): Promise<string | undefined> {
-    for (const slug of await this.store.listSlugs('imported')) {
-      const source = await this.transactions.readImportedSource(slug)
-      if (source?.signature === signature) return slug
+  private async findImportedDirectoryNameBySignature(
+    signature: string
+  ): Promise<string | undefined> {
+    for (const directoryName of await this.store.listDirectoryNames('imported')) {
+      const source = await this.transactions.readImportedSource(directoryName)
+      if (source?.signature === signature) return directoryName
     }
     return undefined
   }
 
-  private async importedIndex(): Promise<{ urls: Set<string>; slugs: Set<string> }> {
+  private async importedIndex(): Promise<{ urls: Set<string>; directoryNames: Set<string> }> {
     const urls = new Set<string>()
-    const slugs = new Set<string>()
-    for (const slug of await this.store.listSlugs('imported')) {
-      slugs.add(slug)
-      const source = await this.transactions.readImportedSource(slug)
+    const directoryNames = new Set<string>()
+    for (const directoryName of await this.store.listDirectoryNames('imported')) {
+      directoryNames.add(directoryName)
+      const source = await this.transactions.readImportedSource(directoryName)
       if (source?.url) urls.add(source.url)
     }
-    return { urls, slugs }
+    return { urls, directoryNames }
   }
 
   private async writeImported(
-    slug: string,
+    directoryName: string,
     files: FetchedSkillFile[],
     url: string,
     signature: string
   ): Promise<void> {
-    const dir = this.store.skillDir('imported', slug)
+    const dir = this.store.skillDirectory('imported', directoryName)
     const root = resolve(dir)
     const manifestTarget = resolve(dir, SOURCE_MANIFEST)
     const seen = new Set<string>()
@@ -437,12 +454,18 @@ export class SkillBundleImportOwner {
       }
     }
 
-    const staged = await this.transactions.stage('imported', slug, async (staging) => {
+    const staged = await this.transactions.stage('imported', directoryName, async (staging) => {
       for (const file of files) {
         const target = join(staging, file.relativePath)
         await mkdir(dirname(target), { recursive: true })
         try {
-          await writeFile(target, file.content, { flag: 'wx' })
+          await writeFile(
+            target,
+            file.relativePath.toLowerCase() === 'skill.md'
+              ? canonicalImportedSkillDocument(file.content, directoryName)
+              : file.content,
+            { flag: 'wx' }
+          )
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
             throw new Error(

@@ -2,30 +2,16 @@ import { lstat, readFile, readdir } from 'node:fs/promises'
 import { basename, join, posix } from 'node:path'
 
 import { zipSync, type Zippable } from 'fflate'
-import { dump as dumpYaml, load as loadYaml, FAILSAFE_SCHEMA } from 'js-yaml'
-
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
+import { canonicalSkillDocument } from './skill-document-name'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 
 const INTERNAL_SKILL_FILES = new Set(['.source.json', '.specialist-package.json'])
 const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 
-const withoutDisplayName = (raw: string): string => {
-  const normalized = raw.replace(/\r\n?/g, '\n')
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
-  if (!match) return raw
-
-  const parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
-  const fields = Object.entries(parsed as Record<string, unknown>)
-  if (!fields.some(([key]) => key.toLowerCase() === 'displayname')) return raw
-
-  const frontmatter = Object.fromEntries(
-    fields.filter(([key]) => key.toLowerCase() !== 'displayname')
-  )
-  const separator = match[0].endsWith('\n') ? '\n' : ''
-  return `---\n${dumpYaml(frontmatter, { lineWidth: -1 }).trimEnd()}\n---${separator}${normalized.slice(match[0].length)}`
+const normalizeExportedSkillDocument = (raw: string, name: string): string => {
+  return canonicalSkillDocument(raw, name, { omitDisplayName: true })
 }
 
 export type SkillExportArchive = {
@@ -35,7 +21,7 @@ export type SkillExportArchive = {
 
 export const skillExportFileName = (displayName: string, fallbackId: string): string => {
   const sanitize = (value: string): string => {
-    const slug = value
+    const fileStem = value
       .normalize('NFKC')
       .trim()
       .toLocaleLowerCase('en-US')
@@ -47,7 +33,7 @@ export const skillExportFileName = (displayName: string, fallbackId: string): st
       .replace(/^-+|-+$/g, '')
       .slice(0, 80)
       .replace(/-+$/g, '')
-    return WINDOWS_RESERVED_BASENAME.test(slug) ? `skill-${slug}` : slug
+    return WINDOWS_RESERVED_BASENAME.test(fileStem) ? `skill-${fileStem}` : fileStem
   }
   return `${sanitize(displayName) || sanitize(fallbackId) || 'skill'}.zip`
 }
@@ -63,6 +49,7 @@ type SkillExportDialog = {
 
 const collectFiles = async (
   directory: string,
+  skillName: string,
   relativeDirectory = '',
   state: { files: Zippable; fileCount: number; totalBytes: number } = {
     files: {},
@@ -89,7 +76,7 @@ const collectFiles = async (
       throw new Error('Unsafe Skill filesystem entry.')
     }
     if (metadata.isDirectory()) {
-      await collectFiles(absolutePath, relativePath, state, depth + 1)
+      await collectFiles(absolutePath, skillName, relativePath, state, depth + 1)
     } else if (metadata.isFile()) {
       state.fileCount += 1
       state.totalBytes += metadata.size
@@ -105,7 +92,10 @@ const collectFiles = async (
       let bytes = new Uint8Array(await readFile(absolutePath))
       if (relativePath === 'SKILL.md') {
         bytes = new TextEncoder().encode(
-          withoutDisplayName(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+          normalizeExportedSkillDocument(
+            new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+            skillName
+          )
         )
       }
       state.totalBytes += bytes.byteLength - metadata.size
@@ -128,7 +118,7 @@ export const buildSkillExportArchive = async (
   skill: BundledSkill
 ): Promise<SkillExportArchive> => ({
   fileName: skillExportFileName(skill.displayName, basename(skill.sourceDir) || skill.id),
-  archiveBytes: zipSync(await collectFiles(skill.sourceDir), { level: 6 })
+  archiveBytes: zipSync(await collectFiles(skill.sourceDir, skill.name), { level: 6 })
 })
 
 export const saveSkillExport = async (

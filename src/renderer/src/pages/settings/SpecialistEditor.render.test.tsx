@@ -140,6 +140,7 @@ describe('SpecialistEditor', () => {
       connectors: [
         {
           id: 'chemistry',
+          name: 'chemistry',
           displayName: 'Chemistry',
           description: '',
           sources: [],
@@ -150,6 +151,7 @@ describe('SpecialistEditor', () => {
         },
         {
           id: 'pubmed',
+          name: 'pubmed',
           displayName: 'PubMed',
           description: '',
           sources: [],

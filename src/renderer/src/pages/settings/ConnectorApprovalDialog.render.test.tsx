@@ -15,6 +15,7 @@ beforeEach(() => {
     connectors: [
       {
         id: 'biomart',
+        name: 'biomart',
         displayName: 'BioMart',
         description: '',
         sources: [],

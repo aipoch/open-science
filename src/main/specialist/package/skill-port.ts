@@ -1,18 +1,13 @@
 import type { SpecialistPackageSkillPlan } from '../../../shared/specialist-package'
 
 export type SpecialistPackageSkillSnapshot = {
-  id: string
-  /** The installed/catalog ID when it differs from the portable package ID. */
-  sourceId?: string
+  /** Stable ID of the locally installed Skill referenced by Specialist persistence. */
+  localId: string
+  /** Immutable invocation name used by specialist.json and skills/<name>/. */
+  name: string
   version: string
   contentHash: string
   files: ReadonlyArray<{ path: string; bytes: Uint8Array }>
-}
-
-export interface SpecialistPackageBuiltinSkillPort {
-  exportSnapshot: (
-    skillIds: readonly string[]
-  ) => Promise<ReadonlyArray<SpecialistPackageSkillSnapshot>>
 }
 
 // The Skill Module owns its files. Package transactions can only stage an immutable plan, promote it,

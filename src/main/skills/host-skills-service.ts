@@ -67,8 +67,10 @@ const readPackageText = async (root: string, relativePath: string): Promise<stri
   return readBoundedText(current)
 }
 
-const personalDirectoryName = (skill: BundledSkill): string | undefined =>
-  parseUserSkillId(skill.id)?.slug
+const personalSkillName = (skill: BundledSkill): string | undefined => {
+  const parsed = parseUserSkillId(skill.id)
+  return parsed?.source === 'personal' ? parsed.directoryName : undefined
+}
 
 const explicitDraftName = (reference: string): string | undefined => {
   if (!reference.startsWith('draft-')) return undefined
@@ -270,9 +272,9 @@ export class HostSkillsService {
       if (!existing) throw new Error('new Skill names must be lowercase hyphenated names')
       if (existing.source !== 'personal')
         throw new Error('built-in and imported Skills are read-only')
-      const directoryName = personalDirectoryName(existing)
-      if (!directoryName) throw new Error('personal Skill has no editable package name')
-      return this.seedPersonalDraft(existing, directoryName)
+      const personalName = personalSkillName(existing)
+      if (!personalName) throw new Error('personal Skill has no editable name')
+      return this.seedPersonalDraft(existing, personalName)
     }
 
     const path = this.draftDir(name)
@@ -281,7 +283,7 @@ export class HostSkillsService {
     if (existing) {
       if (existing.source !== 'personal')
         throw new Error('built-in and imported Skills are read-only')
-      return this.seedPersonalDraft(existing, personalDirectoryName(existing) ?? name)
+      return this.seedPersonalDraft(existing, personalSkillName(existing) ?? name)
     }
     assertUsableSkillName(name)
     await mkdir(path, { recursive: true })

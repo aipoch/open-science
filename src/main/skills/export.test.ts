@@ -116,6 +116,7 @@ describe('Skill ZIP export', () => {
     const archive = unzipSync(exported.archiveBytes)
     expect(Object.keys(archive)).toEqual(['SKILL.md'])
     expect(strFromU8(archive['SKILL.md']!)).not.toContain('displayName')
+    expect(strFromU8(archive['SKILL.md']!)).toContain('name: Portable')
     expect(strFromU8(archive['SKILL.md']!)).toContain('Body.')
   })
 

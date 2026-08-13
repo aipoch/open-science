@@ -67,7 +67,7 @@ describe('validateSpecialistPackage', () => {
     expect(JSON.stringify(result.preview)).not.toContain(validSpecialist.systemPrompt)
   })
 
-  it('accepts optional Skill and Connector IDs in the user-editable Specialist payload', () => {
+  it('accepts optional Skill and Connector names in the user-editable Specialist payload', () => {
     const result = validateSpecialistPackage(
       packageFiles(validManifest, {
         ...validSpecialist,
@@ -98,7 +98,7 @@ describe('validateSpecialistPackage', () => {
     expect(result.plan?.connectorIds).toEqual(['reference-library'])
   })
 
-  it('canonicalizes legacy Connector aliases to the portable slug', () => {
+  it('resolves portable and legacy Connector names to the local Connector id', () => {
     const result = validateSpecialistPackage(
       packageFiles(validManifest, {
         ...validSpecialist,
@@ -106,17 +106,51 @@ describe('validateSpecialistPackage', () => {
       }),
       {
         ...catalog,
-        connectorIds: ['example-connector'],
+        connectorIds: ['550e8400-e29b-41d4-a716-446655440000'],
         connectorAliases: {
-          'Example Connector': 'example-connector',
-          'installed-uuid': 'example-connector'
+          '550e8400-e29b-41d4-a716-446655440000': 'example-connector',
+          'Example Connector': '550e8400-e29b-41d4-a716-446655440000',
+          'installed-uuid': '550e8400-e29b-41d4-a716-446655440000'
         }
       },
       'zip'
     )
 
     expect(result.preview.installable).toBe(true)
-    expect(result.plan?.connectorIds).toEqual(['example-connector'])
+    expect(result.plan?.connectorIds).toEqual(['550e8400-e29b-41d4-a716-446655440000'])
+  })
+
+  it('resolves portable Skill and Connector names to local installation ids', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        skillIds: ['paper-review'],
+        connectorIds: ['pubmed-private']
+      }),
+      {
+        ...catalog,
+        skills: [
+          {
+            id: 'imported-paper-review',
+            name: 'paper-review',
+            builtin: false
+          }
+        ],
+        connectorIds: ['550e8400-e29b-41d4-a716-446655440000'],
+        connectorAliases: {
+          '550e8400-e29b-41d4-a716-446655440000': 'pubmed-private'
+        }
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.payload).toMatchObject({
+      skillIds: ['paper-review'],
+      connectorIds: ['pubmed-private']
+    })
+    expect(result.plan?.skillIds).toEqual(['imported-paper-review'])
+    expect(result.plan?.connectorIds).toEqual(['550e8400-e29b-41d4-a716-446655440000'])
   })
 
   it('changes the package content identity when bundled Skill bytes change', () => {

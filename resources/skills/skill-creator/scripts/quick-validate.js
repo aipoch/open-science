@@ -19,11 +19,11 @@ const validateSkillDocument = (content, expectedName) => {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(values.name) || values.name.length > 64) {
     return {
       valid: false,
-      error: 'Skill name must be a lowercase hyphenated slug up to 64 characters.'
+      error: 'Skill name must be a safe lowercase hyphenated name up to 64 characters.'
     }
   }
   if (expectedName && values.name !== expectedName) {
-    return { valid: false, error: 'Skill name must match the draft slug.' }
+    return { valid: false, error: 'Skill name must match the draft name.' }
   }
   if (!values.description || values.description.length > 1024 || /[<>]/.test(values.description)) {
     return { valid: false, error: 'Description must be 1-1024 characters without angle brackets.' }

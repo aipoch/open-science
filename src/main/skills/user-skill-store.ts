@@ -22,8 +22,7 @@ export const USER_SOURCES: ReadonlyArray<Extract<SkillSource, 'imported' | 'pers
 
 export type UserSkillSource = (typeof USER_SOURCES)[number]
 
-// Only lowercase slugs so a skill id maps 1:1 to a safe directory name.
-export const SAFE_SLUG = /^[a-z0-9-]+$/
+export const SAFE_SKILL_DIRECTORY_NAME = /^[a-z0-9-]+$/
 
 export const SAFE_SKILL_NAME = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/
 const SKILL_NAME_MAX_LENGTH = 64
@@ -39,7 +38,7 @@ export const assertUsableSkillName = (name: string): void => {
   }
 }
 
-export const toSlug = (name: string): string =>
+export const normalizeSkillName = (name: string): string =>
   name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -49,12 +48,14 @@ export const toSlug = (name: string): string =>
 export const frontmatterBlock = (fields: Record<string, string>): string =>
   dumpYaml(fields, { lineWidth: -1 })
 
-export const parseUserSkillId = (id: string): { source: UserSkillSource; slug: string } | null => {
+export const parseUserSkillId = (
+  id: string
+): { source: UserSkillSource; directoryName: string } | null => {
   for (const source of USER_SOURCES) {
     const prefix = `${source}-`
     if (id.startsWith(prefix)) {
-      const slug = id.slice(prefix.length)
-      if (SAFE_SLUG.test(slug)) return { source, slug }
+      const directoryName = id.slice(prefix.length)
+      if (SAFE_SKILL_DIRECTORY_NAME.test(directoryName)) return { source, directoryName }
     }
   }
   return null
@@ -82,14 +83,16 @@ export class UserSkillStore {
     return join(this.storageRoot, 'skills', source)
   }
 
-  skillDir(source: UserSkillSource, slug: string): string {
-    return join(this.sourceDir(source), slug)
+  skillDirectory(source: UserSkillSource, directoryName: string): string {
+    return join(this.sourceDir(source), directoryName)
   }
 
-  // Hidden transaction directories never surface as slugs or skill ids.
-  async listSlugs(source: UserSkillSource): Promise<string[]> {
+  // Hidden transaction directories never surface as package directory names or Skill ids.
+  async listDirectoryNames(source: UserSkillSource): Promise<string[]> {
     try {
-      return (await readdir(this.sourceDir(source))).filter((entry) => SAFE_SLUG.test(entry))
+      return (await readdir(this.sourceDir(source))).filter((entry) =>
+        SAFE_SKILL_DIRECTORY_NAME.test(entry)
+      )
     } catch {
       return []
     }
@@ -114,28 +117,35 @@ export class UserSkillStore {
     const skills: BundledSkill[] = []
 
     for (const source of USER_SOURCES) {
-      for (const slug of await this.listSlugs(source)) {
-        const skillDir = this.skillDir(source, slug)
+      for (const directoryName of await this.listDirectoryNames(source)) {
+        const skillDirectory = this.skillDirectory(source, directoryName)
 
         try {
-          const { fields } = await readSkillFile(skillDir)
-          const packageMetadata = await readSpecialistPackageSkillMetadata(skillDir)
-          const updatedAt = (await stat(join(skillDir, 'SKILL.md'))).mtime.toISOString()
+          const { fields } = await readSkillFile(skillDirectory)
+          const packageMetadata = await readSpecialistPackageSkillMetadata(skillDirectory)
+          const updatedAt = (await stat(join(skillDirectory, 'SKILL.md'))).mtime.toISOString()
 
           skills.push({
-            id: packageMetadata?.id ?? `${source}-${slug}`,
-            name: fields.name || slug,
-            displayName: fields.displayname || fields.name || slug,
+            id: packageMetadata?.id ?? `${source}-${directoryName}`,
+            // Writable Skill directories predate the explicit id/name model. The safe directory
+            // segment is the canonical invocation/export name; legacy frontmatter remains display
+            // metadata until an ordinary write or export normalizes the package bytes.
+            name: directoryName,
+            displayName: fields.displayname || fields.name || directoryName,
             description: fields.description ?? '',
             source,
             updatedAt,
-            sourceDir: skillDir,
+            sourceDir: skillDirectory,
             author: fields.author,
             license: fields.license,
             thirdParty: fields['third-party'] ?? fields['third_party'] ?? fields.thirdparty
           })
         } catch (error) {
-          log.warn('skipping user skill with unreadable SKILL.md', { source, slug, error })
+          log.warn('skipping user skill with unreadable SKILL.md', {
+            source,
+            directoryName,
+            error
+          })
         }
       }
     }
@@ -143,13 +153,15 @@ export class UserSkillStore {
     return skills
   }
 
-  async resolveSkillId(id: string): Promise<{ source: UserSkillSource; slug: string }> {
+  async resolveSkillId(id: string): Promise<{ source: UserSkillSource; directoryName: string }> {
     const conventional = parseUserSkillId(id)
     if (conventional) return conventional
     for (const source of USER_SOURCES) {
-      for (const slug of await this.listSlugs(source)) {
-        const metadata = await readSpecialistPackageSkillMetadata(this.skillDir(source, slug))
-        if (metadata?.id === id) return { source, slug }
+      for (const directoryName of await this.listDirectoryNames(source)) {
+        const metadata = await readSpecialistPackageSkillMetadata(
+          this.skillDirectory(source, directoryName)
+        )
+        if (metadata?.id === id) return { source, directoryName }
       }
     }
     throw new Error(`Not a user skill id: ${id}`)
@@ -158,7 +170,7 @@ export class UserSkillStore {
   async body(id: string): Promise<string> {
     return this.transactions.runRecovered(async () => {
       const parsed = await this.resolveSkillId(id)
-      return (await readSkillFile(this.skillDir(parsed.source, parsed.slug))).body
+      return (await readSkillFile(this.skillDirectory(parsed.source, parsed.directoryName))).body
     })
   }
 
@@ -166,7 +178,7 @@ export class UserSkillStore {
     return this.transactions.runExclusive(async () => {
       const name = input.name.trim()
       assertUsableSkillName(name)
-      if (await this.slugTaken('personal', name)) {
+      if (await this.directoryNameTaken('personal', name)) {
         throw new Error(`A skill named "${name}" already exists.`)
       }
       await this.writeSkill('personal', name, { ...input, name })
@@ -184,7 +196,7 @@ export class UserSkillStore {
     assertUsableSkillName(normalizedName)
 
     return this.transactions.runRecovered(async () => {
-      if (!overwrite && (await this.slugTaken('personal', normalizedName))) {
+      if (!overwrite && (await this.directoryNameTaken('personal', normalizedName))) {
         throw new Error(`A skill named "${normalizedName}" already exists.`)
       }
 
@@ -213,7 +225,8 @@ export class UserSkillStore {
   async updatePersonal(id: string, input: WriteSkillInput): Promise<void> {
     const parsed = parseUserSkillId(id)
     if (!parsed || parsed.source !== 'personal') throw new Error(`Not a personal skill id: ${id}`)
-    await this.transactions.runExclusive(() => this.writeSkill('personal', parsed.slug, input))
+    const name = parsed.directoryName
+    await this.transactions.runExclusive(() => this.writeSkill('personal', name, input))
   }
 
   async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
@@ -221,34 +234,37 @@ export class UserSkillStore {
       await guard?.(id)
       const parsed = await this.resolveSkillId(id)
       const metadata = await readSpecialistPackageSkillMetadata(
-        this.skillDir(parsed.source, parsed.slug)
+        this.skillDirectory(parsed.source, parsed.directoryName)
       )
       if (metadata?.ownerIds.length) {
         throw new Error('A Specialist-owned Skill cannot be deleted directly.')
       }
-      await rm(this.skillDir(parsed.source, parsed.slug), { recursive: true, force: true })
+      await rm(this.skillDirectory(parsed.source, parsed.directoryName), {
+        recursive: true,
+        force: true
+      })
     })
   }
 
-  async uniqueSlug(source: UserSkillSource, base: string): Promise<string> {
-    const taken = new Set(await this.listSlugs(source))
-    if (!taken.has(base)) return base
+  async uniqueImportedName(baseName: string): Promise<string> {
+    const taken = new Set(await this.listDirectoryNames('imported'))
+    if (!taken.has(baseName)) return baseName
     for (let index = 2; ; index += 1) {
-      const candidate = `${base}-${index}`
+      const candidate = `${baseName}-${index}`
       if (!taken.has(candidate)) return candidate
     }
   }
 
-  async slugTaken(source: UserSkillSource, slug: string): Promise<boolean> {
-    return (await this.listSlugs(source)).includes(slug)
+  async directoryNameTaken(source: UserSkillSource, directoryName: string): Promise<boolean> {
+    return (await this.listDirectoryNames(source)).includes(directoryName)
   }
 
   private async writeSkill(
     source: UserSkillSource,
-    slug: string,
+    directoryName: string,
     input: WriteSkillInput
   ): Promise<void> {
-    const dir = this.skillDir(source, slug)
+    const dir = this.skillDirectory(source, directoryName)
     await mkdir(dir, { recursive: true })
 
     const metadata = Object.fromEntries(

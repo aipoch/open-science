@@ -23,6 +23,7 @@ let root: Root
 const seedConnectors = [
   {
     id: 'pubmed',
+    name: 'pubmed',
     displayName: 'PubMed',
     description: 'Biomedical literature',
     sources: ['NCBI'],
@@ -33,6 +34,7 @@ const seedConnectors = [
   },
   {
     id: 'europepmc',
+    name: 'europepmc',
     displayName: 'Europe PMC',
     description: 'Open-access life-science papers',
     sources: ['EBI'],
@@ -43,6 +45,7 @@ const seedConnectors = [
   },
   {
     id: 'openalex',
+    name: 'openalex',
     displayName: 'OpenAlex',
     description: 'Scholarly works catalog',
     sources: ['OurResearch'],

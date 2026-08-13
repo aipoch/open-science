@@ -45,7 +45,7 @@ import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { readSkillFile } from '../skills/skill-files'
 import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
-import { SAFE_SLUG, UserSkillRepository } from '../skills/user-skill-repository'
+import { SAFE_SKILL_DIRECTORY_NAME, UserSkillRepository } from '../skills/user-skill-repository'
 import {
   provisionAppClaudeConfigDir,
   type ClaudeRuntimeModelConfig
@@ -75,7 +75,7 @@ type DiscoveredAgentHomeSkill = {
   realPath: string
   aliases: AgentHomeSkillRef[]
   fallbackAliases: AgentHomeSkillRef[]
-  matchedFallbackSlugs: Set<string>
+  matchedFallbackDirectoryNames: Set<string>
 }
 
 type SkillCatalogModuleOptions = {
@@ -510,7 +510,7 @@ class SkillCatalogModule {
           realPath: item.realPath,
           aliases: [item.alias],
           fallbackAliases: [],
-          matchedFallbackSlugs: new Set()
+          matchedFallbackDirectoryNames: new Set()
         })
       }
     }
@@ -564,7 +564,7 @@ class SkillCatalogModule {
     for (const [fallbackSlug, candidates] of fallbackBySlug) {
       for (const candidate of candidates) {
         candidate.item.skill.alreadyImported = true
-        candidate.item.matchedFallbackSlugs.add(fallbackSlug)
+        candidate.item.matchedFallbackDirectoryNames.add(fallbackSlug)
       }
     }
     return discovered
@@ -675,7 +675,9 @@ class SkillCatalogModule {
         const discoveredSkill = discoveredByPath.get(pathKey)
         const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonical, {
           aliases: discoveredSkill?.aliases,
-          fallbackSlugs: discoveredSkill ? [...discoveredSkill.matchedFallbackSlugs] : undefined
+          fallbackDirectoryNames: discoveredSkill
+            ? [...discoveredSkill.matchedFallbackDirectoryNames]
+            : undefined
         })
         results.push({ ...validated, ...outcome })
       } catch (error) {
@@ -718,7 +720,7 @@ class SkillCatalogModule {
     if (!homeSkillsDir) {
       throw new Error(`Installed skill source "${String(source)}" is not available.`)
     }
-    if (!SAFE_SLUG.test(slug)) {
+    if (!SAFE_SKILL_DIRECTORY_NAME.test(slug)) {
       throw new Error(`Refusing to import installed skill with unsafe slug: ${slug}`)
     }
     const lexicalCandidate = resolve(homeSkillsDir, slug)
@@ -754,7 +756,7 @@ class SkillCatalogModule {
         child !== '..' &&
         !child.startsWith(`..${sep}`) &&
         !child.includes(sep) &&
-        SAFE_SLUG.test(child)
+        SAFE_SKILL_DIRECTORY_NAME.test(child)
       ) {
         return { source: source.source, slug: child }
       }

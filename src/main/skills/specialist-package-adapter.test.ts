@@ -207,7 +207,8 @@ describe('BundledSkillSpecialistPackageAdapter', () => {
 
     expect(snapshots).toEqual([
       expect.objectContaining({
-        id: 'literature-review',
+        localId: 'literature-review',
+        name: 'literature-review',
         files: expect.arrayContaining([
           expect.objectContaining({ path: 'SKILL.md' }),
           expect.objectContaining({ path: 'kernel.py' }),

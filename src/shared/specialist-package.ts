@@ -92,6 +92,8 @@ export type SpecialistPackageCatalogSnapshot = {
   builtinSkills: ReadonlyArray<{ id: string; appVersion: string; compatibility: string }>
   skills: ReadonlyArray<{
     id: string
+    /** Immutable invocation/export name; defaults to id for legacy catalog fixtures. */
+    name?: string
     displayName?: string
     source?: SkillSource
     version?: string
@@ -102,6 +104,7 @@ export type SpecialistPackageCatalogSnapshot = {
     ownerIds?: readonly string[]
   }>
   connectorIds: readonly string[]
+  /** Local Connector ID (including Custom Connector UUID) to portable invocation name. */
   connectorAliases?: Readonly<Record<string, string>>
   protectedSpecialistIds: readonly string[]
   protectedSpecialistNames?: readonly string[]
@@ -121,6 +124,8 @@ export type SpecialistPackageSkillPreview = {
 }
 
 export type SpecialistPackageSkillPlan = SpecialistPackageSkillPreview & {
+  /** Target installation ID resolved from the portable package Skill name. */
+  localId?: string
   contentHash: string
   filesToInstall: ReadonlyArray<{ path: string; bytes: Uint8Array }>
 }

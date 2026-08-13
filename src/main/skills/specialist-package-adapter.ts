@@ -6,7 +6,7 @@ import type { SpecialistPackageSkillPlan } from '../../shared/specialist-package
 import type { SpecialistPackageSkillPort } from '../specialist/package/skill-port'
 import { type SkillMutationOwner, skillMutationOwnerFor } from './skill-mutation-owner'
 
-const SAFE_SLUG = /^[a-z0-9-]+$/
+const SAFE_DIRECTORY_NAME = /^[a-z0-9-]+$/
 
 export const SPECIALIST_PACKAGE_SKILL_METADATA = '.specialist-package.json'
 
@@ -90,16 +90,17 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     _specialistId: string,
     skills: readonly SpecialistPackageSkillPlan[]
   ): Promise<void> {
-    if (!SAFE_SLUG.test(transactionId) || this.mutationReleases.has(transactionId)) {
+    if (!SAFE_DIRECTORY_NAME.test(transactionId) || this.mutationReleases.has(transactionId)) {
       throw new Error('Invalid package transaction identity.')
     }
     const release = await this.mutationOwner.acquire()
     try {
       const live = await this.snapshot()
       for (const skill of skills) {
-        const current = live.find((candidate) => candidate.id === skill.id)
+        const localId = skill.localId ?? skill.id
+        const current = live.find((candidate) => candidate.id === localId)
         if (skill.disposition === 'install') {
-          if (current || (await exists(join(this.personalRoot, skill.id)))) {
+          if (current || (await exists(join(this.personalRoot, localId)))) {
             throw new Error(`Skill ${skill.id} changed after preview.`)
           }
           continue
@@ -142,7 +143,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         continue
       }
       for (const entry of entries.sort()) {
-        if (!SAFE_SLUG.test(entry)) continue
+        if (!SAFE_DIRECTORY_NAME.test(entry)) continue
         const directory = join(root, entry)
         const metadata = await readMetadata(directory)
         if (metadata) result.push(metadata)
@@ -166,7 +167,8 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
 
   async exportSnapshot(skillIds: readonly string[]): Promise<
     Array<{
-      id: string
+      localId: string
+      name: string
       version: string
       contentHash: string
       files: Array<{ path: string; bytes: Uint8Array }>
@@ -174,7 +176,8 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
   > {
     const requested = new Set(skillIds)
     const result: Array<{
-      id: string
+      localId: string
+      name: string
       version: string
       contentHash: string
       files: Array<{ path: string; bytes: Uint8Array }>
@@ -188,12 +191,12 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         continue
       }
       for (const entry of entries.sort()) {
-        if (!SAFE_SLUG.test(entry)) continue
+        if (!SAFE_DIRECTORY_NAME.test(entry)) continue
         const directory = join(root, entry)
         const beforeMetadata = await readMetadata(directory)
-        const sourceId = beforeMetadata?.id ?? `${source}-${entry}`
-        if (!requested.has(sourceId)) continue
-        const id = beforeMetadata?.id ?? entry
+        const localId = beforeMetadata?.id ?? `${source}-${entry}`
+        if (!requested.has(localId)) continue
+        const name = beforeMetadata?.id ?? entry
         const beforeHash = await directoryHash(directory)
         const files: Array<{ path: string; bytes: Uint8Array }> = []
         const visit = async (current: string, prefix = ''): Promise<void> => {
@@ -226,15 +229,15 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           throw new Error('Skill changed during export. Preview again and retry.')
         }
         result.push({
-          id,
-          ...(sourceId === id ? {} : { sourceId }),
+          localId,
+          name,
           version: beforeMetadata?.version ?? '0.1.0',
           contentHash: afterHash,
           files
         })
       }
     }
-    return result.sort((left, right) => left.id.localeCompare(right.id))
+    return result.sort((left, right) => left.name.localeCompare(right.name))
   }
 
   async prepare(
@@ -242,7 +245,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     specialistId: string,
     skills: readonly SpecialistPackageSkillPlan[]
   ): Promise<void> {
-    if (!SAFE_SLUG.test(transactionId) || !SAFE_SLUG.test(specialistId)) {
+    if (!SAFE_DIRECTORY_NAME.test(transactionId) || !SAFE_DIRECTORY_NAME.test(specialistId)) {
       throw new Error('Invalid package transaction identity.')
     }
     const root = this.transactionDir(transactionId)
@@ -251,12 +254,17 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       await mkdir(root, { recursive: true })
       await writeFile(
         join(root, 'transaction.json'),
-        `${JSON.stringify({ mode: 'install', skillIds: skills.map((skill) => skill.id).sort() })}\n`,
+        `${JSON.stringify({
+          mode: 'install',
+          skillIds: skills.map((skill) => skill.localId ?? skill.id).sort()
+        })}\n`,
         { flag: 'wx' }
       )
       for (const skill of skills) {
-        if (!SAFE_SLUG.test(skill.id)) throw new Error('Invalid bundled Skill ID.')
-        const staging = join(root, 'staging', skill.id)
+        if (!SAFE_DIRECTORY_NAME.test(skill.id)) throw new Error('Invalid bundled Skill ID.')
+        const localId = skill.localId ?? skill.id
+        if (!SAFE_DIRECTORY_NAME.test(localId)) throw new Error('Invalid local Skill ID.')
+        const staging = join(root, 'staging', localId)
         const stagingRoot = resolve(staging)
         await mkdir(staging, { recursive: true })
         for (const file of skill.filesToInstall) {
@@ -271,10 +279,10 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           await mkdir(dirname(target), { recursive: true })
           await writeFile(target, file.bytes, { flag: 'wx' })
         }
-        const existing = await readMetadata(join(this.personalRoot, skill.id))
+        const existing = await readMetadata(join(this.personalRoot, localId))
         const ownerIds = [...new Set([...(existing?.ownerIds ?? []), specialistId])].sort()
         const metadata: PackageSkillMetadata = {
-          id: skill.id,
+          id: localId,
           version: skill.version,
           contentHash: skill.contentHash,
           standalone: existing?.standalone ?? false,
@@ -298,7 +306,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     ownedSkillIds: readonly string[],
     deleteSkillIds: readonly string[]
   ): Promise<void> {
-    if (!SAFE_SLUG.test(transactionId) || !SAFE_SLUG.test(specialistId)) {
+    if (!SAFE_DIRECTORY_NAME.test(transactionId) || !SAFE_DIRECTORY_NAME.test(specialistId)) {
       throw new Error('Invalid package transaction identity.')
     }
     const affected = [...new Set(ownedSkillIds)].sort()
@@ -316,7 +324,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         { flag: 'wx' }
       )
       for (const id of affected) {
-        if (!SAFE_SLUG.test(id)) throw new Error('Invalid owned Skill ID.')
+        if (!SAFE_DIRECTORY_NAME.test(id)) throw new Error('Invalid owned Skill ID.')
         const live = await this.findSkillDirectory(id)
         if (!live) {
           if (deleting.has(id)) throw new Error(`Selected Skill ${id} is no longer installed.`)
@@ -358,14 +366,14 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       }
       if (Array.isArray(transaction.skillIds)) {
         for (const id of transaction.skillIds) {
-          if (typeof id === 'string' && SAFE_SLUG.test(id)) ids.add(id)
+          if (typeof id === 'string' && SAFE_DIRECTORY_NAME.test(id)) ids.add(id)
         }
       }
     } catch {
       // Staging evidence below remains authoritative for legacy transactions.
     }
     try {
-      for (const id of await readdir(stagingRoot)) if (SAFE_SLUG.test(id)) ids.add(id)
+      for (const id of await readdir(stagingRoot)) if (SAFE_DIRECTORY_NAME.test(id)) ids.add(id)
     } catch {
       // A delete-only transaction intentionally has no staging directory.
     }
@@ -392,7 +400,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       } catch {
         return
       }
-      for (const id of transactions.filter((entry) => SAFE_SLUG.test(entry))) {
+      for (const id of transactions.filter((entry) => SAFE_DIRECTORY_NAME.test(entry))) {
         await this.recover(id, 'rollback')
       }
       return
@@ -410,14 +418,14 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       if (transaction.mode === 'delete') mode = 'delete'
       if (Array.isArray(transaction.skillIds)) {
         for (const id of transaction.skillIds)
-          if (typeof id === 'string' && SAFE_SLUG.test(id)) ids.add(id)
+          if (typeof id === 'string' && SAFE_DIRECTORY_NAME.test(id)) ids.add(id)
       }
     } catch {
       // Legacy or partially prepared transaction; directory evidence below remains authoritative.
     }
     for (const directory of [stagingRoot, backupRoot]) {
       try {
-        for (const id of await readdir(directory)) if (SAFE_SLUG.test(id)) ids.add(id)
+        for (const id of await readdir(directory)) if (SAFE_DIRECTORY_NAME.test(id)) ids.add(id)
       } catch {
         // A missing phase directory is an expected durable state.
       }
@@ -452,7 +460,9 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
   }
 
   private transactionDir(transactionId: string): string {
-    if (!SAFE_SLUG.test(transactionId)) throw new Error('Invalid package transaction identity.')
+    if (!SAFE_DIRECTORY_NAME.test(transactionId)) {
+      throw new Error('Invalid package transaction identity.')
+    }
     return join(this.transactionRoot, transactionId)
   }
 
@@ -465,7 +475,9 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       } catch {
         continue
       }
-      for (const entry of entries.filter((candidate) => SAFE_SLUG.test(candidate)).sort()) {
+      for (const entry of entries
+        .filter((candidate) => SAFE_DIRECTORY_NAME.test(candidate))
+        .sort()) {
         const directory = join(root, entry)
         if ((await readMetadata(directory))?.id === id) return directory
       }

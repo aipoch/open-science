@@ -1141,6 +1141,8 @@ export type ConnectorGroup = 'featured' | 'directory'
 // Renderer-safe view of one bundled connector (no tool schemas).
 export type ConnectorView = {
   id: string
+  // Immutable invocation/export name. Bundled Connectors currently use the same value as id.
+  name: string
   displayName: string
   description: string
   sources: string[]

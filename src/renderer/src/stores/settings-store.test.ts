@@ -1318,6 +1318,7 @@ describe('settings store: skill bundle upload', () => {
 describe('settings store: connectors slice', () => {
   const connectorView = (id: string, enabled: boolean): ConnectorView => ({
     id,
+    name: id,
     displayName: 'PubMed',
     description: '',
     sources: [],

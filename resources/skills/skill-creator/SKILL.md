@@ -25,7 +25,7 @@ await host.skills.delete(stableId)
 Without `old_string`, `edit` creates a file and fails if it exists. With `old_string`, the old text
 must occur exactly once. Never silently overwrite an existing draft file. `publish` promotes the
 complete draft into Personal Skills. `delete` is privileged and always uses app approval. When a
-published Skill and its draft coexist, delete only by the exact `draft-<slug>` or `personal-<slug>`
+published Skill and its draft coexist, delete only by the exact `draft-<name>` or `personal-<name>`
 id returned from `list()`; never guess from the shared display name.
 
 ## Choose the current stage
@@ -61,8 +61,8 @@ user's technical comfort.
 
 1. Call `host.skills.list()` before editing. Read every existing file you intend to change.
 2. For Built-in or Imported Skills, create a Personal fork under a new lowercase hyphenated name.
-3. Use frontmatter with `name` and `description`, plus optional `displayName`; `name` must equal the
-   immutable draft slug and defaults as the presentation label when `displayName` is omitted.
+3. Use frontmatter with `name` and `description`, plus optional `displayName`; `name` is the immutable
+   safe draft name and defaults as the presentation label when `displayName` is omitted.
 4. Put stable procedures in `SKILL.md`, detailed knowledge in `references/`, deterministic automation
    in `scripts/`, and output templates in `assets/`.
 5. Prefer imperative instructions and explain why constraints matter. Avoid brittle lists of MUSTs.

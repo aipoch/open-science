@@ -14,7 +14,7 @@ type WritableSkillSource = Extract<SkillSource, 'imported' | 'personal'>
 
 const WRITABLE_SOURCES: readonly WritableSkillSource[] = ['imported', 'personal']
 const TRANSACTION_DIR = /^\.([a-z0-9-]+)\.(import|backup)-(.+)$/
-const SAFE_SOURCE_SLUG = /^[a-z0-9-]+$/
+const SAFE_AGENT_HOME_SKILL_SLUG = /^[a-z0-9-]+$/
 
 const nextGeneration = (): string => `${Date.now().toString().padStart(15, '0')}-${randomUUID()}`
 
@@ -31,7 +31,7 @@ export type ImportedSourceManifest = {
 
 export type StagedSkillPackage = Readonly<{
   source: WritableSkillSource
-  slug: string
+  directoryName: string
   staging: string
   generation: string
 }>
@@ -65,23 +65,23 @@ export class SkillPackageTransactionOwner {
 
   async stage(
     source: WritableSkillSource,
-    slug: string,
+    directoryName: string,
     build: (staging: string) => Promise<void>
   ): Promise<StagedSkillPackage> {
-    const live = this.skillDir(source, slug)
+    const live = this.skillDirectory(source, directoryName)
     const generation = nextGeneration()
     const staging = join(dirname(live), `.${basename(live)}.import-${generation}`)
     try {
       await build(staging)
-      return { source, slug, staging, generation }
+      return { source, directoryName, staging, generation }
     } catch (error) {
-      await this.discard({ source, slug, staging, generation })
+      await this.discard({ source, directoryName, staging, generation })
       throw error
     }
   }
 
   async promote(staged: StagedSkillPackage): Promise<void> {
-    const live = this.skillDir(staged.source, staged.slug)
+    const live = this.skillDirectory(staged.source, staged.directoryName)
     const backup = join(dirname(live), `.${basename(live)}.backup-${staged.generation}`)
     try {
       const hadExisting = await stat(live).then(
@@ -116,9 +116,12 @@ export class SkillPackageTransactionOwner {
     await rm(staged.staging, { recursive: true, force: true }).catch(() => undefined)
   }
 
-  async readImportedSource(slug: string): Promise<ImportedSourceManifest | null> {
+  async readImportedSource(directoryName: string): Promise<ImportedSourceManifest | null> {
     try {
-      const raw = await readFile(join(this.skillDir('imported', slug), SOURCE_MANIFEST), 'utf8')
+      const raw = await readFile(
+        join(this.skillDirectory('imported', directoryName), SOURCE_MANIFEST),
+        'utf8'
+      )
       const parsed = JSON.parse(raw) as unknown
       if (typeof parsed !== 'object' || parsed === null) return null
 
@@ -132,7 +135,7 @@ export class SkillPackageTransactionOwner {
         if (
           isAgentHomeSkillSource(agentHome.source) &&
           typeof agentHome.slug === 'string' &&
-          SAFE_SOURCE_SLUG.test(agentHome.slug)
+          SAFE_AGENT_HOME_SKILL_SLUG.test(agentHome.slug)
         ) {
           manifest.agentHome = { source: agentHome.source, slug: agentHome.slug }
         }
@@ -153,8 +156,8 @@ export class SkillPackageTransactionOwner {
     return join(this.storageRoot, 'skills', source)
   }
 
-  private skillDir(source: WritableSkillSource, slug: string): string {
-    return join(this.sourceDir(source), slug)
+  private skillDirectory(source: WritableSkillSource, directoryName: string): string {
+    return join(this.sourceDir(source), directoryName)
   }
 
   private async recover(source: WritableSkillSource): Promise<void> {
@@ -167,22 +170,22 @@ export class SkillPackageTransactionOwner {
       throw error
     }
 
-    const backupsBySlug = new Map<string, { entry: string; generation: string }[]>()
+    const backupsByDirectoryName = new Map<string, { entry: string; generation: string }[]>()
     const stagings: string[] = []
     for (const entry of entries) {
       const match = TRANSACTION_DIR.exec(entry)
       if (!match) continue
       if (match[2] === 'backup') {
-        const backups = backupsBySlug.get(match[1]) ?? []
+        const backups = backupsByDirectoryName.get(match[1]) ?? []
         backups.push({ entry, generation: match[3] })
-        backupsBySlug.set(match[1], backups)
+        backupsByDirectoryName.set(match[1], backups)
       } else {
         stagings.push(entry)
       }
     }
 
-    for (const [slug, backups] of backupsBySlug) {
-      const live = join(dir, slug)
+    for (const [directoryName, backups] of backupsByDirectoryName) {
+      const live = join(dir, directoryName)
       const liveExists = await stat(live).then(
         () => true,
         () => false
@@ -195,10 +198,10 @@ export class SkillPackageTransactionOwner {
             await rename(path, live)
           } catch (error) {
             throw new Error(
-              `Failed to recover interrupted skill import for "${slug}" from backup ${backups[index].entry}: ${String(error)}`
+              `Failed to recover interrupted Skill package update for "${directoryName}" from backup ${backups[index].entry}: ${String(error)}`
             )
           }
-          log.warn('recovered interrupted skill import from backup', { slug })
+          log.warn('recovered interrupted Skill package update from backup', { directoryName })
         } else {
           await rm(path, { recursive: true, force: true }).catch((error) =>
             log.warn('failed to remove leftover skill backup', {

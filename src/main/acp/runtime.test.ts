@@ -20479,7 +20479,7 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(spawner.spawnCount()).toBe(2)
     expect(spawner.agents[1].resumedSessions).toHaveLength(1)
 
-    // The nudge names the skill by its slug id (the identifier the agent's Skill tool resolves),
+    // The nudge names the Skill by its stable id (the identifier the agent's Skill tool resolves),
     // NOT its human display name — a display name like "Deep Research" is unknown to the tool.
     expect(spawner.agents[1].prompts).toEqual([
       {

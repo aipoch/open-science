@@ -278,13 +278,13 @@ class ConnectorSettingsModule {
     const existingServers = (await this.repository.getSettings()).connectors?.customMcpServers ?? []
     if (!displayName) throw new Error('Display name is required')
     if (!isCustomConnectorName(name)) {
-      throw new Error('Connector ID must use only lowercase letters, numbers, and hyphens')
+      throw new Error('Connector name must use only lowercase letters, numbers, and hyphens')
     }
     if (CONNECTOR_CATALOG.some((connector) => connector.id === name)) {
-      throw new Error(`Connector ID "${name}" is reserved by a built-in connector`)
+      throw new Error(`Connector name "${name}" is reserved by a built-in connector`)
     }
     if (existingServers.some((server) => server.name === name)) {
-      throw new Error(`A custom connector with ID "${name}" already exists`)
+      throw new Error(`A custom connector named "${name}" already exists`)
     }
     if (request.transport === 'stdio' && request.oauth) {
       throw new Error('OAuth is only supported for remote custom connectors')
@@ -493,6 +493,7 @@ class ConnectorSettingsModule {
 
     return CONNECTOR_CATALOG.map((meta) => ({
       id: meta.id,
+      name: meta.id,
       displayName: meta.displayName,
       description: meta.description,
       sources: meta.sources,

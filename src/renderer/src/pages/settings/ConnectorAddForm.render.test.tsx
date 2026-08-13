@@ -143,13 +143,13 @@ describe('ConnectorAddForm (local command)', () => {
         .querySelector('[aria-label="Command"]')
         ?.closest('[data-slot="settings-editor-field"]')
     ).not.toBeNull()
-    expect(document.body.querySelector('[aria-label="Connector ID"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="Connector name"]')).toBeNull()
     expect(document.body.querySelector('[aria-label="Description"]')).toBeNull()
 
     openAdvancedSettings()
 
     expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
-    for (const label of ['Connector ID', 'Description', 'Arguments', 'Environment variables']) {
+    for (const label of ['Connector name', 'Description', 'Arguments', 'Environment variables']) {
       expect(
         document.body
           .querySelector(`[aria-label="${label}"]`)
@@ -158,11 +158,12 @@ describe('ConnectorAddForm (local command)', () => {
     }
   })
 
-  it('reveals a generated Connector ID error instead of hiding it in Advanced settings', () => {
+  it('reveals a generated Connector name error instead of hiding it in Advanced settings', () => {
     useSettingsStore.setState({
       connectors: [
         {
           id: 'memory',
+          name: 'memory',
           displayName: 'Memory',
           description: 'Built-in memory connector.',
           sources: ['Open Science'],
@@ -180,8 +181,8 @@ describe('ConnectorAddForm (local command)', () => {
     setValue('Display name', 'Memory')
 
     expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
-    expect(document.body.querySelector('[aria-label="Connector ID"]')).not.toBeNull()
-    expect(document.body.textContent).toContain('This ID is reserved by a built-in Connector.')
+    expect(document.body.querySelector('[aria-label="Connector name"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('This name is reserved by a built-in Connector.')
   })
 
   it('prefills an imported template and requires local secret values', async () => {
@@ -256,7 +257,7 @@ describe('ConnectorAddForm (remote server)', () => {
     setValue('Authorization server URL', 'https://auth.example.test')
     setValue('Client metadata URL', 'https://client.example.test/metadata.json')
     for (const label of [
-      'Connector ID',
+      'Connector name',
       'Authentication',
       'OAuth scopes',
       'Authorization server URL',
@@ -311,7 +312,7 @@ describe('ConnectorAddForm (edit)', () => {
       root.render(<ConnectorAddForm editServer={editServer} onDone={onDone} onCancel={vi.fn()} />)
     })
 
-    const nameInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector ID"]')
+    const nameInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector name"]')
     expect(nameInput?.value).toBe('my-mem')
     expect(nameInput?.disabled).toBe(true) // name is immutable and visibly disabled
     const displayNameInput = document.body.querySelector<HTMLInputElement>(
@@ -350,12 +351,13 @@ describe('ConnectorAddForm (edit)', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
-  it('reveals a stored Connector ID error instead of hiding it in Advanced settings', () => {
+  it('reveals a stored Connector name error instead of hiding it in Advanced settings', () => {
     useSettingsStore.setState({
       ...createInitialSettingsState(),
       connectors: [
         {
           id: 'my-mem',
+          name: 'my-mem',
           displayName: 'Built-in memory',
           description: 'Built-in memory connector.',
           sources: ['Open Science'],
@@ -377,8 +379,8 @@ describe('ConnectorAddForm (edit)', () => {
     })
 
     expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
-    expect(document.body.querySelector('[aria-label="Connector ID"]')).not.toBeNull()
-    expect(document.body.textContent).toContain('This ID is reserved by a built-in Connector.')
+    expect(document.body.querySelector('[aria-label="Connector name"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('This name is reserved by a built-in Connector.')
   })
 
   it('clears static headers when switching a remote server to OAuth', async () => {

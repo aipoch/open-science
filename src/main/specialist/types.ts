@@ -19,7 +19,7 @@ export type SpecialistImportBaseline = {
 
 // The persisted document stored in specialists.json.
 export type StoredSpecialist = {
-  id: string // immutable UUID
+  id: string // immutable local/package identity
   name: string // public UPPER_SNAKE identifier
   displayName?: string
   description: string

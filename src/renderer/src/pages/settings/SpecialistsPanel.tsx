@@ -365,7 +365,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Builtin and owned Skills are selected by default. Skills copied into the ZIP are
-              discovered automatically on import; Connector IDs are carried as selected references.
+              discovered automatically on import; Connector names are carried as selected
+              references.
             </p>
           </div>
           <span
@@ -436,8 +437,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <div className="rounded-lg border border-border p-3 text-sm" role="status">
               <strong>What the package carries</strong>
               <p className="text-muted-foreground">
-                Only checked Skills are bundled. Connector IDs are imported as selected references;
-                full access can only be chosen later in the configuration page.
+                Only checked Skills are bundled. Connector names are imported as selected
+                references; full access can only be chosen later in the configuration page.
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
                 Connectors:{' '}

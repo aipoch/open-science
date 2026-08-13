@@ -55,6 +55,24 @@ describe('ClaudeCodeSkillMaterializer', () => {
     ).toBe('print(1)')
   })
 
+  it('keeps the runtime directory keyed by local id while normalizing SKILL.md to name', async () => {
+    const configDir = await skillsDir()
+    const skill = await makeSkill('paper-review')
+    skill.id = 'imported-paper-review'
+    await writeFile(
+      join(skill.sourceDir, 'SKILL.md'),
+      '---\nname: Legacy Paper Review\ndescription: Review papers.\n---\nReview.',
+      'utf8'
+    )
+
+    await new ClaudeCodeSkillMaterializer().sync(configDir, [skill])
+
+    expect(await listSkillDirs(configDir)).toEqual(['os-imported-paper-review'])
+    expect(
+      await readFile(join(configDir, 'skills', 'os-imported-paper-review', 'SKILL.md'), 'utf8')
+    ).toContain('name: paper-review')
+  })
+
   it('removes os- dirs that are no longer enabled but leaves other dirs untouched', async () => {
     const configDir = await skillsDir()
     await mkdir(join(configDir, 'skills', 'os-stale'), { recursive: true })
@@ -190,7 +208,7 @@ describe('ClaudeCodeSkillMaterializer', () => {
     )
     const computeSkill: BundledSkill = {
       id: 'remote-compute-ssh',
-      name: 'Remote Compute (SSH)',
+      name: 'remote-compute-ssh',
       displayName: 'Remote Compute (SSH)',
       description: 'Discover SSH compute hosts.',
       source: 'featured',

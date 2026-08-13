@@ -366,6 +366,7 @@ describe('SkillCatalogModule', () => {
     const files = unzipSync(exported.archiveBytes)
 
     expect(Object.keys(files)).toEqual(['SKILL.md'])
+    expect(strFromU8(files['SKILL.md'])).toContain('name: imported-skill')
   })
 
   it('refuses to export built-in and unknown Skills', async () => {

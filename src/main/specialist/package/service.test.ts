@@ -159,7 +159,11 @@ describe('SpecialistPackageService', () => {
       skillPort,
       catalog: async () => ({
         ...catalog,
-        skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false
+        }))
       })
     })
     const preview = await service.preview(bundledZip())
@@ -204,7 +208,11 @@ describe('SpecialistPackageService', () => {
       skillPort,
       catalog: async () => ({
         ...catalog,
-        skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false
+        }))
       })
     })
     const preview = await service.preview(bundledZip())
@@ -274,9 +282,15 @@ describe('SpecialistPackageService', () => {
         }
       ],
       skills: [
-        { id: 'document-reader', builtin: true },
-        { id: 'analysis-tools', version: '1.2.3', builtin: false, ownerIds: ['research-synth'] },
-        { id: 'citation-manager', builtin: false, standalone: true }
+        { id: 'document-reader', name: 'document-reader', builtin: true },
+        {
+          id: 'analysis-tools',
+          name: 'analysis-tools',
+          version: '1.2.3',
+          builtin: false,
+          ownerIds: ['research-synth']
+        },
+        { id: 'citation-manager', name: 'citation-manager', builtin: false, standalone: true }
       ],
       connectorIds: ['reference-library'],
       protectedSpecialistIds: ['reviewer']
@@ -285,23 +299,6 @@ describe('SpecialistPackageService', () => {
       storageDir,
       repository,
       catalog: async () => exportCatalog,
-      builtinSkillPort: {
-        exportSnapshot: async () => [
-          {
-            id: 'document-reader',
-            version: 'builtin',
-            contentHash: 'builtin-stable',
-            files: [
-              {
-                path: 'SKILL.md',
-                bytes: encoder.encode(
-                  '---\nname: document-reader\ndescription: Read documents\n---\nRead documents.'
-                )
-              }
-            ]
-          }
-        ]
-      },
       skillPort: {
         snapshot: async () => [],
         prepare: async () => undefined,
@@ -310,7 +307,8 @@ describe('SpecialistPackageService', () => {
         recover: async () => undefined,
         exportSnapshot: async () => [
           {
-            id: 'analysis-tools',
+            localId: 'analysis-tools',
+            name: 'analysis-tools',
             version: '1.2.3',
             contentHash: 'stable',
             files: [
@@ -335,7 +333,7 @@ describe('SpecialistPackageService', () => {
       skills: [
         { id: 'analysis-tools', kind: 'owned', selected: true, version: '1.2.3' },
         { id: 'citation-manager', kind: 'referenced', selected: false, version: '0.1.0' },
-        { id: 'document-reader', kind: 'builtin', selected: true, selectable: true }
+        { id: 'document-reader', kind: 'builtin', selected: false, selectable: false }
       ],
       connectorIds: ['reference-library']
     })
@@ -408,8 +406,14 @@ describe('SpecialistPackageService', () => {
         }
       ],
       skills: [
-        { id: 'document-reader', builtin: true },
-        { id: 'analysis-tools', version: '1.2.3', builtin: false, ownerIds: ['research-synth'] }
+        { id: 'document-reader', name: 'document-reader', builtin: true },
+        {
+          id: 'analysis-tools',
+          name: 'analysis-tools',
+          version: '1.2.3',
+          builtin: false,
+          ownerIds: ['research-synth']
+        }
       ],
       connectorIds: ['reference-library'],
       protectedSpecialistIds: ['reviewer']
@@ -418,23 +422,6 @@ describe('SpecialistPackageService', () => {
       storageDir,
       repository,
       catalog: async () => exportCatalog,
-      builtinSkillPort: {
-        exportSnapshot: async () => [
-          {
-            id: 'document-reader',
-            version: 'builtin',
-            contentHash: 'builtin-stable',
-            files: [
-              {
-                path: 'SKILL.md',
-                bytes: encoder.encode(
-                  '---\nname: document-reader\ndisplayName: Document Reader\ndescription: Read documents\nversion: 9.9.9\n---\nRead documents.'
-                )
-              }
-            ]
-          }
-        ]
-      },
       skillPort: {
         snapshot: async () => [],
         prepare: async () => undefined,
@@ -443,7 +430,8 @@ describe('SpecialistPackageService', () => {
         recover: async () => undefined,
         exportSnapshot: async () => [
           {
-            id: 'analysis-tools',
+            localId: 'analysis-tools',
+            name: 'analysis-tools',
             version: '1.2.3',
             contentHash: 'stable',
             files: [
@@ -462,7 +450,7 @@ describe('SpecialistPackageService', () => {
     const exported = await service.export({
       specialistId: 'research-synth',
       expectedRevision: 3,
-      includedSkillIds: ['document-reader', 'analysis-tools']
+      includedSkillIds: ['analysis-tools']
     })
     const archive = unzipSync(exported.archiveBytes)
     const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as Record<string, unknown>
@@ -477,11 +465,9 @@ describe('SpecialistPackageService', () => {
     ])
     expect(payload.skillIds).toEqual(['document-reader', 'analysis-tools'])
     expect(payload.connectorIds).toEqual(['reference-library'])
-    expect(archive['skills/document-reader/SKILL.md']).toBeDefined()
+    expect(archive['skills/document-reader/SKILL.md']).toBeUndefined()
     expect(archive['skills/analysis-tools/SKILL.md']).toBeDefined()
     expect(archive['skills/os-document-reader/SKILL.md']).toBeUndefined()
-    expect(strFromU8(archive['skills/document-reader/SKILL.md']!)).not.toContain('version: 9.9.9')
-    expect(strFromU8(archive['skills/document-reader/SKILL.md']!)).not.toContain('displayName')
     expect(strFromU8(archive['skills/analysis-tools/SKILL.md']!)).not.toContain('displayName')
   })
 
@@ -518,7 +504,11 @@ describe('SpecialistPackageService', () => {
       skillPort,
       catalog: async () => ({
         ...catalog,
-        skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^(?:personal|imported)-/, ''),
+          builtin: false
+        }))
       })
     })
 
@@ -669,7 +659,8 @@ describe('SpecialistPackageService', () => {
           await repository.update('research-synth', { description: 'Changed concurrently.' }, 1)
           return [
             {
-              id: 'analysis-tools',
+              localId: 'analysis-tools',
+              name: 'analysis-tools',
               version: '1.0.0',
               contentHash: 'stable',
               files: [
@@ -725,14 +716,15 @@ describe('SpecialistPackageService', () => {
         }
       ],
       skills: [
-        { id: 'document-reader', builtin: true },
+        { id: 'document-reader', name: 'document-reader', builtin: true },
         {
           id: 'analysis-tools',
+          name: 'analysis-tools',
           version: '1.2.3',
           builtin: false,
           ownerIds: ['research-synth']
         },
-        { id: 'citation-manager', builtin: false, standalone: true }
+        { id: 'citation-manager', name: 'citation-manager', builtin: false, standalone: true }
       ],
       connectorIds: ['reference-library'],
       protectedSpecialistIds: ['reviewer']
@@ -745,7 +737,8 @@ describe('SpecialistPackageService', () => {
       recover: async () => undefined,
       exportSnapshot: async () => [
         {
-          id: 'analysis-tools',
+          localId: 'analysis-tools',
+          name: 'analysis-tools',
           version: '1.2.3',
           contentHash: 'snapshot-hash',
           files: [

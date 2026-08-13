@@ -19,13 +19,13 @@ import {
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import {
-  SAFE_SLUG,
+  SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,
   UserSkillStore,
   assertUsableSkillName,
   frontmatterBlock,
   parseUserSkillId,
-  toSlug,
+  normalizeSkillName,
   type WriteSkillInput
 } from './user-skill-store'
 
@@ -157,11 +157,11 @@ class UserSkillRepository {
 }
 
 export {
-  SAFE_SLUG,
+  SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,
   UserSkillRepository,
   assertUsableSkillName,
   frontmatterBlock,
-  parseUserSkillId,
-  toSlug
+  normalizeSkillName,
+  parseUserSkillId
 }

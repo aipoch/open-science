@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createLogger } from '../logger'
 import { COMPUTE_SKILL_ID, preserveComputeHostProjection } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
+import { normalizeSkillDocumentName } from './skill-document-name'
 
 const log = createLogger('skills')
 
@@ -172,6 +173,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
             return true
           }
         })
+        await normalizeSkillDocumentName(join(target, 'SKILL.md'), skill.name)
         if (priorComputeDocument !== undefined) {
           const current = await readFile(join(target, 'SKILL.md'), 'utf8')
           await writeFile(

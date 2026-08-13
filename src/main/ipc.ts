@@ -217,7 +217,6 @@ import {
   selectSpecialistArchive
 } from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
-import { BundledSkillSpecialistPackageAdapter } from './skills/builtin-specialist-package-adapter'
 import { saveSkillExport } from './skills/export'
 import { netFetchStandard } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
@@ -888,7 +887,6 @@ const createApplicationModules = async (
   const appVersion = app.getVersion()
   const specialistSkills = await settingsService.listSpecialistSkillCatalog()
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
-  const builtinSpecialistPackageSkillAdapter = new BundledSkillSpecialistPackageAdapter()
   const packageSkills = await specialistPackageSkillAdapter.snapshot()
   const builtinRegistry = new BuiltinSpecialistRegistry({
     appVersion,
@@ -897,6 +895,7 @@ const createApplicationModules = async (
       const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
       return {
         id: skill.id,
+        name: skill.frameworkName,
         builtin: skill.source === 'featured',
         displayName: skill.displayName,
         source: skill.source,
@@ -927,20 +926,25 @@ const createApplicationModules = async (
           const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
           return {
             id: skill.id,
+            name: skill.frameworkName,
             builtin: skill.source === 'featured',
             displayName: skill.displayName,
             source: skill.source,
             ...(packageSkill ?? {})
           }
         }),
-        connectorIds: Array.from(
-          new Set([
-            ...ALL_CONNECTOR_IDS,
-            ...customMcpServers
-              .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
-              .map((server) => server.name)
-          ])
-        ),
+        connectorIds: [
+          ...ALL_CONNECTOR_IDS,
+          ...customMcpServers
+            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
+            .map((server) => server.id)
+        ],
+        connectorAliases: Object.fromEntries([
+          ...ALL_CONNECTOR_IDS.map((id) => [id, id] as const),
+          ...customMcpServers
+            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
+            .map((server) => [server.id, server.name] as const)
+        ]),
         protectedSpecialistIds: ['reviewer'],
         protectedSpecialistNames: ['Reviewer']
       }
@@ -961,7 +965,6 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
-    builtinSkillPort: builtinSpecialistPackageSkillAdapter,
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
       void runtime.requestSkillsReload()
