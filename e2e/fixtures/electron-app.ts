@@ -220,9 +220,13 @@ const makeTreeWritable = async (root: string): Promise<void> => {
 
 const openMainWindow = async (
   application: ElectronApplication,
-  rendererFailures: RendererFailureGate
+  rendererFailures: RendererFailureGate,
+  windowMode: E2eWindowMode
 ): Promise<Page> => {
   const page = await application.firstWindow()
+  // Hidden BrowserWindows do not produce animation frames reliably, so make
+  // presentation buffers commit immediately without changing normal-window tests.
+  if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
   await rendererFailures.observe(page)
   await page.waitForLoadState('domcontentloaded')
   await expect
@@ -523,7 +527,11 @@ class ElectronAppHarness implements ElectronApp {
       this.roots.fakeRemoteItRoot,
       this.windowMode
     )
-    this.currentPage = await openMainWindow(this.application, this.rendererFailures)
+    this.currentPage = await openMainWindow(
+      this.application,
+      this.rendererFailures,
+      this.windowMode
+    )
   }
 
   private get runningApplication(): ElectronApplication {
