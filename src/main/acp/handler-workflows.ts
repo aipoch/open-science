@@ -12,7 +12,7 @@ import type {
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
-import { continueInterruptedTurn } from './interrupted-turn-continuation'
+import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   getActiveConversationContext,
@@ -36,7 +36,6 @@ const SAFE_RESUME_ERROR_KINDS = new Set([
   'conversation_restore_failed'
 ])
 const SAFE_RESUME_SERVICES = new Set(['session', 'provider', 'mcp', 'transport'])
-const SAVE_AS_SKILL_PROMPT = `[System] Evaluate the active conversation branch for a reusable Skill. Use the Customize Skill and follow its Skill Creator workflow. Extract the reusable pattern rather than copying the transcript. If the workflow is not reusable, explain why and do not create a draft. If it is reusable, use the conversation as existing context, ask only for gaps that materially change behavior, review the draft with the user, and publish only after the user accepts it.`
 const SAVE_AS_SKILL_REPLAY_TARGETS = new Set<HistoryReplayTarget>([
   'claude-code',
   'opencode',
@@ -262,13 +261,8 @@ const createAcpHandlerWorkflows = (
       if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
         throw new Error('Save as skill Session is unavailable.')
       }
-      if (
-        session.status !== 'idle' ||
-        session.activeRun ||
-        session.resumeRecovery ||
-        session.pendingHistoryReplay
-      ) {
-        throw new Error('Save as skill requires an idle Session.')
+      if (session.resumeRecovery || session.pendingHistoryReplay) {
+        throw new Error('Save as skill requires a prepared Session.')
       }
       if (hasCurrentRunningDelegatedAttempt(session)) {
         throw new Error('Save as skill is unavailable while delegated work is still running.')
@@ -284,13 +278,21 @@ const createAcpHandlerWorkflows = (
         throw new Error('Save as skill stopped because the active conversation branch changed.')
       }
       const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
-      const lastMessage = activeBranchMessages.at(-1)
-      if (lastMessage?.role !== 'agent' || lastMessage.status !== 'complete') {
-        throw new Error('Save as skill requires a completed Agent turn.')
+      const controlMessage = activeBranchMessages.at(-1)
+      const previousMessage = activeBranchMessages.at(-2)
+      if (
+        session.status !== 'running' ||
+        session.activeRun?.promptMessageId !== request.promptMessageId ||
+        controlMessage?.id !== request.promptMessageId ||
+        controlMessage.role !== 'user' ||
+        controlMessage.turnIntent !== 'save-as-skill' ||
+        previousMessage?.role !== 'agent' ||
+        previousMessage.status !== 'complete'
+      ) {
+        throw new Error('Save as skill requires a prepared control turn.')
       }
-      const promptMessageId = `message-${randomUUID()}`
       const historyReplay = buildSessionHistoryReplay(
-        activeBranchMessages,
+        activeBranchMessages.slice(0, -1),
         replayPolicy.descriptor,
         session.projectId,
         replayPolicy.supportsImageInput
@@ -300,7 +302,7 @@ const createAcpHandlerWorkflows = (
         text: SAVE_AS_SKILL_PROMPT,
         suppressUserMessage: true,
         forcedSkillIds: ['customize'],
-        provenanceContext: getActiveConversationContext(graph, promptMessageId),
+        provenanceContext: getActiveConversationContext(graph, request.promptMessageId),
         ...(historyReplay
           ? {
               resumeFallback: {

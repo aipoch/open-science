@@ -11,14 +11,17 @@ import type { TaskNotificationService } from '../notifications/task-notification
 
 const INTERRUPTED_TURN_CONTINUATION_PROMPT =
   'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
+const SAVE_AS_SKILL_PROMPT = `[System] Evaluate the active conversation branch for a reusable Skill. Use the Customize Skill and follow its Skill Creator workflow. Extract the reusable pattern rather than copying the transcript. If the workflow is not reusable, explain why and do not create a draft. If it is reusable, use the conversation as existing context, ask only for gaps that materially change behavior, review the draft with the user, and publish only after the user accepts it.`
 
 const buildContinuationPrompt = (
   prompt: PersistedChatSession['messages'][number],
   contextReset: boolean
 ): string =>
-  contextReset
-    ? INTERRUPTED_TURN_CONTINUATION_PROMPT
-    : `${INTERRUPTED_TURN_CONTINUATION_PROMPT}\n\nOriginal user request:\n${prompt.content}`
+  prompt.turnIntent === 'save-as-skill'
+    ? SAVE_AS_SKILL_PROMPT
+    : contextReset
+      ? INTERRUPTED_TURN_CONTINUATION_PROMPT
+      : `${INTERRUPTED_TURN_CONTINUATION_PROMPT}\n\nOriginal user request:\n${prompt.content}`
 
 type InterruptedTurnContinuationRuntime = {
   getSnapshot(): AcpStateSnapshot
@@ -124,13 +127,18 @@ const buildContinuationRequest = (
   const provenanceContext = resolveProvenanceContext(session, request)
   const contextReset = request.contextReset
   const replayMessages = contextReset
-    ? session.messages.map((message) =>
-        message.role === 'agent' &&
-        message.responseToMessageId === request.promptMessageId &&
-        message.status === 'error'
-          ? { ...message, status: 'complete' as const }
-          : message
-      )
+    ? session.messages
+        .filter(
+          (message) =>
+            prompt.turnIntent !== 'save-as-skill' || message.id !== request.promptMessageId
+        )
+        .map((message) =>
+          message.role === 'agent' &&
+          message.responseToMessageId === request.promptMessageId &&
+          message.status === 'error'
+            ? { ...message, status: 'complete' as const }
+            : message
+        )
     : undefined
   const replay =
     contextReset && replayMessages
@@ -161,9 +169,11 @@ const buildContinuationRequest = (
       : {}),
     ...(livePrompt?.forcedSkillIds?.length
       ? { forcedSkillIds: livePrompt.forcedSkillIds }
-      : skillIds?.length
-        ? { forcedSkillIds: skillIds }
-        : {}),
+      : prompt.turnIntent === 'save-as-skill'
+        ? { forcedSkillIds: ['customize'] }
+        : skillIds?.length
+          ? { forcedSkillIds: skillIds }
+          : {}),
     ...(livePrompt?.referencedArtifacts?.length
       ? { referencedArtifacts: livePrompt.referencedArtifacts }
       : referencedArtifacts?.length
@@ -220,3 +230,4 @@ export const continueInterruptedTurn = async (
 }
 
 export type { InterruptedTurnContinuationDependencies, InterruptedTurnContinuationRuntime }
+export { SAVE_AS_SKILL_PROMPT }

@@ -278,6 +278,7 @@ describe('ACP application commands', () => {
       sessionId: 'session-1',
       agentFrameId: 'root-frame',
       messageBranchId: 'active-branch',
+      promptMessageId: 'save-as-skill-control',
       historyReplay: { target: 'claude-code' as const }
     }
 

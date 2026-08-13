@@ -105,7 +105,9 @@ type WorkspaceAgentRuntime = {
   subscribeToSubagentRuntimeUpdates: (listener: SubagentRuntimeListener) => () => void
   compactContext: (sessionId: string) => Promise<boolean>
   ensureSessionReady: (sessionId: string) => Promise<void>
-  saveAsSkill: (request: Omit<AcpSaveAsSkillRequest, 'historyReplay'>) => Promise<void>
+  saveAsSkill: (
+    request: Omit<AcpSaveAsSkillRequest, 'historyReplay' | 'promptMessageId'>
+  ) => Promise<void>
   sendMessage: (
     input: SendWorkspaceMessageIntent
   ) => Promise<SendWorkspaceMessageResult | undefined>

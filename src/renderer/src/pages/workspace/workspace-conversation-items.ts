@@ -200,13 +200,19 @@ const createConversationItems = (
   handoffEvents: readonly HandoffLifecycleEvent[] = []
 ): ConversationItem[] => {
   const messages: ConversationItem[] =
-    session?.messages.map((message, index) => ({
-      id: message.id,
-      type: 'message',
-      createdAt: message.createdAt,
-      sortIndex: message.sortIndex ?? index,
-      message
-    })) ?? []
+    session?.messages.flatMap((message, index): ConversationItem[] =>
+      message.turnIntent === 'save-as-skill'
+        ? []
+        : [
+            {
+              id: message.id,
+              type: 'message',
+              createdAt: message.createdAt,
+              sortIndex: message.sortIndex ?? index,
+              message
+            }
+          ]
+    ) ?? []
   const activities: ConversationItem[] =
     session?.activities?.flatMap((activity): ConversationItem[] => {
       const planToolKind = getPlanToolKind(activity)

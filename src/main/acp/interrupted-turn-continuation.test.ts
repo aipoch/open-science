@@ -60,6 +60,34 @@ const session = (messages: PersistedChatMessage[]): PersistedChatSession => ({
 })
 
 describe('continueInterruptedTurn', () => {
+  it('reconstructs the hidden Save as skill turn after restart', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
+    ])
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+    await continueInterruptedTurn(
+      {
+        runtime: {
+          getSnapshot: vi.fn(() => snapshot()),
+          getLatestUserPrompt: vi.fn(() => undefined),
+          startContinuation
+        },
+        loadSession: vi.fn(async () => durable)
+      },
+      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+    )
+
+    expect(startContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Evaluate the active conversation branch'),
+        forcedSkillIds: ['customize'],
+        suppressUserMessage: true,
+        provenanceContext: expect.objectContaining({ promptMessageId: 'prompt-1' })
+      })
+    )
+  })
+
   it('reconstructs app-owned continuation authority from the durable active user turn', async () => {
     const durable = session([
       message('prompt-1', 'user', 'Analyze the attached evidence', {

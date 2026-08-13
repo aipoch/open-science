@@ -256,7 +256,7 @@ describe('ACP module transport seam', () => {
       projectId: 'project-1',
       title: 'Session',
       cwd: '/workspace',
-      status: 'idle',
+      status: 'running',
       messages: [
         {
           id: 'prompt-1',
@@ -277,10 +277,21 @@ describe('ACP module transport seam', () => {
           createdAt: 2,
           completedAt: 2,
           updatedAt: 2
+        },
+        {
+          id: 'save-as-skill-control',
+          role: 'user',
+          content: 'Save as skill',
+          status: 'complete',
+          eventIds: [],
+          turnIntent: 'save-as-skill',
+          createdAt: 3,
+          updatedAt: 3
         }
       ],
+      activeRun: { promptMessageId: 'save-as-skill-control', startedAt: 3 },
       createdAt: 1,
-      updatedAt: 2
+      updatedAt: 3
     })
     const graph = session.conversationGraph!
     const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
@@ -319,6 +330,7 @@ describe('ACP module transport seam', () => {
         sessionId: session.id,
         agentFrameId: frame.id,
         messageBranchId: frame.activeBranchId,
+        promptMessageId: 'save-as-skill-control',
         historyReplay: { target: 'claude-code' }
       }
     )

@@ -34,6 +34,50 @@ const createActivity = (overrides: Partial<ToolActivity>): ToolActivity => ({
   ...overrides
 })
 
+it('hides the durable Save as skill control message from the transcript', () => {
+  const session: ChatSession = {
+    ...baseSession,
+    messages: [
+      {
+        id: 'visible-answer',
+        role: 'agent',
+        content: 'Completed analysis',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        completedAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'hidden-control',
+        role: 'user',
+        content: 'Save as skill',
+        status: 'complete',
+        eventIds: [],
+        turnIntent: 'save-as-skill',
+        createdAt: 2,
+        updatedAt: 2
+      },
+      {
+        id: 'visible-response',
+        role: 'agent',
+        content: 'This workflow can become a skill.',
+        status: 'complete',
+        eventIds: [],
+        responseToMessageId: 'hidden-control',
+        createdAt: 3,
+        completedAt: 3,
+        updatedAt: 3
+      }
+    ]
+  }
+
+  expect(createConversationItems(session).map(({ id }) => id)).toEqual([
+    'visible-answer',
+    'visible-response'
+  ])
+})
+
 describe('workspace conversation items', () => {
   it('projects each active-branch direct-child upward message once in Main Agent timeline order', () => {
     const session: ChatSession = {

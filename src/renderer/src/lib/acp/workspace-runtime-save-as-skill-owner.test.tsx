@@ -103,6 +103,7 @@ describe('workspace Save as skill owner', () => {
     expect(flushSessionPersistence).toHaveBeenCalledOnce()
     expect(saveAsSkill).toHaveBeenCalledWith({
       ...request,
+      promptMessageId: expect.any(String),
       historyReplay: {
         target: 'claude-code',
         contextWindow: 100_000,
@@ -115,6 +116,48 @@ describe('workspace Save as skill owner', () => {
       await first
     })
     expect(owner.saveAsSkillInFlightSessionIds).toEqual([])
+  })
+
+  it('keeps a rejected hidden turn recoverable', async () => {
+    useSessionStore.setState({ sessions: [session] })
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { acp: { saveAsSkill: vi.fn(async () => Promise.reject(new Error('Disconnected'))) } }
+    })
+    const runtime = { state: { sessionIds: ['session-1'] }, resumeSession: vi.fn() } as never
+    let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+    const Harness = (): null => {
+      owner = useWorkspaceRuntimeSaveAsSkillOwner({
+        runtime,
+        supportsImageInput: true,
+        getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+      })
+      return null
+    }
+    root = createRoot(document.createElement('div'))
+    act(() => root?.render(createElement(Harness)))
+    const graph = session.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+
+    await expect(
+      act(() =>
+        owner.saveAsSkill({
+          projectId: session.projectId,
+          sessionId: session.id,
+          agentFrameId: frame.id,
+          messageBranchId: frame.activeBranchId
+        })
+      )
+    ).rejects.toThrow('Disconnected')
+
+    const rejected = useSessionStore.getState().sessions[0]
+    const control = rejected?.messages.at(-1)
+    expect(control).toMatchObject({ turnIntent: 'save-as-skill', interrupted: true })
+    expect(rejected?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'connection-lost',
+      promptMessageId: control?.id
+    })
   })
 
   it.each([
@@ -169,14 +212,22 @@ describe('workspace Save as skill owner', () => {
       expect(persistedRuntimeSegments).toHaveLength(
         originalRuntimeSegmentCount + (contextReset ? 1 : 0)
       )
-      expect(persistedSession).toMatchObject({ status: 'idle' })
-      expect(persistedSession?.activeRun).toBeUndefined()
+      const controlMessage = persistedSession?.messages.at(-1)
+      expect(controlMessage).toMatchObject({
+        role: 'user',
+        turnIntent: 'save-as-skill'
+      })
+      expect(persistedSession).toMatchObject({
+        status: 'running',
+        activeRun: { promptMessageId: controlMessage?.id }
+      })
 
       expect(saveAsSkill).toHaveBeenCalledWith({
         projectId: session.projectId,
         sessionId: session.id,
         agentFrameId: frame.id,
         messageBranchId: frame.activeBranchId,
+        promptMessageId: controlMessage?.id,
         historyReplay: {
           target: 'claude-code',
           contextWindow: 100_000,

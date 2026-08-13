@@ -15,7 +15,9 @@ type WorkspaceSaveAsSkillOwnerOptions = {
 
 type WorkspaceSaveAsSkillOwner = {
   saveAsSkillInFlightSessionIds: string[]
-  saveAsSkill: (request: Omit<AcpSaveAsSkillRequest, 'historyReplay'>) => Promise<void>
+  saveAsSkill: (
+    request: Omit<AcpSaveAsSkillRequest, 'historyReplay' | 'promptMessageId'>
+  ) => Promise<void>
 }
 
 // Owns local admission from the click through provider turn completion. Every consumer observes the
@@ -29,10 +31,13 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
   const [saveAsSkillInFlightSessionIds, setSaveAsSkillInFlightSessionIds] = useState<string[]>([])
 
   const saveAsSkill = useCallback(
-    async (request: Omit<AcpSaveAsSkillRequest, 'historyReplay'>): Promise<void> => {
+    async (
+      request: Omit<AcpSaveAsSkillRequest, 'historyReplay' | 'promptMessageId'>
+    ): Promise<void> => {
       if (inFlightRef.current.has(request.sessionId)) return
       inFlightRef.current.add(request.sessionId)
       setSaveAsSkillInFlightSessionIds((current) => [...current, request.sessionId])
+      let controlMessageId: string | undefined
       try {
         const contextReset = await ensureWorkspaceSessionReady(runtime, request.sessionId)
         const session = useSessionStore
@@ -57,15 +62,38 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         ) {
           throw new Error('Save as skill Runtime Segment could not be created.')
         }
+        const controlMessage = useSessionStore.getState().appendUserMessage({
+          sessionId: session.id,
+          content: 'Save as skill',
+          turnIntent: 'save-as-skill'
+        })
+        if (!controlMessage) throw new Error('Save as skill control message could not be created.')
+        controlMessageId = controlMessage.messageId
         await flushSessionPersistence()
         await window.api.acp.saveAsSkill({
           ...request,
+          promptMessageId: controlMessage.messageId,
           historyReplay: {
             ...getHistoryReplayDescriptor(session.id),
             supportsImageInput,
             ...(contextReset ? { contextReset: true as const } : {})
           }
         })
+      } catch (error) {
+        const current = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === request.sessionId)
+        if (controlMessageId && current?.activeRun?.promptMessageId === controlMessageId) {
+          useSessionStore
+            .getState()
+            .interruptRun(
+              request.sessionId,
+              'connection-lost',
+              error instanceof Error ? error.message : String(error),
+              controlMessageId
+            )
+        }
+        throw error
       } finally {
         inFlightRef.current.delete(request.sessionId)
         setSaveAsSkillInFlightSessionIds((current) =>

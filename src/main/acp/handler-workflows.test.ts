@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { ensureConversationRuntimeSegment } from '../../shared/conversation-graph'
+import {
+  ensureConversationRuntimeSegment,
+  resolveMessageBranchPath,
+  synchronizeActiveConversationMessages
+} from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
   type PersistedChatSession
@@ -43,6 +47,31 @@ const createSession = (): PersistedChatSession =>
     updatedAt: 2
   })
 
+const prepareControlTurn = (session: PersistedChatSession): void => {
+  const createdAt = 3
+  const controlMessage = {
+    id: 'save-as-skill-control',
+    role: 'user' as const,
+    content: 'Save as skill',
+    status: 'complete' as const,
+    eventIds: [],
+    turnIntent: 'save-as-skill' as const,
+    createdAt,
+    updatedAt: createdAt
+  }
+  session.messages.push(controlMessage)
+  session.status = 'running'
+  session.activeRun = { promptMessageId: controlMessage.id, startedAt: createdAt }
+  const graph = session.conversationGraph!
+  const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+  session.conversationGraph = synchronizeActiveConversationMessages(
+    graph,
+    [...resolveMessageBranchPath(graph, frame.activeBranchId), controlMessage],
+    createdAt
+  )
+  session.updatedAt = createdAt
+}
+
 const createHarness = (
   mutate?: (session: ReturnType<typeof createSession>) => void,
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
@@ -54,11 +83,13 @@ const createHarness = (
     sessionId: string
     agentFrameId: string
     messageBranchId: string
+    promptMessageId: string
     historyReplay: { target: HistoryReplayTarget }
   }
 } => {
   const session = createSession()
   mutate?.(session)
+  prepareControlTurn(session)
   const sendPrompt = vi.fn(async () => undefined)
   const snapshot = { status: 'connected' } as never
   const workflows = createAcpHandlerWorkflows(
@@ -84,6 +115,7 @@ const createHarness = (
       sessionId: session.id,
       agentFrameId: frame.id,
       messageBranchId: frame.activeBranchId,
+      promptMessageId: 'save-as-skill-control',
       historyReplay: { target: 'claude-code' as const }
     }
   }
@@ -136,7 +168,7 @@ describe('ACP Save as skill workflow', () => {
         provenanceContext: expect.objectContaining({
           agentFrameId: harness.request.agentFrameId,
           messageBranchId: harness.request.messageBranchId,
-          promptMessageId: expect.stringMatching(/^message-/)
+          promptMessageId: 'save-as-skill-control'
         }),
         resumeFallback: expect.objectContaining({
           historyPreamble: expect.stringContaining('Build a reusable analysis workflow.')
@@ -224,14 +256,22 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.sendPrompt).not.toHaveBeenCalled()
   })
 
+  it('fails closed when the durable control Message does not match the request', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.workflows.saveAsSkill({ ...harness.request, promptMessageId: 'forged-control' })
+    ).rejects.toThrow('requires a prepared control turn')
+    expect(harness.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('does not start unless the durable Session is idle', async () => {
     const harness = createHarness((session) => {
-      session.status = 'running'
-      session.activeRun = { promptMessageId: 'prompt-1', startedAt: 3 }
+      session.resumeRecovery = { kind: 'resume-required', cause: 'connection-lost' }
     })
 
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
-      'requires an idle Session'
+      'requires a prepared Session'
     )
     expect(harness.sendPrompt).not.toHaveBeenCalled()
   })
