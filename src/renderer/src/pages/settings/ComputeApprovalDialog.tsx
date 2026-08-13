@@ -132,6 +132,40 @@ export function ComputeApprovalDialog({
                 )}
               </div>
             </div>
+            <div className="flex gap-2">
+              <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
+              <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
+            </div>
+            <div className="flex gap-2">
+              <span className="w-16 shrink-0 text-muted-foreground">{t('Command')}</span>
+              <div className="min-w-0 flex-1">
+                <span className="break-all font-mono text-muted-foreground">
+                  {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
+                </span>
+                {isLongCommand && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedRequestId((id) =>
+                        id === dialogRequest.id ? null : dialogRequest.id
+                      )
+                    }
+                    className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
+                    aria-expanded={showFull}
+                  >
+                    {showFull ? (
+                      <>
+                        <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="size-3" aria-hidden="true" /> {t('Show full command')}
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
             {dialogRequest.inputs_summary && (
               <div className="flex gap-2">
                 <span className="w-16 shrink-0 text-muted-foreground">{t('Inputs')}</span>
@@ -139,49 +173,7 @@ export function ComputeApprovalDialog({
                   {dialogRequest.inputs_summary}
                 </span>
               </div>
-              <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">Intent</span>
-                <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
-              </div>
-              <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">Command</span>
-                <div className="min-w-0 flex-1">
-                  <span className="break-all font-mono text-muted-foreground">
-                    {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
-                  </span>
-                  {isLongCommand && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpandedRequestId((id) =>
-                          id === dialogRequest.id ? null : dialogRequest.id
-                        )
-                      }
-                      className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
-                      aria-expanded={showFull}
-                    >
-                      {showFull ? (
-                        <>
-                          <ChevronUp className="size-3" aria-hidden="true" /> Show less
-                        </>
-                      ) : (
-                        <>
-                          <ChevronDown className="size-3" aria-hidden="true" /> Show full command
-                        </>
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-              {dialogRequest.inputs_summary && (
-                <div className="flex gap-2">
-                  <span className="w-16 shrink-0 text-muted-foreground">Inputs</span>
-                  <span className="min-w-0 break-words text-foreground">
-                    {dialogRequest.inputs_summary}
-                  </span>
-                </div>
-              )}
-            </div>
+            )}
           </div>
 
           <div className={cn(dialogFooterClassName, 'flex-wrap')}>

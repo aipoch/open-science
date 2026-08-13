@@ -4,11 +4,10 @@ import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import {
-  dialogBodyClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -98,18 +97,11 @@ const DataRootMissingDialog = ({
             </p>
           ) : null}
 
-            {stillMissing ? (
-              <p className="mt-3 text-xs text-destructive" role="alert">
-                Still not found. Reconnect the drive and try again, or choose another location.
-              </p>
-            ) : null}
-
-            {chooseError ? (
-              <p className="mt-3 text-xs text-destructive" role="alert">
-                {chooseError}
-              </p>
-            ) : null}
-          </div>
+          {chooseError ? (
+            <p className="mt-3 text-xs text-destructive" role="alert">
+              {chooseError}
+            </p>
+          ) : null}
 
           <div className={cn(dialogFooterClassName, 'flex-col items-stretch')}>
             <Button

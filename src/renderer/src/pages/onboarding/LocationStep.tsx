@@ -300,7 +300,7 @@ const LocationStep = ({
                   className={dialogCloseButtonClassName}
                 >
                   {t('Keep default')}
-                </button>
+                </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
                 <button

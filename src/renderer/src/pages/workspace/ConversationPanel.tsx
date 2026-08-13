@@ -1289,28 +1289,19 @@ const ConversationPanel = ({
                             ) : null}
                             <DropdownMenuItem
                               data-testid="menu-request-review"
-                              disabled={!canEditDraft || isRequestReviewDisabled || isReviewing}
-                              aria-busy={isReviewing || undefined}
+                              disabled={!canEditDraft || isRequestReviewDisabled}
                               onSelect={() => {
-                                if (canEditDraft && !isRequestReviewDisabled && !isReviewing) {
+                                if (canEditDraft && !isRequestReviewDisabled) {
                                   onRequestReview()
                                 }
                               }}
                               className="items-center gap-2"
                             >
-                              {isReviewing ? (
-                                <Loader2
-                                  className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <ScanEye
-                                  className="size-4 shrink-0 text-text-200"
-                                  strokeWidth={2}
-                                  aria-hidden="true"
-                                />
-                              )}
+                              <Sparkles
+                                className="size-4 shrink-0 text-text-200"
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
                               <span className="text-[13px] font-medium leading-5">
                                 {t('Request review')}
                               </span>
