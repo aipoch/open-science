@@ -3,6 +3,7 @@
   "include": [
     "electron.vite.config.*",
     "playwright.config.ts",
+    "playwright.accessibility.config.ts",
     "e2e/**/*",
     "vite.web.config.*",
     "src/main/**/*",

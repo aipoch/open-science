@@ -23,6 +23,7 @@
     "test:e2e:journey": "playwright test e2e/electron-foundation.spec.ts e2e/settings-persistence.spec.ts e2e/windows-window-system.spec.ts",
     "test:e2e:workspace": "playwright test e2e/launch-environment.spec.ts e2e/workspace-conversation.spec.ts e2e/workspace-files.spec.ts",
     "test:e2e:accessibility": "playwright test e2e/accessibility.spec.ts",
+    "test:e2e:accessibility:signal": "node scripts/ci/run-accessibility-e2e.mjs",
     "test:e2e:visual": "playwright test e2e/visual-regression.spec.ts",
     "test:e2e:p0": "playwright test e2e/certification",
     "test:cli": "vitest run packages/open-science",
