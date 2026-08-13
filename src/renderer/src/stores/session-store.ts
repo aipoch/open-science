@@ -3,7 +3,10 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import type { AcpContextUsage } from '../../../shared/acp'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
-import type { UpdateSessionArchiveRequest } from '../../../shared/session-persistence'
+import {
+  sanitizeSessionTitle,
+  type UpdateSessionArchiveRequest
+} from '../../../shared/session-persistence'
 import { createSessionMessageGraphOwner } from './session-store-message-graph-owner'
 import type { SessionMessageGraphActions } from './session-store-message-graph-helpers'
 import {
@@ -62,6 +65,11 @@ type SessionStore = SessionStoreData &
     // disabled for this session; when false (loop ended or cancelled), send is re-enabled.
     setFixLoopActive: (sessionId: string, active: boolean) => void
     renameSession: (sessionId: string, title: string) => void
+    applyAgentSessionTitle: (
+      sessionId: string,
+      title: string,
+      source?: 'app-generated' | 'framework'
+    ) => void
     deleteSession: (sessionId: string) => void
     removeSessionsForProject: (projectId: string) => void
   }
@@ -270,6 +278,30 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
           ? {
               ...session,
               title: trimmedTitle,
+              titleSource: 'user',
+              updatedAt: Date.now()
+            }
+          : session
+      )
+    }))
+  },
+
+  applyAgentSessionTitle: (sessionId, title, source = 'framework') => {
+    const sanitizedTitle = sanitizeSessionTitle(title)
+    if (!sanitizedTitle) return
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId &&
+        (source === 'framework'
+          ? session.titleSource === 'fallback' ||
+            session.titleSource === 'app-generated' ||
+            session.titleSource === 'framework' ||
+            session.titleSource === 'agent'
+          : session.titleSource === 'fallback' || session.titleSource === 'app-generated')
+          ? {
+              ...session,
+              title: sanitizedTitle,
+              titleSource: source,
               updatedAt: Date.now()
             }
           : session

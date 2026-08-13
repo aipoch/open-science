@@ -4,6 +4,7 @@ import type { ArtifactFile, ReconcilePendingArtifactsRequest } from '../../../..
 import type { RendererFailureContext } from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
+  type ApplyAgentSessionTitleRequest,
   type DeleteSessionRequest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
@@ -26,13 +27,17 @@ type SessionPersistenceApi = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<PersistedChatSession>
+  applyAgentTitle: (request: ApplyAgentSessionTitleRequest) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
 
 type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
 
-type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'> & {
+type OrderedSessionPersistence = Pick<
+  SessionPersistenceApi,
+  'saveSession' | 'saveManifest' | 'applyAgentTitle'
+> & {
   saveLatestSession: (
     target: string,
     task: LatestSessionSaveTask,
@@ -54,6 +59,9 @@ const conflictRebaseFieldChanged = (
   next: ChatSession,
   field: SessionConflictRebaseField
 ): boolean => {
+  if (field === 'title') {
+    return previous.title !== next.title || previous.titleSource !== next.titleSource
+  }
   return previous[field] !== next[field]
 }
 
@@ -71,7 +79,7 @@ const mergeSaveSessionOptions = (
 // the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
 // Artifact finalization cannot be overtaken by an older store snapshot.
 const createOrderedSessionPersistence = (
-  api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest'>
+  api: Pick<SessionPersistenceApi, 'saveSession' | 'saveManifest' | 'applyAgentTitle'>
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
   let pendingLatest:
@@ -127,6 +135,7 @@ const createOrderedSessionPersistence = (
     saveLatestSession,
     saveSession: (session, options) =>
       enqueue(() => (options ? api.saveSession(session, options) : api.saveSession(session))),
+    applyAgentTitle: (request) => enqueue(() => api.applyAgentTitle(request)),
     saveManifest: (request) => enqueue(() => api.saveManifest(request)),
     flush: () => queue.then(() => undefined)
   }
@@ -139,11 +148,16 @@ const liveSessionPersistence = createOrderedSessionPersistence({
     options
       ? window.api.sessions.saveSession(session, options)
       : window.api.sessions.saveSession(session),
+  applyAgentTitle: (request) => window.api.sessions.applyAgentTitle(request),
   saveManifest: (request) => window.api.sessions.saveManifest(request)
 })
 
 const saveSessionInOrder = (session: PersistedChatSession): Promise<PersistedChatSession> =>
   liveSessionPersistence.saveSession(session)
+
+const applyAgentSessionTitleInOrder = (
+  request: ApplyAgentSessionTitleRequest
+): Promise<PersistedChatSession> => liveSessionPersistence.applyAgentTitle(request)
 
 const flushSessionPersistence = (): Promise<void> => liveSessionPersistence.flush()
 
@@ -748,6 +762,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 }
 
 export {
+  applyAgentSessionTitleInOrder,
   createOrderedSessionPersistence,
   createStoreSaver,
   flushSessionPersistence,

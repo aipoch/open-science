@@ -55,6 +55,7 @@ type PreloadApi = {
     getClientId: () => unknown
   }
   sessions: {
+    applyAgentTitle: (request: unknown) => unknown
     loadAll: () => unknown
     loadOne: (request: unknown) => unknown
     saveSession: (session: unknown, options?: unknown) => unknown
@@ -412,6 +413,7 @@ describe('preload bridge — public surface inventory', () => {
       'saveManagedFile',
       'saveProjectArtifacts',
       'saveSessionArtifacts',
+      'sessions.applyAgentTitle',
       'sessions.deleteSession',
       'sessions.exportConversation',
       'sessions.loadAll',
@@ -673,7 +675,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 23-group, 156-callable T1d complement', () => {
+  it('pins the exact 23-group, 158-callable T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -700,7 +702,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(157)
+    expect(coreContracts).toHaveLength(158)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -712,16 +714,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 117, events: 29, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 118, events: 29, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 117 request methods through their cataloged Electron channels', async () => {
+  it('routes all 118 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(117)
+    expect(requestContracts).toHaveLength(118)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -951,6 +953,12 @@ type ForwardingCase = {
 
 const sampleSession = { id: 's-1', projectId: 'p-1', title: 't' }
 const sampleDeleteSession = { projectId: 'p-1', sessionId: 's-1' }
+const sampleAgentTitle = {
+  projectId: 'p-1',
+  sessionId: 's-1',
+  title: 'Generated title',
+  source: 'framework'
+}
 const sampleManifest = { projectId: 'p-1', sessionId: 's-1' }
 const sampleConversationExport = {
   projectId: 'p-1',
@@ -1058,6 +1066,12 @@ const cases: ForwardingCase[] = [
     args: []
   },
   // sessions block
+  {
+    name: 'sessions.applyAgentTitle → sessions:apply-agent-title',
+    invoke: (a) => a.sessions.applyAgentTitle(sampleAgentTitle),
+    channel: 'sessions:apply-agent-title',
+    args: [sampleAgentTitle]
+  },
   {
     name: 'sessions.loadAll → sessions:load-all (no args)',
     invoke: (a) => a.sessions.loadAll(),

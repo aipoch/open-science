@@ -191,7 +191,7 @@ describe('application command composition', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.localWeb.commandNames()).toEqual(expectedLocalWebCommands())
-    expect(composition.localWeb.commandNames()).toHaveLength(244)
+    expect(composition.localWeb.commandNames()).toHaveLength(245)
   })
 
   it('partitions remote Web dispatch from fail-closed pre-dispatch rejections', async () => {
@@ -206,7 +206,7 @@ describe('application command composition', () => {
     )
 
     expect(composition.remoteWeb.commandNames()).toEqual(expectedRemoteCommands())
-    expect(composition.remoteWeb.commandNames()).toHaveLength(175)
+    expect(composition.remoteWeb.commandNames()).toHaveLength(176)
     expect(composition.remoteWeb.rejectedCommandNames()).toEqual(expectedRemoteRejections())
     expect(composition.remoteWeb.rejectedCommandNames()).toHaveLength(69)
 
@@ -232,13 +232,14 @@ describe('application command composition', () => {
     expect(composition.task.commandNames()).not.toEqual(expect.arrayContaining(reviewerCommands))
   })
 
-  it('exposes only the seven Task commands and no transport-wide capability', async () => {
+  it('exposes only the eight Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
       'projects:list',
       'projects:create',
       'sessions:load-all',
+      'sessions:apply-agent-title',
       'sessions:save-session',
       'artifacts:finalize-run',
       'preview-resources:acquire',

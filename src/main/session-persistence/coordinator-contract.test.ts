@@ -5,6 +5,7 @@ import type {
   PersistedChatSession,
   SessionPlanRuntimeContext
 } from '../../shared/session-persistence'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import {
   SessionPersistenceCoordinator,
   type SessionFileIndex,
@@ -113,6 +114,207 @@ const createFileIndex = (overrides: Partial<SessionFileIndex> = {}): SessionFile
 })
 
 describe('SessionPersistenceCoordinator contracts', () => {
+  it('atomically applies generated titles by source priority to the latest durable Session', async () => {
+    const fallback = createSession({
+      id: 'fallback',
+      title: 'First prompt',
+      titleSource: 'fallback'
+    })
+    const agent = createSession({ id: 'agent', title: 'Earlier title', titleSource: 'agent' })
+    const user = createSession({ id: 'user', title: 'Manual title', titleSource: 'user' })
+    const { repository, sessions } = createRepository([fallback, agent, user])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.applyAgentSessionTitle({
+        projectId: 'project-1',
+        sessionId: 'fallback',
+        title: 'Fallback replacement',
+        source: 'app-generated'
+      })
+    ).resolves.toMatchObject({ title: 'Fallback replacement', titleSource: 'app-generated' })
+    await expect(
+      coordinator.applyAgentSessionTitle({
+        projectId: 'project-1',
+        sessionId: 'agent',
+        title: 'Newer framework title',
+        source: 'framework'
+      })
+    ).resolves.toMatchObject({ title: 'Newer framework title', titleSource: 'framework' })
+    await expect(
+      coordinator.applyAgentSessionTitle({
+        projectId: 'project-1',
+        sessionId: 'agent',
+        title: 'Lower priority generated title',
+        source: 'app-generated'
+      })
+    ).resolves.toMatchObject({ title: 'Newer framework title', titleSource: 'framework' })
+
+    // This simulates a manual rename winning immediately before the queued late framework event.
+    sessions.set('fallback', {
+      ...sessions.get('fallback')!,
+      title: 'Manual race winner',
+      titleSource: 'user'
+    })
+    await expect(
+      coordinator.applyAgentSessionTitle({
+        projectId: 'project-1',
+        sessionId: 'fallback',
+        title: 'Stale late title',
+        source: 'framework'
+      })
+    ).resolves.toMatchObject({ title: 'Manual race winner', titleSource: 'user' })
+    await expect(
+      coordinator.applyAgentSessionTitle({
+        projectId: 'project-1',
+        sessionId: 'user',
+        title: 'Must not replace manual title',
+        source: 'framework'
+      })
+    ).resolves.toMatchObject({ title: 'Manual title', titleSource: 'user' })
+  })
+
+  it('atomically attaches late naming usage to the final Agent message for its prompt', async () => {
+    const prompt = {
+      id: 'prompt-1',
+      role: 'user' as const,
+      content: 'Review these papers',
+      status: 'complete' as const,
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const firstAnswer = {
+      id: 'answer-1',
+      role: 'agent' as const,
+      content: 'Initial answer',
+      status: 'complete' as const,
+      responseToMessageId: prompt.id,
+      eventIds: [],
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const appUsage = {
+      source: 'app-generated' as const,
+      usage: { inputTokens: 7, cacheTokens: 0, outputTokens: 3 }
+    }
+    const finalAnswer = {
+      ...firstAnswer,
+      id: 'answer-2',
+      content: 'Final answer',
+      sessionNamingUsage: appUsage,
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const laterPrompt = {
+      ...prompt,
+      id: 'prompt-2',
+      content: 'Follow up',
+      createdAt: 4,
+      updatedAt: 4
+    }
+    const laterAnswer = {
+      ...firstAnswer,
+      id: 'answer-3',
+      content: 'Follow-up answer',
+      responseToMessageId: laterPrompt.id,
+      createdAt: 5,
+      updatedAt: 5
+    }
+    const session = materializeSessionConversationGraph(
+      createSession({
+        title: 'Manual title',
+        titleSource: 'user',
+        messages: [prompt, firstAnswer, finalAnswer, laterPrompt, laterAnswer]
+      })
+    )
+    const { sessions, repository } = createRepository([session])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    const usage = { source: 'framework' as const, unavailable: true as const }
+
+    await coordinator.applyAgentSessionTitle({
+      projectId: session.projectId,
+      sessionId: session.id,
+      title: 'Generated title',
+      source: 'framework',
+      promptMessageId: prompt.id,
+      sessionNamingUsage: usage
+    })
+
+    expect(sessions.get(session.id)).toMatchObject({ title: 'Manual title', titleSource: 'user' })
+    const persistedMessages = sessions.get(session.id)?.messages
+    expect(persistedMessages?.[0]).toEqual(prompt)
+    expect(persistedMessages?.[1]).toEqual(firstAnswer)
+    expect(persistedMessages?.[2]).toMatchObject({
+      id: finalAnswer.id,
+      role: 'agent',
+      content: finalAnswer.content,
+      responseToMessageId: prompt.id,
+      sessionNamingUsage: {
+        source: 'combined',
+        appGenerated: { usage: appUsage.usage },
+        frameworkUnavailable: true
+      }
+    })
+    expect(persistedMessages?.[2].updatedAt).toBeGreaterThan(finalAnswer.updatedAt)
+    expect(persistedMessages?.[3]).toEqual(laterPrompt)
+    expect(persistedMessages?.[4]).toEqual(laterAnswer)
+    expect(
+      sessions
+        .get(session.id)
+        ?.conversationGraph?.messages.find((message) => message.id === finalAnswer.id)
+        ?.sessionNamingUsage
+    ).toEqual({
+      source: 'combined',
+      appGenerated: { usage: appUsage.usage },
+      frameworkUnavailable: true
+    })
+  })
+
+  it('preserves a concurrent manual rename when saving a stale whole-Session projection', async () => {
+    const started = createSession({
+      title: 'Run-start title',
+      titleSource: 'fallback',
+      updatedAt: 2
+    })
+    const { sessions, repository } = createRepository([started])
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    sessions.set(started.id, {
+      ...started,
+      title: 'Manual rename during run',
+      titleSource: 'user',
+      pinned: true,
+      updatedAt: 3
+    })
+
+    const saved = await coordinator.saveSession(
+      {
+        ...started,
+        status: 'idle',
+        messages: [
+          {
+            id: 'answer-1',
+            role: 'agent',
+            content: 'Done',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 4,
+            updatedAt: 4
+          }
+        ],
+        updatedAt: 4
+      },
+      { preserveTitle: true }
+    )
+    expect(saved).toMatchObject({
+      title: 'Manual rename during run',
+      titleSource: 'user',
+      status: 'idle',
+      messages: [expect.objectContaining({ id: 'answer-1' })]
+    })
+    expect(saved.pinned).toBeUndefined()
+  })
+
   it('serializes every mutation and snapshot through one failure-tolerant queue', async () => {
     const gate = createDeferred()
     const order: string[] = []

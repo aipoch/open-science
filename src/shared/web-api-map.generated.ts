@@ -138,6 +138,7 @@ export const WEB_INVOKE_CHANNELS = {
   saveManagedFile: 'file:save-managed',
   saveProjectArtifacts: 'file:save-project-artifacts',
   saveSessionArtifacts: 'file:save-session-artifacts',
+  'sessions.applyAgentTitle': 'sessions:apply-agent-title',
   'sessions.deleteSession': 'sessions:delete-session',
   'sessions.exportConversation': 'sessions:export-conversation',
   'sessions.loadAll': 'sessions:load-all',

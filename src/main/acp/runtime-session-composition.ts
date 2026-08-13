@@ -16,6 +16,7 @@ import type { RuntimeSnapshotProjection } from './runtime-snapshot-owner'
 import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
 import { AcpSessionRegistry } from './session-registry'
 import { AcpSessionUpdateProjector } from './session-update-projector'
+import { SessionAutoTitleOwner } from './session-auto-title-owner'
 
 const log = createLogger('acp')
 
@@ -80,6 +81,9 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     snapshotProjection,
     callbacks
   })
+  const sessionAutoTitle = options.sessionAutoTitle
+    ? new SessionAutoTitleOwner(options.sessionAutoTitle)
+    : undefined
   const appContinuations = new AcpAppContinuationOwner({
     activityChanged: base.notifyGenerationActivityChanged
   })
@@ -246,6 +250,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       permissionContext.setProviderPermissionProfile(sessionId, profile),
     emitState: () => publication.emitState(),
     pushEvent: (event) => publication.pushEvent(event),
+    onFrameworkTitle: (sessionId) => sessionAutoTitle?.observeFrameworkTitle(sessionId),
     reportToolFailure: (effect) =>
       log.warn('tool call failed', {
         tool: effect.tool,
@@ -267,7 +272,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     permissionContext,
     clientInteractions,
     reviewerSessions,
-    sessionUpdateProjector
+    sessionUpdateProjector,
+    sessionAutoTitle
   })
 }
 /* eslint-enable @typescript-eslint/explicit-function-return-type */

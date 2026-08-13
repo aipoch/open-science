@@ -167,6 +167,8 @@ const api: OpenScienceAPI = {
     onChanged: (listener) => electronRendererContracts.subscribe('permissions.onChanged', listener)
   },
   sessions: {
+    applyAgentTitle: (request) =>
+      electronRendererContracts.invoke('sessions.applyAgentTitle', request),
     // Loads every per-session file plus the last-open manifest from the main process.
     loadAll: () => electronRendererContracts.invoke('sessions.loadAll'),
     // Loads one durable Session without scanning unrelated Project/Session files.

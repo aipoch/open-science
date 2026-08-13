@@ -3,6 +3,7 @@ import type { SessionNotification } from '@agentclientprotocol/sdk'
 import type { AcpContextUsage, AcpRuntimeEvent } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { sanitizeSessionTitle } from '../../shared/session-persistence'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
 import type { AcpContextUsagePolicy } from './context-usage-policy'
@@ -15,7 +16,6 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
-
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
 const CODEX_LEGACY_COMPACTION_NOTICE = "*Context compacted to fit the model's context window.*"
@@ -78,12 +78,17 @@ type AcpSessionUpdateProjectorOptions = Readonly<{
   ) => boolean
   emitState: () => void
   pushEvent: (event: Readonly<AcpRuntimeEvent>) => void
+  onFrameworkTitle?: (sessionId: string, title: string) => string | undefined
   reportToolFailure: (
     effect: Extract<AcpSessionUpdateEffect, { kind: 'tool-failure-diagnostic' }>
   ) => void
 }>
 
 type AcpSessionUpdateEffect =
+  | Readonly<{
+      kind: 'session-title-update'
+      event: Readonly<AcpRuntimeEvent>
+    }>
   | Readonly<{
       kind: 'context-observation'
       sessionId: string
@@ -146,6 +151,7 @@ const toolObservation = (
 class AcpSessionUpdateProjector {
   private readonly codexSkillActivity = new CodexSkillActivityProjector()
   private readonly appOwnedUserChoiceToolCallIds = new Map<string, Set<string>>()
+  private readonly publishedSessionTitles = new Map<string, string>()
 
   constructor(private readonly options: AcpSessionUpdateProjectorOptions) {}
 
@@ -156,11 +162,13 @@ class AcpSessionUpdateProjector {
   clearGeneration(): void {
     this.codexSkillActivity.setSkillsRoot(undefined)
     this.appOwnedUserChoiceToolCallIds.clear()
+    this.publishedSessionTitles.clear()
   }
 
   clearSession(sessionId: string): void {
     this.codexSkillActivity.clearSession(sessionId)
     this.appOwnedUserChoiceToolCallIds.delete(sessionId)
+    this.publishedSessionTitles.delete(sessionId)
   }
 
   dispose(): void {
@@ -218,6 +226,33 @@ class AcpSessionUpdateProjector {
           }
         : projectedEvent
     )
+    if (routed.update.sessionUpdate === 'session_info_update') {
+      if (routing.reconnectPending || !routing.visible) {
+        return Object.freeze([])
+      }
+      const title = sanitizeSessionTitle(routed.update.title)
+      if (!title) {
+        return Object.freeze([])
+      }
+      if (this.publishedSessionTitles.get(routed.sessionId) === title) {
+        return Object.freeze([])
+      }
+      this.publishedSessionTitles.set(routed.sessionId, title)
+      const promptMessageId = this.options.onFrameworkTitle?.(routed.sessionId, title)
+      return Object.freeze([
+        deepFreeze({
+          kind: 'session-title-update' as const,
+          event: {
+            ...event,
+            ...(promptMessageId ? { promptMessageId } : {}),
+            sessionTitleUpdate: { title, source: 'framework' as const },
+            sessionNamingUsage: { source: 'framework' as const, unavailable: true as const },
+            title: undefined,
+            text: undefined
+          }
+        })
+      ])
+    }
     // codex-acp 1.1.4 flattens Codex's post-compaction warning into an unscoped assistant chunk.
     // Keep the separate compaction notice, but do not attribute this adapter-authored warning to the model.
     if (
@@ -331,6 +366,9 @@ class AcpSessionUpdateProjector {
           effect.notification,
           effect.observation
         )
+        break
+      case 'session-title-update':
+        this.options.pushEvent(effect.event)
         break
       case 'current-mode': {
         const aggregate = this.options.registry.lookup(effect.sessionId)?.aggregate

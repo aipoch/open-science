@@ -3,6 +3,7 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
   type AcpRuntimeEvent,
+  type AcpSessionNamingUsage,
   type AcpTerminalContextWindow,
   type AcpTurnTokenUsage
 } from '../../shared/acp'
@@ -46,6 +47,7 @@ export type AcpPromptFinalizationHandles = Readonly<{
   onPromptEnded: () => void
   generationActivityChanged: () => void
   autoCompactIfNeeded: () => Promise<unknown>
+  sessionNamingUsage?: AcpSessionNamingUsage
 }>
 type ObservedPromptStop = Readonly<{
   response: PromptResponse
@@ -61,7 +63,7 @@ type LogicalTurnUsage = Readonly<{
 
 const MAX_LOGICAL_TURN_USAGE_ENTRIES = 500
 
-const sumTurnUsage = (
+export const sumTurnUsage = (
   left: AcpTurnTokenUsage,
   right: AcpTurnTokenUsage
 ): AcpTurnTokenUsage | undefined => {
@@ -195,6 +197,7 @@ export class AcpPromptOutcomeFinalizer {
         title: 'Prompt stopped',
         text: observedStop.response.stopReason,
         turnUsage,
+        ...(handles.sessionNamingUsage ? { sessionNamingUsage: handles.sessionNamingUsage } : {}),
         ...(observedStop.terminalContextWindow
           ? { terminalContextWindow: observedStop.terminalContextWindow }
           : {}),

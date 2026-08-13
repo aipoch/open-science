@@ -1,4 +1,5 @@
 import type { StoreApi } from 'zustand'
+import type { AcpSessionNamingUsage } from '../../../shared/acp'
 import {
   activateConversationBranch,
   forkEditedConversationMessage,
@@ -259,6 +260,7 @@ export const createSessionMessageGraphOwner = <
         projectId: projectId ?? '',
         isPending: isPending ? true : undefined,
         title: createTitleFromMessage(trimmedContent || createTitleFromUploads(uploads)),
+        titleSource: 'fallback',
         cwd: cwd ?? '',
         status: 'running',
         permissionProfile: permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
@@ -354,6 +356,7 @@ export const createSessionMessageGraphOwner = <
       title: trimmedContent
         ? createBranchTitleFromMessage(trimmedContent)
         : createTitleFromUploads(uploads),
+      titleSource: 'fallback',
       cwd: source.cwd,
       status: 'running',
       permissionProfile:
@@ -583,6 +586,56 @@ export const createSessionMessageGraphOwner = <
         }) as Partial<State>
     )
     return revised
+  },
+
+  applySessionNamingUsage: (sessionId, usage, promptMessageId) => {
+    set(
+      (state) =>
+        ({
+          sessions: state.sessions.map((session) => {
+            if (session.id !== sessionId) return session
+            const index = session.messages.findLastIndex(
+              (message) =>
+                message.role === 'agent' &&
+                (promptMessageId === undefined || message.responseToMessageId === promptMessageId)
+            )
+            if (index < 0) return session
+            const messages = [...session.messages]
+            const message = messages[index]
+            const currentUsage = message.sessionNamingUsage
+            if (currentUsage?.source === 'combined' || currentUsage?.source === usage.source) {
+              return session
+            }
+            const mergedUsage: AcpSessionNamingUsage =
+              currentUsage && currentUsage.source !== usage.source
+                ? {
+                    source: 'combined',
+                    appGenerated:
+                      currentUsage.source === 'app-generated'
+                        ? {
+                            ...(currentUsage.usage ? { usage: currentUsage.usage } : {}),
+                            ...(currentUsage.unavailable ? { unavailable: true as const } : {})
+                          }
+                        : usage.source === 'app-generated'
+                          ? {
+                              ...(usage.usage ? { usage: usage.usage } : {}),
+                              ...(usage.unavailable ? { unavailable: true as const } : {})
+                            }
+                          : { unavailable: true },
+                    frameworkUnavailable: true
+                  }
+                : usage
+            const now = Math.max(Date.now(), session.updatedAt + 1)
+            messages[index] = { ...message, sessionNamingUsage: mergedUsage, updatedAt: now }
+            return {
+              ...session,
+              messages,
+              conversationGraph: synchronizeSessionGraph(session, messages, now),
+              updatedAt: now
+            }
+          })
+        }) as Partial<State>
+    )
   },
 
   activateMessageBranch: (sessionId, branchId) => {

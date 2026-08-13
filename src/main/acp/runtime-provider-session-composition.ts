@@ -145,6 +145,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     handoff: base.handoffContinuity,
     contextUsage: base.contextUsageTracker,
     projector: session.sessionUpdateProjector,
+    sessionAutoTitle: session.sessionAutoTitle,
     pushEvent: (event) => session.publication.pushEvent(event),
     emitState,
     getSnapshot: () => session.publication.getSnapshot()

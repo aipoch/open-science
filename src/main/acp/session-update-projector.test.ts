@@ -34,7 +34,8 @@ const createProjector = (
     availableModeIds: ['default', 'bypassPermissions'],
     fullAccessAvailable: true
   },
-  acceptProviderPermissionProfile = true
+  acceptProviderPermissionProfile = true,
+  onFrameworkTitle?: (sessionId: string, title: string) => string | undefined
 ): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
@@ -95,6 +96,7 @@ const createProjector = (
     },
     emitState: () => undefined,
     pushEvent: (event) => record({ kind: 'visible-event', event }),
+    ...(onFrameworkTitle ? { onFrameworkTitle } : {}),
     reportToolFailure: (effect) => record(effect)
   })
   return {
@@ -115,6 +117,66 @@ const createProjector = (
 }
 
 describe('AcpSessionUpdateProjector', () => {
+  it('projects a framework title onto the app Session id without conversation noise', () => {
+    const projector = createProjector()
+    const notification: SessionNotification = {
+      sessionId: 'provider-session',
+      update: { sessionUpdate: 'session_info_update', title: '  Evidence   synthesis  ' }
+    }
+    const routing = {
+      appSessionId: 'app-session',
+      eventId: 'event-title',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+
+    expect(projector.route(notification, routing)).toEqual([
+      {
+        kind: 'visible-event',
+        event: expect.objectContaining({
+          sessionId: 'app-session',
+          sessionTitleUpdate: { title: 'Evidence synthesis', source: 'framework' },
+          sessionNamingUsage: { source: 'framework', unavailable: true },
+          title: undefined,
+          text: undefined
+        })
+      }
+    ])
+    expect(projector.route(notification, { ...routing, reconnectPending: true })).toEqual([])
+  })
+
+  it('projects the retained first-turn identity onto a late framework title', () => {
+    const onFrameworkTitle = vi.fn(() => 'first-prompt')
+    const projector = createProjector(undefined, true, onFrameworkTitle)
+
+    expect(
+      projector.route(
+        {
+          sessionId: 'provider-session',
+          update: { sessionUpdate: 'session_info_update', title: 'Late framework title' }
+        },
+        {
+          appSessionId: 'app-session',
+          eventId: 'late-title',
+          visible: true,
+          reconnectPending: false,
+          mcpServerNames: []
+        }
+      )
+    ).toEqual([
+      {
+        kind: 'visible-event',
+        event: expect.objectContaining({
+          sessionId: 'app-session',
+          promptMessageId: 'first-prompt',
+          sessionTitleUpdate: { title: 'Late framework title', source: 'framework' }
+        })
+      }
+    ])
+    expect(onFrameworkTitle).toHaveBeenCalledWith('app-session', 'Late framework title')
+  })
+
   it('routes stable Session usage through context owners in projection order', () => {
     const journal: string[] = []
     const beginSession = vi.fn(() => journal.push('context:begin'))

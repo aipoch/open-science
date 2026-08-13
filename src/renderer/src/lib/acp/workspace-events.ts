@@ -16,6 +16,7 @@ import {
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import {
   INTERRUPTED_TURN_ERROR,
+  type ApplyAgentSessionTitleRequest,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
@@ -34,7 +35,10 @@ import {
   type ToolActivity
 } from '../../stores/session-store'
 import { useSettingsStore } from '../../stores/settings-store'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import {
+  applyAgentSessionTitleInOrder,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
 import {
   createRuntimeStreamId,
   getAcpRuntimeEventImage,
@@ -195,6 +199,7 @@ const isNonActionableCodexDiagnostic = (text: string): boolean => {
 type WorkspaceRuntimeEventDependencies = {
   finalizeRunArtifacts?: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   saveSession?: (session: PersistedChatSession) => Promise<PersistedChatSession | void>
+  applyAgentTitle?: (request: ApplyAgentSessionTitleRequest) => Promise<PersistedChatSession>
 }
 
 // Defaults to the preload artifact API while allowing tests to inject a fake finalizer.
@@ -497,6 +502,41 @@ const applyWorkspaceRuntimeEvent = async (
 ): Promise<boolean> => {
   const store = useSessionStore.getState()
 
+  if (event.sessionTitleUpdate && event.sessionId) {
+    const session = store.sessions.find((candidate) => candidate.id === event.sessionId)
+    if (!session) return false
+    const source = event.sessionTitleUpdate.source ?? 'framework'
+    const applyAgentTitle =
+      dependencies.applyAgentTitle ??
+      (typeof window === 'undefined' ? undefined : applyAgentSessionTitleInOrder)
+    if (applyAgentTitle) {
+      const durable = await applyAgentTitle({
+        projectId: session.projectId,
+        sessionId: event.sessionId,
+        title: event.sessionTitleUpdate.title,
+        source,
+        ...(event.promptMessageId ? { promptMessageId: event.promptMessageId } : {}),
+        ...(event.sessionNamingUsage ? { sessionNamingUsage: event.sessionNamingUsage } : {})
+      })
+      store.applyDurableSessionProjection({
+        source: session,
+        session: durable,
+        mode: 'title-authority'
+      })
+    } else {
+      // Isolated store-adapter tests do not install the preload bridge.
+      store.applyAgentSessionTitle(event.sessionId, event.sessionTitleUpdate.title, source)
+    }
+    if (event.sessionNamingUsage) {
+      store.applySessionNamingUsage(
+        event.sessionId,
+        event.sessionNamingUsage,
+        event.promptMessageId
+      )
+    }
+    return true
+  }
+
   if (event.kind === 'permission' && event.sessionId) {
     const permission = store.sessions.find((session) => session.id === event.sessionId)
       ?.runtimeContext?.permission
@@ -657,7 +697,13 @@ const applyWorkspaceRuntimeEvent = async (
       }
     }
 
-    store.finishRun(event.sessionId, event.turnUsage, terminalPromptMessageId, contextWindowSample)
+    store.finishRun(
+      event.sessionId,
+      event.turnUsage,
+      terminalPromptMessageId,
+      contextWindowSample,
+      event.sessionNamingUsage
+    )
 
     const terminalSession = useSessionStore
       .getState()

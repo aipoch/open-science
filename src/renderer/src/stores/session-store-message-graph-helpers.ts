@@ -5,6 +5,7 @@ import {
   synchronizeActiveConversationActivities,
   synchronizeActiveConversationMessages
 } from '../../../shared/conversation-graph'
+import type { AcpSessionNamingUsage } from '../../../shared/acp'
 import type { MessagePart } from '../../../shared/session-persistence'
 import {
   sanitizeActivityGroup,
@@ -84,6 +85,11 @@ export type AppendRoutedUserMessageInput = {
 }
 
 export type SessionMessageGraphActions = {
+  applySessionNamingUsage: (
+    sessionId: string,
+    usage: AcpSessionNamingUsage,
+    promptMessageId?: string
+  ) => void
   appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
   appendRoutedUserMessage: (input: AppendRoutedUserMessageInput) => AppendMessageResult | undefined
   appendPendingUserMessage: (

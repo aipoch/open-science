@@ -46,6 +46,14 @@ const createLoadResult = (
 const createApi = (overrides: Partial<SessionPersistenceApi> = {}): SessionPersistenceApi => ({
   loadAll: vi.fn().mockResolvedValue(createLoadResult()),
   saveSession: vi.fn(async (session: PersistedChatSession) => session),
+  applyAgentTitle: vi.fn(async (request) =>
+    createPersistedSession({
+      id: request.sessionId,
+      projectId: request.projectId,
+      title: request.title,
+      titleSource: request.source
+    })
+  ),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   saveManifest: vi.fn().mockResolvedValue(undefined),
   ...overrides
@@ -250,6 +258,27 @@ describe('renderer session persistence bridge', () => {
     expect(useSessionStore.getState().sessions[0].messages).toEqual(durable.messages)
     expect(useSessionStore.getState().sessions[0].conversationGraph).toEqual(
       durable.conversationGraph
+    )
+  })
+
+  it('rebases a same-text manual rename when only title ownership changes', async () => {
+    const persisted = createPersistedSession({
+      projectId: 'project-a',
+      title: 'Shared title',
+      titleSource: 'agent'
+    })
+    useSessionStore.getState().hydrateSessions([persisted])
+    const api = createApi({
+      saveSession: vi.fn().mockResolvedValue({ ...persisted, titleSource: 'user' })
+    })
+    const save = createStoreSaver(api, useSessionStore.getState())
+
+    useSessionStore.getState().renameSession('session-1', 'Shared title')
+    await save(useSessionStore.getState())
+
+    expect(api.saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Shared title', titleSource: 'user' }),
+      { conflictRebaseFields: ['title'] }
     )
   })
 
@@ -802,6 +831,45 @@ describe('renderer session persistence bridge', () => {
 
     expect(saveSession).toHaveBeenCalledTimes(3)
     expect(durableTitle).toBe('Artifact latest')
+  })
+
+  it('orders an Agent title mutation after the queued initial Session save', async () => {
+    const initialSave = createDeferred<PersistedChatSession>()
+    const persisted = createPersistedSession({ title: 'Prompt fallback', titleSource: 'fallback' })
+    const api = createApi({
+      saveSession: vi.fn(() => initialSave.promise),
+      applyAgentTitle: vi.fn(async (request) => ({
+        ...persisted,
+        title: request.title,
+        titleSource: request.source
+      }))
+    })
+    const persistence = createOrderedSessionPersistence(api)
+
+    const saving = persistence.saveLatestSession('session:session-1', () =>
+      api.saveSession(persisted)
+    )
+    const applyingTitle = persistence.applyAgentTitle({
+      projectId: 'default',
+      sessionId: 'session-1',
+      title: 'Framework title',
+      source: 'framework',
+      promptMessageId: 'first-prompt'
+    })
+    await flushMicrotasks()
+
+    expect(api.saveSession).toHaveBeenCalledOnce()
+    expect(api.applyAgentTitle).not.toHaveBeenCalled()
+
+    initialSave.resolve(persisted)
+    await saving
+    await expect(applyingTitle).resolves.toMatchObject({
+      title: 'Framework title',
+      titleSource: 'framework'
+    })
+    expect(api.applyAgentTitle).toHaveBeenCalledWith(
+      expect.objectContaining({ promptMessageId: 'first-prompt' })
+    )
   })
 
   it('flushes only after explicit and coalesced queued writes settle', async () => {

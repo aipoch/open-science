@@ -109,6 +109,241 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('applies a structured framework title without changing first-turn usage ownership', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'framework-title',
+        kind: 'system',
+        sessionTitleUpdate: { title: 'Evidence synthesis' }
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'first-response',
+        role: 'assistant',
+        messageId: 'assistant-message-1',
+        text: 'Done'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'first-stop',
+        kind: 'stop',
+        turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Evidence synthesis',
+      titleSource: 'framework',
+      messages: [
+        expect.objectContaining({ role: 'user' }),
+        expect.objectContaining({
+          role: 'agent',
+          turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
+        })
+      ]
+    })
+  })
+
+  it('uses the durable title returned by the main-process priority gate', async () => {
+    const current = toPersistedSession(useSessionStore.getState().sessions[0])
+    const durableUserTitle = {
+      ...current,
+      title: 'User title from another client',
+      titleSource: 'user' as const,
+      updatedAt: current.updatedAt + 1
+    }
+    const applyAgentTitle = vi.fn().mockResolvedValue(durableUserTitle)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'stale-framework-title',
+        kind: 'system',
+        sessionTitleUpdate: { title: 'Older framework title', source: 'framework' }
+      }),
+      { applyAgentTitle }
+    )
+
+    expect(applyAgentTitle).toHaveBeenCalledWith({
+      projectId: current.projectId,
+      sessionId: current.id,
+      title: 'Older framework title',
+      source: 'framework'
+    })
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'User title from another client',
+      titleSource: 'user'
+    })
+  })
+
+  it('routes late naming usage by prompt identity instead of response position', async () => {
+    const store = useSessionStore.getState()
+    const firstPromptMessageId = store.sessions[0].activeRun?.promptMessageId
+    store.appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'first-response',
+      eventId: 'first-response-event',
+      promptMessageId: firstPromptMessageId,
+      content: 'First answer'
+    })
+    store.finishRun('transport-session-1', undefined, firstPromptMessageId)
+
+    const secondPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Follow up'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'second-response',
+      eventId: 'second-response-event',
+      promptMessageId: secondPrompt?.messageId,
+      content: 'Second answer'
+    })
+    useSessionStore.getState().finishRun('transport-session-1', undefined, secondPrompt?.messageId)
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'late-framework-title',
+        kind: 'system',
+        promptMessageId: secondPrompt?.messageId,
+        sessionTitleUpdate: { title: 'Follow-up analysis', source: 'framework' },
+        sessionNamingUsage: { source: 'framework', unavailable: true }
+      })
+    )
+    const responses = useSessionStore
+      .getState()
+      .sessions[0].messages.filter((message) => message.role === 'agent')
+    expect(responses[0].sessionNamingUsage).toBeUndefined()
+    expect(responses[1].sessionNamingUsage).toEqual({ source: 'framework', unavailable: true })
+  })
+
+  it('keeps a framework title arriving after the second turn owned by the first prompt', async () => {
+    const store = useSessionStore.getState()
+    const firstPromptMessageId = store.sessions[0].activeRun?.promptMessageId
+    store.appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'first-response',
+      eventId: 'first-response-event',
+      promptMessageId: firstPromptMessageId,
+      content: 'First answer'
+    })
+    store.finishRun('transport-session-1', undefined, firstPromptMessageId)
+
+    const secondPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Follow up'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'second-response',
+      eventId: 'second-response-event',
+      promptMessageId: secondPrompt?.messageId,
+      content: 'Second answer'
+    })
+    useSessionStore.getState().finishRun('transport-session-1', undefined, secondPrompt?.messageId)
+    const applyAgentTitle = vi.fn(async (request) => ({
+      ...toPersistedSession(useSessionStore.getState().sessions[0]),
+      title: request.title,
+      titleSource: request.source
+    }))
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'late-first-title',
+        kind: 'system',
+        promptMessageId: firstPromptMessageId,
+        sessionTitleUpdate: { title: 'First-turn framework title', source: 'framework' },
+        sessionNamingUsage: { source: 'framework', unavailable: true }
+      }),
+      { applyAgentTitle }
+    )
+
+    expect(applyAgentTitle).toHaveBeenCalledWith(
+      expect.objectContaining({ promptMessageId: firstPromptMessageId })
+    )
+    const responses = useSessionStore
+      .getState()
+      .sessions[0].messages.filter((message) => message.role === 'agent')
+    expect(responses[0].sessionNamingUsage).toEqual({ source: 'framework', unavailable: true })
+    expect(responses[1].sessionNamingUsage).toBeUndefined()
+  })
+
+  it('upgrades a late framework title without hiding first-turn app naming usage', async () => {
+    const firstPromptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'first-response',
+        role: 'assistant',
+        messageId: 'first-response',
+        promptMessageId: firstPromptMessageId,
+        text: 'First answer'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'first-stop',
+        kind: 'stop',
+        promptMessageId: firstPromptMessageId,
+        turnUsage: { inputTokens: 31, cacheTokens: 5, outputTokens: 10 },
+        sessionNamingUsage: {
+          source: 'app-generated',
+          usage: { inputTokens: 6, cacheTokens: 1, outputTokens: 2 }
+        }
+      })
+    )
+
+    const secondPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Follow up'
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'second-response',
+        role: 'assistant',
+        messageId: 'second-response',
+        promptMessageId: secondPrompt?.messageId,
+        text: 'Second answer'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'second-stop',
+        kind: 'stop',
+        promptMessageId: secondPrompt?.messageId,
+        turnUsage: { inputTokens: 12, cacheTokens: 0, outputTokens: 4 }
+      })
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'late-framework-title',
+        kind: 'system',
+        promptMessageId: firstPromptMessageId,
+        sessionTitleUpdate: { title: 'Framework title', source: 'framework' },
+        sessionNamingUsage: { source: 'framework', unavailable: true }
+      })
+    )
+
+    const session = useSessionStore.getState().sessions[0]
+    const responses = session.messages.filter((message) => message.role === 'agent')
+    expect(session).toMatchObject({ title: 'Framework title', titleSource: 'framework' })
+    expect(responses[0]).toMatchObject({
+      turnUsage: { inputTokens: 31, cacheTokens: 5, outputTokens: 10 },
+      sessionNamingUsage: {
+        source: 'combined',
+        appGenerated: {
+          usage: { inputTokens: 6, cacheTokens: 1, outputTokens: 2 }
+        },
+        frameworkUnavailable: true
+      }
+    })
+    expect(responses[1]).toMatchObject({
+      turnUsage: { inputTokens: 12, cacheTokens: 0, outputTokens: 4 }
+    })
+    expect(responses[1].sessionNamingUsage).toBeUndefined()
+  })
+
   it('applies assistant message events as streamed agent chunks', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({

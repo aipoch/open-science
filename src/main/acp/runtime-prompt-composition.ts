@@ -242,7 +242,8 @@ const composeAcpRuntimePromptOwners = (
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
       callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
-    emitState
+    emitState,
+    sessionAutoTitle: session.sessionAutoTitle
   })
 
   return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow })

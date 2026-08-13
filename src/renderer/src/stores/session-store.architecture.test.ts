@@ -897,6 +897,7 @@ describe('Session Store architecture', () => {
       'SessionRunProjectionActions'
     ])
     expect(facadeActionNames(facadeSource)).toEqual([
+      'applyAgentSessionTitle',
       'clearBranchContextReset',
       'clearSelection',
       'clearSpecialistSwitchResetRequired',
@@ -929,6 +930,7 @@ describe('Session Store architecture', () => {
       'appendPendingUserMessage',
       'appendRoutedUserMessage',
       'appendUserMessage',
+      'applySessionNamingUsage',
       'bindPendingSession',
       'branchInNewSession',
       'clearPendingContextReplay',

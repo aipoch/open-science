@@ -115,6 +115,7 @@ export type ApplyDurableSessionProjectionInput = {
   mode?:
     | 'merge-upload-identities'
     | 'replace-persisted-if-current'
+    | 'title-authority'
     | 'permission-authority'
     | 'enabled-compute-hosts-authority'
     | 'delegated-authority'
@@ -490,6 +491,21 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
+
+      if (mode === 'title-authority') {
+        const projected: ChatSession = {
+          ...current,
+          title: session.title,
+          titleSource: session.titleSource,
+          updatedAt: Math.max(current.updatedAt, session.updatedAt)
+        }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        } as Partial<State>
+      }
 
       if (mode === 'enabled-compute-hosts-authority') {
         const projected: ChatSession = {

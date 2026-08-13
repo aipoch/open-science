@@ -205,6 +205,7 @@ const WRAPPED_COMMAND_KEYS = [
   'projectCreate',
   'projectDelete',
   'projectUpdate',
+  'sessionApplyAgentTitle',
   'sessionDelete',
   'sessionExportConversation',
   'sessionLoadAll',
@@ -237,7 +238,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 49 current data and content invoke channels', () => {
+  it('owns exactly the 50 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -271,6 +272,7 @@ describe('Data and content application commands', () => {
         'projects:get',
         'projects:list',
         'projects:update',
+        'sessions:apply-agent-title',
         'sessions:delete-session',
         'sessions:export-conversation',
         'sessions:load-all',

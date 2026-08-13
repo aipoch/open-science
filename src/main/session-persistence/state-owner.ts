@@ -5,7 +5,9 @@ import type { PersistedConversationGraph } from '../../shared/conversation-graph
 import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/project-files'
 import {
   materializeSessionConversationGraph,
+  sanitizeSessionTitle,
   sanitizeSessionRuntimeContext,
+  type ApplyAgentSessionTitleRequest,
   type PersistedChatMessage,
   type PersistedChatSession,
   type PersistedSessionStatus,
@@ -84,6 +86,28 @@ type SessionPersistenceStateOwnerOptions = {
   log: Logger
 }
 
+const mergeSessionNamingUsage = (
+  current: PersistedChatMessage['sessionNamingUsage'],
+  incoming: NonNullable<ApplyAgentSessionTitleRequest['sessionNamingUsage']>
+): NonNullable<PersistedChatMessage['sessionNamingUsage']> => {
+  if (!current || incoming.source === 'combined') return incoming
+  if (current.source === 'combined' || current.source === incoming.source) return current
+  const appGenerated =
+    current.source === 'app-generated'
+      ? current
+      : incoming.source === 'app-generated'
+        ? incoming
+        : { source: 'app-generated' as const, unavailable: true as const }
+  return {
+    source: 'combined',
+    appGenerated: {
+      ...(appGenerated.usage ? { usage: appGenerated.usage } : {}),
+      ...(appGenerated.unavailable ? { unavailable: true as const } : {})
+    },
+    frameworkUnavailable: true
+  }
+}
+
 class SessionRuntimeContextRevisionConflictError extends Error {
   readonly code = 'revision-conflict' as const
 
@@ -113,6 +137,7 @@ const rebaseSafeSessionFields = (
     switch (field) {
       case 'title':
         rebased.title = submitted.title
+        rebased.titleSource = submitted.titleSource
         break
       case 'permissionProfile':
         rebased.permissionProfile = submitted.permissionProfile
@@ -315,6 +340,71 @@ class SessionPersistenceStateOwner {
     return graph
       ? resolveActiveConversationMessages(graph).some((message) => message.id === messageId)
       : false
+  }
+
+  async applyAgentSessionTitle(
+    request: ApplyAgentSessionTitleRequest
+  ): Promise<PersistedChatSession> {
+    const { projectId, sessionId, title, source, promptMessageId, sessionNamingUsage } = request
+    this.options.assertMutable(projectId, sessionId, 'mutate')
+    const sanitizedTitle = sanitizeSessionTitle(title)
+    if (!sanitizedTitle) throw new Error('Agent Session title must be non-empty.')
+    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    if (loaded.status !== 'found') {
+      throw new Error(`Cannot apply an Agent title to a ${loaded.status} Session.`)
+    }
+    const current = loaded.session
+    const currentPriority =
+      current.titleSource === 'fallback'
+        ? 0
+        : current.titleSource === 'app-generated'
+          ? 1
+          : current.titleSource === 'framework' || current.titleSource === 'agent'
+            ? 2
+            : 3
+    const requestedPriority = source === 'framework' ? 2 : 1
+    const appliesTitle = requestedPriority >= currentPriority
+    let usageMessageIndex = -1
+    if (promptMessageId && sessionNamingUsage) {
+      for (let index = current.messages.length - 1; index >= 0; index -= 1) {
+        const message = current.messages[index]
+        if (message.role === 'agent' && message.responseToMessageId === promptMessageId) {
+          usageMessageIndex = index
+          break
+        }
+      }
+    }
+    if (!appliesTitle && usageMessageIndex < 0) return current
+
+    const updatedAt = Math.max(current.updatedAt + 1, Date.now())
+    const messages =
+      usageMessageIndex < 0
+        ? current.messages
+        : current.messages.map((message, index) =>
+            index === usageMessageIndex
+              ? {
+                  ...message,
+                  sessionNamingUsage: mergeSessionNamingUsage(
+                    message.sessionNamingUsage,
+                    sessionNamingUsage!
+                  ),
+                  updatedAt
+                }
+              : message
+          )
+    const candidate = {
+      ...current,
+      ...(appliesTitle ? { title: sanitizedTitle, titleSource: source } : {}),
+      messages,
+      updatedAt
+    }
+    const durable =
+      usageMessageIndex >= 0 && current.conversationGraph
+        ? materializeSessionConversationGraph(candidate)
+        : candidate
+    await this.options.repository.saveSession(durable)
+    this.recordSession(durable)
+    return durable
   }
 
   private async loadRuntimeContextSession(
@@ -544,6 +634,9 @@ class SessionPersistenceStateOwner {
         : undefined
     const mergedSession: PersistedChatSession = {
       ...rendererOwnedSession,
+      ...(options.preserveTitle && authority
+        ? { title: authority.title, titleSource: authority.titleSource }
+        : {}),
       messages: mergeMainOwnedRelayMessages(rendererOwnedSession.messages, authority?.messages),
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
