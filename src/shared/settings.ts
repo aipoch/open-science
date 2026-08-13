@@ -849,12 +849,13 @@ export type SkillView = {
   thirdParty?: string
 }
 
-// A skill view plus its SKILL.md body (frontmatter stripped) and the names of any files under its
-// `references/` directory, for the detail/edit view.
+// A skill view plus its SKILL.md body (frontmatter stripped), its editable `references/` attachments
+// (for the editor), and every file shipped in the skill directory (for the read-only detail view).
 export type SkillDetailView = SkillView & {
   body: string
   metadata?: Record<string, string>
   references: SkillReferenceInfo[]
+  files: SkillFileEntry[]
 }
 
 export type ExportSkillRequest = { id: string }
@@ -864,6 +865,14 @@ export type ExportSkillResult = { saved: boolean }
 // A reference file's name (basename under `references/`), without its content.
 export type SkillReferenceInfo = {
   path: string
+}
+
+// One file shipped inside a skill directory (references/, scripts/, assets/, templates/, ...),
+// listed read-only in the detail view. `path` is the posix path relative to the skill root; `size`
+// is the file size in bytes. SKILL.md itself is excluded (it is rendered as the body).
+export type SkillFileEntry = {
+  path: string
+  size: number
 }
 
 export type SetSkillEnabledRequest = {

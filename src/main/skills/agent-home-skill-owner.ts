@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import type { AgentHomeSkillRef, AgentHomeSkillSource } from '../../shared/settings'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { parseSkillDocument } from './frontmatter'
+import { isSkillDocumentName } from './skill-bundle-paths'
 import {
   SOURCE_MANIFEST,
   type SkillPackageTransactionOwner,
@@ -302,7 +303,9 @@ class AgentHomeSkillOwner {
 
   async validatePublishedSkillPackage(staging: string): Promise<void> {
     const entries = await this.inspectAgentHomeSkill(staging)
-    if (!entries.some((entry) => entry.kind === 'file' && entry.relativePath === 'SKILL.md')) {
+    if (
+      !entries.some((entry) => entry.kind === 'file' && isSkillDocumentName(entry.relativePath))
+    ) {
       throw new Error('A published Skill must contain SKILL.md at its root.')
     }
   }
@@ -444,7 +447,7 @@ class AgentHomeSkillOwner {
     const files = entries.filter(
       (entry): entry is Extract<AgentHomeTreeEntry, { kind: 'file' }> => entry.kind === 'file'
     )
-    const skillMd = files.find((file) => file.relativePath === 'SKILL.md')
+    const skillMd = files.find((file) => isSkillDocumentName(file.relativePath))
     if (!skillMd) throw new Error('Agent-home Skill must contain a SKILL.md.')
     const previewTooLarge = (): never => {
       throw new Error(
