@@ -7,6 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ToolActivity } from '@/stores/session-store'
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: 'en' }
+  })
+}))
+
 vi.mock('@/components/ui/message-scroller', () => ({
   MessageScrollerItem: ({ children }: PropsWithChildren) => <div>{children}</div>
 }))

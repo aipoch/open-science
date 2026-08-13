@@ -10,8 +10,10 @@ import {
   X
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { projectGeneratePlanActivity } from './generate-plan-activity-projection'
+import { planConfidenceLabelKey } from './session-plan/plan-confidence-label'
 import { WorkspaceToolDetailsRow } from './WorkspaceToolDetailsRow'
 import { buildToolActivityDetails } from './workspace-tool-activity-details'
 
@@ -29,6 +31,8 @@ const WorkspacePlanActivityRecord = ({
   hasDurablePlanAuthority = false,
   contentPaddingClassName = 'px-4 md:px-6'
 }: WorkspacePlanActivityRecordProps): React.JSX.Element => {
+  const { t } = useTranslation()
+
   const projection = projectGeneratePlanActivity(activity, hasDurablePlanAuthority)
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(() => new Set())
   const [showAllSteps, setShowAllSteps] = useState(false)
@@ -233,7 +237,7 @@ const WorkspacePlanActivityRecord = ({
               ) : null}
               <div className="mt-3 flex items-start gap-2 border-t border-border-200 pt-[9px] text-[11px] text-text-300">
                 <span className="shrink-0 whitespace-nowrap rounded-[5px] bg-accent/10 px-1.5 py-0.5 text-[10px] text-text-100">
-                  {projection.feasibility.confidence} confidence
+                  {t(planConfidenceLabelKey(projection.feasibility.confidence))}
                 </span>
                 <span>{projection.feasibility.summary}</span>
               </div>

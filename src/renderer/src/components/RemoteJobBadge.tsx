@@ -16,7 +16,10 @@ type RemoteJobBadgeProps = {
 // Shows running count + elapsed time when jobs are running; shows gray "N jobs" when all finished.
 // Hidden only when session has no jobs at all.
 // Hover reveals a tooltip listing each running job's host + intent + duration.
-export const RemoteJobBadge = ({ sessionId, onOpenJobList }: RemoteJobBadgeProps): React.JSX.Element | null => {
+export const RemoteJobBadge = ({
+  sessionId,
+  onOpenJobList
+}: RemoteJobBadgeProps): React.JSX.Element | null => {
   const allJobsForSession = useSessionJobStore((state) => state.allJobsForSession)
   const [now, setNow] = useState(() => Date.now())
 

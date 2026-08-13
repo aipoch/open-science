@@ -10,6 +10,13 @@ import { useSessionStore } from '@/stores/session-store'
 
 const sideChatState = vi.hoisted(() => ({ parentSessionId: undefined as string | undefined }))
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: 'en' }
+  })
+}))
+
 vi.mock('../NotebookPreview', () => ({ NotebookPreview: () => null }))
 vi.mock('../ProjectFilesView', () => ({ ProjectFilesView: () => null }))
 vi.mock('../SessionReviewerPanel', () => ({ SessionReviewerPanel: () => null }))

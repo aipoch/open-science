@@ -7,6 +7,28 @@ import type { ActivePlanProjection } from '../../../../../shared/session-plan/co
 import { PlanPreviewSurface, PlanProgressChip, WorkspacePlanCard } from './SessionPlanSurfaces'
 import { isPlanProgressVisible } from './plan-progress'
 
+// Mock react-i18next to return English keys directly (natural-language keys)
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) => {
+      // Handle interpolation
+      let result = key
+      if (options) {
+        Object.entries(options).forEach(([k, v]) => {
+          result = result.replace(`{{${k}}}`, String(v))
+        })
+      }
+      // Handle pluralization with defaultValue_one
+      if (options?.count === 1 && options?.defaultValue_one) {
+        result = String(options.defaultValue_one)
+        result = result.replace('{{count}}', String(options.count))
+      }
+      return result
+    },
+    i18n: { language: 'en' }
+  })
+}))
+
 afterEach(cleanup)
 
 const projection: ActivePlanProjection = {
@@ -255,7 +277,7 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByText('PHASE 2')).toBeTruthy()
     expect(
       screen.getByText(
-        'Complete two phases in order. Delegations within a phase may run in parallel.'
+        'Complete 2 phases in order. Delegations within a phase may run in parallel.'
       )
     ).toBeTruthy()
     expect(screen.getByText('Data intake')).toBeTruthy()
