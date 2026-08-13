@@ -13,6 +13,13 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
 
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+    i18n: { language: 'en' }
+  })
+}))
+
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
   PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>

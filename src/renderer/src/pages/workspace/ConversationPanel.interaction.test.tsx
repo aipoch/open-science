@@ -22,6 +22,26 @@ import type { DelegatedQuestionRequest } from '../../../../shared/session-persis
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+// Mock react-i18next to return English keys directly (natural-language keys)
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) => {
+      let result = key
+      if (options) {
+        Object.entries(options).forEach(([k, v]) => {
+          result = result.replace(`{{${k}}}`, String(v))
+        })
+      }
+      if (options?.count === 1 && options?.defaultValue_one) {
+        result = String(options.defaultValue_one)
+        result = result.replace('{{count}}', String(options.count))
+      }
+      return result
+    },
+    i18n: { language: 'en' }
+  })
+}))
+
 // Child regions pull in stores/UI unrelated to composer intake, so stub them to plain markers.
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: PropsWithChildren): React.JSX.Element => <div>{children}</div>
