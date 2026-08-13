@@ -78,6 +78,8 @@ const createHarness = (
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
   sendPrompt: ReturnType<typeof vi.fn>
+  hasLiveSession: ReturnType<typeof vi.fn>
+  session: PersistedChatSession
   request: {
     projectId: string
     sessionId: string
@@ -91,10 +93,12 @@ const createHarness = (
   mutate?.(session)
   prepareControlTurn(session)
   const sendPrompt = vi.fn(async () => undefined)
+  const hasLiveSession = vi.fn(() => true)
   const snapshot = { status: 'connected' } as never
   const workflows = createAcpHandlerWorkflows(
     {
       getSnapshot: () => snapshot,
+      hasLiveSession,
       resumeSession: vi.fn(),
       sendPrompt,
       getLatestUserPrompt: vi.fn(),
@@ -110,6 +114,8 @@ const createHarness = (
   return {
     workflows,
     sendPrompt,
+    hasLiveSession,
+    session,
     request: {
       projectId: session.projectId,
       sessionId: session.id,
@@ -177,6 +183,41 @@ describe('ACP Save as skill workflow', () => {
     )
   })
 
+  it('accepts the exact prepared control after a live provider adoption normalizes its read', async () => {
+    const harness = createHarness()
+    harness.session.status = 'error'
+    harness.session.activeRun = undefined
+    harness.session.resumeRecovery = {
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: harness.request.promptMessageId
+    }
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).resolves.toEqual({
+      status: 'connected'
+    })
+
+    expect(harness.hasLiveSession).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(harness.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a normalized control when its provider Session is no longer live', async () => {
+    const harness = createHarness()
+    harness.session.status = 'error'
+    harness.session.activeRun = undefined
+    harness.session.resumeRecovery = {
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: harness.request.promptMessageId
+    }
+    harness.hasLiveSession.mockReturnValue(false)
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
+      'requires a prepared Session'
+    )
+    expect(harness.sendPrompt).not.toHaveBeenCalled()
+  })
+
   it('binds context-reset hidden-turn provenance to the fresh runtime segment', async () => {
     const harness = createHarness((session) => {
       session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
@@ -194,11 +235,65 @@ describe('ACP Save as skill workflow', () => {
 
     expect(harness.sendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
+        contextReset: true,
         provenanceContext: expect.objectContaining({
           runtimeSegmentId: 'runtime-segment-after-context-reset'
         })
       })
     )
+  })
+
+  it('filters earlier hidden Save as skill controls from replay', async () => {
+    const harness = createHarness((session) => {
+      const messages = [
+        ...session.messages,
+        {
+          id: 'previous-save-control',
+          role: 'user' as const,
+          content: 'Save as skill',
+          status: 'complete' as const,
+          eventIds: [],
+          turnIntent: 'save-as-skill' as const,
+          createdAt: 3,
+          updatedAt: 3
+        },
+        {
+          id: 'previous-save-answer',
+          role: 'agent' as const,
+          content: 'The earlier evaluation found no reusable workflow.',
+          status: 'complete' as const,
+          eventIds: [],
+          responseToMessageId: 'previous-save-control',
+          createdAt: 4,
+          completedAt: 4,
+          updatedAt: 4
+        }
+      ]
+      session.messages = messages
+      session.conversationGraph = materializeSessionConversationGraph({
+        ...session,
+        conversationGraph: undefined,
+        messages
+      }).conversationGraph
+    })
+
+    await harness.workflows.saveAsSkill(harness.request)
+
+    const preamble = harness.sendPrompt.mock.calls[0]?.[0].resumeFallback?.historyPreamble
+    expect(preamble).toContain('The earlier evaluation found no reusable workflow.')
+    expect(preamble).not.toContain('Save as skill')
+  })
+
+  it('fails closed when conversation history cannot fit the replay budget', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.workflows.saveAsSkill({
+        ...harness.request,
+        historyReplay: { target: 'claude-code', contextWindow: 1, contextReset: true }
+      })
+    ).rejects.toThrow('conversation history could not be replayed')
+    expect(harness.sendPrompt).not.toHaveBeenCalled()
   })
 
   it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget]>([

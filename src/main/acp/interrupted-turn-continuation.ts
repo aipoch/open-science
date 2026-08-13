@@ -128,10 +128,7 @@ const buildContinuationRequest = (
   const contextReset = request.contextReset
   const replayMessages = contextReset
     ? session.messages
-        .filter(
-          (message) =>
-            prompt.turnIntent !== 'save-as-skill' || message.id !== request.promptMessageId
-        )
+        .filter((message) => message.turnIntent !== 'save-as-skill')
         .map((message) =>
           message.role === 'agent' &&
           message.responseToMessageId === request.promptMessageId &&
@@ -152,6 +149,9 @@ const buildContinuationRequest = (
           contextReset.supportsImageInput
         )
       : undefined
+  if (contextReset && !replay) {
+    throw new Error('Interrupted conversation history could not be replayed after context reset.')
+  }
   const attachments = contextReset
     ? undefined
     : livePrompt?.attachments?.length

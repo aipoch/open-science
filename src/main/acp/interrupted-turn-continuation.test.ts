@@ -223,6 +223,10 @@ describe('continueInterruptedTurn', () => {
       const durable = session([
         message('prompt-0', 'user', 'Collect baseline evidence'),
         message('answer-0', 'agent', 'Baseline is ready', { responseToMessageId: 'prompt-0' }),
+        message('save-control-0', 'user', 'Save as skill', { turnIntent: 'save-as-skill' }),
+        message('save-answer-0', 'agent', 'No reusable workflow was found', {
+          responseToMessageId: 'save-control-0'
+        }),
         message('prompt-1', 'user', 'Compare the cohorts'),
         message('answer-1', 'agent', 'I loaded both cohort tables', {
           responseToMessageId: 'prompt-1',
@@ -266,9 +270,48 @@ describe('continueInterruptedTurn', () => {
       expect(request.historyPreamble).toContain('Collect baseline evidence')
       expect(request.historyPreamble).toContain('Compare the cohorts')
       expect(request.historyPreamble).toContain('I loaded both cohort tables')
+      expect(request.historyPreamble).not.toContain('Save as skill')
       expect(request.text).not.toContain('Compare the cohorts')
     }
   )
+
+  it('fails closed after context reset when only hidden controls remain for replay', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
+    ])
+    durable.conversationGraph!.runtimeSegments.push({
+      id: 'runtime-resumed',
+      agentFrameId: durable.conversationGraph!.activeFrameId,
+      frameworkId: 'claude-code',
+      startedAt: 2
+    })
+    const startContinuation = vi.fn()
+
+    await expect(
+      continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable)
+        },
+        {
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          promptMessageId: 'prompt-1',
+          contextReset: {
+            runtimeSegmentId: 'runtime-resumed',
+            historyReplayTarget: 'claude-code',
+            contextWindow: 100_000,
+            supportsImageInput: false
+          }
+        }
+      )
+    ).rejects.toThrow('history could not be replayed after context reset')
+    expect(startContinuation).not.toHaveBeenCalled()
+  })
 
   it('does not dispatch a second continuation while the recovered prompt is already running', async () => {
     const durable = session([message('prompt-1', 'user', 'Keep going')])

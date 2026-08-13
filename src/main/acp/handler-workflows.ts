@@ -45,6 +45,7 @@ const SAVE_AS_SKILL_REPLAY_TARGETS = new Set<HistoryReplayTarget>([
 
 type AcpHandlerWorkflowRuntime = {
   getSnapshot(): AcpStateSnapshot
+  hasLiveSession(projectId: string, sessionId: string): boolean
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
@@ -261,7 +262,18 @@ const createAcpHandlerWorkflows = (
       if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
         throw new Error('Save as skill Session is unavailable.')
       }
-      if (session.resumeRecovery || session.pendingHistoryReplay) {
+      const preparedControlRun =
+        session.status === 'running' &&
+        session.activeRun?.promptMessageId === request.promptMessageId
+      const recoveredPreparedControlRun =
+        session.resumeRecovery?.kind === 'resume-required' &&
+        session.resumeRecovery.promptMessageId === request.promptMessageId &&
+        !session.pendingHistoryReplay &&
+        runtime.hasLiveSession(session.projectId, session.id)
+      if (
+        session.pendingHistoryReplay ||
+        (session.resumeRecovery && !recoveredPreparedControlRun)
+      ) {
         throw new Error('Save as skill requires a prepared Session.')
       }
       if (hasCurrentRunningDelegatedAttempt(session)) {
@@ -281,8 +293,7 @@ const createAcpHandlerWorkflows = (
       const controlMessage = activeBranchMessages.at(-1)
       const previousMessage = activeBranchMessages.at(-2)
       if (
-        session.status !== 'running' ||
-        session.activeRun?.promptMessageId !== request.promptMessageId ||
+        (!preparedControlRun && !recoveredPreparedControlRun) ||
         controlMessage?.id !== request.promptMessageId ||
         controlMessage.role !== 'user' ||
         controlMessage.turnIntent !== 'save-as-skill' ||
@@ -292,32 +303,33 @@ const createAcpHandlerWorkflows = (
         throw new Error('Save as skill requires a prepared control turn.')
       }
       const historyReplay = buildSessionHistoryReplay(
-        activeBranchMessages.slice(0, -1),
+        activeBranchMessages
+          .slice(0, -1)
+          .filter((message) => message.turnIntent !== 'save-as-skill'),
         replayPolicy.descriptor,
         session.projectId,
         replayPolicy.supportsImageInput
       )
+      if (!historyReplay) {
+        throw new Error('Save as skill conversation history could not be replayed.')
+      }
       await runtime.sendPrompt({
         sessionId: session.id,
         text: SAVE_AS_SKILL_PROMPT,
         suppressUserMessage: true,
         forcedSkillIds: ['customize'],
         provenanceContext: getActiveConversationContext(graph, request.promptMessageId),
-        ...(historyReplay
+        resumeFallback: {
+          historyPreamble: historyReplay.historyPreamble,
+          historyAttachments: historyReplay.historyAttachments,
+          historyImages: historyReplay.historyImages
+        },
+        ...(replayPolicy.contextReset
           ? {
-              resumeFallback: {
-                historyPreamble: historyReplay.historyPreamble,
-                historyAttachments: historyReplay.historyAttachments,
-                historyImages: historyReplay.historyImages
-              },
-              ...(replayPolicy.contextReset
-                ? {
-                    historyPreamble: historyReplay.historyPreamble,
-                    historyAttachments: historyReplay.historyAttachments,
-                    historyImages: historyReplay.historyImages,
-                    contextReset: true
-                  }
-                : {})
+              historyPreamble: historyReplay.historyPreamble,
+              historyAttachments: historyReplay.historyAttachments,
+              historyImages: historyReplay.historyImages,
+              contextReset: true
             }
           : {})
       })
