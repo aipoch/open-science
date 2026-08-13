@@ -114,7 +114,6 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
                   sshAliases.length === 0 ? t('No hosts in ~/.ssh/config') : t('Pick a host…')
                 }
               />
-              />
             </SelectTrigger>
             <SelectContent>
               {sshAliases.map((option) => (

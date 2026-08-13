@@ -9,7 +9,23 @@ import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, options?: Record<string, unknown>) => {
+      if (!options) return key
+      let result = key
+      // Handle count-based pluralization
+      if (typeof options.count === 'number') {
+        const template = options.count === 1 && options.defaultValue_one ? String(options.defaultValue_one) : key
+        result = template.replace('{{count}}', String(options.count))
+      }
+      // Handle all other interpolations
+      Object.keys(options).forEach(optKey => {
+        if (optKey !== 'defaultValue_one' && optKey !== 'count') {
+          const placeholder = `{{${optKey}}}`
+          result = result.replace(placeholder, String(options[optKey]))
+        }
+      })
+      return result
+    },
     i18n: { language: 'en' }
   })
 }))
