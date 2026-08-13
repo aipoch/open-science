@@ -12,7 +12,7 @@
 //  - privileged mutations (delete and switch): explain the impending action, then
 //    invoke the SDK — the standard permission card is the single authorization point.
 
-import type { AgentReadModel } from '../agents-service'
+import type { AgentReadModel, ConnectorReadModel } from '../agents-service'
 
 // ---------------------------------------------------------------------------
 // Scope clarification (design.md §5: never silently grant Full)
@@ -60,19 +60,29 @@ export type ReviewedTargetState = {
   revision: number
 }
 
-export const buildReviewedTarget = (profile: AgentReadModel): ReviewedTargetState => ({
-  name: profile.name,
-  displayName: profile.displayName,
-  description: profile.description,
-  systemPrompt: profile.systemPrompt,
-  iconKey: profile.iconKey,
-  colorKey: profile.colorKey,
-  enabled: profile.enabled,
-  capabilityMode: profile.capabilityMode,
-  skillIds: profile.selectedCapabilities.skillIds,
-  connectorIds: profile.selectedCapabilities.connectorIds,
-  revision: profile.revision
-})
+export const buildReviewedTarget = (
+  profile: AgentReadModel,
+  connectorCatalog: ConnectorReadModel[] = []
+): ReviewedTargetState => {
+  const connectorNameById = new Map(connectorCatalog.map(({ id, name }) => [id, name]))
+  return {
+    name: profile.name,
+    displayName: profile.displayName,
+    description: profile.description,
+    systemPrompt: profile.systemPrompt,
+    iconKey: profile.iconKey,
+    colorKey: profile.colorKey,
+    enabled: profile.enabled,
+    capabilityMode: profile.capabilityMode,
+    skillIds: profile.selectedCapabilities.skillIds,
+    // The profile persists local IDs, including Custom Connector UUIDs. Reviews and SDK mutation
+    // inputs use immutable public names so internal UUIDs never reach ordinary user-facing prose.
+    connectorIds: profile.selectedCapabilities.connectorIds.map(
+      (id) => connectorNameById.get(id) ?? id
+    ),
+    revision: profile.revision
+  }
+}
 
 // A textual review of the complete target state for the ordinary-mutation chat review. It shows every
 // field the checklist requires AND states that Connector tool scope is not configured (design.md §7,
