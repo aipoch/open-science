@@ -124,6 +124,8 @@ describe('workspace Save as skill owner', () => {
     'replays history after resume only when contextReset is $contextReset',
     async ({ contextReset, expectedContextReset }) => {
       useSessionStore.setState({ sessions: [session] })
+      const originalRuntimeSegmentId = session.conversationGraph?.runtimeSegments.at(-1)?.id
+      const originalRuntimeSegmentCount = session.conversationGraph?.runtimeSegments.length ?? 0
       const saveAsSkill = vi.fn(async () => undefined)
       Object.defineProperty(window, 'api', {
         configurable: true,
@@ -159,6 +161,16 @@ describe('workspace Save as skill owner', () => {
           messageBranchId: frame.activeBranchId
         })
       )
+
+      const persistedSession = useSessionStore.getState().sessions[0]
+      const persistedRuntimeSegments = persistedSession?.conversationGraph?.runtimeSegments ?? []
+      const persistedRuntimeSegmentId = persistedRuntimeSegments.at(-1)?.id
+      expect(persistedRuntimeSegmentId === originalRuntimeSegmentId).toBe(!contextReset)
+      expect(persistedRuntimeSegments).toHaveLength(
+        originalRuntimeSegmentCount + (contextReset ? 1 : 0)
+      )
+      expect(persistedSession).toMatchObject({ status: 'idle' })
+      expect(persistedSession?.activeRun).toBeUndefined()
 
       expect(saveAsSkill).toHaveBeenCalledWith({
         projectId: session.projectId,

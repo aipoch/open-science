@@ -94,6 +94,29 @@ export const createSessionMessageGraphOwner = <
   set: StoreApi<State>['setState'],
   get: StoreApi<State>['getState']
 ): SessionMessageGraphActions => ({
+  openContextResetRuntimeSegment: (sessionId) => {
+    let runtimeSegmentId: string | undefined
+    const now = Date.now()
+    set({
+      sessions: get().sessions.map((session) => {
+        if (session.id !== sessionId) return session
+        const conversationGraph = synchronizeSessionGraph(
+          session,
+          session.messages,
+          now,
+          session.agentFrameworkId ?? 'claude-code',
+          session.agentBackendId,
+          session.agentModel,
+          true
+        )
+        runtimeSegmentId = conversationGraph.runtimeSegments
+          .filter((segment) => segment.agentFrameId === conversationGraph.activeFrameId)
+          .at(-1)?.id
+        return { ...session, conversationGraph, updatedAt: now }
+      })
+    } as Partial<State>)
+    return runtimeSegmentId
+  },
   appendRoutedUserMessage: ({
     sessionId,
     messageId,

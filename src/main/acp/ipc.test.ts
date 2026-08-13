@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpCompactSessionRequest, AcpResumeSessionRequest } from '../../shared/acp'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
   beginMigration,
@@ -142,6 +143,7 @@ const registerWithFakes = (overrides?: {
   provisionedConnectorSkillNames?: string[]
   customMcpServers?: Array<{ id: string; name: string }>
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
+  interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
 }): AcpTestOptions => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -187,7 +189,8 @@ const registerWithFakes = (overrides?: {
       runtime,
       createSessionWorkflow,
       options.taskNotifications,
-      overrides?.archiveAvailability
+      overrides?.archiveAvailability,
+      overrides?.interruptedTurnSessions
     )
   )
   return options as AcpTestOptions
@@ -247,6 +250,83 @@ it('routes delegated question responses to their owner without touching Main eli
 })
 
 describe('ACP module transport seam', () => {
+  it('holds archive admission for the direct Electron Save as skill path', async () => {
+    const session = materializeSessionConversationGraph({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Build a reusable workflow.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'answer-1',
+          role: 'agent',
+          content: 'Done.',
+          status: 'complete',
+          eventIds: [],
+          responseToMessageId: 'prompt-1',
+          createdAt: 2,
+          completedAt: 2,
+          updatedAt: 2
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const graph = session.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    let admissionActive = false
+    const admitted = vi.fn()
+    registerWithFakes({
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          projectId: string,
+          sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => {
+          admitted(projectId, sessionId)
+          admissionActive = true
+          try {
+            return await operation()
+          } finally {
+            admissionActive = false
+          }
+        },
+        withSessionAvailableById: async <Result>(
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation()
+      },
+      interruptedTurnSessions: { loadSession: vi.fn(async () => session) }
+    })
+    sendPrompt.mockImplementationOnce(async () => {
+      expect(admissionActive).toBe(true)
+    })
+
+    await handlers.get('acp:save-as-skill')?.(
+      {},
+      {
+        projectId: session.projectId,
+        sessionId: session.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId,
+        historyReplay: { target: 'claude-code' }
+      }
+    )
+
+    expect(admitted).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(admissionActive).toBe(false)
+  })
+
   it('pins the complete ACP call and event inventory shared by Electron and Web', () => {
     registerWithFakes()
 

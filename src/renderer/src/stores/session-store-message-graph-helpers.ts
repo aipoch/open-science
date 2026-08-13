@@ -97,6 +97,7 @@ export type SessionMessageGraphActions = {
   reviseSessionFromElicitation: (sessionId: string, activityId: string) => boolean
   setElicitationHistoryReplayRequest: (sessionId: string, requestId?: string) => void
   activateMessageBranch: (sessionId: string, branchId: string) => void
+  openContextResetRuntimeSegment: (sessionId: string) => string | undefined
 }
 
 let runtimeSegmentSequence = 0

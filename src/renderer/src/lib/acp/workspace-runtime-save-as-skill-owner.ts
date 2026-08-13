@@ -51,6 +51,12 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         ) {
           throw new Error('Save as skill stopped because the active conversation branch changed.')
         }
+        if (
+          contextReset &&
+          !useSessionStore.getState().openContextResetRuntimeSegment(session.id)
+        ) {
+          throw new Error('Save as skill Runtime Segment could not be created.')
+        }
         await flushSessionPersistence()
         await window.api.acp.saveAsSkill({
           ...request,

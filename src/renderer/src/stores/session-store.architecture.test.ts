@@ -932,6 +932,7 @@ describe('Session Store architecture', () => {
       'bindPendingSession',
       'branchInNewSession',
       'clearPendingContextReplay',
+      'openContextResetRuntimeSegment',
       'removeMessage',
       'reviseSessionFromElicitation',
       'setElicitationHistoryReplayRequest',

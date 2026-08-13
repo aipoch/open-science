@@ -224,15 +224,7 @@ const registerAcpCommands = (
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can save a Session as a Skill.')
         }
-        const request = invocation.args[0]
-        const save = (): Promise<AcpStateSnapshot> => dependencies.workflows.saveAsSkill(request)
-        return dependencies.archiveAvailability
-          ? dependencies.archiveAvailability.withSessionAvailable(
-              request.projectId,
-              request.sessionId,
-              save
-            )
-          : save()
+        return dependencies.workflows.saveAsSkill(invocation.args[0])
       },
       'acp:cancel': (invocation) => dependencies.runtime.cancelPrompt(invocation.args[0]),
       'acp:delete-session': (invocation) => dependencies.runtime.deleteSession(invocation.args[0]),

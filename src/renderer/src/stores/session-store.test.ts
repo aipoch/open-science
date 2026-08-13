@@ -4392,6 +4392,7 @@ describe('session store public contract', () => {
         'markDisconnected',
         'markResumed',
         'markSpecialistSwitchResetRequired',
+        'openContextResetRuntimeSegment',
         'prepareInterruptedTurnContinuation',
         'recordArtifactError',
         'removeMessage',

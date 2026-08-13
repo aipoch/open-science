@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { ensureConversationRuntimeSegment } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
   type PersistedChatSession
@@ -43,7 +44,8 @@ const createSession = (): PersistedChatSession =>
   })
 
 const createHarness = (
-  mutate?: (session: ReturnType<typeof createSession>) => void
+  mutate?: (session: ReturnType<typeof createSession>) => void,
+  archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
   sendPrompt: ReturnType<typeof vi.fn>
@@ -69,7 +71,7 @@ const createHarness = (
     },
     { create: vi.fn() } as never,
     undefined,
-    undefined,
+    archiveAvailability,
     { loadSession: vi.fn(async () => session) }
   )
   const graph = session.conversationGraph!
@@ -88,6 +90,35 @@ const createHarness = (
 }
 
 describe('ACP Save as skill workflow', () => {
+  it('holds archive admission until the hidden turn is accepted', async () => {
+    let admissionActive = false
+    const admitted = vi.fn()
+    const harness = createHarness(undefined, {
+      withSessionAvailable: async <Result>(
+        projectId: string,
+        sessionId: string,
+        operation: () => Promise<Result>
+      ): Promise<Result> => {
+        admitted(projectId, sessionId)
+        admissionActive = true
+        try {
+          return await operation()
+        } finally {
+          admissionActive = false
+        }
+      },
+      withSessionAvailableById: vi.fn()
+    })
+    harness.sendPrompt.mockImplementationOnce(async () => {
+      expect(admissionActive).toBe(true)
+    })
+
+    await harness.workflows.saveAsSkill(harness.request)
+
+    expect(admitted).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(admissionActive).toBe(false)
+  })
+
   it('starts one hidden Customize turn on the exact durable conversation branch', async () => {
     const harness = createHarness()
 
@@ -109,6 +140,30 @@ describe('ACP Save as skill workflow', () => {
         }),
         resumeFallback: expect.objectContaining({
           historyPreamble: expect.stringContaining('Build a reusable analysis workflow.')
+        })
+      })
+    )
+  })
+
+  it('binds context-reset hidden-turn provenance to the fresh runtime segment', async () => {
+    const harness = createHarness((session) => {
+      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+        id: 'runtime-segment-after-context-reset',
+        frameworkId: 'claude-code',
+        startedAt: 3,
+        forceNew: true
+      })
+    })
+
+    await harness.workflows.saveAsSkill({
+      ...harness.request,
+      historyReplay: { target: 'claude-code', contextReset: true }
+    })
+
+    expect(harness.sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provenanceContext: expect.objectContaining({
+          runtimeSegmentId: 'runtime-segment-after-context-reset'
         })
       })
     )

@@ -252,70 +252,78 @@ const createAcpHandlerWorkflows = (
   },
 
   async saveAsSkill(request): Promise<AcpStateSnapshot> {
-    if (!interruptedTurnSessions) throw new Error('Save as skill is not available.')
-    const replayPolicy = resolveSaveAsSkillReplay(request.historyReplay)
-    const session = await interruptedTurnSessions.loadSession(request.projectId, request.sessionId)
-    if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
-      throw new Error('Save as skill Session is unavailable.')
+    const save = async (): Promise<AcpStateSnapshot> => {
+      if (!interruptedTurnSessions) throw new Error('Save as skill is not available.')
+      const replayPolicy = resolveSaveAsSkillReplay(request.historyReplay)
+      const session = await interruptedTurnSessions.loadSession(
+        request.projectId,
+        request.sessionId
+      )
+      if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
+        throw new Error('Save as skill Session is unavailable.')
+      }
+      if (
+        session.status !== 'idle' ||
+        session.activeRun ||
+        session.resumeRecovery ||
+        session.pendingHistoryReplay
+      ) {
+        throw new Error('Save as skill requires an idle Session.')
+      }
+      if (hasCurrentRunningDelegatedAttempt(session)) {
+        throw new Error('Save as skill is unavailable while delegated work is still running.')
+      }
+      const graph = session.conversationGraph
+      const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+      if (
+        !graph ||
+        !frame ||
+        frame.id !== request.agentFrameId ||
+        frame.activeBranchId !== request.messageBranchId
+      ) {
+        throw new Error('Save as skill stopped because the active conversation branch changed.')
+      }
+      const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
+      const lastMessage = activeBranchMessages.at(-1)
+      if (lastMessage?.role !== 'agent' || lastMessage.status !== 'complete') {
+        throw new Error('Save as skill requires a completed Agent turn.')
+      }
+      const promptMessageId = `message-${randomUUID()}`
+      const historyReplay = buildSessionHistoryReplay(
+        activeBranchMessages,
+        replayPolicy.descriptor,
+        session.projectId,
+        replayPolicy.supportsImageInput
+      )
+      await runtime.sendPrompt({
+        sessionId: session.id,
+        text: SAVE_AS_SKILL_PROMPT,
+        suppressUserMessage: true,
+        forcedSkillIds: ['customize'],
+        provenanceContext: getActiveConversationContext(graph, promptMessageId),
+        ...(historyReplay
+          ? {
+              resumeFallback: {
+                historyPreamble: historyReplay.historyPreamble,
+                historyAttachments: historyReplay.historyAttachments,
+                historyImages: historyReplay.historyImages
+              },
+              ...(replayPolicy.contextReset
+                ? {
+                    historyPreamble: historyReplay.historyPreamble,
+                    historyAttachments: historyReplay.historyAttachments,
+                    historyImages: historyReplay.historyImages,
+                    contextReset: true
+                  }
+                : {})
+            }
+          : {})
+      })
+      return runtime.getSnapshot()
     }
-    if (
-      session.status !== 'idle' ||
-      session.activeRun ||
-      session.resumeRecovery ||
-      session.pendingHistoryReplay
-    ) {
-      throw new Error('Save as skill requires an idle Session.')
-    }
-    if (hasCurrentRunningDelegatedAttempt(session)) {
-      throw new Error('Save as skill is unavailable while delegated work is still running.')
-    }
-    const graph = session.conversationGraph
-    const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
-    if (
-      !graph ||
-      !frame ||
-      frame.id !== request.agentFrameId ||
-      frame.activeBranchId !== request.messageBranchId
-    ) {
-      throw new Error('Save as skill stopped because the active conversation branch changed.')
-    }
-    const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
-    const lastMessage = activeBranchMessages.at(-1)
-    if (lastMessage?.role !== 'agent' || lastMessage.status !== 'complete') {
-      throw new Error('Save as skill requires a completed Agent turn.')
-    }
-    const promptMessageId = `message-${randomUUID()}`
-    const historyReplay = buildSessionHistoryReplay(
-      activeBranchMessages,
-      replayPolicy.descriptor,
-      session.projectId,
-      replayPolicy.supportsImageInput
-    )
-    await runtime.sendPrompt({
-      sessionId: session.id,
-      text: SAVE_AS_SKILL_PROMPT,
-      suppressUserMessage: true,
-      forcedSkillIds: ['customize'],
-      provenanceContext: getActiveConversationContext(graph, promptMessageId),
-      ...(historyReplay
-        ? {
-            resumeFallback: {
-              historyPreamble: historyReplay.historyPreamble,
-              historyAttachments: historyReplay.historyAttachments,
-              historyImages: historyReplay.historyImages
-            },
-            ...(replayPolicy.contextReset
-              ? {
-                  historyPreamble: historyReplay.historyPreamble,
-                  historyAttachments: historyReplay.historyAttachments,
-                  historyImages: historyReplay.historyImages,
-                  contextReset: true
-                }
-              : {})
-          }
-        : {})
-    })
-    return runtime.getSnapshot()
+    return archiveAvailability
+      ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, save)
+      : save()
   },
 
   async sendPrompt(request): Promise<AcpStateSnapshot> {
