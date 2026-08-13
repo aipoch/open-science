@@ -126,9 +126,8 @@ const UpdateCapsule = ({
             aria-label={label}
             className={cn(
               'update-reminder relative isolate inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-primary text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transform-none motion-reduce:transition-none',
-              isSession
-                ? '[@media(pointer:coarse)]:size-11'
-                : 'min-w-8 gap-1.5 px-2 text-xs font-semibold whitespace-nowrap sm:w-auto sm:px-2.5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11',
+              !isSession &&
+                'min-w-8 gap-1.5 px-2 text-xs font-semibold whitespace-nowrap sm:w-auto sm:px-2.5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11',
               hasError && 'bg-danger-000 text-white hover:bg-danger-000/90',
               className
             )}

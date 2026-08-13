@@ -120,6 +120,7 @@ describe('UpdateCapsule', () => {
     expect(button?.textContent).toBe('')
     expect(button?.classList).toContain('size-8')
     expect(button?.classList).toContain('shrink-0')
+    expect(button?.classList).not.toContain('[@media(pointer:coarse)]:size-11')
     expect(button?.querySelector('.update-reminder-sheen')).not.toBeNull()
 
     await act(async () => button?.focus())

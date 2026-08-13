@@ -40,8 +40,8 @@ type PanelAnimationDirection = 'opening' | 'closing'
 type AnimatedResizablePanelOptions = {
   panelState: ResizablePanelState
   defaultOpenSize: number
-  minOpenSize: number
-  minOpenSizeCss?: string
+  minOpenPercentage: number
+  layoutMinSize?: string
   requestVersion?: number
   onPanelStateChange: (state: ResizablePanelState) => void
   onPixelWidthChange?: (width: number) => void
@@ -59,8 +59,8 @@ type AnimatedResizablePanel = {
 const useAnimatedResizablePanel = ({
   panelState,
   defaultOpenSize,
-  minOpenSize,
-  minOpenSizeCss,
+  minOpenPercentage,
+  layoutMinSize,
   requestVersion = 0,
   onPanelStateChange,
   onPixelWidthChange,
@@ -197,10 +197,10 @@ const useAnimatedResizablePanel = ({
       return
     }
 
-    animatePanelSize(Math.max(lastOpenSizeRef.current, minOpenSize), 'opening', {
+    animatePanelSize(Math.max(lastOpenSizeRef.current, minOpenPercentage), 'opening', {
       animate: shouldAnimate
     })
-  }, [animatePanelSize, minOpenSize, panelState, requestVersion])
+  }, [animatePanelSize, minOpenPercentage, panelState, requestVersion])
 
   useEffect(
     () => () => {
@@ -216,7 +216,9 @@ const useAnimatedResizablePanel = ({
     panelRef,
     separatorRef,
     // Animation targets stay percentage-based while the layout may enforce a true CSS length floor.
-    minSize: isMinSizeRelaxed ? PANEL_COLLAPSED_SIZE_CSS : (minOpenSizeCss ?? `${minOpenSize}%`),
+    minSize: isMinSizeRelaxed
+      ? PANEL_COLLAPSED_SIZE_CSS
+      : (layoutMinSize ?? `${minOpenPercentage}%`),
     onResize
   }
 }
@@ -287,8 +289,8 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
   const sidebar = useAnimatedResizablePanel({
     panelState: sidebarState,
     defaultOpenSize: SIDEBAR_PANEL_DEFAULT_SIZE,
-    minOpenSize: SIDEBAR_PANEL_MIN_OPEN_SIZE,
-    minOpenSizeCss: SIDEBAR_PANEL_MIN_OPEN_SIZE_CSS,
+    minOpenPercentage: SIDEBAR_PANEL_MIN_OPEN_SIZE,
+    layoutMinSize: SIDEBAR_PANEL_MIN_OPEN_SIZE_CSS,
     onPanelStateChange: setSidebarState,
     onPixelWidthChange: syncSidebarTogglePosition,
     collapseFocusTargetRef: sidebarToggleRef
@@ -300,7 +302,7 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
   const preview = useAnimatedResizablePanel({
     panelState: previewPort.state,
     defaultOpenSize: PREVIEW_PANEL_DEFAULT_SIZE,
-    minOpenSize: PREVIEW_PANEL_MIN_OPEN_SIZE,
+    minOpenPercentage: PREVIEW_PANEL_MIN_OPEN_SIZE,
     requestVersion: previewPort.openRequestVersion,
     onPanelStateChange: previewPort.syncState,
     collapseFocusTargetRef: previewToggleRef
