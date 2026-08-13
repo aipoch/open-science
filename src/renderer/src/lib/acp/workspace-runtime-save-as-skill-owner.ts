@@ -65,7 +65,8 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         const controlMessage = useSessionStore.getState().appendUserMessage({
           sessionId: session.id,
           content: 'Save as skill',
-          turnIntent: 'save-as-skill'
+          turnIntent: 'save-as-skill',
+          agentModel: session.agentModel
         })
         if (!controlMessage) throw new Error('Save as skill control message could not be created.')
         controlMessageId = controlMessage.messageId

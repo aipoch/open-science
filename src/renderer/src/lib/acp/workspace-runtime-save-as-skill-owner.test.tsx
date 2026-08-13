@@ -20,6 +20,7 @@ const session = materializeSessionConversationGraph({
   title: 'Reusable workflow',
   cwd: '/workspace',
   status: 'idle',
+  agentModel: 'selected-model',
   messages: [
     {
       id: 'prompt-1',
@@ -219,6 +220,7 @@ describe('workspace Save as skill owner', () => {
       })
       expect(persistedSession).toMatchObject({
         status: 'running',
+        agentModel: 'selected-model',
         activeRun: { promptMessageId: controlMessage?.id }
       })
 
