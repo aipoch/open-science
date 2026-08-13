@@ -5,6 +5,25 @@ import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
 import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
 
 describe('ACP runtime event normalization', () => {
+  it('maps session info titles to structured control data without transcript text or usage', () => {
+    const event = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: { sessionUpdate: 'session_info_update', title: 'Evidence synthesis' }
+      },
+      'event-title',
+      1710000000000
+    )
+
+    expect(event).toMatchObject({
+      kind: 'system',
+      sessionId: 'session-1',
+      sessionTitleUpdate: { title: 'Evidence synthesis' }
+    })
+    expect(event.text).toBeUndefined()
+    expect(event.turnUsage).toBeUndefined()
+  })
+
   it('maps assistant text chunks into readable runtime events', () => {
     const notification: SessionNotification = {
       sessionId: 'session-1',

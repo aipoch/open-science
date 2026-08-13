@@ -118,6 +118,99 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
+  it('routes a changed OpenCode native title through ACP Session info projection', async () => {
+    const api = { baseUrl: 'https://usage.example/v1', authorization: 'Bearer generation-1' }
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'provider-1', title: 'Explain ACP naming' }), {
+          status: 200
+        })
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'provider-1', title: 'ACP Naming Explained' }), {
+          status: 200
+        })
+      )
+    const routeNotification = vi.fn()
+    const session = {
+      sessionId: 'provider-1',
+      prompt: vi.fn(async () => undefined),
+      nextUpdate: vi.fn(async () => stop({ stopReason: 'end_turn' }))
+    } as unknown as ProviderPromptExecutionInput['session']
+    const executor = new AcpProviderPromptExecutor({
+      backendGeneration: { openCodeUsageApi: () => api },
+      opencodeUsageFetch: fetchImpl
+    })
+
+    await executor.execute({
+      session,
+      content: 'prompt',
+      cwd: '/workspace',
+      frameworkId: 'opencode',
+      captureFrameworkTitle: true,
+      isCurrent: () => true,
+      beforeDispatch: async () => 'active',
+      captureStop: () => true,
+      onAccepted: () => undefined,
+      routeNotification
+    })
+
+    expect(routeNotification).toHaveBeenCalledWith({
+      sessionId: 'provider-1',
+      update: {
+        sessionUpdate: 'session_info_update',
+        title: 'ACP Naming Explained'
+      }
+    })
+  })
+
+  it('does not route an OpenCode title after its runtime generation is superseded', async () => {
+    const api = { baseUrl: 'https://usage.example/v1', authorization: 'Bearer generation-1' }
+    let current = true
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: 'provider-1', title: 'Prompt fallback' }), {
+          status: 200
+        })
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockImplementationOnce(async () => {
+        current = false
+        return new Response(JSON.stringify({ id: 'provider-1', title: 'Stale native title' }), {
+          status: 200
+        })
+      })
+    const routeNotification = vi.fn()
+    const executor = new AcpProviderPromptExecutor({
+      backendGeneration: { openCodeUsageApi: () => api },
+      opencodeUsageFetch: fetchImpl
+    })
+
+    await executor.execute({
+      session: {
+        sessionId: 'provider-1',
+        prompt: vi.fn(async () => undefined),
+        nextUpdate: vi.fn(async () => stop({ stopReason: 'end_turn' }))
+      } as unknown as ProviderPromptExecutionInput['session'],
+      content: 'prompt',
+      cwd: '/workspace',
+      frameworkId: 'opencode',
+      captureFrameworkTitle: true,
+      isCurrent: () => current,
+      beforeDispatch: async () => 'active',
+      captureStop: () => true,
+      onAccepted: () => undefined,
+      routeNotification
+    })
+
+    expect(routeNotification).not.toHaveBeenCalled()
+  })
+
   it('captures one OpenCode generation API for both usage snapshots', async () => {
     const api = { baseUrl: 'https://usage.example/v1', authorization: 'Bearer generation-1' }
     const openCodeUsageApi = vi.fn(() => api)

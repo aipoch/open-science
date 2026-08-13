@@ -29,8 +29,21 @@ import type { AcpPromptSessionInteractionScope } from './session-interaction-own
 import type { AcpSessionToolingAvailability } from './session-presentation-policy'
 import type { AcpSessionRegistry } from './session-registry'
 import type { AcpTurnSkillOwner, TurnSkillHandle } from './turn-skill-owner'
+import type { SessionAutoTitleOwner } from './session-auto-title-owner'
+import { sumTurnUsage } from './prompt-outcome-finalizer'
 
 const log = createLogger('acp-prompt-turn-workflow')
+
+const buildSessionAutoTitlePrompt = (request: AcpPromptRequest): string => {
+  const text = request.text.trim()
+  if (text) return text
+  const attachmentNames = (request.attachments ?? [])
+    .map((attachment) => attachment.originalName.trim() || attachment.name.trim())
+    .filter(Boolean)
+  return attachmentNames.length > 0
+    ? `User started the conversation with these attachments: ${attachmentNames.join(', ')}`
+    : ''
+}
 
 type AcpPromptTurnMode =
   | Readonly<{ kind: 'user'; promptAttemptId?: string }>
@@ -156,6 +169,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   recordAdmittedPrompt: (request: AcpPromptRequest) => void
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
+  sessionAutoTitle?: Pick<SessionAutoTitleOwner, 'complete' | 'registerPrompt'>
 }>
 
 class AcpPromptTurnWorkflow {
@@ -279,6 +293,9 @@ class AcpPromptTurnWorkflow {
     const eventIdentity = interaction.promptMessageId
       ? { promptMessageId: interaction.promptMessageId }
       : {}
+    if (request.autoTitle && turn.mode.kind === 'user' && !request.continuation) {
+      this.options.sessionAutoTitle?.registerPrompt(sessionId, interaction.promptMessageId)
+    }
     let artifact: ArtifactTurnHandle | undefined
     let prepared: PreparedPromptHandle | undefined
     let context: ContextWindowTurnHandle | undefined
@@ -367,6 +384,7 @@ class AcpPromptTurnWorkflow {
         content: prepared.content,
         cwd: promptSnapshot?.cwd ?? this.options.currentCwd(),
         frameworkId: promptSnapshot?.frameworkId ?? env.backend().framework.id,
+        captureFrameworkTitle: request.autoTitle === true,
         isCurrent: () => this.isCurrent(turn),
         beforeDispatch: async () => {
           if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
@@ -421,6 +439,56 @@ class AcpPromptTurnWorkflow {
       sideChatRelaySettled = true
       sideChatRelay.restore()
     }
+    let sessionNamingUsage: import('../../shared/acp').AcpSessionNamingUsage | undefined
+    if (
+      request.autoTitle &&
+      turn.mode.kind === 'user' &&
+      !request.continuation &&
+      outcome.kind === 'stopped' &&
+      this.options.sessionAutoTitle
+    ) {
+      const naming = await this.options.sessionAutoTitle.complete({
+        sessionId,
+        prompt: buildSessionAutoTitlePrompt(request),
+        signal: interaction.signal,
+        isCurrent: () => this.isCurrent(turn)
+      })
+      if (naming.kind === 'framework') {
+        sessionNamingUsage = naming.usage
+          ? {
+              source: 'combined',
+              appGenerated: { usage: naming.usage },
+              frameworkUnavailable: true
+            }
+          : { source: 'framework', unavailable: true }
+      } else if (naming.kind === 'generated') {
+        sessionNamingUsage = naming.usage
+          ? { source: 'app-generated', usage: naming.usage }
+          : { source: 'app-generated', unavailable: true }
+        finalization.pushEvent({
+          kind: 'system',
+          level: 'info',
+          sessionId,
+          ...eventIdentity,
+          sessionTitleUpdate: { title: naming.title, source: 'app-generated' },
+          sessionNamingUsage
+        })
+      } else {
+        sessionNamingUsage = naming.usage
+          ? { source: 'app-generated', usage: naming.usage }
+          : { source: 'app-generated', unavailable: true }
+      }
+      if (naming.usage && outcome.facts.turnUsage) {
+        const turnUsage = sumTurnUsage(outcome.facts.turnUsage, naming.usage)
+        outcome = {
+          ...outcome,
+          facts: {
+            ...outcome.facts,
+            ...(turnUsage ? { turnUsage } : {})
+          }
+        }
+      }
+    }
     const model = env.backend().session.model
     return finalizer.finalize(
       {
@@ -460,7 +528,8 @@ class AcpPromptTurnWorkflow {
         generationActivityChanged: finalization.generationActivityChanged,
         autoCompactIfNeeded: () => finalization.autoCompact(sessionId, session, interaction),
         beforeInteractionRelease: () => plan.beforeRelease(sessionId, interaction),
-        afterInteractionRelease: () => plan.afterRelease(sessionId)
+        afterInteractionRelease: () => plan.afterRelease(sessionId),
+        ...(sessionNamingUsage ? { sessionNamingUsage } : {})
       },
       outcome
     )
@@ -512,7 +581,7 @@ class AcpPromptTurnWorkflow {
   }
 }
 
-export { AcpPromptTurnWorkflow }
+export { AcpPromptTurnWorkflow, buildSessionAutoTitlePrompt }
 export type {
   AcpPromptTurnMode,
   AcpPromptTurnPlanContext,

@@ -23,8 +23,11 @@ import type {
   PersistedChatMessage,
   PersistedChatSession,
   PersistedMessageImage,
+  SaveSessionOptions,
+  SessionTitleSource,
   PersistedToolActivity
 } from '../../shared/session-persistence'
+import { sanitizeSessionTitle } from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
   StartTaskRunRequest,
@@ -47,7 +50,15 @@ type TaskProjectPort = {
 
 type TaskSessionPort = {
   list(): Promise<PersistedChatSession[]>
-  save(session: PersistedChatSession): Promise<void>
+  save(session: PersistedChatSession, options?: SaveSessionOptions): Promise<void>
+  applyAgentTitle?(request: {
+    projectId: string
+    sessionId: string
+    title: string
+    source: Extract<SessionTitleSource, 'app-generated' | 'framework'>
+    promptMessageId: string
+    sessionNamingUsage?: AcpRuntimeEvent['sessionNamingUsage']
+  }): Promise<void>
 }
 
 type TaskPreviewResourcePort = {
@@ -94,6 +105,7 @@ type TaskAgentPromptRequest = {
   historyPreamble?: string
   contextReset?: boolean
   resumeFallback?: { historyPreamble?: string }
+  autoTitle?: true
 }
 
 type TaskAgentPromptObserver = {
@@ -145,6 +157,9 @@ type MutableTaskRun = TaskRun & {
     accepted: boolean
     dispatch: Promise<void>
   }
+  sessionProjectionSettled: Promise<void>
+  settleSessionProjection: () => void
+  titlePersistence: Promise<void>
 }
 
 type CompletedTaskSession = {
@@ -326,6 +341,7 @@ const canonicalizeTaskWorkingDirectory = async (value: string): Promise<string> 
 class TaskRunner {
   private readonly runs = new Map<string, MutableTaskRun>()
   private readonly activeRunBySession = new Map<string, string>()
+  private readonly autoTitleOwnerBySession = new Map<string, string>()
   private readonly progressListeners = new Set<(event: TaskRunProgressEvent) => void>()
   private readonly unsubscribeEvents: () => void
 
@@ -339,6 +355,7 @@ class TaskRunner {
     this.unsubscribeEvents()
     for (const run of this.runs.values()) this.stopHeartbeat(run)
     this.progressListeners.clear()
+    this.autoTitleOwnerBySession.clear()
   }
 
   subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {
@@ -472,6 +489,10 @@ class TaskRunner {
       throw error
     }
     const session = prepared.session
+    let settleSessionProjection!: () => void
+    const sessionProjectionSettled = new Promise<void>((resolve) => {
+      settleSessionProjection = resolve
+    })
     const run = {
       id: runId,
       sessionId: session.id,
@@ -485,11 +506,15 @@ class TaskRunner {
       progressPhase: 'accepted' as const,
       providerAccepted: false,
       firstVisibleOutput: false,
-      completion: Promise.resolve()
+      completion: Promise.resolve(),
+      sessionProjectionSettled,
+      settleSessionProjection,
+      titlePersistence: Promise.resolve()
     } satisfies MutableTaskRun
 
     this.pruneRuns()
     this.runs.set(runId, run)
+    if (prepared.autoTitle) this.autoTitleOwnerBySession.set(session.id, runId)
     this.publishProgress(run, 'accepted')
     this.publishProgress(run, 'session-ready')
     this.scheduleHeartbeat(run)
@@ -500,7 +525,8 @@ class TaskRunner {
       prompt,
       prepared.historyPreamble,
       prepared.contextReset,
-      prepared.resumeFallback
+      prepared.resumeFallback,
+      prepared.autoTitle
     ).finally(() => this.releaseSession(session.id, runId))
     return cloneRun(run)
   }
@@ -579,6 +605,7 @@ class TaskRunner {
     historyPreamble?: string
     contextReset?: boolean
     resumeFallback?: TaskAgentPromptRequest['resumeFallback']
+    autoTitle?: true
   }> {
     const now = this.dependencies.now()
     const permissionProfile =
@@ -639,6 +666,7 @@ class TaskRunner {
           id: sessionInfo.sessionId,
           projectId: project.id,
           title: createTitle(prompt),
+          titleSource: 'fallback',
           cwd: request.cwd ?? sessionInfo.cwd ?? '',
           status: 'running',
           permissionProfile,
@@ -658,7 +686,7 @@ class TaskRunner {
       delete session.resumeRecovery
     }
 
-    await this.dependencies.sessions.save(session)
+    await this.dependencies.sessions.save(session, { preserveTitle: true })
     const previousHistoryPreamble = existing
       ? createHistoryPreamble(selectTaskHistoryMessages(existing))
       : undefined
@@ -670,7 +698,8 @@ class TaskRunner {
       resumeFallback:
         request.skillIds?.length && previousHistoryPreamble
           ? { historyPreamble: previousHistoryPreamble }
-          : undefined
+          : undefined,
+      autoTitle: existing ? undefined : true
     }
   }
 
@@ -681,7 +710,8 @@ class TaskRunner {
     prompt: string,
     historyPreamble?: string,
     contextReset?: boolean,
-    resumeFallback?: TaskAgentPromptRequest['resumeFallback']
+    resumeFallback?: TaskAgentPromptRequest['resumeFallback'],
+    autoTitle?: true
   ): Promise<void> {
     let promptError: unknown
     let cancellationAtPromptFailure: MutableTaskRun['cancellation'] = undefined
@@ -695,7 +725,8 @@ class TaskRunner {
           ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(contextReset ? { contextReset: true } : {}),
-          ...(resumeFallback ? { resumeFallback } : {})
+          ...(resumeFallback ? { resumeFallback } : {}),
+          ...(autoTitle ? { autoTitle: true as const } : {})
         },
         {
           onProviderPromptAccepted: () => {
@@ -732,15 +763,21 @@ class TaskRunner {
     const failure = completionError ?? (promptFailureWasCancelled ? undefined : promptError)
     if (failure) {
       await this.failRun(run, acceptedSession, completed, failure)
+      run.settleSessionProjection()
+      await run.titlePersistence
       return
     }
 
     try {
-      await this.dependencies.sessions.save(completed!.session)
+      await this.dependencies.sessions.save(completed!.session, { preserveTitle: true })
     } catch (error) {
       await this.failRun(run, acceptedSession, completed, error)
+      run.settleSessionProjection()
+      await run.titlePersistence
       return
     }
+    run.settleSessionProjection()
+    await run.titlePersistence
     const terminalCancellation = run.cancellation
     if (terminalCancellation) await terminalCancellation.dispatch.catch(() => undefined)
     const terminalCancellationAccepted = terminalCancellation?.accepted === true
@@ -780,7 +817,7 @@ class TaskRunner {
     run.completedAt = this.dependencies.now()
     this.stopHeartbeat(run)
     this.publishProgress(run, 'failed')
-    await this.dependencies.sessions.save(failed).catch(() => undefined)
+    await this.dependencies.sessions.save(failed, { preserveTitle: true }).catch(() => undefined)
   }
 
   private async completeSession(
@@ -792,6 +829,10 @@ class TaskRunner {
       (event) => event.kind === 'message' && event.role === 'assistant'
     )
     const terminalStopEvent = [...events].reverse().find((event) => event.kind === 'stop')
+    const latestTitleEvent = [...events].reverse().find((event) => event.sessionTitleUpdate)
+    const turnUsage = terminalStopEvent?.turnUsage
+    const sessionNamingUsage =
+      terminalStopEvent?.sessionNamingUsage ?? latestTitleEvent?.sessionNamingUsage
     const streamedOutput = assistantEvents
       .map((event) => getAcpRuntimeEventText(event) ?? '')
       .join('')
@@ -805,6 +846,13 @@ class TaskRunner {
         return image ? ({ id: event.id, ...image } satisfies PersistedMessageImage) : undefined
       })
       .filter((image): image is PersistedMessageImage => Boolean(image))
+    let turnUsageFields: Partial<Pick<PersistedChatMessage, 'turnUsage' | 'turnUsageUnavailable'>> =
+      {}
+    if (turnUsage) {
+      turnUsageFields = { turnUsage }
+    } else if (terminalStopEvent) {
+      turnUsageFields = { turnUsageUnavailable: true }
+    }
     const assistantMessageId = this.dependencies.createId()
     const assistantMessage: PersistedChatMessage = {
       id: assistantMessageId,
@@ -814,11 +862,8 @@ class TaskRunner {
       responseToMessageId: session.activeRun?.promptMessageId,
       eventIds: assistantEvents.map((event) => event.id),
       images: images.length ? images : undefined,
-      ...(terminalStopEvent?.turnUsage
-        ? { turnUsage: terminalStopEvent.turnUsage }
-        : terminalStopEvent
-          ? { turnUsageUnavailable: true as const }
-          : {}),
+      ...turnUsageFields,
+      ...(sessionNamingUsage ? { sessionNamingUsage } : {}),
       createdAt: now,
       updatedAt: now
     }
@@ -871,12 +916,15 @@ class TaskRunner {
             throw new Error(result.message)
           }
           if (!ownershipSessionPersisted) {
-            await this.dependencies.sessions.save({
-              ...session,
-              messages: [...session.messages, assistantMessage],
-              activities: [...(session.activities ?? []), ...activities],
-              updatedAt: now
-            })
+            await this.dependencies.sessions.save(
+              {
+                ...session,
+                messages: [...session.messages, assistantMessage],
+                activities: [...(session.activities ?? []), ...activities],
+                updatedAt: now
+              },
+              { preserveTitle: true }
+            )
             ownershipSessionPersisted = true
           }
           result = await this.dependencies.artifacts.finalizeRun(request)
@@ -926,8 +974,38 @@ class TaskRunner {
 
   private captureEvent(event: AcpRuntimeEvent): void {
     if (!event.sessionId) return
+    const title = sanitizeSessionTitle(event.sessionTitleUpdate?.title)
+    const explicitOwner = event.promptMessageId
+      ? [...this.runs.values()].find(
+          (run) =>
+            run.sessionId === event.sessionId && run.promptMessageId === event.promptMessageId
+        )
+      : undefined
+    const autoTitleOwnerId = this.autoTitleOwnerBySession.get(event.sessionId)
+    const titleOwner =
+      explicitOwner ?? (autoTitleOwnerId ? this.runs.get(autoTitleOwnerId) : undefined)
+    if (title) {
+      const source = event.sessionTitleUpdate?.source ?? 'framework'
+      if (titleOwner) {
+        titleOwner.titlePersistence = titleOwner.titlePersistence
+          .then(() => titleOwner.sessionProjectionSettled)
+          .then(() =>
+            this.dependencies.sessions.applyAgentTitle?.({
+              projectId: titleOwner.projectId,
+              sessionId: titleOwner.sessionId,
+              title,
+              source,
+              promptMessageId: titleOwner.promptMessageId,
+              ...(event.sessionNamingUsage ? { sessionNamingUsage: event.sessionNamingUsage } : {})
+            })
+          )
+          .then(() => undefined)
+          .catch(() => undefined)
+      }
+    }
     for (const run of this.runs.values()) {
       if (run.status !== 'running' || run.sessionId !== event.sessionId) continue
+      if (event.sessionTitleUpdate && titleOwner && run.id !== titleOwner.id) continue
       if (event.promptMessageId !== undefined && event.promptMessageId !== run.promptMessageId) {
         continue
       }
@@ -994,6 +1072,9 @@ class TaskRunner {
       .sort((left, right) => left.startedAt - right.startedAt)
     for (const run of completed) {
       this.runs.delete(run.id)
+      if (this.autoTitleOwnerBySession.get(run.sessionId) === run.id) {
+        this.autoTitleOwnerBySession.delete(run.sessionId)
+      }
       if (this.runs.size < MAX_RETAINED_RUNS) return
     }
   }

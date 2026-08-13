@@ -10,6 +10,7 @@ import type { AgentFrameworkId } from '../../shared/settings'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import { claudeCodeTurnAdapter } from './claude-turn-adapter'
 import { createCodexTurnAdapter } from './codex-turn-adapter'
+import { fetchOpenCodeSessionTitle } from './opencode-session-title'
 import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import { fetchOpenCodeUsageSnapshot } from './opencode-turn-usage'
 import type {
@@ -17,7 +18,6 @@ import type {
   AcpProviderTurnProbe,
   AcpProviderTurnResult
 } from './provider-turn-adapter'
-
 type ProviderPromptObservationStage = 'accepted' | 'begin' | 'cancel' | 'finalize' | 'observe'
 
 type ProviderPromptExecutionInput = Readonly<{
@@ -25,6 +25,7 @@ type ProviderPromptExecutionInput = Readonly<{
   content: string | ContentBlock[]
   cwd: string
   frameworkId: AgentFrameworkId
+  captureFrameworkTitle?: boolean
   isCurrent: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   captureStop: () => boolean
@@ -73,6 +74,7 @@ const normalizeFacts = (
 ): AcpProviderTurnResult => {
   const turnUsage = facts.turnUsage ?? toAcpTurnTokenUsage(response.usage)
   return Object.freeze({
+    ...(facts.frameworkSessionTitle ? { frameworkSessionTitle: facts.frameworkSessionTitle } : {}),
     ...(turnUsage ? { turnUsage: Object.freeze({ ...turnUsage }) } : {}),
     ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
     ...(facts.contextUsedTokens === undefined
@@ -105,7 +107,7 @@ class AcpProviderPromptExecutor {
   async execute(input: ProviderPromptExecutionInput): Promise<ProviderPromptOutcome> {
     const providerSessionId = input.session.sessionId
     const token = Symbol(providerSessionId)
-    const adapter = this.adapterFor(input.frameworkId)
+    const adapter = this.adapterFor(input.frameworkId, input.captureFrameworkTitle === true)
     let probe = NOOP_PROBE
     try {
       probe = await adapter.begin({ providerSessionId, cwd: input.cwd })
@@ -190,10 +192,20 @@ class AcpProviderPromptExecutor {
         } catch (error) {
           reportBestEffort(input.reportBestEffortFailure, 'finalize', error)
         }
+        const normalizedFacts = normalizeFacts(message.response, facts)
+        if (normalizedFacts.frameworkSessionTitle && input.isCurrent()) {
+          input.routeNotification({
+            sessionId: providerSessionId,
+            update: {
+              sessionUpdate: 'session_info_update',
+              title: normalizedFacts.frameworkSessionTitle
+            }
+          })
+        }
         return Object.freeze({
           kind: 'stopped',
           response: message.response,
-          facts: normalizeFacts(message.response, facts)
+          facts: normalizedFacts
         })
       }
     } finally {
@@ -202,22 +214,38 @@ class AcpProviderPromptExecutor {
     }
   }
 
-  private adapterFor(frameworkId: AgentFrameworkId): AcpProviderTurnAdapter {
+  private adapterFor(
+    frameworkId: AgentFrameworkId,
+    captureFrameworkTitle: boolean
+  ): AcpProviderTurnAdapter {
     if (frameworkId === 'claude-code') return claudeCodeTurnAdapter
     if (frameworkId === 'codex') return createCodexTurnAdapter()
 
     // Capture one generation's immutable API before adapter.begin awaits. Re-reading the owner for
     // the final snapshot could mix credentials or lose usage after a generation switch.
     const usageApi = this.options.backendGeneration.openCodeUsageApi()
-    return new AcpOpenCodeTurnAdapter((providerSessionId, cwd) =>
-      usageApi
-        ? fetchOpenCodeUsageSnapshot(
-            usageApi,
-            providerSessionId,
-            cwd,
-            this.options.opencodeUsageFetch
-          )
-        : Promise.resolve(undefined)
+    return new AcpOpenCodeTurnAdapter(
+      (providerSessionId, cwd) =>
+        usageApi
+          ? fetchOpenCodeUsageSnapshot(
+              usageApi,
+              providerSessionId,
+              cwd,
+              this.options.opencodeUsageFetch
+            )
+          : Promise.resolve(undefined),
+      captureFrameworkTitle
+        ? (providerSessionId, cwd, signal) =>
+            usageApi
+              ? fetchOpenCodeSessionTitle(
+                  usageApi,
+                  providerSessionId,
+                  cwd,
+                  this.options.opencodeUsageFetch,
+                  signal
+                )
+              : Promise.resolve(undefined)
+        : undefined
     )
   }
 }

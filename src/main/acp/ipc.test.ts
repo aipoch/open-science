@@ -58,8 +58,11 @@ const {
     .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
   const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
   const sendPrompt = vi.fn().mockResolvedValue(undefined)
-  const AcpRuntimeMock = vi.fn().mockImplementation(function () {
+  const AcpRuntimeMock = vi.fn().mockImplementation(function (options) {
+    const resolveBackend = (): unknown =>
+      options.resolveBackend?.({ forcedSkillIds: [], systemPromptAppends: [] })
     return {
+      connect: vi.fn(resolveBackend),
       createSession,
       cancelPrompt,
       compactSession,
@@ -67,6 +70,7 @@ const {
       disconnect,
       resetSessionContext,
       resumeSession,
+      requestProviderReconnect: vi.fn(resolveBackend),
       sendPrompt,
       getSnapshot: vi.fn().mockReturnValue({
         status: 'idle',
@@ -121,7 +125,7 @@ vi.mock('../storage-root', () => ({
 }))
 
 const { installAcpIpcHandlers } = await import('./ipc')
-const { createAcpRuntime } = await import('./runtime-composition')
+const { captureAcpBackendAdmission, createAcpRuntime } = await import('./runtime-composition')
 const { createAcpCreateSessionWorkflow } = await import('./create-session-workflow')
 const { createAcpHandlerWorkflows } = await import('./handler-workflows')
 type AcpTestOptions = Parameters<typeof createAcpRuntime>[0]
@@ -159,7 +163,14 @@ const registerWithFakes = (overrides?: {
     authorizeSkillImportReferencedUploads: vi.fn(async () => () => undefined),
     settingsService: {
       captureActiveAgentBackendSelection: vi.fn().mockResolvedValue({}),
+      captureActiveExplicitAgentBackendTarget: vi.fn().mockResolvedValue({
+        frameworkId: 'claude-code',
+        providerId: 'provider-1',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'medium'
+      }),
       resolveAgentBackend: vi.fn().mockResolvedValue({}),
+      resolveExplicitAgentBackend: vi.fn().mockResolvedValue({}),
       listSpecialistSkillCatalog: vi
         .fn()
         .mockResolvedValue(overrides?.specialistSkillCatalog ?? []),
@@ -211,6 +222,123 @@ afterEach(() => {
   errorLogSpy.mockClear()
   infoLogSpy.mockClear()
   AcpRuntimeMock.mockClear()
+})
+
+it('pins title inference to the backend target admitted for the runtime generation', async () => {
+  let activeTarget: {
+    frameworkId: 'claude-code' | 'opencode'
+    providerId: string
+    model: { kind: 'required'; id: string }
+    reasoningEffort: 'medium' | 'high'
+  } = {
+    frameworkId: 'claude-code',
+    providerId: 'provider-a',
+    model: { kind: 'required', id: 'model-a' },
+    reasoningEffort: 'medium'
+  }
+  const resolveExplicitAgentBackend = vi.fn().mockResolvedValue({ backendId: 'backend-a' })
+  const settings = {
+    captureActiveExplicitAgentBackendTarget: vi.fn(async () => structuredClone(activeTarget)),
+    resolveExplicitAgentBackend
+  } as never
+
+  const admission = captureAcpBackendAdmission(settings)
+  await admission.resolve({})
+  activeTarget = {
+    frameworkId: 'opencode',
+    providerId: 'provider-b',
+    model: { kind: 'required', id: 'model-b' },
+    reasoningEffort: 'high'
+  }
+
+  await expect(admission.target()).resolves.toMatchObject({
+    frameworkId: 'claude-code',
+    providerId: 'provider-a',
+    model: { kind: 'required', id: 'model-a' }
+  })
+  expect(resolveExplicitAgentBackend).toHaveBeenCalledWith(
+    expect.objectContaining({ providerId: 'provider-a' }),
+    {}
+  )
+})
+
+it('resolves the newly selected provider and model after a provider reconnect', async () => {
+  const options = registerWithFakes()
+  let activeTarget = {
+    frameworkId: 'claude-code' as const,
+    providerId: 'provider-a',
+    model: { kind: 'required' as const, id: 'model-a' },
+    reasoningEffort: 'medium' as const
+  }
+  const settings = options.settingsService as AcpTestOptions['settingsService'] & {
+    captureActiveExplicitAgentBackendTarget: ReturnType<typeof vi.fn>
+    resolveExplicitAgentBackend: ReturnType<typeof vi.fn>
+  }
+  settings.captureActiveExplicitAgentBackendTarget.mockImplementation(async () =>
+    structuredClone(activeTarget)
+  )
+  settings.resolveExplicitAgentBackend.mockImplementation(async (target) => ({
+    backendId: `${target.providerId}:${target.model.id}`
+  }))
+
+  const runtime = createAcpRuntime(options)
+  await runtime.connect()
+  activeTarget = {
+    frameworkId: 'claude-code',
+    providerId: 'provider-b',
+    model: { kind: 'required', id: 'model-b' },
+    reasoningEffort: 'medium'
+  }
+  await runtime.requestProviderReconnect()
+
+  expect(settings.resolveExplicitAgentBackend).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({
+      providerId: 'provider-b',
+      model: { kind: 'required', id: 'model-b' }
+    }),
+    { forcedSkillIds: [], systemPromptAppends: [] }
+  )
+})
+
+it('does not let a stale backend resolution replace the title inference target', async () => {
+  let activeTarget = {
+    frameworkId: 'claude-code' as const,
+    providerId: 'provider-a',
+    model: { kind: 'required' as const, id: 'model-a' },
+    reasoningEffort: 'medium' as const
+  }
+  const releases = new Map<string, () => void>()
+  const settings = {
+    captureActiveExplicitAgentBackendTarget: vi.fn(async () => structuredClone(activeTarget)),
+    resolveExplicitAgentBackend: vi.fn(
+      (target: { providerId: string }) =>
+        new Promise((resolve) => {
+          releases.set(target.providerId, () => resolve({ backendId: target.providerId }))
+        })
+    )
+  } as never
+  const admission = captureAcpBackendAdmission(settings)
+
+  const stale = admission.resolve({})
+  await vi.waitFor(() => expect(releases.has('provider-a')).toBe(true))
+  activeTarget = {
+    frameworkId: 'claude-code',
+    providerId: 'provider-b',
+    model: { kind: 'required', id: 'model-b' },
+    reasoningEffort: 'medium'
+  }
+  const current = admission.resolve({})
+  await vi.waitFor(() => expect(releases.has('provider-b')).toBe(true))
+  releases.get('provider-b')?.()
+  await current
+  releases.get('provider-a')?.()
+  await stale
+
+  await expect(admission.target()).resolves.toMatchObject({
+    providerId: 'provider-b',
+    model: { kind: 'required', id: 'model-b' }
+  })
 })
 
 it('routes delegated question responses to their owner without touching Main elicitation', async () => {

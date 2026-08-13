@@ -1,6 +1,7 @@
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ProjectFileSource } from '../../shared/project-files'
 import type {
+  ApplyAgentSessionTitleRequest,
   LoadAllSessionsResult,
   PersistedChatMessage,
   PersistedChatSession,
@@ -681,6 +682,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
     return this.enqueue(() => this.stateOwner.saveSession(session, options))
+  }
+
+  applyAgentSessionTitle(request: ApplyAgentSessionTitleRequest): Promise<PersistedChatSession> {
+    return this.enqueue(() => this.stateOwner.applyAgentSessionTitle(request))
   }
 
   // Specialist switching reads the latest durable Session and changes only this safe binding. Keep

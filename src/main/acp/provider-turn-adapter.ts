@@ -36,6 +36,7 @@ export type AcpProviderTurnFinalizationInput = Readonly<{
  * Durable interaction, context, and Session owners decide whether and how to publish these facts.
  */
 export type AcpProviderTurnResult = Readonly<{
+  frameworkSessionTitle?: string
   turnUsage?: Readonly<Omit<AcpTurnTokenUsage, 'turnCount'>>
   modelTurnCount?: number
   contextUsedTokens?: number

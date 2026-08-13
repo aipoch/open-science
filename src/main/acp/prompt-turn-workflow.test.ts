@@ -9,7 +9,11 @@ import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import type { ReadyPreparedPromptHandle } from './prompt-preparation-owner'
-import { AcpPromptTurnWorkflow, type AcpPromptTurnWorkflowOptions } from './prompt-turn-workflow'
+import {
+  AcpPromptTurnWorkflow,
+  buildSessionAutoTitlePrompt,
+  type AcpPromptTurnWorkflowOptions
+} from './prompt-turn-workflow'
 import { AcpSessionAggregate } from './session-aggregate'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { TurnSkillHandle } from './turn-skill-owner'
@@ -129,6 +133,7 @@ const createHarness = (
     preflightPlan?: AcpPromptTurnWorkflowOptions['plan']['preflight']
     prepare?: AcpPromptTurnWorkflowOptions['preparation']['prepare']
     providerReconnectPending?: () => boolean
+    sessionAutoTitle?: AcpPromptTurnWorkflowOptions['sessionAutoTitle']
     sideChatClaim?: NonNullable<
       NonNullable<AcpPromptTurnWorkflowOptions['environment']['sideChatRelays']>['claim']
     >
@@ -319,7 +324,8 @@ const createHarness = (
       journal.push('start')
       input.onPromptStarted?.()
     }),
-    emitState: vi.fn(() => journal.push('state'))
+    emitState: vi.fn(() => journal.push('state')),
+    ...(input.sessionAutoTitle ? { sessionAutoTitle: input.sessionAutoTitle } : {})
   } satisfies AcpPromptTurnWorkflowOptions
   const workflow = new AcpPromptTurnWorkflow(workflowOptions)
   return {
@@ -357,6 +363,45 @@ const request = (): AcpPromptRequest => ({
 })
 
 describe('AcpPromptTurnWorkflow', () => {
+  it('builds a non-empty naming prompt for an attachment-only first turn', () => {
+    expect(
+      buildSessionAutoTitlePrompt({
+        sessionId: 's1',
+        text: '',
+        attachments: [
+          {
+            id: 'upload-1',
+            sessionId: 's1',
+            name: 'stored-name.pdf',
+            originalName: 'evidence review.pdf',
+            path: '/uploads/stored-name.pdf',
+            size: 42
+          }
+        ]
+      })
+    ).toContain('evidence review.pdf')
+  })
+
+  it('combines app naming usage with framework provenance when the framework title wins', async () => {
+    const usage = { inputTokens: 7, cacheTokens: 2, outputTokens: 1, turnCount: 1 }
+    const harness = createHarness({
+      sessionAutoTitle: {
+        registerPrompt: vi.fn(),
+        complete: vi.fn(async () => ({ kind: 'framework' as const, attempted: true, usage }))
+      }
+    })
+    const prompt = request()
+    prompt.autoTitle = true
+
+    await harness.workflow.run(prompt, { kind: 'user' })
+
+    expect(harness.finalizer.mock.calls[0][0].sessionNamingUsage).toEqual({
+      source: 'combined',
+      appGenerated: { usage },
+      frameworkUnavailable: true
+    })
+  })
+
   it('admits and executes one user turn in owner order with its opaque handles', async () => {
     const harness = createHarness()
 

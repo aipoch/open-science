@@ -2111,6 +2111,164 @@ describe('session store', () => {
     })
   })
 
+  it('attaches late session naming usage to the response identified by its prompt', () => {
+    const firstPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First question'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'first-response',
+      eventId: 'first-response-event',
+      promptMessageId: firstPrompt?.messageId,
+      content: 'First answer'
+    })
+    useSessionStore.getState().finishRun('transport-session-1', undefined, firstPrompt?.messageId)
+
+    const secondPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Second question'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'second-response',
+      eventId: 'second-response-event',
+      promptMessageId: secondPrompt?.messageId,
+      content: 'Second answer'
+    })
+    useSessionStore.getState().finishRun('transport-session-1', undefined, secondPrompt?.messageId)
+
+    useSessionStore
+      .getState()
+      .applySessionNamingUsage(
+        'transport-session-1',
+        { source: 'framework', unavailable: true },
+        firstPrompt?.messageId
+      )
+
+    const session = useSessionStore.getState().sessions[0]
+    const responses = session.messages.filter((message) => message.role === 'agent')
+    expect(responses[0].sessionNamingUsage).toEqual({ source: 'framework', unavailable: true })
+    expect(responses[1].sessionNamingUsage).toBeUndefined()
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === responses[0].id)
+        ?.sessionNamingUsage
+    ).toEqual({ source: 'framework', unavailable: true })
+    expect(
+      toPersistedSession(session).messages.find((message) => message.id === responses[0].id)
+    ).toMatchObject({ sessionNamingUsage: { source: 'framework', unavailable: true } })
+  })
+
+  it('attaches late session naming usage to the final response for its prompt', () => {
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Question with multiple response messages'
+    })
+    expect(prompt).toBeDefined()
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'first-response-part',
+      eventId: 'first-response-part-event',
+      promptMessageId: prompt!.messageId,
+      content: 'I will inspect this.'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'final-response-part',
+      eventId: 'final-response-part-event',
+      promptMessageId: prompt!.messageId,
+      content: 'Inspection complete.'
+    })
+    useSessionStore
+      .getState()
+      .finishRun(
+        'transport-session-1',
+        { inputTokens: 30, cacheTokens: 4, outputTokens: 8 },
+        prompt!.messageId,
+        undefined,
+        {
+          source: 'app-generated',
+          usage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2 }
+        }
+      )
+
+    useSessionStore
+      .getState()
+      .applySessionNamingUsage(
+        'transport-session-1',
+        { source: 'framework', unavailable: true },
+        prompt!.messageId
+      )
+
+    const responses = useSessionStore
+      .getState()
+      .sessions[0].messages.filter(
+        (message) => message.role === 'agent' && message.responseToMessageId === prompt!.messageId
+      )
+    expect(responses[0].sessionNamingUsage).toBeUndefined()
+    expect(responses[1]).toMatchObject({
+      turnUsage: { inputTokens: 30, cacheTokens: 4, outputTokens: 8 },
+      sessionNamingUsage: {
+        source: 'combined',
+        appGenerated: { usage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2 } },
+        frameworkUnavailable: true
+      }
+    })
+  })
+
+  it('keeps first-turn app naming usage when a late framework title reports no usage', () => {
+    const firstPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'First question'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'first-response',
+      eventId: 'first-response-event',
+      promptMessageId: firstPrompt?.messageId,
+      content: 'First answer'
+    })
+    useSessionStore
+      .getState()
+      .finishRun(
+        'transport-session-1',
+        { inputTokens: 30, cacheTokens: 4, outputTokens: 8 },
+        firstPrompt?.messageId,
+        undefined,
+        {
+          source: 'app-generated',
+          usage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2 }
+        }
+      )
+
+    useSessionStore
+      .getState()
+      .applyAgentSessionTitle('transport-session-1', 'Framework title', 'framework')
+    useSessionStore
+      .getState()
+      .applySessionNamingUsage(
+        'transport-session-1',
+        { source: 'framework', unavailable: true },
+        firstPrompt?.messageId
+      )
+
+    const session = useSessionStore.getState().sessions[0]
+    const firstResponse = session.messages.find(
+      (message) =>
+        message.role === 'agent' && message.responseToMessageId === firstPrompt?.messageId
+    )
+    expect(session).toMatchObject({ title: 'Framework title', titleSource: 'framework' })
+    expect(firstResponse).toMatchObject({
+      turnUsage: { inputTokens: 30, cacheTokens: 4, outputTokens: 8 },
+      sessionNamingUsage: {
+        source: 'combined',
+        appGenerated: { usage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2 } },
+        frameworkUnavailable: true
+      }
+    })
+  })
+
   it('moves cumulative ask-user continuation usage to the final agent message', () => {
     const prompt = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -2191,6 +2349,96 @@ describe('session store', () => {
     expect(toPersistedSession(session).messages.at(-1)?.turnUsage).toEqual(
       agentMessages[2].turnUsage
     )
+  })
+
+  it('preserves session naming usage across ask-user continuations until replacement usage arrives', () => {
+    const prompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Build the requested workflow'
+    })
+    expect(prompt).toBeDefined()
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-before-question',
+      eventId: 'event-before-question',
+      promptMessageId: prompt!.messageId,
+      content: 'I need one detail.'
+    })
+    useSessionStore
+      .getState()
+      .finishRun(
+        'transport-session-1',
+        { inputTokens: 10, cacheTokens: 3, outputTokens: 4 },
+        prompt!.messageId,
+        undefined,
+        {
+          source: 'app-generated',
+          usage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2 }
+        }
+      )
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-after-answer',
+      eventId: 'event-after-answer',
+      promptMessageId: prompt!.messageId,
+      content: 'The workflow is complete.'
+    })
+    useSessionStore
+      .getState()
+      .finishRun(
+        'transport-session-1',
+        { inputTokens: 30, cacheTokens: 8, outputTokens: 10 },
+        prompt!.messageId
+      )
+
+    const session = useSessionStore.getState().sessions[0]
+    const responses = session.messages.filter(
+      (message) => message.role === 'agent' && message.responseToMessageId === prompt!.messageId
+    )
+    expect(responses[0].sessionNamingUsage).toBeUndefined()
+    expect(responses[1].sessionNamingUsage).toEqual({
+      source: 'app-generated',
+      usage: { inputTokens: 5, cacheTokens: 1, outputTokens: 2 }
+    })
+    expect(
+      session.conversationGraph?.messages.find((message) => message.id === responses[1].id)
+        ?.sessionNamingUsage
+    ).toEqual(responses[1].sessionNamingUsage)
+    expect(
+      toPersistedSession(session).messages.find((message) => message.id === responses[1].id)
+        ?.sessionNamingUsage
+    ).toEqual(responses[1].sessionNamingUsage)
+
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-after-another-answer',
+      eventId: 'event-after-another-answer',
+      promptMessageId: prompt!.messageId,
+      content: 'The updated workflow is complete.'
+    })
+    useSessionStore
+      .getState()
+      .finishRun(
+        'transport-session-1',
+        { inputTokens: 45, cacheTokens: 12, outputTokens: 15 },
+        prompt!.messageId,
+        undefined,
+        { source: 'framework', unavailable: true }
+      )
+
+    const replacedResponses = useSessionStore
+      .getState()
+      .sessions[0].messages.filter(
+        (message) => message.role === 'agent' && message.responseToMessageId === prompt!.messageId
+      )
+    expect(replacedResponses[0].sessionNamingUsage).toBeUndefined()
+    expect(replacedResponses[1].sessionNamingUsage).toBeUndefined()
+    expect(replacedResponses[2].sessionNamingUsage).toEqual({
+      source: 'framework',
+      unavailable: true
+    })
   })
 
   it('marks aggregate ask-user continuation usage unavailable when any segment is unavailable', () => {
@@ -4367,7 +4615,9 @@ describe('session store public contract', () => {
         'appendPendingUserMessage',
         'appendRoutedUserMessage',
         'appendUserMessage',
+        'applyAgentSessionTitle',
         'applyDurableSessionProjection',
+        'applySessionNamingUsage',
         'attachRunArtifacts',
         'beginActivityGroup',
         'beginCompaction',
@@ -4422,6 +4672,33 @@ describe('session store public contract', () => {
         'upsertToolActivity'
       ].sort()
     )
+  })
+
+  it('lets framework titles replace fallbacks and prior framework titles but never manual names', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Review the evidence'
+    })
+
+    useSessionStore.getState().applyAgentSessionTitle('transport-session-1', 'First agent title')
+    useSessionStore.getState().applyAgentSessionTitle('transport-session-1', 'Latest agent title')
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Latest agent title',
+      titleSource: 'framework'
+    })
+
+    useSessionStore.getState().renameSession('transport-session-1', 'Manual title')
+    useSessionStore.getState().applyAgentSessionTitle('transport-session-1', 'Ignored agent title')
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Manual title',
+      titleSource: 'user'
+    })
+
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, titleSource: undefined }))
+    }))
+    useSessionStore.getState().applyAgentSessionTitle('transport-session-1', 'Also ignored')
+    expect(useSessionStore.getState().sessions[0].title).toBe('Manual title')
   })
 
   it('keeps production consumers on the public store facade', () => {

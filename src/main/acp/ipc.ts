@@ -58,6 +58,7 @@ const registerAcpIpcHandlerSet = (
     const rendererRequest: AcpPromptRequest = {
       ...request,
       turnIntent: request.turnIntent === 'plan-first' ? 'plan-first' : undefined,
+      autoTitle: request.autoTitle === true ? true : undefined,
       continuation: undefined,
       suppressUserMessage: undefined
     }

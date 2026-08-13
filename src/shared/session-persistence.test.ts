@@ -9,6 +9,7 @@ import {
   materializeSessionConversationGraph,
   sanitizeActivityGroup,
   normalizeSessionFile,
+  sanitizeSessionTitle,
   sanitizeMessageImages,
   sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
@@ -165,6 +166,56 @@ describe('conversation graph materialization diagnostics', () => {
         message: 'Conversation graph materialization failed.'
       })
     )
+  })
+})
+
+describe('Session title persistence', () => {
+  it('bounds provider titles and removes control-character layout', () => {
+    expect(sanitizeSessionTitle('  Evidence\n\u0000 synthesis  ')).toBe('Evidence synthesis')
+    expect(sanitizeSessionTitle('x'.repeat(200))).toHaveLength(120)
+    expect(sanitizeSessionTitle('\n\u0000\t')).toBeUndefined()
+  })
+
+  it('round-trips a valid source and treats missing or invalid legacy sources conservatively', () => {
+    expect(
+      normalizeSessionFile({ ...createSessionWithActivity(undefined), titleSource: 'agent' })
+        ?.titleSource
+    ).toBe('agent')
+    expect(
+      normalizeSessionFile({ ...createSessionWithActivity(undefined), titleSource: 'unknown' })
+        ?.titleSource
+    ).toBeUndefined()
+    expect(normalizeSessionFile(createSessionWithActivity(undefined))?.titleSource).toBeUndefined()
+  })
+
+  it('preserves combined app and framework session naming usage on agent messages', () => {
+    const session = createSessionWithActivity(undefined)
+    session.messages = [
+      {
+        id: 'agent-1',
+        role: 'agent',
+        content: 'Done',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1,
+        sessionNamingUsage: {
+          source: 'combined',
+          appGenerated: {
+            usage: { inputTokens: 7, cacheTokens: 1, outputTokens: 2 }
+          },
+          frameworkUnavailable: true
+        }
+      }
+    ]
+
+    expect(normalizeSessionFile(session)?.messages[0].sessionNamingUsage).toEqual({
+      source: 'combined',
+      appGenerated: {
+        usage: { inputTokens: 7, cacheTokens: 1, outputTokens: 2 }
+      },
+      frameworkUnavailable: true
+    })
   })
 })
 

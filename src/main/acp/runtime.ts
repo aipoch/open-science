@@ -82,6 +82,7 @@ import type {
 } from './reviewer-session-owner'
 import type { ArtifactTurnOwner } from './artifact-turn-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
+import type { SessionAutoTitleOwnerOptions } from './session-auto-title-owner'
 import type { AcpSessionRegistry } from './session-registry'
 import type {
   AcpConnectionResourceOwner,
@@ -217,6 +218,7 @@ type AcpRuntimeOptions = {
   cancelTimeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void
+  sessionAutoTitle?: SessionAutoTitleOwnerOptions
   // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
   // injectable so tests can drive the degrade-to-file path with small fixtures.
   inlineImageBudgetBytes?: number
@@ -963,8 +965,23 @@ class AcpRuntime {
     const hooks: AcpAgentConnectionHooks = {
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
       requestPermission: (params) => this.clientInteractions.requestPermission(params),
-      observeSessionUpdate: (notification) =>
-        this.permissionContext.observeProviderUpdate(notification),
+      observeSessionUpdate: (notification) => {
+        this.permissionContext.observeProviderUpdate(notification)
+        if (
+          notification.update.sessionUpdate !== 'session_info_update' ||
+          identity.epoch !== this.connectionGeneration
+        ) {
+          return
+        }
+        const appSessionId = this.sessionRegistry.resolveAppSessionId(notification.sessionId)
+        const attachment = this.sessionRegistry.lookup(appSessionId)?.attachment
+        if (!attachment || attachment.providerSessionId !== notification.sessionId) {
+          return
+        }
+        // Session metadata can legally arrive after the prompt response. Route it from the
+        // connection-wide notification seam instead of relying on the turn-scoped update drain.
+        this.sessionUpdateProjector.route(notification, { appSessionId })
+      },
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),

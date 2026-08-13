@@ -232,6 +232,7 @@ type PromptDispatch = {
   continuation?: Parameters<WorkspaceCommandRuntime['sendPrompt']>[11]
   turnIntent?: SendWorkspaceMessageIntent['turnIntent']
   accepted?: () => void
+  autoTitle?: true
 }
 
 const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatch): void => {
@@ -250,10 +251,10 @@ const dispatchPrompt = (runtime: WorkspaceCommandRuntime, request: PromptDispatc
     request.replay?.contextReset
   ] as const
   const result = request.turnIntent
-    ? runtime.sendPrompt(...args, request.continuation, request.turnIntent)
+    ? runtime.sendPrompt(...args, request.continuation, request.turnIntent, request.autoTitle)
     : request.continuation
-      ? runtime.sendPrompt(...args, request.continuation)
-      : runtime.sendPrompt(...args)
+      ? runtime.sendPrompt(...args, request.continuation, undefined, request.autoTitle)
+      : runtime.sendPrompt(...args, undefined, undefined, request.autoTitle)
   void result
     .then(() => request.accepted?.())
     .catch((error) => {
@@ -365,6 +366,7 @@ const startPendingPrompt = (
       referencedArtifacts: request.referencedArtifacts,
       replay: { ...request.replay, contextReset: Boolean(request.contextReset) },
       turnIntent: request.turnIntent,
+      autoTitle: true,
       accepted: () =>
         useSessionStore.getState().clearPendingContextReplay(created.sessionId, bound.messageId)
     })

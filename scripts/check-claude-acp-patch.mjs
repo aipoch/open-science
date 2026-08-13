@@ -19,4 +19,23 @@ if (typeof acpAgent.waitForMcpServers !== 'function') {
   )
 }
 
+const agentSource = require('node:fs').readFileSync(
+  require.resolve(`${packageName}/dist/acp-agent.js`),
+  'utf8'
+)
+const nativeTitlePatchMarkers = [
+  'sdk = { query, getSessionInfo }',
+  'withTimeout(this.sdk.getSessionInfo',
+  'const customTitle = info.customTitle',
+  'await this.maybeUpdateSessionTitle(params.sessionId, session);'
+]
+
+for (const marker of nativeTitlePatchMarkers) {
+  if (!agentSource.includes(marker)) {
+    throw new Error(
+      `${packageName} patch is incomplete: framework-native session title marker is missing (${marker}). Run npm ci; do not edit node_modules manually.`
+    )
+  }
+}
+
 console.log(`Verified ${packageName}@${expectedVersion} patch integrity.`)

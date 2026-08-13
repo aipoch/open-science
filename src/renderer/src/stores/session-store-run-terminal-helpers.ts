@@ -1,6 +1,7 @@
 import {
   sanitizeAcpContextWindowSample,
   type AcpContextWindowSample,
+  type AcpSessionNamingUsage,
   type AcpTurnTokenUsage
 } from '../../../shared/acp'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
@@ -84,6 +85,7 @@ const completeStreamingMessages = (
   messages: ChatMessage[],
   promptMessageId: string | undefined,
   turnUsage: AcpTurnTokenUsage | undefined,
+  sessionNamingUsage: AcpSessionNamingUsage | undefined,
   now: number
 ): ChatMessage[] => {
   const promptResponses = promptMessageId
@@ -92,6 +94,10 @@ const completeStreamingMessages = (
       )
     : []
   const usageFooterMessageId = promptResponses.at(-1)?.id
+  const previousSessionNamingUsage = promptResponses.findLast(
+    (message) => message.sessionNamingUsage !== undefined
+  )?.sessionNamingUsage
+  const nextSessionNamingUsage = sessionNamingUsage ?? previousSessionNamingUsage
   return messages.map((message) => {
     const completesStream = message.status === 'streaming'
     const ownsTurnUsageFooter = message.id === usageFooterMessageId
@@ -103,16 +109,25 @@ const completeStreamingMessages = (
     const recordsCompletion =
       completesStream ||
       (ownsTurnUsageFooter && message.status === 'complete' && message.completedAt === undefined)
+    let usageFooter: Partial<
+      Pick<ChatMessage, 'turnUsage' | 'turnUsageUnavailable' | 'sessionNamingUsage'>
+    > = {}
+    if (ownsTurnUsageFooter) {
+      usageFooter = turnUsage ? { turnUsage } : { turnUsageUnavailable: true }
+      if (nextSessionNamingUsage) usageFooter.sessionNamingUsage = nextSessionNamingUsage
+    }
     return {
       ...message,
-      ...(belongsToPrompt ? { turnUsage: undefined, turnUsageUnavailable: undefined } : {}),
+      ...(belongsToPrompt
+        ? {
+            turnUsage: undefined,
+            turnUsageUnavailable: undefined,
+            sessionNamingUsage: undefined
+          }
+        : {}),
       ...(completesStream ? { status: 'complete' as const } : {}),
       ...(recordsCompletion ? { completedAt: now } : {}),
-      ...(ownsTurnUsageFooter
-        ? turnUsage
-          ? { turnUsage }
-          : { turnUsageUnavailable: true as const }
-        : {}),
+      ...usageFooter,
       updatedAt: now
     }
   })
@@ -270,14 +285,21 @@ export const projectFinishedRun = (
   session: ChatSession,
   turnUsage?: AcpTurnTokenUsage,
   promptMessageId?: string,
-  contextWindowSample?: RunTerminalContextWindowSample
+  contextWindowSample?: RunTerminalContextWindowSample,
+  sessionNamingUsage?: AcpSessionNamingUsage
 ): ChatSession => {
   const keepArtifactError = session.error?.startsWith(ARTIFACT_ERROR_PREFIX) ?? false
   const now = Math.max(Date.now(), session.updatedAt + 1)
   const terminalPromptMessageId = promptMessageId ?? session.activeRun?.promptMessageId
   const messages = appendContextWindowSample(
     session,
-    completeStreamingMessages(session.messages, terminalPromptMessageId, turnUsage, now),
+    completeStreamingMessages(
+      session.messages,
+      terminalPromptMessageId,
+      turnUsage,
+      sessionNamingUsage,
+      now
+    ),
     terminalPromptMessageId,
     contextWindowSample,
     now

@@ -108,11 +108,11 @@ type ApplicationCommandComposition = Readonly<{
 }>
 
 const GROUP_COUNT = 28
-const INTERNAL_COMMAND_COUNT = 246
-const LOCAL_WEB_COMMAND_COUNT = 244
-const REMOTE_WEB_COMMAND_COUNT = 175
+const INTERNAL_COMMAND_COUNT = 247
+const LOCAL_WEB_COMMAND_COUNT = 245
+const REMOTE_WEB_COMMAND_COUNT = 176
 const REMOTE_REJECTED_COMMAND_COUNT = 69
-const TASK_COMMAND_COUNT = 7
+const TASK_COMMAND_COUNT = 8
 const VALIDATED_ELECTRON_COMMAND_COUNT = 6
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
@@ -124,6 +124,7 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'projects:list',
   'projects:create',
   'sessions:load-all',
+  'sessions:apply-agent-title',
   'sessions:save-session',
   'artifacts:finalize-run',
   'preview-resources:acquire',

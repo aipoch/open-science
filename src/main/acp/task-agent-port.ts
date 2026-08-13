@@ -37,7 +37,8 @@ const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest =
   ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
   ...(request.historyPreamble ? { historyPreamble: request.historyPreamble } : {}),
   ...(request.contextReset ? { contextReset: true } : {}),
-  ...(request.resumeFallback ? { resumeFallback: request.resumeFallback } : {})
+  ...(request.resumeFallback ? { resumeFallback: request.resumeFallback } : {}),
+  ...(request.autoTitle ? { autoTitle: true as const } : {})
 })
 
 // Adapts the provider-neutral Task seam to the existing ACP owner without exposing the coordinator,
