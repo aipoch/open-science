@@ -377,7 +377,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
   })
 
-  it('keeps later tools behind the visible assistant prefix', async () => {
+  it('renders later tools in real time while the assistant reply is still pacing', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
       'requestAnimationFrame',
@@ -441,15 +441,17 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         activities: [tool]
       })
     )
-    expect(
-      container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
-    ).toBeNull()
-
-    await act(async () => vi.advanceTimersByTimeAsync(96))
-    expect(container.textContent).toContain('Flow')
+    // Tool rows render in real time so their running state stays visible; only later
+    // text messages wait behind the pacing reply.
     expect(
       container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
     ).not.toBeNull()
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      'F'
+    )
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('Flow')
   })
 
   it('keeps terminal metadata behind the final visible assistant prefix', async () => {
@@ -834,9 +836,12 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         activities: [tool]
       })
     )
+    // The tool row renders in real time; the later assistant fragment is the only row
+    // still held behind the pacing one.
     expect(
       container.querySelector('[data-message-id="activity-group-tool-between-fragments"]')
-    ).toBeNull()
+    ).not.toBeNull()
+    expect(container.querySelectorAll('[data-testid="presented-agent-markdown"]')).toHaveLength(1)
     await act(async () => vi.advanceTimersByTimeAsync(160))
 
     const assistantSurfaces = container.querySelectorAll('[data-testid="presented-agent-markdown"]')

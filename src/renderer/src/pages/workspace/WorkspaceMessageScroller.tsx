@@ -884,7 +884,14 @@ const WorkspaceMessageScrollerImpl = ({
               />
               {/* Messages and tool activities share one sorted transcript timeline. */}
               {conversationItems.map((item, itemIndex) => {
-                if (presentationBarrierIndex >= 0 && itemIndex > presentationBarrierIndex) {
+                // Only later text messages stay behind the presentation barrier; tool,
+                // activity, and other non-message rows render in real time so their
+                // running state stays visible while the reply paces above them.
+                if (
+                  presentationBarrierIndex >= 0 &&
+                  itemIndex > presentationBarrierIndex &&
+                  (item.type === 'message' || item.type === 'subagent-message')
+                ) {
                   return null
                 }
 
@@ -1132,29 +1139,25 @@ const WorkspaceMessageScrollerImpl = ({
               })}
 
               {/* Render any remaining unbound completed jobs after all conversation items */}
-              {presentationBarrierIndex < 0
-                ? trailingJobs.map((job) => (
-                    <MessageScrollerItem
-                      key={`completed-job-${job.job_id}`}
-                      messageId={`completed-job-${job.job_id}`}
-                      className="min-w-0"
-                    >
-                      <div className="px-4 py-1 md:px-6">
-                        <div className="mx-auto w-full max-w-4xl">
-                          <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                        </div>
-                      </div>
-                    </MessageScrollerItem>
-                  ))
-                : null}
+              {trailingJobs.map((job) => (
+                <MessageScrollerItem
+                  key={`completed-job-${job.job_id}`}
+                  messageId={`completed-job-${job.job_id}`}
+                  className="min-w-0"
+                >
+                  <div className="px-4 py-1 md:px-6">
+                    <div className="mx-auto w-full max-w-4xl">
+                      <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              ))}
 
               {presentationBarrierIndex < 0 ? trailingContent : null}
 
-              {presentationBarrierIndex < 0 && isResumingSession && activeSession ? (
+              {isResumingSession && activeSession ? (
                 <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
-              ) : presentationBarrierIndex < 0 &&
-                agentLoadingPhase !== 'hidden' &&
-                activeSession ? (
+              ) : agentLoadingPhase !== 'hidden' && activeSession ? (
                 <WorkspaceAgentLoadingRow
                   sessionId={activeSession.id}
                   phase={agentLoadingPhase}
