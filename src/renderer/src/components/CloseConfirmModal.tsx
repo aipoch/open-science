@@ -26,8 +26,10 @@ type ActiveRequest = {
 // only), so every call into window.api.window here must tolerate that absence. onOpenChange also
 // feeds unread visibility projection, preventing a covered conversation from being acknowledged.
 export const CloseConfirmModal = ({
+  active = true,
   onOpenChange
 }: {
+  active?: boolean
   onOpenChange?: (open: boolean) => void
 }): React.JSX.Element | null => {
   const [request, setRequest] = useState<ActiveRequest | undefined>(undefined)
@@ -75,7 +77,7 @@ export const CloseConfirmModal = ({
 
   return (
     <AlertDialog.Root
-      open={Boolean(request)}
+      open={active && Boolean(request)}
       onOpenChange={(open) => {
         if (!open) reply('cancel')
       }}

@@ -54,6 +54,24 @@ afterEach(() => {
 })
 
 describe('StorageMigrationModal', () => {
+  it('continues a covered migration while suppressing its presentation', async () => {
+    const api = installApi()
+
+    await act(async () => {
+      root.render(<StorageMigrationModal active={false} targetPath="/mnt/data" onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    await act(async () => {
+      root.render(<StorageMigrationModal active targetPath="/mnt/data" onClose={vi.fn()} />)
+    })
+
+    expect(document.body.textContent).toMatch(/data copied/i)
+  })
+
   it('advances past "Checking…" under StrictMode instead of stranding on detect (mountedRef reset)', async () => {
     // Regression: StrictMode's dev mount→unmount→mount left mountedRef false for the real mount, so
     // every async guard bailed and the modal stuck on the detecting copy. Rendering under StrictMode

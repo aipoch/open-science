@@ -19,14 +19,14 @@ import { formatBytes } from '../../../shared/update'
 // Update confirmation dialog: shows the target version and release notes so the user can decide
 // before a large download. Opened from the external capsule and the settings About section. When the
 // manifest carries no notes, it links to the matching GitHub release so the user can still read them.
-const UpdateDialog = (): React.JSX.Element | null => {
+const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
   const status = useUpdateStore((state) => state.status)
   const isOpen = useUpdateStore((state) => state.isDialogOpen)
   const closeDialog = useUpdateStore((state) => state.closeDialog)
   const download = useUpdateStore((state) => state.download)
   const apply = useUpdateStore((state) => state.apply)
 
-  const open = Boolean(isOpen && status.latest)
+  const open = Boolean(active && isOpen && status.latest)
   const dialogStatus = useRetainedDialogValue(open ? status : undefined)
   const releaseUrl = `${APP.links.githubReleases}/tag/v${dialogStatus?.latest ?? ''}`
   const isDownloading = dialogStatus?.state === 'downloading'

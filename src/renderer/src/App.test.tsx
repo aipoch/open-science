@@ -92,7 +92,18 @@ const mocks = vi.hoisted(() => {
     syncUnreadTaskView: vi.fn(),
     globalSearch: { props: undefined as { open: boolean } | undefined },
     homePage: { props: undefined as { onOpenGlobalSearch: () => void } | undefined },
-    closeActiveModal: { handler: undefined as (() => boolean) | undefined }
+    closeActiveModal: {
+      handler: undefined as (() => 'handled' | 'close-preview' | 'close-base') | undefined
+    },
+    sideChatParentSessionIds: new Set<string>(),
+    presentationProps: {
+      closeConfirmation: undefined as { active?: boolean } | undefined,
+      update: undefined as { active?: boolean } | undefined,
+      computeApproval: undefined as { active?: boolean } | undefined,
+      connectorApproval: undefined as { active?: boolean } | undefined,
+      skillImportApproval: undefined as { active?: boolean } | undefined,
+      workspace: undefined as { isPreviewPresentationActive?: boolean } | undefined
+    }
   }
 })
 
@@ -103,7 +114,7 @@ vi.mock('@/lib/deep-link', () => ({
   useDeepLinkNavigation: mocks.deepLinkNavigation
 }))
 vi.mock('@/hooks/useCloseActivePaneShortcut', () => ({
-  useCloseActivePaneShortcut: (handler?: () => boolean) => {
+  useCloseActivePaneShortcut: (handler?: () => 'handled' | 'close-preview' | 'close-base') => {
     mocks.closeActiveModal.handler = handler
   }
 }))
@@ -185,7 +196,10 @@ vi.mock('@/pages/onboarding/startup-gate', () => ({
 }))
 
 vi.mock('@/components/CloseConfirmModal', () => ({
-  CloseConfirmModal: (): React.JSX.Element => <div data-testid="close-confirm" />
+  CloseConfirmModal: (props: { active?: boolean }): React.JSX.Element => {
+    mocks.presentationProps.closeConfirmation = props
+    return <div data-testid="close-confirm" />
+  }
 }))
 vi.mock('@/components/DataRootMissingDialog', () => ({
   DataRootMissingDialog: ({
@@ -205,7 +219,13 @@ vi.mock('@/components/LifecycleToast', () => ({
   LifecycleToast: (): React.JSX.Element => <div data-testid="lifecycle-toast" />
 }))
 vi.mock('@/components/UpdateDialog', () => ({
-  UpdateDialog: (): React.JSX.Element => <div data-testid="update-dialog" />
+  UpdateDialog: (props: { active?: boolean }): React.JSX.Element => {
+    mocks.presentationProps.update = props
+    return <div data-testid="update-dialog" />
+  }
+}))
+vi.mock('@/components/PermissionUndoSnackbar', () => ({
+  PermissionUndoSnackbar: (): React.JSX.Element => <div data-testid="permission-undo" />
 }))
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children
@@ -237,10 +257,22 @@ vi.mock('@/pages/onboarding/OnboardingWizard', () => ({
   }
 }))
 vi.mock('@/pages/settings/ConnectorApprovalDialog', () => ({
-  ConnectorApprovalDialog: (): React.JSX.Element => <div data-testid="approval-dialog" />
+  ConnectorApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
+    mocks.presentationProps.connectorApproval = props
+    return <div data-testid="approval-dialog" />
+  }
 }))
 vi.mock('@/pages/settings/SkillImportApprovalDialog', () => ({
-  SkillImportApprovalDialog: (): React.JSX.Element => <div data-testid="skill-import-dialog" />
+  SkillImportApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
+    mocks.presentationProps.skillImportApproval = props
+    return <div data-testid="skill-import-dialog" />
+  }
+}))
+vi.mock('@/pages/settings/ComputeApprovalDialog', () => ({
+  ComputeApprovalDialog: (props: { active?: boolean }): React.JSX.Element => {
+    mocks.presentationProps.computeApproval = props
+    return <div data-testid="compute-approval-dialog" />
+  }
 }))
 vi.mock('@/pages/settings/SettingsPage', () => ({
   SettingsPage: ({
@@ -268,17 +300,26 @@ vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
     isSessionPersistenceReady,
-    canDeleteConversations
+    canDeleteConversations,
+    isPreviewPresentationActive
   }: {
     isSessionPersistenceReady: boolean
     canDeleteConversations: boolean
+    isPreviewPresentationActive?: boolean
   }): React.JSX.Element => (
     <div
+      ref={() => {
+        mocks.presentationProps.workspace = { isPreviewPresentationActive }
+      }}
       data-testid="workspace-page"
       data-ready={String(isSessionPersistenceReady)}
       data-can-delete-conversations={String(canDeleteConversations)}
     />
   )
+}))
+vi.mock('@/pages/workspace/use-side-chat-controller', () => ({
+  SideChatProvider: ({ children }: { children: ReactNode }): ReactNode => children,
+  useOpenSideChatParentSessionIds: (): ReadonlySet<string> => mocks.sideChatParentSessionIds
 }))
 
 import App from './App'
@@ -375,6 +416,12 @@ describe('App startup routing', () => {
     mocks.globalSearch.props = undefined
     mocks.homePage.props = undefined
     mocks.closeActiveModal.handler = undefined
+    mocks.sideChatParentSessionIds.clear()
+    for (const key of Object.keys(mocks.presentationProps) as Array<
+      keyof typeof mocks.presentationProps
+    >) {
+      mocks.presentationProps[key] = undefined
+    }
   })
 
   afterEach(async () => {
@@ -478,7 +525,7 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettings).not.toHaveBeenCalled()
 
     act(() => {
-      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+      expect(mocks.closeActiveModal.handler?.()).toBe('handled')
     })
     expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
   })
@@ -496,6 +543,85 @@ describe('App startup routing', () => {
 
     expect(mocks.settings.openSettings).not.toHaveBeenCalled()
     dialog.remove()
+  })
+
+  it('does not open global search from a shortcut or Home action over an active dialog', async () => {
+    mocks.settings.isLoaded = true
+    await render()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.appendChild(dialog)
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+      mocks.homePage.props?.onOpenGlobalSearch()
+    })
+
+    expect(document.querySelector('[data-testid="global-search"]')).toBeNull()
+    dialog.remove()
+  })
+
+  it('activates only the highest-priority pending approval and resumes the next one', async () => {
+    mocks.settings.isLoaded = true
+    mocks.settings.isSettingsOpen = true
+    mocks.settings.pendingApprovals = [{ id: 'connector', sessionId: 'connector-session' }]
+    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'compute-session' }]
+    mocks.skillImport.pending = [{ id: 'skill', sessionId: 'skill-session' }]
+    await render()
+
+    expect(mocks.presentationProps.computeApproval?.active).toBe(true)
+    expect(mocks.presentationProps.connectorApproval?.active).toBe(false)
+    expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
+    expect(container.querySelector('[data-testid="settings-page"]')?.textContent).toBe('closed')
+    expect(
+      container.querySelector('[data-testid="home-page"]')?.closest('[aria-hidden="true"]')
+    ).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="lifecycle-toast"]')?.closest('[aria-hidden="true"]')
+    ).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="permission-undo"]')?.closest('[aria-hidden="true"]')
+    ).not.toBeNull()
+
+    mocks.compute.pendingApprovals = []
+    await act(async () => root.render(<App />))
+
+    expect(mocks.presentationProps.computeApproval?.active).toBe(false)
+    expect(mocks.presentationProps.connectorApproval?.active).toBe(true)
+    expect(mocks.presentationProps.skillImportApproval?.active).toBe(false)
+  })
+
+  it('does not let Side Chat-owned approvals block workspace visibility or global search', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sideChatParentSessionIds.add('side-chat-session')
+    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'side-chat-session' }]
+    await render()
+
+    expect(mocks.presentationProps.computeApproval?.active).toBe(false)
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(true)
+    expect(mocks.syncUnreadTaskView).toHaveBeenLastCalledWith({
+      isSessionContentVisible: true
+    })
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', metaKey: true, cancelable: true })
+      )
+    })
+
+    expect(mocks.globalSearch.props?.open).toBe(true)
+  })
+
+  it('consumes the close shortcut while a decision-required approval is active', async () => {
+    mocks.settings.isLoaded = true
+    mocks.compute.pendingApprovals = [{ id: 'compute', session_id: 'compute-session' }]
+    await render()
+
+    expect(mocks.closeActiveModal.handler?.()).toBe('handled')
+    expect(mocks.update.closeDialog).not.toHaveBeenCalled()
   })
 
   it('ignores a closed dialog portal when opening Settings', async () => {
@@ -521,7 +647,7 @@ describe('App startup routing', () => {
     await render()
 
     act(() => {
-      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+      expect(mocks.closeActiveModal.handler?.()).toBe('handled')
     })
 
     expect(mocks.update.closeDialog).toHaveBeenCalledOnce()
@@ -539,7 +665,7 @@ describe('App startup routing', () => {
     document.body.appendChild(dialog)
 
     act(() => {
-      expect(mocks.closeActiveModal.handler?.()).toBe(true)
+      expect(mocks.closeActiveModal.handler?.()).toBe('handled')
     })
 
     expect(onKeyDown).toHaveBeenCalledOnce()

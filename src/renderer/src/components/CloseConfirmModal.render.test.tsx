@@ -76,6 +76,24 @@ const findButtonByName = async (pattern: RegExp): Promise<HTMLButtonElement> => 
 }
 
 describe('CloseConfirmModal', () => {
+  it('retains a covered close request until its presentation becomes active', async () => {
+    act(() => root.render(<CloseConfirmModal active={false} />))
+    act(() => {
+      emit({ requestId: 'r-covered', variant: 'close-to-tray', sessions: [] })
+    })
+
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-covered', ack: true })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(sendResponse).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'r-covered', choice: expect.anything() })
+    )
+
+    act(() => root.render(<CloseConfirmModal active />))
+
+    await findByText(/Minimize or quit?/)
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+  })
+
   it('uses shared settings dialog chrome for the close confirmation', async () => {
     render()
     act(() => {

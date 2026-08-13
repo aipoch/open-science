@@ -165,7 +165,7 @@ describe('useCloseActivePaneShortcut', () => {
   it('lets an active modal handle the shortcut before preview panes or the window', () => {
     useNavigationStore.setState({ view: 'workspace' })
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(fileTab('kept-open'))
-    const closeActiveModal = vi.fn(() => true)
+    const closeActiveModal = vi.fn(() => 'handled' as const)
 
     const { unmount } = renderHook(() => useCloseActivePaneShortcut(closeActiveModal))
     act(() => closeActivePane?.())
@@ -184,7 +184,7 @@ describe('useCloseActivePaneShortcut', () => {
     preview.setToolItemExpanded('expanded-tool')
     preview.openFileDialog(fileTab('dialog'))
 
-    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut(() => 'close-preview'))
     act(() => closeActivePane?.())
     expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
     expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBe('expanded-tool')

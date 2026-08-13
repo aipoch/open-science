@@ -69,6 +69,25 @@ afterEach(() => {
 })
 
 describe('LegacyDataMoveDialog', () => {
+  it('keeps a covered legacy prompt pending without dismissing it', async () => {
+    const api = installApi()
+
+    await act(async () => {
+      root.render(
+        <LegacyDataMoveDialog
+          active={false}
+          currentDataRoot="/home/u/.open-science"
+          defaultParent="/home/u"
+          onDismiss={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(api.dismissLegacyMovePrompt).not.toHaveBeenCalled()
+  })
+
   it('uses shared settings dialog chrome without changing the move choices', async () => {
     installApi()
     await renderDialog()

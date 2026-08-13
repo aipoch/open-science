@@ -64,6 +64,7 @@ type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
   canDeleteConversations: boolean
+  isPreviewPresentationActive?: boolean
 }
 
 // New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
@@ -75,7 +76,8 @@ const OPEN_DIALOG_SELECTOR =
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
-  canDeleteConversations
+  canDeleteConversations,
+  isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
   // The active project scopes which sessions are visible and stamps newly created ones. The workspace
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
@@ -867,6 +869,7 @@ const WorkspacePage = ({
     <main className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]">
       <WorkspacePanelLayout
         hasPreviewItems={previewItems.length > 0}
+        isPreviewPresentationActive={isPreviewPresentationActive}
         restoredPlanResponder={
           activeSession
             ? {
@@ -1141,7 +1144,11 @@ const WorkspacePage = ({
       />
 
       <FilePreviewDialog
-        item={fileDialogItem?.projectId === activeProjectId ? fileDialogItem : undefined}
+        item={
+          isPreviewPresentationActive && fileDialogItem?.projectId === activeProjectId
+            ? fileDialogItem
+            : undefined
+        }
         onClose={closeFileDialog}
       />
 

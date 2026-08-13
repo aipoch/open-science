@@ -13,8 +13,10 @@ import { useSettingsStore } from '@/stores/settings-store'
 // service, so a call that isn't pre-allowed or skip-approved is held until the user decides here.
 // Requests are answered one at a time (oldest first); the card can't be dismissed without a decision.
 export function ConnectorApprovalDialog({
+  active = true,
   blockedSessionIds
 }: {
+  active?: boolean
   blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
   const request = useSettingsStore((state) =>
@@ -51,7 +53,7 @@ export function ConnectorApprovalDialog({
   const deny = (): void => void respondApproval(request.id, 'deny')
 
   return (
-    <Dialog.Root open>
+    <Dialog.Root open={active}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
         <Dialog.Content
@@ -116,7 +118,7 @@ export function ConnectorApprovalDialog({
       </Dialog.Portal>
       <PermissionScopeConfirmationDialog
         confirmation={
-          pendingBroadScope
+          active && pendingBroadScope
             ? {
                 scope: pendingBroadScope,
                 subject: `${displayName} ${request.method}`,

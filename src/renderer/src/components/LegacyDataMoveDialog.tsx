@@ -12,6 +12,8 @@ import {
 import { StorageMigrationModal } from '@/pages/settings/StorageMigrationModal'
 
 type LegacyDataMoveDialogProps = {
+  // App Shell presentation ownership may temporarily cover this prompt without discarding its state.
+  active?: boolean
   // The hidden config root where a legacy install's data currently lives (e.g. ~/.open-science).
   currentDataRoot: string
   // The parent the "Move to OpenScience" action relocates into; its derived data root (resolved via
@@ -28,6 +30,7 @@ type LegacyDataMoveDialogProps = {
 // restart. Moving sets settings.dataRoot, which by itself disqualifies the prompt on the next launch,
 // so only the "keep it here" path needs to persist a dismissal.
 const LegacyDataMoveDialog = ({
+  active = true,
   currentDataRoot,
   defaultParent,
   onDismiss
@@ -84,6 +87,7 @@ const LegacyDataMoveDialog = ({
   if (migrationTarget !== null) {
     return (
       <StorageMigrationModal
+        active={active}
         targetPath={migrationTarget}
         onClose={() => setMigrationTarget(null)}
       />
@@ -91,7 +95,7 @@ const LegacyDataMoveDialog = ({
   }
 
   return (
-    <AlertDialog.Root open>
+    <AlertDialog.Root open={active}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
         <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>

@@ -32,6 +32,18 @@ afterEach(() => {
 })
 
 describe('UpdateDialog', () => {
+  it('preserves a covered update request while suppressing its presentation', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'available', current: '0.1.0', latest: '0.2.0' }
+    })
+
+    act(() => root.render(<UpdateDialog active={false} />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useUpdateStore.getState().isDialogOpen).toBe(true)
+  })
+
   it('uses shared settings dialog chrome and prevents outside-click dismissal', () => {
     useUpdateStore.setState({
       isDialogOpen: true,

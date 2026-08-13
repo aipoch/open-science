@@ -49,6 +49,24 @@ describe('ConnectorApprovalDialog', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('keeps a covered approval queued while suppressing its presentation', () => {
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'r1',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{}'
+        }
+      ]
+    })
+
+    act(() => root.render(<ConnectorApprovalDialog active={false} />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useSettingsStore.getState().pendingApprovals).toHaveLength(1)
+  })
+
   it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
     useSettingsStore.setState({
       pendingApprovals: [

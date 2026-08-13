@@ -383,6 +383,18 @@ colors communicate a successful or failed probe/migration result.
 - Workspace: `flex h-svh min-w-0 bg-bg-10 text-foreground overflow-hidden`.
 - Main content column: `min-w-0 flex-1 overflow-hidden`.
 - Use `ScrollArea` for scrollable content. Do not create multiple nested scroll containers in the same direction.
+- The App Shell presentation owner selects the only root presentation allowed to be interactive.
+  Feature stores retain their own requested/open state; they do not coordinate presentation order
+  with one another.
+- Root presentation priority is fixed: close confirmation, missing data-root recovery, legacy data
+  move, update, compute approval, Connector approval, Skill import approval, global search, Settings,
+  preview, then base content. A covered presentation stays requested and resumes when higher-priority
+  work clears.
+- Session visibility, App Shell shortcut eligibility, and `Cmd/Ctrl+W` routing must consume that
+  projection. Do not rebuild parallel Boolean gate lists in `AppContent` or feature components.
+- When a presentation above preview/base owns the shell, base content is `inert` and
+  `aria-hidden`. Nested dialogs and fullscreen viewers retain local priority before base-pane or
+  window close behavior.
 
 ### Button
 

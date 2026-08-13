@@ -14,11 +14,13 @@ import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'
 import { useSkillImportCandidatePreview } from './useSkillImportCandidatePreview'
 
 type SkillImportApprovalRequestDialogProps = {
+  active: boolean
   request: ConversationSkillImportApprovalRequest
   respond: (response: ConversationSkillImportApprovalResponse) => Promise<void>
 }
 
 const SkillImportApprovalRequestDialog = ({
+  active,
   request,
   respond
 }: SkillImportApprovalRequestDialogProps): React.JSX.Element => {
@@ -75,7 +77,7 @@ const SkillImportApprovalRequestDialog = ({
 
   return (
     <>
-      <Dialog.Root open>
+      <Dialog.Root open={active}>
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
           <Dialog.Content
@@ -213,14 +215,19 @@ const SkillImportApprovalRequestDialog = ({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-      <SkillImportCandidatePreview {...candidatePreview.previewProps} />
+      <SkillImportCandidatePreview
+        {...candidatePreview.previewProps}
+        open={active && candidatePreview.previewProps.open}
+      />
     </>
   )
 }
 
 export function SkillImportApprovalDialog({
+  active = true,
   blockedSessionIds
 }: {
+  active?: boolean
   blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
   const request = useSkillImportStore((state) =>
@@ -229,6 +236,11 @@ export function SkillImportApprovalDialog({
   const respond = useSkillImportStore((state) => state.respond)
 
   return request ? (
-    <SkillImportApprovalRequestDialog key={request.id} request={request} respond={respond} />
+    <SkillImportApprovalRequestDialog
+      key={request.id}
+      active={active}
+      request={request}
+      respond={respond}
+    />
   ) : null
 }

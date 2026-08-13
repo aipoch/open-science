@@ -16,6 +16,7 @@ import {
 type Stage = 'detecting' | 'confirm' | 'migrating' | 'done' | 'committing' | 'error'
 
 type StorageMigrationModalProps = {
+  active?: boolean
   targetPath: string
   onClose: () => void
 }
@@ -48,6 +49,7 @@ const formatElapsed = (ms: number): string => {
 // (moved / cancelled / switchover failed / failed) to matching UI. Mounted only while a move is in
 // flight, so unmount always means "tear down the progress subscription".
 const StorageMigrationModal = ({
+  active: isPresentationActive = true,
   targetPath,
   onClose
 }: StorageMigrationModalProps): React.JSX.Element => {
@@ -212,7 +214,7 @@ const StorageMigrationModal = ({
   const isSwitchover = Boolean(outcome && 'switchoverFailed' in outcome)
 
   return (
-    <Dialog.Root open>
+    <Dialog.Root open={isPresentationActive}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
         <Dialog.Content

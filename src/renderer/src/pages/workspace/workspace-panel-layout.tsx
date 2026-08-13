@@ -440,6 +440,7 @@ const useWorkspacePanelLayout = (previewPort: PreviewPanelLayoutPort): Workspace
 
 type WorkspacePanelLayoutProps = {
   hasPreviewItems: boolean
+  isPreviewPresentationActive?: boolean
   restoredPlanResponder?: RestoredPlanResponder
   preview: PreviewPanelLayoutPort
   renderDesktopSidebar: (options: {
@@ -460,6 +461,7 @@ type WorkspacePanelLayoutProps = {
 // Adapts the controller to the desktop split view and mobile drawer/sheet without owning page data.
 const WorkspacePanelLayout = ({
   hasPreviewItems,
+  isPreviewPresentationActive = true,
   restoredPlanResponder,
   preview: previewPort,
   renderDesktopSidebar,
@@ -553,7 +555,7 @@ const WorkspacePanelLayout = ({
 
       {isMobile ? (
         <MobilePreviewSheet
-          open={preview.state === 'open'}
+          open={isPreviewPresentationActive && preview.state === 'open'}
           onClose={preview.collapse}
           restoredPlanResponder={restoredPlanResponder}
         />

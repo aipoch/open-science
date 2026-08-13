@@ -28,8 +28,10 @@ import { useComputeStore } from '@/stores/compute-store'
 //   This project      — approve for (provider, operation) for all future calls in this project
 //   Always            — approve for (provider, operation) across projects
 export function ComputeApprovalDialog({
+  active = true,
   blockedSessionIds
 }: {
+  active?: boolean
   blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
   const request = useComputeStore((state) =>
@@ -58,7 +60,7 @@ export function ComputeApprovalDialog({
   const showFull = expandedRequestId === dialogRequest.id
 
   return (
-    <Dialog.Root open={Boolean(request)}>
+    <Dialog.Root open={active && Boolean(request)}>
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
@@ -153,7 +155,7 @@ export function ComputeApprovalDialog({
       </Dialog.Portal>
       <PermissionScopeConfirmationDialog
         confirmation={
-          pendingBroadScope
+          active && pendingBroadScope
             ? {
                 scope: pendingBroadScope,
                 subject: `remote commands on ${dialogRequest.provider_name}`,

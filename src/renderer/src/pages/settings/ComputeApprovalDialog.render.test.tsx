@@ -48,6 +48,15 @@ describe('ComputeApprovalDialog', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('keeps a covered approval queued while suppressing its presentation', () => {
+    useComputeStore.setState({ pendingApprovals: [request] })
+
+    act(() => root.render(<ComputeApprovalDialog active={false} />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useComputeStore.getState().pendingApprovals).toEqual([request])
+  })
+
   it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
     useComputeStore.setState({
       pendingApprovals: [{ ...request, session_id: 'session-side' }]
