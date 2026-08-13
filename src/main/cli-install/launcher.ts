@@ -176,7 +176,7 @@ export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLaun
 }
 
 export const isCliShimStale = async (env: CliLauncherEnv): Promise<boolean> => {
-  if (!env.packaged) return false
+  if (!(env.platform === 'linux' && env.packaged)) return false
   const plan = planCliLauncher(env)
   try {
     const content = await readFile(plan.target, 'utf8')
