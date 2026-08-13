@@ -4,7 +4,7 @@
 // empty area to type a path), and its leading drive crumb opens a drive/volume switcher.
 import { ChevronDown, CircleAlert, Folder, Home, Info } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type {
   GrantedLocalRoot,
@@ -15,6 +15,7 @@ import type {
 import {
   describeLocalListingError,
   isLocalPathRoot,
+  localDriveRootFor,
   parentLocalPath,
   resolveLocalPath,
   sameLocalDirectory,
@@ -35,18 +36,6 @@ type ListingState =
   | { kind: 'loading' }
   | { kind: 'ok'; entries: LocalDirEntry[] }
   | { kind: 'error'; summary: string }
-
-// The drive/volume a path lives on: the drive root on Windows (C:\), the volume root on POSIX
-// (/Volumes/<name> when browsing an external volume, / otherwise).
-const driveRootOf = (path: string, platform: string): string => {
-  if (platform !== 'win32') {
-    const volume = path.match(/^\/Volumes\/[^/]+/)
-    if (volume) return volume[0]
-  }
-  let root = path
-  while (!isLocalPathRoot(root, platform)) root = parentLocalPath(root, platform)
-  return root
-}
 
 // One custom-dot radio option for the access-level choice in the footer.
 const AccessRadio = ({
@@ -79,8 +68,8 @@ const AccessRadio = ({
 )
 
 // The path input that replaces the breadcrumb while editing. Enter or blur submits, Escape
-// cancels; either way the parent swaps the breadcrumb back in. The settled ref guards the blur
-// that follows an Enter/Escape unmount from submitting twice.
+// cancels; either way the parent swaps the breadcrumb back in. Enter/Escape unmount the input, and
+// unmounting never fires blur, so neither path can double-settle.
 const PathEditInput = ({
   initialPath,
   onSubmit,
@@ -91,12 +80,6 @@ const PathEditInput = ({
   onCancel: () => void
 }): React.JSX.Element => {
   const [value, setValue] = useState(initialPath)
-  const settledRef = useRef(false)
-  const settle = (action: () => void): void => {
-    if (settledRef.current) return
-    settledRef.current = true
-    action()
-  }
   return (
     <input
       ref={(element) => {
@@ -109,19 +92,38 @@ const PathEditInput = ({
       onKeyDown={(event) => {
         if (event.key === 'Enter') {
           event.preventDefault()
-          settle(() => onSubmit(value))
+          onSubmit(value)
         } else if (event.key === 'Escape') {
           event.preventDefault()
-          settle(onCancel)
+          onCancel()
         }
       }}
-      onBlur={() => settle(() => onSubmit(value))}
+      onBlur={() => onSubmit(value)}
       spellCheck={false}
       aria-label="Folder path"
       className="w-full rounded-md border border-border bg-bg-000 px-2 py-1 font-mono text-xs text-text-100 outline-none focus:text-text-000 focus:ring-2 focus:ring-ring/50"
     />
   )
 }
+
+// The highlighted chip for the current location: the tail crumb, or the drive label when cwd sits
+// at a drive root (no segment crumbs). Clicking it opens the path editor, like the bar's empty space.
+const CurrentCrumb = ({
+  label,
+  onEdit
+}: {
+  label: string
+  onEdit: () => void
+}): React.JSX.Element => (
+  <button
+    type="button"
+    data-testid="grant-access-crumb-current"
+    onClick={onEdit}
+    className="rounded bg-bg-200 px-1 py-0.5 font-medium text-text-000"
+  >
+    {label}
+  </button>
+)
 
 // The dialog body. Rendered only while the dialog is open, so every open starts fresh at home
 // with the default access level and no leftover grant error.
@@ -148,19 +150,22 @@ const GrantFolderAccessDialogContent = ({
     | { kind: 'error'; path: string; summary: string }
     | null
   >(null)
+  // Bumped to force a re-list of the unchanged cwd (a no-op path submit clearing an error).
+  const [relistNonce, setRelistNonce] = useState(0)
   const [access, setAccess] = useState<GrantedLocalRootAccess>('ro')
   const [grantFailed, setGrantFailed] = useState(false)
 
   // On mount: resolve home (the initial location), enumerate the mounted drives for the drive
-  // dropdown, and refresh the granted roots the grant fallback compares against.
+  // dropdown, and refresh the granted roots so handleGrant's fallback can tell which root the
+  // grant just added. A drive-enumeration failure must not take the whole dialog down with it.
   useEffect(() => {
     if (!window.api?.localFs) return
     let cancelled = false
     void (async () => {
       const [fetchedRoots, fetchedDrives] = await Promise.all([
         window.api.localFs.getRoots(),
-        // Optional-chained: some component tests stub localFs without the drive surface.
-        window.api.localFs.listDrives?.() ?? Promise.resolve([])
+        // A drive-enumeration failure must not take the whole dialog down with it.
+        window.api.localFs.listDrives().catch(() => [])
       ])
       if (cancelled) return
       setHome(fetchedRoots.home)
@@ -201,7 +206,7 @@ const GrantFolderAccessDialogContent = ({
     return () => {
       cancelled = true
     }
-  }, [home, cwd, platform])
+  }, [home, cwd, platform, relistNonce])
 
   const listing: ListingState =
     result && sameLocalDirectory(result.path, cwd, platform)
@@ -228,12 +233,22 @@ const GrantFolderAccessDialogContent = ({
         path: cwd,
         summary:
           invalid === 'not_absolute'
-            ? 'Enter an absolute path, starting at /.'
+            ? platform === 'win32'
+              ? 'Enter an absolute path, like C:\\folder.'
+              : 'Enter an absolute path, starting at /.'
             : 'That path contains invalid characters.'
       })
       return
     }
-    if (!sameLocalDirectory(resolved, cwd, platform)) navigateTo(resolved)
+    if (sameLocalDirectory(resolved, cwd, platform)) {
+      // A no-op submit while an error is showing re-lists cwd so the stale error clears.
+      if (result?.kind === 'error') {
+        setResult(null)
+        setRelistNonce((nonce) => nonce + 1)
+      }
+      return
+    }
+    navigateTo(resolved)
   }
 
   const isHome = home !== undefined && sameLocalDirectory(cwd, home, platform)
@@ -255,8 +270,10 @@ const GrantFolderAccessDialogContent = ({
 
   // Absolute-path breadcrumb: a leading drive crumb (opening the drive/volume dropdown), a home
   // shortcut, then every segment of cwd as a clickable crumb. Segmentation is platform-aware.
-  // The root itself is not a crumb — the drive dropdown trigger represents it.
-  const driveRoot = cwd === '' ? undefined : driveRootOf(cwd, platform)
+  // The root itself is not a crumb — the drive dropdown trigger represents it. The drive root is
+  // the longest listDrives() entry containing cwd, so Linux mount points under /media, /run/media
+  // and /mnt highlight their own entry instead of /.
+  const driveRoot = cwd === '' ? undefined : localDriveRootFor(cwd, drives, platform)
   const currentDrive = drives.find(
     (drive) => driveRoot !== undefined && sameLocalDirectory(drive.path, driveRoot, platform)
   )
@@ -367,10 +384,12 @@ const GrantFolderAccessDialogContent = ({
               ›
             </span>
             {crumbs.length === 0 ? (
-              // At a drive root there are no segment crumbs; say so instead of a dangling separator.
-              <span className="rounded bg-bg-200 px-1 py-0.5 font-medium text-text-000">
-                {currentDrive?.label ?? driveRoot}
-              </span>
+              // At a drive root there are no segment crumbs; the current-location chip stands in
+              // for the tail crumb.
+              <CurrentCrumb
+                label={currentDrive?.label ?? driveRoot ?? ''}
+                onEdit={() => setEditingPath(true)}
+              />
             ) : null}
             {crumbs.map((crumb, index) => {
               const isCurrent = index === crumbs.length - 1
@@ -382,9 +401,7 @@ const GrantFolderAccessDialogContent = ({
                     </span>
                   ) : null}
                   {isCurrent ? (
-                    <span className="rounded bg-bg-200 px-1 py-0.5 font-medium text-text-000">
-                      {crumb.label}
-                    </span>
+                    <CurrentCrumb label={crumb.label} onEdit={() => setEditingPath(true)} />
                   ) : (
                     <button
                       type="button"

@@ -393,8 +393,8 @@ export const LocalFileBrowser = ({
     void (async () => {
       const [fetchedRoots, fetchedDrives, fetchedBookmarks] = await Promise.all([
         window.api.localFs.getRoots(),
-        // Optional-chained: some component tests stub localFs without the drive surface.
-        window.api.localFs.listDrives?.() ?? Promise.resolve([]),
+        // A drive-enumeration failure must not take the whole browser down with it.
+        window.api.localFs.listDrives().catch(() => []),
         window.api.compute.bookmarksGet(LOCAL_BOOKMARKS_KEY)
       ])
       setRoots(fetchedRoots)
@@ -430,7 +430,9 @@ export const LocalFileBrowser = ({
         problem: {
           summary:
             invalid === 'not_absolute'
-              ? 'Enter an absolute path, starting at /.'
+              ? window.api.platform === 'win32'
+                ? 'Enter an absolute path, like C:\\folder.'
+                : 'Enter an absolute path, starting at /.'
               : 'That path contains invalid characters.'
         }
       })
@@ -438,6 +440,8 @@ export const LocalFileBrowser = ({
     }
     if (sameLocalDirectory(resolved, currentPath, window.api.platform)) {
       setAddressInput(currentPath)
+      // A no-op submit while an error is showing re-reads the folder so the error clears.
+      if (state.kind === 'error') void navigate(currentPath)
       return
     }
     void navigate(resolved)

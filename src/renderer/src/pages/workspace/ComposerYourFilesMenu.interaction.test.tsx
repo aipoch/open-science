@@ -121,6 +121,7 @@ beforeEach(() => {
     localFs: {
       listDir,
       getRoots: vi.fn().mockResolvedValue({ home: '/Users/roxi', machineName: 'Test Mac' }),
+      listDrives: vi.fn(async () => []),
       listGrantedRoots: vi.fn().mockResolvedValue([ROOT]),
       grantRoot: vi.fn().mockResolvedValue([ROOT]),
       setGrantedRootAccess: vi.fn().mockResolvedValue([ROOT]),

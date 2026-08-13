@@ -5,13 +5,15 @@ import {
   isLocalPathRoot,
   isPathWithin,
   isSensitiveLocalPath,
+  localDriveRootFor,
   parentLocalPath,
   resolveLocalPath,
   sameLocalDirectory,
   sortLocalEntries,
   validateGrantCandidate,
   validateLocalPath,
-  type LocalDirEntry
+  type LocalDirEntry,
+  type LocalDrive
 } from './local-fs'
 
 describe('validateLocalPath', () => {
@@ -222,6 +224,45 @@ describe('isPathWithin', () => {
     expect(isPathWithin('C:\\data2\\x', 'C:\\data')).toBe(false)
     // Mixed forms of the same path still match after separator normalization.
     expect(isPathWithin('C:/data/x', 'C:\\data')).toBe(true)
+  })
+})
+
+describe('localDriveRootFor', () => {
+  const posixDrives: LocalDrive[] = [
+    { path: '/', label: '/' },
+    { path: '/Volumes/External', label: 'External' },
+    { path: '/media/user/usb', label: 'usb' },
+    { path: '/mnt/data', label: 'data' }
+  ]
+  const winDrives: LocalDrive[] = [
+    { path: 'C:\\', label: 'C:' },
+    { path: 'D:\\', label: 'D:' }
+  ]
+
+  it('picks the longest matching mount point on POSIX', () => {
+    expect(localDriveRootFor('/media/user/usb/sub', posixDrives, 'linux')).toBe('/media/user/usb')
+    expect(localDriveRootFor('/mnt/data', posixDrives, 'linux')).toBe('/mnt/data')
+    expect(localDriveRootFor('/Volumes/External/docs', posixDrives, 'darwin')).toBe(
+      '/Volumes/External'
+    )
+    expect(localDriveRootFor('/Users/roxi', posixDrives, 'darwin')).toBe('/')
+  })
+
+  it('does not match siblings sharing a prefix', () => {
+    expect(localDriveRootFor('/media/user/usb2/sub', posixDrives, 'linux')).toBe('/')
+  })
+
+  it('matches Windows drives case-insensitively and across separators', () => {
+    expect(localDriveRootFor('c:\\Users\\roxi', winDrives, 'win32')).toBe('C:\\')
+    expect(localDriveRootFor('D:/Data/raw', winDrives, 'win32')).toBe('D:\\')
+  })
+
+  it('falls back to the lexical root when no enumerated drive matches', () => {
+    expect(localDriveRootFor('E:\\Data', winDrives, 'win32')).toBe('E:\\')
+    expect(localDriveRootFor('\\\\server\\share\\docs', winDrives, 'win32')).toBe(
+      '\\\\server\\share'
+    )
+    expect(localDriveRootFor('/Users/roxi', [], 'darwin')).toBe('/')
   })
 })
 

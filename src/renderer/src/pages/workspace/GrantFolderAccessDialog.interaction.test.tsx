@@ -125,6 +125,25 @@ const driveEntry = (path: string): Element | undefined =>
     (element) => element.getAttribute('data-testid') === `grant-access-drive-${path}`
   )
 
+const pathInput = (): HTMLInputElement | null =>
+  document.body.querySelector<HTMLInputElement>('[aria-label="Folder path"]')
+
+// Types into the controlled path input the way React expects (native setter + input event).
+const typeInto = async (input: HTMLInputElement, value: string): Promise<void> => {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+const keyOn = async (input: HTMLInputElement, key: string): Promise<void> => {
+  await act(async () => {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+    await Promise.resolve()
+  })
+}
+
 describe('GrantFolderAccessDialog', () => {
   it('lists the home subfolders on open', async () => {
     renderDialog()
@@ -166,29 +185,103 @@ describe('GrantFolderAccessDialog', () => {
 
     // Clicking the bar's own empty area (target === currentTarget) opens the editor.
     await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
-    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Folder path"]')
+    const input = pathInput()
     expect(input).not.toBeNull()
     expect(input?.value).toBe(HOME)
     expect(input?.selectionStart).toBe(0)
     expect(input?.selectionEnd).toBe(HOME.length)
 
+    await typeInto(input as HTMLInputElement, `${HOME}/Projects`)
+    await keyOn(input as HTMLInputElement, 'Enter')
+
+    expect(listDir).toHaveBeenCalledWith(`${HOME}/Projects`)
+    // The bar is back to breadcrumb rendering.
+    expect(pathInput()).toBeNull()
+    expect(document.body.querySelector('[data-testid="grant-access-path-bar"]')).not.toBeNull()
+  })
+
+  it('submits the path edit on blur and navigates', async () => {
+    renderDialog()
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+    const input = pathInput() as HTMLInputElement
+    await typeInto(input, `${HOME}/Projects`)
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        'value'
-      )?.set
-      setter?.call(input, `${HOME}/Projects`)
-      input?.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () => {
-      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      // React wires onBlur to the bubbling focusout event.
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
       await Promise.resolve()
     })
 
     expect(listDir).toHaveBeenCalledWith(`${HOME}/Projects`)
-    // The bar is back to breadcrumb rendering.
-    expect(document.body.querySelector('[aria-label="Folder path"]')).toBeNull()
-    expect(document.body.querySelector('[data-testid="grant-access-path-bar"]')).not.toBeNull()
+    expect(pathInput()).toBeNull()
+  })
+
+  it('opens the path editor when the tail crumb is clicked', async () => {
+    renderDialog()
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-crumb-current"]'))
+
+    const input = pathInput()
+    expect(input).not.toBeNull()
+    expect(input?.value).toBe(HOME)
+  })
+
+  it('surfaces a quiet error for an invalid path and clears it on a no-op submit', async () => {
+    renderDialog()
+    await flush()
+    expect(document.body.textContent).toContain('Projects')
+
+    await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+    const input = pathInput() as HTMLInputElement
+    // A control character is never valid in a path, even after resolving against cwd.
+    await typeInto(input, '/bad\x01path')
+    await keyOn(input, 'Enter')
+
+    expect(document.body.textContent).toContain('That path contains invalid characters.')
+    expect(document.body.textContent).not.toContain('Projects')
+
+    // Reopening the editor and submitting the unchanged cwd re-lists and clears the error.
+    await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+    await keyOn(pathInput() as HTMLInputElement, 'Enter')
+    await flush()
+
+    expect(document.body.textContent).not.toContain('That path contains invalid characters.')
+    expect(document.body.textContent).toContain('Projects')
+  })
+
+  it('highlights the longest matching linux mount point instead of /', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'linux',
+      localFs: {
+        getRoots: vi.fn().mockResolvedValue({ home: HOME, machineName: 'Test Box' }),
+        listDrives: vi.fn().mockResolvedValue([
+          { path: '/', label: '/' },
+          { path: '/media/user/usb', label: 'usb' }
+        ]),
+        listDir,
+        listGrantedRoots: vi.fn().mockResolvedValue([]),
+        grantRoot
+      }
+    }
+    renderDialog()
+    await flush()
+
+    // Browse onto the USB mount via the path editor.
+    await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+    const input = pathInput() as HTMLInputElement
+    await typeInto(input, '/media/user/usb/sub')
+    await keyOn(input, 'Enter')
+    await flush()
+
+    expect(listDir).toHaveBeenCalledWith('/media/user/usb/sub')
+    // The root crumb tracks the mount, and the menu highlights it rather than /.
+    expect(
+      document.body.querySelector('[data-testid="grant-access-drive-root"]')?.textContent
+    ).toContain('usb')
+    expect(driveEntry('/media/user/usb')?.getAttribute('aria-current')).toBe('true')
+    expect(driveEntry('/')?.getAttribute('aria-current')).toBeNull()
   })
 
   it('cancels path editing on Escape without navigating', async () => {
@@ -197,7 +290,7 @@ describe('GrantFolderAccessDialog', () => {
     const initialCalls = listDir.mock.calls.length
 
     await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
-    const input = document.body.querySelector<HTMLInputElement>('[aria-label="Folder path"]')
+    const input = pathInput()
     expect(input).not.toBeNull()
 
     await act(async () => {
@@ -205,7 +298,7 @@ describe('GrantFolderAccessDialog', () => {
       await Promise.resolve()
     })
 
-    expect(document.body.querySelector('[aria-label="Folder path"]')).toBeNull()
+    expect(pathInput()).toBeNull()
     expect(document.body.querySelector('[data-testid="grant-access-path-bar"]')).not.toBeNull()
     expect(listDir.mock.calls.length).toBe(initialCalls)
   })

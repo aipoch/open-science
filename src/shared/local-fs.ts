@@ -228,3 +228,31 @@ export const parentLocalPath = (path: string, platform: string): string => {
 
 export const isLocalPathRoot = (path: string, platform: string): boolean =>
   sameLocalDirectory(path, localPathRoot(path, platform), platform)
+
+// The mounted drive/volume a path lives on: the longest listDrives() entry containing it, so
+// /media/user/usb/sub resolves to the usb mount rather than /. Windows compares
+// case-insensitively (a cwd realpath'd to "c:\…" must still match the "C:\" entry) and tolerates
+// either separator. Falls back to the lexical path root (C:\, UNC share, or /) when no enumerated
+// drive matches — e.g. before the listDrives call has resolved.
+export const localDriveRootFor = (
+  path: string,
+  drives: readonly LocalDrive[],
+  platform: string
+): string => {
+  const windows = platform === 'win32'
+  const separator = windows ? '\\' : '/'
+  const normalize = (value: string): string =>
+    windows ? value.replace(/\//g, '\\').toLowerCase() : value
+  const candidate = normalize(path)
+  let best: LocalDrive | undefined
+  for (const drive of drives) {
+    const root = normalize(drive.path)
+    // The separator boundary matters: "/media/user/usb2" must NOT match the "/media/user/usb" drive.
+    const prefix = root.endsWith('/') || root.endsWith('\\') ? root : `${root}${separator}`
+    if (candidate === root || candidate.startsWith(prefix)) {
+      if (!best || root.length > normalize(best.path).length) best = drive
+    }
+  }
+  if (best) return best.path
+  return localPathRoot(path, platform)
+}
