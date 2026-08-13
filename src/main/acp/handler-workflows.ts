@@ -311,25 +311,34 @@ const createAcpHandlerWorkflows = (
       if (!historyReplay) {
         throw new Error('Save as skill conversation history could not be replayed.')
       }
-      await runtime.startContinuation({
+      const tracked = taskNotifications?.trackPrompt({
         sessionId: session.id,
-        text: SAVE_AS_SKILL_PROMPT,
-        suppressUserMessage: true,
-        provenanceContext: getActiveConversationContext(graph, request.promptMessageId),
-        resumeFallback: {
-          historyPreamble: historyReplay.historyPreamble,
-          historyAttachments: historyReplay.historyAttachments,
-          historyImages: historyReplay.historyImages
-        },
-        ...(replayPolicy.contextReset
-          ? {
-              historyPreamble: historyReplay.historyPreamble,
-              historyAttachments: historyReplay.historyAttachments,
-              historyImages: historyReplay.historyImages,
-              contextReset: true
-            }
-          : {})
+        text: 'Save as skill'
       })
+      try {
+        await runtime.startContinuation({
+          sessionId: session.id,
+          text: SAVE_AS_SKILL_PROMPT,
+          suppressUserMessage: true,
+          provenanceContext: getActiveConversationContext(graph, request.promptMessageId),
+          resumeFallback: {
+            historyPreamble: historyReplay.historyPreamble,
+            historyAttachments: historyReplay.historyAttachments,
+            historyImages: historyReplay.historyImages
+          },
+          ...(replayPolicy.contextReset
+            ? {
+                historyPreamble: historyReplay.historyPreamble,
+                historyAttachments: historyReplay.historyAttachments,
+                historyImages: historyReplay.historyImages,
+                contextReset: true
+              }
+            : {})
+        })
+      } catch (error) {
+        if (tracked) taskNotifications?.untrackPrompt(session.id, tracked)
+        throw error
+      }
       return runtime.getSnapshot()
     }
     return archiveAvailability

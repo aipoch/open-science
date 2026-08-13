@@ -74,7 +74,8 @@ const prepareControlTurn = (session: PersistedChatSession): void => {
 
 const createHarness = (
   mutate?: (session: ReturnType<typeof createSession>) => void,
-  archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
+  archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3],
+  taskNotifications?: Parameters<typeof createAcpHandlerWorkflows>[2]
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
   startContinuation: ReturnType<typeof vi.fn>
@@ -105,7 +106,7 @@ const createHarness = (
       startContinuation
     },
     { create: vi.fn() } as never,
-    undefined,
+    taskNotifications,
     archiveAvailability,
     { loadSession: vi.fn(async () => session) }
   )
@@ -182,6 +183,35 @@ describe('ACP Save as skill workflow', () => {
       })
     )
     expect(request).not.toHaveProperty('forcedSkillIds')
+  })
+
+  it('tracks the accepted hidden turn with a safe task notification label', async () => {
+    const trackPrompt = vi.fn(() => ({ token: 1 }))
+    const untrackPrompt = vi.fn()
+    const harness = createHarness(undefined, undefined, { trackPrompt, untrackPrompt })
+
+    await harness.workflows.saveAsSkill(harness.request)
+
+    expect(trackPrompt).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      text: 'Save as skill'
+    })
+    expect(trackPrompt.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.startContinuation.mock.invocationCallOrder[0]
+    )
+    expect(untrackPrompt).not.toHaveBeenCalled()
+  })
+
+  it('reverts task notification tracking when continuation admission fails', async () => {
+    const trackPrompt = vi.fn(() => ({ token: 7 }))
+    const untrackPrompt = vi.fn()
+    const harness = createHarness(undefined, undefined, { trackPrompt, untrackPrompt })
+    const failure = new Error('Provider rejected continuation')
+    harness.startContinuation.mockRejectedValueOnce(failure)
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toBe(failure)
+
+    expect(untrackPrompt).toHaveBeenCalledWith('session-1', { token: 7 })
   })
 
   it('accepts the exact prepared control after a live provider adoption normalizes its read', async () => {
