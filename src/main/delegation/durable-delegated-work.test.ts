@@ -886,10 +886,21 @@ describe('durable delegated work', () => {
         options: [{ optionId: 'deny-beta', name: 'Deny', kind: 'reject_once' }]
       }
     ])
-    await expect(work.sessionSummary(caller.session)).resolves.toMatchObject({
+    await expect(work.sessionSummary(caller.session)).resolves.toEqual({
+      runningCount: 2,
       children: [
-        { status: 'running', awaitingPermission: true },
-        { status: 'running', awaitingPermission: true }
+        {
+          frameId: dispatched.children[0].frameId,
+          title: 'Alpha child',
+          status: 'running',
+          awaitingPermission: true
+        },
+        {
+          frameId: dispatched.children[1].frameId,
+          title: 'Beta child',
+          status: 'running',
+          awaitingPermission: true
+        }
       ]
     })
 
@@ -3295,6 +3306,18 @@ describe('durable delegated work', () => {
       work.delegate(
         { ...caller, originMessageId: 'forged-origin', toolInvocationId: 'forged-call' },
         { task: 'private', name: 'private' },
+        { wait: false }
+      )
+    ).rejects.toMatchObject({ code: 'authorization' })
+    await expect(
+      work.delegate(
+        {
+          ...caller,
+          role: 'delegate',
+          attemptId: 'nested-source-attempt',
+          toolInvocationId: 'nested-delegate-call'
+        },
+        { task: 'nested work', name: 'nested work' },
         { wait: false }
       )
     ).rejects.toMatchObject({ code: 'authorization' })
