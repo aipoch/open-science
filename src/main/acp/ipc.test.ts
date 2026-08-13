@@ -44,6 +44,7 @@ const {
   disconnect,
   resetSessionContext,
   resumeSession,
+  sendAppContinuation,
   sendPrompt,
   AcpRuntimeMock
 } = vi.hoisted(() => {
@@ -58,8 +59,9 @@ const {
     .fn()
     .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
   const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
+  const sendAppContinuation = vi.fn().mockResolvedValue(undefined)
   const sendPrompt = vi.fn().mockResolvedValue(undefined)
-  const AcpRuntimeMock = vi.fn().mockImplementation(function () {
+  const AcpRuntimeMock = vi.fn().mockImplementation(function (options) {
     return {
       createSession,
       cancelPrompt,
@@ -68,6 +70,11 @@ const {
       disconnect,
       resetSessionContext,
       resumeSession,
+      sendAppContinuation: (request, promptAttemptId) => {
+        const prompting = sendAppContinuation(request, promptAttemptId)
+        options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
+        return prompting
+      },
       sendPrompt,
       getSnapshot: vi.fn().mockReturnValue({
         status: 'idle',
@@ -90,6 +97,7 @@ const {
     disconnect,
     resetSessionContext,
     resumeSession,
+    sendAppContinuation,
     sendPrompt,
     AcpRuntimeMock
   }
@@ -209,6 +217,8 @@ afterEach(() => {
   deleteSession.mockClear()
   disconnect.mockClear()
   resumeSession.mockClear()
+  sendAppContinuation.mockReset()
+  sendAppContinuation.mockResolvedValue(undefined)
   sendPrompt.mockReset()
   sendPrompt.mockResolvedValue(undefined)
   errorLogSpy.mockClear()
@@ -250,7 +260,7 @@ it('routes delegated question responses to their owner without touching Main eli
 })
 
 describe('ACP module transport seam', () => {
-  it('holds archive admission for the direct Electron Save as skill path', async () => {
+  it('holds archive admission until Save as skill is accepted without awaiting turn completion', async () => {
     const session = materializeSessionConversationGraph({
       id: 'session-1',
       projectId: 'project-1',
@@ -319,8 +329,12 @@ describe('ACP module transport seam', () => {
       },
       interruptedTurnSessions: { loadSession: vi.fn(async () => session) }
     })
-    sendPrompt.mockImplementationOnce(async () => {
+    let completeTurn!: () => void
+    sendAppContinuation.mockImplementationOnce(() => {
       expect(admissionActive).toBe(true)
+      return new Promise((resolve) => {
+        completeTurn = () => resolve(undefined)
+      })
     })
 
     await handlers.get('acp:save-as-skill')?.(
@@ -337,6 +351,7 @@ describe('ACP module transport seam', () => {
 
     expect(admitted).toHaveBeenCalledWith('project-1', 'session-1')
     expect(admissionActive).toBe(false)
+    completeTurn()
   })
 
   it('pins the complete ACP call and event inventory shared by Electron and Web', () => {

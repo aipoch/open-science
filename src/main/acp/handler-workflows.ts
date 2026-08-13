@@ -313,7 +313,7 @@ const createAcpHandlerWorkflows = (
       if (!historyReplay) {
         throw new Error('Save as skill conversation history could not be replayed.')
       }
-      await runtime.sendPrompt({
+      await runtime.startContinuation({
         sessionId: session.id,
         text: SAVE_AS_SKILL_PROMPT,
         suppressUserMessage: true,

@@ -77,7 +77,7 @@ const createHarness = (
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
-  sendPrompt: ReturnType<typeof vi.fn>
+  startContinuation: ReturnType<typeof vi.fn>
   hasLiveSession: ReturnType<typeof vi.fn>
   session: PersistedChatSession
   request: {
@@ -92,7 +92,7 @@ const createHarness = (
   const session = createSession()
   mutate?.(session)
   prepareControlTurn(session)
-  const sendPrompt = vi.fn(async () => undefined)
+  const startContinuation = vi.fn(async () => undefined)
   const hasLiveSession = vi.fn(() => true)
   const snapshot = { status: 'connected' } as never
   const workflows = createAcpHandlerWorkflows(
@@ -100,9 +100,9 @@ const createHarness = (
       getSnapshot: () => snapshot,
       hasLiveSession,
       resumeSession: vi.fn(),
-      sendPrompt,
+      sendPrompt: vi.fn(),
       getLatestUserPrompt: vi.fn(),
-      startContinuation: vi.fn()
+      startContinuation
     },
     { create: vi.fn() } as never,
     undefined,
@@ -113,7 +113,7 @@ const createHarness = (
   const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
   return {
     workflows,
-    sendPrompt,
+    startContinuation,
     hasLiveSession,
     session,
     request: {
@@ -147,7 +147,7 @@ describe('ACP Save as skill workflow', () => {
       },
       withSessionAvailableById: vi.fn()
     })
-    harness.sendPrompt.mockImplementationOnce(async () => {
+    harness.startContinuation.mockImplementationOnce(async () => {
       expect(admissionActive).toBe(true)
     })
 
@@ -164,8 +164,8 @@ describe('ACP Save as skill workflow', () => {
       status: 'connected'
     })
 
-    expect(harness.sendPrompt).toHaveBeenCalledOnce()
-    expect(harness.sendPrompt).toHaveBeenCalledWith(
+    expect(harness.startContinuation).toHaveBeenCalledOnce()
+    expect(harness.startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-1',
         suppressUserMessage: true,
@@ -198,7 +198,7 @@ describe('ACP Save as skill workflow', () => {
     })
 
     expect(harness.hasLiveSession).toHaveBeenCalledWith('project-1', 'session-1')
-    expect(harness.sendPrompt).toHaveBeenCalledOnce()
+    expect(harness.startContinuation).toHaveBeenCalledOnce()
   })
 
   it('rejects a normalized control when its provider Session is no longer live', async () => {
@@ -215,7 +215,7 @@ describe('ACP Save as skill workflow', () => {
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'requires a prepared Session'
     )
-    expect(harness.sendPrompt).not.toHaveBeenCalled()
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('binds context-reset hidden-turn provenance to the fresh runtime segment', async () => {
@@ -233,7 +233,7 @@ describe('ACP Save as skill workflow', () => {
       historyReplay: { target: 'claude-code', contextReset: true }
     })
 
-    expect(harness.sendPrompt).toHaveBeenCalledWith(
+    expect(harness.startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         contextReset: true,
         provenanceContext: expect.objectContaining({
@@ -279,7 +279,7 @@ describe('ACP Save as skill workflow', () => {
 
     await harness.workflows.saveAsSkill(harness.request)
 
-    const preamble = harness.sendPrompt.mock.calls[0]?.[0].resumeFallback?.historyPreamble
+    const preamble = harness.startContinuation.mock.calls[0]?.[0].resumeFallback?.historyPreamble
     expect(preamble).toContain('The earlier evaluation found no reusable workflow.')
     expect(preamble).not.toContain('Save as skill')
   })
@@ -293,7 +293,7 @@ describe('ACP Save as skill workflow', () => {
         historyReplay: { target: 'claude-code', contextWindow: 1, contextReset: true }
       })
     ).rejects.toThrow('conversation history could not be replayed')
-    expect(harness.sendPrompt).not.toHaveBeenCalled()
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget]>([
@@ -311,7 +311,7 @@ describe('ACP Save as skill workflow', () => {
       historyReplay: { target }
     })
 
-    expect(harness.sendPrompt).toHaveBeenCalledWith(
+    expect(harness.startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         suppressUserMessage: true,
         forcedSkillIds: ['customize'],
@@ -337,7 +337,7 @@ describe('ACP Save as skill workflow', () => {
 
     await harness.workflows.saveAsSkill(harness.request)
 
-    const sent = harness.sendPrompt.mock.calls[0]?.[0]
+    const sent = harness.startContinuation.mock.calls[0]?.[0]
     expect(sent?.resumeFallback?.historyPreamble).toContain('Build a reusable analysis workflow.')
     expect(sent?.resumeFallback?.historyPreamble).not.toContain('flat tail')
   })
@@ -348,7 +348,7 @@ describe('ACP Save as skill workflow', () => {
     await expect(
       harness.workflows.saveAsSkill({ ...harness.request, messageBranchId: 'stale-branch' })
     ).rejects.toThrow('active conversation branch changed')
-    expect(harness.sendPrompt).not.toHaveBeenCalled()
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('fails closed when the durable control Message does not match the request', async () => {
@@ -357,7 +357,7 @@ describe('ACP Save as skill workflow', () => {
     await expect(
       harness.workflows.saveAsSkill({ ...harness.request, promptMessageId: 'forged-control' })
     ).rejects.toThrow('requires a prepared control turn')
-    expect(harness.sendPrompt).not.toHaveBeenCalled()
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('does not start unless the durable Session is idle', async () => {
@@ -368,7 +368,7 @@ describe('ACP Save as skill workflow', () => {
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'requires a prepared Session'
     )
-    expect(harness.sendPrompt).not.toHaveBeenCalled()
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('ignores renderer-only replay budget overrides', async () => {
@@ -379,7 +379,7 @@ describe('ACP Save as skill workflow', () => {
       historyReplay: { target: 'claude-code', budget: 1 } as never
     })
 
-    expect(harness.sendPrompt).toHaveBeenCalledWith(
+    expect(harness.startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         resumeFallback: expect.objectContaining({
           historyPreamble: expect.stringContaining('Build a reusable analysis workflow.')
@@ -397,7 +397,7 @@ describe('ACP Save as skill workflow', () => {
         historyReplay: { target: 'renderer-owned-policy' } as never
       })
     ).rejects.toThrow('history replay target is invalid')
-    expect(harness.sendPrompt).not.toHaveBeenCalled()
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('does not start while a delegated Attempt is running', async () => {
@@ -427,6 +427,6 @@ describe('ACP Save as skill workflow', () => {
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'delegated work is still running'
     )
-    expect(harness.sendPrompt).not.toHaveBeenCalled()
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 })
