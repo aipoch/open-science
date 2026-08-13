@@ -393,8 +393,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   )
   const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
     runtime,
-    supportsImageInput,
-    getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
+    getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor,
+    drainRuntimeEvents
   })
   const resumeInterruptedSession = useCallback(
     (sessionId: string): Promise<void> =>

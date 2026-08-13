@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { materializeSessionConversationGraph } from '../../../../shared/session-persistence'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
 
@@ -21,6 +22,8 @@ const session = materializeSessionConversationGraph({
   cwd: '/workspace',
   status: 'idle',
   agentModel: 'selected-model',
+  agentFrameworkId: 'claude-code',
+  agentBackendId: 'claude-code:session-provider',
   messages: [
     {
       id: 'prompt-1',
@@ -50,13 +53,40 @@ const session = materializeSessionConversationGraph({
 describe('workspace Save as skill owner', () => {
   let root: Root | undefined
 
+  beforeEach(() => {
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      activeProviderId: 'active-provider',
+      providers: [
+        {
+          id: 'active-provider',
+          type: 'custom',
+          name: 'Active provider',
+          models: ['active-model'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        },
+        {
+          id: 'session-provider',
+          type: 'custom',
+          name: 'Session provider',
+          models: ['session-model'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ]
+    })
+  })
+
   afterEach(() => {
     if (root) act(() => root?.unmount())
     root = undefined
     vi.restoreAllMocks()
   })
 
-  it('deduplicates one Session while flushing its exact active Branch before dispatch', async () => {
+  it('deduplicates one Session and replays with its persisted Provider capability', async () => {
     useSessionStore.setState({ sessions: [session] })
     let release!: () => void
     const saveAsSkill = vi.fn(
@@ -77,7 +107,6 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        supportsImageInput: true,
         getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
       })
       return null
@@ -130,7 +159,6 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        supportsImageInput: true,
         getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
       })
       return null
@@ -187,7 +215,6 @@ describe('workspace Save as skill owner', () => {
       const Harness = (): null => {
         owner = useWorkspaceRuntimeSaveAsSkillOwner({
           runtime,
-          supportsImageInput: true,
           getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
         })
         return null
@@ -239,4 +266,103 @@ describe('workspace Save as skill owner', () => {
       })
     }
   )
+
+  it('resets and replays the selected Branch before dispatch', async () => {
+    useSessionStore.setState({
+      sessions: [{ ...session, branchContextResetRequired: true }]
+    })
+    const shutdown = vi.fn(async () => ({ sessionId: session.id, status: 'shutdown' }))
+    const saveAsSkill = vi.fn(async () => undefined)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { acp: { saveAsSkill }, notebook: { shutdown } }
+    })
+    const resetSessionContext = vi.fn(async () => ({
+      sessionId: session.id,
+      cwd: session.cwd,
+      contextReset: true
+    }))
+    const runtime = {
+      state: { cwd: session.cwd, sessionIds: [session.id] },
+      resumeSession: vi.fn(),
+      resetSessionContext
+    } as never
+    let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+    const Harness = (): null => {
+      owner = useWorkspaceRuntimeSaveAsSkillOwner({
+        runtime,
+        getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+      })
+      return null
+    }
+    root = createRoot(document.createElement('div'))
+    act(() => root?.render(createElement(Harness)))
+    const graph = session.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+
+    await act(() =>
+      owner.saveAsSkill({
+        projectId: session.projectId,
+        sessionId: session.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId
+      })
+    )
+
+    expect(shutdown).toHaveBeenCalledWith({
+      sessionId: session.id,
+      workspaceCwd: session.cwd,
+      projectId: session.projectId
+    })
+    expect(resetSessionContext).toHaveBeenCalledOnce()
+    expect(resetSessionContext.mock.invocationCallOrder[0]).toBeLessThan(
+      saveAsSkill.mock.invocationCallOrder[0]
+    )
+    expect(saveAsSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ historyReplay: expect.objectContaining({ contextReset: true }) })
+    )
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
+  })
+
+  it('replays after a Specialist switch before dispatch', async () => {
+    useSessionStore.setState({
+      sessions: [{ ...session, specialistSwitchResetRequired: true }]
+    })
+    const saveAsSkill = vi.fn(async () => undefined)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { acp: { saveAsSkill } }
+    })
+    const runtime = {
+      state: { cwd: session.cwd, sessionIds: [session.id] },
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn()
+    } as never
+    let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+    const Harness = (): null => {
+      owner = useWorkspaceRuntimeSaveAsSkillOwner({
+        runtime,
+        getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+      })
+      return null
+    }
+    root = createRoot(document.createElement('div'))
+    act(() => root?.render(createElement(Harness)))
+    const graph = session.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+
+    await act(() =>
+      owner.saveAsSkill({
+        projectId: session.projectId,
+        sessionId: session.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId
+      })
+    )
+
+    expect(saveAsSkill).toHaveBeenCalledWith(
+      expect.objectContaining({ historyReplay: expect.objectContaining({ contextReset: true }) })
+    )
+    expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
+  })
 })

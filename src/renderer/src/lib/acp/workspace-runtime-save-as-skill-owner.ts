@@ -2,15 +2,16 @@ import { useCallback, useRef, useState } from 'react'
 
 import type { AcpSaveAsSkillRequest } from '../../../../shared/acp'
 import { useSessionStore } from '../../stores/session-store'
+import { useSettingsStore } from '../../stores/settings-store'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import type { useAcpRuntime } from './useAcpRuntime'
 import type { HistoryReplayDescriptor } from './history-preamble'
-import { ensureWorkspaceSessionReady } from './workspace-runtime-session-lifecycle-owner'
+import { prepareExistingWorkspacePrompt } from './workspace-runtime-prompt-preparation-owner'
 
 type WorkspaceSaveAsSkillOwnerOptions = {
   runtime: ReturnType<typeof useAcpRuntime>
-  supportsImageInput: boolean
   getHistoryReplayDescriptor: (sessionId: string) => HistoryReplayDescriptor
+  drainRuntimeEvents?: (sessionId?: string) => Promise<void>
 }
 
 type WorkspaceSaveAsSkillOwner = {
@@ -20,12 +21,12 @@ type WorkspaceSaveAsSkillOwner = {
   ) => Promise<void>
 }
 
-// Owns local admission from the click through provider turn completion. Every consumer observes the
+// Owns local admission from the click through provider acceptance. Every consumer observes the
 // same exact Session set while the durable command is prepared and dispatched.
 const useWorkspaceRuntimeSaveAsSkillOwner = ({
   runtime,
-  supportsImageInput,
-  getHistoryReplayDescriptor
+  getHistoryReplayDescriptor,
+  drainRuntimeEvents
 }: WorkspaceSaveAsSkillOwnerOptions): WorkspaceSaveAsSkillOwner => {
   const inFlightRef = useRef(new Set<string>())
   const [saveAsSkillInFlightSessionIds, setSaveAsSkillInFlightSessionIds] = useState<string[]>([])
@@ -39,7 +40,35 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
       setSaveAsSkillInFlightSessionIds((current) => [...current, request.sessionId])
       let controlMessageId: string | undefined
       try {
-        const contextReset = await ensureWorkspaceSessionReady(runtime, request.sessionId)
+        const initialSession = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === request.sessionId)
+        if (!initialSession) throw new Error(`Session not found: ${request.sessionId}`)
+        const provider = useSettingsStore
+          .getState()
+          .providers.find(
+            (candidate) =>
+              initialSession.agentBackendId === `${initialSession.agentFrameworkId}:${candidate.id}`
+          )
+        const replayPolicy = {
+          ...getHistoryReplayDescriptor(request.sessionId),
+          supportsImageInput: provider?.supportsImageInput
+        }
+        const prepared = await prepareExistingWorkspacePrompt(runtime, {
+          sessionId: request.sessionId,
+          requireExistingSession: true,
+          cwd: initialSession.cwd,
+          projectName: initialSession.projectId,
+          permissionProfile: initialSession.permissionProfile,
+          selectedRuntime: {
+            frameworkId: initialSession.agentFrameworkId,
+            backendId: initialSession.agentBackendId,
+            supportsImageInput: replayPolicy.supportsImageInput
+          },
+          replay: { descriptor: replayPolicy },
+          drainRuntimeEvents
+        })
+        if (!prepared) throw new Error('Save as skill Session preparation did not complete.')
         const session = useSessionStore
           .getState()
           .sessions.find((candidate) => candidate.id === request.sessionId)
@@ -56,6 +85,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         ) {
           throw new Error('Save as skill stopped because the active conversation branch changed.')
         }
+        const contextReset = prepared.replay().contextReset
         if (
           contextReset &&
           !useSessionStore.getState().openContextResetRuntimeSegment(session.id)
@@ -75,11 +105,11 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           ...request,
           promptMessageId: controlMessage.messageId,
           historyReplay: {
-            ...getHistoryReplayDescriptor(session.id),
-            supportsImageInput,
+            ...replayPolicy,
             ...(contextReset ? { contextReset: true as const } : {})
           }
         })
+        prepared.acceptPrompt(controlMessage.messageId)
       } catch (error) {
         const current = useSessionStore
           .getState()
@@ -102,7 +132,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         )
       }
     },
-    [getHistoryReplayDescriptor, runtime, supportsImageInput]
+    [drainRuntimeEvents, getHistoryReplayDescriptor, runtime]
   )
 
   return { saveAsSkillInFlightSessionIds, saveAsSkill }

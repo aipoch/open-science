@@ -611,7 +611,7 @@ describe('workspace runtime architecture', () => {
         'workspace-runtime-prompt-preparation-owner',
         'workspace-runtime-command-owner'
       ],
-      'workspace-runtime-save-as-skill-owner': ['workspace-runtime-session-lifecycle-owner']
+      'workspace-runtime-save-as-skill-owner': ['workspace-runtime-prompt-preparation-owner']
     })
     expect(importsFrom(facadePath).map((reference) => reference.target)).toContain(
       subagentPresentationTarget
