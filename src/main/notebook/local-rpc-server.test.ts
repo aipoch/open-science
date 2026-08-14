@@ -77,6 +77,182 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('binds viewImage to the trusted active control invocation and workspace', async () => {
+    const stage = vi.fn(async (_source, _options, trusted) => trusted)
+    const isAvailable = vi.fn(async () => true)
+    const discard = vi.fn()
+    const discardSession = vi.fn()
+    const shutdown = vi.fn()
+    const server = new NotebookLocalRpcServer({} as never, {
+      hostViewImage: {
+        isAvailable,
+        stage,
+        complete: vi.fn(async () => []),
+        discard,
+        discardSession,
+        shutdown
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'session-1',
+      'project-1',
+      'root-frame-session-1',
+      { role: 'main' },
+      '/trusted/workspace'
+    )
+    const call = (params: Record<string, unknown>): Promise<Response> =>
+      fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ method: 'viewImageCall', params })
+        },
+        'host.viewImage capability test'
+      )
+    const capabilities = (): Promise<Response> =>
+      fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ method: 'capabilitiesCall', params: {} })
+        },
+        'host.capabilities viewImage test'
+      )
+    const help = (): Promise<Response> =>
+      fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'hostSdkHelp',
+            params: { query: 'viewImage', view_image_available: true }
+          })
+        },
+        'host.help viewImage availability test'
+      )
+
+    try {
+      await expect(capabilities().then((response) => response.json())).resolves.toMatchObject({
+        result: { viewImage: false }
+      })
+      await expect(help().then((response) => response.json())).resolves.toMatchObject({
+        result: { availability: { status: 'unavailable' } }
+      })
+      await expect(call({ source: { path: 'plot.png' }, options: {} })).resolves.toMatchObject({
+        status: 403
+      })
+      const release = connection.beginControlInvocation({
+        turnId: 'turn-1',
+        controlInvocationGeneration: 3,
+        toolInvocationId: 'run-1'
+      })
+      await expect(capabilities().then((response) => response.json())).resolves.toMatchObject({
+        result: { viewImage: true }
+      })
+      await expect(help().then((response) => response.json())).resolves.toMatchObject({
+        result: { availability: { status: 'available' } }
+      })
+      const response = await call({ source: { path: 'plot.png' }, options: {} })
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toEqual({
+        result: {
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          workspaceCwd: '/trusted/workspace',
+          controlInvocationId: 'run-1',
+          signal: {}
+        }
+      })
+      expect(stage).toHaveBeenCalledWith(
+        { path: 'plot.png' },
+        {},
+        expect.objectContaining({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          workspaceCwd: '/trusted/workspace',
+          controlInvocationId: 'run-1'
+        })
+      )
+      await expect(
+        call({ source: { path: 'plot.png' }, options: {}, projectId: 'forged' })
+      ).resolves.toMatchObject({ status: 500 })
+      release()
+      connection.release()
+      expect(discard).toHaveBeenCalledWith('run-1')
+    } finally {
+      connection.release()
+      await server.close()
+    }
+    expect(discardSession).not.toHaveBeenCalled()
+    expect(shutdown).toHaveBeenCalledOnce()
+  })
+
+  it('releases only the unfinished viewImage invocations owned by one control connection', async () => {
+    const discard = vi.fn()
+    const server = new NotebookLocalRpcServer({} as never, {
+      hostViewImage: {
+        isAvailable: vi.fn(async () => true),
+        stage: vi.fn(),
+        complete: vi.fn(async () => []),
+        discard,
+        discardSession: vi.fn(),
+        shutdown: vi.fn()
+      }
+    })
+    const left = await server.issueControlConnection(
+      'session-1',
+      'project-1',
+      'frame-left',
+      { role: 'main' },
+      '/workspace-left'
+    )
+    const right = await server.issueControlConnection(
+      'session-1',
+      'project-1',
+      'frame-right',
+      { role: 'main' },
+      '/workspace-right'
+    )
+    const endLeft = left.beginControlInvocation({
+      turnId: 'turn-left',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'run-left'
+    })
+    const endRight = right.beginControlInvocation({
+      turnId: 'turn-right',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'run-right'
+    })
+
+    try {
+      endLeft()
+      endRight()
+      left.release()
+      expect(discard).toHaveBeenCalledTimes(1)
+      expect(discard).toHaveBeenLastCalledWith('run-left')
+
+      right.release()
+      expect(discard).toHaveBeenCalledTimes(2)
+      expect(discard).toHaveBeenLastCalledWith('run-right')
+    } finally {
+      left.release()
+      right.release()
+      await server.close()
+    }
+  })
+
   it('rejects an invalid token before reading the request body', async () => {
     const server = new NotebookLocalRpcServer({} as never, {
       transport: 'tcp',

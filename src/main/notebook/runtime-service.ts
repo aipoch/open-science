@@ -138,6 +138,7 @@ type McpRpcConnectionBinding = {
   projectId: string
   agentFrameId: string
   attemptId?: string
+  workspaceCwd: string
 }
 
 type NotebookRuntimeServiceOptions = ProjectIdScope & {

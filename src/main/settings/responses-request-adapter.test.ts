@@ -88,4 +88,34 @@ describe('Responses request protocol adapter', () => {
       ]
     })
   })
+
+  it('stringifies function-call image output, documenting why the Codex Chat bridge stays disabled', () => {
+    const imageOutput = [
+      { type: 'input_text', text: '{"status":"completed"}' },
+      { type: 'input_image', image_url: 'data:image/png;base64,aW1hZ2U=' }
+    ]
+    const request = responsesToChatRequest(
+      {
+        model: 'catalog-model',
+        input: [
+          { type: 'function_call', call_id: 'call-1', name: 'repl_execute', arguments: '{}' },
+          { type: 'function_call_output', call_id: 'call-1', output: imageOutput }
+        ],
+        tools: [],
+        stream: false
+      },
+      'chat-model'
+    )
+
+    expect(request.messages).toContainEqual({
+      role: 'tool',
+      tool_call_id: 'call-1',
+      content: JSON.stringify(imageOutput)
+    })
+    expect(request.messages).not.toContainEqual(
+      expect.objectContaining({
+        content: expect.arrayContaining([expect.objectContaining({ type: 'image_url' })])
+      })
+    )
+  })
 })

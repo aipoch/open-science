@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 const workspacePagePath = resolve(__dirname, 'WorkspacePage.tsx')
 const workspacePanelLayoutPath = resolve(__dirname, 'workspace-panel-layout.tsx')
 const workspaceSidebarPath = resolve(__dirname, 'WorkspaceSidebar.tsx')
+const workspaceSidebarContainerPath = resolve(__dirname, 'WorkspaceSidebarContainer.tsx')
 const conversationPanelPath = resolve(__dirname, 'ConversationPanel.tsx')
 const permissionApprovalControlsPath = resolve(__dirname, 'PermissionApprovalControls.tsx')
 const appPath = resolve(__dirname, '../../App.tsx')
@@ -35,18 +36,29 @@ describe('workspace page component boundaries', () => {
   it('keeps workspace regions in page-private component files', () => {
     const workspacePageSource = readFileSync(workspacePagePath, 'utf8')
     const workspacePanelLayoutSource = readFileSync(workspacePanelLayoutPath, 'utf8')
+    // The sidebar's session-list subscription lives in a container between the page and the view.
+    const workspaceSidebarContainerSource = readFileSync(workspaceSidebarContainerPath, 'utf8')
 
     for (const fileName of componentFileNames) {
       const componentName = fileName.replace('.tsx', '')
       const componentSource = readFileSync(resolve(__dirname, fileName), 'utf8')
       const ownerSource =
-        componentName === 'PreviewPanel' ? workspacePanelLayoutSource : workspacePageSource
+        componentName === 'PreviewPanel'
+          ? workspacePanelLayoutSource
+          : componentName === 'WorkspaceSidebar'
+            ? workspaceSidebarContainerSource
+            : workspacePageSource
 
       expect(componentSource).toContain(`const ${componentName}`)
       expect(componentSource).toContain(`export { ${componentName} }`)
       expect(ownerSource).toContain(`import { ${componentName} } from './${componentName}'`)
       expect(ownerSource).toContain(`<${componentName}`)
     }
+
+    expect(workspacePageSource).toContain(
+      "import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'"
+    )
+    expect(workspacePageSource).toContain('<WorkspaceSidebarContainer')
 
     expect(workspacePageSource).toContain(
       "import { WorkspacePanelLayout } from './workspace-panel-layout'"
@@ -357,8 +369,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain(
       "'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'"
     )
-    expect(workspaceMessageScrollerSource).toContain('conversationContentClassName')
-    expect(workspaceMessageScrollerSource).toContain('mx-auto w-full max-w-4xl')
+    expect(workspaceMessageScrollerSource).toContain('className="gap-0 px-4 pb-[56px]"')
+    // Rows must stay direct children of MessageScrollerContent; no transcript wrapper div.
+    expect(workspaceMessageScrollerSource).not.toContain('conversationContentClassName')
   })
 
   it('matches the reference page chat background and transparent assistant progress', () => {

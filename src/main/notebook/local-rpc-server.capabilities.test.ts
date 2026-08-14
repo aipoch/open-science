@@ -65,7 +65,8 @@ describe('capabilitiesCall RPC', () => {
         artifacts: true,
         lineage: true,
         frames: true,
-        llm: true
+        llm: true,
+        viewImage: false
       }
     })
   })
@@ -91,7 +92,8 @@ describe('capabilitiesCall RPC', () => {
           artifacts: false,
           lineage: false,
           frames: false,
-          llm: false
+          llm: false,
+          viewImage: false
         }
       }
     })

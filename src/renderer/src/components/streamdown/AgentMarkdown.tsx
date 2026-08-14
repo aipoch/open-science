@@ -18,7 +18,8 @@ import 'katex/dist/katex.min.css'
 
 import { AGENT_ALLOWED_TAGS, AGENT_CONTROLS } from './streamdown-config'
 import { LinkSafetyModal } from './LinkSafetyModal'
-import { normalizeAgentMarkdown } from './normalize-agent-markdown'
+import { StreamingBlock } from './StreamingBlock'
+import { createAgentMarkdownNormalizer } from './normalize-agent-markdown'
 import { useSmoothStreamingContent } from './use-smooth-streaming-content'
 import { cn } from '@/lib/utils'
 
@@ -243,7 +244,9 @@ const RichAgentMarkdown = memo(
     sessionLinks = false,
     incrementalBlocks = false
   }: RichAgentMarkdownProps): React.JSX.Element => {
-    const renderedContent = useMemo(() => normalizeAgentMarkdown(content), [content])
+    // Append-only streaming re-normalizes just the trailing block instead of the full message.
+    const [normalizer] = useState(() => createAgentMarkdownNormalizer())
+    const renderedContent = useMemo(() => normalizer(content), [normalizer, content])
 
     return (
       <div
@@ -262,6 +265,7 @@ const RichAgentMarkdown = memo(
           mode={isAnimating || incrementalBlocks ? 'streaming' : 'static'}
           isAnimating={isAnimating}
           animated={false}
+          BlockComponent={StreamingBlock}
           parseIncompleteMarkdown={isAnimating}
           normalizeHtmlIndentation={!isAnimating}
           allowedTags={AGENT_ALLOWED_TAGS}

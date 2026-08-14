@@ -700,7 +700,8 @@ describe('ACP session capability owner', () => {
       'agentsCall',
       'skillsCall',
       'framesCall',
-      'llmCall'
+      'llmCall',
+      'viewImageCall'
     ])
     expect(reviewer.mcpServers).toEqual([])
     expect(reviewer.descriptor.capabilities).toEqual([])

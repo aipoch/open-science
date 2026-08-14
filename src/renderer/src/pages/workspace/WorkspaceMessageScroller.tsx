@@ -15,6 +15,7 @@ import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-sto
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
 import {
+  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -132,7 +133,6 @@ const VisibleMessageSnapshotCommit = ({
 }
 
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
-const conversationContentClassName = 'relative mx-auto w-full max-w-4xl pb-[56px]'
 const SCROLL_TO_FIRST_MESSAGE_MIN_USER_TURNS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_HEIGHT_VIEWPORTS = 2
 const SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS = 0.1
@@ -258,12 +258,14 @@ const WorkspaceMessageReview = ({
 
   if (!review) return null
   return (
-    <div className="px-4 pb-1 md:px-6">
-      <div className="mx-auto w-full max-w-[56rem]">
-        {/* Only "Go to transcript" navigates to the reviewer page; the card itself does not. */}
-        <ReviewerCard review={review} onGoToTranscript={onGoToTranscript} onRerun={onRerun} />
+    <MessageScrollerItem messageId={`review-${turnMessageId}`} className="min-w-0">
+      <div className="px-4 pb-1 md:px-6">
+        <div className="mx-auto w-full max-w-[56rem]">
+          {/* Only "Go to transcript" navigates to the reviewer page; the card itself does not. */}
+          <ReviewerCard review={review} onGoToTranscript={onGoToTranscript} onRerun={onRerun} />
+        </div>
       </div>
-    </div>
+    </MessageScrollerItem>
   )
 }
 
@@ -576,6 +578,17 @@ const WorkspaceMessageScrollerImpl = ({
     }
   }, [activeSession?.messages, assistantFooterMessageIds, currentPresentationScopeId])
 
+  // Legacy sessions synthesize one runtime identity from session-level fields; hoist it so a
+  // per-chunk transcript rebuild keeps the same reference and memoized message items can bail out.
+  const legacyAgentBackendId = activeSession?.agentBackendId
+  const legacyAgentModel = activeSession?.agentModel
+  const legacyRuntimeIdentity = useMemo(
+    () =>
+      legacyAgentBackendId || legacyAgentModel
+        ? { backendId: legacyAgentBackendId, model: legacyAgentModel }
+        : undefined,
+    [legacyAgentBackendId, legacyAgentModel]
+  )
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
   )
@@ -672,7 +685,7 @@ const WorkspaceMessageScrollerImpl = ({
   )
 
   // Shows a transient notice and schedules its auto-dismiss, replacing any in-flight timer.
-  const showMentionNotice = (message: string): void => {
+  const showMentionNotice = useCallback((message: string): void => {
     if (mentionNoticeTimerRef.current !== undefined) {
       window.clearTimeout(mentionNoticeTimerRef.current)
     }
@@ -682,84 +695,97 @@ const WorkspaceMessageScrollerImpl = ({
       setMentionNotice(null)
       mentionNoticeTimerRef.current = undefined
     }, MENTION_NOTICE_TIMEOUT_MS)
-  }
+  }, [])
 
   // Routes a generated-file click to the preview workbench, scoped to the active session.
-  const onPreviewArtifact = (artifact: MessageArtifact): void => {
-    if (currentSessionId) previewArtifact(artifact, currentSessionId, currentProjectId)
-  }
+  // These handlers stay referentially stable so memoized message items can skip re-rendering.
+  const onPreviewArtifact = useCallback(
+    (artifact: MessageArtifact): void => {
+      if (currentSessionId) previewArtifact(artifact, currentSessionId, currentProjectId)
+    },
+    [currentProjectId, currentSessionId]
+  )
 
   // Routes a sent-message upload click to the preview workbench for the active session.
-  const onPreviewUploadAttachment = (attachment: MessageUploadAttachment): void => {
-    if (currentSessionId) {
-      previewUploadAttachment(attachment, currentSessionId, activeSession?.projectId)
-    }
-  }
+  const onPreviewUploadAttachment = useCallback(
+    (attachment: MessageUploadAttachment): void => {
+      if (currentSessionId) {
+        previewUploadAttachment(attachment, currentSessionId, currentProjectId)
+      }
+    },
+    [currentProjectId, currentSessionId]
+  )
 
   // Opens an artifact mention in the preview panel, probing existence first so a stale link warns.
-  const onPreviewMentionArtifact = async (part: ArtifactMentionPart): Promise<void> => {
-    if (!currentSessionId) return
-    if (part.source === 'linked-folder') {
-      // Linked-folder mentions resolve through the granted-roots store: the root's absolute path
-      // plus the mention's relative path gives the local file to preview. A revoked root keeps
-      // the "not available" notice.
-      const grantedState = useGrantedFoldersStore.getState()
-      const roots = grantedState.loaded
-        ? grantedState.roots
-        : await grantedState.refresh().catch(() => [])
-      const root = roots.find((candidate) => candidate.id === part.rootId)
-      if (!root) {
-        showMentionNotice('Linked-folder files are not available until the folder is connected.')
+  const onPreviewMentionArtifact = useCallback(
+    async (part: ArtifactMentionPart): Promise<void> => {
+      if (!currentSessionId) return
+      if (part.source === 'linked-folder') {
+        // Linked-folder mentions resolve through the granted-roots store: the root's absolute path
+        // plus the mention's relative path gives the local file to preview. A revoked root keeps
+        // the "not available" notice.
+        const grantedState = useGrantedFoldersStore.getState()
+        const roots = grantedState.loaded
+          ? grantedState.roots
+          : await grantedState.refresh().catch(() => [])
+        const root = roots.find((candidate) => candidate.id === part.rootId)
+        if (!root) {
+          showMentionNotice('Linked-folder files are not available until the folder is connected.')
+          return
+        }
+        usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+          createPreviewFileItemFromLocal({
+            sessionId: currentSessionId,
+            path: resolveLocalPath(root.path, part.relativePath, window.api.platform),
+            name: part.name
+          })
+        )
         return
       }
-      usePreviewWorkbenchStore.getState().upsertAndActivateItem(
-        createPreviewFileItemFromLocal({
-          sessionId: currentSessionId,
-          path: resolveLocalPath(root.path, part.relativePath, window.api.platform),
-          name: part.name
+
+      const read =
+        part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
+
+      try {
+        await read({
+          ...createPreviewRequestScope({
+            projectId: currentProjectId,
+            sessionId: currentSessionId,
+            source: part.source,
+            path: part.path
+          }),
+          path: part.path,
+          maxBytes: 1,
+          encoding: 'utf8'
         })
-      )
-      return
-    }
+      } catch {
+        showMentionNotice(`"${part.name}" is no longer available.`)
+        return
+      }
 
-    const read =
-      part.source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
-
-    try {
-      await read({
-        ...createPreviewRequestScope({
-          projectId: currentProjectId,
-          sessionId: currentSessionId,
-          source: part.source,
-          path: part.path
-        }),
-        path: part.path,
-        maxBytes: 1,
-        encoding: 'utf8'
-      })
-    } catch {
-      showMentionNotice(`"${part.name}" is no longer available.`)
-      return
-    }
-
-    usePreviewWorkbenchStore
-      .getState()
-      .upsertAndActivateItem(
-        createPreviewFileItemFromMention(part, currentSessionId, currentProjectId)
-      )
-  }
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(
+          createPreviewFileItemFromMention(part, currentSessionId, currentProjectId)
+        )
+    },
+    [currentProjectId, currentSessionId, showMentionNotice]
+  )
 
   // Opens Settings on a skill mention's detail, warning instead when the skill no longer exists.
-  const onOpenSkillMention = async (skillId: string, name: string): Promise<void> => {
-    const detail = await window.api.settings.getSkillDetail(skillId).catch(() => null)
+  const onOpenSkillMention = useCallback(
+    async (skillId: string, name: string): Promise<void> => {
+      const detail = await window.api.settings.getSkillDetail(skillId).catch(() => null)
 
-    if (!detail) {
-      showMentionNotice(`Skill "${name}" is no longer available.`)
-      return
-    }
+      if (!detail) {
+        showMentionNotice(`Skill "${name}" is no longer available.`)
+        return
+      }
 
-    useSettingsStore.getState().openSettingsToSkill(skillId)
-  }
+      useSettingsStore.getState().openSettingsToSkill(skillId)
+    },
+    [showMentionNotice]
+  )
 
   // Toggles a whole adjacent tool-activity group without affecting other sessions.
   const toggleActivityGroup = (groupId: string): void => {
@@ -846,295 +872,298 @@ const WorkspaceMessageScrollerImpl = ({
             aria-label="Conversation"
             onScroll={handleMessageScrollerScroll}
           >
-            <MessageScrollerContent ref={messageScrollerContentRef} className="gap-0 px-4">
-              <div className={conversationContentClassName}>
-                <VisibleMessageSnapshotCommit
-                  scopeId={currentPresentationScopeId}
-                  messageIdsKey={visibleMessageIdsKey}
-                  onCommit={handleVisibleMessageSnapshotCommit}
-                />
-                {/* Messages and tool activities share one sorted transcript timeline. */}
-                {conversationItems.map((item, itemIndex) => {
-                  if (presentationBarrierIndex >= 0 && itemIndex > presentationBarrierIndex) {
-                    return null
-                  }
+            {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
+            <MessageScrollerContent
+              ref={messageScrollerContentRef}
+              className="gap-0 px-4 pb-[56px]"
+            >
+              <VisibleMessageSnapshotCommit
+                scopeId={currentPresentationScopeId}
+                messageIdsKey={visibleMessageIdsKey}
+                onCommit={handleVisibleMessageSnapshotCommit}
+              />
+              {/* Messages and tool activities share one sorted transcript timeline. */}
+              {conversationItems.map((item, itemIndex) => {
+                // Only later text messages stay behind the presentation barrier; tool,
+                // activity, and other non-message rows render in real time so their
+                // running state stays visible while the reply paces above them.
+                if (
+                  presentationBarrierIndex >= 0 &&
+                  itemIndex > presentationBarrierIndex &&
+                  (item.type === 'message' || item.type === 'subagent-message')
+                ) {
+                  return null
+                }
 
-                  if (item.type === 'message') {
-                    const artifacts = artifactVisibility.artifactsForMessage(item.message)
-                    // Jobs pre-assigned to this slot: each job appears in exactly one slot.
-                    const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
-                    const graph = activeSession?.conversationGraph
-                    const messageNode = graph?.messages.find(
-                      (message) => message.id === item.message.id
-                    )
-                    const runtimeSegment = messageNode?.runtimeSegmentId
-                      ? graph?.runtimeSegments.find(
-                          (segment) => segment.id === messageNode.runtimeSegmentId
+                if (item.type === 'message') {
+                  const artifacts = artifactVisibility.artifactsForMessage(item.message)
+                  // Jobs pre-assigned to this slot: each job appears in exactly one slot.
+                  const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
+                  const graph = activeSession?.conversationGraph
+                  const messageNode = graph?.messages.find(
+                    (message) => message.id === item.message.id
+                  )
+                  const runtimeSegment = messageNode?.runtimeSegmentId
+                    ? graph?.runtimeSegments.find(
+                        (segment) => segment.id === messageNode.runtimeSegmentId
+                      )
+                    : undefined
+                  // Legacy sessions synthesize this segment with a fallback framework. Keep only
+                  // the session-level values that were actually persisted.
+                  const synthesizedLegacyRuntime =
+                    runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
+                    !activeSession?.agentFrameworkId
+                  const runtimeIdentity = synthesizedLegacyRuntime
+                    ? legacyRuntimeIdentity
+                    : runtimeSegment
+                  const revisionRootMessageId = messageNode?.revisionRootMessageId
+                  const revisions = revisionRootMessageId
+                    ? (graph?.messages
+                        .filter(
+                          (message) =>
+                            message.role === 'user' &&
+                            message.revisionRootMessageId === revisionRootMessageId
                         )
+                        .sort(
+                          (left, right) =>
+                            left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+                        ) ?? [])
+                    : []
+                  const revisionIndex = revisions.findIndex(
+                    (message) => message.id === item.message.id
+                  )
+                  const activateRevision = (index: number): (() => void) | undefined => {
+                    const revision = revisions[index]
+                    return revision && activeSession
+                      ? () =>
+                          useSessionStore
+                            .getState()
+                            .activateMessageBranch(activeSession.id, revision.introducedOnBranchId)
                       : undefined
-                    // Legacy sessions synthesize this segment with a fallback framework. Keep only
-                    // the session-level values that were actually persisted.
-                    const synthesizedLegacyRuntime =
-                      runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
-                      !activeSession?.agentFrameworkId
-                    const runtimeIdentity = synthesizedLegacyRuntime
-                      ? activeSession?.agentBackendId || activeSession?.agentModel
+                  }
+                  const messageItemProps: EditableWorkspaceMessageItemProps = {
+                    message: item.message,
+                    onPreviewArtifact,
+                    onPreviewUploadAttachment,
+                    onOpenSkillMention,
+                    onPreviewMentionArtifact,
+                    onSendEditedMessage,
+                    turnStartedAt: item.message.responseToMessageId
+                      ? messageCreatedAtById.get(item.message.responseToMessageId)
+                      : undefined,
+                    runtimeIdentity,
+                    showAssistantFooter:
+                      item.message.role !== 'agent' ||
+                      assistantFooterMessageIds.has(item.message.id),
+                    subsequentTurns: subsequentTurnCountByMessageId.get(item.message.id) ?? 0,
+                    revisionNavigation:
+                      revisionIndex >= 0 && revisions.length > 1
                         ? {
-                            backendId: activeSession.agentBackendId,
-                            model: activeSession.agentModel
+                            index: revisionIndex,
+                            total: revisions.length,
+                            onPrevious: activateRevision(revisionIndex - 1),
+                            onNext: activateRevision(revisionIndex + 1)
                           }
-                        : undefined
-                      : runtimeSegment
-                    const revisionRootMessageId = messageNode?.revisionRootMessageId
-                    const revisions = revisionRootMessageId
-                      ? (graph?.messages
-                          .filter(
-                            (message) =>
-                              message.role === 'user' &&
-                              message.revisionRootMessageId === revisionRootMessageId
-                          )
-                          .sort(
-                            (left, right) =>
-                              left.createdAt - right.createdAt || left.id.localeCompare(right.id)
-                          ) ?? [])
-                      : []
-                    const revisionIndex = revisions.findIndex(
-                      (message) => message.id === item.message.id
-                    )
-                    const activateRevision = (index: number): (() => void) | undefined => {
-                      const revision = revisions[index]
-                      return revision && activeSession
-                        ? () =>
-                            useSessionStore
-                              .getState()
-                              .activateMessageBranch(
-                                activeSession.id,
-                                revision.introducedOnBranchId
-                              )
-                        : undefined
-                    }
-                    const messageItemProps: EditableWorkspaceMessageItemProps = {
-                      message: item.message,
-                      onPreviewArtifact,
-                      onPreviewUploadAttachment,
-                      onOpenSkillMention,
-                      onPreviewMentionArtifact,
-                      onSendEditedMessage,
-                      turnStartedAt: item.message.responseToMessageId
-                        ? messageCreatedAtById.get(item.message.responseToMessageId)
                         : undefined,
-                      runtimeIdentity,
-                      showAssistantFooter:
-                        item.message.role !== 'agent' ||
-                        assistantFooterMessageIds.has(item.message.id),
-                      subsequentTurns: subsequentTurnCountByMessageId.get(item.message.id) ?? 0,
-                      revisionNavigation:
-                        revisionIndex >= 0 && revisions.length > 1
-                          ? {
-                              index: revisionIndex,
-                              total: revisions.length,
-                              onPrevious: activateRevision(revisionIndex - 1),
-                              onNext: activateRevision(revisionIndex + 1)
-                            }
-                          : undefined,
-                      artifacts
-                    }
-                    if (item.message.role === 'agent') {
-                      messageItemProps.onPresentationChange = handleMessagePresentationChange
-                      messageItemProps.presentationSourceOpen =
-                        itemIndex === conversationItems.length - 1
-                      messageItemProps.presentationAnimateOnMount =
-                        presentationScopeRemainedVisible &&
-                        !visibleMessageSnapshot.messageIds.has(item.message.id)
-                    }
-
-                    return (
-                      <div key={JSON.stringify([currentPresentationScopeId, item.id])}>
-                        {/* Unbound completed jobs that belong chronologically before this message */}
-                        {jobsBeforeMessage.map((job) => (
-                          <MessageScrollerItem
-                            key={`completed-job-${job.job_id}`}
-                            messageId={`completed-job-${job.job_id}`}
-                            className="min-w-0"
-                          >
-                            <div className="px-4 py-1 md:px-6">
-                              <div className="mx-auto w-full max-w-4xl">
-                                <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                              </div>
-                            </div>
-                          </MessageScrollerItem>
-                        ))}
-                        {item.message.role === 'user' ? (
-                          <EditableWorkspaceMessageItem {...messageItemProps} />
-                        ) : (
-                          <WorkspaceMessageItem {...messageItemProps} canEditMessage={false} />
-                        )}
-                        {currentSessionId &&
-                        item.message.role === 'agent' &&
-                        !presentingMessageIds.has(item.message.id) ? (
-                          <WorkspaceMessageReview
-                            projectId={currentProjectId}
-                            sessionId={currentSessionId}
-                            turnMessageId={item.message.id}
-                            onGoToTranscript={handleGoToTranscript}
-                            onRerun={handleRerunReview}
-                          />
-                        ) : null}
-                      </div>
-                    )
+                    artifacts
                   }
-
-                  if (item.type === 'subagent-message') {
-                    return (
-                      <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
-                        <div className="px-4 pb-1 pt-3 md:px-6">
-                          <div className="mx-auto w-full max-w-[56rem]">
-                            <WorkspaceSubagentMessageRow
-                              message={item.message}
-                              onOpenSource={() => {
-                                if (!currentSessionId) return
-                                usePreviewWorkbenchStore
-                                  .getState()
-                                  .upsertAndActivateItem(
-                                    createSessionSubagentsPreviewItem(
-                                      currentSessionId,
-                                      currentProjectId,
-                                      item.message.sourceFrameId
-                                    )
-                                  )
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </MessageScrollerItem>
-                    )
-                  }
-
-                  if (item.type === 'handoff') {
-                    return (
-                      <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
-                        <div className="px-4 pb-1 pt-3 md:px-6">
-                          <div className="mx-auto w-full max-w-[56rem]">
-                            <HandoffLifecycleStatus
-                              handoff={item}
-                              onRetry={
-                                item.phase === 'failed' && onRetryHandoff
-                                  ? async () =>
-                                      onRetryHandoff({
-                                        sessionId: item.sessionId,
-                                        originatingTurnId: item.originatingTurnId
-                                      })
-                                  : undefined
-                              }
-                            />
-                          </div>
-                        </div>
-                      </MessageScrollerItem>
-                    )
-                  }
-
-                  if (item.type === 'plan-activity') {
-                    return (
-                      <WorkspacePlanActivityRecord
-                        key={item.id}
-                        activity={item.activity}
-                        hasDurablePlanAuthority={item.activity.id === durablePlanOwnerActivityId}
-                      />
-                    )
-                  }
-
-                  if (item.type === 'compaction-activity') {
-                    return (
-                      <WorkspaceContextCompactionActivityRow
-                        key={item.id}
-                        activity={item.activity}
-                      />
-                    )
-                  }
-
-                  if (item.type === 'activity') {
-                    if (!item.activity.elicitation) return null
-                    const elicitationRequest =
-                      pendingElicitations.find(
-                        (request) => request.toolCallId === item.activity.id
-                      ) ??
-                      (activeSession && item.activity.elicitation.durable
-                        ? {
-                            requestId: item.activity.elicitation.durable.requestId,
-                            sessionId: activeSession.id,
-                            toolCallId: item.activity.id,
-                            message: item.activity.elicitation.message,
-                            fields: item.activity.elicitation.fields,
-                            durable: item.activity.elicitation.durable
-                          }
-                        : undefined)
-                    return (
-                      <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
-                        <div className="px-4 pb-1 pt-3 md:px-6">
-                          <div className="mx-auto w-full max-w-4xl">
-                            <WorkspaceElicitationCard
-                              key={elicitationRequest?.requestId ?? item.activity.id}
-                              elicitation={item.activity.elicitation}
-                              request={elicitationRequest}
-                              variant={
-                                item.activity.elicitation.state === 'pending'
-                                  ? 'pending-placeholder'
-                                  : 'default'
-                              }
-                            />
-                          </div>
-                        </div>
-                      </MessageScrollerItem>
-                    )
+                  if (item.message.role === 'agent') {
+                    messageItemProps.onPresentationChange = handleMessagePresentationChange
+                    messageItemProps.presentationSourceOpen =
+                      itemIndex === conversationItems.length - 1
+                    messageItemProps.presentationAnimateOnMount =
+                      presentationScopeRemainedVisible &&
+                      !visibleMessageSnapshot.messageIds.has(item.message.id)
                   }
 
                   return (
-                    <WorkspaceActivityGroup
+                    <Fragment key={item.id}>
+                      {/* Unbound completed jobs that belong chronologically before this message */}
+                      {jobsBeforeMessage.map((job) => (
+                        <MessageScrollerItem
+                          key={`completed-job-${job.job_id}`}
+                          messageId={`completed-job-${job.job_id}`}
+                          className="min-w-0"
+                        >
+                          <div className="px-4 py-1 md:px-6">
+                            <div className="mx-auto w-full max-w-4xl">
+                              <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                            </div>
+                          </div>
+                        </MessageScrollerItem>
+                      ))}
+                      {/* #1124: the composite key remounts the message row when the presentation
+                          scope changes; the surrounding fragment keeps sibling rows stable. */}
+                      {item.message.role === 'user' ? (
+                        <EditableWorkspaceMessageItem
+                          key={JSON.stringify([currentPresentationScopeId, item.id])}
+                          {...messageItemProps}
+                        />
+                      ) : (
+                        <WorkspaceMessageItem
+                          key={JSON.stringify([currentPresentationScopeId, item.id])}
+                          {...messageItemProps}
+                          canEditMessage={false}
+                        />
+                      )}
+                      {currentSessionId &&
+                      item.message.role === 'agent' &&
+                      !presentingMessageIds.has(item.message.id) ? (
+                        <WorkspaceMessageReview
+                          projectId={currentProjectId}
+                          sessionId={currentSessionId}
+                          turnMessageId={item.message.id}
+                          onGoToTranscript={handleGoToTranscript}
+                          onRerun={handleRerunReview}
+                        />
+                      ) : null}
+                    </Fragment>
+                  )
+                }
+
+                if (item.type === 'subagent-message') {
+                  return (
+                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                      <div className="px-4 pb-1 pt-3 md:px-6">
+                        <div className="mx-auto w-full max-w-[56rem]">
+                          <WorkspaceSubagentMessageRow
+                            message={item.message}
+                            onOpenSource={() => {
+                              if (!currentSessionId) return
+                              usePreviewWorkbenchStore
+                                .getState()
+                                .upsertAndActivateItem(
+                                  createSessionSubagentsPreviewItem(
+                                    currentSessionId,
+                                    currentProjectId,
+                                    item.message.sourceFrameId
+                                  )
+                                )
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </MessageScrollerItem>
+                  )
+                }
+
+                if (item.type === 'handoff') {
+                  return (
+                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                      <div className="px-4 pb-1 pt-3 md:px-6">
+                        <div className="mx-auto w-full max-w-[56rem]">
+                          <HandoffLifecycleStatus
+                            handoff={item}
+                            onRetry={
+                              item.phase === 'failed' && onRetryHandoff
+                                ? async () =>
+                                    onRetryHandoff({
+                                      sessionId: item.sessionId,
+                                      originatingTurnId: item.originatingTurnId
+                                    })
+                                : undefined
+                            }
+                          />
+                        </div>
+                      </div>
+                    </MessageScrollerItem>
+                  )
+                }
+
+                if (item.type === 'plan-activity') {
+                  return (
+                    <WorkspacePlanActivityRecord
                       key={item.id}
-                      group={item}
-                      isExpanded={!collapsedActivityGroups.has(item.id)}
-                      onToggleGroup={toggleActivityGroup}
-                      expansionOverrides={activityExpansionOverrides}
-                      onToggleRow={toggleActivityRow}
-                      notebookRunsById={notebookRunsById}
-                      permission={activeSession?.runtimeContext?.permission}
-                      jobsByActivityId={jobsByActivityId}
-                      onOpenJobDetail={handleOpenJobDetail}
+                      activity={item.activity}
+                      hasDurablePlanAuthority={item.activity.id === durablePlanOwnerActivityId}
                     />
                   )
-                })}
+                }
 
-                {/* Render any remaining unbound completed jobs after all conversation items */}
-                {presentationBarrierIndex < 0
-                  ? trailingJobs.map((job) => (
-                      <MessageScrollerItem
-                        key={`completed-job-${job.job_id}`}
-                        messageId={`completed-job-${job.job_id}`}
-                        className="min-w-0"
-                      >
-                        <div className="px-4 py-1 md:px-6">
-                          <div className="mx-auto w-full max-w-4xl">
-                            <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                          </div>
+                if (item.type === 'compaction-activity') {
+                  return (
+                    <WorkspaceContextCompactionActivityRow key={item.id} activity={item.activity} />
+                  )
+                }
+
+                if (item.type === 'activity') {
+                  if (!item.activity.elicitation) return null
+                  const elicitationRequest =
+                    pendingElicitations.find(
+                      (request) => request.toolCallId === item.activity.id
+                    ) ??
+                    (activeSession && item.activity.elicitation.durable
+                      ? {
+                          requestId: item.activity.elicitation.durable.requestId,
+                          sessionId: activeSession.id,
+                          toolCallId: item.activity.id,
+                          message: item.activity.elicitation.message,
+                          fields: item.activity.elicitation.fields,
+                          durable: item.activity.elicitation.durable
+                        }
+                      : undefined)
+                  return (
+                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                      <div className="px-4 pb-1 pt-3 md:px-6">
+                        <div className="mx-auto w-full max-w-4xl">
+                          <WorkspaceElicitationCard
+                            key={elicitationRequest?.requestId ?? item.activity.id}
+                            elicitation={item.activity.elicitation}
+                            request={elicitationRequest}
+                            variant={
+                              item.activity.elicitation.state === 'pending'
+                                ? 'pending-placeholder'
+                                : 'default'
+                            }
+                          />
                         </div>
-                      </MessageScrollerItem>
-                    ))
-                  : null}
+                      </div>
+                    </MessageScrollerItem>
+                  )
+                }
 
-                {presentationBarrierIndex < 0 ? trailingContent : null}
-
-                {presentationBarrierIndex < 0 && isResumingSession && activeSession ? (
-                  <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
-                ) : presentationBarrierIndex < 0 &&
-                  agentLoadingPhase !== 'hidden' &&
-                  activeSession ? (
-                  <WorkspaceAgentLoadingRow
-                    sessionId={activeSession.id}
-                    phase={agentLoadingPhase}
-                    agentStatus={activeSession.agentStatus}
+                return (
+                  <WorkspaceActivityGroup
+                    key={item.id}
+                    group={item}
+                    isExpanded={!collapsedActivityGroups.has(item.id)}
+                    onToggleGroup={toggleActivityGroup}
+                    expansionOverrides={activityExpansionOverrides}
+                    onToggleRow={toggleActivityRow}
+                    notebookRunsById={notebookRunsById}
+                    permission={activeSession?.runtimeContext?.permission}
+                    jobsByActivityId={jobsByActivityId}
+                    onOpenJobDetail={handleOpenJobDetail}
                   />
-                ) : null}
-              </div>
+                )
+              })}
+
+              {/* Render any remaining unbound completed jobs after all conversation items */}
+              {trailingJobs.map((job) => (
+                <MessageScrollerItem
+                  key={`completed-job-${job.job_id}`}
+                  messageId={`completed-job-${job.job_id}`}
+                  className="min-w-0"
+                >
+                  <div className="px-4 py-1 md:px-6">
+                    <div className="mx-auto w-full max-w-4xl">
+                      <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              ))}
+
+              {presentationBarrierIndex < 0 ? trailingContent : null}
+
+              {isResumingSession && activeSession ? (
+                <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
+              ) : agentLoadingPhase !== 'hidden' && activeSession ? (
+                <WorkspaceAgentLoadingRow
+                  sessionId={activeSession.id}
+                  phase={agentLoadingPhase}
+                  agentStatus={activeSession.agentStatus}
+                />
+              ) : null}
             </MessageScrollerContent>
           </MessageScrollerViewport>
 

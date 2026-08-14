@@ -987,7 +987,8 @@ const HOST_CAPABILITY_NAMES = [
   'artifacts',
   'lineage',
   'frames',
-  'llm'
+  'llm',
+  'viewImage'
 ]
 
 async function hostCapabilities(...args) {
@@ -1196,6 +1197,128 @@ async function artifactsRpc(op, params) {
     )
   }
   return body.result
+}
+
+const exactHostObject = (value, label, allowedKeys) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError(`${label} must be a plain object.`)
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== null && Object.getPrototypeOf(prototype) !== null) {
+    throw new TypeError(`${label} must be a plain object.`)
+  }
+  const keys = Reflect.ownKeys(value)
+  const unknown = keys.find(
+    (key) => typeof key !== 'string' || !Object.prototype.hasOwnProperty.call(allowedKeys, key)
+  )
+  if (unknown !== undefined) throw new TypeError(`${label} unknown option: ${String(unknown)}`)
+  return Object.fromEntries(keys.map((key) => [key, value[key]]))
+}
+
+const frozenImageSize = (value, label) => {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== 2 ||
+    !Number.isInteger(value.width) ||
+    value.width < 1 ||
+    !Number.isInteger(value.height) ||
+    value.height < 1
+  ) {
+    throw new Error(`host.viewImage returned invalid ${label}`)
+  }
+  return Object.freeze({ width: value.width, height: value.height })
+}
+
+const frozenImageCrop = (value) => {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== 4 ||
+    !['left', 'top', 'right', 'bottom'].every(
+      (key) => Number.isInteger(value[key]) && value[key] >= 0
+    ) ||
+    value.left >= value.right ||
+    value.top >= value.bottom
+  ) {
+    throw new Error('host.viewImage returned invalid crop')
+  }
+  return Object.freeze({
+    left: value.left,
+    top: value.top,
+    right: value.right,
+    bottom: value.bottom
+  })
+}
+
+const frozenViewImageResult = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('host.viewImage returned an invalid result')
+  }
+  const allowed = new Set([
+    'attached',
+    'sourceKind',
+    'originalSize',
+    'crop',
+    'outputSize',
+    'mimeType'
+  ])
+  if (
+    Object.keys(value).some((key) => !allowed.has(key)) ||
+    value.attached !== true ||
+    !['artifactVersion', 'uploadVersion', 'workspacePath'].includes(value.sourceKind) ||
+    !['image/png', 'image/jpeg'].includes(value.mimeType)
+  ) {
+    throw new Error('host.viewImage returned an invalid result')
+  }
+  return Object.freeze({
+    attached: true,
+    sourceKind: value.sourceKind,
+    originalSize: frozenImageSize(value.originalSize, 'originalSize'),
+    ...(value.crop === undefined ? {} : { crop: frozenImageCrop(value.crop) }),
+    outputSize: frozenImageSize(value.outputSize, 'outputSize'),
+    mimeType: value.mimeType
+  })
+}
+
+async function hostViewImage(source, options = undefined) {
+  if (arguments.length < 1 || arguments.length > 2) {
+    throw new TypeError('host.viewImage accepts source and optional options')
+  }
+  const normalizedSource = exactHostObject(source, 'host.viewImage source', {
+    versionId: true,
+    path: true
+  })
+  const normalizedOptions =
+    options === undefined
+      ? undefined
+      : exactHostObject(options, 'host.viewImage options', { crop: true, maxSize: true })
+  if (normalizedOptions?.crop !== undefined) {
+    normalizedOptions.crop = exactHostObject(normalizedOptions.crop, 'host.viewImage crop', {
+      unit: true,
+      left: true,
+      top: true,
+      right: true,
+      bottom: true
+    })
+  }
+  if (!RPC_ENDPOINT) throw new Error('host.viewImage is unavailable: RPC endpoint not set')
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({
+      method: 'viewImageCall',
+      params: {
+        source: normalizedSource,
+        ...(normalizedOptions === undefined ? {} : { options: normalizedOptions })
+      }
+    })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) throw new Error(body.error || 'host.viewImage HTTP ' + res.status)
+  return frozenViewImageResult(body.result)
 }
 
 const HOST_ARTIFACT_REQUIRED_KEYS = [
@@ -2953,6 +3076,7 @@ const sandbox = {
     llm: hostLlm,
     artifacts: hostArtifacts,
     artifactPath: hostArtifactPath,
+    viewImage: hostViewImage,
     lineage: hostLineage,
     frames: hostFrames,
     mcp: hostMcp,

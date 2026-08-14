@@ -100,16 +100,23 @@ vi.mock('@/components/ui/message-scroller', () => {
     PropsWithChildren<React.HTMLAttributes<HTMLDivElement>>
   >(function MockMessageScrollerContent({ children, ...props }, ref) {
     return (
-      <div ref={ref} {...props}>
+      <div ref={ref} data-slot="message-scroller-content" {...props}>
         {children}
       </div>
     )
   })
   const Item = ({
     children,
-    messageId
-  }: PropsWithChildren<{ messageId?: string }>): React.JSX.Element => (
-    <div data-message-id={messageId}>{children}</div>
+    messageId,
+    scrollAnchor
+  }: PropsWithChildren<{ messageId?: string; scrollAnchor?: boolean }>): React.JSX.Element => (
+    <div
+      data-slot="message-scroller-item"
+      data-message-id={messageId}
+      data-scroll-anchor={scrollAnchor === true ? 'true' : undefined}
+    >
+      {children}
+    </div>
   )
   const Button = forwardRef<
     HTMLButtonElement,
@@ -329,7 +336,48 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     container.remove()
   })
 
-  it('keeps later tools behind the visible assistant prefix', async () => {
+  it('keeps every transcript row a direct MessageScrollerItem child of the content element', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({
+      id: 'prompt-structure',
+      content: 'Flatten the transcript',
+      sortIndex: 1,
+      createdAt: 100
+    })
+    const reply = createMessage({
+      id: 'reply-structure',
+      role: 'agent',
+      content: 'Reply body',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const session = createSession({ status: 'idle', messages: [prompt, reply] })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    // message-scroller only measures and anchors Content's direct children, so every transcript
+    // row must be a MessageScrollerItem and no wrapper div may sit in between.
+    const content = container.querySelector('[data-slot="message-scroller-content"]')
+    expect(content).not.toBeNull()
+    const rows = Array.from(content?.children ?? [])
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.getAttribute('data-slot')).toBe('message-scroller-item')
+    }
+
+    const userRow = content?.querySelector('[data-message-id="prompt-structure"]')
+    expect(userRow?.getAttribute('data-scroll-anchor')).toBe('true')
+    const agentRow = content?.querySelector('[data-message-id="reply-structure"]')
+    expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
+  })
+
+  it('renders later tools in real time while the assistant reply is still pacing', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
       'requestAnimationFrame',
@@ -393,15 +441,17 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         activities: [tool]
       })
     )
-    expect(
-      container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
-    ).toBeNull()
-
-    await act(async () => vi.advanceTimersByTimeAsync(96))
-    expect(container.textContent).toContain('Flow')
+    // Tool rows render in real time so their running state stays visible; only later
+    // text messages wait behind the pacing reply.
     expect(
       container.querySelector('[data-message-id="activity-group-tool-after-stream"]')
     ).not.toBeNull()
+    expect(container.querySelector('[data-testid="presented-agent-markdown"]')?.textContent).toBe(
+      'F'
+    )
+
+    await act(async () => vi.advanceTimersByTimeAsync(96))
+    expect(container.textContent).toContain('Flow')
   })
 
   it('keeps terminal metadata behind the final visible assistant prefix', async () => {
@@ -786,9 +836,12 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         activities: [tool]
       })
     )
+    // The tool row renders in real time; the later assistant fragment is the only row
+    // still held behind the pacing one.
     expect(
       container.querySelector('[data-message-id="activity-group-tool-between-fragments"]')
-    ).toBeNull()
+    ).not.toBeNull()
+    expect(container.querySelectorAll('[data-testid="presented-agent-markdown"]')).toHaveLength(1)
     await act(async () => vi.advanceTimersByTimeAsync(160))
 
     const assistantSurfaces = container.querySelectorAll('[data-testid="presented-agent-markdown"]')

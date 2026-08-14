@@ -637,6 +637,7 @@ describe('Settings backend ownership architecture', () => {
       'delegatedWorkCall',
       'skillsCall',
       'llmCall',
+      'viewImageCall',
       'requestUserInput'
     ])
     expect(

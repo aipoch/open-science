@@ -53,6 +53,50 @@ const sanitizeRawToolPayload = (value: unknown): unknown | undefined => {
   }
 }
 
+const RAW_IMAGE_CONTENT_TYPES = new Set(['image', 'image_url', 'input_image', 'output_image'])
+
+// ACP providers use several nested image-block shapes in raw tool results. Scan the already bounded,
+// JSON-safe projection iteratively so a raw-only image cannot bypass the structured-content check or
+// use deeply nested data to exhaust the stack.
+const hasRawImagePayload = (value: unknown): boolean => {
+  const pending = [value]
+  let visited = 0
+  while (pending.length > 0) {
+    visited += 1
+    if (visited > MAX_RUNTIME_RAW_PAYLOAD_CHARS) return true
+    const current = pending.pop()
+    if (typeof current === 'string') {
+      if (/data:image\//iu.test(current)) return true
+      const trimmed = current.trim()
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          pending.push(JSON.parse(trimmed) as unknown)
+        } catch {
+          // A non-JSON string has no nested structure to inspect.
+        }
+      }
+      continue
+    }
+    if (Array.isArray(current)) {
+      pending.push(...current)
+      continue
+    }
+    if (!isRecord(current)) continue
+
+    const type = typeof current.type === 'string' ? current.type.toLowerCase() : undefined
+    if (type && RAW_IMAGE_CONTENT_TYPES.has(type)) return true
+    const mediaType = [
+      current.mimeType,
+      current.mime_type,
+      current.mediaType,
+      current.media_type
+    ].find((candidate): candidate is string => typeof candidate === 'string')
+    if (mediaType?.toLowerCase().startsWith('image/')) return true
+    pending.push(...Object.values(current))
+  }
+  return false
+}
+
 // Extracts a safe tool identity (e.g. "WebFetch") from ACP extension metadata without exposing
 // arguments. Accepts anything carrying `_meta`, so both stream updates and permission tool calls reuse it.
 const extractProviderToolName = (source: { _meta?: unknown } | undefined): string | undefined => {
@@ -249,15 +293,39 @@ const projectToolTitle = (update: ToolCallUpdate): string | undefined => {
     : (update.title ?? undefined)
 }
 
+const projectToolContent = (
+  content: ToolCallContent[] | null | undefined
+): ToolCallContent[] | undefined =>
+  content?.map((item) =>
+    item.type === 'content' && item.content.type === 'image'
+      ? {
+          type: 'content' as const,
+          content: {
+            type: 'text' as const,
+            text: `[image: ${item.content.mimeType}]`
+          }
+        }
+      : item
+  )
+
+const hasToolImageContent = (content: ToolCallContent[] | null | undefined): boolean =>
+  content?.some((item) => item.type === 'content' && item.content.type === 'image') === true
+
 // Projects activity detail fields only for tools whose payload is safe and useful to show.
 const projectToolDetailPayload = (update: ToolCallUpdate): Partial<AcpRuntimeEvent> => {
   if (isNativeSkillToolUpdate(update)) return {}
 
+  const containsStructuredImage = hasToolImageContent(update.content)
+  const rawOutput = containsStructuredImage ? undefined : sanitizeRawToolPayload(update.rawOutput)
+  const containsImage = containsStructuredImage || hasRawImagePayload(rawOutput)
+
   return {
-    toolContent: update.content ?? undefined,
+    toolContent: projectToolContent(update.content),
     toolLocations: update.locations ?? undefined,
     rawInput: sanitizeRawToolPayload(update.rawInput),
-    rawOutput: sanitizeRawToolPayload(update.rawOutput),
+    // ACP adapters may expose an image only in rawOutput or echo the complete structured result.
+    // Omit either form so transient bytes never enter runtime IPC or Session JSON.
+    rawOutput: containsImage ? undefined : rawOutput,
     ...extractTerminalMeta(update)
   }
 }

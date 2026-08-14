@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
@@ -52,7 +53,8 @@ import {
   getVisiblePermissionRequests,
   hasBlockingRootPermissionRequest
 } from './session-permissions'
-import { WorkspaceSidebar } from './WorkspaceSidebar'
+import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
+import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from './visible-project-sessions'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
@@ -113,7 +115,6 @@ const WorkspacePage = ({
   const specialistItems = useSpecialistStore((state) => state.items)
   const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
   const loadSpecialists = useSpecialistStore((state) => state.load)
-  const allSessions = useSessionStore((state) => state.sessions)
   const selectedSessionId = useSessionStore((state) => state.selectedSessionId)
   const newConversationDraftKey = newConversationDraftKeyFor(scopedProjectId)
   const currentDraftKey = selectedSessionId ?? newConversationDraftKey
@@ -121,16 +122,6 @@ const WorkspacePage = ({
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
-  // Only sessions belonging to the active project are shown in this workspace.
-  const sessions = useMemo(
-    () =>
-      activeProject?.archivedAt === undefined
-        ? allSessions.filter(
-            (session) => session.projectId === scopedProjectId && session.archivedAt === undefined
-          )
-        : [],
-    [activeProject?.archivedAt, allSessions, scopedProjectId]
-  )
   const previewItems = usePreviewWorkbenchStore((state) => state.items)
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
@@ -242,17 +233,33 @@ const WorkspacePage = ({
     Record<string, NotebookSessionReference>
   >({})
 
-  // The selected session is the only conversation rendered in the center panel.
-  const activeSession = useMemo(
-    () => sessions.find((session) => session.id === selectedSessionId),
-    [selectedSessionId, sessions]
+  // The selected session is the only conversation rendered in the center panel. Selecting it by
+  // id (instead of deriving it from the full list) keeps chunk commits for other sessions from
+  // re-rendering the page; the active session's own per-chunk identity changes still do.
+  const activeSession = useSessionStore((state) => {
+    if (activeProject?.archivedAt !== undefined) return undefined
+    const selected = state.sessions.find((session) => session.id === selectedSessionId)
+    if (!selected || selected.projectId !== scopedProjectId || selected.archivedAt !== undefined) {
+      return undefined
+    }
+    return selected
+  })
+  // Starter history is only consumed when no session is active, so this subscription collapses to
+  // a stable empty list while a session is selected — background session updates then never
+  // re-render the page through it.
+  const starterHistorySessions = useSessionStore(
+    useShallow((state) =>
+      activeSession === undefined && activeProject?.archivedAt === undefined
+        ? visibleProjectSessions(state.sessions, scopedProjectId)
+        : NO_VISIBLE_SESSIONS
+    )
   )
   const composerHistoryEntries = useMemo(
     () =>
       activeSession
         ? buildSessionComposerHistory(activeSession)
-        : buildStarterComposerHistory(sessions),
-    [activeSession, sessions]
+        : buildStarterComposerHistory(starterHistorySessions),
+    [activeSession, starterHistorySessions]
   )
   // Composer ports are lazy event-time callbacks. The controller does not invoke them while its hook
   // initializes, so the composer owner below is established before any archive/delete action can run.
@@ -931,9 +938,10 @@ const WorkspacePage = ({
           syncState: syncPreviewPanelState
         }}
         renderDesktopSidebar={({ sidebarToggle, sidebarToggleRef }) => (
-          <WorkspaceSidebar
+          <WorkspaceSidebarContainer
+            projectId={scopedProjectId}
+            isProjectArchived={activeProject?.archivedAt !== undefined}
             projectName={activeProject?.name ?? 'Project'}
-            sessions={sessions}
             activeSessionId={selectedSessionId}
             canCreateConversation={isSessionPersistenceReady}
             canMutateConversations={isSessionPersistenceReady}
@@ -974,9 +982,10 @@ const WorkspacePage = ({
           />
         )}
         renderMobileSidebar={({ isOpen, close }) => (
-          <WorkspaceSidebar
+          <WorkspaceSidebarContainer
+            projectId={scopedProjectId}
+            isProjectArchived={activeProject?.archivedAt !== undefined}
             projectName={activeProject?.name ?? 'Project'}
-            sessions={sessions}
             activeSessionId={selectedSessionId}
             canCreateConversation={isSessionPersistenceReady}
             canMutateConversations={isSessionPersistenceReady}

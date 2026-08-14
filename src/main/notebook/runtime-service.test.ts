@@ -1453,14 +1453,22 @@ describe('notebook runtime service', () => {
 
   it('binds each executeControl generation to the cached session capability and releases both lifetimes', async () => {
     const root = await createStorageRoot()
+    const projectWorkspace = join(root, 'project-workspace')
+    await mkdir(projectWorkspace, { recursive: true })
     const executions: NotebookExecutionRequest[] = []
     const release = vi.fn()
     const releaseInvocation = vi.fn()
+    const completeControlInvocation = vi.fn(async () => [
+      { data: Buffer.from('image').toString('base64'), mimeType: 'image/png' as const }
+    ])
+    const discardControlInvocation = vi.fn()
     const beginControlInvocation = vi.fn(() => releaseInvocation)
     const resolveConnection = vi.fn(async (binding: { sessionId: string; projectId: string }) => ({
       endpoint: 'http://127.0.0.1:1/x',
       token: 'session-token',
       beginControlInvocation,
+      completeControlInvocation,
+      discardControlInvocation,
       release,
       binding
     }))
@@ -1489,11 +1497,15 @@ describe('notebook runtime service', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(42)
     try {
       for (const code of ['return 1', 'return 2']) {
-        await service.executeControl({
-          projectName: 'default-project',
-          sessionId: 'session-1',
-          workspaceCwd: root,
-          code
+        await expect(
+          service.executeControl({
+            projectName: 'default-project',
+            sessionId: 'session-1',
+            workspaceCwd: projectWorkspace,
+            code
+          })
+        ).resolves.toMatchObject({
+          viewImages: [{ data: Buffer.from('image').toString('base64'), mimeType: 'image/png' }]
         })
       }
     } finally {
@@ -1504,7 +1516,8 @@ describe('notebook runtime service', () => {
     expect(resolveConnection).toHaveBeenCalledWith({
       sessionId: 'session-1',
       projectId: 'default-project',
-      agentFrameId: 'root-frame-session-1'
+      agentFrameId: 'root-frame-session-1',
+      workspaceCwd: join(root, 'notebooks', 'default-project', 'session-1', 'data')
     })
     expect(executions.map((request) => request.mcpRpcToken)).toEqual([
       'session-token',
@@ -1525,9 +1538,67 @@ describe('notebook runtime service', () => {
       artifactIds: []
     })
     expect(releaseInvocation).toHaveBeenCalledTimes(2)
+    expect(completeControlInvocation).toHaveBeenCalledTimes(2)
+    expect(discardControlInvocation).not.toHaveBeenCalled()
+    const persistedRun = await readFile(
+      join(root, 'notebooks', 'default-project', 'session-1', 'run.json'),
+      'utf8'
+    )
+    expect(persistedRun).not.toContain(Buffer.from('image').toString('base64'))
+    expect(persistedRun).not.toContain('viewImages')
 
-    await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+    await service.shutdown({ sessionId: 'session-1', workspaceCwd: projectWorkspace })
     expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('discards transient images on failed execution and captured completion', async () => {
+    const root = await createStorageRoot()
+    const completeControlInvocation = vi.fn(async () => [
+      { data: Buffer.from('image').toString('base64'), mimeType: 'image/png' as const }
+    ])
+    const discardControlInvocation = vi.fn()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: request.code === 'fail' ? 'failed' : 'completed',
+          stdout: '',
+          stderr: request.code === 'fail' ? 'failed' : '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    service.setMcpRpcConnectionResolver(async () => ({
+      endpoint: 'http://127.0.0.1:1/x',
+      token: 'session-token',
+      beginControlInvocation: () => vi.fn(),
+      completeControlInvocation,
+      discardControlInvocation
+    }))
+
+    await expect(
+      service.executeControl({ sessionId: 'session-1', workspaceCwd: root, code: 'fail' })
+    ).resolves.not.toHaveProperty('viewImages')
+    expect(completeControlInvocation).not.toHaveBeenCalled()
+    expect(discardControlInvocation).toHaveBeenCalledTimes(1)
+
+    service.setControlCompletionInterceptor({
+      intercept: async ({ execute }) => {
+        await execute()
+        return { kind: 'captured' as const }
+      }
+    })
+    await expect(
+      service.executeControl({ sessionId: 'session-1', workspaceCwd: root, code: 'complete' })
+    ).rejects.toThrow(/captured for specialist handoff/u)
+    expect(completeControlInvocation).not.toHaveBeenCalled()
+    expect(discardControlInvocation).toHaveBeenCalledTimes(2)
   })
 
   it('binds a suppressed continuation to its durable authorization origin', async () => {
@@ -1641,13 +1712,31 @@ describe('notebook runtime service', () => {
       sessionId: 'session-1',
       projectId: 'project-1',
       agentFrameId: 'child-frame',
-      attemptId: 'attempt-1'
+      attemptId: 'attempt-1',
+      workspaceCwd: join(
+        root,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'child-frame',
+        'data'
+      )
     })
     expect(resolveConnection).toHaveBeenNthCalledWith(2, {
       sessionId: 'session-1',
       projectId: 'project-1',
       agentFrameId: 'child-frame',
-      attemptId: 'attempt-2'
+      attemptId: 'attempt-2',
+      workspaceCwd: join(
+        root,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'child-frame',
+        'data'
+      )
     })
     expect(releaseFirst).toHaveBeenCalledOnce()
     expect(releaseSecond).not.toHaveBeenCalled()

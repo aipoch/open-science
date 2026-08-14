@@ -7,6 +7,10 @@ import {
   AnthropicProviderBridge,
   type AnthropicProviderBridgeTarget
 } from './anthropic-provider-bridge'
+import {
+  CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE,
+  OPENCODE_ANTHROPIC_TOOL_IMAGE_REQUEST_FIXTURE
+} from './provider-tool-image-wire.test-fixtures'
 
 type CapturedRequest = {
   authorization?: string
@@ -179,4 +183,40 @@ describe('AnthropicProviderBridge', () => {
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
   })
+
+  it.each([
+    ['Claude Code', CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE],
+    ['OpenCode', OPENCODE_ANTHROPIC_TOOL_IMAGE_REQUEST_FIXTURE]
+  ] as const)(
+    'preserves the captured %s MCP image fixture at the final Anthropic boundary',
+    async (_framework, fixture) => {
+      const upstream = createUpstream()
+      servers.push(upstream.server)
+      const target = {
+        id: 'provider/model-a',
+        baseUrl: await listen(upstream.server),
+        key: 'key-a',
+        model: 'model-a'
+      }
+      const bridge = new AnthropicProviderBridge([target], target.id)
+      bridges.push(bridge)
+      const connection = await bridge.start()
+      await fetch(`${connection.baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          ...fixture,
+          model: 'untrusted'
+        })
+      })
+
+      expect(upstream.requests[0].body).toMatchObject({
+        model: 'model-a',
+        messages: fixture.messages
+      })
+    }
+  )
 })

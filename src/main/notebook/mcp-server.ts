@@ -233,7 +233,11 @@ type NotebookRpcToolDefinition = {
   // a verbose result (e.g. restart returning the whole session state) compact and to-the-point.
   mapResult?: (raw: unknown, input: unknown) => unknown
   resultLimitChars?: number
+  includeViewImages?: boolean
 }
+
+type NotebookToolContent =
+  { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 
 const notebookRpcSignal = (
   method: string,
@@ -718,6 +722,45 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
   return best
 }
 
+const buildNotebookToolContent = (
+  raw: unknown,
+  definition: Pick<
+    NotebookRpcToolDefinition,
+    'includeViewImages' | 'mapResult' | 'resultLimitChars'
+  >,
+  input?: unknown
+): NotebookToolContent[] => {
+  const result = definition.mapResult ? definition.mapResult(raw, input) : raw
+  const content: NotebookToolContent[] = [
+    {
+      type: 'text',
+      text: serializeNotebookToolResult(result, definition.resultLimitChars)
+    }
+  ]
+  const rawRecord = asRecord(raw)
+  if (!definition.includeViewImages || rawRecord?.status !== 'completed') return content
+  const viewImages = rawRecord.viewImages
+  if (viewImages === undefined) return content
+  if (!Array.isArray(viewImages)) {
+    throw new Error('repl_execute returned invalid transient image content.')
+  }
+  const images = viewImages.map((candidate): Extract<NotebookToolContent, { type: 'image' }> => {
+    const image = asRecord(candidate)
+    if (
+      typeof image?.data !== 'string' ||
+      image.data.length === 0 ||
+      image.data.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/u.test(image.data) ||
+      (image.mimeType !== 'image/png' && image.mimeType !== 'image/jpeg')
+    ) {
+      throw new Error('repl_execute returned invalid transient image content.')
+    }
+    return { type: 'image', data: image.data, mimeType: image.mimeType }
+  })
+  content.push(...images)
+  return content
+}
+
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
 const registerNotebookRpcTool = (
   server: ModelContextProtocolServer,
@@ -743,14 +786,8 @@ const registerNotebookRpcTool = (
         resolveNotebookRpcFetch(definition.method),
         extra.signal
       )
-      const result = definition.mapResult ? definition.mapResult(raw, input) : raw
       return {
-        content: [
-          {
-            type: 'text',
-            text: serializeNotebookToolResult(result, definition.resultLimitChars)
-          }
-        ]
+        content: buildNotebookToolContent(raw, definition, input)
       }
     }
   )
@@ -973,6 +1010,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     method: 'executeControl',
     inputSchema: replExecuteToolSchema,
     mapResult: compactNotebookExecutionResult,
+    includeViewImages: true,
     resultLimitChars: NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
   },
   {
@@ -1101,6 +1139,7 @@ export {
   REPL_EXECUTE_DOC,
   BASH_EXECUTE_DOC,
   buildShellExecuteDoc,
+  buildNotebookToolContent,
   NOTEBOOK_MCP_CONTROL_RESULT_LIMIT,
   NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT,
   NOTEBOOK_MCP_STATE_RESULT_LIMIT,

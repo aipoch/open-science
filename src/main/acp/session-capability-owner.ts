@@ -54,7 +54,8 @@ const NOTEBOOK_CONTROL_RPC_METHODS = [
   'agentsCall',
   'skillsCall',
   'framesCall',
-  'llmCall'
+  'llmCall',
+  'viewImageCall'
 ] as const
 
 export type SessionCapabilityName = (typeof CURRENT_PRIMARY_CAPABILITIES)[number]

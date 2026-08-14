@@ -14,7 +14,7 @@ JavaScript control REPL; Python and R data kernels do not receive it.
 const caps = await host.capabilities()
 ```
 
-The v1 result contains exactly eight boolean keys:
+The v1 result contains exactly nine boolean keys:
 
 - `mcp` gates `host.mcp` connector calls.
 - `compute` gates the `host.compute` namespace.
@@ -24,6 +24,8 @@ The v1 result contains exactly eight boolean keys:
 - `lineage` gates the read-only `host.lineage` namespace.
 - `frames` gates the read-only `host.frames` namespace.
 - `llm` gates `host.llm` one-shot, tool-less inference.
+- `viewImage` gates transient `host.viewImage(source, options?)` image attachment from an Artifact or
+  Upload Version in the current Project, or a current-Session relative workspace path.
 
 Interpret the result narrowly:
 
@@ -41,6 +43,10 @@ if (caps.compute === true) {
 
 if (caps.llm === true) {
   const result = await host.llm('Summarize the current findings.')
+}
+
+if (caps.viewImage === true) {
+  await host.viewImage({ path: 'results/plot.png' }, { maxSize: 1200 })
 }
 ```
 

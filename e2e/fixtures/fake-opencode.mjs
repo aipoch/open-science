@@ -28,6 +28,8 @@ const RELIABLE_BRANCH_WAKE_PROMPT = 'Wake the reliable messaging branch park jou
 const RELIABLE_FAILURE_PROMPT = 'Start the reliable messaging post-fence failure journey.'
 const RELIABLE_FAILURE_OBSERVE_PROMPT = 'Observe the reliable messaging post-fence failure.'
 const RELIABLE_FAIRNESS_PROMPT = 'Start the reliable messaging fairness journey.'
+const LONG_STREAM_PROMPT = 'Stream the long scroll journey.'
+const TOOL_ORDER_PROMPT = 'Run the ordered slow tool journey.'
 const RELIABLE_FAIRNESS_USER_PROMPT = 'Run the concurrent real user prompt.'
 const DELEGATION_INHERITED_SPECIALIST_PROMPT =
   'Run the production inherited Specialist delegation journey.'
@@ -479,7 +481,100 @@ if (process.argv.includes('--version')) {
 
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
-        if (
+        if (prompt.includes(TOOL_ORDER_PROMPT)) {
+          // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
+          const intentMessageId = `e2e-message-${nextMessageId++}`
+          // A long intent text, chunked quickly so live pacing trails far behind arrival.
+          for (let chunk = 0; chunk < 20; chunk += 1) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: intentMessageId,
+                content: {
+                  type: 'text',
+                  text: `Intent paragraph ${chunk}: I will now run the slow tool for you. `
+                }
+              }
+            })
+            await delay(30)
+          }
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'e2e-order-tool',
+              title: 'Slow ordered tool',
+              kind: 'other',
+              status: 'in_progress'
+            }
+          })
+          await delay(2_000)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'e2e-order-tool',
+              title: 'Slow ordered tool',
+              status: 'completed'
+            }
+          })
+          const followUpMessageId = `e2e-message-${nextMessageId++}`
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: followUpMessageId,
+              content: { type: 'text', text: 'The slow tool has finished running.' }
+            }
+          })
+          reply = ''
+        } else if (prompt.includes(LONG_STREAM_PROMPT)) {
+          // Mirror a real agent turn: text segment -> tool call -> second text segment ->
+          // tool completion -> trailing segment, with separate message ids per segment.
+          const streamSegment = async (segment, paragraphs) => {
+            const streamMessageId = `e2e-message-${nextMessageId++}`
+            for (let chunk = 0; chunk < paragraphs; chunk += 1) {
+              await context.client.notify(acp.methods.client.session.update, {
+                sessionId: context.params.sessionId,
+                update: {
+                  sessionUpdate: 'agent_message_chunk',
+                  messageId: streamMessageId,
+                  content: {
+                    type: 'text',
+                    text: `Segment ${segment} paragraph ${chunk}. The quick brown fox jumps over the lazy dog.\n\n`
+                  }
+                }
+              })
+              await delay(50)
+            }
+          }
+
+          await streamSegment(1, 12)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'e2e-scroll-tool-mid',
+              title: 'Mid-turn tool call',
+              kind: 'other',
+              status: 'in_progress'
+            }
+          })
+          await delay(200)
+          await streamSegment(2, 16)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'e2e-scroll-tool-mid',
+              title: 'Mid-turn tool call',
+              status: 'completed'
+            }
+          })
+          await streamSegment(3, 8)
+          reply = ''
+        } else if (
           await submitReviewerPass(sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [])
         ) {
           reply = ''

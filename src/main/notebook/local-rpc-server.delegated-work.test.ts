@@ -125,7 +125,8 @@ describe('authenticated delegatedWorkCall route', () => {
       'host.resolveMessage': 'unavailable',
       'host.sendFrameMessage': 'unavailable',
       'host.stopChild': 'unavailable',
-      'host.submitOutput': 'unavailable'
+      'host.submitOutput': 'unavailable',
+      'host.viewImage': 'unavailable'
     })
     await expect(
       fetch(child.endpoint, {

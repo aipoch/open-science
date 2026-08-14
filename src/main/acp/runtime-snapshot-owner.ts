@@ -2,6 +2,10 @@ import type { AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { getAcpRuntimeEventImage, MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp'
 
 const MAX_EVENTS = 500
+// Amortized eviction: trim only after a full cap of slack accumulates, so steady-state appends are
+// a plain push instead of an O(n) array rebuild per event. Reads always go through the last
+// MAX_EVENTS window, keeping the observable retention bound exact.
+const EVENT_TRIM_THRESHOLD = MAX_EVENTS * 2
 
 type RuntimeSnapshotFields = Pick<AcpStateSnapshot, 'status' | 'cwd' | 'error' | 'events'>
 type RuntimeSnapshotProjection = Omit<AcpStateSnapshot, keyof RuntimeSnapshotFields>
@@ -56,7 +60,7 @@ class AcpRuntimeSnapshotOwner {
     let raw = event.raw
     let text = event.text
     if (image && event.sessionId) {
-      const retainedBytes = this.retainedEvents
+      const retainedBytes = this.retainedWindow()
         .filter((candidate) => candidate.sessionId === event.sessionId)
         .reduce(
           (total, candidate) => total + (getAcpRuntimeEventImage(candidate)?.byteLength ?? 0),
@@ -83,8 +87,22 @@ class AcpRuntimeSnapshotOwner {
       raw
     }
 
-    this.retainedEvents = [...this.retainedEvents, cloneEvent(runtimeEvent)].slice(-MAX_EVENTS)
+    // Deeply frozen inputs (the session-update projector deep-freezes every event it emits) are
+    // immutable, so ownership transfers and the retained history can share them; anything else
+    // gets a defensive clone so later caller mutation cannot rewrite history.
+    this.retainedEvents.push(Object.isFrozen(event) ? runtimeEvent : cloneEvent(runtimeEvent))
+    if (this.retainedEvents.length > EVENT_TRIM_THRESHOLD) {
+      this.retainedEvents = this.retainedEvents.slice(-MAX_EVENTS)
+    }
     return runtimeEvent
+  }
+
+  // The retained array may carry up to a cap of trim slack; every reader sees exactly the last
+  // MAX_EVENTS entries, in append order.
+  private retainedWindow(): AcpRuntimeEvent[] {
+    return this.retainedEvents.length > MAX_EVENTS
+      ? this.retainedEvents.slice(-MAX_EVENTS)
+      : this.retainedEvents
   }
 
   snapshot(projection: RuntimeSnapshotProjection): AcpStateSnapshot {
@@ -92,7 +110,7 @@ class AcpRuntimeSnapshotOwner {
       status: this.connectionStatus,
       cwd: this.workingDirectory,
       error: this.currentError,
-      events: this.retainedEvents,
+      events: this.retainedWindow(),
       ...projection
     })
   }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,29 +15,124 @@ import {
   MAX_IMAGE_PAYLOAD_BYTES,
   MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES,
   MAX_SESSION_INLINE_IMAGE_BYTES,
+  prepareImageContentData,
   type ImageContentData
 } from './attachment-media'
 
-// A configurable fake nativeImage so the >2MB compression path is exercised without an Electron runtime.
+// A configurable processor double keeps policy/error tests deterministic. The separate
+// attachment-media.sharp test exercises the real cross-platform adapter and image fixtures.
 type FakeImage = {
   isEmpty: () => boolean
   getSize: () => { width: number; height: number }
-  resize: ReturnType<typeof vi.fn>
+  crop: ReturnType<
+    typeof vi.fn<(options: { x: number; y: number; width: number; height: number }) => FakeImage>
+  >
+  resize: ReturnType<
+    typeof vi.fn<(options: { width: number; height: number; quality: 'better' }) => FakeImage>
+  >
   toJPEG: (quality: number) => Buffer
   toPNG: () => Buffer
+  hasAlpha?: boolean
+  isOpaque?: boolean
+}
+
+type FakeSharpPipeline = {
+  metadata: ReturnType<
+    typeof vi.fn<
+      () => Promise<{
+        width: number
+        height: number
+        autoOrient: { width: number; height: number }
+        hasAlpha: boolean
+      }>
+    >
+  >
+  clone: () => FakeSharpPipeline
+  autoOrient: () => FakeSharpPipeline
+  extract: (options: {
+    left: number
+    top: number
+    width: number
+    height: number
+  }) => FakeSharpPipeline
+  resize: (width: number, height: number) => FakeSharpPipeline
+  ensureAlpha: () => FakeSharpPipeline
+  raw: () => FakeSharpPipeline
+  png: () => FakeSharpPipeline
+  jpeg: (options: { quality: number }) => FakeSharpPipeline
+  toBuffer: ReturnType<
+    typeof vi.fn<
+      (options?: {
+        resolveWithObject?: boolean
+      }) => Promise<Buffer | { data: Buffer; info: { channels: number } }>
+    >
+  >
 }
 
 let fakeImage: FakeImage
-// The wrapper ignores the path arg at runtime; the spy just records that a decode was attempted.
-const createFromPath = vi.fn(() => fakeImage)
-const createFromBuffer = vi.fn(() => fakeImage)
-
-vi.mock('electron', () => ({
-  nativeImage: {
-    createFromPath: () => createFromPath(),
-    createFromBuffer: () => createFromBuffer()
+const makeSharpPipeline = (input: Buffer): FakeSharpPipeline => {
+  let encode = (): Buffer => fakeImage.toPNG()
+  const pipeline = {
+    metadata: vi.fn(async () => {
+      if (fakeImage.isEmpty()) throw new Error('decode failed')
+      const size = fakeImage.getSize()
+      const inputIsPng = input[0] === 0x89 && input[1] === 0x50
+      return {
+        ...size,
+        autoOrient: size,
+        hasAlpha: fakeImage.hasAlpha ?? inputIsPng
+      }
+    }),
+    clone: () => makeSharpPipeline(input),
+    autoOrient() {
+      return this
+    },
+    extract({
+      left,
+      top,
+      width,
+      height
+    }: {
+      left: number
+      top: number
+      width: number
+      height: number
+    }) {
+      fakeImage.crop({ x: left, y: top, width, height })
+      return this
+    },
+    resize(width: number, height: number) {
+      fakeImage.resize({ width, height, quality: 'better' })
+      return this
+    },
+    ensureAlpha() {
+      return this
+    },
+    raw() {
+      return this
+    },
+    png() {
+      encode = () => fakeImage.toPNG()
+      return this
+    },
+    jpeg({ quality }: { quality: number }) {
+      encode = () => fakeImage.toJPEG(quality)
+      return this
+    },
+    toBuffer: vi.fn(async (options?: { resolveWithObject?: boolean }) =>
+      options?.resolveWithObject
+        ? {
+            data: Buffer.from([0, 0, 0, fakeImage.isOpaque === true ? 0xff : 0]),
+            info: { channels: 4 }
+          }
+        : encode()
+    )
   }
-}))
+  return pipeline
+}
+const sharpFactory = vi.fn((input: Buffer) => makeSharpPipeline(input))
+
+vi.mock('sharp', () => ({ default: (input: Buffer) => sharpFactory(input) }))
 
 // A fake pdfjs document so text extraction is deterministic and does not parse a real PDF.
 let fakePdf: { numPages: number; pages: string[][] }
@@ -60,12 +155,14 @@ let root: string
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'attachment-media-'))
-  createFromPath.mockClear()
-  createFromBuffer.mockClear()
+  sharpFactory.mockClear()
   getDocument.mockClear()
   fakeImage = {
     isEmpty: () => false,
     getSize: () => ({ width: 4000, height: 2000 }),
+    crop: vi.fn(function (this: FakeImage) {
+      return this
+    }),
     resize: vi.fn(function (this: FakeImage) {
       return this
     }),
@@ -79,6 +176,269 @@ beforeEach(async () => {
       ['Second', ' page']
     ]
   }
+})
+
+describe('prepareImageContentData', () => {
+  const pngFixture = (width: number, height: number): Buffer => {
+    const bytes = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes)
+    bytes.writeUInt32BE(13, 8)
+    bytes.write('IHDR', 12, 'ascii')
+    bytes.writeUInt32BE(width, 16)
+    bytes.writeUInt32BE(height, 20)
+    bytes[24] = 8
+    bytes[25] = 6
+    return bytes
+  }
+
+  const jpegSegment = (marker: number, payload: Buffer): Buffer => {
+    const bytes = Buffer.alloc(payload.length + 4)
+    bytes[0] = 0xff
+    bytes[1] = marker
+    bytes.writeUInt16BE(payload.length + 2, 2)
+    payload.copy(bytes, 4)
+    return bytes
+  }
+
+  const jpegFrameSegment = (width: number, height: number): Buffer => {
+    const payload = Buffer.alloc(15)
+    payload[0] = 8
+    payload.writeUInt16BE(height, 1)
+    payload.writeUInt16BE(width, 3)
+    payload[5] = 3
+    Buffer.from([1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]).copy(payload, 6)
+    return jpegSegment(0xc0, payload)
+  }
+
+  const jpegFixture = (width: number, height: number, prefixes: Buffer[] = []): Buffer =>
+    Buffer.concat([Buffer.from([0xff, 0xd8]), ...prefixes, jpegFrameSegment(width, height)])
+
+  const writePng = (path: string, width = 4000, height = 2000): Promise<void> =>
+    writeFile(path, pngFixture(width, height))
+
+  it('resolves fraction crops outward before resizing the cropped image', async () => {
+    fakeImage.getSize = () => ({ width: 101, height: 51 })
+    const filePath = join(root, 'fraction.png')
+    await writeFile(filePath, pngFixture(101, 51))
+
+    const result = await prepareImageContentData(filePath, {
+      crop: { unit: 'fraction', left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 },
+      maxSize: 40
+    })
+
+    expect(fakeImage.crop).toHaveBeenCalledWith({ x: 10, y: 10, width: 71, height: 36 })
+    expect(fakeImage.resize).toHaveBeenCalledWith({ width: 40, height: 20, quality: 'better' })
+    expect(result).toEqual({
+      data: Buffer.from('png-bytes').toString('base64'),
+      mimeType: 'image/png',
+      originalSize: { width: 101, height: 51 },
+      crop: { left: 10, top: 10, right: 81, bottom: 46 },
+      outputSize: { width: 40, height: 20 }
+    })
+  })
+
+  it('accepts JPEG by signature and never upscales a smaller oriented image', async () => {
+    fakeImage.getSize = () => ({ width: 100, height: 50 })
+    const filePath = join(root, 'small.jpg')
+    await writeFile(filePath, jpegFixture(100, 50))
+
+    await expect(prepareImageContentData(filePath)).resolves.toMatchObject({
+      mimeType: 'image/jpeg',
+      originalSize: { width: 100, height: 50 },
+      outputSize: { width: 100, height: 50 }
+    })
+    expect(fakeImage.resize).not.toHaveBeenCalled()
+  })
+
+  it('skips valid JPEG metadata and table segments before the frame header', async () => {
+    fakeImage.getSize = () => ({ width: 120, height: 80 })
+    const filePath = join(root, 'prefixed.jpg')
+    await writeFile(
+      filePath,
+      jpegFixture(120, 80, [
+        jpegSegment(0xe0, Buffer.from('JFIF\0', 'ascii')),
+        jpegSegment(0xdb, Buffer.alloc(65, 1))
+      ])
+    )
+
+    await expect(prepareImageContentData(filePath)).resolves.toMatchObject({
+      mimeType: 'image/jpeg',
+      originalSize: { width: 120, height: 80 }
+    })
+    expect(sharpFactory).toHaveBeenCalledOnce()
+  })
+
+  it('rejects malformed JPEG frame markers before native decode', async () => {
+    const malformedShortFrame = Buffer.from([
+      0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 0x08, 0x00, 0x01, 0x00, 0x01, 0x00
+    ])
+    const mismatchedComponentFrame = jpegSegment(
+      0xc0,
+      Buffer.from([0x08, 0x00, 0x01, 0x00, 0x01, 0x03, 0x01, 0x11, 0x00])
+    )
+
+    for (const [name, bytes] of [
+      ['short-sof.jpg', Buffer.concat([malformedShortFrame, jpegFrameSegment(5000, 4000)])],
+      [
+        'mismatched-sof.jpg',
+        Buffer.concat([
+          Buffer.from([0xff, 0xd8]),
+          mismatchedComponentFrame,
+          jpegFrameSegment(5000, 4000)
+        ])
+      ],
+      [
+        'repeated-soi.jpg',
+        Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xd8]), jpegFrameSegment(1, 1)])
+      ],
+      [
+        'restart-before-sof.jpg',
+        Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xd0]), jpegFrameSegment(1, 1)])
+      ]
+    ] as const) {
+      const filePath = join(root, name)
+      await writeFile(filePath, bytes)
+      await expect(prepareImageContentData(filePath)).rejects.toMatchObject({
+        code: 'IMAGE_DECODE_FAILED'
+      })
+    }
+    expect(sharpFactory).not.toHaveBeenCalled()
+  })
+
+  it('rejects a truncated PNG IHDR before native decode', async () => {
+    const filePath = join(root, 'truncated.png')
+    await writeFile(filePath, pngFixture(1, 1).subarray(0, 32))
+
+    await expect(prepareImageContentData(filePath)).rejects.toMatchObject({
+      code: 'IMAGE_DECODE_FAILED'
+    })
+    expect(sharpFactory).not.toHaveBeenCalled()
+  })
+
+  it('rejects SVG and optional formats before invoking the native decoder', async () => {
+    for (const [name, bytes] of [
+      ['image.svg', Buffer.from('<svg/>')],
+      ['image.webp', Buffer.from('RIFFxxxxWEBP')],
+      ['image.gif', Buffer.from('GIF89a')]
+    ] as const) {
+      await writeFile(join(root, name), bytes)
+      await expect(prepareImageContentData(join(root, name))).rejects.toMatchObject({
+        code: 'IMAGE_DECODE_FAILED'
+      })
+    }
+    expect(sharpFactory).not.toHaveBeenCalled()
+  })
+
+  it('rejects source bytes and declared pixels before native decode or crop/resize allocations', async () => {
+    const oversized = join(root, 'oversized.png')
+    await writePng(oversized)
+    await truncate(oversized, MAX_AUTO_PROCESS_IMAGE_BYTES + 1)
+    await expect(prepareImageContentData(oversized)).rejects.toMatchObject({
+      code: 'IMAGE_SOURCE_TOO_LARGE'
+    })
+
+    for (const [name, bytes] of [
+      ['bomb.png', pngFixture(5000, 4000)],
+      ['bomb.jpg', jpegFixture(5000, 4000)]
+    ] as const) {
+      const bomb = join(root, name)
+      await writeFile(bomb, bytes)
+      await expect(prepareImageContentData(bomb)).rejects.toThrow(/pixel processing limit/u)
+    }
+    expect(sharpFactory).not.toHaveBeenCalled()
+    expect(fakeImage.crop).not.toHaveBeenCalled()
+    expect(fakeImage.resize).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the bytes returned by readFile when a source grows after stat', async () => {
+    const filePath = join(root, 'growing.png')
+    await writePng(filePath, 100, 60)
+    const probe = await open(filePath, 'r')
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as {
+      readFile: typeof probe.readFile
+    }
+    await probe.close()
+    const readFile = vi
+      .spyOn(fileHandlePrototype, 'readFile')
+      .mockResolvedValueOnce(Buffer.alloc(MAX_AUTO_PROCESS_IMAGE_BYTES + 1))
+
+    try {
+      await expect(prepareImageContentData(filePath)).rejects.toMatchObject({
+        code: 'IMAGE_SOURCE_TOO_LARGE',
+        sourceBytes: MAX_AUTO_PROCESS_IMAGE_BYTES + 1
+      })
+      expect(sharpFactory).not.toHaveBeenCalled()
+    } finally {
+      readFile.mockRestore()
+    }
+  })
+
+  it('validates pixel crop bounds and preserves PNG output for cropped PNG input', async () => {
+    const filePath = join(root, 'crop.png')
+    await writePng(filePath, 1568, 784)
+    fakeImage.getSize = () => ({ width: 100, height: 60 })
+
+    await expect(
+      prepareImageContentData(filePath, {
+        crop: { unit: 'pixels', left: 10, top: 5, right: 90, bottom: 55 }
+      })
+    ).resolves.toMatchObject({
+      mimeType: 'image/png',
+      crop: { left: 10, top: 5, right: 90, bottom: 55 }
+    })
+    expect(fakeImage.crop).toHaveBeenCalledWith({ x: 10, y: 5, width: 80, height: 50 })
+
+    await expect(
+      prepareImageContentData(filePath, {
+        crop: { unit: 'pixels', left: 0, top: 0, right: 101, bottom: 60 }
+      })
+    ).rejects.toThrow(/outside the image bounds/u)
+  })
+
+  it('downscales oversized PNG output without converting away transparency', async () => {
+    const filePath = join(root, 'transparent.png')
+    await writePng(filePath)
+    fakeImage.getSize = () => ({ width: 1568, height: 784 })
+    fakeImage.toPNG = vi
+      .fn()
+      .mockReturnValueOnce(Buffer.alloc(MAX_IMAGE_PAYLOAD_BYTES + 1))
+      .mockReturnValueOnce(Buffer.from('transparent-png'))
+    fakeImage.toJPEG = vi.fn(() => Buffer.from('jpeg'))
+
+    await expect(prepareImageContentData(filePath)).resolves.toMatchObject({
+      mimeType: 'image/png',
+      outputSize: { width: 768, height: 384 }
+    })
+    expect(fakeImage.resize).toHaveBeenCalledWith({ width: 768, height: 384, quality: 'better' })
+    expect(fakeImage.toJPEG).not.toHaveBeenCalled()
+  })
+
+  it('honors an already-aborted processing signal without decoding', async () => {
+    const filePath = join(root, 'aborted.png')
+    await writePng(filePath)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(prepareImageContentData(filePath, {}, controller.signal)).rejects.toThrow(
+      /aborted/u
+    )
+    expect(sharpFactory).not.toHaveBeenCalled()
+  })
+
+  it('rejects a workspace file replaced by an outside symlink after authorization', async () => {
+    const authorized = join(root, 'authorized.png')
+    const outside = join(root, 'outside.png')
+    await writePng(authorized)
+    await writePng(outside)
+    const expectedCanonicalPath = await realpath(authorized)
+    await rm(authorized)
+    await symlink(outside, authorized)
+
+    await expect(
+      prepareImageContentData(authorized, {}, undefined, expectedCanonicalPath)
+    ).rejects.toThrow(/changed while it was being opened/u)
+    expect(sharpFactory).not.toHaveBeenCalled()
+  })
 })
 
 afterEach(async () => {
@@ -102,7 +462,7 @@ describe('buildImageContentData', () => {
     await expect(
       buildImageContentData(filePath, 'image/png', MAX_AUTO_PROCESS_IMAGE_BYTES + 1)
     ).rejects.toMatchObject({ code: 'IMAGE_SOURCE_TOO_LARGE' })
-    expect(createFromPath).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('passes small images through untouched as raw base64', async () => {
@@ -113,7 +473,7 @@ describe('buildImageContentData', () => {
     const result = await buildImageContentData(filePath, 'image/png', bytes.byteLength)
 
     expect(result).toEqual({ data: bytes.toString('base64'), mimeType: 'image/png' })
-    expect(createFromPath).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('reads small managed images from the trusted byte source instead of the path', async () => {
@@ -133,7 +493,7 @@ describe('buildImageContentData', () => {
 
   it('downscales large images to the long-edge cap and re-encodes to JPEG', async () => {
     const filePath = join(root, 'large.jpg')
-    await writeFile(filePath, Buffer.from('ignored-because-nativeimage-is-mocked'))
+    await writeFile(filePath, Buffer.from('ignored-because-sharp-is-mocked'))
 
     const result = await buildImageContentData(filePath, 'image/jpeg', 3 * 1024 * 1024)
 
@@ -156,13 +516,14 @@ describe('buildImageContentData', () => {
       readBytes
     )
 
-    expect(createFromBuffer).toHaveBeenCalledOnce()
-    expect(createFromPath).not.toHaveBeenCalled()
+    expect(sharpFactory).toHaveBeenCalledOnce()
+    expect(sharpFactory).toHaveBeenCalledWith(bytes)
     expect(readBytes).toHaveBeenCalledOnce()
     expect(result.data).toBe(Buffer.from('jpeg-80').toString('base64'))
   })
 
   it('keeps PNG encoding for large PNGs to preserve transparency', async () => {
+    fakeImage.hasAlpha = true
     const filePath = join(root, 'large.png')
     await writeFile(filePath, Buffer.from('ignored'))
 
@@ -189,7 +550,7 @@ describe('buildImageContentData', () => {
   })
 
   it('reports image processing failures without falling back to the original file', async () => {
-    createFromPath.mockImplementationOnce(() => {
+    sharpFactory.mockImplementationOnce(() => {
       throw new Error('decoder crashed')
     })
     const filePath = join(root, 'large.jpg')

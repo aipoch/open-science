@@ -13,6 +13,7 @@ import type {
 } from '../../shared/notebook'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import type { TrustedControlInvocationIdentity } from '../../shared/agents-contract'
+import type { TransientViewImage } from './host-view-image-service'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 
@@ -90,6 +91,10 @@ export type NotebookSessionMcpRpcConnection = {
   socketPath?: string
   token: string
   beginControlInvocation?: (context: TrustedControlInvocationIdentity) => () => void
+  completeControlInvocation?: (
+    controlInvocationId: string
+  ) => Promise<readonly TransientViewImage[]>
+  discardControlInvocation?: (controlInvocationId: string) => void
   release?: () => void
 }
 
@@ -466,6 +471,7 @@ export class NotebookSessionAggregate<
           projectId: string
           agentFrameId: string
           attemptId?: string
+          workspaceCwd: string
         }) => Promise<NotebookSessionMcpRpcConnection>)
       | undefined
   ): Promise<NotebookSessionMcpRpcConnection | undefined> {
@@ -477,6 +483,7 @@ export class NotebookSessionAggregate<
         sessionId: this.sessionId,
         projectId: this.projectId,
         agentFrameId: lane.agentFrameId,
+        workspaceCwd: this.dataRoot,
         ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
       })
       return this.mcpRpcConnection
@@ -489,6 +496,16 @@ export class NotebookSessionAggregate<
     const connection = this.mcpRpcConnection
     this.mcpRpcConnection = undefined
     connection?.release?.()
+  }
+
+  completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]> {
+    return (
+      this.mcpRpcConnection?.completeControlInvocation?.(controlInvocationId) ?? Promise.resolve([])
+    )
+  }
+
+  discardControlInvocation(controlInvocationId: string): void {
+    this.mcpRpcConnection?.discardControlInvocation?.(controlInvocationId)
   }
 
   private requireCell(cellId: string): NotebookCell {

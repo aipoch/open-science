@@ -8,6 +8,9 @@ const HOST_SDK_SUBAGENT_OPERATION_IDS = [
   'host.stopChild',
   'host.submitOutput'
 ] as const
+const HOST_SDK_OPERATION_IDS = Object.freeze(
+  [...HOST_SDK_SUBAGENT_OPERATION_IDS, 'host.viewImage'].sort()
+)
 
 type HostSdkSubagentOperation =
   (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number] extends `host.${infer Operation}`
@@ -16,7 +19,7 @@ type HostSdkSubagentOperation =
 
 type HostSdkHelpContext = Readonly<{
   callerRole: 'main' | 'delegate'
-  capabilities: Readonly<Record<HostSdkSubagentOperation, boolean>>
+  capabilities: Readonly<Record<HostSdkSubagentOperation, boolean> & { viewImage?: boolean }>
 }>
 
 type HostSdkAvailability =
@@ -52,7 +55,7 @@ type HostSdkHelpCatalog = Readonly<{
     path: string
     aliases: readonly string[]
     summary: string
-    availability: HostSdkAvailability
+    availability: Readonly<{ status: HostSdkAvailability['status'] }>
   }>[]
   hint: string
 }>
@@ -669,6 +672,74 @@ const RESOLVE_MESSAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   )
 }
 
+const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.viewImage',
+  path: 'host.viewImage',
+  aliases: ['viewImage'],
+  summary: 'Attach an authorized existing image to the current repl_execute result.',
+  call_forms: [{ signature: 'await host.viewImage(source, options?)', accepts: 'source_options' }],
+  request: {
+    fields: [
+      {
+        name: 'source',
+        type: '{ versionId: string } | { path: string }',
+        required: true,
+        description:
+          'Artifact or Upload Version in the current Project, or current-Session relative workspace path.'
+      }
+    ]
+  },
+  options: {
+    fields: [
+      {
+        name: 'crop',
+        type: "{ unit: 'pixels' | 'fraction', left, top, right, bottom }",
+        required: false,
+        description: 'Explicit crop applied before resize.'
+      },
+      {
+        name: 'maxSize',
+        type: 'integer',
+        required: false,
+        default: 1568,
+        range: '1..1568',
+        description: 'Maximum output long edge; never upscales.'
+      }
+    ]
+  },
+  returns: {
+    type: 'object',
+    fields: [
+      { name: 'attached', type: 'true', required: true, description: 'Staged successfully.' },
+      {
+        name: 'sourceKind',
+        type: 'string',
+        required: true,
+        description: 'Authorized source kind.'
+      },
+      { name: 'originalSize', type: 'object', required: true, description: 'Oriented pixels.' },
+      { name: 'crop', type: 'object', required: false, description: 'Resolved pixel crop.' },
+      { name: 'outputSize', type: 'object', required: true, description: 'Prepared pixels.' },
+      { name: 'mimeType', type: 'string', required: true, description: 'image/png or image/jpeg.' }
+    ]
+  },
+  constraints: [
+    'Available only during an active repl_execute on a certified visual route.',
+    'Bytes are transient and attach atomically only if repl_execute succeeds.'
+  ],
+  examples: [
+    {
+      title: 'Inspect a workspace image',
+      code: "await host.viewImage({ path: 'results/plot.png' }, { maxSize: 1200 })"
+    }
+  ],
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.viewImage
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: 'host.viewImage requires a certified visual route.' }
+}
+
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   CHILDREN_DESCRIPTOR,
   COLLECT_DESCRIPTOR,
@@ -677,10 +748,12 @@ const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   RESOLVE_MESSAGE_DESCRIPTOR,
   SEND_FRAME_MESSAGE_DESCRIPTOR,
   STOP_CHILD_DESCRIPTOR,
-  SUBMIT_OUTPUT_DESCRIPTOR
+  SUBMIT_OUTPUT_DESCRIPTOR,
+  VIEW_IMAGE_DESCRIPTOR
 ]
 
 const registeredOperationIds = [...OPERATION_DESCRIPTORS]
+  .filter(({ id }) => id !== 'host.viewImage')
   .map(({ id }) => id)
   .sort() as (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number][]
 if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_OPERATION_IDS)) {
@@ -740,14 +813,17 @@ const hostSdkHelp: HostSdkHelpRegistry = Object.freeze({
         {
           kind: 'catalog',
           coverage: 'registered_topics_only',
-          topics: entries.map((descriptor) => ({
-            id: descriptor.id,
-            kind: descriptor.kind,
-            path: descriptor.path,
-            aliases: descriptor.aliases,
-            summary: descriptor.summary,
-            availability: descriptor.resolveAvailability(context)
-          })),
+          topics: entries.map((descriptor) => {
+            const availability = descriptor.resolveAvailability(context)
+            return {
+              id: descriptor.id,
+              kind: descriptor.kind,
+              path: descriptor.path,
+              aliases: descriptor.aliases,
+              summary: descriptor.summary,
+              availability: { status: availability.status }
+            }
+          }),
           hint: 'Query only the operation you plan to call; each topic gives concise field descriptions.'
         },
         MAX_CATALOG_RESULT_CHARS
@@ -794,5 +870,5 @@ const hostSdkHelp: HostSdkHelpRegistry = Object.freeze({
   }
 })
 
-export { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp }
+export { HOST_SDK_OPERATION_IDS, HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp }
 export type { HostSdkHelpContext, HostSdkHelpRegistry, HostSdkHelpResult }

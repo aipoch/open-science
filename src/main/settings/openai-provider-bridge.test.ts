@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
+import { OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
 
 type CapturedRequest = {
   authorization?: string
@@ -185,5 +186,33 @@ describe('OpenAiProviderBridge', () => {
     expect(response.status).toBe(200)
     expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
     expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+  })
+
+  it('preserves the captured OpenCode MCP image fixture at the final Chat boundary', async () => {
+    const upstream = createUpstream()
+    servers.push(upstream.server)
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'chat-completions',
+      endpoint: `${await listen(upstream.server)}/v1/chat/completions`,
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE,
+        model: 'untrusted'
+      })
+    })
+
+    expect(upstream.requests[0].body).toMatchObject({
+      model: 'model-a',
+      messages: OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE.messages
+    })
   })
 })

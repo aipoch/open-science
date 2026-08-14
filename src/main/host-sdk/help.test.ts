@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from './help'
+import { HOST_SDK_OPERATION_IDS, HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from './help'
 
 const provisioned = Object.fromEntries(
   HOST_SDK_SUBAGENT_OPERATION_IDS.map((id) => [id.slice('host.'.length), true])
@@ -10,6 +10,9 @@ const provisioned = Object.fromEntries(
   (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number] extends `host.${infer Op}` ? Op : never,
   boolean
 >
+const unprovisioned = Object.fromEntries(
+  HOST_SDK_SUBAGENT_OPERATION_IDS.map((id) => [id.slice('host.'.length), false])
+) as typeof provisioned
 const mainContext = { callerRole: 'main', capabilities: provisioned } as const
 const delegateContext = { callerRole: 'delegate', capabilities: provisioned } as const
 
@@ -53,15 +56,38 @@ describe('Host SDK help', () => {
       hint: expect.stringMatching(/query only the operation you plan to call/i)
     })
     if (catalog.kind !== 'catalog') throw new Error('expected catalog')
-    expect(catalog.topics.map(({ id }) => id)).toEqual([...HOST_SDK_SUBAGENT_OPERATION_IDS])
+    expect(catalog.topics.map(({ id }) => id)).toEqual([...HOST_SDK_OPERATION_IDS])
     expect(catalog.topics.map(({ id, path, aliases }) => ({ id, path, aliases }))).toEqual(
-      HOST_SDK_SUBAGENT_OPERATION_IDS.map((id) => ({
+      HOST_SDK_OPERATION_IDS.map((id) => ({
         id,
         path: id,
         aliases: [id.slice('host.'.length)]
       }))
     )
     expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_500)
+
+    const unavailableCatalog = hostSdkHelp.query(undefined, {
+      callerRole: 'main',
+      capabilities: unprovisioned
+    })
+    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(2_500)
+  })
+
+  it('documents the transient visual-model-gated viewImage contract', () => {
+    const help = hostSdkHelp.query('viewImage', {
+      ...mainContext,
+      capabilities: { ...mainContext.capabilities, viewImage: true }
+    })
+    expect(help).toMatchObject({
+      kind: 'operation',
+      id: 'host.viewImage',
+      availability: { status: 'available' },
+      call_forms: [{ signature: 'await host.viewImage(source, options?)' }]
+    })
+    if (help.kind !== 'operation') throw new Error('expected operation help')
+    expect(JSON.stringify(help.request)).toMatch(
+      /Artifact or Upload Version in the current Project/u
+    )
   })
 
   it('keeps the published REPL subagent surface and Help registry in lockstep', () => {

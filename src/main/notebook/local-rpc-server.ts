@@ -59,6 +59,11 @@ import { hostSdkHelp } from '../host-sdk/help'
 import { parseCollectRpcCall, parseDelegateRpcCall } from '../host-sdk/delegate-contract'
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
 import { StructuredOutputError } from '../delegation/structured-output'
+import type {
+  HostViewImageContext,
+  HostViewImageResult,
+  TransientViewImage
+} from './host-view-image-service'
 
 const log = createLogger('notebook:local-rpc')
 
@@ -207,6 +212,18 @@ type NotebookLocalRpcServerOptions = {
       signal?: AbortSignal
     ): Promise<HostLlmResult | readonly HostLlmBatchItem[]>
   }
+  hostViewImage?: {
+    isAvailable(context: { sessionId: string }): Promise<boolean>
+    stage(
+      source: unknown,
+      options: unknown,
+      context: HostViewImageContext
+    ): Promise<HostViewImageResult>
+    complete(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+    discard(controlInvocationId: string): void
+    discardSession(sessionId: string): void
+    shutdown(): void
+  }
 }
 
 type NotebookRpcPayload = {
@@ -229,6 +246,7 @@ type NotebookRpcSessionBinding = {
   delegatedWorkAttemptId?: string
   allowedMethods?: ReadonlySet<string>
   activeControlInvocation?: TrustedControlInvocationIdentity
+  workspaceCwd?: string
   isControl?: true
   delegatedNotebook?: {
     attemptId: string
@@ -311,6 +329,7 @@ const CONTROL_RPC_METHODS = new Set([
   'delegatedWorkCall',
   'skillsCall',
   'llmCall',
+  'viewImageCall',
   'requestUserInput'
 ])
 const DELEGATED_CONTROL_RPC_METHODS = new Set([...CONTROL_RPC_METHODS, 'delegatedOutputCall'])
@@ -408,6 +427,7 @@ class NotebookLocalRpcServer {
   private readonly delegatedWorkService: NotebookLocalRpcServerOptions['delegatedWorkService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
   private readonly hostLlm: NotebookLocalRpcServerOptions['hostLlm']
+  private readonly hostViewImage: NotebookLocalRpcServerOptions['hostViewImage']
   private server: Server | undefined
   private serverLifecycle: NotebookRpcServerLifecycle | undefined
   private startPromise: Promise<NotebookRpcConnection> | undefined
@@ -456,6 +476,7 @@ class NotebookLocalRpcServer {
     this.delegatedWorkService = options.delegatedWorkService
     this.skillsService = options.skillsService
     this.hostLlm = options.hostLlm
+    this.hostViewImage = options.hostViewImage
   }
 
   issueArtifactRunCapability(
@@ -556,7 +577,14 @@ class NotebookLocalRpcServer {
     this.serverLifecycle = undefined
     this.startPromise = undefined
     this.artifactRpcCapabilities.clear()
+    for (const binding of this.sessionRpcCapabilities.values()) {
+      if (binding.activeControlInvocation) {
+        this.hostViewImage?.discard(binding.activeControlInvocation.toolInvocationId)
+      }
+      this.hostViewImage?.discardSession(binding.sessionId)
+    }
     this.sessionRpcCapabilities.clear()
+    this.hostViewImage?.shutdown()
     this.sessionRpcTokens.clear()
     this.skillImportRpcTokens.clear()
     this.executionAuthorizations.clear()
@@ -970,10 +998,13 @@ class NotebookLocalRpcServer {
     delegatedWorkIdentity: Readonly<{
       role: 'main' | 'delegate'
       attemptId?: string
-    }> = { role: 'main' }
+    }> = { role: 'main' },
+    workspaceCwd?: string
   ): Promise<
     NotebookRpcConnection & {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
+      completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]>
+      discardControlInvocation(controlInvocationId: string): void
       release: () => void
     }
   > {
@@ -999,9 +1030,11 @@ class NotebookLocalRpcServer {
         delegatedWorkIdentity.role === 'delegate'
           ? DELEGATED_CONTROL_RPC_METHODS
           : CONTROL_RPC_METHODS,
-      isControl: true
+      isControl: true,
+      ...(workspaceCwd ? { workspaceCwd } : {})
     }
     this.sessionRpcCapabilities.set(token, binding)
+    const ownedControlInvocationIds = new Set<string>()
 
     return {
       endpoint: connection.endpoint,
@@ -1009,13 +1042,30 @@ class NotebookLocalRpcServer {
       token,
       beginControlInvocation: (context) => {
         binding.activeControlInvocation = context
+        ownedControlInvocationIds.add(context.toolInvocationId)
         return () => {
           if (binding.activeControlInvocation === context) {
             delete binding.activeControlInvocation
           }
         }
       },
+      completeControlInvocation: async (controlInvocationId) => {
+        if (!ownedControlInvocationIds.has(controlInvocationId)) return []
+        const images = await (this.hostViewImage?.complete(controlInvocationId) ??
+          Promise.resolve([]))
+        ownedControlInvocationIds.delete(controlInvocationId)
+        return images
+      },
+      discardControlInvocation: (controlInvocationId) => {
+        if (!ownedControlInvocationIds.has(controlInvocationId)) return
+        this.hostViewImage?.discard(controlInvocationId)
+        ownedControlInvocationIds.delete(controlInvocationId)
+      },
       release: () => {
+        for (const controlInvocationId of ownedControlInvocationIds) {
+          this.hostViewImage?.discard(controlInvocationId)
+        }
+        ownedControlInvocationIds.clear()
         this.sessionRpcCapabilities.delete(token)
       }
     }
@@ -1215,9 +1265,18 @@ class NotebookLocalRpcServer {
       const method = typeof payload.method === 'string' ? payload.method : ''
       activeRequest.method = method
       let params = isRecord(payload.params) ? payload.params : {}
+      if (method === 'hostSdkHelp') delete params.view_image_available
       let hostCapabilities:
         | Record<
-            'mcp' | 'compute' | 'agents' | 'skills' | 'artifacts' | 'lineage' | 'frames' | 'llm',
+            | 'mcp'
+            | 'compute'
+            | 'agents'
+            | 'skills'
+            | 'artifacts'
+            | 'lineage'
+            | 'frames'
+            | 'llm'
+            | 'viewImage',
             boolean
           >
         | undefined
@@ -1258,6 +1317,20 @@ class NotebookLocalRpcServer {
           if (method === 'llmCall' && !sessionBinding.isControl) {
             throw new RpcHttpError(403, 'host.llm requires a control-plane REPL capability.')
           }
+          if (method === 'viewImageCall') {
+            if (!sessionBinding.isControl || !sessionBinding.activeControlInvocation) {
+              throw new RpcHttpError(
+                403,
+                'host.viewImage requires an active trusted control invocation.'
+              )
+            }
+            if (!sessionBinding.workspaceCwd) {
+              throw new RpcHttpError(403, 'host.viewImage requires a trusted Session workspace.')
+            }
+            if (Object.keys(params).some((key) => key !== 'source' && key !== 'options')) {
+              throw new Error('host.viewImage RPC params are invalid.')
+            }
+          }
           if (
             method === 'agentsCall' &&
             params.op === 'switch' &&
@@ -1286,7 +1359,13 @@ class NotebookLocalRpcServer {
                 sessionBinding.isControl === true &&
                 allows('llmCall') &&
                 Boolean(this.hostLlm) &&
-                (await this.hostLlm!.isAvailable())
+                (await this.hostLlm!.isAvailable()),
+              viewImage:
+                sessionBinding.isControl === true &&
+                Boolean(sessionBinding.activeControlInvocation) &&
+                allows('viewImageCall') &&
+                Boolean(this.hostViewImage) &&
+                (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId }))
             }
           }
           if (
@@ -1346,6 +1425,12 @@ class NotebookLocalRpcServer {
             ...params,
             sessionId: sessionBinding.sessionId,
             ...(sessionBinding.projectId ? { projectId: sessionBinding.projectId } : {}),
+            ...(method === 'viewImageCall'
+              ? {
+                  workspaceCwd: sessionBinding.workspaceCwd,
+                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId
+                }
+              : {}),
             ...(method === 'agentsCall' || method === 'skillsCall'
               ? {
                   session_id: sessionBinding.sessionId,
@@ -1384,7 +1469,18 @@ class NotebookLocalRpcServer {
                       sessionBinding.activeControlInvocation?.originatingUserMessageId
                   }
                 : method === 'hostSdkHelp'
-                  ? { caller_role: sessionBinding.delegatedWorkRole }
+                  ? {
+                      caller_role: sessionBinding.delegatedWorkRole,
+                      view_image_available:
+                        sessionBinding.isControl === true &&
+                        Boolean(sessionBinding.activeControlInvocation) &&
+                        (!sessionBinding.allowedMethods ||
+                          sessionBinding.allowedMethods.has('viewImageCall')) &&
+                        Boolean(this.hostViewImage) &&
+                        (await this.hostViewImage!.isAvailable({
+                          sessionId: sessionBinding.sessionId
+                        }))
+                    }
                   : {})
           }
         } else {
@@ -1670,6 +1766,25 @@ class NotebookLocalRpcServer {
       void _sessionId
       void _projectId
       return this.hostLlm.call(input as HostLlmCallInput, signal)
+    }
+
+    if (method === 'viewImageCall') {
+      if (!this.hostViewImage) throw new Error('host.viewImage is not configured.')
+      const projectId = typeof params.projectId === 'string' ? params.projectId : ''
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      const workspaceCwd = typeof params.workspaceCwd === 'string' ? params.workspaceCwd : ''
+      const controlInvocationId =
+        typeof params.controlInvocationId === 'string' ? params.controlInvocationId : ''
+      if (!projectId || !sessionId || !workspaceCwd || !controlInvocationId) {
+        throw new RpcHttpError(403, 'host.viewImage trusted capability identity is incomplete.')
+      }
+      return this.hostViewImage.stage(params.source, params.options, {
+        projectId,
+        sessionId,
+        workspaceCwd,
+        controlInvocationId,
+        signal
+      })
     }
 
     if (method === 'resolveNotebookInput') {
@@ -1987,7 +2102,8 @@ class NotebookLocalRpcServer {
           sendFrameMessage: Boolean(this.delegatedWorkService?.sendMessage),
           messageReceipt: Boolean(this.delegatedWorkService?.messageReceipt),
           resolveMessage: Boolean(this.delegatedWorkService?.resolveMessage),
-          submitOutput: Boolean(this.delegatedWorkService?.submitOutput)
+          submitOutput: Boolean(this.delegatedWorkService?.submitOutput),
+          viewImage: params.view_image_available === true
         }
       })
     }

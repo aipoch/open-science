@@ -37,11 +37,12 @@ import {
   type NotebookShellResult
 } from './shell-process'
 import { startWorkingFileObservation } from './working-file-observer'
+import type { TransientViewImage } from './host-view-image-service'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
   'status' | 'stdout' | 'stderr' | 'traceback' | 'outputs' | 'workingFiles'
->
+> & { viewImages?: readonly TransientViewImage[] }
 
 type NotebookControlCompletionInterceptor = {
   intercept<T>(options: {
@@ -71,6 +72,7 @@ type McpRpcConnectionBinding = {
   projectId: string
   agentFrameId: string
   attemptId?: string
+  workspaceCwd: string
 }
 type McpRpcConnectionResolver = (
   binding: McpRpcConnectionBinding
@@ -302,38 +304,52 @@ class NotebookExecutionOwner {
       )
     )
 
-    // The completion gate deliberately stays outside enqueueControl: an approved continuation may
-    // re-enter this same Session and must not deadlock behind the old invocation's handoff.
-    const interceptor = this.controlCompletionInterceptor
-    if (!interceptor) return rawRun
-
-    const outcome = await interceptor.intercept({
-      context: {
-        sessionId: session.sessionId,
-        turnId: controlInvocationId,
-        toolInvocationId: controlInvocationId,
-        controlInvocationGeneration,
-        ...(request.provenanceContext
-          ? {
-              originatingTurnId: request.provenanceContext.promptMessageId,
-              originatingUserMessageId:
-                request.provenanceContext.originMessageId ??
-                request.provenanceContext.promptMessageId
-            }
-          : {}),
-        attachmentIds:
-          request.registeredInputFiles
-            ?.filter((input) => input.sourceKind === 'upload-version')
-            .map((input) => input.sourceFileId) ?? [],
-        artifactIds:
-          request.registeredInputFiles
-            ?.filter((input) => input.sourceKind === 'artifact-version')
-            .map((input) => input.sourceFileId) ?? []
-      },
-      execute: () => rawRun
-    })
-    if (outcome.kind === 'captured') throw new NotebookControlCompletionCapturedError()
-    return outcome.result
+    try {
+      // The completion gate deliberately stays outside enqueueControl: an approved continuation may
+      // re-enter this same Session and must not deadlock behind the old invocation's handoff.
+      const interceptor = this.controlCompletionInterceptor
+      let result: NotebookControlResult
+      if (!interceptor) {
+        result = await rawRun
+      } else {
+        const outcome = await interceptor.intercept({
+          context: {
+            sessionId: session.sessionId,
+            turnId: controlInvocationId,
+            toolInvocationId: controlInvocationId,
+            controlInvocationGeneration,
+            ...(request.provenanceContext
+              ? {
+                  originatingTurnId: request.provenanceContext.promptMessageId,
+                  originatingUserMessageId:
+                    request.provenanceContext.originMessageId ??
+                    request.provenanceContext.promptMessageId
+                }
+              : {}),
+            attachmentIds:
+              request.registeredInputFiles
+                ?.filter((input) => input.sourceKind === 'upload-version')
+                .map((input) => input.sourceFileId) ?? [],
+            artifactIds:
+              request.registeredInputFiles
+                ?.filter((input) => input.sourceKind === 'artifact-version')
+                .map((input) => input.sourceFileId) ?? []
+          },
+          execute: () => rawRun
+        })
+        if (outcome.kind === 'captured') throw new NotebookControlCompletionCapturedError()
+        result = outcome.result
+      }
+      if (result.status !== 'completed') {
+        session.discardControlInvocation(controlInvocationId)
+        return result
+      }
+      const viewImages = await session.completeControlInvocation(controlInvocationId)
+      return viewImages.length > 0 ? { ...result, viewImages } : result
+    } catch (error) {
+      session.discardControlInvocation(controlInvocationId)
+      throw error
+    }
   }
 
   private async executeControlExclusive(

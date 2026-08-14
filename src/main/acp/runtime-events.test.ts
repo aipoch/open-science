@@ -1,7 +1,8 @@
 import type { SessionNotification, ToolCallContent } from '@agentclientprotocol/sdk'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
+import { sanitizeToolActivity } from '../../shared/session-persistence'
 import { extractToolFailureText, toAcpRuntimeEvent } from './runtime-events'
 
 describe('ACP runtime event normalization', () => {
@@ -281,6 +282,134 @@ describe('ACP runtime event normalization', () => {
       rawInput: { command: 'ls -la' },
       rawOutput: { stdout: 'total 8' }
     })
+  })
+
+  it('projects ACP tool-result images without retaining bytes in runtime or Session JSON', () => {
+    const imageData = Buffer.from('tiny-image').toString('base64')
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-image',
+        title: 'View image',
+        status: 'completed',
+        content: [
+          { type: 'content', content: { type: 'text', text: '{"status":"completed"}' } },
+          {
+            type: 'content',
+            content: { type: 'image', mimeType: 'image/png', data: imageData }
+          }
+        ],
+        rawOutput: {
+          content: [
+            { type: 'text', text: '{"status":"completed"}' },
+            { type: 'image', mimeType: 'image/png', data: imageData }
+          ]
+        }
+      }
+    }
+
+    const event = toAcpRuntimeEvent(notification, 'event-image-tool', 1710000000004)
+    const persisted = sanitizeToolActivity({
+      ...event,
+      sortIndex: 1,
+      eventIds: [event.id],
+      createdAt: event.timestamp,
+      updatedAt: event.timestamp
+    })
+
+    expect(event.toolContent).toEqual([
+      { type: 'content', content: { type: 'text', text: '{"status":"completed"}' } },
+      { type: 'content', content: { type: 'text', text: '[image: image/png]' } }
+    ])
+    expect(event.rawOutput).toBeUndefined()
+    expect(JSON.stringify(event)).not.toContain(imageData)
+    expect(JSON.stringify(persisted)).not.toContain(imageData)
+  })
+
+  it('drops image bytes that appear only inside nested raw tool output', () => {
+    const imageData = Buffer.from('raw-only-image').toString('base64')
+    for (const rawOutput of [
+      {
+        result: {
+          content: [
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: imageData }
+            }
+          ]
+        }
+      },
+      {
+        response: {
+          output: [
+            {
+              type: 'input_image',
+              image_url: `data:image/jpeg;base64,${imageData}`
+            }
+          ]
+        }
+      },
+      JSON.stringify({
+        content: [{ type: 'image', mimeType: 'image/png', data: imageData }]
+      })
+    ]) {
+      const event = toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tool-raw-image',
+            status: 'completed',
+            content: [
+              { type: 'content', content: { type: 'text', text: '{"status":"completed"}' } }
+            ],
+            rawOutput
+          }
+        },
+        'event-raw-image',
+        1710000000004
+      )
+
+      const persisted = sanitizeToolActivity({
+        ...event,
+        sortIndex: 1,
+        eventIds: [event.id],
+        createdAt: event.timestamp,
+        updatedAt: event.timestamp
+      })
+      expect(event.rawOutput).toBeUndefined()
+      expect(JSON.stringify(event)).not.toContain(imageData)
+      expect(JSON.stringify(persisted)).not.toContain(imageData)
+    }
+  })
+
+  it('does not inspect a raw-output echo after structured content proves an image', () => {
+    const toJSON = vi.fn(() => {
+      throw new Error('raw output should not be serialized')
+    })
+    const event = toAcpRuntimeEvent(
+      {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tool-structured-image',
+          status: 'completed',
+          content: [
+            {
+              type: 'content',
+              content: { type: 'image', mimeType: 'image/png', data: 'transient' }
+            }
+          ],
+          rawOutput: { toJSON }
+        }
+      },
+      'event-structured-image',
+      1710000000005
+    )
+
+    expect(event.rawOutput).toBeUndefined()
+    expect(toJSON).not.toHaveBeenCalled()
   })
 
   it('omits native Skill instruction documents from activity events', () => {
