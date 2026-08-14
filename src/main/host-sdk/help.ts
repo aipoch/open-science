@@ -55,7 +55,7 @@ type HostSdkHelpCatalog = Readonly<{
     path: string
     aliases: readonly string[]
     summary: string
-    availability: HostSdkAvailability
+    availability: Readonly<{ status: HostSdkAvailability['status'] }>
   }>[]
   hint: string
 }>
@@ -813,14 +813,17 @@ const hostSdkHelp: HostSdkHelpRegistry = Object.freeze({
         {
           kind: 'catalog',
           coverage: 'registered_topics_only',
-          topics: entries.map((descriptor) => ({
-            id: descriptor.id,
-            kind: descriptor.kind,
-            path: descriptor.path,
-            aliases: descriptor.aliases,
-            summary: descriptor.summary,
-            availability: descriptor.resolveAvailability(context)
-          })),
+          topics: entries.map((descriptor) => {
+            const availability = descriptor.resolveAvailability(context)
+            return {
+              id: descriptor.id,
+              kind: descriptor.kind,
+              path: descriptor.path,
+              aliases: descriptor.aliases,
+              summary: descriptor.summary,
+              availability: { status: availability.status }
+            }
+          }),
           hint: 'Query only the operation you plan to call; each topic gives concise field descriptions.'
         },
         MAX_CATALOG_RESULT_CHARS

@@ -10,6 +10,9 @@ const provisioned = Object.fromEntries(
   (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number] extends `host.${infer Op}` ? Op : never,
   boolean
 >
+const unprovisioned = Object.fromEntries(
+  HOST_SDK_SUBAGENT_OPERATION_IDS.map((id) => [id.slice('host.'.length), false])
+) as typeof provisioned
 const mainContext = { callerRole: 'main', capabilities: provisioned } as const
 const delegateContext = { callerRole: 'delegate', capabilities: provisioned } as const
 
@@ -62,6 +65,12 @@ describe('Host SDK help', () => {
       }))
     )
     expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_500)
+
+    const unavailableCatalog = hostSdkHelp.query(undefined, {
+      callerRole: 'main',
+      capabilities: unprovisioned
+    })
+    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(2_500)
   })
 
   it('documents the transient visual-model-gated viewImage contract', () => {
