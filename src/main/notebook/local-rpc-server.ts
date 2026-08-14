@@ -250,7 +250,7 @@ type NotebookRpcSessionBinding = {
   delegatedWorkAttemptId?: string
   allowedMethods?: ReadonlySet<string>
   activeControlInvocation?: TrustedControlInvocationIdentity
-  workspaceCwd?: string
+  executionCwd?: string
   isControl?: true
   delegatedNotebook?: {
     attemptId: string
@@ -1004,7 +1004,7 @@ class NotebookLocalRpcServer {
       role: 'main' | 'delegate'
       attemptId?: string
     }> = { role: 'main' },
-    workspaceCwd?: string
+    executionCwd?: string
   ): Promise<
     NotebookRpcConnection & {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
@@ -1036,7 +1036,7 @@ class NotebookLocalRpcServer {
           ? DELEGATED_CONTROL_RPC_METHODS
           : CONTROL_RPC_METHODS,
       isControl: true,
-      ...(workspaceCwd ? { workspaceCwd } : {})
+      ...(executionCwd ? { executionCwd } : {})
     }
     this.sessionRpcCapabilities.set(token, binding)
     const ownedControlInvocationIds = new Set<string>()
@@ -1215,8 +1215,8 @@ class NotebookLocalRpcServer {
     const callerRole = sessionBinding.delegatedWorkRole ?? 'main'
     const hasDelegatedIdentity = Boolean(
       sessionBinding.projectId &&
-        sessionBinding.agentFrameId &&
-        (callerRole !== 'delegate' || sessionBinding.delegatedWorkAttemptId)
+      sessionBinding.agentFrameId &&
+      (callerRole !== 'delegate' || sessionBinding.delegatedWorkAttemptId)
     )
     const hasDelegatedOrigin = sessionBinding.delegatedNotebook
       ? Boolean(sessionBinding.delegatedNotebook.provenanceContext.promptMessageId)
@@ -1233,7 +1233,7 @@ class NotebookLocalRpcServer {
       callerRole,
       isControl: Boolean(sessionBinding.isControl),
       hasActiveControlInvocation: Boolean(sessionBinding.activeControlInvocation),
-      hasWorkspace: Boolean(sessionBinding.workspaceCwd),
+      hasWorkspace: Boolean(sessionBinding.executionCwd),
       allowsMethod,
       delegatedWorkReady,
       services: {
@@ -1369,8 +1369,8 @@ class NotebookLocalRpcServer {
                 'host.viewImage requires an active trusted control invocation.'
               )
             }
-            if (!sessionBinding.workspaceCwd) {
-              throw new RpcHttpError(403, 'host.viewImage requires a trusted Session workspace.')
+            if (!sessionBinding.executionCwd) {
+              throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
             }
             if (Object.keys(params).some((key) => key !== 'source' && key !== 'options')) {
               throw new Error('host.viewImage RPC params are invalid.')
@@ -1448,7 +1448,7 @@ class NotebookLocalRpcServer {
             ...(sessionBinding.projectId ? { projectId: sessionBinding.projectId } : {}),
             ...(method === 'viewImageCall'
               ? {
-                  workspaceCwd: sessionBinding.workspaceCwd,
+                  executionCwd: sessionBinding.executionCwd,
                   controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId
                 }
               : {}),
@@ -1787,16 +1787,16 @@ class NotebookLocalRpcServer {
       if (!this.hostViewImage) throw new Error('host.viewImage is not configured.')
       const projectId = typeof params.projectId === 'string' ? params.projectId : ''
       const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
-      const workspaceCwd = typeof params.workspaceCwd === 'string' ? params.workspaceCwd : ''
+      const executionCwd = typeof params.executionCwd === 'string' ? params.executionCwd : ''
       const controlInvocationId =
         typeof params.controlInvocationId === 'string' ? params.controlInvocationId : ''
-      if (!projectId || !sessionId || !workspaceCwd || !controlInvocationId) {
+      if (!projectId || !sessionId || !executionCwd || !controlInvocationId) {
         throw new RpcHttpError(403, 'host.viewImage trusted capability identity is incomplete.')
       }
       return this.hostViewImage.stage(params.source, params.options, {
         projectId,
         sessionId,
-        workspaceCwd,
+        executionCwd,
         controlInvocationId,
         signal
       })

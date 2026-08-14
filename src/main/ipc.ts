@@ -1721,13 +1721,13 @@ const createApplicationModules = async (
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
   notebookService.setMcpRpcConnectionResolver(
-    ({ sessionId, projectId, agentFrameId, attemptId, workspaceCwd }) =>
+    ({ sessionId, projectId, agentFrameId, attemptId, executionCwd }) =>
       notebookRpcServer.issueControlConnection(
         sessionId,
         projectId,
         agentFrameId,
         attemptId ? { role: 'delegate', attemptId } : { role: 'main' },
-        workspaceCwd
+        executionCwd
       )
   )
   // The renderer's approval card responds here; the broker resolves the held connector call.

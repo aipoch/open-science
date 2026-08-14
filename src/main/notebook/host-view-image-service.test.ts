@@ -121,12 +121,12 @@ const harness = (
 }
 
 const context = (
-  workspaceCwd = '/workspace',
+  executionCwd = '/workspace',
   controlInvocationId = 'run-1'
 ): HostViewImageContext => ({
   projectId: 'project-a',
   sessionId: 'calling-session',
-  workspaceCwd,
+  executionCwd,
   controlInvocationId,
   signal: new AbortController().signal
 })
@@ -239,13 +239,17 @@ describe('HostViewImageService', () => {
     ).rejects.toThrow(/ambiguous/u)
   })
 
-  it('accepts only an existing real workspace file contained by the trusted Session root', async () => {
+  it('accepts a code-relative file and rejects application-owned sibling paths', async () => {
     root = await mkdtemp(join(tmpdir(), 'host-view-image-'))
-    const workspace = join(root, 'workspace')
+    const workspace = join(root, 'data')
+    const handoff = join(root, 'handoff')
     const outside = join(root, 'outside')
     await mkdir(join(workspace, 'results'), { recursive: true })
+    await mkdir(handoff)
     await mkdir(outside)
     await writeFile(join(workspace, 'results', 'image.png'), 'image')
+    await writeFile(join(handoff, 'connector.png'), 'handoff')
+    await writeFile(join(root, 'run.json'), '{}')
     await writeFile(join(outside, 'secret.png'), 'secret')
     await symlink(join(outside, 'secret.png'), join(workspace, 'escape.png'))
     const h = harness()
@@ -263,6 +267,9 @@ describe('HostViewImageService', () => {
     for (const path of [
       '../outside/secret.png',
       '..\\outside\\secret.png',
+      '../handoff/connector.png',
+      '..\\handoff\\connector.png',
+      '../run.json',
       join(outside, 'secret.png'),
       'C:\\outside\\secret.png',
       '\\\\server\\share\\secret.png',

@@ -681,7 +681,7 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         type: '{ versionId: string } | { path: string }',
         required: true,
         description:
-          'Artifact or Upload Version in the current Project, or current-Session relative workspace path.'
+          'Artifact or Upload Version in the current Project, or a path relative to the current execution workspace. For a generated file, pass the same relative path used to save it.'
       }
     ]
   },

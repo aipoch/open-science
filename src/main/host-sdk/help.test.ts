@@ -85,9 +85,11 @@ describe('Host SDK help', () => {
       call_forms: [{ signature: 'await host.viewImage(source, options?)' }]
     })
     if (help.kind !== 'operation') throw new Error('expected operation help')
-    expect(JSON.stringify(help.request)).toMatch(
-      /Artifact or Upload Version in the current Project/u
-    )
+    const request = JSON.stringify(help.request)
+    expect(request).toMatch(/Artifact or Upload Version in the current Project/u)
+    expect(request).toMatch(/path relative to the current execution workspace/u)
+    expect(request).toMatch(/same relative path used to save it/u)
+    expect(request).not.toMatch(/Notebook/u)
   })
 
   it('keeps the published REPL subagent surface and Help registry in lockstep', () => {

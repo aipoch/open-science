@@ -1948,7 +1948,7 @@ describe('notebook runtime service', () => {
       sessionId: 'session-1',
       projectId: 'default-project',
       agentFrameId: 'root-frame-session-1',
-      workspaceCwd: join(root, 'notebooks', 'default-project', 'session-1', 'data')
+      executionCwd: join(root, 'notebooks', 'default-project', 'session-1', 'data')
     })
     expect(executions.map((request) => request.mcpRpcToken)).toEqual([
       'session-token',
@@ -2144,7 +2144,7 @@ describe('notebook runtime service', () => {
       projectId: 'project-1',
       agentFrameId: 'child-frame',
       attemptId: 'attempt-1',
-      workspaceCwd: join(
+      executionCwd: join(
         root,
         'notebooks',
         'project-1',
@@ -2159,7 +2159,7 @@ describe('notebook runtime service', () => {
       projectId: 'project-1',
       agentFrameId: 'child-frame',
       attemptId: 'attempt-2',
-      workspaceCwd: join(
+      executionCwd: join(
         root,
         'notebooks',
         'project-1',

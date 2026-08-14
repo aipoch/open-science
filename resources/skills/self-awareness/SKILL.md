@@ -25,7 +25,8 @@ The current project-native result contains 17 known boolean keys:
 - `frames` gates the read-only `host.frames` namespace.
 - `llm` gates `host.llm` one-shot, tool-less inference.
 - `viewImage` gates transient `host.viewImage(source, options?)` image attachment from an Artifact or
-  Upload Version in the current Project, or a current-Session relative workspace path.
+  Upload Version in the current Project, or a path relative to the current execution workspace. For
+  a generated file, pass the same relative path used to save it.
 - `delegate`, `children`, `collect`, `stopChild`, and `resolveMessage` are Main/root-only delegated
   work operations.
 - `sendFrameMessage` and `messageReceipt` are available to Main/root and Delegate agents when their

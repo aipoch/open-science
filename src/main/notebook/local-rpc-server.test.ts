@@ -77,7 +77,7 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
-  it('binds viewImage to the trusted active control invocation and workspace', async () => {
+  it('binds viewImage to the trusted active control invocation and execution workspace', async () => {
     const stage = vi.fn(async (_source, _options, trusted) => trusted)
     const isAvailable = vi.fn(async () => true)
     const discard = vi.fn()
@@ -170,7 +170,7 @@ describe('notebook local RPC server', () => {
         result: {
           projectId: 'project-1',
           sessionId: 'session-1',
-          workspaceCwd: '/trusted/workspace',
+          executionCwd: '/trusted/workspace',
           controlInvocationId: 'run-1',
           signal: {}
         }
@@ -181,7 +181,7 @@ describe('notebook local RPC server', () => {
         expect.objectContaining({
           projectId: 'project-1',
           sessionId: 'session-1',
-          workspaceCwd: '/trusted/workspace',
+          executionCwd: '/trusted/workspace',
           controlInvocationId: 'run-1'
         })
       )

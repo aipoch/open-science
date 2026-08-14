@@ -196,7 +196,7 @@ describe('capabilitiesCall RPC', () => {
     })
   })
 
-  it('does not advertise host.viewImage without a trusted Session workspace', async () => {
+  it('does not advertise host.viewImage without a trusted execution workspace', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       hostViewImage: {
@@ -226,7 +226,7 @@ describe('capabilitiesCall RPC', () => {
     endInvocation()
   })
 
-  it('reports host.viewImage unavailable from host.help without a trusted Session workspace', async () => {
+  it('reports host.viewImage unavailable from host.help without a trusted execution workspace', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       hostViewImage: {
@@ -256,7 +256,7 @@ describe('capabilitiesCall RPC', () => {
     endInvocation()
   })
 
-  it('advertises host.viewImage with an active invocation and trusted Session workspace', async () => {
+  it('advertises host.viewImage with an active invocation and trusted execution workspace', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       hostViewImage: {

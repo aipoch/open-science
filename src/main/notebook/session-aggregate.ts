@@ -516,7 +516,7 @@ export class NotebookSessionAggregate<
           projectId: string
           agentFrameId: string
           attemptId?: string
-          workspaceCwd: string
+          executionCwd: string
         }) => Promise<NotebookSessionMcpRpcConnection>)
       | undefined
   ): Promise<NotebookSessionMcpRpcConnection | undefined> {
@@ -528,7 +528,7 @@ export class NotebookSessionAggregate<
         sessionId: this.sessionId,
         projectId: this.projectId,
         agentFrameId: lane.agentFrameId,
-        workspaceCwd: this.dataRoot,
+        executionCwd: this.dataRoot,
         ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
       })
       return this.mcpRpcConnection
