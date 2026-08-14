@@ -16,6 +16,7 @@ const streamingMetrics = {
     id: string
     len?: number
     title?: string
+    chunks?: number
   }>
 }
 
@@ -27,6 +28,15 @@ const pushTimelineEvent = (event: {
   len?: number
   title?: string
 }): void => {
+  // Coalesce consecutive text events of one stream into a single entry so micro-chunks
+  // cannot evict tool events from the ring; ordering transitions stay visible.
+  const last = streamingMetrics.events[streamingMetrics.events.length - 1]
+  if (event.kind === 'text' && last?.kind === 'text' && last.id === event.id) {
+    last.len = (last.len ?? 0) + (event.len ?? 0)
+    last.chunks = (last.chunks ?? 1) + 1
+    last.t = Date.now()
+    return
+  }
   streamingMetrics.events.push({ t: Date.now(), ...event })
   if (streamingMetrics.events.length > MAX_TIMELINE_EVENTS) {
     streamingMetrics.events.splice(0, streamingMetrics.events.length - MAX_TIMELINE_EVENTS)
