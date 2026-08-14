@@ -26,7 +26,7 @@ that drops into the scanpy neighbors → leiden → umap pipeline.
 
 ## Setup (any agent, no API key)
 
-This is a **pure skill** — `kernel.py` is deterministic Python and *you* (the
+This is a **pure skill** — `kernel.py` is deterministic Python and _you_ (the
 base model) do all the reasoning. There is no `host` runtime and no LLM API.
 The only helper here is `h5ad_safe_obs`, which coerces an obs/var frame so
 `anndata.write_h5ad()` succeeds. Load it once per session in a Python cell:
@@ -109,13 +109,13 @@ mode).
 
 ## Output format
 
-| Key                            | What                                                   |
-| ------------------------------ | ------------------------------------------------------ |
-| `adata.obsm["X_scVI"]`         | `n_cells × n_latent` batch-corrected embedding         |
-| `adata.obsm["X_scANVI"]`       | label-aware embedding (better separates known classes) |
-| `adata.obs["pred_cell_type"]`  | scANVI predicted label per cell                        |
-| `adata.layers["scvi_normalized"]` | decoded expression, library-size normalized         |
-| DE dataframe                   | per-gene `lfc_*` / `proba_de` (with `mode="change"`)   |
+| Key                               | What                                                   |
+| --------------------------------- | ------------------------------------------------------ |
+| `adata.obsm["X_scVI"]`            | `n_cells × n_latent` batch-corrected embedding         |
+| `adata.obsm["X_scANVI"]`          | label-aware embedding (better separates known classes) |
+| `adata.obs["pred_cell_type"]`     | scANVI predicted label per cell                        |
+| `adata.layers["scvi_normalized"]` | decoded expression, library-size normalized            |
+| DE dataframe                      | per-gene `lfc_*` / `proba_de` (with `mode="change"`)   |
 
 ## Remote compute (rent a GPU)
 
@@ -162,23 +162,23 @@ skill.)
 
 ## Gotchas
 
-| Gotcha | What happens / fix |
-|---|---|
-| `differential_expression()` defaults to `mode="vanilla"` (scvi-tools ≥1.4) | `KeyError: 'lfc_mean'` / `'proba_de'` when sorting — pass `mode="change"` to get `lfc_*`/`proba_de`/`is_de_fdr_*`; in vanilla mode sort on `bayes_factor`. |
-| `adata.obs` index/columns are `string[pyarrow]` (`ArrowStringArray`) | `.write_h5ad()` dies with `IORegistryError: No method registered for writing <class 'pandas.arrays.ArrowStringArray'>` (anndata #2377). Coerce before writing: `adata.obs = h5ad_safe_obs(adata.obs)` (kernel helper — load it via `exec` locally, see Setup; inline the coercion in a remote `pipeline.py`). **`.astype(str)` alone is not enough** — on a pyarrow-backed Index/Series it returns another Arrow-backed array; round-trip through `np.asarray(..., dtype=object)`. `anndata.settings.allow_write_nullable_strings = True` does **not** cover Arrow-backed strings. |
-| `use_gpu=` kwarg | Removed in 1.x → `TypeError: train() got an unexpected keyword argument 'use_gpu'`. Use `accelerator="gpu", devices=1`. |
-| Log-normalized data fed to `setup_anndata` | Silent garbage — scVI's NB likelihood needs raw integer counts. Stash counts in `adata.layers["counts"]` *before* normalize/log1p and pass `layer="counts"`. |
+| Gotcha                                                                     | What happens / fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `differential_expression()` defaults to `mode="vanilla"` (scvi-tools ≥1.4) | `KeyError: 'lfc_mean'` / `'proba_de'` when sorting — pass `mode="change"` to get `lfc_*`/`proba_de`/`is_de_fdr_*`; in vanilla mode sort on `bayes_factor`.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `adata.obs` index/columns are `string[pyarrow]` (`ArrowStringArray`)       | `.write_h5ad()` dies with `IORegistryError: No method registered for writing <class 'pandas.arrays.ArrowStringArray'>` (anndata #2377). Coerce before writing: `adata.obs = h5ad_safe_obs(adata.obs)` (kernel helper — load it via `exec` locally, see Setup; inline the coercion in a remote `pipeline.py`). **`.astype(str)` alone is not enough** — on a pyarrow-backed Index/Series it returns another Arrow-backed array; round-trip through `np.asarray(..., dtype=object)`. `anndata.settings.allow_write_nullable_strings = True` does **not** cover Arrow-backed strings. |
+| `use_gpu=` kwarg                                                           | Removed in 1.x → `TypeError: train() got an unexpected keyword argument 'use_gpu'`. Use `accelerator="gpu", devices=1`.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Log-normalized data fed to `setup_anndata`                                 | Silent garbage — scVI's NB likelihood needs raw integer counts. Stash counts in `adata.layers["counts"]` _before_ normalize/log1p and pass `layer="counts"`.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---|---|
-| `KeyError: 'lfc_mean'` (or `'proba_de'`, `'is_de_fdr_0.05'`) on DE result | Add `mode="change"` to `differential_expression()`; the default vanilla mode has no LFC columns. |
-| `IORegistryError: No method registered for writing <class 'pandas.arrays.ArrowStringArray'>` on `.write_h5ad()` | `adata.obs = h5ad_safe_obs(adata.obs)` (and `adata.var` if needed) before writing. The `allow_write_nullable_strings` flag does not help here. |
-| `TypeError: ... unexpected keyword argument 'use_gpu'` | Replace with `accelerator="gpu", devices=1`. |
-| `ValueError: ... non-negative integers` / NB loss explodes | `layer="counts"` points at log/float data — restore raw counts. |
-| `MisconfigurationException: No supported gpu backend found` | No CUDA visible — drop `accelerator`/`devices` to fall back to CPU, or dispatch via Remote compute. |
-| `UnicodeEncodeError: 'ascii' codec can't encode character ...` writing a summary / printing | Container has no `LANG` so Python defaults to ASCII. Open files with `encoding="utf-8"` and/or `sys.stdout.reconfigure(encoding="utf-8")` at script top, or set `PYTHONIOENCODING=utf-8` in the image. |
+| Symptom                                                                                                         | Fix                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `KeyError: 'lfc_mean'` (or `'proba_de'`, `'is_de_fdr_0.05'`) on DE result                                       | Add `mode="change"` to `differential_expression()`; the default vanilla mode has no LFC columns.                                                                                                       |
+| `IORegistryError: No method registered for writing <class 'pandas.arrays.ArrowStringArray'>` on `.write_h5ad()` | `adata.obs = h5ad_safe_obs(adata.obs)` (and `adata.var` if needed) before writing. The `allow_write_nullable_strings` flag does not help here.                                                         |
+| `TypeError: ... unexpected keyword argument 'use_gpu'`                                                          | Replace with `accelerator="gpu", devices=1`.                                                                                                                                                           |
+| `ValueError: ... non-negative integers` / NB loss explodes                                                      | `layer="counts"` points at log/float data — restore raw counts.                                                                                                                                        |
+| `MisconfigurationException: No supported gpu backend found`                                                     | No CUDA visible — drop `accelerator`/`devices` to fall back to CPU, or dispatch via Remote compute.                                                                                                    |
+| `UnicodeEncodeError: 'ascii' codec can't encode character ...` writing a summary / printing                     | Container has no `LANG` so Python defaults to ASCII. Open files with `encoding="utf-8"` and/or `sys.stdout.reconfigure(encoding="utf-8")` at script top, or set `PYTHONIOENCODING=utf-8` in the image. |
 
 ---
 

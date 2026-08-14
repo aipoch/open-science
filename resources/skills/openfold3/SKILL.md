@@ -31,13 +31,13 @@ metadata:
 
 ## Prerequisites
 
-| Requirement | Minimum | Recommended |
-| ----------- | ------- | ----------- |
-| Python      | 3.10+   | 3.11        |
-| CUDA        | 12.1+   | 12.4+       |
-| GPU VRAM    | 24GB    | 80GB (H100) |
-| RAM         | 32GB    | 64GB        |
-| Disk (weights) | 3GB  | -           |
+| Requirement    | Minimum | Recommended |
+| -------------- | ------- | ----------- |
+| Python         | 3.10+   | 3.11        |
+| CUDA           | 12.1+   | 12.4+       |
+| GPU VRAM       | 24GB    | 80GB (H100) |
+| RAM            | 32GB    | 64GB        |
+| Disk (weights) | 3GB     | -           |
 
 ## How to run
 
@@ -99,9 +99,9 @@ OpenFold3 does **not** read FASTA. Queries are a JSON object validated by
   "queries": {
     "my_complex": {
       "chains": [
-        {"molecule_type": "protein", "chain_ids": ["A"], "sequence": "MQIFVK…"},
-        {"molecule_type": "protein", "chain_ids": ["B", "C"], "sequence": "MVLSPA…"},
-        {"molecule_type": "ligand",  "chain_ids": ["L"], "smiles": "CC(=O)Oc1ccccc1C(=O)O"}
+        { "molecule_type": "protein", "chain_ids": ["A"], "sequence": "MQIFVK…" },
+        { "molecule_type": "protein", "chain_ids": ["B", "C"], "sequence": "MVLSPA…" },
+        { "molecule_type": "ligand", "chain_ids": ["L"], "smiles": "CC(=O)Oc1ccccc1C(=O)O" }
       ],
       "use_msas": true
     }
@@ -110,10 +110,10 @@ OpenFold3 does **not** read FASTA. Queries are a JSON object validated by
 }
 ```
 
-| `molecule_type` | required field |
-| -------- | ---- |
-| `protein` / `dna` / `rna` | `sequence` |
-| `ligand` | `smiles` **or** `ccd_codes: ["HEM"]` |
+| `molecule_type`           | required field                       |
+| ------------------------- | ------------------------------------ |
+| `protein` / `dna` / `rna` | `sequence`                           |
+| `ligand`                  | `smiles` **or** `ccd_codes: ["HEM"]` |
 
 `chain_ids` is a list — repeat the same sequence across multiple chain IDs
 for homo-oligomers. Per-chain `paired_msa_file_paths` / `main_msa_file_paths`
@@ -121,13 +121,13 @@ let you supply your own a3m instead of the server.
 
 ## Key parameters
 
-| Flag | Default | Description |
-| ---- | ------- | ----------- |
-| `--num-diffusion-samples` | 5 | Structures per (query, seed) |
-| `--num-model-seeds` | 1 | Number of model seeds per query (multiplies output count alongside JSON `seeds` and diffusion samples) |
-| `--use-msa-server` | true | ColabFold MMseqs2 server for MSA |
-| `--use-templates` | true | ColabFold template search + RCSB remap |
-| `--inference-ckpt-path` | auto-discovered under `$OPENFOLD_CACHE` | Override only — for non-standard layouts or to pin a specific checkpoint file |
+| Flag                      | Default                                 | Description                                                                                            |
+| ------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `--num-diffusion-samples` | 5                                       | Structures per (query, seed)                                                                           |
+| `--num-model-seeds`       | 1                                       | Number of model seeds per query (multiplies output count alongside JSON `seeds` and diffusion samples) |
+| `--use-msa-server`        | true                                    | ColabFold MMseqs2 server for MSA                                                                       |
+| `--use-templates`         | true                                    | ColabFold template search + RCSB remap                                                                 |
+| `--inference-ckpt-path`   | auto-discovered under `$OPENFOLD_CACHE` | Override only — for non-standard layouts or to pin a specific checkpoint file                          |
 
 ## Output format
 
@@ -147,9 +147,14 @@ out/
 
 ```json
 {
-  "avg_plddt": 78.96, "ptm": 0.667, "iptm": 0.0, "gpde": 0.73,
-  "has_clash": 0.0, "sample_ranking_score": 0.133,
-  "chain_ptm": {"A": 0.667}, "chain_pair_iptm": {}
+  "avg_plddt": 78.96,
+  "ptm": 0.667,
+  "iptm": 0.0,
+  "gpde": 0.73,
+  "has_clash": 0.0,
+  "sample_ranking_score": 0.133,
+  "chain_ptm": { "A": 0.667 },
+  "chain_pair_iptm": {}
 }
 ```
 
@@ -172,13 +177,13 @@ find out -name '*_model.cif' | wc -l   # = queries x json_seeds x num-model-seed
 
 ## Troubleshooting
 
-| Error | Cause | Fix |
-| ----- | ----- | --- |
-| `_deepspeed_evo_attn requires that DeepSpeed be installed` | default eval kernel is DS4Sci on CUDA | install `deepspeed` (needs nvcc + CUTLASS), **or** in `model_config.py` eval block set `use_deepspeed_evo_attention: False` + `use_cueq_triangle_kernels: True` (cuEq path; no build) |
-| `CUTLASS_PATH ... not set ... cutlass_library is not installed` | cuEq path still needs the python `cutlass_library` shim | `pip install nvidia-cutlass` |
-| `libXrender.so.1: cannot open shared object file` | rdkit (via pdbeccdutils) needs X11 render libs | `apt-get install libxrender1 libxext6 libsm6` |
-| `ModuleNotFoundError: boto3` (or `awscrt`) | `openfold3.core.data.io.s3` is eager-imported even when weights are local | `pip install boto3 awscrt` |
-| `ValidationError: queries / Field required` or `Input should be an object` | wrong JSON shape | top-level is `{"queries": {"<name>": {...}}}` (a dict, not a list) |
-| `ValidationError ... settings / Extra inputs are not permitted` | tried to override model config via `--runner-yaml` | `--runner-yaml` is `InferenceExperimentConfig` only; kernel/memory settings live in `model_config.py` |
-| `Failed to fetch chain ID mappings from RCSB for N entries` | `data.rcsb.org` unreachable (allowlist/offline) | run with `--use-templates false`, or open egress to `data.rcsb.org` |
-| `CUDA out of memory` | large complex / many samples | reduce `--num-diffusion-samples`; the `low_mem` preset (`model_setting_presets.yml`) offloads more aggressively |
+| Error                                                                      | Cause                                                                     | Fix                                                                                                                                                                                   |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_deepspeed_evo_attn requires that DeepSpeed be installed`                 | default eval kernel is DS4Sci on CUDA                                     | install `deepspeed` (needs nvcc + CUTLASS), **or** in `model_config.py` eval block set `use_deepspeed_evo_attention: False` + `use_cueq_triangle_kernels: True` (cuEq path; no build) |
+| `CUTLASS_PATH ... not set ... cutlass_library is not installed`            | cuEq path still needs the python `cutlass_library` shim                   | `pip install nvidia-cutlass`                                                                                                                                                          |
+| `libXrender.so.1: cannot open shared object file`                          | rdkit (via pdbeccdutils) needs X11 render libs                            | `apt-get install libxrender1 libxext6 libsm6`                                                                                                                                         |
+| `ModuleNotFoundError: boto3` (or `awscrt`)                                 | `openfold3.core.data.io.s3` is eager-imported even when weights are local | `pip install boto3 awscrt`                                                                                                                                                            |
+| `ValidationError: queries / Field required` or `Input should be an object` | wrong JSON shape                                                          | top-level is `{"queries": {"<name>": {...}}}` (a dict, not a list)                                                                                                                    |
+| `ValidationError ... settings / Extra inputs are not permitted`            | tried to override model config via `--runner-yaml`                        | `--runner-yaml` is `InferenceExperimentConfig` only; kernel/memory settings live in `model_config.py`                                                                                 |
+| `Failed to fetch chain ID mappings from RCSB for N entries`                | `data.rcsb.org` unreachable (allowlist/offline)                           | run with `--use-templates false`, or open egress to `data.rcsb.org`                                                                                                                   |
+| `CUDA out of memory`                                                       | large complex / many samples                                              | reduce `--num-diffusion-samples`; the `low_mem` preset (`model_setting_presets.yml`) offloads more aggressively                                                                       |

@@ -72,21 +72,21 @@ applies to `--chain_id_jsonl` and `--tied_positions_jsonl`.
 
 ## Checkpoints — which one to pick
 
-| `--model_name` | training noise | use |
-|---|---|---|
-| `v_48_002` | 0.02 Å | highest recovery; close-to-native redesigns |
-| `v_48_020` (default) | 0.20 Å | de novo backbones — tolerates RFdiffusion imperfection |
-| `v_48_030` | 0.30 Å | very rough backbones; lowest recovery |
-| `--use_soluble_model` | — | swaps to the soluble-trained set; see `solublempnn` |
+| `--model_name`        | training noise | use                                                    |
+| --------------------- | -------------- | ------------------------------------------------------ |
+| `v_48_002`            | 0.02 Å         | highest recovery; close-to-native redesigns            |
+| `v_48_020` (default)  | 0.20 Å         | de novo backbones — tolerates RFdiffusion imperfection |
+| `v_48_030`            | 0.30 Å         | very rough backbones; lowest recovery                  |
+| `--use_soluble_model` | —              | swaps to the soluble-trained set; see `solublempnn`    |
 
 ## Errors worth recognizing
 
-| You see | It means / do this |
-|---|---|
-| `KeyError: 'A'` | Chain letter not in the PDB — `grep '^ATOM' file.pdb \| cut -c22 \| sort -u` to see what is. |
-| `JSONDecodeError` on a `*_jsonl` flag | The flag wants a file path, not inline JSON; write the file first. |
-| All positions redesigned despite `--fixed_positions_jsonl` | Outer PDB-stem key missing — see the gotcha above. |
-| `ModuleNotFoundError` for relative imports | Script run from the wrong cwd — `cd` into the cloned repo first; the imports are repo-relative. |
+| You see                                                    | It means / do this                                                                              |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `KeyError: 'A'`                                            | Chain letter not in the PDB — `grep '^ATOM' file.pdb \| cut -c22 \| sort -u` to see what is.    |
+| `JSONDecodeError` on a `*_jsonl` flag                      | The flag wants a file path, not inline JSON; write the file first.                              |
+| All positions redesigned despite `--fixed_positions_jsonl` | Outer PDB-stem key missing — see the gotcha above.                                              |
+| `ModuleNotFoundError` for relative imports                 | Script run from the wrong cwd — `cd` into the cloned repo first; the imports are repo-relative. |
 
 ---
 

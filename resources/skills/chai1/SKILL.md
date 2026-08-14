@@ -100,10 +100,10 @@ card.
 
 ## Errors worth recognizing
 
-| You see | It means / do this |
-|---|---|
-| `PermissionError` under `site-packages/chai_lab/...` | `CHAI_DOWNLOADS_DIR` not set on a read-only image — export it to a writable path or the pre-populated mount. |
-| `RuntimeError: CUDA out of memory` during ESM embedding | The traced ESM2-3B is loading alongside the trunk — use an 80 GB tier or split chains across calls. |
+| You see                                                 | It means / do this                                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `PermissionError` under `site-packages/chai_lab/...`    | `CHAI_DOWNLOADS_DIR` not set on a read-only image — export it to a writable path or the pre-populated mount. |
+| `RuntimeError: CUDA out of memory` during ESM embedding | The traced ESM2-3B is loading alongside the trunk — use an 80 GB tier or split chains across calls.          |
 
 ---
 

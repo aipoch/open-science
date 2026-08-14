@@ -69,12 +69,12 @@ PDBs are the reason to prefer this runner even for protein-only jobs.
 
 ## Model types — which one to pick
 
-| `--model_type` | sees | use |
-|---|---|---|
-| `ligand_mpnn` | backbone + ligand/NA/metal atoms | binding-pocket or active-site design |
-| `protein_mpnn` | backbone only | protein–protein; same weights as `proteinmpnn` |
-| `soluble_mpnn` | backbone only, soluble-trained | expression-biased prior; see `solublempnn` |
-| `*_membrane_mpnn` | backbone + membrane label | transmembrane designs |
+| `--model_type`    | sees                             | use                                            |
+| ----------------- | -------------------------------- | ---------------------------------------------- |
+| `ligand_mpnn`     | backbone + ligand/NA/metal atoms | binding-pocket or active-site design           |
+| `protein_mpnn`    | backbone only                    | protein–protein; same weights as `proteinmpnn` |
+| `soluble_mpnn`    | backbone only, soluble-trained   | expression-biased prior; see `solublempnn`     |
+| `*_membrane_mpnn` | backbone + membrane label        | transmembrane designs                          |
 
 Each model type has its own `--checkpoint_<type>` flag; the wrong pairing is
 caught at load time, but the default checkpoint path is relative to the repo,
@@ -110,12 +110,12 @@ not trust the sequences.
 
 ## Errors worth recognizing
 
-| You see | It means / do this |
-|---|---|
-| `ModuleNotFoundError: No module named 'tree'` | `pip install dm-tree` — the vendored openfold imports it unconditionally. |
-| `module 'numpy' has no attribute 'int'` | Run the `sed` patch on `openfold/np/residue_constants.py`, or pin `numpy<1.24` (py≤3.11 only). |
+| You see                                                   | It means / do this                                                                                 |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ModuleNotFoundError: No module named 'tree'`             | `pip install dm-tree` — the vendored openfold imports it unconditionally.                          |
+| `module 'numpy' has no attribute 'int'`                   | Run the `sed` patch on `openfold/np/residue_constants.py`, or pin `numpy<1.24` (py≤3.11 only).     |
 | `error: command 'clang' failed` while `pip install ProDy` | See the ProDy gotcha above — `apt_install("build-essential")` and `env({"CC":"gcc","CXX":"g++"})`. |
-| `FileNotFoundError` for `model_params/...` | Checkpoints not fetched — run `bash get_model_params.sh ./model_params` from inside the clone. |
+| `FileNotFoundError` for `model_params/...`                | Checkpoints not fetched — run `bash get_model_params.sh ./model_params` from inside the clone.     |
 
 ---
 

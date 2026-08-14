@@ -13,6 +13,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import { cn } from '@/lib/utils'
 import { APP } from '../../../shared/app-config'
 
 type DataRootMissingDialogProps = {

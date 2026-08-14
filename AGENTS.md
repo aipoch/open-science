@@ -29,12 +29,12 @@ t('workspace.dataRoot.missing')
 
 ### How to wrap strings
 
-| Surface | How to translate |
-|---|---|
-| JSX text node | `{t('Copy here')}` |
-| JSX attribute visible to users (`aria-label`, `placeholder`, `alt`) | `aria-label={t('Close dialog')}` |
-| Sentence with an embedded link or element | `<Trans i18nKey="See <docs>the guide</docs>" components={{ docs: <a href="…" /> }} />` |
-| Interpolated value | `t('{{count}} files', { count: n })` |
+| Surface                                                             | How to translate                                                                       |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| JSX text node                                                       | `{t('Copy here')}`                                                                     |
+| JSX attribute visible to users (`aria-label`, `placeholder`, `alt`) | `aria-label={t('Close dialog')}`                                                       |
+| Sentence with an embedded link or element                           | `<Trans i18nKey="See <docs>the guide</docs>" components={{ docs: <a href="…" /> }} />` |
+| Interpolated value                                                  | `t('{{count}} files', { count: n })`                                                   |
 
 For `Trans`, **never use an HTML void-element name** (`link`, `br`, `img`, `input`, …) as a
 placeholder tag — the HTML parser self-closes it and the wrapped label falls outside the anchor.
@@ -91,11 +91,11 @@ for a known set of script-specific characters and will fail on cross-script cont
 
 ### Glossary (mandatory)
 
-| Term | zh-Hans | zh-Hant | Note |
-|---|---|---|---|
+| Term           | zh-Hans               | zh-Hant               | Note                                                 |
+| -------------- | --------------------- | --------------------- | ---------------------------------------------------- |
 | Skill / Skills | **Skill** / **Skill** | **Skill** / **Skill** | Never translate to 技能/技巧 — keep the English word |
-| Agent | **Agent** | **Agent** | Keep as-is |
-| Notebook | **Notebook** | **Notebook** | Keep as-is |
+| Agent          | **Agent**             | **Agent**             | Keep as-is                                           |
+| Notebook       | **Notebook**          | **Notebook**          | Keep as-is                                           |
 
 ### Verifying your translations
 

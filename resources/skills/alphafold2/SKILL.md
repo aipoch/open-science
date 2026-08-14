@@ -86,11 +86,11 @@ GPU stage then starts immediately and the server is not hit again.
 
 ## Errors worth recognizing
 
-| You see | It means / do this |
-|---|---|
-| Job hangs silently during "Running model_1" with host RAM climbing | Unified-memory loop under gVisor — see the gotcha above; override or patch `batch.py`. |
-| `RESOURCE_EXHAUSTED` / OOM during XLA compile | `XLA_PYTHON_CLIENT_MEM_FRACTION` too high for the GPU — drop below the `0.95` default to `0.9` or so. |
-| MSA stage hangs at `Submitting job` | Public MMseqs2 server is rate-limiting — wait, or pre-compute with `--msa-only` and re-run from the cached `.a3m`. |
+| You see                                                            | It means / do this                                                                                                 |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Job hangs silently during "Running model_1" with host RAM climbing | Unified-memory loop under gVisor — see the gotcha above; override or patch `batch.py`.                             |
+| `RESOURCE_EXHAUSTED` / OOM during XLA compile                      | `XLA_PYTHON_CLIENT_MEM_FRACTION` too high for the GPU — drop below the `0.95` default to `0.9` or so.              |
+| MSA stage hangs at `Submitting job`                                | Public MMseqs2 server is rate-limiting — wait, or pre-compute with `--msa-only` and re-run from the cached `.a3m`. |
 
 ---
 

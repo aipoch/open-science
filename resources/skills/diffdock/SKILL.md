@@ -54,12 +54,12 @@ larger-library screening recipe are in `references/workflows.md`.
 Under `--out_dir/<complex_name>/` each sample is written as
 `rank{N}_confidence{score}.sdf`, plus a copy of `rank1.sdf` for convenience.
 The confidence value in the filename is a logit, so it is unbounded and can be
-negative; among samples for the *same* complex higher is better, but values are
+negative; among samples for the _same_ complex higher is better, but values are
 not comparable across different complexes or ligands.
 
 ## The YAML config overwrites your CLI flags
 
-`inference.py` loads `--config default_inference_args.yaml` *after* argparse
+`inference.py` loads `--config default_inference_args.yaml` _after_ argparse
 and replaces every key it finds, so passing `--samples_per_complex 40` or
 `--model_dir ...` on the command line is silently ignored if the same key sits
 in the YAML. To change sampling depth or any other key the YAML defines, copy
@@ -83,11 +83,11 @@ header out in full.
 
 ## Errors worth recognizing
 
-| You see | It means / do this |
-|---|---|
+| You see                                                     | It means / do this                                                                                                           |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `ValueError: not allowed to raise maximum limit` at startup | `setrlimit(NOFILE, 64000)` exceeds the sandbox hard limit — `sed` the constant in `inference.py` to `min(64000, rlimit[1])`. |
-| Silent SIGKILL a few minutes into the SO(3) precompute | Host RAM exhausted — see the gotcha above. |
-| `python3: not found` | You are on the upstream `rbgcsail/diffdock` image — that one runs from `/home/appuser/DiffDock` under `micromamba`. |
+| Silent SIGKILL a few minutes into the SO(3) precompute      | Host RAM exhausted — see the gotcha above.                                                                                   |
+| `python3: not found`                                        | You are on the upstream `rbgcsail/diffdock` image — that one runs from `/home/appuser/DiffDock` under `micromamba`.          |
 
 ---
 

@@ -65,7 +65,9 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
       if (successTimer.current) clearTimeout(successTimer.current)
       successTimer.current = setTimeout(() => setIsSuccess(false), 4_000)
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t('Could not save the proxy configuration.'))
+      setMessage(
+        error instanceof Error ? error.message : t('Could not save the proxy configuration.')
+      )
     } finally {
       setIsSaving(false)
     }
@@ -75,12 +77,16 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
     <div className="space-y-5 p-5">
       <SettingsSection
         title={t('Proxy')}
-        description={t('Choose how Open Science reaches the internet. Changes apply to new app requests and processes.')}
+        description={t(
+          'Choose how Open Science reaches the internet. Changes apply to new app requests and processes.'
+        )}
         aria-label={t('Proxy settings')}
       >
         <SettingsRow
           label={t('Mode')}
-          description={t('System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open Science started with; choose Manual to give them a fixed proxy.')}
+          description={t(
+            'System follows your device proxy for app requests. Agent processes inherit only the proxy environment Open Science started with; choose Manual to give them a fixed proxy.'
+          )}
           className="pt-0"
         >
           <Select
@@ -88,7 +94,11 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
             onValueChange={(value) => handleModeChange(value as NetworkProxyMode)}
           >
             <SelectTrigger aria-label={t('Proxy mode')}>
-              <span>{t(draft.mode === 'system' ? 'System' : draft.mode === 'manual' ? 'Manual' : 'Direct')}</span>
+              <span>
+                {t(
+                  draft.mode === 'system' ? 'System' : draft.mode === 'manual' ? 'Manual' : 'Direct'
+                )}
+              </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="system">{t('System')}</SelectItem>
@@ -102,7 +112,9 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
           <>
             <SettingsRow
               label={t('Proxy server')}
-              description={t('HTTP, HTTPS, SOCKS, SOCKS4, or SOCKS5 URL. Embedded credentials are not supported.')}
+              description={t(
+                'HTTP, HTTPS, SOCKS, SOCKS4, or SOCKS5 URL. Embedded credentials are not supported.'
+              )}
             >
               <div className="space-y-1.5">
                 <Input
@@ -136,7 +148,9 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
 
             <SettingsRow
               label={t('Bypass rules')}
-              description={t('Optional comma-separated hosts that should connect directly. Localhost is always bypassed.')}
+              description={t(
+                'Optional comma-separated hosts that should connect directly. Localhost is always bypassed.'
+              )}
             >
               <Input
                 id="network-proxy-bypass"
@@ -153,7 +167,9 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
       </SettingsSection>
 
       <div className="rounded-lg bg-bg-10 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground ring-1 ring-border-200">
-        {t('Existing agent sessions, notebook kernels, and installers keep their current connection. New requests and processes use the saved setting.')}
+        {t(
+          'Existing agent sessions, notebook kernels, and installers keep their current connection. New requests and processes use the saved setting.'
+        )}
       </div>
 
       {message ? (

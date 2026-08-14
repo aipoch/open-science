@@ -95,31 +95,25 @@ const loadRemoteAccessSnapshot = async (
   return initial.canManage ? window.api.remoteAccess.detect() : initial
 }
 
-const loadRemoteAccessSnapshot = async (
-  onInitial: (snapshot: RemoteAccessSnapshot) => void = () => undefined,
-  isActive: () => boolean = () => true
-): Promise<RemoteAccessSnapshot> => {
-  const initial = await window.api.remoteAccess.getSnapshot()
-  if (!isActive()) return initial
-  onInitial(initial)
-  return initial.canManage ? window.api.remoteAccess.detect() : initial
-}
-
-const BrowserAccessSteps = (): React.JSX.Element => (
+const BrowserAccessSteps = ({ t }: { t: TFunction }): React.JSX.Element => (
   <div className="mt-4 flex items-start gap-3 border-t border-blue-600/15 pt-4">
     <Smartphone className="mt-0.5 size-5 shrink-0 text-blue-600" aria-hidden="true" />
     <ol className="min-w-0 space-y-2 text-sm leading-relaxed text-foreground">
       <li>
-        <span className="font-medium">1.</span> Scan the QR code or open the saved link in a
-        browser.
+        <span className="font-medium">1.</span>{' '}
+        {t('Scan the QR code or open the saved link in a browser.')}
       </li>
       <li>
-        <span className="font-medium">2.</span> Complete two-step verification by matching the
-        six-digit code, then approve the request from this computer or a trusted browser.
+        <span className="font-medium">2.</span>{' '}
+        {t(
+          'Complete two-step verification by matching the six-digit code, then approve the request from this computer or a trusted browser.'
+        )}
       </li>
       <li>
-        <span className="font-medium">3.</span> Choose “Always trust this browser” for direct access
-        on future visits while Browser access is on.
+        <span className="font-medium">3.</span>{' '}
+        {t(
+          'Choose "Always trust this browser" for direct access on future visits while Browser access is on.'
+        )}
       </li>
     </ol>
   </div>
@@ -503,7 +497,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                 <li>
                   <span className="font-medium">4.</span>{' '}
                   {t(
-                    'Choose “Always trust this browser” to skip approval on future visits to the same remote address.'
+                    'Choose "Always trust this browser" to skip approval on future visits to the same remote address.'
                   )}
                 </li>
               </ol>
@@ -556,7 +550,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                             onClick={() => void copyUrl()}
                           >
                             <Copy className="size-3.5" aria-hidden="true" />
-                            {copyStatus === 'copied' ? 'Copied' : 'Copy'}
+                            {copyStatus === 'copied' ? t('Copied') : t('Copy')}
                           </Button>
                           <Button type="button" variant="outline" size="sm" asChild>
                             <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
@@ -585,11 +579,11 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                         className="sr-only"
                         data-testid="remote-link-copy-status"
                       >
-                        {copyStatus === 'copied' ? 'Browser link copied.' : ''}
+                        {copyStatus === 'copied' ? t('Browser link copied.') : ''}
                       </span>
                     </div>
                   </div>
-                  <BrowserAccessSteps />
+                  <BrowserAccessSteps t={t} />
                 </div>
                 <div
                   className="justify-self-center rounded-xl border border-border bg-white p-2 shadow-sm sm:justify-self-end"
@@ -614,7 +608,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                 <div className="text-sm text-muted-foreground">
                   {t('The browser link and QR code appear here after setup is complete.')}
                 </div>
-                <BrowserAccessSteps />
+                <BrowserAccessSteps t={t} />
               </div>
             )}
           </div>

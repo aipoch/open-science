@@ -228,7 +228,13 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm text-foreground">
-                  {t(networkProxy.mode === 'system' ? 'System' : networkProxy.mode === 'manual' ? 'Manual' : 'Direct')}
+                  {t(
+                    networkProxy.mode === 'system'
+                      ? 'System'
+                      : networkProxy.mode === 'manual'
+                        ? 'Manual'
+                        : 'Direct'
+                  )}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
                   {networkProxy.mode === 'manual'

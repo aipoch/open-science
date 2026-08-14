@@ -8,7 +8,6 @@ import {
   dialogBodyClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
