@@ -56,10 +56,17 @@ type FakeSharpPipeline = {
     height: number
   }) => FakeSharpPipeline
   resize: (width: number, height: number) => FakeSharpPipeline
-  stats: ReturnType<typeof vi.fn<() => Promise<{ isOpaque: boolean }>>>
+  ensureAlpha: () => FakeSharpPipeline
+  raw: () => FakeSharpPipeline
   png: () => FakeSharpPipeline
   jpeg: (options: { quality: number }) => FakeSharpPipeline
-  toBuffer: ReturnType<typeof vi.fn<() => Promise<Buffer>>>
+  toBuffer: ReturnType<
+    typeof vi.fn<
+      (options?: {
+        resolveWithObject?: boolean
+      }) => Promise<Buffer | { data: Buffer; info: { channels: number } }>
+    >
+  >
 }
 
 let fakeImage: FakeImage
@@ -98,7 +105,12 @@ const makeSharpPipeline = (input: Buffer): FakeSharpPipeline => {
       fakeImage.resize({ width, height, quality: 'better' })
       return this
     },
-    stats: vi.fn(async () => ({ isOpaque: fakeImage.isOpaque ?? false })),
+    ensureAlpha() {
+      return this
+    },
+    raw() {
+      return this
+    },
     png() {
       encode = () => fakeImage.toPNG()
       return this
@@ -107,7 +119,14 @@ const makeSharpPipeline = (input: Buffer): FakeSharpPipeline => {
       encode = () => fakeImage.toJPEG(quality)
       return this
     },
-    toBuffer: vi.fn(async () => encode())
+    toBuffer: vi.fn(async (options?: { resolveWithObject?: boolean }) =>
+      options?.resolveWithObject
+        ? {
+            data: Buffer.from([0, 0, 0, fakeImage.isOpaque === true ? 0xff : 0]),
+            info: { channels: 4 }
+          }
+        : encode()
+    )
   }
   return pipeline
 }

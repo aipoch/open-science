@@ -338,7 +338,17 @@ const processImageBytes = async (
     }
     return pipeline
   }
-  const preserveTransparency = metadata.hasAlpha === true && !(await prepare().stats()).isOpaque
+  let preserveTransparency = false
+  if (metadata.hasAlpha === true) {
+    const { data, info } = await prepare().ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    const alphaChannel = info.channels - 1
+    for (let offset = alphaChannel; offset < data.length; offset += info.channels) {
+      if (data[offset] !== 0xff) {
+        preserveTransparency = true
+        break
+      }
+    }
+  }
   signal?.throwIfAborted()
   const outputMimeType: 'image/png' | 'image/jpeg' = preserveTransparency
     ? 'image/png'

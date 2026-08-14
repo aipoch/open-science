@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import sharp from 'sharp'
 
 import { buildImageContentData, prepareImageContentData } from './attachment-media'
 
@@ -84,6 +85,29 @@ describe('sharp image-processing adapter', () => {
     await expect(prepareImageContentData(transparent, { maxSize: 16 })).resolves.toMatchObject({
       mimeType: 'image/png'
     })
+  })
+
+  it('chooses the output format from transparency remaining after crop', async () => {
+    root = await mkdtemp(join(tmpdir(), 'attachment-media-sharp-alpha-'))
+    const filePath = join(root, 'mixed-alpha.png')
+    const pixels = Buffer.from([255, 0, 0, 255, 0, 0, 0, 0])
+    await writeFile(
+      filePath,
+      await sharp(pixels, { raw: { width: 2, height: 1, channels: 4 } })
+        .png()
+        .toBuffer()
+    )
+
+    await expect(
+      prepareImageContentData(filePath, {
+        crop: { unit: 'pixels', left: 0, top: 0, right: 1, bottom: 1 }
+      })
+    ).resolves.toMatchObject({ mimeType: 'image/jpeg' })
+    await expect(
+      prepareImageContentData(filePath, {
+        crop: { unit: 'pixels', left: 1, top: 0, right: 2, bottom: 1 }
+      })
+    ).resolves.toMatchObject({ mimeType: 'image/png' })
   })
 
   it('uses the same transparency-driven policy for oversized upload processing', async () => {
