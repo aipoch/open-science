@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import {
   dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogFormInputClassName,
+  dialogFormLabelClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
