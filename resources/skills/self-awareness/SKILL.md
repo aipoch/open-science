@@ -14,7 +14,7 @@ JavaScript control REPL; Python and R data kernels do not receive it.
 const caps = await host.capabilities()
 ```
 
-The current v1 known result contains exactly nine boolean keys:
+The current project-native result contains 17 known boolean keys:
 
 - `mcp` gates `host.mcp` connector calls.
 - `compute` gates the `host.compute` namespace.
@@ -26,6 +26,12 @@ The current v1 known result contains exactly nine boolean keys:
 - `llm` gates `host.llm` one-shot, tool-less inference.
 - `viewImage` gates transient `host.viewImage(source, options?)` image attachment from an Artifact or
   Upload Version in the current Project, or a current-Session relative workspace path.
+- `delegate`, `children`, `collect`, `stopChild`, and `resolveMessage` are Main/root-only delegated
+  work operations.
+- `sendFrameMessage` and `messageReceipt` are available to Main/root and Delegate agents when their
+  trusted route is provisioned.
+- `submitOutput` is available only to an authenticated Delegate Attempt with an admitted output
+  schema.
 
 Newer runtimes may return additive boolean keys. Do not assume their meaning until their matching
 Skill documents them. Older runtimes can omit known keys.
@@ -50,6 +56,10 @@ if (caps.llm === true) {
 
 if (caps.viewImage === true) {
   await host.viewImage({ path: 'results/plot.png' }, { maxSize: 1200 })
+}
+
+if (caps.sendFrameMessage === true) {
+  await host.sendFrameMessage('parent', 'The analysis is ready.')
 }
 ```
 

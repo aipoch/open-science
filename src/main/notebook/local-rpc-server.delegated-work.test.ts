@@ -66,7 +66,7 @@ describe('authenticated delegatedWorkCall route', () => {
     child.release()
   })
 
-  it('describes delegate availability from the authenticated control binding without an active invocation', async () => {
+  it('keeps delegated help unavailable until its authenticated route is ready', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
       delegatedWorkService: { delegate: vi.fn() }
@@ -99,7 +99,13 @@ describe('authenticated delegatedWorkCall route', () => {
     }
 
     await expect(ask(main.endpoint, main.token, 'delegate', 'delegate')).resolves.toMatchObject({
-      result: { kind: 'operation', availability: { status: 'available' } }
+      result: {
+        kind: 'operation',
+        availability: {
+          status: 'unavailable',
+          reason: 'host.delegate is not provisioned for this Session.'
+        }
+      }
     })
     await expect(ask(child.endpoint, child.token, 'main', 'delegate')).resolves.toMatchObject({
       result: {
@@ -120,7 +126,7 @@ describe('authenticated delegatedWorkCall route', () => {
     ).toEqual({
       'host.children': 'unavailable',
       'host.collect': 'unavailable',
-      'host.delegate': 'available',
+      'host.delegate': 'unavailable',
       'host.messageReceipt': 'unavailable',
       'host.resolveMessage': 'unavailable',
       'host.sendFrameMessage': 'unavailable',

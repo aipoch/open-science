@@ -1,21 +1,16 @@
-const HOST_SDK_SUBAGENT_OPERATION_IDS = [
-  'host.children',
-  'host.collect',
-  'host.delegate',
-  'host.messageReceipt',
-  'host.resolveMessage',
-  'host.sendFrameMessage',
-  'host.stopChild',
-  'host.submitOutput'
-] as const
+import {
+  HOST_CAPABILITY_OPERATION_KEYS,
+  type HostCapabilityOperationKey
+} from './capability-projection'
+
+const HOST_SDK_SUBAGENT_OPERATION_IDS = HOST_CAPABILITY_OPERATION_KEYS.map(
+  (operation) => `host.${operation}` as const
+) as readonly `host.${HostCapabilityOperationKey}`[]
 const HOST_SDK_OPERATION_IDS = Object.freeze(
   [...HOST_SDK_SUBAGENT_OPERATION_IDS, 'host.viewImage'].sort()
 )
 
-type HostSdkSubagentOperation =
-  (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number] extends `host.${infer Operation}`
-    ? Operation
-    : never
+type HostSdkSubagentOperation = HostCapabilityOperationKey
 
 type HostSdkHelpContext = Readonly<{
   callerRole: 'main' | 'delegate'

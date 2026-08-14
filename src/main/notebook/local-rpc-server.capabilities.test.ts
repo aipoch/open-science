@@ -81,7 +81,15 @@ describe('capabilitiesCall RPC', () => {
         lineage: true,
         frames: true,
         llm: true,
-        viewImage: false
+        viewImage: false,
+        delegate: false,
+        children: false,
+        collect: false,
+        stopChild: false,
+        sendFrameMessage: false,
+        messageReceipt: false,
+        resolveMessage: false,
+        submitOutput: false
       }
     })
   })
@@ -112,6 +120,32 @@ describe('capabilitiesCall RPC', () => {
         }
       }
     })
+  })
+
+  it('does not advertise delegated work without the trusted origin required by its route', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: {
+        delegate: async () => ({}) as never,
+        sendMessage: async () => ({}) as never
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1'
+    })
+
+    await expect(callCapabilities(connection)).resolves.toMatchObject({
+      payload: { result: { delegate: false, sendFrameMessage: false } }
+    })
+
+    endInvocation()
   })
 
   it('does not advertise Host Frames to an ordinary non-control Session token', async () => {

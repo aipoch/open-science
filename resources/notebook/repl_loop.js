@@ -983,15 +983,41 @@ const HOST_CAPABILITY_MAX_FIELDS = 64
 const HOST_CAPABILITY_MAX_KEY_LENGTH = 64
 const HOST_CAPABILITY_KEY_PATTERN = /^[a-z][a-zA-Z0-9]*$/
 const HOST_CAPABILITY_DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+// This is the JavaScript-side known catalog, intentionally mirrored by a contract test instead of
+// importing TypeScript into the bundled REPL resource.
+const HOST_CAPABILITY_KNOWN_KEYS = Object.freeze([
+  'mcp',
+  'compute',
+  'agents',
+  'skills',
+  'artifacts',
+  'lineage',
+  'frames',
+  'llm',
+  'viewImage',
+  'children',
+  'collect',
+  'delegate',
+  'messageReceipt',
+  'resolveMessage',
+  'sendFrameMessage',
+  'stopChild',
+  'submitOutput'
+])
 
 function isValidHostCapabilityProjection(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   if (Object.getPrototypeOf(value) !== Object.prototype) return false
 
   const entries = Object.entries(value)
+  const knownEntries = HOST_CAPABILITY_KNOWN_KEYS.filter((name) =>
+    Object.hasOwn(value, name)
+  ).map((name) => [name, value[name]])
+  const unknownEntries = entries.filter(([name]) => !HOST_CAPABILITY_KNOWN_KEYS.includes(name))
   return (
     entries.length <= HOST_CAPABILITY_MAX_FIELDS &&
-    entries.every(
+    knownEntries.every(([, enabled]) => typeof enabled === 'boolean') &&
+    unknownEntries.every(
       ([name, enabled]) =>
         name.length <= HOST_CAPABILITY_MAX_KEY_LENGTH &&
         HOST_CAPABILITY_KEY_PATTERN.test(name) &&
