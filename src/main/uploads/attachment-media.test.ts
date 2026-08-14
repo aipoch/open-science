@@ -87,25 +87,47 @@ beforeEach(async () => {
 })
 
 describe('prepareImageContentData', () => {
-  const writePng = (path: string): Promise<void> =>
-    writeFile(
-      path,
-      Buffer.concat([
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-        Buffer.from('fixture')
-      ])
-    )
+  const pngFixture = (width: number, height: number): Buffer => {
+    const bytes = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes)
+    bytes.writeUInt32BE(13, 8)
+    bytes.write('IHDR', 12, 'ascii')
+    bytes.writeUInt32BE(width, 16)
+    bytes.writeUInt32BE(height, 20)
+    bytes[24] = 8
+    bytes[25] = 6
+    return bytes
+  }
+
+  const jpegSegment = (marker: number, payload: Buffer): Buffer => {
+    const bytes = Buffer.alloc(payload.length + 4)
+    bytes[0] = 0xff
+    bytes[1] = marker
+    bytes.writeUInt16BE(payload.length + 2, 2)
+    payload.copy(bytes, 4)
+    return bytes
+  }
+
+  const jpegFrameSegment = (width: number, height: number): Buffer => {
+    const payload = Buffer.alloc(15)
+    payload[0] = 8
+    payload.writeUInt16BE(height, 1)
+    payload.writeUInt16BE(width, 3)
+    payload[5] = 3
+    Buffer.from([1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]).copy(payload, 6)
+    return jpegSegment(0xc0, payload)
+  }
+
+  const jpegFixture = (width: number, height: number, prefixes: Buffer[] = []): Buffer =>
+    Buffer.concat([Buffer.from([0xff, 0xd8]), ...prefixes, jpegFrameSegment(width, height)])
+
+  const writePng = (path: string, width = 4000, height = 2000): Promise<void> =>
+    writeFile(path, pngFixture(width, height))
 
   it('resolves fraction crops outward before resizing the cropped image', async () => {
     fakeImage.getSize = () => ({ width: 101, height: 51 })
     const filePath = join(root, 'fraction.png')
-    await writeFile(
-      filePath,
-      Buffer.concat([
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-        Buffer.from('fixture')
-      ])
-    )
+    await writeFile(filePath, pngFixture(101, 51))
 
     const result = await prepareImageContentData(filePath, {
       crop: { unit: 'fraction', left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 },
@@ -126,7 +148,7 @@ describe('prepareImageContentData', () => {
   it('accepts JPEG by signature and never upscales a smaller oriented image', async () => {
     fakeImage.getSize = () => ({ width: 100, height: 50 })
     const filePath = join(root, 'small.jpg')
-    await writeFile(filePath, Buffer.from([0xff, 0xd8, 0xff, 0x00]))
+    await writeFile(filePath, jpegFixture(100, 50))
 
     await expect(prepareImageContentData(filePath)).resolves.toMatchObject({
       mimeType: 'image/jpeg',
@@ -134,6 +156,71 @@ describe('prepareImageContentData', () => {
       outputSize: { width: 100, height: 50 }
     })
     expect(fakeImage.resize).not.toHaveBeenCalled()
+  })
+
+  it('skips valid JPEG metadata and table segments before the frame header', async () => {
+    fakeImage.getSize = () => ({ width: 120, height: 80 })
+    const filePath = join(root, 'prefixed.jpg')
+    await writeFile(
+      filePath,
+      jpegFixture(120, 80, [
+        jpegSegment(0xe0, Buffer.from('JFIF\0', 'ascii')),
+        jpegSegment(0xdb, Buffer.alloc(65, 1))
+      ])
+    )
+
+    await expect(prepareImageContentData(filePath)).resolves.toMatchObject({
+      mimeType: 'image/jpeg',
+      originalSize: { width: 120, height: 80 }
+    })
+    expect(createFromBuffer).toHaveBeenCalledOnce()
+  })
+
+  it('rejects malformed JPEG frame markers before native decode', async () => {
+    const malformedShortFrame = Buffer.from([
+      0xff, 0xd8, 0xff, 0xc0, 0x00, 0x08, 0x08, 0x00, 0x01, 0x00, 0x01, 0x00
+    ])
+    const mismatchedComponentFrame = jpegSegment(
+      0xc0,
+      Buffer.from([0x08, 0x00, 0x01, 0x00, 0x01, 0x03, 0x01, 0x11, 0x00])
+    )
+
+    for (const [name, bytes] of [
+      ['short-sof.jpg', Buffer.concat([malformedShortFrame, jpegFrameSegment(5000, 4000)])],
+      [
+        'mismatched-sof.jpg',
+        Buffer.concat([
+          Buffer.from([0xff, 0xd8]),
+          mismatchedComponentFrame,
+          jpegFrameSegment(5000, 4000)
+        ])
+      ],
+      [
+        'repeated-soi.jpg',
+        Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xd8]), jpegFrameSegment(1, 1)])
+      ],
+      [
+        'restart-before-sof.jpg',
+        Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xd0]), jpegFrameSegment(1, 1)])
+      ]
+    ] as const) {
+      const filePath = join(root, name)
+      await writeFile(filePath, bytes)
+      await expect(prepareImageContentData(filePath)).rejects.toMatchObject({
+        code: 'IMAGE_DECODE_FAILED'
+      })
+    }
+    expect(createFromBuffer).not.toHaveBeenCalled()
+  })
+
+  it('rejects a truncated PNG IHDR before native decode', async () => {
+    const filePath = join(root, 'truncated.png')
+    await writeFile(filePath, pngFixture(1, 1).subarray(0, 32))
+
+    await expect(prepareImageContentData(filePath)).rejects.toMatchObject({
+      code: 'IMAGE_DECODE_FAILED'
+    })
+    expect(createFromBuffer).not.toHaveBeenCalled()
   })
 
   it('rejects SVG and optional formats before invoking the native decoder', async () => {
@@ -150,7 +237,7 @@ describe('prepareImageContentData', () => {
     expect(createFromBuffer).not.toHaveBeenCalled()
   })
 
-  it('rejects source bytes and decoded pixels before crop/resize allocations', async () => {
+  it('rejects source bytes and declared pixels before native decode or crop/resize allocations', async () => {
     const oversized = join(root, 'oversized.png')
     await writePng(oversized)
     await truncate(oversized, MAX_AUTO_PROCESS_IMAGE_BYTES + 1)
@@ -158,17 +245,22 @@ describe('prepareImageContentData', () => {
       code: 'IMAGE_SOURCE_TOO_LARGE'
     })
 
-    const bomb = join(root, 'bomb.png')
-    await writePng(bomb)
-    fakeImage.getSize = () => ({ width: 5000, height: 4000 })
-    await expect(prepareImageContentData(bomb)).rejects.toThrow(/pixel processing limit/u)
+    for (const [name, bytes] of [
+      ['bomb.png', pngFixture(5000, 4000)],
+      ['bomb.jpg', jpegFixture(5000, 4000)]
+    ] as const) {
+      const bomb = join(root, name)
+      await writeFile(bomb, bytes)
+      await expect(prepareImageContentData(bomb)).rejects.toThrow(/pixel processing limit/u)
+    }
+    expect(createFromBuffer).not.toHaveBeenCalled()
     expect(fakeImage.crop).not.toHaveBeenCalled()
     expect(fakeImage.resize).not.toHaveBeenCalled()
   })
 
   it('rechecks the bytes returned by readFile when a source grows after stat', async () => {
     const filePath = join(root, 'growing.png')
-    await writePng(filePath)
+    await writePng(filePath, 100, 60)
     const probe = await open(filePath, 'r')
     const fileHandlePrototype = Object.getPrototypeOf(probe) as {
       readFile: typeof probe.readFile
@@ -191,7 +283,7 @@ describe('prepareImageContentData', () => {
 
   it('validates pixel crop bounds and preserves PNG output for cropped PNG input', async () => {
     const filePath = join(root, 'crop.png')
-    await writePng(filePath)
+    await writePng(filePath, 1568, 784)
     fakeImage.getSize = () => ({ width: 100, height: 60 })
 
     await expect(
