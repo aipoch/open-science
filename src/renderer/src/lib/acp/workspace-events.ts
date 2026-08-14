@@ -47,8 +47,21 @@ import {
   getAcpRuntimeEventText,
   isAssistantRuntimeChatMessageEvent,
   isBufferableAssistantTextEvent,
-  isRuntimeChatMessageEvent
+  isRuntimeChatMessageEvent,
+  type RuntimeChatMessageEvent
 } from './chat-events'
+
+// One seam for per-chunk metrics so the single and batch apply paths cannot drift apart.
+const recordAppliedTextChunk = (
+  event: RuntimeChatMessageEvent,
+  content: string | undefined
+): void => {
+  recordAcpChunkEventReceived()
+  recordTextEventApplied(
+    createRuntimeStreamId(event),
+    typeof content === 'string' ? content.length : 0
+  )
+}
 
 // Sessions whose next triggerAutoReview call should be skipped exactly once.
 // Used to suppress the re-review that would otherwise be triggered by the [Auditor] correction turn:
@@ -565,12 +578,8 @@ const applyWorkspaceRuntimeEvent = async (
     }
 
     store.completeActivityGroup(event.sessionId, event.promptMessageId)
-    recordAcpChunkEventReceived()
     recordAgentMessageChunkCommit(1)
-    recordTextEventApplied(
-      createRuntimeStreamId(event),
-      typeof content === 'string' ? content.length : 0
-    )
+    recordAppliedTextChunk(event, content)
     store.appendAgentMessageChunk({
       sessionId: event.sessionId,
       streamId: createRuntimeStreamId(event),
@@ -918,11 +927,7 @@ const applyWorkspaceRuntimeEventBatch = async (events: AcpRuntimeEvent[]): Promi
       promptMessageId: event.promptMessageId,
       content
     })
-    recordAcpChunkEventReceived()
-    recordTextEventApplied(
-      createRuntimeStreamId(event),
-      typeof content === 'string' ? content.length : 0
-    )
+    recordAppliedTextChunk(event, content)
   }
 
   recordAgentMessageChunkCommit(inputs.length)

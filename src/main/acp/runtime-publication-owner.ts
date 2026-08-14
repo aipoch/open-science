@@ -1,14 +1,28 @@
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
-import {
-  recordAcpStateBroadcastSent,
-  recordAcpStateBroadcastSuppressed
-} from './publication-metrics'
+import { createLogger } from '../logger'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type {
   AcpRuntimeSnapshotOwner,
   RuntimeEventInput,
   RuntimeSnapshotProjection
 } from './runtime-snapshot-owner'
+
+// Dev-facing counters for the acp:state trailing-edge coalescer; a throttled debug summary rides
+// the existing logger level gating (debug is dev-only), leaving production unaffected.
+const log = createLogger('acp')
+let acpStateBroadcastsSent = 0
+let acpStateBroadcastsSuppressed = 0
+
+const recordAcpStateBroadcastSent = (): void => {
+  acpStateBroadcastsSent += 1
+  // Streaming still emits ~one broadcast per frame, so log a periodic summary instead.
+  if (acpStateBroadcastsSent % 100 === 0) {
+    log.debug('acp:state broadcasts', {
+      sent: acpStateBroadcastsSent,
+      suppressed: acpStateBroadcastsSuppressed
+    })
+  }
+}
 
 type AcpRuntimePublicationCallbacks = Readonly<{
   onEvent?: (event: AcpRuntimeEvent) => void
@@ -105,7 +119,7 @@ class AcpRuntimePublicationOwner {
 
   private scheduleStatePublication(): void {
     if (this.cancelScheduledStatePublication) {
-      recordAcpStateBroadcastSuppressed()
+      acpStateBroadcastsSuppressed += 1
       return
     }
 
