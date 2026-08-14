@@ -205,10 +205,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
     },
     quit: () => app.quit(),
     prepare: async () => {
-      // Start Windows Crashpad after the single-instance lock but before any BrowserWindow can create
-      // a renderer. Upload stays disabled: dumps remain local for explicit support collection. Without
-      // this initialization the affected Windows renderer failures surface only as
-      // Crashpad_NotConnectedToHandler, which masks the native crash that caused the white window.
+      // Start local-only Crashpad after the single-instance lock but before any BrowserWindow can
+      // create a renderer. Upload stays disabled: dumps remain local for explicit support collection.
+      // Without this initialization, native failures can terminate a process without leaving the dump
+      // needed to distinguish a renderer, utility, or main-process crash.
       const crashReporting = startLocalCrashReporting({
         platform: process.platform,
         productName: APP_NAME,
