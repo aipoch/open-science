@@ -29,9 +29,19 @@ const saveTextVersion = async (
   await preview.getByRole('button', { name: `Edit ${FILE_NAME}` }).click()
   const editor = preview.getByRole('textbox', { name: `Edit ${FILE_NAME} source` })
   await expect(editor).toHaveValue(baseline)
+  const saveButton = preview.getByRole('button', { name: 'Save changes' })
+  await expect(preview.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible()
+  await expect(saveButton).toHaveText('Save')
+  await expect(saveButton.locator('svg')).toHaveCount(0)
+  await expect(preview.getByRole('button', { name: `Download ${FILE_NAME}` })).toHaveCount(0)
+  await expect(preview.getByRole('button', { name: `Close preview of ${FILE_NAME}` })).toHaveCount(
+    0
+  )
   await editor.fill(nextContent)
-  await preview.getByRole('button', { name: 'Save changes' }).click()
+  await saveButton.click()
   await expect(editor).toBeHidden()
+  await expect(preview.getByRole('button', { name: `Download ${FILE_NAME}` })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Close preview of ${FILE_NAME}` })).toBeVisible()
 }
 
 test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
@@ -79,6 +89,23 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
   await expect(
     differences.locator('[data-diff-kind="added"]').filter({ hasText: 'Second edited version.' })
   ).toBeVisible()
+  const diffColors = await differences.evaluate((region) => {
+    const rowColor = (kind: 'added' | 'removed'): string =>
+      getComputedStyle(region.querySelector<HTMLElement>(`[data-diff-kind="${kind}"]`)!)
+        .backgroundColor
+    const markerColor = (kind: 'added' | 'removed'): string =>
+      getComputedStyle(
+        region.querySelector<HTMLElement>(`[data-diff-kind="${kind}"]`)!.firstElementChild!
+      ).color
+    return {
+      addedRow: rowColor('added'),
+      removedRow: rowColor('removed'),
+      addedMarker: markerColor('added'),
+      removedMarker: markerColor('removed')
+    }
+  })
+  expect(diffColors.addedRow).not.toBe(diffColors.removedRow)
+  expect(diffColors.addedMarker).not.toBe(diffColors.removedMarker)
 
   await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
   await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
@@ -92,11 +119,10 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
     differences.locator('[data-diff-kind="added"]').filter({ hasText: 'First edited version.' })
   ).toBeVisible()
 
-  await preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` }).click()
-  await expect(differences).toBeHidden()
-  await expect(preview.getByText('First edited version.', { exact: true })).toBeVisible()
   await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
   await expect(versionNavigation.getByText('v1', { exact: true })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toHaveCount(0)
+  await expect(differences).toBeHidden()
   await expect(preview.getByText('Deterministic preview content.', { exact: true })).toBeVisible()
   await expect(preview.locator('[data-diff-kind]')).toHaveCount(0)
 

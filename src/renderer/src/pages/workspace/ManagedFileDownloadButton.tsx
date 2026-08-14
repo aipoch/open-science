@@ -14,6 +14,7 @@ type ManagedFileDownloadButtonProps = {
   versionId?: string
   suggestedName: string
   appearance?: 'icon' | 'primary'
+  tone?: 'default' | 'strong'
   className?: string
   disabled?: boolean
   iconSize?: 'icon-xs' | 'icon-sm' | 'icon'
@@ -32,6 +33,7 @@ const ManagedFileDownloadButtonState = ({
   versionId,
   suggestedName,
   appearance = 'icon',
+  tone = 'default',
   className,
   disabled = false,
   iconSize = 'icon-xs',
@@ -140,7 +142,9 @@ const ManagedFileDownloadButtonState = ({
                 !isPrimary &&
                   (status === 'saved'
                     ? 'text-emerald-600 hover:bg-muted hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400'
-                    : 'text-text-100 hover:bg-muted hover:text-text-000'),
+                    : tone === 'strong'
+                      ? 'text-text-000 hover:bg-muted hover:text-text-000'
+                      : 'text-text-100 hover:bg-muted hover:text-text-000'),
                 revealOnParentHover &&
                   (status === 'idle'
                     ? 'opacity-0 group-hover:opacity-100 group-focus-visible/download:opacity-100 focus-visible:opacity-100'

@@ -178,6 +178,60 @@ afterEach(() => {
 })
 
 describe('FilePreviewDialog managed version transitions', () => {
+  it('keeps version navigation working when onItemChange is omitted', async () => {
+    await act(async () => {
+      root.render(<FilePreviewDialog item={versionThreeItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click('[aria-label="Previous file version"]')
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[data-testid="preview-content"]')?.textContent).toContain(
+      'upload-v2'
+    )
+    expect(
+      document.body.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
+    ).toBe('v2')
+  })
+
+  it('does not reuse a stale internal override after the controlled Dialog returns to its original version', async () => {
+    await act(async () => {
+      root.render(<StoreConnectedDialog />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click('[aria-label="Previous file version"]')
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(document.body.querySelector('[data-testid="preview-content"]')?.textContent).toContain(
+      'upload-v2'
+    )
+
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().openFileDialog(versionThreeItem, true)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      selectedVersionId: 'upload-v3'
+    })
+    expect(document.body.querySelector('[data-testid="preview-content"]')?.textContent).toContain(
+      'upload-v3'
+    )
+    expect(
+      document.body.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
+    ).toBe('v3')
+  })
+
   it('keeps diff mode through the real controlled Dialog and store chain from v3 to v2', async () => {
     await act(async () => {
       root.render(<StoreConnectedDialog />)

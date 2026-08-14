@@ -6,7 +6,6 @@ import {
   Maximize2,
   MoreHorizontal,
   Pencil,
-  Save,
   X
 } from 'lucide-react'
 import { marked } from 'marked'
@@ -70,6 +69,8 @@ type PreviewFileSurfaceHandle = {
   confirmLeave: () => boolean
 }
 
+const previewHeaderActionClassName = 'text-text-000 hover:text-text-000'
+
 const PreviewProvenanceButton = ({
   item,
   onOpenProvenance,
@@ -86,7 +87,7 @@ const PreviewProvenanceButton = ({
           type="button"
           variant="ghost"
           size="icon-xs"
-          className="text-text-100 hover:text-text-000"
+          className={previewHeaderActionClassName}
           aria-label={`Open Provenance for ${item.title}`}
           onClick={onOpenProvenance}
         >
@@ -108,7 +109,8 @@ const PreviewFileHeader = ({
   onReload,
   provenanceEntry = 'menu',
   tooltipClassName,
-  managedControls
+  managedControls,
+  managedControlsOnly = false
 }: Pick<
   PreviewFileSurfaceProps,
   | 'item'
@@ -118,7 +120,10 @@ const PreviewFileHeader = ({
   | 'onReload'
   | 'provenanceEntry'
   | 'tooltipClassName'
-> & { managedControls?: React.ReactNode }): React.JSX.Element => (
+> & {
+  managedControls?: React.ReactNode
+  managedControlsOnly?: boolean
+}): React.JSX.Element => (
   <header
     data-testid="preview-card-header"
     className={`flex shrink-0 items-center gap-1 border-b border-border-300/50 px-2 ${
@@ -126,7 +131,7 @@ const PreviewFileHeader = ({
       item.source === 'local' ? 'min-h-8 py-0.5' : 'h-8'
     }`}
   >
-    {onOpenProvenance && provenanceEntry === 'leading' ? (
+    {!managedControlsOnly && onOpenProvenance && provenanceEntry === 'leading' ? (
       <PreviewProvenanceButton
         item={item}
         onOpenProvenance={onOpenProvenance}
@@ -166,58 +171,63 @@ const PreviewFileHeader = ({
     ) : (
       <>
         {managedControls}
-        {onOpenProvenance && provenanceEntry === 'trailing' ? (
-          <PreviewProvenanceButton
-            item={item}
-            onOpenProvenance={onOpenProvenance}
-            tooltipClassName={tooltipClassName}
-          />
-        ) : null}
-        <ManagedFileDownloadButton
-          source={item.source ?? 'artifact'}
-          path={item.path}
-          {...(item.projectId && item.managedFileId
-            ? {
-                projectId: item.projectId,
-                fileId: item.managedFileId,
-                ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
-              }
-            : {})}
-          suggestedName={item.name}
-          className="bg-transparent shadow-none"
-        />
-        {item.originSession?.state === 'deleted' ? (
-          <span
-            data-testid="deleted-origin-session"
-            className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
-          >
-            Source session deleted
-          </span>
-        ) : null}
-        {onOpenProvenance && provenanceEntry === 'menu' ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="text-text-100 hover:text-text-000"
-                aria-label={`File actions for ${item.title}`}
+        {!managedControlsOnly ? (
+          <>
+            {onOpenProvenance && provenanceEntry === 'trailing' ? (
+              <PreviewProvenanceButton
+                item={item}
+                onOpenProvenance={onOpenProvenance}
+                tooltipClassName={tooltipClassName}
+              />
+            ) : null}
+            <ManagedFileDownloadButton
+              source={item.source ?? 'artifact'}
+              path={item.path}
+              {...(item.projectId && item.managedFileId
+                ? {
+                    projectId: item.projectId,
+                    fileId: item.managedFileId,
+                    ...(item.selectedVersionId ? { versionId: item.selectedVersionId } : {})
+                  }
+                : {})}
+              suggestedName={item.name}
+              tone="strong"
+              className="bg-transparent shadow-none"
+            />
+            {item.originSession?.state === 'deleted' ? (
+              <span
+                data-testid="deleted-origin-session"
+                className="shrink-0 rounded bg-warning-100 px-1.5 py-0.5 text-[10px] text-warning-900"
               >
-                <MoreHorizontal aria-hidden="true" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="z-[70] min-w-36">
-              <DropdownMenuItem onSelect={onOpenProvenance}>
-                <GitBranch className="mr-2 size-4" aria-hidden="true" />
-                Provenance
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                Source session deleted
+              </span>
+            ) : null}
+            {onOpenProvenance && provenanceEntry === 'menu' ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className={previewHeaderActionClassName}
+                    aria-label={`File actions for ${item.title}`}
+                  >
+                    <MoreHorizontal aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="z-[70] min-w-36">
+                  <DropdownMenuItem onSelect={onOpenProvenance}>
+                    <GitBranch className="mr-2 size-4" aria-hidden="true" />
+                    Provenance
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </>
         ) : null}
       </>
     )}
-    {onOpenFullScreen ? (
+    {!managedControlsOnly && onOpenFullScreen ? (
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -225,7 +235,7 @@ const PreviewFileHeader = ({
               type="button"
               variant="ghost"
               size="icon-xs"
-              className="text-text-100 hover:text-text-000"
+              className={previewHeaderActionClassName}
               aria-label={`Open full screen preview of ${item.title}`}
               onClick={onOpenFullScreen}
             >
@@ -238,25 +248,27 @@ const PreviewFileHeader = ({
         </Tooltip>
       </TooltipProvider>
     ) : null}
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="text-text-100 hover:text-text-000"
-            aria-label={`Close preview of ${item.title}`}
-            onClick={onClose}
-          >
-            <X aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent className={tooltipClassName}>
-          {`Close preview of ${item.title}`}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    {!managedControlsOnly ? (
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className={previewHeaderActionClassName}
+              aria-label={`Close preview of ${item.title}`}
+              onClick={onClose}
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className={tooltipClassName}>
+            {`Close preview of ${item.title}`}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    ) : null}
   </header>
 )
 
@@ -555,13 +567,18 @@ const DiffContent = ({
   markdown: boolean
 }): React.JSX.Element => (
   <div
-    className="min-h-full bg-bg-000 py-2 font-mono text-xs"
+    className="min-h-full bg-bg-000 py-2 font-mono text-xs text-text-000"
     role="region"
     aria-label="File version differences"
   >
     {toDiffRenderBlocks(result, markdown).map((block) => {
       if (block.kind === 'markdown') {
-        const tone = block.changeKind === 'added' ? 'bg-success-100/50' : 'bg-destructive/10'
+        const tone =
+          block.changeKind === 'added' ? 'bg-diff-added-surface' : 'bg-diff-removed-surface'
+        const markerTone =
+          block.changeKind === 'added'
+            ? 'text-diff-added-foreground'
+            : 'text-diff-removed-foreground'
         const marker = block.changeKind === 'added' ? '+' : '-'
         const content = block.lines
           .map((line) => line.segments.map((segment) => segment.text).join(''))
@@ -572,11 +589,11 @@ const DiffContent = ({
             className={`grid min-h-6 grid-cols-[2rem_3rem_3rem_minmax(0,1fr)] items-start ${tone}`}
             data-diff-kind={block.changeKind}
           >
-            <span className="px-2 text-center text-text-300">{marker}</span>
-            <span className="text-right text-text-300">
+            <span className={`px-2 text-center ${markerTone}`}>{marker}</span>
+            <span className={`text-right ${markerTone}`}>
               {block.changeKind === 'removed' ? block.lines[0]?.oldLineNumber : ''}
             </span>
-            <span className="pr-2 text-right text-text-300">
+            <span className={`pr-2 text-right ${markerTone}`}>
               {block.changeKind === 'added' ? block.lines[0]?.newLineNumber : ''}
             </span>
             <div className="min-w-0 font-sans">
@@ -589,10 +606,16 @@ const DiffContent = ({
       const marker = line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' '
       const tone =
         line.kind === 'added'
-          ? 'bg-success-100/50'
+          ? 'bg-diff-added-surface'
           : line.kind === 'removed'
-            ? 'bg-destructive/10'
+            ? 'bg-diff-removed-surface'
             : ''
+      const markerTone =
+        line.kind === 'added'
+          ? 'text-diff-added-foreground'
+          : line.kind === 'removed'
+            ? 'text-diff-removed-foreground'
+            : 'text-text-300'
       return (
         <div
           key={`${index}:${line.oldLineNumber ?? ''}:${line.newLineNumber ?? ''}`}
@@ -600,7 +623,7 @@ const DiffContent = ({
           data-diff-kind={line.kind}
         >
           <span
-            className="px-2 text-center text-text-300"
+            className={`px-2 text-center ${markerTone}`}
             aria-label={
               line.kind === 'added'
                 ? 'Added line'
@@ -611,8 +634,8 @@ const DiffContent = ({
           >
             {marker}
           </span>
-          <span className="text-right text-text-300">{line.oldLineNumber ?? ''}</span>
-          <span className="pr-2 text-right text-text-300">{line.newLineNumber ?? ''}</span>
+          <span className={`text-right ${markerTone}`}>{line.oldLineNumber ?? ''}</span>
+          <span className={`pr-2 text-right ${markerTone}`}>{line.newLineNumber ?? ''}</span>
           <pre
             className={`min-w-0 whitespace-pre-wrap break-words ${markdown ? 'font-sans' : 'font-mono'}`}
             {...(markdown && line.kind !== 'context' ? { 'data-diff-inline': 'true' } : {})}
@@ -623,9 +646,9 @@ const DiffContent = ({
                 data-diff-segment={segment.kind}
                 className={
                   segment.kind === 'added'
-                    ? 'bg-success-200'
+                    ? 'bg-diff-added-highlight text-text-000'
                     : segment.kind === 'removed'
-                      ? 'bg-destructive/20 line-through'
+                      ? 'bg-diff-removed-highlight text-text-000 line-through'
                       : undefined
                 }
               >
@@ -754,6 +777,22 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
       managedInspectResult && managedInspectResult.key === managedRequestKey
         ? managedInspectResult.value
         : undefined
+    const previousManagedInspect =
+      managedIdentity &&
+      managedInspectResult?.value.source === managedIdentity.source &&
+      managedInspectResult.value.projectId === managedIdentity.projectId &&
+      managedInspectResult.value.fileId === managedIdentity.fileId
+        ? managedInspectResult.value
+        : undefined
+    const managedNavigationInspect =
+      managedInspect ??
+      (previousManagedInspect &&
+      previewItem.selectedVersionId &&
+      previousManagedInspect.versions.some(
+        (version) => version.id === previewItem.selectedVersionId
+      )
+        ? { ...previousManagedInspect, selectedVersionId: previewItem.selectedVersionId }
+        : undefined)
     const isDirty = mode === 'edit' && editBaseline !== undefined && draft !== editBaseline.text
     const invalidateSave = (): void => {
       saveGenerationRef.current += 1
@@ -798,17 +837,28 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         typeof managedFileVersions.inspect !== 'function'
       )
         return
+      const leaveDiffMode = (): void => {
+        setMode((current) => (current === 'diff' ? 'view' : current))
+        setDiffResult(undefined)
+        setDiffError(undefined)
+      }
       void managedFileVersions
         .inspect({
           ...managedIdentity,
           ...(previewItem.selectedVersionId ? { versionId: previewItem.selectedVersionId } : {})
         })
         .then((result) => {
-          if (active && result.ok) {
-            setManagedInspectResult({ key: managedRequestKey, value: result.value })
+          if (!active) return
+          if (!result.ok) {
+            leaveDiffMode()
+            return
           }
+          setManagedInspectResult({ key: managedRequestKey, value: result.value })
+          if (!result.value.canDiff) leaveDiffMode()
         })
-        .catch(() => undefined)
+        .catch(() => {
+          if (active) leaveDiffMode()
+        })
       return () => {
         active = false
       }
@@ -853,7 +903,9 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
         if (!skipWorkbenchGuard && !confirmLeave()) return false
         if (onItemChange) acceptedIdentityTransitionRef.current = nextIdentityKey
         onItemChange?.(nextItem)
-        setVersionOverride({ key: itemIdentityKey, item: nextItem })
+        // Uncontrolled surfaces own their local selection; controlled Dialogs publish through
+        // onItemChange and must not retain an origin-keyed override that can become stale.
+        if (!onItemChange) setVersionOverride({ key: itemIdentityKey, item: nextItem })
       }
       return true
     }
@@ -884,14 +936,16 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
     }
 
     const selectManagedVersion = (versionId: string): void => {
-      if (!managedInspect || !projectId) return
-      const version = managedInspect.versions.find((candidate) => candidate.id === versionId)
+      if (!managedNavigationInspect || !projectId) return
+      const version = managedNavigationInspect.versions.find(
+        (candidate) => candidate.id === versionId
+      )
       if (!version) return
       const nextItem = createPreviewFileItemForManagedVersion({
         item: previewItem,
         version,
         projectId,
-        sessionId: managedInspect.sessionId
+        sessionId: managedNavigationInspect.sessionId
       })
       if (!applyVersionItem(nextItem)) return
       invalidateSave()
@@ -1027,6 +1081,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
               : undefined
           }
           tooltipClassName={tooltipClassName}
+          managedControlsOnly={mode === 'edit'}
           managedControls={
             managedInspect ? (
               mode === 'edit' ? (
@@ -1035,6 +1090,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                     type="button"
                     variant="ghost"
                     size="sm"
+                    className="text-text-000 hover:text-text-000"
                     onClick={() => {
                       if (confirmLeave()) {
                         invalidateSave()
@@ -1048,12 +1104,12 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                   </Button>
                   <Button
                     type="button"
-                    size="icon-xs"
+                    size="sm"
                     aria-label="Save changes"
                     disabled={!isDirty || saving}
                     onClick={() => void saveEdit()}
                   >
-                    <Save aria-hidden="true" />
+                    Save
                   </Button>
                 </div>
               ) : (
@@ -1065,6 +1121,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           type="button"
                           variant="ghost"
                           size="icon-xs"
+                          className={previewHeaderActionClassName}
                           aria-label={`Edit ${resolvedPreviewItem.name}`}
                           disabled={!managedInspect.canEdit}
                           onClick={beginEdit}
@@ -1082,6 +1139,7 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
                           type="button"
                           variant={mode === 'diff' ? 'default' : 'ghost'}
                           size="icon-xs"
+                          className={mode === 'diff' ? undefined : previewHeaderActionClassName}
                           aria-label={
                             mode === 'diff'
                               ? `Stop comparing ${resolvedPreviewItem.name}`
@@ -1105,8 +1163,11 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             ) : undefined
           }
         />
-        {!showProvenance && managedInspect ? (
-          <ManagedVersionNavigation inspect={managedInspect} onSelect={selectManagedVersion} />
+        {!showProvenance && managedNavigationInspect ? (
+          <ManagedVersionNavigation
+            inspect={managedNavigationInspect}
+            onSelect={selectManagedVersion}
+          />
         ) : !showProvenance && !managedIdentity && lineage ? (
           <ArtifactVersionNavigation
             lineage={lineage}

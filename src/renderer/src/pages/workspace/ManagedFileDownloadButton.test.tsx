@@ -246,6 +246,35 @@ describe('ManagedFileDownloadButton', () => {
     expect(button.getAttribute('aria-label')).toBe('Download report.csv')
   })
 
+  it('keeps the strong header tone at rest without overriding the successful-save color', async () => {
+    vi.useFakeTimers()
+    window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: true })
+    } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="artifact"
+          path="/managed/report.csv"
+          suggestedName="report.csv"
+          tone="strong"
+        />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>('button')!
+    expect(button.className.split(/\s+/)).toContain('text-text-000')
+
+    await act(async () => {
+      button.click()
+      await Promise.resolve()
+    })
+
+    expect(button.className.split(/\s+/)).toContain('text-emerald-600')
+    expect(button.className.split(/\s+/)).not.toContain('text-text-000')
+  })
+
   it('keeps a failed save visible and allows retrying', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const saveManagedFile = vi

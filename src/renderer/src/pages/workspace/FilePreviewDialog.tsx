@@ -127,7 +127,9 @@ const FilePreviewDialog = ({
                   ref={previewSurfaceRef}
                   item={dialogItem}
                   onClose={() => requestClose(false)}
-                  onItemChange={(nextItem) => onItemChange?.(nextItem, true)}
+                  {...(onItemChange
+                    ? { onItemChange: (nextItem: PreviewFileItem) => onItemChange(nextItem, true) }
+                    : {})}
                   provenanceEntry="trailing"
                   tooltipClassName="z-[70]"
                   leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
