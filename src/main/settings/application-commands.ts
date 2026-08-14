@@ -17,6 +17,7 @@ import type {
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
   SetProjectFilesFilterRequest,
+  SetReviewerModelRequest,
   SetSubagentModelRequest,
   ValidateProviderRequest
 } from '../../shared/settings'
@@ -35,6 +36,7 @@ import {
   readGitHubToken,
   readNotificationsEnabled,
   readProjectFilesFilter,
+  readReviewerModel,
   readSubagentModel
 } from './transport-validation'
 import type { AppearanceSettingsWorkflows } from './workflows/appearance'
@@ -75,6 +77,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setPackageMirror'
   | 'setNetworkProxy'
   | 'setProjectFilesFilter'
+  | 'setReviewerModel'
   | 'setSubagentModel'
   | 'validateProvider'
 >
@@ -264,6 +267,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetProjectFilesFilterRequest],
     StoreResult<'setProjectFilesFilter'>
   >('settings:set-project-files-filter'),
+  setReviewerModel: defineApplicationCommand<
+    'settings:set-reviewer-model',
+    readonly [request: SetReviewerModelRequest],
+    StoreResult<'setReviewerModel'>
+  >('settings:set-reviewer-model'),
   setSubagentModel: defineApplicationCommand<
     'settings:set-subagent-model',
     readonly [request: SetSubagentModelRequest],
@@ -313,6 +321,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setPackageMirror,
   settingsCoreApplicationCommands.setNetworkProxy,
   settingsCoreApplicationCommands.setProjectFilesFilter,
+  settingsCoreApplicationCommands.setReviewerModel,
   settingsCoreApplicationCommands.setSubagentModel,
   settingsCoreApplicationCommands.validateProvider
 ] as const)
@@ -428,6 +437,8 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:set-project-files-filter')
         return dependencies.service.setProjectFilesFilter(readProjectFilesFilter(args[0]))
       },
+      'settings:set-reviewer-model': ({ args }) =>
+        dependencies.service.setReviewerModel(readReviewerModel(args[0])),
       'settings:set-subagent-model': ({ args }) =>
         dependencies.service.setSubagentModel(readSubagentModel(args[0])),
       'settings:validate-provider': ({ args }) => dependencies.service.validateProvider(args[0])

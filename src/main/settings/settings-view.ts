@@ -54,6 +54,7 @@ export const buildSettingsSnapshot = (
     networkProxy: resolveNetworkProxySettings(settings.networkProxy),
     reasoningEffort: preferences.reasoningEffort,
     subagentModel: settings.subagentModel ?? { mode: 'inherit' },
+    reviewerModel: settings.reviewerModel ?? { mode: 'inherit' },
     notificationsEnabled: preferences.notificationsEnabled,
     conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
     closePreference: preferences.closePreference,

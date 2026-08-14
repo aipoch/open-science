@@ -3219,6 +3219,7 @@ describe('assembleReviewRunRequest — shared turn selection', () => {
     expect(result!.sessionId).toBe('transport-session-1')
     expect(result!.turnMessageId).toBe(lastAgent!.id)
     expect(result!.mainSessionId).toBe('transport-session-1')
+    expect(result).not.toHaveProperty('model')
   })
 
   it('skips autoReviewEnabled — returns a request even when auto-review is off', () => {

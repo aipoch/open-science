@@ -219,6 +219,14 @@ export const runReviewAssessment = async (
       systemPromptAppend: REVIEWER_RUBRIC_SYSTEM_PROMPT_APPEND
     })
     reviewerSession = built.session
+    const backend = acpRuntime.captureBackend?.()
+    const runtimeModel = backend?.context.model ?? backend?.session.model
+    if (runtimeModel && runtimeModel !== review.model) {
+      review = await runReviewMutation(runSessionMutation, () =>
+        reviewRepository.updateReview(review.id, { model: runtimeModel })
+      )
+      onReviewUpdate?.({ ...review, checks: [] })
+    }
     if (options.mode === 'initial') {
       log.info('reviewer session started', { sessionId: reviewerSession.sessionId })
     }

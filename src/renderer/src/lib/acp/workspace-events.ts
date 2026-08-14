@@ -40,7 +40,6 @@ import {
   recordTextEventApplied,
   recordToolEventApplied
 } from '../streaming-metrics'
-import { useSettingsStore } from '../../stores/settings-store'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import {
   createRuntimeStreamId,
@@ -410,8 +409,7 @@ const assembleReviewRunRequest = (sessionId: string): ReviewRunRequest | undefin
     sessionId,
     turnMessageId: lastAgentMessage.id,
     projectId: session.projectId ?? '',
-    mainSessionId: sessionId,
-    model: useSettingsStore.getState().activeModel
+    mainSessionId: sessionId
   }
 }
 

@@ -54,6 +54,7 @@ const settingsPaths = {
   responsesProtocolTypes: resolve(settingsRoot, 'responses-protocol-types.ts'),
   responsesRequestAdapter: resolve(settingsRoot, 'responses-request-adapter.ts'),
   responsesResponseAdapter: resolve(settingsRoot, 'responses-response-adapter.ts'),
+  reviewerModelOwner: resolve(settingsRoot, 'reviewer-model-owner.ts'),
   subagentModelOwner: resolve(settingsRoot, 'subagent-model-owner.ts'),
   subagentModelSettings: resolve(settingsRoot, 'subagent-model-settings.ts'),
   service: resolve(settingsRoot, 'service.ts'),
@@ -281,7 +282,7 @@ const productionSourcePaths = productionSources()
 describe('Settings backend ownership architecture', () => {
   it('locks the final facade ceilings and every internal owner below the hard limit', () => {
     // Repository remains one atomic mutation facade; Subagent validation runs inside its CAS write.
-    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(683)
+    expect(rawLineCount(readSource(settingsPaths.repository))).toBeLessThanOrEqual(700)
     expect(rawLineCount(readSource(settingsPaths.subagentModelSettings))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.recordCodec))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.documentCodec))).toBeLessThanOrEqual(660)
@@ -302,6 +303,7 @@ describe('Settings backend ownership architecture', () => {
     expect(rawLineCount(readSource(settingsPaths.responsesResponseAdapter))).toBeLessThanOrEqual(
       660
     )
+    expect(rawLineCount(readSource(settingsPaths.reviewerModelOwner))).toBeLessThanOrEqual(660)
     expect(rawLineCount(readSource(settingsPaths.subagentModelOwner))).toBeLessThanOrEqual(660)
     // Main's facade plus typed Subagent forwarding, proxy projection, and owner composition.
     expect(rawLineCount(readSource(settingsPaths.service))).toBeLessThanOrEqual(1050)
@@ -373,7 +375,9 @@ describe('Settings backend ownership architecture', () => {
       'value:createSubagentModels'
     ])
     expect(exportInventoryFrom(settingsPaths.subagentModelSettings)).toEqual([
+      'type:ReviewerModelValidator',
       'type:SubagentModelValidator',
+      'value:buildReviewerModelMutation',
       'value:buildSubagentModelMutation'
     ])
   })
@@ -416,6 +420,7 @@ describe('Settings backend ownership architecture', () => {
       'setPackageMirror',
       'setProjectFilesFilter',
       'setReasoningEffort',
+      'setReviewerModel',
       'setRuntimeEnablement',
       'setRuntimeSelection',
       'setSkillEnabled',
@@ -494,7 +499,7 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitSubagentExecutionModel authenticateCustomServer buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSubagentExecutionModel authenticateCustomServer buildCustomServerTemplateExport
         buildSkillExport cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment clearGrantedLocalRoots codexSkillCatalog
         codexSkillDescriptorsForIds createSkill deleteProvider deleteSkill detectClaude detectCodex
         detectOpencode dismissLegacyDataMovePrompt getAppIconVariant getClosePreference
@@ -515,7 +520,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
-        setPackageMirror setProjectFilesFilter setReasoningEffort setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel
+        setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider withHostSkillRead
       `
@@ -535,6 +540,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/preferences.ts',
       'src/main/settings/provider-accounts.ts',
       'src/main/settings/provider-auth-lifecycle.ts',
+      'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
       'src/main/settings/skill-catalog.ts',
       'src/main/settings/subagent-model-owner.ts'
@@ -555,6 +561,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/backend-route-planner.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/provider-transport-owner.ts',
+      'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
       'src/main/settings/subagent-model-owner.ts'
     ])
@@ -563,6 +570,8 @@ describe('Settings backend ownership architecture', () => {
       'src/main/acp/restricted-inference-runner.ts',
       'src/main/artifacts/code-reconstruction.ts',
       'src/main/notebook/host-llm-service.ts',
+      'src/main/reviewer/model-runtime-owner.ts',
+      'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
       'src/main/settings/subagent-model-owner.ts',
       'src/main/side-chat/runtime-owner.ts'
@@ -682,6 +691,7 @@ describe('Settings backend ownership architecture', () => {
       'projectFilesFilter',
       'providers',
       'reasoningEffort',
+      'reviewerModel',
       'subagentModel',
       'version'
     ])
@@ -777,6 +787,7 @@ describe('Settings backend ownership architecture', () => {
     ])
     expect(manifest.modules.settings_service_facade.ownerPaths).toEqual([
       'src/main/settings/service.ts',
+      'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/subagent-model-owner.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual([

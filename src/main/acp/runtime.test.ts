@@ -22981,6 +22981,30 @@ describe('ACP runtime — session effort', () => {
     expect(fakeAgent.configChanges[1]).toMatchObject({ configId: 'effort', value: 'high' })
   })
 
+  it('keeps an admitted background activity on its original reasoning effort', async () => {
+    const process = new FakeAgentProcess()
+    const fakeAgent = startFakeAgent(process, ['s-effort-activity'], {
+      configOptions: [thoughtLevelOption(['default', 'low', 'high'])]
+    })
+    const runtime = createEffortRuntime(process, 'low')
+    const activityStarted = createDeferred()
+    const finishActivity = createDeferred()
+    await runtime.createSession({ cwd: '/workspace' })
+    fakeAgent.configChanges.length = 0
+
+    const activity = runtime.withActivity({}, async () => {
+      activityStarted.resolve()
+      await finishActivity.promise
+    })
+    await activityStarted.promise
+
+    await expect(runtime.applyReasoningEffortChange('high')).resolves.toBe(false)
+    expect(fakeAgent.configChanges).toEqual([])
+
+    finishActivity.resolve()
+    await activity
+  })
+
   it('keeps a session created concurrently with a live effort change on the new level', async () => {
     const process = new FakeAgentProcess()
     const staleConfigurationStarted = createDeferred()

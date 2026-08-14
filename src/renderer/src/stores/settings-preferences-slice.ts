@@ -4,6 +4,7 @@ import type {
   AppIconVariant,
   ProjectFilesFilterPreference,
   ReasoningEffort,
+  ReviewerModelConfiguration,
   SettingsSnapshot,
   SubagentModelConfiguration
 } from '../../../shared/settings'
@@ -20,6 +21,8 @@ type SettingsPreferencesState = {
   networkProxy?: NetworkProxySettings
   packageMirror?: PackageMirror
   reasoningEffort: ReasoningEffort
+  reviewerModel?: ReviewerModelConfiguration
+  reviewerModelPending?: boolean
   subagentModel?: SubagentModelConfiguration
   subagentModelPending?: boolean
   notificationsEnabled: boolean
@@ -41,6 +44,7 @@ type OptimisticPreferenceField =
 
 export type SettingsPreferencesActions = {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
+  setReviewerModel: (configuration: ReviewerModelConfiguration) => Promise<void>
   setSubagentModel: (configuration: SubagentModelConfiguration) => Promise<void>
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
   setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
@@ -66,7 +70,12 @@ type SettingsPreferencesCommands = Pick<
   | 'markOnboardingComplete'
   | 'setPackageMirror'
 > &
-  Partial<Pick<Window['api']['settings'], 'getSettings' | 'setSubagentModel' | 'setNetworkProxy'>>
+  Partial<
+    Pick<
+      Window['api']['settings'],
+      'getSettings' | 'setReviewerModel' | 'setSubagentModel' | 'setNetworkProxy'
+    >
+  >
 
 type SettingsPreferencesSliceOptions = {
   getState: () => SettingsPreferencesState
@@ -122,6 +131,30 @@ export const createSettingsPreferencesSlice = ({
   }
 
   return {
+    setReviewerModel: async (configuration) => {
+      const write = writeCoordinator.begin('reviewerModel')
+      setState({ reviewerModelPending: true })
+      try {
+        const snapshot = await getCommands().setReviewerModel!({ configuration })
+        if (!write.isCurrent()) return
+        reconcileSnapshot(snapshot)
+        write.succeed()
+      } catch (error) {
+        write.fail('Could not save Reviewer model. Refresh the model catalog and try again.')
+        console.error('Failed to set Reviewer model', error)
+        const refresh = getCommands().getSettings
+        if (refresh) {
+          try {
+            reconcileSnapshot(await refresh())
+          } catch (refreshError) {
+            console.error('Failed to refresh Settings after rejected Reviewer model', refreshError)
+          }
+        }
+      } finally {
+        if (write.isCurrent()) setState({ reviewerModelPending: false })
+      }
+    },
+
     setSubagentModel: async (configuration) => {
       const write = writeCoordinator.begin('subagentModel')
       setState({ subagentModelPending: true })

@@ -86,6 +86,15 @@ type ReviewerIpcOptions = {
     sessionId: string,
     mutation: () => Promise<Result>
   ) => Promise<Result>
+  modelRuntime?: Readonly<{
+    admit: () => Promise<
+      Readonly<{
+        model: string
+        reviewerAcpRuntime?: ReviewerAcpRuntime
+        release: () => Promise<void>
+      }>
+    >
+  }>
 }
 
 type ReviewerCommandOwner = Readonly<{
@@ -161,7 +170,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       evidenceScope,
       projectId,
       mainSessionId,
-      model
+      model: rendererModel
     } = request
 
     // Reserve the turn SYNCHRONOUSLY (before any await) so a double-click / multiple stale cards can't
@@ -245,6 +254,26 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
 
     log.info('review triggered', { sessionId, turnMessageId })
 
+    let modelAdmission: Awaited<
+      ReturnType<NonNullable<ReviewerIpcOptions['modelRuntime']>['admit']>
+    >
+    try {
+      modelAdmission = options.modelRuntime
+        ? await options.modelRuntime.admit()
+        : {
+            model: rendererModel ?? '',
+            release: async () => undefined
+          }
+    } catch (error) {
+      inFlightReviewKeys.delete(inFlightKey)
+      log.error('review start failed: model admission failed', {
+        sessionId,
+        turnMessageId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return { started: false, reason: 'run-failed' }
+    }
+
     let releaseDataRootWriter: (() => void) | undefined
     try {
       // The review can publish immutable scope snapshots after `triggerReview` has already returned
@@ -253,6 +282,13 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       releaseDataRootWriter = acquireDataRootWriter()
     } catch {
       inFlightReviewKeys.delete(inFlightKey)
+      await modelAdmission.release().catch((error: unknown) => {
+        log.error('review start cleanup failed', {
+          sessionId,
+          turnMessageId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      })
       return { started: false, reason: 'run-failed' }
     }
 
@@ -281,7 +317,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         evidenceScope,
         projectId,
         mainSessionId,
-        model: model ?? '',
+        model: modelAdmission.model,
         // Reload on every orchestrator request. In particular, the post-correction read must observe
         // the newly persisted [Auditor] and agent messages instead of the review-start snapshot.
         getSession: loadCurrentSession,
@@ -290,6 +326,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           ? (mutation) => options.withSessionMutation!(projectId, sessionId, mutation)
           : undefined,
         acpRuntime: options.acpRuntime,
+        ...(modelAdmission.reviewerAcpRuntime
+          ? { reviewerAcpRuntime: modelAdmission.reviewerAcpRuntime }
+          : {}),
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
         artifactVersionContentResolver: (request) =>
@@ -333,12 +372,19 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
             error: error instanceof Error ? error.message : String(error)
           })
         })
-        .finally(() => {
+        .finally(async () => {
           // If the run ended without ever signalling onStarted, no review actually began — this is a
           // genuine pre-push failure (scope/insert), not a persistence race, so it is not auto-retried.
           settle({ started: false, reason: 'run-failed' })
           inFlightReviewKeys.delete(inFlightKey)
           releaseDataRootWriter?.()
+          await modelAdmission.release().catch((error: unknown) => {
+            log.error('review runtime cleanup failed', {
+              sessionId,
+              turnMessageId,
+              error: error instanceof Error ? error.message : String(error)
+            })
+          })
         })
     })
   }

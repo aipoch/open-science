@@ -843,7 +843,6 @@ const WorkspaceMessageScrollerImpl = ({
         scopeTurnMessageId: review.scope.turnMessageId,
         projectId: review.projectId,
         mainSessionId: review.sessionId,
-        model: useSettingsStore.getState().activeModel,
         // Explicit user Re-run: bypass main's auto-only per-turn idempotency so the stale/error review
         // is genuinely re-run rather than refused as already-reviewed.
         origin: 'manual'

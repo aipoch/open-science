@@ -45,6 +45,7 @@ import {
   type SetNotificationsEnabledRequest,
   type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
+  type SetReviewerModelRequest,
   type SetSubagentModelRequest,
   type SetSkillEnabledRequest,
   type SetSkillsEnabledRequest,
@@ -68,6 +69,7 @@ import {
   readNotificationsEnabled,
   readProjectFilesFilter,
   readReasoningEffort,
+  readReviewerModel,
   readSubagentModel
 } from './transport-validation'
 
@@ -166,6 +168,12 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-subagent-model', async (_event, request: SetSubagentModelRequest) => {
     const configuration = readSubagentModel(request)
     const snapshot = await service.setSubagentModel(configuration)
+    broadcastToRenderers('settings:changed', snapshot)
+    return snapshot
+  })
+  ipcMainHandle('settings:set-reviewer-model', async (_event, request: SetReviewerModelRequest) => {
+    const configuration = readReviewerModel(request)
+    const snapshot = await service.setReviewerModel(configuration)
     broadcastToRenderers('settings:changed', snapshot)
     return snapshot
   })

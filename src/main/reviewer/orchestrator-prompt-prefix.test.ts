@@ -347,7 +347,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
     // buildReviewerSession is called twice: once for the initial review (submit a warn finding so the
     // fix loop runs, no prefix), once for the scoped re-review (return a prefix + capture the prompt).
     let buildCall = 0
-    const runtime = {
+    const reviewerRuntime = {
       buildReviewerSession: async (request: { mcpServers: unknown[] }) => {
         buildCall += 1
         if (buildCall === 1) {
@@ -369,7 +369,9 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
         }
         return { session: makeFakeReviewerSession(scopedPromptSink), promptPrefix: scopedPrefix }
       },
-      disposeReviewerSession: () => ({ rejectedToolCalls: 0, reviewerBridgeScoped: undefined }),
+      disposeReviewerSession: () => ({ rejectedToolCalls: 0, reviewerBridgeScoped: undefined })
+    } as unknown as AcpRuntime
+    const runtime = {
       // The [Auditor] correction turn: append the auditor user turn + the agent's correction turn so
       // the fix loop resolves a new correctionTurnMessageId (msg-4-correction) for the scoped review.
       sendPrompt: async () => {
@@ -413,6 +415,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
       getSession: () => currentSession,
       reviewRepository: repository,
       acpRuntime: runtime,
+      reviewerAcpRuntime: reviewerRuntime,
       artifactStorageRoot: temporaryRoot!,
       fixLoopMaxRounds: 1
     })

@@ -43,7 +43,10 @@ type ReviewerFixLoopOptions = {
   getSession: SessionProvider
   reviewRepository: ReviewRepository
   runSessionMutation?: ReviewMutationRunner
+  // Main Agent runtime used for [Auditor] correction turns.
   acpRuntime: ReviewerAcpRuntime
+  // Runtime pinned for every scoped Reviewer re-assessment in this chain.
+  reviewerAcpRuntime?: ReviewerAcpRuntime
   artifactStorageRoot: string
   artifactVersionContentResolver?: ArtifactVersionContentResolver
   reviewerMcpEntryPath?: string
@@ -111,6 +114,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     reviewRepository,
     runSessionMutation,
     acpRuntime,
+    reviewerAcpRuntime = acpRuntime,
     artifactStorageRoot,
     artifactVersionContentResolver,
     reviewerMcpEntryPath,
@@ -301,7 +305,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       projectId,
       reviewRepository,
       runSessionMutation,
-      acpRuntime,
+      acpRuntime: reviewerAcpRuntime,
       artifactStorageRoot,
       artifactVersionContentResolver,
       reviewerMcpEntryPath,

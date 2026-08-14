@@ -21,10 +21,25 @@ import {
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { SettingsField, SettingsRow } from './SettingsLayout'
+import type { SubagentModelConfiguration } from '../../../../shared/settings'
 
 const INHERIT_KEY = 'same-as-main-model'
 
-const SubagentModelSelect = (): React.JSX.Element => {
+type ModelPolicySelectProps = Readonly<{
+  ariaLabel: string
+  inheritLabel: string
+  configuration: SubagentModelConfiguration
+  pending: boolean
+  setConfiguration: (configuration: SubagentModelConfiguration) => Promise<void>
+}>
+
+const ModelPolicySelect = ({
+  ariaLabel,
+  inheritLabel,
+  configuration,
+  pending,
+  setConfiguration
+}: ModelPolicySelectProps): React.JSX.Element => {
   const providers = useSettingsStore((state) => state.providers)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
@@ -32,9 +47,6 @@ const SubagentModelSelect = (): React.JSX.Element => {
   )
   const frameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
-  const configuration = useSettingsStore((state) => state.subagentModel)
-  const pending = useSettingsStore((state) => state.subagentModelPending)
-  const setConfiguration = useSettingsStore((state) => state.setSubagentModel)
   const catalog = buildConfiguredModelCatalog({
     providers,
     activeProviderId,
@@ -105,7 +117,7 @@ const SubagentModelSelect = (): React.JSX.Element => {
             void setConfiguration({ mode: 'fixed', ...identity, reasoningEffort })
           }}
         >
-          <SelectTrigger aria-label="Subagent model Model">
+          <SelectTrigger aria-label={`${ariaLabel} Model`}>
             <span className="flex items-center gap-2 truncate">
               {configuration.mode === 'fixed' && selectedEntry ? (
                 <>
@@ -125,12 +137,12 @@ const SubagentModelSelect = (): React.JSX.Element => {
                   {configuration.model} · {configuration.providerId} · Unavailable
                 </span>
               ) : (
-                <span className="truncate">Same as main model</span>
+                <span className="truncate">{inheritLabel}</span>
               )}
             </span>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={INHERIT_KEY}>Same as main model</SelectItem>
+            <SelectItem value={INHERIT_KEY}>{inheritLabel}</SelectItem>
             {unavailable ? (
               <SelectItem value={selectedKey} disabled>
                 {configuration.model} · {configuration.providerId} · Unavailable
@@ -162,16 +174,16 @@ const SubagentModelSelect = (): React.JSX.Element => {
       <SettingsField label="Reasoning effort">
         {configuration.mode === 'inherit' ? (
           <Select value={INHERIT_KEY} disabled>
-            <SelectTrigger aria-label="Subagent model Reasoning effort">
+            <SelectTrigger aria-label={`${ariaLabel} Reasoning effort`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={INHERIT_KEY}>Same as main model</SelectItem>
+              <SelectItem value={INHERIT_KEY}>{inheritLabel}</SelectItem>
             </SelectContent>
           </Select>
         ) : effortProfile && !effortProfile.supported ? (
           <Select value="not-supported" disabled>
-            <SelectTrigger aria-label="Subagent model Reasoning effort">
+            <SelectTrigger aria-label={`${ariaLabel} Reasoning effort`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -195,7 +207,7 @@ const SubagentModelSelect = (): React.JSX.Element => {
               void setConfiguration({ ...configuration, reasoningEffort })
             }}
           >
-            <SelectTrigger aria-label="Subagent model Reasoning effort">
+            <SelectTrigger aria-label={`${ariaLabel} Reasoning effort`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -213,4 +225,24 @@ const SubagentModelSelect = (): React.JSX.Element => {
   )
 }
 
-export { SubagentModelSelect }
+const SubagentModelSelect = (): React.JSX.Element => (
+  <ModelPolicySelect
+    ariaLabel="Subagent model"
+    inheritLabel="Same as main model"
+    configuration={useSettingsStore((state) => state.subagentModel)}
+    pending={useSettingsStore((state) => state.subagentModelPending)}
+    setConfiguration={useSettingsStore((state) => state.setSubagentModel)}
+  />
+)
+
+const ReviewerModelSelect = (): React.JSX.Element => (
+  <ModelPolicySelect
+    ariaLabel="Reviewer model"
+    inheritLabel="Follow Active model"
+    configuration={useSettingsStore((state) => state.reviewerModel)}
+    pending={useSettingsStore((state) => state.reviewerModelPending)}
+    setConfiguration={useSettingsStore((state) => state.setReviewerModel)}
+  />
+)
+
+export { ReviewerModelSelect, SubagentModelSelect }

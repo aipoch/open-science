@@ -157,6 +157,7 @@ import {
   registerReviewerIpcHandlers,
   type ReviewerCommandOwner
 } from './reviewer/ipc'
+import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
@@ -2567,8 +2568,25 @@ const createApplicationModules = async (
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
+  const reviewerModelRuntime = await modules.add(
+    {
+      appVersion: app.getVersion(),
+      captureModel: () => settingsService.admitReviewerExecutionModel(),
+      resolveTarget: (target, context) =>
+        settingsService.resolveExplicitAgentBackend(target, context)
+    },
+    (options) => {
+      const owner = new ReviewerModelRuntimeOwner(options)
+      return {
+        name: 'reviewer-model-runtime',
+        capability: owner,
+        dispose: () => owner.shutdown()
+      }
+    }
+  )
   const reviewerOptions = {
     acpRuntime: runtime,
+    modelRuntime: reviewerModelRuntime,
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     withSessionMutation: <Result>(

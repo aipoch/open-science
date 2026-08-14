@@ -9,6 +9,7 @@ import {
   readNotificationsEnabled,
   readProjectFilesFilter,
   readReasoningEffort,
+  readReviewerModel,
   readSubagentModel
 } from './transport-validation'
 
@@ -67,6 +68,27 @@ describe('Settings transport validation', () => {
     expect(() =>
       readSubagentModel({ configuration: { mode: 'inherit', providerId: 'stale' } })
     ).toThrow('Invalid Subagent model configuration.')
+  })
+
+  it('accepts only complete atomic Reviewer model configurations', () => {
+    expect(
+      readReviewerModel({
+        configuration: {
+          mode: 'fixed',
+          providerId: 'provider-a',
+          model: 'reviewer-model',
+          reasoningEffort: 'max'
+        }
+      })
+    ).toEqual({
+      mode: 'fixed',
+      providerId: 'provider-a',
+      model: 'reviewer-model',
+      reasoningEffort: 'max'
+    })
+    expect(() => readReviewerModel({ configuration: { mode: 'fixed' } })).toThrow(
+      'Invalid Reviewer model configuration.'
+    )
   })
 
   it('accepts only boolean conversation Skill import preferences', () => {

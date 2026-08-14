@@ -5294,6 +5294,115 @@ describe('SettingsService: Subagent model', () => {
   })
 })
 
+describe('SettingsService: Reviewer model', () => {
+  it('atomically validates and saves a fixed Reviewer target', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Reviewer gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://reviewer.example/v1',
+      model: 'reviewer-model',
+      key: 'secret'
+    })
+    const provider = created.providers.find((candidate) => candidate.name === 'Reviewer gateway')!
+
+    const snapshot = await service.setReviewerModel({
+      mode: 'fixed',
+      providerId: provider.id,
+      model: 'reviewer-model',
+      reasoningEffort: 'high'
+    })
+
+    expect(snapshot.reviewerModel).toEqual({
+      mode: 'fixed',
+      providerId: provider.id,
+      model: 'reviewer-model',
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('admits the configured fixed Reviewer backend for one Review chain', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Admitted Reviewer gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://reviewer.example/v1',
+      model: 'reviewer-model',
+      key: 'secret'
+    })
+    const provider = created.providers.find(
+      (candidate) => candidate.name === 'Admitted Reviewer gateway'
+    )!
+    await service.setReviewerModel({
+      mode: 'fixed',
+      providerId: provider.id,
+      model: 'reviewer-model',
+      reasoningEffort: 'high'
+    })
+
+    const admission = await service.admitReviewerExecutionModel()
+
+    expect(admission.model).toBe('reviewer-model')
+    expect(admission.fixedTarget).toEqual({
+      frameworkId: 'claude-code',
+      providerId: provider.id,
+      model: { kind: 'required', id: 'reviewer-model' },
+      reasoningEffort: 'high'
+    })
+  })
+
+  it('preserves a fixed Reviewer selection when its provider is deleted', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Restorable Reviewer gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://reviewer.example/v1',
+      model: 'reviewer-model',
+      key: 'secret'
+    })
+    const provider = created.providers.find(
+      (candidate) => candidate.name === 'Restorable Reviewer gateway'
+    )!
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: provider.id,
+      model: 'reviewer-model',
+      reasoningEffort: 'high' as const
+    }
+    await service.setReviewerModel(fixed)
+
+    await service.deleteProvider(provider.id)
+
+    expect((await service.getSettingsView()).reviewerModel).toEqual(fixed)
+    await expect(service.admitReviewerExecutionModel()).resolves.toMatchObject({
+      model: 'reviewer-model',
+      fixedTarget: { providerId: provider.id }
+    })
+  })
+
+  it('follows the Active model without admitting a second backend', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Active Reviewer gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://active.example/v1',
+      model: 'active-model',
+      key: 'secret'
+    })
+    await service.setActiveProvider(created.providers[0].id, 'active-model')
+    await service.setReviewerModel({ mode: 'inherit' })
+
+    const admission = await service.admitReviewerExecutionModel()
+
+    expect(admission).toMatchObject({ model: 'active-model' })
+    expect(admission.fixedTarget).toBeUndefined()
+  })
+})
+
 describe('SettingsService: notifications preference', () => {
   it('projects enabled when no preference is stored', async () => {
     const service = createService()
