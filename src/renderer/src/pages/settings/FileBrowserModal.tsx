@@ -233,9 +233,9 @@ function DetailPanel({
         </div>
 
         <div className="space-y-1.5">
-          <MetaRow label="SIZE" value={formatSize(entry.size)} />
-          <MetaRow label="MODIFIED" value={new Date(entry.mtimeMs).toLocaleString()} />
-          <MetaRow label="TYPE" value={inferType(entry.name)} />
+          <MetaRow label={t('SIZE')} value={formatSize(entry.size)} />
+          <MetaRow label={t('MODIFIED')} value={new Date(entry.mtimeMs).toLocaleString()} />
+          <MetaRow label={t('TYPE')} value={inferType(entry.name)} />
         </div>
 
         {/* No preview placeholder */}
@@ -489,11 +489,11 @@ export function FileBrowserModal({
       } catch (error) {
         if (!isCurrent()) return
         const detail =
-          error instanceof Error && error.message ? error.message : 'Failed to load bookmarks.'
+          error instanceof Error && error.message ? error.message : t('Failed to load bookmarks.')
         setBookmarksState({
           kind: 'error',
           items: [],
-          summary: "Couldn't load bookmarks.",
+          summary: t("Couldn't load bookmarks."),
           detail
         })
       }
@@ -556,11 +556,11 @@ export function FileBrowserModal({
     } catch (error) {
       if (!isCurrent()) return
       const detail =
-        error instanceof Error && error.message ? error.message : 'Failed to update bookmarks.'
+        error instanceof Error && error.message ? error.message : t('Failed to update bookmarks.')
       setBookmarksState({
         kind: 'error',
         items: previous,
-        summary: "Couldn't update bookmarks.",
+        summary: t("Couldn't update bookmarks."),
         detail
       })
     }
