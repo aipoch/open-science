@@ -358,7 +358,7 @@ export const OfficePreviewContent = ({
       <PreviewFallbackCard
         icon={FileWarning}
         name={item.name}
-        message="Open this Office file in your default app to view it."
+        message={t('Open this Office file in your default app to view it.')}
         action={<LocalFileFallbackAction path={item.path} className="mt-3" />}
       />
     )
@@ -369,7 +369,7 @@ export const OfficePreviewContent = ({
         item={item}
         source={source}
         title={t('Preview unavailable')}
-        message="Office preview is only available in the desktop app. Download this file to view it."
+        message={t('Office preview is only available in the desktop app. Download this file to view it.')}
       />
     )
   }

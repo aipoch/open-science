@@ -261,7 +261,7 @@ const TiffPreviewContent = ({
       <PreviewErrorCard
         name={name}
         error={resourceState.error}
-        fallbackMessage="TIFF couldn't be loaded for preview"
+        fallbackMessage={t("TIFF couldn't be loaded for preview")}
       />
     )
   }
