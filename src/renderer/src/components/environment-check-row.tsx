@@ -29,6 +29,13 @@ const STATUS_COPY = {
   failed: 'Action needed'
 } satisfies Record<EnvironmentCheckItem['status'], string>
 
+const getStatusLabel = (
+  status: EnvironmentCheckItem['status'],
+  t: (key: string) => string
+): string => {
+  return t(STATUS_COPY[status])
+}
+
 const statusIcon = (status: EnvironmentCheckItem['status']): React.JSX.Element => {
   if (status === 'passed') {
     return <CheckCircle2 className="size-4 text-primary" aria-hidden="true" />
@@ -101,7 +108,7 @@ const EnvironmentCheckRow = ({ check, icon }: EnvironmentCheckRowProps): React.J
             )}
           >
             {statusIcon(check.status)}
-            {t(STATUS_COPY[check.status])}
+            {getStatusLabel(check.status, t)}
           </span>
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">{check.summary}</p>
