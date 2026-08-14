@@ -195,7 +195,9 @@ describe('ACP Save as skill workflow', () => {
       expect.objectContaining({
         sessionId: 'session-1',
         suppressUserMessage: true,
-        text: expect.stringMatching(/First evaluate.*Do not load.*If and only if/s),
+        text: expect.stringMatching(
+          /Distill this session.*Review the active conversation branch.*First decide.*If it does not.*If it does.*load Customize/s
+        ),
         provenanceContext: expect.objectContaining({
           agentFrameId: harness.request.agentFrameId,
           messageBranchId: harness.request.messageBranchId,
@@ -418,7 +420,9 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         suppressUserMessage: true,
-        text: expect.stringMatching(/First evaluate.*If and only if/s),
+        text: expect.stringMatching(
+          /Distill this session.*Review the active conversation branch.*First decide.*load Customize/s
+        ),
         resumeFallback: expect.objectContaining({
           historyPreamble: expect.stringContaining('Build a reusable analysis workflow.')
         })

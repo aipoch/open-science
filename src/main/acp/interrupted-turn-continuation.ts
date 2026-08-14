@@ -14,7 +14,11 @@ import type { TaskNotificationService } from '../notifications/task-notification
 
 const INTERRUPTED_TURN_CONTINUATION_PROMPT =
   'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
-const SAVE_AS_SKILL_PROMPT = `[System] First evaluate whether the active conversation branch contains a reusable workflow worth saving as a Skill. Do not load or invoke Customize, Skill Creator, or any other skill-authoring workflow until this evaluation is complete. A simple one-off task without a settled procedure, user corrections, reusable configuration or house style, reusable helper, or meaningful multi-step workflow is not enough; briefly explain why and stop without creating a draft. If and only if the branch contains a settled procedure the user is likely to run again, load the Customize Skill and follow its Skill Creator workflow. Extract the reusable pattern rather than copying the transcript, ask only for gaps that materially change behavior, review the draft with the user, and publish only after the user accepts it.`
+const SAVE_AS_SKILL_PROMPT = `[System] Distill this session into a reusable Skill.
+
+Review the active conversation branch: what was the goal, which agents and tools were used, what were the key steps, and what steering or corrections did the user provide along the way? Capture the reusable pattern, not a verbatim transcript.
+
+First decide whether the branch contains a settled procedure the user is likely to run again. If it does not, briefly explain why and stop. If it does, load Customize and follow its Skill Creator workflow.`
 
 const buildContinuationPrompt = (
   prompt: PersistedChatSession['messages'][number],

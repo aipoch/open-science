@@ -81,7 +81,9 @@ describe('continueInterruptedTurn', () => {
     const request = startContinuation.mock.calls[0][0]
     expect(request).toEqual(
       expect.objectContaining({
-        text: expect.stringMatching(/First evaluate.*Do not load.*If and only if/s),
+        text: expect.stringMatching(
+          /Distill this session.*Review the active conversation branch.*First decide.*If it does not.*If it does.*load Customize/s
+        ),
         suppressUserMessage: true,
         provenanceContext: expect.objectContaining({ promptMessageId: 'prompt-1' })
       })
