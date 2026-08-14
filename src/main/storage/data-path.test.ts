@@ -14,6 +14,14 @@ describe('data-path sentinel codec', () => {
   it('leaves external absolute paths unchanged', () => {
     expect(encodeDataPath('/Users/x/external/file.csv', ROOT)).toBe('/Users/x/external/file.csv')
   })
+  it
+    .runIf(process.platform !== 'win32')
+    .each([`${ROOT}/uploads/folder\\name.txt`, `${ROOT}/uploads/c:notes.txt`])(
+    'leaves an in-root path with a non-portable filename unchanged: %s',
+    (absolute) => {
+      expect(encodeDataPath(absolute, ROOT)).toBe(absolute)
+    }
+  )
   it('is idempotent on an already-encoded sentinel, regardless of the given root', () => {
     expect(encodeDataPath('$DATA/artifacts/x', '/data/os')).toBe('$DATA/artifacts/x')
   })

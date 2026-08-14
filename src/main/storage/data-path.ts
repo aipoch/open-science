@@ -21,17 +21,23 @@ const isInsideOrEqual = (root: string, candidate: string): boolean => {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
-const normalizeDataPathSuffix = (suffix: string): string => {
+const tryNormalizeDataPathSuffix = (suffix: string): string | undefined => {
   if (suffix.includes('\\') || posix.isAbsolute(suffix) || win32.isAbsolute(suffix)) {
-    throw invalidDataPathError()
+    return undefined
   }
 
   if (WINDOWS_DRIVE_PREFIX.test(suffix) || suffix.split('/').includes('..')) {
-    throw invalidDataPathError()
+    return undefined
   }
 
   const normalized = posix.normalize(suffix)
   return normalized === '.' ? '' : normalized
+}
+
+const normalizeDataPathSuffix = (suffix: string): string => {
+  const normalized = tryNormalizeDataPathSuffix(suffix)
+  if (normalized === undefined) throw invalidDataPathError()
+  return normalized
 }
 
 const resolveEncodedDataPath = (
@@ -62,7 +68,8 @@ export const encodeDataPath = (
   }
   if (!isInside(dataRoot, abs)) return abs
   const rel = relative(dataRoot, abs).split(sep).join('/')
-  return `${DATA_ROOT_SENTINEL}/${rel}`
+  const normalized = tryNormalizeDataPathSuffix(rel)
+  return normalized === undefined ? abs : `${DATA_ROOT_PREFIX}${normalized}`
 }
 
 // Resolves a "$DATA/..." sentinel against the current data root; leaves other values untouched.
