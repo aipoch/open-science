@@ -53,8 +53,8 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
       <section className="flex w-full max-w-md flex-col items-center text-center">
         {state.phase === 'blocked' ? (
           <div className="mb-10">
-            <img src={logo} alt="Open Science" className="h-12 w-auto dark:hidden" />
-            <img src={logoDark} alt="Open Science" className="hidden h-12 w-auto dark:block" />
+            <img src={logo} alt={t('Open Science')} className="h-12 w-auto dark:hidden" />
+            <img src={logoDark} alt={t('Open Science')} className="hidden h-12 w-auto dark:block" />
           </div>
         ) : null}
 

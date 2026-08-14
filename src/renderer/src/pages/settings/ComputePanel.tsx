@@ -129,11 +129,11 @@ const HostCard = ({
 
       {status === 'connected' ? (
         <Badge className="shrink-0 bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">
-          Connected
+          {t('Connected')}
         </Badge>
       ) : status === 'failed' ? (
         <Badge className="shrink-0 bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground">
-          Probe failed
+          {t('Probe failed')}
         </Badge>
       ) : (
         <Badge variant="outline" className="shrink-0">

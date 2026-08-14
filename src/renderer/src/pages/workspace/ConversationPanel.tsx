@@ -354,7 +354,11 @@ const ConversationPanel = ({
     compactDisabledReason: compactContextDisabledReason,
     compact: onCompactContext
   } = contextWindow
-  const { disabled: isRequestReviewDisabled, running: isReviewing, request: onRequestReview } = review
+  const {
+    disabled: isRequestReviewDisabled,
+    running: isReviewing,
+    request: onRequestReview
+  } = review
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
   const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
   const specialistId = activeSession
@@ -1442,7 +1446,7 @@ const ConversationPanel = ({
                                           type="button"
                                           className={composerIconButtonClassName}
                                           disabled={!canStartSideChat}
-                                          aria-label="More send options"
+                                          aria-label={t('More send options')}
                                           data-testid="running-side-chat-menu-trigger"
                                         >
                                           <ChevronDown className="size-3.5" aria-hidden="true" />
@@ -1451,7 +1455,7 @@ const ConversationPanel = ({
                                     </span>
                                   </TooltipTrigger>
                                   <TooltipContent side="top">
-                                    {sideChatDisabledReason ?? 'More send options'}
+                                    {sideChatDisabledReason ?? t('More send options')}
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
@@ -1467,7 +1471,7 @@ const ConversationPanel = ({
                                     aria-hidden="true"
                                   />
                                   <span>
-                                    Side chat
+                                    {t('Side chat')}
                                     {sideChatDisabledReason ? (
                                       <span className="block text-[11px] text-text-300">
                                         {sideChatDisabledReason}

@@ -224,7 +224,7 @@ const ClaudeIsolatedSignInModalBody = ({
                 they must run would be misleading — hide it and drop the now-orphaned "Step" numbering. */}
             {browserSignInPending ? null : (
               <div className="space-y-1.5">
-                <span className={dialogFormLabelClassName}>Step 1 · Run</span>
+                <span className={dialogFormLabelClassName}>{t('Step 1 · Run')}</span>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 truncate rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-xs">
                     {SETUP_TOKEN_COMMAND}
@@ -234,17 +234,17 @@ const ClaudeIsolatedSignInModalBody = ({
                     variant="outline"
                     size="sm"
                     onClick={() => void copyCommand()}
-                    aria-label="Copy command"
+                    aria-label={t('Copy command')}
                   >
                     {copied ? (
                       <>
                         <Check className="size-3.5" aria-hidden="true" />
-                        Copied
+                        {t('Copied')}
                       </>
                     ) : (
                       <>
                         <Copy className="size-3.5" aria-hidden="true" />
-                        Copy
+                        {t('Copy')}
                       </>
                     )}
                   </Button>
@@ -260,7 +260,7 @@ const ClaudeIsolatedSignInModalBody = ({
               </label>
               <Input
                 id="claude-setup-token-input"
-                aria-label="Claude setup token"
+                aria-label={t('Claude setup token')}
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
                 placeholder="sk-ant-..."

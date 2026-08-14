@@ -605,9 +605,9 @@ const ComposerAgentControlsMenu = ({
             </div>
             <div className={dialogBodyClassName}>
               <AlertDialog.Description className={dialogDescriptionClassName}>
-                The agent can run commands, change files, execute notebook code, and make network
-                requests without asking first. Authentication failures and execution errors can
-                still stop the run.
+                {t(
+                  'The agent can run commands, change files, execute notebook code, and make network requests without asking first. Authentication failures and execution errors can still stop the run.'
+                )}
               </AlertDialog.Description>
             </div>
             <div className={dialogFooterClassName}>

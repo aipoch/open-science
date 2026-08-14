@@ -11,6 +11,15 @@ import {
   isActivityActive
 } from './workspace-conversation-items'
 
+// Mock t function for tests
+const t = (key: string, options?: Record<string, unknown>): string => {
+  // Simple implementation that just handles interpolation
+  if (options && 'name' in options) {
+    return key.replace('{{name}}', String(options.name))
+  }
+  return key
+}
+
 const baseSession: ChatSession = {
   id: 'session-1',
   projectId: 'default',
@@ -437,7 +446,7 @@ describe('workspace conversation items', () => {
     })
     const session: ChatSession = { ...baseSession, activities: [activity] }
 
-    expect(formatActivityTitle(activity)).toBe('Compacting context')
+    expect(formatActivityTitle(activity, undefined, t)).toBe('Compacting context')
     expect(createConversationItems(session)).toEqual([
       expect.objectContaining({
         id: 'compaction-activity-context-compaction:1',
@@ -808,7 +817,9 @@ describe('workspace conversation items', () => {
           id: 'tool-read-1',
           status: 'completed',
           toolKind: 'read'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolRead')
 
@@ -818,7 +829,9 @@ describe('workspace conversation items', () => {
           id: 'tool-unknown-1',
           status: 'completed',
           toolKind: undefined
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: tool')
   })
@@ -831,7 +844,9 @@ describe('workspace conversation items', () => {
           title: 'ToolSearch',
           status: 'completed',
           toolKind: undefined
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Used tool: ToolSearch')
   })
@@ -843,7 +858,9 @@ describe('workspace conversation items', () => {
           id: 'tool-search-1',
           status: 'failed',
           toolKind: 'search'
-        })
+        }),
+        undefined,
+        t
       )
     ).toBe('Tool failed: ToolSearch')
 

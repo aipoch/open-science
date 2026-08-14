@@ -377,7 +377,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   <input
                     type="file"
                     multiple
-                    aria-label="Add reference files"
+                    aria-label={t('Add reference files')}
                     className="sr-only"
                     onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
                   />

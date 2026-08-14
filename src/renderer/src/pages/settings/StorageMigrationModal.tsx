@@ -264,7 +264,7 @@ const StorageMigrationModal = ({
                 </Button>
                 {!hasDelegatedWork ? (
                   <Button type="button" onClick={startMigration}>
-                    Interrupt and move
+                    {t('Interrupt and move')}
                   </Button>
                 ) : null}
               </div>

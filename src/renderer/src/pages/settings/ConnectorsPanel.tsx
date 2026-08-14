@@ -378,7 +378,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       >
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
           <SelectTrigger
-            aria-label="Filter connectors by group"
+            aria-label={t('Filter connectors by group')}
             className="w-full sm:col-start-1 sm:row-start-1"
           >
             <span>{t(FILTER_LABEL_KEYS[filter])}</span>
@@ -392,9 +392,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
           </SelectContent>
         </Select>
         <SettingsSearchInput
-          aria-label="Search connectors"
+          aria-label={t('Search connectors')}
           containerClassName="min-w-0 sm:col-start-2 sm:row-start-1"
-          placeholder="Search connectors…"
+          placeholder={t('Search connectors…')}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />

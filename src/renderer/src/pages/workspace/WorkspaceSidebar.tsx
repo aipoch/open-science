@@ -669,7 +669,7 @@ const WorkspaceSidebarView = ({
                   'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
                   sidebarInteractiveTransitionClassName
                 )}
-                aria-label="Settings"
+                aria-label={t('Settings')}
               >
                 <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
               </button>

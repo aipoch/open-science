@@ -123,7 +123,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                   aria-invalid={showServerError ? true : undefined}
                   aria-describedby="network-proxy-server-help"
                   value={draft.server ?? ''}
-                  placeholder="http://127.0.0.1:1086"
+                  placeholder={t('http://127.0.0.1:1086')}
                   onBlur={() => setServerTouched(true)}
                   onChange={(event) => {
                     const server = event.target.value
@@ -156,7 +156,7 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
                 id="network-proxy-bypass"
                 aria-label={t('Proxy bypass rules')}
                 value={draft.bypassRules ?? ''}
-                placeholder="*.internal.example, 10.0.0.0/8"
+                placeholder={t('*.internal.example, 10.0.0.0/8')}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, bypassRules: event.target.value }))
                 }

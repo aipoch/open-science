@@ -854,8 +854,8 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             </td>
                             {hasCondaFields ? (
                               <>
-                                <th className="py-2 pr-3 font-medium">Build</th>
-                                <th className="py-2 pr-3 font-medium">Channel</th>
+                                <th className="py-2 pr-3 font-medium">{t('Build')}</th>
+                                <th className="py-2 pr-3 font-medium">{t('Channel')}</th>
                               </>
                             ) : null}
                           </tr>

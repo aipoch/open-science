@@ -3,7 +3,7 @@
 
 // Python's two-snake logo (blue upper, yellow lower).
 export const PythonIcon = (): React.JSX.Element => (
-  <svg viewBox="0 0 256 255" className="size-full" role="img" aria-label="Python">
+  <svg viewBox="0 0 256 255" className="size-full" role="img" aria-label={t('Python')}>
     <defs>
       <linearGradient id="py-blue" x1="12.96%" y1="12.04%" x2="79.64%" y2="78.2%">
         <stop offset="0%" stopColor="#387EB8" />

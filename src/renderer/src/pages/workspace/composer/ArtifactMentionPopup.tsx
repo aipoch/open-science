@@ -283,7 +283,7 @@ export const ArtifactMentionPopup = ({
       <ul
         id={resolvedListboxId}
         role="listbox"
-        aria-label="Artifact suggestions"
+        aria-label={t('Artifact suggestions')}
         className="overflow-y-auto max-h-[min(45vh,18rem)]"
       >
         {uploadMatches.length > 0 ? (

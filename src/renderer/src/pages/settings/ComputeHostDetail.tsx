@@ -261,11 +261,11 @@ export function ComputeHostDetail({
               <h3 className="truncate text-lg font-semibold text-foreground">{host.displayName}</h3>
               {status === 'connected' ? (
                 <Badge className="bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">
-                  Connected
+                  {t('Connected')}
                 </Badge>
               ) : status === 'failed' ? (
                 <Badge className="bg-status-failure-surface text-status-failure-foreground dark:bg-status-failure-dark-surface/40 dark:text-status-failure-dark-foreground">
-                  Probe failed
+                  {t('Probe failed')}
                 </Badge>
               ) : (
                 <Badge variant="outline">{t('Not probed')}</Badge>
@@ -315,7 +315,7 @@ export function ComputeHostDetail({
               aria-hidden="true"
             />
             <span className="text-sm font-semibold text-status-failure-foreground dark:text-status-failure-dark-emphasis">
-              Probe failed
+              {t('Probe failed')}
             </span>
             <Button
               type="button"
@@ -323,7 +323,7 @@ export function ComputeHostDetail({
               size="icon-sm"
               onClick={() => void handleProbe()}
               disabled={isProbing}
-              aria-label="Retry probe"
+              aria-label={t('Retry probe')}
               className="ml-auto text-status-failure-accent hover:bg-status-failure-surface dark:text-status-failure-dark-foreground"
             >
               <RefreshCw

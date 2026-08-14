@@ -219,10 +219,12 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
       ) : null}
 
       {!isConfiguring ? (
-        <section aria-label="Proxy">
-          <h3 className="mb-1 text-sm font-semibold text-foreground">Proxy</h3>
+        <section aria-label={t('Proxy')}>
+          <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Proxy')}</h3>
           <p className="mb-3 text-xs text-muted-foreground">
-            How Open Science, ACP agents, notebook runtimes, and installers reach the internet.
+            {t(
+              'How Open Science, ACP agents, notebook runtimes, and installers reach the internet.'
+            )}
           </p>
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
@@ -249,15 +251,15 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                 onClick={() => onNavigate({ kind: 'proxy' })}
                 className={actionButtonClassName}
               >
-                Configure proxy
+                {t('Configure proxy')}
               </button>
             </div>
           </div>
         </section>
       ) : null}
 
-      <section aria-label="Package mirror">
-        <h3 className="mb-1 text-sm font-semibold text-foreground">Package mirror</h3>
+      <section aria-label={t('Package mirror')}>
+        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Package mirror')}</h3>
         <p className="mb-3 text-xs text-muted-foreground">
           {t(
             'Where the notebook environment fetches conda and Python packages from when installing or updating.'
@@ -282,7 +284,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                   id="mirror-conda-channel"
                   aria-label={t('Conda channel mirror')}
                   value={draft.condaChannel ?? ''}
-                  placeholder="https://mirrors.example.com/conda-forge/"
+                  placeholder={t('https://mirrors.example.com/conda-forge/')}
                   onChange={(event) =>
                     setDraft((current) => ({ ...current, condaChannel: event.target.value }))
                   }
@@ -297,7 +299,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                   id="mirror-pypi-index"
                   aria-label={t('Python package index (pip)')}
                   value={draft.pypiIndex ?? ''}
-                  placeholder="https://mirrors.example.com/pypi/simple"
+                  placeholder={t('https://mirrors.example.com/pypi/simple')}
                   onChange={(event) =>
                     setDraft((current) => ({ ...current, pypiIndex: event.target.value }))
                   }
@@ -313,7 +315,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                   id="mirror-ca-bundle"
                   aria-label={t('CA bundle path')}
                   value={draft.caBundle ?? ''}
-                  placeholder="/path/to/corp-ca-bundle.pem"
+                  placeholder={t('/path/to/corp-ca-bundle.pem')}
                   onChange={(event) =>
                     setDraft((current) => ({ ...current, caBundle: event.target.value }))
                   }

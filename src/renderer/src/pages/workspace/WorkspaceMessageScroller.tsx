@@ -27,6 +27,7 @@ import {
   type ReactNode
 } from 'react'
 import { ArrowDownIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
@@ -294,6 +295,7 @@ const WorkspaceMessageScrollerImpl = ({
   handoffLifecycleSource,
   onRetryHandoff
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
   const statusAllowsScrollToFirstMessage = Boolean(
@@ -869,7 +871,7 @@ const WorkspaceMessageScrollerImpl = ({
           />
           <MessageScrollerViewport
             ref={messageScrollerViewportRef}
-            aria-label="Conversation"
+            aria-label={t('Conversation')}
             onScroll={handleMessageScrollerScroll}
           >
             {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
@@ -1171,7 +1173,7 @@ const WorkspaceMessageScrollerImpl = ({
             <MessageScrollerButton
               ref={scrollToFirstMessageButtonRef}
               direction="start"
-              aria-label="Scroll to first message"
+              aria-label={t('Scroll to first message')}
               aria-hidden="true"
               data-revealed="false"
               tabIndex={-1}
@@ -1179,7 +1181,7 @@ const WorkspaceMessageScrollerImpl = ({
               className="z-20 min-h-11 gap-1 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none"
             >
               <ArrowDownIcon aria-hidden="true" />
-              <span>First message</span>
+              <span>{t('First message')}</span>
             </MessageScrollerButton>
           ) : null}
 
@@ -1191,7 +1193,9 @@ const WorkspaceMessageScrollerImpl = ({
             className="sr-only"
           >
             {terminalAnnouncement?.status === 'complete' ? (
-              <span key={`${terminalAnnouncement.messageId}:complete`}>Response completed.</span>
+              <span key={`${terminalAnnouncement.messageId}:complete`}>
+                {t('Response completed.')}
+              </span>
             ) : null}
           </div>
           <div
@@ -1201,7 +1205,7 @@ const WorkspaceMessageScrollerImpl = ({
             className="sr-only"
           >
             {terminalAnnouncement?.status === 'error' ? (
-              <span key={`${terminalAnnouncement.messageId}:error`}>Response failed.</span>
+              <span key={`${terminalAnnouncement.messageId}:error`}>{t('Response failed.')}</span>
             ) : null}
           </div>
 

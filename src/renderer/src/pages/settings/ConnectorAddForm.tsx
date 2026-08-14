@@ -377,11 +377,11 @@ export function ConnectorAddForm({
         {mode === 'local' ? (
           <div data-slot="settings-editor-field" className={fieldClassName}>
             <label className={fieldLabelClassName} htmlFor="connector-command">
-              Command
+              {t('Command')}
               <RequiredMark />
             </label>
             <Select value={commandChoice} onValueChange={setCommandChoice}>
-              <SelectTrigger aria-label="Command">
+              <SelectTrigger aria-label={t('Command')}>
                 <span>
                   {t(
                     COMMAND_OPTIONS.find((o) => o.value === commandChoice)?.labelKey ??
@@ -399,7 +399,7 @@ export function ConnectorAddForm({
             </Select>
             {commandChoice === 'other' ? (
               <Input
-                aria-label="Custom command"
+                aria-label={t('Custom command')}
                 value={customCommand}
                 placeholder="/absolute/path/to/executable"
                 className="font-mono"
@@ -410,12 +410,12 @@ export function ConnectorAddForm({
         ) : (
           <div data-slot="settings-editor-field" className={fieldClassName}>
             <label className={fieldLabelClassName} htmlFor="connector-url">
-              Server URL
+              {t('Server URL')}
               <RequiredMark />
             </label>
             <Input
               id="connector-url"
-              aria-label="Server URL"
+              aria-label={t('Server URL')}
               value={url}
               placeholder="https://example.com/mcp"
               className="font-mono"
@@ -505,7 +505,7 @@ export function ConnectorAddForm({
                       aria-label={t('Arguments')}
                       value={argsText}
                       rows={2}
-                      placeholder="-y @modelcontextprotocol/server-memory"
+                      placeholder={t('-y @modelcontextprotocol/server-memory')}
                       className="resize-y font-mono text-[13px]"
                       onChange={(event) => setArgsText(event.target.value)}
                     />

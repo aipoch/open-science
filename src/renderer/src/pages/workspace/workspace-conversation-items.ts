@@ -156,7 +156,11 @@ const formatActivityToolName = (activity: ToolActivity): string => {
 }
 
 // Builds the status-sensitive text for non-search activity chips.
-const formatActivityTitle = (activity: ToolActivity, phase?: ToolExecutionPhase): string => {
+const formatActivityTitle = (
+  activity: ToolActivity,
+  phase: ToolExecutionPhase | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string => {
   if (phase === 'closed') return `Request ended: ${formatActivityToolName(activity)}`
 
   if (isContextCompactionActivity(activity)) {
@@ -183,16 +187,16 @@ const formatActivityTitle = (activity: ToolActivity, phase?: ToolExecutionPhase)
   if (phase === 'declined') return `Declined by you: ${toolName}`
   if (phase === 'awaiting-approval') return `Waiting for your approval: ${toolName}`
   if (phase === 'prepared') return `Code shown: ${toolName}`
-  if (phase === 'limit-reached') return `Execution limit reached: ${toolName}`
-  if (phase === 'cancelled') return `Cancelled: ${toolName}`
-  if (phase === 'interrupted') return `Interrupted: ${toolName}`
-  if (phase === 'failed') return `Tool failed: ${toolName}`
-  if (phase === 'completed') return `Used tool: ${toolName}`
-  if (phase === 'executing') return `Using tool: ${toolName}`
-  if (activity.status === 'failed') return `Tool failed: ${toolName}`
-  if (activity.status === 'completed') return `Used tool: ${toolName}`
+  if (phase === 'limit-reached') return t('Execution limit reached: {{name}}', { name: toolName })
+  if (phase === 'cancelled') return t('Cancelled: {{name}}', { name: toolName })
+  if (phase === 'interrupted') return t('Interrupted: {{name}}', { name: toolName })
+  if (phase === 'failed') return t('Tool failed: {{name}}', { name: toolName })
+  if (phase === 'completed') return t('Used tool: {{name}}', { name: toolName })
+  if (phase === 'executing') return t('Using tool: {{name}}', { name: toolName })
+  if (activity.status === 'failed') return t('Tool failed: {{name}}', { name: toolName })
+  if (activity.status === 'completed') return t('Used tool: {{name}}', { name: toolName })
 
-  return `Using tool: ${toolName}`
+  return t('Using tool: {{name}}', { name: toolName })
 }
 
 // Projects persisted chat messages and transient tool activities into one sortable transcript list.

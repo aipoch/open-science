@@ -123,7 +123,7 @@ const PageLoadError = ({
   >
     <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
     <Button type="button" variant="outline" className="h-7 shrink-0 px-2.5" onClick={onRetry}>
-      Retry
+      {t('Retry')}
     </Button>
   </div>
 )
@@ -623,7 +623,7 @@ const ProjectFilesViewContent = ({
                       <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent className="z-[70]">Clear file search</TooltipContent>
+                  <TooltipContent className="z-[70]">{t('Clear file search')}</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             ) : null}

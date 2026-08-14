@@ -171,13 +171,15 @@ const LocationStep = ({
       <Separator className="bg-border-200" />
 
       <CardContent className="flex-1 px-4 py-5 sm:px-6">
-        <section aria-label="Choose data location" className="space-y-5">
+        <section aria-label={t('Choose data location')} className="space-y-5">
           {dataRootError ? (
             <div
               className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive sm:flex-row sm:items-center sm:justify-between"
               role="alert"
             >
-              <span>Could not load the default data location: {dataRootError}</span>
+              <span>
+                {t('Could not load the default data location:')} {dataRootError}
+              </span>
               <Button
                 type="button"
                 variant="link"
@@ -185,7 +187,7 @@ const LocationStep = ({
                 onClick={onRetryDataRootInfo}
                 className="h-auto self-start p-0 text-destructive hover:text-text-000 sm:self-auto"
               >
-                Retry
+                {t('Retry')}
               </Button>
             </div>
           ) : null}
@@ -195,16 +197,16 @@ const LocationStep = ({
               className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
               role="alert"
             >
-              Could not finish setting up storage: {relaunchError} You can retry or keep the default
-              location.
+              {t('Could not finish setting up storage:')} {relaunchError}{' '}
+              {t('You can retry or keep the default location.')}
             </p>
           ) : null}
 
           <div className="rounded-xl border border-border-200 p-4">
-            <span className="text-xs font-medium text-text-100">Location</span>
+            <span className="text-xs font-medium text-text-100">{t('Location')}</span>
             <div className="mt-1 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
               <p
-                aria-label="Data location path"
+                aria-label={t('Data location path')}
                 className="min-w-0 flex-1 truncate rounded-lg border border-border-200 bg-bg-000 px-2.5 py-1.5 font-mono text-xs"
               >
                 {chosenDataRoot || dataRootInfo?.dataRoot || ''}

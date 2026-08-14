@@ -578,19 +578,19 @@ const AppContent = (): React.JSX.Element | null => {
         <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
         {sessionPersistence.loadError ? (
           <SessionPersistenceAlert
-            title="Saved conversations could not be loaded"
+            title={t('Saved conversations could not be loaded')}
             message={sessionPersistence.loadError}
             onRetry={sessionPersistence.retryLoad}
           />
         ) : sessionPersistence.writeError ? (
           <SessionPersistenceAlert
-            title="Conversation storage needs attention"
+            title={t('Conversation storage needs attention')}
             message={sessionPersistence.writeError}
             onRetry={sessionPersistence.retryWrites}
           />
         ) : sessionPersistence.loadWarning ? (
           <SessionPersistenceAlert
-            title="Saved conversation data was damaged"
+            title={t('Saved conversation data was damaged')}
             message={sessionPersistence.loadWarning}
             variant="warning"
             onDismiss={sessionPersistence.dismissLoadWarning}

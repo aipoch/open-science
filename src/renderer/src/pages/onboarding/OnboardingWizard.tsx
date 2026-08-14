@@ -186,7 +186,7 @@ const OnboardingWizard = ({
           className="mt-8 grid grid-cols-1 gap-6 md:mt-12 md:grid-cols-[240px_minmax(0,1fr)] md:gap-10"
         >
           <section aria-labelledby="onboarding-introduction-title" className="md:pt-2">
-            <p className="text-[11px] font-medium text-muted-foreground">FIRST-TIME SETUP</p>
+            <p className="text-[11px] font-medium text-muted-foreground">{t('FIRST-TIME SETUP')}</p>
             <h1
               id="onboarding-introduction-title"
               className="mt-2 font-serif text-[28px] leading-[1.15] font-medium text-text-000"

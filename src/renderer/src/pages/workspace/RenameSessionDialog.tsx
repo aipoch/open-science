@@ -75,13 +75,13 @@ const RenameSessionDialog = ({
             </div>
             <div className={`${dialogBodyClassName} space-y-3`}>
               <Dialog.Description className={dialogDescriptionClassName}>
-                Update the name shown in the session list.
+                {t('Update the name shown in the session list.')}
               </Dialog.Description>
               <label
                 className={`${dialogFormLabelClassName} sr-only`}
                 htmlFor="rename-session-name"
               >
-                Session name
+                {t('Session name')}
               </label>
               <Input
                 id="rename-session-name"

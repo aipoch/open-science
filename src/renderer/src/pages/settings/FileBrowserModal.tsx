@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
 import {
@@ -166,6 +167,7 @@ function DetailPanel({
   activeProjectId,
   onClose
 }: DetailPanelProps): React.JSX.Element {
+  const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
   const [actionStatus, setActionStatus] = useState<ActionStatus>({ kind: 'idle' })
   const remoteAbsPath = `${resolvedDir.replace(/\/$/, '')}/${entry.name}`
@@ -212,12 +214,12 @@ function DetailPanel({
     <div className="flex w-52 shrink-0 flex-col border-l border-border">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-          Details
+          {t('Details')}
         </span>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close detail panel"
+          aria-label={t('Close detail panel')}
           className="rounded p-0.5 text-muted-foreground hover:bg-accent"
         >
           <X className="size-3.5" />
@@ -238,7 +240,9 @@ function DetailPanel({
 
         {/* No preview placeholder */}
         <div className="rounded border border-dashed border-border bg-muted/30 px-3 py-4 text-center">
-          <p className="text-xs text-muted-foreground">No preview · {formatSize(entry.size)}</p>
+          <p className="text-xs text-muted-foreground">
+            {t('No preview ·')} {formatSize(entry.size)}
+          </p>
         </div>
 
         {/* Action status banner */}
@@ -251,7 +255,7 @@ function DetailPanel({
                 className="underline text-xs"
                 onClick={() => handleReveal(actionStatus.filePath!)}
               >
-                Show in Finder
+                {t('Show in Finder')}
               </button>
             )}
           </div>
@@ -273,7 +277,7 @@ function DetailPanel({
           className="w-full gap-1.5 text-xs"
           disabled={isLoading}
           onClick={() => void handleDownload()}
-          aria-label="Download file to OS Downloads folder"
+          aria-label={t('Download file to OS Downloads folder')}
         >
           <Download className="size-3.5" />
           {actionStatus.kind === 'loading' && actionStatus.action === 'download'
@@ -292,11 +296,11 @@ function DetailPanel({
             size="sm"
             className="w-full gap-1.5 text-xs"
             disabled
-            title="Coming soon — remote import to project artifacts is not yet available"
-            aria-label="Add file to current project as artifact (coming soon)"
+            title={t('Coming soon — remote import to project artifacts is not yet available')}
+            aria-label={t('Add file to current project as artifact (coming soon)')}
           >
             <FolderOpen className="size-3.5" />
-            Add to project
+            {t('Add to project')}
           </Button>
         )}
 
@@ -307,7 +311,7 @@ function DetailPanel({
           size="sm"
           className="w-full gap-1.5 text-xs"
           onClick={() => void copyPath()}
-          aria-label="Copy remote absolute path to clipboard"
+          aria-label={t('Copy remote absolute path to clipboard')}
         >
           <ClipboardCopy className="size-3.5" />
           {copied ? 'Copied!' : 'Copy path'}
@@ -342,6 +346,7 @@ export function FileBrowserModal({
   initialProviderId,
   initialPath
 }: FileBrowserModalProps): React.JSX.Element | null {
+  const { t } = useTranslation()
   const hosts = useComputeStore((s) => s.hosts)
   const probeHost = useComputeStore((s) => s.probeHost)
   // Active project for "Add to project" — derived from navigation state.
@@ -620,12 +625,12 @@ export function FileBrowserModal({
           className={dialogPanelClassName(
             'z-[70] flex w-[min(860px,calc(100vw-2rem))] h-[min(600px,calc(100vh-4rem))] flex-col overflow-hidden p-0'
           )}
-          aria-label="Remote file browser"
+          aria-label={t('Remote file browser')}
         >
           {/* Header: host chips + close */}
           <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mr-1">
-              Host
+              {t('Host')}
             </span>
             {hosts.map((h) => (
               <button
@@ -652,7 +657,12 @@ export function FileBrowserModal({
             ))}
             <div className="flex-1" />
             <Dialog.Close asChild>
-              <Button type="button" variant="ghost" size="icon-sm" aria-label="Close file browser">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close file browser')}
+              >
                 <X className="size-4" />
               </Button>
             </Dialog.Close>
@@ -667,7 +677,7 @@ export function FileBrowserModal({
               size="icon-sm"
               disabled={history.length === 0}
               onClick={handleBack}
-              aria-label="Go back"
+              aria-label={t('Go back')}
             >
               <ArrowLeft className="size-4" />
             </Button>
@@ -678,7 +688,7 @@ export function FileBrowserModal({
               size="icon-sm"
               disabled={isAtRoot()}
               onClick={handleUp}
-              aria-label="Go up one level"
+              aria-label={t('Go up one level')}
             >
               <ArrowUp className="size-4" />
             </Button>
@@ -695,14 +705,14 @@ export function FileBrowserModal({
                 aria-expanded={gotoOpen}
               >
                 <MapPin className="size-3.5" />
-                Go to
+                {t('Go to')}
                 <ChevronDown className="size-3.5 opacity-60" />
               </Button>
               {gotoOpen && (
                 <div
                   className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-lg border border-border bg-popover p-1 shadow-md"
                   role="listbox"
-                  aria-label="Go-to locations"
+                  aria-label={t('Go-to locations')}
                 >
                   {goToItems.map((item) => (
                     <button
@@ -725,7 +735,7 @@ export function FileBrowserModal({
                   {goToItems.length > 0 && <div className="my-1 border-t border-border" />}
                   {bookmarksState.kind === 'loading' && (
                     <p className={'px-2 py-1.5 text-xs text-muted-foreground'}>
-                      Loading bookmarks...
+                      {t('Loading bookmarks...')}
                     </p>
                   )}
                   {/* Pin current folder */}
@@ -736,14 +746,14 @@ export function FileBrowserModal({
                     onClick={() => void handlePinCurrent()}
                   >
                     <MapPin className="size-3.5 text-muted-foreground" />
-                    <span>Pin current folder</span>
+                    <span>{t('Pin current folder')}</span>
                   </button>
                   {/* Bookmarks */}
                   {bookmarks.length > 0 && (
                     <>
                       <div className="my-1 border-t border-border" />
                       <p className="px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        Bookmarks
+                        {t('Bookmarks')}
                       </p>
                       {bookmarks.map((bm) => (
                         <div key={bm} className="flex items-center gap-1">
@@ -786,7 +796,7 @@ export function FileBrowserModal({
                 }}
                 onBlur={() => setAddressEditing(false)}
                 className="h-7 w-full rounded border border-border bg-muted/40 px-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                aria-label="Current directory path"
+                aria-label={t('Current directory path')}
                 spellCheck={false}
               />
             </form>
@@ -797,7 +807,7 @@ export function FileBrowserModal({
               variant="ghost"
               size="icon-sm"
               onClick={handleRefresh}
-              aria-label="Refresh directory listing"
+              aria-label={t('Refresh directory listing')}
             >
               <RefreshCw className="size-4" />
             </Button>
@@ -838,7 +848,7 @@ export function FileBrowserModal({
                       className="text-xs"
                       onClick={handleRefresh}
                     >
-                      Retry
+                      {t('Retry')}
                     </Button>
                     {roots?.home && (
                       <Button
@@ -848,7 +858,7 @@ export function FileBrowserModal({
                         className="text-xs"
                         onClick={() => void navigate(roots.scratch ?? roots.home ?? '~')}
                       >
-                        Go to home
+                        {t('Go to home')}
                       </Button>
                     )}
                   </div>
@@ -860,23 +870,23 @@ export function FileBrowserModal({
                 <div className="flex flex-1 items-center justify-center">
                   <RefreshCw
                     className="size-5 animate-spin text-muted-foreground"
-                    aria-label="Loading"
+                    aria-label={t('Loading')}
                   />
                 </div>
               )}
 
               {/* Entry list */}
               {browserState.kind === 'ok' && (
-                <div role="listbox" aria-label="Directory contents">
+                <div role="listbox" aria-label={t('Directory contents')}>
                   {/* Header row */}
                   <div className="grid grid-cols-[1fr_80px_80px] border-b border-border bg-muted/30 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    <span>Name</span>
-                    <span className="text-right">Size</span>
-                    <span className="text-right">Modified</span>
+                    <span>{t('Name')}</span>
+                    <span className="text-right">{t('Size')}</span>
+                    <span className="text-right">{t('Modified')}</span>
                   </div>
                   {listing?.entries.length === 0 && (
                     <p className="py-6 text-center text-xs text-muted-foreground">
-                      Empty directory
+                      {t('Empty directory')}
                     </p>
                   )}
                   {listing?.entries.map((entry) => (
@@ -920,7 +930,7 @@ export function FileBrowserModal({
                   ))}
                   {listing?.truncated && (
                     <p className="border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
-                      Showing first 5,000 entries. Navigate into a subdirectory to see more.
+                      {t('Showing first 5,000 entries. Navigate into a subdirectory to see more.')}
                     </p>
                   )}
                 </div>

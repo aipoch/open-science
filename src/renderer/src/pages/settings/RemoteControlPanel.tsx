@@ -255,7 +255,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                 onClick={retryInitialLoad}
               >
                 <RefreshCw className="size-3.5" aria-hidden="true" />
-                Try again
+                {t('Try again')}
               </Button>
             </div>
           </div>
@@ -571,7 +571,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                           className="mt-2 text-xs text-destructive"
                           data-testid="remote-link-copy-error"
                         >
-                          Could not copy the browser link. Select it and copy it manually.
+                          {t('Could not copy the browser link. Select it and copy it manually.')}
                         </div>
                       ) : null}
                       <span

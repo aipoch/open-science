@@ -1,5 +1,6 @@
 import type { ToolActivity } from '@/stores/session-store'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { useTranslation } from 'react-i18next'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { formatNotebookRunFigureMeta } from './notebook-run-figures'
@@ -34,10 +35,12 @@ type WorkspaceToolDetailsRowProps = {
 const sectionLabelClassName = 'text-[11px] font-medium uppercase tracking-wide text-text-300'
 
 // Renders a code block plus its optional truncation note.
-const renderCodeBody = (section: ToolCodeSection): React.JSX.Element => (
+const renderCodeBody = (section: ToolCodeSection, t: (key: string) => string): React.JSX.Element => (
   <>
     <WorkspaceToolCodeBlock code={section.text} language={section.language} />
-    {section.truncated ? <div className="text-[11px] text-text-300">Output truncated</div> : null}
+    {section.truncated ? (
+      <div className="text-[11px] text-text-300">{t('Output truncated')}</div>
+    ) : null}
   </>
 )
 
@@ -90,47 +93,6 @@ const WorkspaceToolImageOutput = ({
   )
 }
 
-// Renders one detail section as a diff, an image preview, a collapsible code panel, or a plain
-// code block.
-const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
-  if (section.kind === 'diff') {
-    return (
-      <div key={index} className="space-y-1">
-        <div className={sectionLabelClassName}>{section.label}</div>
-        <WorkspaceToolDiffBlock section={section} />
-      </div>
-    )
-  }
-
-  if (section.kind === 'image') {
-    return (
-      <div key={index} className="space-y-1">
-        <div className={sectionLabelClassName}>{section.label}</div>
-        <WorkspaceToolImageOutput section={section} />
-      </div>
-    )
-  }
-
-  // Collapsible sections (e.g. notebook output) start closed so the code stays the focus.
-  if (section.collapsible) {
-    return (
-      <details key={index} className="space-y-1">
-        <summary className={`${sectionLabelClassName} cursor-pointer select-none`}>
-          {section.label}
-        </summary>
-        <div className="mt-1">{renderCodeBody(section)}</div>
-      </details>
-    )
-  }
-
-  return (
-    <div key={index} className="space-y-1">
-      <div className={sectionLabelClassName}>{section.label}</div>
-      {renderCodeBody(section)}
-    </div>
-  )
-}
-
 // Renders a non-search tool call with an expandable panel showing input, output, or diffs.
 const WorkspaceToolDetailsRow = ({
   activity,
@@ -140,8 +102,48 @@ const WorkspaceToolDetailsRow = ({
   isExpanded,
   onToggle
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
+  const { t } = useTranslation()
   const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun) : undefined
   const notebookRunMeta = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
+
+  const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
+    if (section.kind === 'diff') {
+      return (
+        <div key={index} className="space-y-1">
+          <div className={sectionLabelClassName}>{section.label}</div>
+          <WorkspaceToolDiffBlock section={section} />
+        </div>
+      )
+    }
+
+    if (section.kind === 'image') {
+      return (
+        <div key={index} className="space-y-1">
+          <div className={sectionLabelClassName}>{section.label}</div>
+          <WorkspaceToolImageOutput section={section} />
+        </div>
+      )
+    }
+
+    // Collapsible sections (e.g. notebook output) start closed so the code stays the focus.
+    if (section.collapsible) {
+      return (
+        <details key={index} className="space-y-1">
+          <summary className={`${sectionLabelClassName} cursor-pointer select-none`}>
+            {section.label}
+          </summary>
+          <div className="mt-1">{renderCodeBody(section, t)}</div>
+        </details>
+      )
+    }
+
+    return (
+      <div key={index} className="space-y-1">
+        <div className={sectionLabelClassName}>{section.label}</div>
+        {renderCodeBody(section, t)}
+      </div>
+    )
+  }
 
   return (
     <WorkspaceToolActivityRowButton

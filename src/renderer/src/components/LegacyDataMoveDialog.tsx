@@ -119,8 +119,9 @@ const LegacyDataMoveDialog = ({
 
           <div className={cn(dialogBodyClassName, 'space-y-4')}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              Your research data is in a hidden folder. Moving it into a visible OpenScience folder
-              makes it easy to find and back up — your settings and history stay where they are.
+              {t(
+                'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.'
+              )}
             </AlertDialog.Description>
             <div>
               <span className="text-xs font-medium text-text-100">{t('Current (hidden)')}</span>

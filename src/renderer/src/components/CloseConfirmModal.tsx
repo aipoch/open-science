@@ -146,7 +146,7 @@ export const CloseConfirmModal = ({
           <div className="mt-4 flex justify-end gap-2">
             {hasDelegatedWork && isQuitVariant ? (
               <AlertDialog.Cancel asChild>
-                <Button type="button">Return to tasks</Button>
+                <Button type="button">{t('Return to tasks')}</Button>
               </AlertDialog.Cancel>
             ) : isQuitVariant ? (
               <AlertDialog.Cancel asChild>
@@ -161,7 +161,7 @@ export const CloseConfirmModal = ({
             )}
             {!hasDelegatedWork ? (
               <Button type="button" onClick={() => reply('quit')}>
-                Quit
+                {t('Quit')}
               </Button>
             ) : null}
           </div>

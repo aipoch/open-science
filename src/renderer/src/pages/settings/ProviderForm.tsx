@@ -381,7 +381,7 @@ const ProviderForm = ({
               aria-label={t('Base URL')}
               value={value.baseUrl}
               disabled={disabled}
-              placeholder="https://gateway.example"
+              placeholder={t('https://gateway.example')}
               onChange={(event) => onChange({ baseUrl: event.target.value })}
             />
             {errors.baseUrl ? (
