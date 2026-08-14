@@ -507,7 +507,7 @@ const AppContent = (): React.JSX.Element | null => {
               onClick={() => void retrySettingsInitialization()}
               className="mt-4"
             >
-              {isSettingsLoading ? 'Retrying…' : 'Retry'}
+              {isSettingsLoading ? t('Retrying…') : t('Retry')}
             </Button>
           </div>
         </main>
