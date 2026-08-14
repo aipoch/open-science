@@ -220,7 +220,7 @@ export const runReviewAssessment = async (
     })
     reviewerSession = built.session
     const backend = acpRuntime.captureBackend?.()
-    const runtimeModel = backend?.context.model ?? backend?.session.model
+    const runtimeModel = backend?.session.model ?? backend?.context.model
     if (runtimeModel && runtimeModel !== review.model) {
       review = await runReviewMutation(runSessionMutation, () =>
         reviewRepository.updateReview(review.id, { model: runtimeModel })

@@ -152,13 +152,19 @@ const makeRepository = (): ReviewRepository =>
     })
   }) as unknown as ReviewRepository
 
-const runtime = (runtimeModel?: string): AcpRuntime =>
+const runtime = (contextModel?: string, sessionModel?: string): AcpRuntime =>
   ({
-    ...(runtimeModel
+    ...(contextModel || sessionModel
       ? {
           captureBackend: () => ({
-            context: { model: runtimeModel, supportsImageInput: false },
-            session: { modelRequired: false }
+            context: {
+              ...(contextModel ? { model: contextModel } : {}),
+              supportsImageInput: false
+            },
+            session: {
+              ...(sessionModel ? { model: sessionModel } : {}),
+              modelRequired: false
+            }
           })
         }
       : {}),
@@ -271,6 +277,20 @@ describe('review assessment owner', () => {
     expect(updates).toContainEqual(
       expect.objectContaining({ lifecycle: 'running', model: 'actual-runtime-model' })
     )
+  })
+
+  it('records the selected session model instead of the context tokenization model', async () => {
+    const reviewRepository = makeRepository()
+
+    await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      acpRuntime: runtime('tokenization-model', 'selected-runtime-model'),
+      mode: 'initial'
+    })
+
+    expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
+      model: 'selected-runtime-model'
+    })
   })
 
   it('disposes a built session when the pinned model cannot be persisted', async () => {

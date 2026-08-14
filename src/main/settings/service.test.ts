@@ -5388,6 +5388,33 @@ describe('SettingsService: Reviewer model', () => {
     })
   })
 
+  it('rejects a fixed Reviewer provider whose latest validation failed', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Failing Reviewer gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://reviewer.example/v1',
+      model: 'reviewer-model',
+      key: 'secret'
+    })
+    const provider = created.providers.find(
+      (candidate) => candidate.name === 'Failing Reviewer gateway'
+    )!
+    const fixed = {
+      mode: 'fixed' as const,
+      providerId: provider.id,
+      model: 'reviewer-model',
+      reasoningEffort: 'high' as const
+    }
+    await service.setReviewerModel(fixed)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401 }))
+    await service.validateProvider({ providerId: provider.id })
+
+    await expect(service.admitReviewerExecutionModel()).rejects.toThrow('validation failed')
+    expect((await service.getSettingsView()).reviewerModel).toEqual(fixed)
+  })
+
   it('preserves a fixed Reviewer selection when its provider is deleted', async () => {
     const service = createService()
     const created = await service.upsertProvider({

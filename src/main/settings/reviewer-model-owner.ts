@@ -1,4 +1,4 @@
-import type { ReviewerModelConfiguration } from '../../shared/settings'
+import { providerValidationFailed, type ReviewerModelConfiguration } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework } from '../agent-framework'
 import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend-resolver'
 import type { ProviderAccountsModule } from './provider-accounts'
@@ -26,10 +26,7 @@ class ReviewerModelOwner {
     await this.options.repository.setReviewerModel(configuration, (settings, candidate) => {
       if (candidate.mode === 'inherit') return
       const provider = settings.providers.find((entry) => entry.id === candidate.providerId)
-      const validationFailed =
-        provider?.lastValidationFailure !== undefined &&
-        (provider.lastValidatedAt === undefined ||
-          provider.lastValidationFailure.at >= provider.lastValidatedAt)
+      const validationFailed = provider ? providerValidationFailed(provider) : false
       if (!provider || validationFailed) {
         throw new Error(
           'The selected Reviewer model is no longer available. Refresh the model catalog.'
@@ -67,6 +64,10 @@ class ReviewerModelOwner {
       return Object.freeze({
         model: settings.activeModel ?? activeProvider?.model ?? ''
       })
+    }
+    const provider = settings.providers.find((entry) => entry.id === configuration.providerId)
+    if (provider && providerValidationFailed(provider)) {
+      throw new Error('The configured Reviewer model provider validation failed.')
     }
     const { frameworkId } = await this.options.backendResolver.captureConfiguredSelection()
     return Object.freeze({

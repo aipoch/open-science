@@ -150,7 +150,7 @@ class ReviewerModelRuntimeOwner {
     })
     this.activeRuntimes.add(active)
     return Object.freeze({
-      model: backend.contextUsageModel ?? captured.model,
+      model: captured.model,
       reviewerAcpRuntime: runtime,
       release: async () => {
         if (!this.activeRuntimes.has(active)) return

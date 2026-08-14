@@ -53,7 +53,7 @@ describe('ReviewerModelRuntimeOwner', () => {
         modelRoute,
         executablePath: '/agent',
         env: {},
-        contextUsageModel: target.model.id
+        contextUsageModel: `${target.model.id}-tokenizer`
       } as ResolvedAgentBackend
       const resolveTarget = vi.fn(async () => backend)
       const owner = new ReviewerModelRuntimeOwner({
