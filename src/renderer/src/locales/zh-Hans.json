@@ -2108,6 +2108,7 @@
   "{{count}} remote jobs_other": "{{count}} 个远程任务",
   "{{count}} repl": "{{count}} repl",
   "{{count}} results_other": "{{count}} 条结果",
+  "1 result": "1 条结果",
   "{{count}} running remote jobs_other": "{{count}} 个远程任务正在运行",
   "{{count}} running · {{elapsed}}": "{{count}} 个运行中 · {{elapsed}}",
   "{{count}} running_other": "{{count}} 个正在运行",

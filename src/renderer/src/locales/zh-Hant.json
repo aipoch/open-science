@@ -2099,6 +2099,7 @@
   "{{count}} remote jobs_other": "{{count}} 個遠端任務",
   "{{count}} repl": "{{count}} repl",
   "{{count}} results_other": "{{count}} 筆結果",
+  "1 result": "1 筆結果",
   "{{count}} running remote jobs_other": "{{count}} 個遠端任務正在執行",
   "{{count}} running · {{elapsed}}": "{{count}} 個執行中 · {{elapsed}}",
   "{{count}} running_other": "{{count}} 個正在執行",
