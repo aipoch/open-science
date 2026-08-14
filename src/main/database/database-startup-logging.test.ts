@@ -70,6 +70,14 @@ describe('database startup logging', () => {
       phase: 'migrating',
       migrationId: '0002_project_agent_context'
     })
+    expect(progress).toHaveBeenCalledWith({
+      phase: 'migrating',
+      migrationId: '0003_granted_local_roots'
+    })
+    expect(progress).toHaveBeenCalledWith({
+      phase: 'migrating',
+      migrationId: '0004_managed_file_version_foundation'
+    })
     expect(records).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ level: 'info', message: 'database migration checking' }),
@@ -100,7 +108,8 @@ describe('database startup logging', () => {
             applied: [
               '0001_runtime_schema_baseline',
               '0002_project_agent_context',
-              '0003_granted_local_roots'
+              '0003_granted_local_roots',
+              '0004_managed_file_version_foundation'
             ],
             adoptedLegacy: true
           })

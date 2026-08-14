@@ -278,6 +278,10 @@ describe('artifact provenance durable lifecycle contract', () => {
     const coreRow = await value.client.artifactVersion.findUniqueOrThrow({
       where: { id: first.versionId }
     })
+    if (!coreRow.evidenceJson || !coreRow.evidenceStorageKey) {
+      throw new Error('Expected the agent-generated lifecycle fixture to retain evidence.')
+    }
+    const coreEvidenceStorageKey = coreRow.evidenceStorageKey
     const corruptEvidence = JSON.parse(coreRow.evidenceJson) as ArtifactVersionEvidence
     const persistCorruptEvidence = async (): Promise<void> => {
       const corruptEvidenceJson = canonicalJson(corruptEvidence as unknown as CanonicalJson)
@@ -289,7 +293,7 @@ describe('artifact provenance durable lifecycle contract', () => {
         }
       })
       await writeFile(
-        join(value.storageRoot, ...coreRow.evidenceStorageKey.split('/')),
+        join(value.storageRoot, ...coreEvidenceStorageKey.split('/')),
         corruptEvidenceJson,
         'utf8'
       )
@@ -374,6 +378,9 @@ describe('artifact provenance durable lifecycle contract', () => {
     const row = await value.client.artifactVersion.findUniqueOrThrow({
       where: { id: version.versionId }
     })
+    if (!row.evidenceJson || !row.evidenceStorageKey) {
+      throw new Error('Expected the agent-generated lifecycle fixture to retain evidence.')
+    }
     const corruptEvidence = JSON.parse(row.evidenceJson) as ArtifactVersionEvidence
     expect(corruptEvidence).toMatchObject({
       producer: { state: 'available' },

@@ -106,6 +106,7 @@ class AcpPromptPreparationOwner {
 
   async prepare(input: AcpPromptPreparationInput): Promise<PreparedPromptHandle> {
     let releaseGrant: (() => void) | undefined
+    let releasePromptContent: (() => void) | undefined
     let contextTurn: ContextWindowTurnHandle | undefined
     let closed = false
 
@@ -115,14 +116,28 @@ class AcpPromptPreparationOwner {
       const ownedContext = contextTurn
       contextTurn = undefined
       try {
-        if (ownedContext && failContext) ownedContext.fail()
+        const releaseContent = releasePromptContent
+        releasePromptContent = undefined
+        try {
+          releaseContent?.()
+        } catch (error) {
+          try {
+            log.error('prepared prompt content cleanup failed', errorLogFields(error))
+          } catch {
+            // Cleanup diagnostics cannot replace the preparation or provider outcome.
+          }
+        }
       } finally {
         try {
-          ownedContext?.supersede()
+          if (ownedContext && failContext) ownedContext.fail()
         } finally {
-          const release = releaseGrant
-          releaseGrant = undefined
-          release?.()
+          try {
+            ownedContext?.supersede()
+          } finally {
+            const release = releaseGrant
+            releaseGrant = undefined
+            release?.()
+          }
         }
       }
     }
@@ -212,6 +227,7 @@ class AcpPromptPreparationOwner {
         skillImportTurnToken: input.skillImportTurnToken,
         onSkillImportAttachmentEligible: input.onSkillImportAttachmentEligible
       })
+      releasePromptContent = prepared.close
       if (await cancelled()) return cancelPrepared()
 
       if (this.options.notebook?.registerTurnInputs && prepared.turnInputs) {

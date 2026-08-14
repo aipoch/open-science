@@ -6,12 +6,14 @@ import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/di
 import { STREAMDOWN_FULLSCREEN_SELECTOR } from '@/components/streamdown/dom-selectors'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import { dialogPreviewGuardScope } from '@/stores/preview-leave-guard'
 
-import { PreviewFileSurface } from './PreviewFileSurface'
+import { PreviewFileSurface, type PreviewFileSurfaceHandle } from './PreviewFileSurface'
 
 type FilePreviewDialogProps = {
   item: PreviewFileItem | undefined
-  onClose: () => void
+  onClose: (skipGuard?: boolean) => void
+  onItemChange?: (item: PreviewFileItem, skipGuard?: boolean) => void
 }
 
 const hasStreamdownFullscreen = (): boolean =>
@@ -45,11 +47,23 @@ const setBackgroundIsolation = (isolated: boolean): void => {
 
 // The dialog is deliberately transient: Files tiles and panel previews can open it without
 // creating or removing a preview-workbench item.
-const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX.Element | null => {
+const FilePreviewDialog = ({
+  item,
+  onClose,
+  onItemChange
+}: FilePreviewDialogProps): React.JSX.Element | null => {
   const dialogItem = useRetainedDialogValue(item)
   const open = Boolean(item)
   const [hasNestedFullscreen, setHasNestedFullscreen] = useState(hasStreamdownFullscreen)
   const isBackgroundIsolatedRef = useRef(false)
+  const previewSurfaceRef = useRef<PreviewFileSurfaceHandle | null>(null)
+  const requestClose = useCallback(
+    (checkGuard = true): void => {
+      if (checkGuard && previewSurfaceRef.current?.confirmLeave() === false) return
+      onClose(true)
+    },
+    [onClose]
+  )
 
   const acquireBackgroundIsolation = useCallback((): void => {
     if (isBackgroundIsolatedRef.current) return
@@ -83,7 +97,7 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
       modal={false}
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose()
+        if (!nextOpen) requestClose(true)
       }}
     >
       <Dialog.Portal>
@@ -110,10 +124,13 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
             <div className="flex size-full min-h-0 min-w-0">
               {dialogItem ? (
                 <PreviewFileSurface
+                  ref={previewSurfaceRef}
                   item={dialogItem}
-                  onClose={onClose}
+                  onClose={() => requestClose(false)}
+                  onItemChange={(nextItem) => onItemChange?.(nextItem, true)}
                   provenanceEntry="trailing"
                   tooltipClassName="z-[70]"
+                  leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
                 />
               ) : null}
             </div>

@@ -10,16 +10,29 @@ type SaveBlobFileResult = {
   filePath?: string
 }
 
-type SaveManagedFileRequest = {
-  source: 'artifact' | 'upload' | 'notebook-input' | 'local'
+type SaveManagedVersionFileRequest = {
+  source: 'artifact' | 'upload'
+  path: string
+  projectId?: string
+  fileId?: string
+  versionId?: string
+  suggestedName: string
+}
+
+type SavePathFileRequest = {
+  source: 'notebook-input' | 'local'
   path: string
   suggestedName: string
 }
+
+type SaveManagedFileRequest = SaveManagedVersionFileRequest | SavePathFileRequest
 
 type SaveManagedFileResult = SaveBlobFileResult
 
 type SaveSessionArtifactFile = {
   path: string
+  fileId?: string
+  versionId?: string
   suggestedName: string
 }
 
@@ -40,6 +53,8 @@ type SaveProjectArtifactFile = {
   source: 'artifact' | 'upload'
   sessionId: string
   path: string
+  fileId?: string
+  versionId?: string
   suggestedName: string
 }
 

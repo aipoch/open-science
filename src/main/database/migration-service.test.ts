@@ -1,11 +1,13 @@
 import { access, copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient } from '../projects/prisma-client'
+import { ManagedFileIndexRepository } from '../project-files/repository'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import { verifyCurrentRuntimeSchema } from './legacy-baseline-adapter'
 import {
   BASELINE_CHECKSUM,
@@ -18,8 +20,78 @@ import {
   type MigrationManifestEntry
 } from './migration-service'
 
+const materializeVersioningBaseline = async (client: PrismaClient): Promise<void> => {
+  for (const statement of MIGRATION_MANIFEST[0]!.statements) {
+    await client.$executeRawUnsafe(statement)
+  }
+  await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "checksum" TEXT NOT NULL,
+    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+  await client.$executeRaw`
+    INSERT INTO "_open_science_migrations" ("id", "checksum")
+    VALUES (${MIGRATION_MANIFEST[0]!.id}, ${MIGRATION_MANIFEST[0]!.checksum})
+  `
+  await client.$executeRawUnsafe(`
+    INSERT INTO "FileOriginSession"
+      ("projectId", "sessionId", "state", "createdAt", "updatedAt")
+    VALUES ('project-versioning', 'session-versioning', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `)
+  await client.$executeRawUnsafe(`
+    INSERT INTO "ArtifactLineage"
+      ("id", "projectId", "sessionId", "normalizedFilename", "filename", "createdAt", "updatedAt")
+    VALUES
+      ('artifact-file', 'project-versioning', 'session-versioning', 'report.md', 'report.md', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `)
+  await client.$executeRawUnsafe(`
+    INSERT INTO "ArtifactVersion"
+      ("id", "artifactId", "versionNumber", "filename", "artifactRunId", "rootFrameId",
+       "agentFrameId", "messageBranchId", "runtimeSegmentId", "promptMessageId", "state",
+       "contentStorageKey", "evidenceStorageKey", "sizeBytes", "checksum", "evidenceJson",
+       "evidenceChecksum", "evidenceSchemaVersion", "createdAt", "updatedAt")
+    VALUES
+      ('artifact-v1', 'artifact-file', 1, 'report.md', 'run-1', 'root-1', 'agent-1', 'branch-1',
+       'segment-1', 'prompt-1', 'finalized', 'artifact/v1.md', 'artifact/v1-evidence.json', 10,
+       'checksum-a1', '{}', 'evidence-a1', 1, '2026-01-01T00:00:00.000Z', CURRENT_TIMESTAMP),
+      ('artifact-v2', 'artifact-file', 2, 'report.md', 'run-2', 'root-2', 'agent-2', 'branch-2',
+       'segment-2', 'prompt-2', 'finalized', 'artifact/v2.md', 'artifact/v2-evidence.json', 20,
+       'checksum-a2', '{}', 'evidence-a2', 1, '2026-01-02T00:00:00.000Z', CURRENT_TIMESTAMP),
+      ('artifact-v3-staging', 'artifact-file', 3, 'report.md', 'run-3', 'root-3', 'agent-3',
+       'branch-3', 'segment-3', 'prompt-3', 'staging', 'artifact/v3.md',
+       'artifact/v3-evidence.json', 30, 'checksum-a3', '{}', 'evidence-a3', 1,
+       '2026-01-03T00:00:00.000Z', CURRENT_TIMESTAMP)
+  `)
+  await client.$executeRawUnsafe(`
+    INSERT INTO "UploadFile"
+      ("id", "projectId", "sessionId", "filename", "originalFilename", "createdAt", "updatedAt")
+    VALUES
+      ('upload-file', 'project-versioning', 'session-versioning', 'notes.txt', 'notes.txt', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `)
+  await client.$executeRawUnsafe(`
+    INSERT INTO "UploadVersion"
+      ("id", "uploadFileId", "versionNumber", "state", "contentStorageKey", "filename",
+       "originalFilename", "sizeBytes", "checksum", "createdAt", "registeredAt", "updatedAt")
+    VALUES
+      ('upload-v1', 'upload-file', 1, 'ready', 'upload/v1.txt', 'notes.txt', 'notes.txt', 10,
+       'checksum-u1', '2026-01-01T00:00:00.000Z', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+      ('upload-v2', 'upload-file', 2, 'ready', 'upload/v2.txt', 'notes.txt', 'notes.txt', 20,
+       'checksum-u2', '2026-01-02T00:00:00.000Z', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `)
+  await client.$executeRawUnsafe(`
+    INSERT INTO "ManagedFile"
+      ("source", "sourceFileId", "sourceVersionId", "checksum", "projectId", "sessionId",
+       "displayName", "storageKey", "sizeBytes", "sortAtMs", "createdAt", "updatedAt")
+    VALUES
+      ('artifact', 'artifact-file', 'artifact-v1', 'checksum-a1', 'project-versioning',
+       'session-versioning', 'report.md', 'artifact/v1.md', 10, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+      ('upload', 'upload-file', 'upload-v1', 'checksum-u1', 'project-versioning',
+       'session-versioning', 'notes.txt', 'upload/v1.txt', 10, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `)
+}
+
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0004_test_suffix'
+  const id = '0005_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -173,10 +245,11 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ],
       from: null,
-      to: '0003_granted_local_roots'
+      to: '0004_managed_file_version_foundation'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -189,8 +262,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0003_granted_local_roots',
-      to: '0003_granted_local_roots'
+      from: '0004_managed_file_version_foundation',
+      to: '0004_managed_file_version_foundation'
     })
   })
 
@@ -201,6 +274,817 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
 
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('backfills explicit heads and derivation chains while preserving legacy storage names', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-migration-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: false,
+      applied: [
+        '0002_project_agent_context',
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
+      ],
+      to: '0004_managed_file_version_foundation'
+    })
+
+    await expect(
+      client.$queryRaw<Array<{ id: string; currentVersionId: string | null }>>`
+        SELECT "id", "currentVersionId" FROM "ArtifactLineage"
+      `
+    ).resolves.toEqual([{ id: 'artifact-file', currentVersionId: 'artifact-v2' }])
+    await expect(
+      client.$queryRaw<Array<{ id: string; currentVersionId: string | null }>>`
+        SELECT "id", "currentVersionId" FROM "UploadFile"
+      `
+    ).resolves.toEqual([{ id: 'upload-file', currentVersionId: 'upload-v2' }])
+    await expect(
+      client.$queryRaw<
+        Array<{
+          id: string
+          basedOnVersionId: string | null
+          originKind: string
+          storedFilename: string | null
+          managedVisibleAt: Date | null
+        }>
+      >`
+        SELECT "id", "basedOnVersionId", "originKind", "storedFilename", "managedVisibleAt"
+        FROM "ArtifactVersion" ORDER BY "versionNumber"
+      `
+    ).resolves.toEqual([
+      {
+        id: 'artifact-v1',
+        basedOnVersionId: null,
+        originKind: 'agent_generated',
+        storedFilename: null,
+        managedVisibleAt: new Date('2026-01-01T00:00:00.000Z')
+      },
+      {
+        id: 'artifact-v2',
+        basedOnVersionId: 'artifact-v1',
+        originKind: 'agent_generated',
+        storedFilename: null,
+        managedVisibleAt: new Date('2026-01-02T00:00:00.000Z')
+      },
+      {
+        id: 'artifact-v3-staging',
+        basedOnVersionId: 'artifact-v2',
+        originKind: 'agent_generated',
+        storedFilename: null,
+        managedVisibleAt: null
+      }
+    ])
+    await expect(
+      client.$queryRaw<Array<{ source: string; sourceVersionId: string; storageKey: string }>>`
+        SELECT "source", "sourceVersionId", "storageKey" FROM "ManagedFile" ORDER BY "source"
+      `
+    ).resolves.toEqual([
+      { source: 'artifact', sourceVersionId: 'artifact-v2', storageKey: 'artifact/v2.md' },
+      { source: 'upload', sourceVersionId: 'upload-v2', storageKey: 'upload/v2.txt' }
+    ])
+  })
+
+  it('builds derivation chains from the previous readable version across staging gaps', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-readable-chain-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await client.$executeRawUnsafe(`
+      INSERT INTO "ArtifactVersion"
+        ("id", "artifactId", "versionNumber", "filename", "artifactRunId", "rootFrameId",
+         "agentFrameId", "messageBranchId", "runtimeSegmentId", "promptMessageId", "state",
+         "contentStorageKey", "evidenceStorageKey", "sizeBytes", "checksum", "evidenceJson",
+         "evidenceChecksum", "evidenceSchemaVersion", "createdAt", "updatedAt")
+      VALUES
+        ('artifact-v4', 'artifact-file', 4, 'report.md', 'run-4', 'root-4', 'agent-4', 'branch-4',
+         'segment-4', 'prompt-4', 'finalized', 'artifact/v4.md', 'artifact/v4-evidence.json', 40,
+         'checksum-a4', '{}', 'evidence-a4', 1, '2026-01-04T00:00:00.000Z', CURRENT_TIMESTAMP)
+    `)
+    await client.$executeRawUnsafe(`
+      INSERT INTO "UploadVersion"
+        ("id", "uploadFileId", "versionNumber", "state", "contentStorageKey", "filename",
+         "originalFilename", "sizeBytes", "checksum", "createdAt", "registeredAt", "updatedAt")
+      VALUES
+        ('upload-v3-staging', 'upload-file', 3, 'staging', 'upload/v3.txt', 'notes.txt',
+         'notes.txt', 30, 'checksum-u3', '2026-01-03T00:00:00.000Z', CURRENT_TIMESTAMP,
+         CURRENT_TIMESTAMP),
+        ('upload-v4', 'upload-file', 4, 'ready', 'upload/v4.txt', 'notes.txt', 'notes.txt', 40,
+         'checksum-u4', '2026-01-04T00:00:00.000Z', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `)
+
+    await migrateApplicationDatabase(client)
+
+    await expect(
+      client.$queryRaw<Array<{ id: string; basedOnVersionId: string | null }>>`
+        SELECT "id", "basedOnVersionId" FROM "ArtifactVersion" WHERE "id" = 'artifact-v4'
+      `
+    ).resolves.toEqual([{ id: 'artifact-v4', basedOnVersionId: 'artifact-v2' }])
+    await expect(
+      client.$queryRaw<Array<{ id: string; basedOnVersionId: string | null }>>`
+        SELECT "id", "basedOnVersionId" FROM "UploadVersion" WHERE "id" = 'upload-v4'
+      `
+    ).resolves.toEqual([{ id: 'upload-v4', basedOnVersionId: 'upload-v2' }])
+  })
+
+  it('rebuilds missing and stale ManagedFile head projections without reviving tombstones', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-projection-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await client.$executeRawUnsafe(`
+      UPDATE "ArtifactVersion"
+      SET "contentType" = 'text/markdown', "messageId" = 'message-v2'
+      WHERE "id" = 'artifact-v2'
+    `)
+    await client.$executeRawUnsafe(`
+      UPDATE "UploadVersion"
+      SET "contentType" = 'text/plain', "filename" = 'stored-notes-v2.txt',
+          "originalFilename" = 'Original notes.txt'
+      WHERE "id" = 'upload-v2'
+    `)
+    await client.$executeRawUnsafe(`
+      UPDATE "ManagedFile"
+      SET "displayName" = 'stale.md', "storageKey" = 'artifact/stale.md', "mimeType" = 'wrong',
+          "sizeBytes" = 999, "checksum" = 'stale', "mtimeMs" = 3, "sortAtMs" = 4,
+          "deletedAt" = '2026-02-01T00:00:00.000Z', "deleteOperationId" = 'delete-1'
+      WHERE "source" = 'artifact' AND "sourceFileId" = 'artifact-file'
+    `)
+    await client.$executeRawUnsafe(`
+      UPDATE "ManagedFile"
+      SET "messageId" = 'message-preserved', "displayName" = 'stale-upload-name.txt',
+          "sortAtMs" = 987654321
+      WHERE "source" = 'upload' AND "sourceFileId" = 'upload-file'
+    `)
+    await client.$executeRawUnsafe(`
+      INSERT INTO "UploadFile"
+        ("id", "projectId", "sessionId", "filename", "originalFilename", "createdAt", "updatedAt")
+      VALUES
+        ('upload-missing', 'project-versioning', 'session-versioning', 'stored-data.csv',
+         '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `)
+    await client.$executeRawUnsafe(`
+      INSERT INTO "UploadVersion"
+        ("id", "uploadFileId", "versionNumber", "state", "contentStorageKey", "filename",
+         "originalFilename", "contentType", "sizeBytes", "checksum", "createdAt", "registeredAt",
+         "updatedAt")
+      VALUES
+        ('upload-missing-v1', 'upload-missing', 1, 'ready', 'upload/missing-v1.csv',
+         'stored-data.csv', '', 'text/csv', 30, 'checksum-missing',
+         '2026-01-03T00:00:00.000Z', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `)
+    await client.managedFileSessionSync.create({
+      data: {
+        projectId: 'project-versioning',
+        sessionId: 'session-versioning',
+        filesRevision: 7,
+        groupSortAtMs: 777,
+        artifactCount: 1,
+        uploadCount: 1
+      }
+    })
+    await client.$executeRawUnsafe(`
+      INSERT INTO "ArtifactLineage"
+        ("id", "projectId", "sessionId", "normalizedFilename", "filename", "createdAt", "updatedAt")
+      VALUES
+        ('artifact-headless', 'project-versioning', 'session-versioning', 'headless.md', 'headless.md',
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `)
+    await client.$executeRawUnsafe(`
+      INSERT INTO "ArtifactVersion"
+        ("id", "artifactId", "versionNumber", "filename", "artifactRunId", "rootFrameId",
+         "agentFrameId", "messageBranchId", "runtimeSegmentId", "promptMessageId", "state",
+         "contentStorageKey", "evidenceStorageKey", "sizeBytes", "checksum", "evidenceJson",
+         "evidenceChecksum", "evidenceSchemaVersion", "createdAt", "updatedAt")
+      VALUES
+        ('artifact-headless-staging', 'artifact-headless', 1, 'headless.md', 'run-headless',
+         'root-headless', 'agent-headless', 'branch-headless', 'segment-headless',
+         'prompt-headless', 'staging', 'artifact/headless-staging.md',
+         'artifact/headless-staging-evidence.json', 50, 'checksum-headless', '{}',
+         'evidence-headless', 1, '2026-01-05T00:00:00.000Z', CURRENT_TIMESTAMP)
+    `)
+    await client.$executeRawUnsafe(`
+      INSERT INTO "ManagedFile"
+        ("source", "sourceFileId", "sourceVersionId", "checksum", "projectId", "sessionId",
+         "displayName", "storageKey", "sizeBytes", "sortAtMs", "createdAt", "updatedAt")
+      VALUES
+        ('artifact', 'artifact-headless', 'artifact-headless-staging', 'checksum-headless',
+         'project-versioning', 'session-versioning', 'headless.md', 'artifact/headless-staging.md',
+         50, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `)
+
+    await migrateApplicationDatabase(client)
+
+    await expect(
+      client.$queryRaw<
+        Array<{
+          source: string
+          sourceFileId: string
+          sourceVersionId: string | null
+          checksum: string | null
+          displayName: string
+          storageKey: string
+          mimeType: string | null
+          sizeBytes: bigint
+          mtimeMs: bigint | null
+          sortAtMs: bigint
+          messageId: string | null
+          deletedAt: Date | null
+          deleteOperationId: string | null
+        }>
+      >`
+        SELECT "source", "sourceFileId", "sourceVersionId", "checksum", "displayName",
+               "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs", "messageId",
+               "deletedAt", "deleteOperationId"
+        FROM "ManagedFile" ORDER BY "source", "sourceFileId"
+      `
+    ).resolves.toEqual([
+      {
+        source: 'artifact',
+        sourceFileId: 'artifact-file',
+        sourceVersionId: 'artifact-v2',
+        checksum: 'checksum-a2',
+        displayName: 'report.md',
+        storageKey: 'artifact/v2.md',
+        mimeType: 'text/markdown',
+        sizeBytes: 20n,
+        mtimeMs: 1767312000000n,
+        sortAtMs: 1767312000000n,
+        messageId: 'message-v2',
+        deletedAt: new Date('2026-02-01T00:00:00.000Z'),
+        deleteOperationId: 'delete-1'
+      },
+      {
+        source: 'upload',
+        sourceFileId: 'upload-file',
+        sourceVersionId: 'upload-v2',
+        checksum: 'checksum-u2',
+        displayName: 'Original notes.txt',
+        storageKey: 'upload/v2.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 20n,
+        mtimeMs: 1767312000000n,
+        sortAtMs: 987654321n,
+        messageId: 'message-preserved',
+        deletedAt: null,
+        deleteOperationId: null
+      },
+      {
+        source: 'upload',
+        sourceFileId: 'upload-missing',
+        sourceVersionId: 'upload-missing-v1',
+        checksum: 'checksum-missing',
+        displayName: 'stored-data.csv',
+        storageKey: 'upload/missing-v1.csv',
+        mimeType: 'text/csv',
+        sizeBytes: 30n,
+        mtimeMs: 1767398400000n,
+        sortAtMs: 1767398400000n,
+        messageId: null,
+        deletedAt: null,
+        deleteOperationId: null
+      }
+    ])
+
+    await expect(
+      client.managedFileSessionSync.findUniqueOrThrow({
+        where: {
+          projectId_sessionId: {
+            projectId: 'project-versioning',
+            sessionId: 'session-versioning'
+          }
+        },
+        select: { filesRevision: true }
+      })
+    ).resolves.toEqual({ filesRevision: -1 })
+
+    const session: PersistedChatSession = {
+      id: 'session-versioning',
+      projectId: 'project-versioning',
+      title: 'Versioning',
+      cwd: '/workspace',
+      status: 'idle',
+      filesRevision: 7,
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_500,
+      messages: [
+        {
+          id: 'message-authoritative',
+          role: 'user',
+          content: 'Use both inputs',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'upload-file',
+              versionId: 'upload-v2',
+              versionNumber: 2,
+              sessionId: 'session-versioning',
+              name: 'stored-notes-v2.txt',
+              originalName: 'Original notes.txt',
+              mimeType: 'text/plain',
+              size: 20
+            },
+            {
+              id: 'upload-missing',
+              versionId: 'upload-missing-v1',
+              versionNumber: 1,
+              sessionId: 'session-versioning',
+              name: 'stored-data.csv',
+              originalName: '',
+              mimeType: 'text/csv',
+              size: 30
+            }
+          ],
+          createdAt: 1_700_000_000_100,
+          updatedAt: 1_700_000_000_200
+        }
+      ]
+    }
+    const index = new ManagedFileIndexRepository(() => Promise.resolve(client!), storageRoot)
+    await expect(index.syncSession(session)).resolves.toContain('upload')
+    await expect(
+      client.managedFile.findMany({
+        where: { source: 'upload' },
+        orderBy: { sourceFileId: 'asc' },
+        select: { sourceFileId: true, messageId: true, sortAtMs: true }
+      })
+    ).resolves.toEqual([
+      {
+        sourceFileId: 'upload-file',
+        messageId: 'message-authoritative',
+        sortAtMs: 1_700_000_000_200n
+      },
+      {
+        sourceFileId: 'upload-missing',
+        messageId: 'message-authoritative',
+        sortAtMs: 1_700_000_000_200n
+      }
+    ])
+  })
+
+  it('invalidates a current Session ledger before removing a legacy path-only Upload projection', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-legacy-upload-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await client.$executeRawUnsafe(`DELETE FROM "ManagedFile" WHERE "source" = 'upload'`)
+    await client.$executeRawUnsafe(`DELETE FROM "UploadVersion"`)
+    await client.$executeRawUnsafe(`DELETE FROM "UploadFile"`)
+    const legacyStorageKey = 'uploads/default-project/session-versioning/legacy-input.csv'
+    const legacyPath = join(storageRoot, ...legacyStorageKey.split('/'))
+    await mkdir(dirname(legacyPath), { recursive: true })
+    await writeFile(legacyPath, 'legacy upload')
+    await client.$executeRawUnsafe(`
+      INSERT INTO "ManagedFile"
+        ("source", "sourceFileId", "projectId", "sessionId", "messageId", "displayName",
+         "storageKey", "mimeType", "sizeBytes", "mtimeMs", "sortAtMs", "createdAt", "updatedAt")
+      VALUES
+        ('upload', 'legacy-upload', 'project-versioning', 'session-versioning', 'message-stale',
+         'Legacy input.csv', '${legacyStorageKey}', 'text/csv', 13, 111, 222,
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `)
+    await client.managedFileSessionSync.create({
+      data: {
+        projectId: 'project-versioning',
+        sessionId: 'session-versioning',
+        filesRevision: 7,
+        groupSortAtMs: 222,
+        artifactCount: 1,
+        uploadCount: 1
+      }
+    })
+
+    await migrateApplicationDatabase(client)
+    await expect(
+      client.managedFileSessionSync.findUniqueOrThrow({
+        where: {
+          projectId_sessionId: {
+            projectId: 'project-versioning',
+            sessionId: 'session-versioning'
+          }
+        },
+        select: { filesRevision: true }
+      })
+    ).resolves.toEqual({ filesRevision: -1 })
+    await expect(
+      client.managedFile.count({ where: { sourceFileId: 'legacy-upload' } })
+    ).resolves.toBe(0)
+
+    const session: PersistedChatSession = {
+      id: 'session-versioning',
+      projectId: 'project-versioning',
+      title: 'Legacy upload',
+      cwd: '/workspace',
+      status: 'idle',
+      filesRevision: 7,
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_500,
+      messages: [
+        {
+          id: 'message-authoritative',
+          role: 'user',
+          content: 'Use legacy input',
+          status: 'complete',
+          eventIds: [],
+          uploads: [
+            {
+              id: 'legacy-upload',
+              sessionId: 'session-versioning',
+              name: 'legacy-input.csv',
+              originalName: 'Legacy input.csv',
+              path: legacyPath,
+              mimeType: 'text/csv',
+              size: 13
+            }
+          ],
+          createdAt: 1_700_000_000_100,
+          updatedAt: 1_700_000_000_300
+        }
+      ]
+    }
+    const index = new ManagedFileIndexRepository(() => Promise.resolve(client!), storageRoot)
+    await expect(index.syncSession(session)).resolves.toContain('upload')
+    await expect(
+      client.managedFile.findFirstOrThrow({
+        where: { sourceFileId: 'legacy-upload' },
+        select: { messageId: true, sortAtMs: true }
+      })
+    ).resolves.toEqual({
+      messageId: 'message-authoritative',
+      sortAtMs: 1_700_000_000_300n
+    })
+  })
+
+  it('does not create active head projections for a tombstoned Session ledger', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-tombstone-projection-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await client.managedFile.deleteMany({ where: { projectId: 'project-versioning' } })
+    await client.managedFileSessionSync.create({
+      data: {
+        projectId: 'project-versioning',
+        sessionId: 'session-versioning',
+        filesRevision: 7,
+        groupSortAtMs: 777,
+        artifactCount: 1,
+        uploadCount: 1,
+        deletedAt: new Date('2026-02-01T00:00:00.000Z'),
+        deleteOperationId: 'delete-session-1'
+      }
+    })
+
+    await migrateApplicationDatabase(client)
+
+    const index = new ManagedFileIndexRepository(() => Promise.resolve(client!), storageRoot)
+    await expect(index.getOverview('project-versioning')).resolves.toMatchObject({
+      totalCount: 0,
+      artifactCount: 0,
+      uploadCount: 0
+    })
+    await expect(
+      client.managedFile.count({
+        where: { projectId: 'project-versioning', deletedAt: null }
+      })
+    ).resolves.toBe(0)
+  })
+
+  it('keeps missing head projections absent during current-schema adoption for a deleting Project', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-deleting-project-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+    await client.managedFile.deleteMany({ where: { projectId: 'project-versioning' } })
+    await client.projectDeletionIntent.create({ data: { projectId: 'project-versioning' } })
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+
+    await migrateApplicationDatabase(client)
+
+    const index = new ManagedFileIndexRepository(() => Promise.resolve(client!), storageRoot)
+    await expect(index.getOverview('project-versioning')).resolves.toMatchObject({
+      totalCount: 0,
+      artifactCount: 0,
+      uploadCount: 0
+    })
+    await expect(
+      client.managedFile.count({
+        where: { projectId: 'project-versioning', deletedAt: null }
+      })
+    ).resolves.toBe(0)
+  })
+
+  it('allows user-edited artifacts without fabricated Agent provenance', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-provenance-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "ArtifactVersion"
+          ("id", "artifactId", "versionNumber", "filename", "originKind", "basedOnVersionId",
+           "state", "contentStorageKey", "storageTag", "storedFilename", "sizeBytes", "checksum",
+           "createdAt", "updatedAt")
+        VALUES
+          ('artifact-user-edit', 'artifact-file', 4, 'report.md', 'user_edit', 'artifact-v1',
+           'finalized', 'artifact/vk3m8q2az_report.md', 'vk3m8q2az', 'vk3m8q2az_report.md', 11,
+           'checksum-edit', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `
+    ).resolves.toBe(1)
+
+    await expect(
+      client.$executeRaw`
+        INSERT INTO "ArtifactVersion"
+          ("id", "artifactId", "versionNumber", "filename", "originKind", "basedOnVersionId",
+           "artifactRunId", "rootFrameId", "agentFrameId", "messageBranchId", "runtimeSegmentId",
+           "promptMessageId", "evidenceStorageKey", "evidenceJson", "evidenceChecksum",
+           "evidenceSchemaVersion", "state", "contentStorageKey", "sizeBytes", "checksum",
+           "createdAt", "updatedAt")
+        VALUES
+          ('artifact-user-edit-fake', 'artifact-file', 5, 'report.md', 'user_edit', 'artifact-v1',
+           'fake-run', 'fake-root', 'fake-agent', 'fake-branch', 'fake-segment', 'fake-prompt',
+           'fake-evidence', '{}', 'fake-checksum', 1, 'finalized', 'artifact/fake.md', 12,
+           'checksum-fake', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `
+    ).rejects.toThrow()
+  })
+
+  it.each([
+    ['artifactRunId', "'forged'"],
+    ['writeRequestChecksum', "'forged'"],
+    ['rootFrameId', "'forged'"],
+    ['agentFrameId', "'forged'"],
+    ['messageBranchId', "'forged'"],
+    ['runtimeSegmentId', "'forged'"],
+    ['promptMessageId', "'forged'"],
+    ['notebookSessionId', "'forged'"],
+    ['producerRunId', "'forged'"],
+    ['producerRunIndex', '1'],
+    ['messageId', "'forged'"],
+    ['messageSnapshotId', "'snapshot-forged'"],
+    ['evidenceStorageKey', "'forged'"],
+    ['evidenceJson', "'{}'"],
+    ['evidenceChecksum', "'forged'"],
+    ['evidenceSchemaVersion', '1'],
+    ['executionSnapshotJson', "'{}'"],
+    ['executionSnapshotChecksum', "'forged'"],
+    ['executionSnapshotStorageKey', "'forged'"],
+    ['executionSnapshotSchemaVersion', '1']
+  ])('rejects user-edited Artifact Agent field %s', async (column, sqlValue) => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-user-edit-check-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+    await client.artifactMessageSnapshot.create({
+      data: {
+        id: 'snapshot-forged',
+        projectId: 'project-versioning',
+        sessionId: 'session-versioning',
+        rootFrameId: 'root-forged',
+        agentFrameId: 'agent-forged',
+        messageBranchId: 'branch-forged',
+        terminalMessageId: 'message-forged',
+        state: 'ready',
+        storageKey: 'snapshot/forged.json',
+        checksum: 'checksum-forged',
+        messageCount: 1
+      }
+    })
+
+    await expect(
+      client.$executeRawUnsafe(`
+        INSERT INTO "ArtifactVersion"
+          ("id", "artifactId", "versionNumber", "filename", "originKind", "basedOnVersionId",
+           "storageTag", "storedFilename", "state", "contentStorageKey", "sizeBytes", "checksum",
+           "${column}", "createdAt", "updatedAt")
+        VALUES
+          ('artifact-user-edit-forged', 'artifact-file', 4, 'report.md', 'user_edit', 'artifact-v1',
+           'vk3m8q2az', 'vk3m8q2az_report.md', 'finalized', 'artifact/forged-report.md', 12,
+           'checksum-forged', ${sqlValue}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `)
+    ).rejects.toThrow()
+  })
+
+  it('records staging writes without allocating a visible content version', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-write-log-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+
+    await client.$executeRaw`
+      INSERT INTO "ManagedFileVersionWriteOperation"
+        ("operationId", "source", "projectId", "sourceFileId", "basedOnVersionId",
+         "expectedHeadVersionId", "state", "storageTag", "storedFilename", "contentStorageKey",
+         "checksum", "sizeBytes", "textFormatJson", "createdAt", "updatedAt")
+      VALUES
+        ('operation-1', 'artifact', 'project-versioning', 'artifact-file', 'artifact-v1',
+         'artifact-v2', 'staging', 'vk3m8q2az', 'vk3m8q2az_report.md',
+         'artifact/vk3m8q2az_report.md', 'checksum-staged', 12, '{}', CURRENT_TIMESTAMP,
+         CURRENT_TIMESTAMP)
+    `
+
+    await expect(
+      client.$queryRaw<Array<{ maximumVersion: bigint }>>`
+        SELECT MAX("versionNumber") AS "maximumVersion" FROM "ArtifactVersion"
+        WHERE "state" = 'finalized'
+      `
+    ).resolves.toEqual([{ maximumVersion: 2n }])
+  })
+
+  it('rolls back schema and ledger when rebuilt rows fail foreign-key integrity', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-broken-foreign-key-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+    await client.$executeRawUnsafe(`
+      INSERT INTO "ArtifactVersion"
+        ("id", "artifactId", "versionNumber", "filename", "artifactRunId", "rootFrameId",
+         "agentFrameId", "messageBranchId", "runtimeSegmentId", "promptMessageId", "state",
+         "contentStorageKey", "evidenceStorageKey", "sizeBytes", "checksum", "evidenceJson",
+         "evidenceChecksum", "evidenceSchemaVersion", "createdAt", "updatedAt")
+      VALUES
+        ('artifact-orphan', 'missing-lineage', 1, 'orphan.md', 'run-orphan', 'root-orphan',
+         'agent-orphan', 'branch-orphan', 'segment-orphan', 'prompt-orphan', 'finalized',
+         'artifact/orphan.md', 'artifact/orphan-evidence.json', 10, 'checksum-orphan', '{}',
+         'evidence-orphan', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0004_managed_file_version_foundation'
+    })
+    await expect(
+      client.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "_open_science_migrations" ORDER BY "id"
+      `
+    ).resolves.toEqual([
+      { id: '0001_runtime_schema_baseline' },
+      { id: '0002_project_agent_context' },
+      { id: '0003_granted_local_roots' }
+    ])
+    await expect(
+      client.$queryRaw<Array<{ name: string }>>`
+        SELECT "name" FROM pragma_table_info('ArtifactVersion') WHERE "name" = 'originKind'
+      `
+    ).resolves.toEqual([])
+    await expect(
+      client.$queryRaw<Array<{ foreign_keys: bigint }>>`PRAGMA foreign_keys`
+    ).resolves.toEqual([{ foreign_keys: 1n }])
+  })
+
+  it('rejects a non-completed head during the always-on version-domain audit', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-invalid-head-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+    await client.artifactLineage.update({
+      where: { id: 'artifact-file' },
+      data: { currentVersionId: 'artifact-v3-staging' }
+    })
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed'
+    })
+  })
+
+  it('rejects a derivation from a non-completed or newer version during domain audit', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-invalid-derivation-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+    await client.artifactVersion.update({
+      where: { id: 'artifact-v2' },
+      data: { basedOnVersionId: 'artifact-v3-staging' }
+    })
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed'
+    })
+  })
+
+  it('rejects orphaned relations during the always-on integrity audit', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-orphan-audit-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+    await client.$executeRawUnsafe(`DELETE FROM "ArtifactVersion" WHERE "id" = 'artifact-v2'`)
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed'
+    })
+  })
+
+  it('enforces Artifact head and derivation ownership in SQLite', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-artifact-ownership-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+    await client.artifactLineage.create({
+      data: {
+        id: 'artifact-other',
+        projectId: 'project-versioning',
+        sessionId: 'session-versioning',
+        normalizedFilename: 'other.md',
+        filename: 'other.md'
+      }
+    })
+    await client.artifactVersion.create({
+      data: {
+        id: 'artifact-other-v1',
+        artifactId: 'artifact-other',
+        versionNumber: 1,
+        filename: 'other.md',
+        artifactRunId: 'run-other',
+        rootFrameId: 'root-other',
+        agentFrameId: 'agent-other',
+        messageBranchId: 'branch-other',
+        runtimeSegmentId: 'segment-other',
+        promptMessageId: 'prompt-other',
+        state: 'finalized',
+        contentStorageKey: 'artifact/other-v1.md',
+        evidenceStorageKey: 'artifact/other-v1-evidence.json',
+        sizeBytes: 10,
+        checksum: 'checksum-other',
+        evidenceJson: '{}',
+        evidenceChecksum: 'evidence-other',
+        evidenceSchemaVersion: 1
+      }
+    })
+
+    await expect(
+      client.artifactLineage.update({
+        where: { id: 'artifact-file' },
+        data: { currentVersionId: 'artifact-other-v1' }
+      })
+    ).rejects.toThrow()
+    await expect(
+      client.$executeRawUnsafe(`
+        INSERT INTO "ArtifactVersion"
+          ("id", "artifactId", "versionNumber", "filename", "originKind", "basedOnVersionId",
+           "state", "contentStorageKey", "sizeBytes", "checksum", "createdAt", "updatedAt")
+        VALUES
+          ('artifact-cross-derived', 'artifact-file', 4, 'report.md', 'legacy',
+           'artifact-other-v1', 'finalized', 'artifact/cross-derived.md', 11, 'checksum-cross',
+           CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `)
+    ).rejects.toThrow()
+  })
+
+  it('enforces Upload head and derivation ownership in SQLite', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-versioning-upload-ownership-'))
+    client = createProjectDbClient(storageRoot)
+    await materializeVersioningBaseline(client)
+    await migrateApplicationDatabase(client)
+    await client.uploadFile.create({
+      data: {
+        id: 'upload-other',
+        projectId: 'project-versioning',
+        sessionId: 'session-versioning',
+        filename: 'other.txt',
+        originalFilename: 'other.txt'
+      }
+    })
+    await client.uploadVersion.create({
+      data: {
+        id: 'upload-other-v1',
+        uploadFileId: 'upload-other',
+        versionNumber: 1,
+        state: 'ready',
+        contentStorageKey: 'upload/other-v1.txt',
+        filename: 'other.txt',
+        originalFilename: 'other.txt',
+        sizeBytes: 10,
+        checksum: 'checksum-other'
+      }
+    })
+
+    await expect(
+      client.uploadFile.update({
+        where: { id: 'upload-file' },
+        data: { currentVersionId: 'upload-other-v1' }
+      })
+    ).rejects.toThrow()
+    await expect(
+      client.uploadVersion.create({
+        data: {
+          id: 'upload-cross-derived',
+          uploadFileId: 'upload-file',
+          versionNumber: 3,
+          state: 'ready',
+          originKind: 'user_edit',
+          basedOnVersionId: 'upload-other-v1',
+          storageTag: 'vk3m8q2az',
+          storedFilename: 'vk3m8q2az_notes.txt',
+          contentStorageKey: 'upload/cross-derived.txt',
+          filename: 'notes.txt',
+          originalFilename: 'notes.txt',
+          sizeBytes: 11,
+          checksum: 'checksum-cross'
+        }
+      })
+    ).rejects.toThrow()
   })
 
   it('rejects schema objects outside the generated current target', async () => {
@@ -234,7 +1118,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0003_granted_local_roots'
+      migrationId: '0004_managed_file_version_foundation'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -250,9 +1134,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0004_test_suffix'],
-      from: '0003_granted_local_roots',
-      to: '0004_test_suffix'
+      applied: ['0005_test_suffix'],
+      from: '0004_managed_file_version_foundation',
+      to: '0005_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -262,7 +1146,8 @@ describe('application database migrations', () => {
       { id: '0001_runtime_schema_baseline' },
       { id: '0002_project_agent_context' },
       { id: '0003_granted_local_roots' },
-      { id: '0004_test_suffix' }
+      { id: '0004_managed_file_version_foundation' },
+      { id: '0005_test_suffix' }
     ])
   })
 
@@ -289,6 +1174,7 @@ describe('application database migrations', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-agent-context-backup-'))
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const versioningBackupPath = `${databasePath}.before-0004_managed_file_version_foundation.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     for (const statement of MIGRATION_MANIFEST[0]!.statements) {
@@ -315,9 +1201,13 @@ describe('application database migrations', () => {
       })
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0002_project_agent_context', '0003_granted_local_roots'],
+      applied: [
+        '0002_project_agent_context',
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
+      ],
       from: '0001_runtime_schema_baseline',
-      to: '0003_granted_local_roots'
+      to: '0004_managed_file_version_foundation'
     })
     expect(backupEvents).toEqual([
       {
@@ -328,6 +1218,11 @@ describe('application database migrations', () => {
       {
         migrationId: '0003_granted_local_roots',
         path: `${databasePath}.before-0003_granted_local_roots.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0004_managed_file_version_foundation',
+        path: versioningBackupPath,
         reused: false
       }
     ])
@@ -361,7 +1256,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0004_test_suffix'
+      migrationId: '0005_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -376,7 +1271,8 @@ describe('application database migrations', () => {
     ).resolves.toEqual([
       { id: '0001_runtime_schema_baseline' },
       { id: '0002_project_agent_context' },
-      { id: '0003_granted_local_roots' }
+      { id: '0003_granted_local_roots' },
+      { id: '0004_managed_file_version_foundation' }
     ])
   })
 
@@ -398,7 +1294,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0004_test_suffix'
+      migrationId: '0005_test_suffix'
     })
   })
 
@@ -427,9 +1323,10 @@ describe('application database migrations', () => {
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
         '0003_granted_local_roots',
-        '0004_test_suffix'
+        '0004_managed_file_version_foundation',
+        '0005_test_suffix'
       ],
-      to: '0004_test_suffix'
+      to: '0005_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -443,7 +1340,7 @@ describe('application database migrations', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Preserved' } })
     await client.$executeRaw`
       INSERT INTO "_open_science_migrations" ("id", "checksum")
-      VALUES (${'0004_future_schema'}, ${'f'.repeat(64)})
+      VALUES (${'0005_future_schema'}, ${'f'.repeat(64)})
     `
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
@@ -514,7 +1411,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -553,7 +1451,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -605,7 +1504,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -660,7 +1560,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -672,7 +1573,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual([
       {
         sql: expect.stringContaining(
-          '"sourceUploadVersionId" IS NOT NULL AND "sourceArtifactVersionId" IS NULL'
+          '"sourceArtifactVersionId" IS NULL AND "sourceUploadVersionId" IS NOT NULL'
         )
       }
     ])
@@ -749,7 +1650,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
     await expect(
@@ -763,6 +1665,8 @@ describe('application database migrations', () => {
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
     const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const grantedRootsBackupPath = `${databasePath}.before-0003_granted_local_roots.backup`
+    const versioningBackupPath = `${databasePath}.before-0004_managed_file_version_foundation.backup`
     const backupEvents: unknown[] = []
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
@@ -791,7 +1695,8 @@ describe('application database migrations', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
     expect(backupEvents).toEqual([
@@ -807,11 +1712,18 @@ describe('application database migrations', () => {
       },
       {
         migrationId: '0003_granted_local_roots',
-        path: `${databasePath}.before-0003_granted_local_roots.backup`,
+        path: grantedRootsBackupPath,
+        reused: false
+      },
+      {
+        migrationId: '0004_managed_file_version_foundation',
+        path: versioningBackupPath,
         reused: false
       }
     ])
     await expect(access(agentContextBackupPath)).resolves.toBeUndefined()
+    await expect(access(grantedRootsBackupPath)).resolves.toBeUndefined()
+    await expect(access(versioningBackupPath)).resolves.toBeUndefined()
     await expect(client.project.count()).resolves.toBe(1)
 
     const backupClient = new PrismaClient({
@@ -1149,6 +2061,8 @@ describe('application database migrations', () => {
     const databasePath = join(storageRoot, 'open-science.db')
     const backupPath = `${databasePath}.before-0001_runtime_schema_baseline.backup`
     const agentContextBackupPath = `${databasePath}.before-0002_project_agent_context.backup`
+    const grantedRootsBackupPath = `${databasePath}.before-0003_granted_local_roots.backup`
+    const versioningBackupPath = `${databasePath}.before-0004_managed_file_version_foundation.backup`
     client = createProjectDbClient(storageRoot)
     await client.$executeRawUnsafe(`CREATE TABLE "Project" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -1189,7 +2103,12 @@ describe('application database migrations', () => {
       }),
       expect.objectContaining({
         migrationId: '0003_granted_local_roots',
-        path: `${databasePath}.before-0003_granted_local_roots.backup`,
+        path: grantedRootsBackupPath,
+        reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0004_managed_file_version_foundation',
+        path: versioningBackupPath,
         reused: false
       })
     ])
@@ -1198,11 +2117,17 @@ describe('application database migrations', () => {
       { migrationId: '0002_project_agent_context', path: agentContextBackupPath },
       {
         migrationId: '0003_granted_local_roots',
-        path: `${databasePath}.before-0003_granted_local_roots.backup`
+        path: grantedRootsBackupPath
+      },
+      {
+        migrationId: '0004_managed_file_version_foundation',
+        path: versioningBackupPath
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(access(agentContextBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(grantedRootsBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(versioningBackupPath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       client.$queryRaw<Array<{ id: string; name: string }>>`SELECT "id", "name" FROM "Project"`
     ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])

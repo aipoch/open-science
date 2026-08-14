@@ -147,6 +147,13 @@ type PreloadApi = {
     stageLocalFile: (file: File, request: unknown) => Promise<unknown>
     claimLocalFile: (request: unknown) => Promise<void>
   }
+  managedFileVersions: {
+    getCapability: () => Promise<{ available: true } | { available: false; reason: string }>
+    inspect: (request: unknown) => Promise<unknown>
+    diffText: (request: unknown) => Promise<unknown>
+    cancelDiff: (request: unknown) => Promise<unknown>
+    saveTextEdit: (request: unknown) => Promise<unknown>
+  }
   window: {
     findInPage?: (request: unknown) => void
     clearFind?: () => void
@@ -180,9 +187,12 @@ const collectFunctionPaths = (value: unknown, prefix = ''): string[] => {
 beforeAll(async () => {
   // Take the contextBridge branch of the preload's expose logic (production path with context isolation).
   Object.defineProperty(process, 'contextIsolated', { value: true, configurable: true })
-  invokeMock.mockImplementation(async (channel: string) =>
-    validatedApplicationCommandChannels.has(channel) ? { ok: true, result: undefined } : undefined
-  )
+  invokeMock.mockImplementation(async (channel: string) => {
+    if (channel === 'managed-file-versions:get-capability') return { available: true }
+    return validatedApplicationCommandChannels.has(channel)
+      ? { ok: true, result: undefined }
+      : undefined
+  })
 
   await import('./index')
 
@@ -321,6 +331,11 @@ describe('preload bridge — public surface inventory', () => {
       'logs.getPath',
       'logs.openFile',
       'logs.revealInFolder',
+      'managedFileVersions.cancelDiff',
+      'managedFileVersions.diffText',
+      'managedFileVersions.getCapability',
+      'managedFileVersions.inspect',
+      'managedFileVersions.saveTextEdit',
       'network.checkConnectivity',
       'network.getInfo',
       'notebook.appendCodeCell',
@@ -677,7 +692,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 23-group, 157-callable T1d complement', () => {
+  it('pins the exact 25-group, 163-contract T1d complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -685,6 +700,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'diagnostics',
       'github',
       'lifecycle',
+      'managed-file-versions',
       'local-fs',
       'logs',
       'network',
@@ -704,7 +720,7 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(158)
+    expect(coreContracts).toHaveLength(163)
     expect({
       requests: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
@@ -716,16 +732,16 @@ describe('preload bridge — core renderer contract catalog', () => {
       surfaceNative: coreContracts.filter(
         ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
       ).length
-    }).toEqual({ requests: 118, events: 29, sends: 10, surfaceNative: 1 })
+    }).toEqual({ requests: 123, events: 29, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 118 request methods through their cataloged Electron channels', async () => {
+  it('routes all 123 request methods through their cataloged Electron channels', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
 
-    expect(requestContracts).toHaveLength(118)
+    expect(requestContracts).toHaveLength(123)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -849,6 +865,43 @@ describe('preload bridge — core renderer contract catalog', () => {
 
     expect(getPathForFileMock).toHaveBeenCalledWith(file)
     expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it('reports native capability and forwards managed file version methods over exact channels', async () => {
+    const inspectRequest = { source: 'artifact', projectId: 'project-1', fileId: 'artifact-1' }
+    const saveRequest = {
+      ...inspectRequest,
+      basedOnVersionId: 'version-1',
+      expectedHeadVersionId: 'version-1',
+      operationId: 'operation-1',
+      content: 'changed\n'
+    }
+
+    await expect(api.managedFileVersions.getCapability()).resolves.toEqual({ available: true })
+    await api.managedFileVersions.inspect(inspectRequest)
+    await api.managedFileVersions.diffText({
+      ...inspectRequest,
+      versionId: 'version-2',
+      requestId: 'diff-1'
+    })
+    await api.managedFileVersions.cancelDiff({ requestId: 'diff-1' })
+    await api.managedFileVersions.saveTextEdit(saveRequest)
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'managed-file-versions:get-capability')
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'managed-file-versions:inspect', inspectRequest)
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'managed-file-versions:diff-text', {
+      ...inspectRequest,
+      versionId: 'version-2',
+      requestId: 'diff-1'
+    })
+    expect(invokeMock).toHaveBeenNthCalledWith(4, 'managed-file-versions:cancel-diff', {
+      requestId: 'diff-1'
+    })
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      5,
+      'managed-file-versions:save-text-edit',
+      saveRequest
+    )
   })
 })
 

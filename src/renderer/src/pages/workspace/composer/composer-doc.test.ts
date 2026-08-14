@@ -100,6 +100,7 @@ describe('docToArtifactRefs', () => {
         {
           type: 'artifact',
           id: 'a1',
+          sourceFileId: 'artifact-file-1',
           name: 'fig1.png',
           path: '/p/fig1.png',
           source: 'artifact',
@@ -114,6 +115,7 @@ describe('docToArtifactRefs', () => {
     expect(docToArtifactRefs(doc)).toEqual([
       {
         id: 'a1',
+        sourceFileId: 'artifact-file-1',
         name: 'fig1.png',
         path: '/p/fig1.png',
         source: 'artifact',
@@ -348,6 +350,31 @@ describe('applyDocToDom + domToDoc round-trip', () => {
     expect(domToDoc(root)).toEqual(doc)
   })
 
+  it('round-trips the stable managed-file identity of an artifact chip', () => {
+    const doc: ComposerDoc = {
+      nodes: [
+        {
+          type: 'artifact',
+          id: 'artifact-row-1',
+          sourceFileId: 'artifact-file-1',
+          name: 'study.csv',
+          path: 'artifact-version:project-1/session-1/artifact-file-1/version-2',
+          source: 'artifact',
+          mimeType: 'text/csv',
+          versionId: 'version-2'
+        }
+      ]
+    }
+    const root = document.createElement('div')
+
+    applyDocToDom(root, doc)
+
+    expect(root.firstElementChild?.getAttribute('data-mention-source-file-id')).toBe(
+      'artifact-file-1'
+    )
+    expect(domToDoc(root)).toEqual(doc)
+  })
+
   it('round-trips a future linked-folder chip without an absolute path', () => {
     const doc: ComposerDoc = {
       nodes: [
@@ -467,6 +494,33 @@ describe('docFromMessageParts', () => {
         }
       ]
     })
+  })
+
+  it('restores the stable managed-file identity for re-edit and send', () => {
+    const doc = docFromMessageParts([
+      {
+        type: 'artifact',
+        id: 'artifact-row-1',
+        sourceFileId: 'artifact-file-1',
+        name: 'study.csv',
+        path: 'artifact-version:project-1/session-1/artifact-file-1/version-2',
+        source: 'artifact',
+        mimeType: 'text/csv',
+        versionId: 'version-2'
+      }
+    ])
+
+    expect(docToArtifactRefs(doc)).toEqual([
+      {
+        id: 'artifact-row-1',
+        sourceFileId: 'artifact-file-1',
+        name: 'study.csv',
+        path: 'artifact-version:project-1/session-1/artifact-file-1/version-2',
+        source: 'artifact',
+        mimeType: 'text/csv',
+        versionId: 'version-2'
+      }
+    ])
   })
 
   it('reproduces the sent message text when rendered back to plain text', () => {

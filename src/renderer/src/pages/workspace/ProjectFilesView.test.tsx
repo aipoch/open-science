@@ -1180,6 +1180,8 @@ describe('ProjectFilesView', () => {
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'upload',
       path: upload.path,
+      projectId: 'default',
+      fileId: 'upload-1',
       suggestedName: 'user upload.png'
     })
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBeUndefined()
@@ -1214,6 +1216,8 @@ describe('ProjectFilesView', () => {
     expect(window.api.saveManagedFile).toHaveBeenCalledWith({
       source: 'artifact',
       path: '/workspace/report.pdf',
+      projectId: 'default',
+      fileId: 'artifact-download',
       suggestedName: 'report.pdf'
     })
   })
@@ -2831,6 +2835,7 @@ describe('ProjectFilesView', () => {
       path: '/workspace/typhoon_tracks.png',
       projectId: 'default',
       sessionId: 'session-1',
+      fileId: 'artifact-1',
       mimeType: 'image/png'
     })
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
@@ -2838,6 +2843,7 @@ describe('ProjectFilesView', () => {
       path: '/uploads/uploaded_image.png',
       projectId: 'default',
       sessionId: 'session-1',
+      fileId: 'upload-1',
       mimeType: 'image/png'
     })
     expect(
@@ -2925,6 +2931,7 @@ describe('ProjectFilesView', () => {
       path: '/workspace/generated-image',
       projectId: 'default',
       sessionId: 'session-1',
+      fileId: 'artifact-1',
       mimeType: 'image/png'
     })
   })
@@ -3009,6 +3016,7 @@ describe('ProjectFilesView', () => {
       path: '/workspace/results.csv',
       projectId: 'default',
       sessionId: 'session-1',
+      fileId: 'artifact-csv',
       maxBytes: 32768,
       encoding: 'utf8'
     })
@@ -3161,10 +3169,18 @@ describe('ProjectFilesView', () => {
     })
 
     expect(window.api.artifacts.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/workspace/generated.treefile', encoding: 'utf8' })
+      expect.objectContaining({
+        path: '/workspace/generated.treefile',
+        fileId: 'artifact-tree',
+        encoding: 'utf8'
+      })
     )
     expect(window.api.uploads.readPreview).toHaveBeenCalledWith(
-      expect.objectContaining({ path: '/uploads/uploaded.treefile', encoding: 'utf8' })
+      expect.objectContaining({
+        path: '/uploads/uploaded.treefile',
+        fileId: expect.any(String),
+        encoding: 'utf8'
+      })
     )
     expect(container.querySelectorAll('[data-testid="artifact-skeleton-preview"]')).toHaveLength(2)
   })

@@ -36,6 +36,7 @@ import { sha256 } from './provenance-canonical'
 import { validateArtifactCoreEvidence } from './provenance-core-evidence'
 import { readOptionalFile, resolveStorageKey } from './provenance-storage'
 import type { PersistedVersionFileRecord } from './provenance-version-writer'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -120,9 +121,12 @@ const validateArtifactExecutionInputs = (
   }
 }
 
-type VersionDescriptorRecord = PersistedVersionFileRecord & {
+type VersionDescriptorRecord = Omit<PersistedVersionFileRecord, 'artifactRunId'> & {
+  artifactRunId: string | null
   state: string
   messageId: string | null
+  originKind: string
+  basedOnVersionId: string | null
 }
 
 type ArtifactProvenanceReadModelOptions = {
@@ -177,7 +181,16 @@ class ArtifactProvenanceReadModel {
         include: {
           originSession: true,
           versions: {
-            where: { state: { in: ['pending', 'finalized'] } },
+            where: {
+              OR: [
+                {
+                  originKind: 'agent_generated',
+                  state: { in: ['pending', 'finalized'] }
+                },
+                { originKind: 'user_edit', state: 'finalized' },
+                { originKind: 'legacy', state: 'finalized' }
+              ]
+            },
             orderBy: [{ versionNumber: 'asc' as const }, { id: 'asc' as const }]
           }
         }
@@ -226,6 +239,7 @@ class ArtifactProvenanceReadModel {
         where: {
           id: versionId,
           artifactId,
+          originKind: 'agent_generated',
           state: { in: ['pending', 'finalized'] },
           artifact: { is: { projectId, sessionId: appSessionId } }
         },
@@ -241,11 +255,12 @@ class ArtifactProvenanceReadModel {
       version = await findVersion()
     }
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
+    const agentVersion = requireAgentArtifactVersion(version)
 
     const evidenceMirror = await this.readCanonicalMirror(
-      resolveStorageKey(this.options.storageRoot, version.evidenceStorageKey),
-      version.evidenceJson,
-      version.evidenceChecksum,
+      resolveStorageKey(this.options.storageRoot, agentVersion.evidenceStorageKey),
+      agentVersion.evidenceJson,
+      agentVersion.evidenceChecksum,
       `Artifact Version evidence is corrupt: ${versionId}`
     )
     const evidence = JSON.parse(evidenceMirror) as ArtifactVersionEvidence
@@ -284,10 +299,10 @@ class ArtifactProvenanceReadModel {
       )
       const persistedExecution = parseArtifactExecutionSnapshot(executionMirror)
       validateArtifactExecutionSnapshot(persistedExecution, {
-        rootFrameId: version.rootFrameId,
-        agentFrameId: version.agentFrameId,
-        messageBranchId: version.messageBranchId,
-        promptMessageId: version.promptMessageId,
+        rootFrameId: agentVersion.rootFrameId,
+        agentFrameId: agentVersion.agentFrameId,
+        messageBranchId: agentVersion.messageBranchId,
+        promptMessageId: agentVersion.promptMessageId,
         producerRunId: version.producerRunId,
         producerRunIndex: version.producerRunIndex,
         executionSnapshotChecksum: version.executionSnapshotChecksum,
@@ -490,7 +505,7 @@ class ArtifactProvenanceReadModel {
 
     return {
       descriptor: await this.options.projectVersionDescriptor(
-        version,
+        agentVersion,
         projectId,
         version.artifact.sessionId
       ),

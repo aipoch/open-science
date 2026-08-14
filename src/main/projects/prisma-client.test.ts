@@ -104,7 +104,8 @@ describe('project prisma client (integration)', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
 
@@ -453,6 +454,7 @@ describe('project prisma client (integration)', () => {
         state: 'pending',
         contentStorageKey: 'artifacts/result.png',
         evidenceStorageKey: 'artifacts/evidence.json',
+        evidenceSchemaVersion: 1,
         sizeBytes: 3n,
         checksum: 'c'.repeat(64),
         evidenceJson: '{}',
@@ -627,6 +629,7 @@ describe('project prisma client (integration)', () => {
         state: 'pending',
         contentStorageKey: 'artifacts/result.png',
         evidenceStorageKey: 'artifacts/evidence.json',
+        evidenceSchemaVersion: 1,
         sizeBytes: 3n,
         checksum: 'a'.repeat(64),
         evidenceJson: '{}',
@@ -686,9 +689,12 @@ describe('project prisma client (integration)', () => {
       $queryRawUnsafe: vi.fn(async () => [])
     } as unknown as PrismaClient
 
-    await expect(applyRuntimeSchemaBaseline(client, { pendingCheckConstraints: [] })).rejects.toBe(
-      migrationFailure
-    )
+    await expect(
+      applyRuntimeSchemaBaseline(client, {
+        pendingCheckConstraints: [],
+        verificationTarget: 'baseline'
+      })
+    ).rejects.toBe(migrationFailure)
   })
 
   it('releases and recreates the shared client for exclusive migration validation', async () => {
@@ -826,6 +832,7 @@ describe('project prisma client (integration)', () => {
           'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/content',
         evidenceStorageKey:
           'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/evidence.json',
+        evidenceSchemaVersion: 1,
         contentType: 'image/png',
         sizeBytes: 3n,
         checksum: 'b'.repeat(64),
@@ -1002,7 +1009,8 @@ describe('project prisma client (integration)', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_managed_file_version_foundation'
       ]
     })
 

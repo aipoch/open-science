@@ -5,7 +5,11 @@ import { deflateRawSync } from 'node:zlib'
 
 import { describe, expect, it } from 'vitest'
 
-import { inspectOuterArchive, isImportableSkillArchivePath } from './skill-archive-sniffer'
+import {
+  inspectOuterArchive,
+  isImportableSkillArchive,
+  isImportableSkillArchivePath
+} from './skill-archive-sniffer'
 import { UserSkillRepository } from './user-skill-repository'
 
 type ZipInput = { path: string; content: Buffer; method?: number }
@@ -102,6 +106,22 @@ const incompressibleBytes = (size: number): Buffer => {
 }
 
 describe('isImportableSkillArchivePath', () => {
+  it('classifies an importable Skill through an anchored reader', async () => {
+    const archive = buildZip([
+      {
+        path: 'reader-skill/SKILL.md',
+        content: Buffer.from('---\nname: Reader Skill\ndescription: From a lease.\n---\nRun it.')
+      }
+    ])
+
+    await expect(
+      isImportableSkillArchive({
+        size: archive.byteLength,
+        read: async (position, length) => archive.subarray(position, position + length)
+      })
+    ).resolves.toBe(true)
+  })
+
   it('finds a named Skill manifest without inflating unrelated large entries', async () => {
     const archive = buildZip([
       { path: 'paper-finder/assets/model.bin', content: Buffer.alloc(2 * 1024 * 1024), method: 0 },

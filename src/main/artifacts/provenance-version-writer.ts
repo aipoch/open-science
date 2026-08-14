@@ -14,6 +14,7 @@ import type {
   PreparedArtifactVersionPersistence
 } from './provenance-producer-capture'
 import type { ArtifactRepository } from './repository'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -201,32 +202,33 @@ class ArtifactProvenanceVersionWriter {
     })
 
     if (existing) {
+      const agentVersion = requireAgentArtifactVersion(existing)
       if (
-        existing.writeRequestChecksum !== writeRequestChecksum ||
-        existing.artifact.projectId !== projectId ||
-        existing.artifact.sessionId !== appSessionId
+        agentVersion.writeRequestChecksum !== writeRequestChecksum ||
+        agentVersion.artifact.projectId !== projectId ||
+        agentVersion.artifact.sessionId !== appSessionId
       ) {
         throw new Error(
           `Artifact write operation was reused for a different request: ${writeOperationId}`
         )
       }
-      if (existing.state === 'staging') {
+      if (agentVersion.state === 'staging') {
         return this.options.recoverStagingVersion(
-          existing,
+          agentVersion,
           projectId,
           appSessionId,
           request.filename,
           publishCompatibilityRouting
         )
       }
-      if (existing.state !== 'pending' && existing.state !== 'finalized') {
+      if (agentVersion.state !== 'pending' && agentVersion.state !== 'finalized') {
         throw new Error(`Artifact write has an invalid lifecycle state: ${writeOperationId}`)
       }
 
-      if (existing.state === 'pending') {
-        await publishCompatibilityRouting(existing, { replaceUnroutedBytes: true })
+      if (agentVersion.state === 'pending') {
+        await publishCompatibilityRouting(agentVersion, { replaceUnroutedBytes: true })
       }
-      return this.options.projectVersionFile(existing, projectId, appSessionId)
+      return this.options.projectVersionFile(agentVersion, projectId, appSessionId)
     }
 
     const pendingFiles = await this.options.compatibilityRepository.listPendingRunFiles({
@@ -307,10 +309,23 @@ class ArtifactProvenanceVersionWriter {
             })
           }
 
-          const latest = await transaction.artifactVersion.aggregate({
-            where: { artifactId: lineage.id },
-            _max: { versionNumber: true }
-          })
+          const [latest, basedOnVersion] = await Promise.all([
+            transaction.artifactVersion.aggregate({
+              where: { artifactId: lineage.id },
+              _max: { versionNumber: true }
+            }),
+            transaction.artifactVersion.findFirst({
+              where: {
+                artifactId: lineage.id,
+                OR: [
+                  { artifactRunId, state: { in: ['pending', 'finalized'] } },
+                  ...(lineage.currentVersionId ? [{ id: lineage.currentVersionId }] : [])
+                ]
+              },
+              orderBy: { versionNumber: 'desc' },
+              select: { id: true }
+            })
+          ])
           const versionNumber = (latest._max.versionNumber ?? 0) + 1
           const contentStorageKey = storageKey(
             'artifacts',
@@ -355,39 +370,43 @@ class ArtifactProvenanceVersionWriter {
               )
             : undefined
 
-          return transaction.artifactVersion.create({
-            data: {
-              id: versionId,
-              artifactId: lineage.id,
-              versionNumber,
-              filename: request.filename,
-              artifactRunId,
-              writeOperationId,
-              writeRequestChecksum,
-              rootFrameId: assertSafeSegment(request.rootFrameId, 'root frame id'),
-              agentFrameId: assertSafeSegment(request.agentFrameId, 'agent frame id'),
-              messageBranchId: assertSafeSegment(request.messageBranchId, 'message branch id'),
-              runtimeSegmentId: assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
-              promptMessageId: assertSafeSegment(request.promptMessageId, 'prompt message id'),
-              notebookSessionId: prepared.notebookSessionId,
-              producerRunId: prepared.producerRunId,
-              producerRunIndex: prepared.producerRunIndex,
-              state: 'staging',
-              contentStorageKey,
-              evidenceStorageKey,
-              contentType: request.contentType,
-              sizeBytes: BigInt(content.byteLength),
-              checksum,
-              evidenceJson: prepared.evidenceJson,
-              evidenceChecksum: prepared.evidenceChecksum,
-              executionSnapshotJson: prepared.executionSnapshotJson,
-              executionSnapshotChecksum: prepared.executionSnapshotChecksum,
-              executionSnapshotStorageKey,
-              executionSnapshotSchemaVersion: prepared.executionSnapshotJson ? 2 : undefined,
-              ...(prepared.inputs ? { inputs: prepared.inputs } : {}),
-              createdAt
-            }
-          })
+          return requireAgentArtifactVersion(
+            await transaction.artifactVersion.create({
+              data: {
+                id: versionId,
+                artifactId: lineage.id,
+                versionNumber,
+                filename: request.filename,
+                basedOnVersionId: basedOnVersion?.id,
+                artifactRunId,
+                writeOperationId,
+                writeRequestChecksum,
+                rootFrameId: assertSafeSegment(request.rootFrameId, 'root frame id'),
+                agentFrameId: assertSafeSegment(request.agentFrameId, 'agent frame id'),
+                messageBranchId: assertSafeSegment(request.messageBranchId, 'message branch id'),
+                runtimeSegmentId: assertSafeSegment(request.runtimeSegmentId, 'runtime segment id'),
+                promptMessageId: assertSafeSegment(request.promptMessageId, 'prompt message id'),
+                notebookSessionId: prepared.notebookSessionId,
+                producerRunId: prepared.producerRunId,
+                producerRunIndex: prepared.producerRunIndex,
+                state: 'staging',
+                contentStorageKey,
+                evidenceStorageKey,
+                contentType: request.contentType,
+                sizeBytes: BigInt(content.byteLength),
+                checksum,
+                evidenceJson: prepared.evidenceJson,
+                evidenceChecksum: prepared.evidenceChecksum,
+                evidenceSchemaVersion: 1,
+                executionSnapshotJson: prepared.executionSnapshotJson,
+                executionSnapshotChecksum: prepared.executionSnapshotChecksum,
+                executionSnapshotStorageKey,
+                executionSnapshotSchemaVersion: prepared.executionSnapshotJson ? 2 : undefined,
+                ...(prepared.inputs ? { inputs: prepared.inputs } : {}),
+                createdAt
+              }
+            })
+          )
         })
       )
       stagingRowPersisted = true
@@ -424,10 +443,12 @@ class ArtifactProvenanceVersionWriter {
           where: { id: persisted.artifactId },
           data: { filename: request.filename }
         })
-        return transaction.artifactVersion.update({
-          where: { id: persisted.id },
-          data: { state: 'pending' }
-        })
+        return requireAgentArtifactVersion(
+          await transaction.artifactVersion.update({
+            where: { id: persisted.id },
+            data: { state: 'pending' }
+          })
+        )
       })
       return this.options.projectVersionFile(finalized, projectId, appSessionId)
     } catch (error) {

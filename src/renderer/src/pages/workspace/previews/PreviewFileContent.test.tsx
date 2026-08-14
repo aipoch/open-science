@@ -181,6 +181,39 @@ describe('PreviewFileContent', () => {
     highlightSpy.mockClear()
   })
 
+  it('keeps the exact managed identity in the unsupported-preview download fallback', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: false })
+    window.api.saveManagedFile = saveManagedFile
+    const unsupportedItem: PreviewFileItem = {
+      id: 'upload:upload-1',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      title: 'archive.bin',
+      type: 'file',
+      source: 'upload',
+      path: 'upload-version:stale-projection',
+      name: 'archive.bin',
+      format: 'unknown',
+      managedFileId: 'upload-1',
+      selectedVersionId: 'upload-v5'
+    }
+
+    await renderFile(unsupportedItem)
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Download archive.bin"]')?.click()
+      await Promise.resolve()
+    })
+
+    expect(saveManagedFile).toHaveBeenCalledWith({
+      source: 'upload',
+      path: 'upload-version:stale-projection',
+      projectId: 'project-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v5',
+      suggestedName: 'archive.bin'
+    })
+  })
+
   afterEach(async () => {
     await act(async () => {
       root.unmount()

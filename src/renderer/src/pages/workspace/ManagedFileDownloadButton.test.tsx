@@ -36,6 +36,38 @@ describe('ManagedFileDownloadButton', () => {
     return container.querySelector('button')!
   }
 
+  it('passes an explicit historical Version through without upgrading it to head', async () => {
+    const saveManagedFile = vi.fn().mockResolvedValue({ saved: true })
+    window.api = { saveManagedFile } as unknown as Window['api']
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <ManagedFileDownloadButton
+          source="artifact"
+          path="artifact-version:project-1/session-1/file-1/version-1"
+          projectId="project-1"
+          fileId="file-1"
+          versionId="version-1"
+          suggestedName="report.md"
+        />
+      )
+    })
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button')?.click()
+      await Promise.resolve()
+    })
+
+    expect(saveManagedFile).toHaveBeenCalledWith({
+      source: 'artifact',
+      path: 'artifact-version:project-1/session-1/file-1/version-1',
+      projectId: 'project-1',
+      fileId: 'file-1',
+      versionId: 'version-1',
+      suggestedName: 'report.md'
+    })
+  })
+
   it('disables duplicate saves while the first request is pending', async () => {
     let resolveSave: ((result: { saved: boolean }) => void) | undefined
     const saveManagedFile = vi.fn(

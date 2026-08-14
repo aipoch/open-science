@@ -45,6 +45,22 @@ describe('installWebRendererContracts', () => {
     expect(invoke).toHaveBeenCalledWith('projects:list', [{ includeArchived: false }])
   })
 
+  it('keeps the host Save dialog Project ZIP action unavailable on Web', () => {
+    const api: Record<string, unknown> = {}
+    const invoke = vi.fn()
+
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['file:save-project-artifacts']),
+      restrictedRpcChannels: new Set(),
+      invoke,
+      subscribe: vi.fn(),
+      nativeAdapters: {}
+    })
+
+    expect(methodAt(api, 'saveProjectArtifacts')).toBeUndefined()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('preserves the Web optional-argument codecs when dispatching RPC', async () => {
     const api: Record<string, unknown> = {}
     const invoke = vi.fn().mockResolvedValue(undefined)
@@ -75,6 +91,10 @@ describe('installWebRendererContracts', () => {
   it('installs browser-native and inert event adapters without Electron lifecycle dispatch', () => {
     const api: Record<string, unknown> = {}
     const close = vi.fn()
+    const getManagedFileVersionCapability = vi.fn(() => ({
+      available: false,
+      reason: 'NATIVE_WRITE_REQUIRED'
+    }))
     const subscribe = vi.fn(() => vi.fn())
     const listener = vi.fn()
 
@@ -83,10 +103,21 @@ describe('installWebRendererContracts', () => {
       restrictedRpcChannels: new Set(),
       invoke: vi.fn(),
       subscribe,
-      nativeAdapters: { 'window.close': close }
+      nativeAdapters: {
+        'managedFileVersions.getCapability': getManagedFileVersionCapability,
+        'window.close': close
+      }
     })
 
     expect(methodAt(api, 'window.close')).toBe(close)
+    expect(methodAt(api, 'managedFileVersions.getCapability')).toBe(getManagedFileVersionCapability)
+    expect(methodAt(api, 'managedFileVersions.getCapability')?.()).toEqual({
+      available: false,
+      reason: 'NATIVE_WRITE_REQUIRED'
+    })
+    expect(methodAt(api, 'managedFileVersions.saveTextEdit')).toBeUndefined()
+    expect(methodAt(api, 'managedFileVersions.diffText')).toBeUndefined()
+    expect(methodAt(api, 'managedFileVersions.cancelDiff')).toBeUndefined()
     expect(methodAt(api, 'specialist.list')).toBeUndefined()
     expect(methodAt(api, 'uploads.stageLocalFile')).toBeUndefined()
     expect(methodAt(api, 'window.announceWindowFindReady')).toBeUndefined()

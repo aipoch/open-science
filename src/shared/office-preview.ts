@@ -32,6 +32,9 @@ export type OfficePreviewOpenRequest = {
   requestId: string
   source: OfficePreviewSource
   path: string
+  projectId?: string
+  fileId?: string
+  versionId?: string
   name: string
   extension: OfficePreviewRequestedExtension
   attempt: number

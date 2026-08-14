@@ -16,6 +16,10 @@ import { migrationSqlExecutor } from './migration-sql-executor'
 import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
 import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
+import {
+  managedFileVersionFoundationCurrentSchemaAdoptionStatements,
+  managedFileVersionFoundationMigration
+} from './migrations/0004-managed-file-version-foundation'
 
 type MigrationVerifierDescriptor =
   | {
@@ -33,6 +37,14 @@ type MigrationVerifierDescriptor =
       version: 1
       table: string
       column: string
+    }
+  | {
+      kind: 'foreign-key-integrity'
+      version: 1
+    }
+  | {
+      kind: 'managed-file-version-domain'
+      version: 1
     }
 
 type MigrationVerifiers = readonly [MigrationVerifierDescriptor, ...MigrationVerifierDescriptor[]]
@@ -55,6 +67,10 @@ const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): stri
       return `table-exists:v${verifier.version}:${lengthPrefixedChecksumText(verifier.table)}`
     case 'column-exists':
       return `column-exists:v${verifier.version}:${lengthPrefixedChecksumText(verifier.table)}${lengthPrefixedChecksumText(verifier.column)}`
+    case 'foreign-key-integrity':
+      return `foreign-key-integrity:v${verifier.version}`
+    case 'managed-file-version-domain':
+      return `managed-file-version-domain:v${verifier.version}`
   }
 }
 
@@ -95,6 +111,11 @@ const GRANTED_LOCAL_ROOTS_CHECKSUM = checksumMigrationPayload(
   grantedLocalRootsMigration.statements,
   grantedLocalRootsMigration.verifiers
 )
+const MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM = checksumMigrationPayload(
+  managedFileVersionFoundationMigration.id,
+  managedFileVersionFoundationMigration.statements,
+  managedFileVersionFoundationMigration.verifiers
+)
 const MIGRATION_MANIFEST = [
   {
     ...runtimeSchemaBaselineMigration,
@@ -113,6 +134,13 @@ const MIGRATION_MANIFEST = [
     checksum: GRANTED_LOCAL_ROOTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...managedFileVersionFoundationMigration,
+    checksum: MANAGED_FILE_VERSION_FOUNDATION_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain',
+    foreignKeysDuringApply: 'disabled'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -187,11 +215,86 @@ type MigrationManifestEntry = {
   verifiers: MigrationVerifiers
   backupOnApply: 'required' | 'none'
   backupRetention: 'retain' | 'delete-after-success'
+  foreignKeysDuringApply?: 'enabled' | 'disabled'
+}
+
+type ForeignKeyViolationRow = {
+  table: string
+  rowid: bigint | number | null
+  parent: string
+  fkid: bigint | number
+}
+
+const verifyForeignKeyIntegrity = async (client: PrismaClient): Promise<void> => {
+  const violations = await migrationSqlExecutor.query<ForeignKeyViolationRow[]>(
+    client,
+    'PRAGMA foreign_key_check'
+  )
+  if (violations.length > 0) {
+    throw new Error('Database foreign-key integrity audit found orphaned relations.')
+  }
+}
+
+const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<void> => {
+  await verifyForeignKeyIntegrity(client)
+  const violations = await migrationSqlExecutor.query<Array<{ kind: string; id: string }>>(
+    client,
+    `
+    SELECT 'artifact-head' AS "kind", "lineage"."id" AS "id"
+    FROM "ArtifactLineage" AS "lineage"
+    WHERE "lineage"."currentVersionId" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "ArtifactVersion" AS "version"
+        WHERE "version"."id" = "lineage"."currentVersionId"
+          AND "version"."artifactId" = "lineage"."id"
+          AND "version"."state" = 'finalized'
+      )
+    UNION ALL
+    SELECT 'upload-head', "file"."id"
+    FROM "UploadFile" AS "file"
+    WHERE "file"."currentVersionId" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "UploadVersion" AS "version"
+        WHERE "version"."id" = "file"."currentVersionId"
+          AND "version"."uploadFileId" = "file"."id"
+          AND "version"."state" = 'ready'
+      )
+    UNION ALL
+    SELECT 'artifact-based-on', "version"."id"
+    FROM "ArtifactVersion" AS "version"
+    WHERE "version"."basedOnVersionId" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "ArtifactVersion" AS "parent"
+        WHERE "parent"."id" = "version"."basedOnVersionId"
+          AND "parent"."artifactId" = "version"."artifactId"
+          AND "parent"."state" = 'finalized'
+          AND "parent"."versionNumber" < "version"."versionNumber"
+      )
+    UNION ALL
+    SELECT 'upload-based-on', "version"."id"
+    FROM "UploadVersion" AS "version"
+    WHERE "version"."basedOnVersionId" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "UploadVersion" AS "parent"
+        WHERE "parent"."id" = "version"."basedOnVersionId"
+          AND "parent"."uploadFileId" = "version"."uploadFileId"
+          AND "parent"."state" = 'ready'
+          AND "parent"."versionNumber" < "version"."versionNumber"
+      )
+    LIMIT 1
+  `
+  )
+  if (violations.length > 0) {
+    throw new Error(
+      `Managed file version domain audit failed for ${violations[0]!.kind}: ${violations[0]!.id}`
+    )
+  }
 }
 
 const runMigrationVerifiers = async (
   client: PrismaClient,
-  verifiers: MigrationVerifiers
+  verifiers: MigrationVerifiers,
+  runtimeSchemaTarget: 'baseline' | 'current' = 'baseline'
 ): Promise<void> => {
   for (const verifier of verifiers) {
     switch (verifier.kind) {
@@ -202,7 +305,8 @@ const runMigrationVerifiers = async (
         ) {
           throw new Error('Migration verification found an unsupported baseline contract.')
         }
-        await verifyRuntimeSchemaBaseline(client)
+        if (runtimeSchemaTarget === 'current') await verifyCurrentRuntimeSchema(client)
+        else await verifyRuntimeSchemaBaseline(client)
         break
       case 'table-exists': {
         const rows = await client.$queryRaw<Array<{ name: string }>>`
@@ -227,6 +331,12 @@ const runMigrationVerifiers = async (
         }
         break
       }
+      case 'foreign-key-integrity':
+        await verifyForeignKeyIntegrity(client)
+        break
+      case 'managed-file-version-domain':
+        await verifyManagedFileVersionDomain(client)
+        break
     }
   }
 }
@@ -597,8 +707,9 @@ const insertLedgerRow = async (
 
 const applyBaselineMigration = async (
   client: PrismaClient,
-  migration: MigrationManifestEntry
-): Promise<void> => {
+  migration: MigrationManifestEntry,
+  currentSchemaMigrations: readonly MigrationManifestEntry[]
+): Promise<'baseline' | 'current'> => {
   let prepared: Awaited<ReturnType<typeof prepareRuntimeSchemaBaseline>>
   try {
     prepared = await prepareRuntimeSchemaBaseline(client)
@@ -614,8 +725,43 @@ const applyBaselineMigration = async (
     await client.$transaction(async (transaction) => {
       const transactionClient = transaction as unknown as PrismaClient
       await applyRuntimeSchemaBaseline(transactionClient, prepared)
-      await runMigrationVerifiers(transactionClient, migration.verifiers)
+      if (prepared.verificationTarget === 'baseline') {
+        await runMigrationVerifiers(transactionClient, migration.verifiers)
+        await insertLedgerRow(transactionClient, migration)
+        return
+      }
+      if (currentSchemaMigrations.length === 0) {
+        throw new Error('Current schema adoption requires its versioned migration manifest.')
+      }
       await insertLedgerRow(transactionClient, migration)
+      for (const currentSchemaMigration of currentSchemaMigrations) {
+        if (currentSchemaMigration.id === managedFileVersionFoundationMigration.id) {
+          for (const statement of managedFileVersionFoundationCurrentSchemaAdoptionStatements) {
+            await migrationSqlExecutor.execute(transaction, statement)
+          }
+        } else {
+          try {
+            await runMigrationVerifiers(transactionClient, currentSchemaMigration.verifiers)
+          } catch {
+            for (const statement of currentSchemaMigration.statements) {
+              await migrationSqlExecutor.execute(transaction, statement)
+            }
+          }
+        }
+        try {
+          await runMigrationVerifiers(transactionClient, currentSchemaMigration.verifiers)
+        } catch (error) {
+          throw new DatabaseMigrationError(
+            'database_validation_failed',
+            'The existing database does not satisfy the required schema contract.',
+            false,
+            currentSchemaMigration.id,
+            { cause: error }
+          )
+        }
+        await insertLedgerRow(transactionClient, currentSchemaMigration)
+      }
+      await runMigrationVerifiers(transactionClient, migration.verifiers, 'current')
     })
   } catch (error) {
     migrationFailure = error
@@ -642,13 +788,19 @@ const applyBaselineMigration = async (
     throw classifyDatabaseFailure(migrationFailure, 'migration', migration.id)
   }
   if (restoreFailure) throw classifyDatabaseFailure(restoreFailure, 'migration', migration.id)
+  return prepared.verificationTarget
 }
 
 const applyManifestMigration = async (
   client: PrismaClient,
   migration: MigrationManifestEntry
 ): Promise<void> => {
+  const disableForeignKeys = migration.foreignKeysDuringApply === 'disabled'
+  let foreignKeysWereEnabled = false
+  let migrationFailure: unknown
   try {
+    foreignKeysWereEnabled = disableForeignKeys && (await readForeignKeyState(client)) === 1
+    if (foreignKeysWereEnabled) await setForeignKeys(client, false)
     await client.$transaction(async (transaction) => {
       const transactionClient = transaction as unknown as PrismaClient
       for (const statement of migration.statements) {
@@ -668,8 +820,27 @@ const applyManifestMigration = async (
       await insertLedgerRow(transactionClient, migration)
     })
   } catch (error) {
-    throw classifyDatabaseFailure(error, 'migration', migration.id)
+    migrationFailure = error
   }
+
+  let restoreFailure: unknown
+  try {
+    if (foreignKeysWereEnabled) await setForeignKeys(client, true)
+  } catch (error) {
+    restoreFailure = error
+  }
+  if (migrationFailure && restoreFailure) {
+    throw classifyDatabaseFailure(
+      new AggregateError(
+        [migrationFailure, restoreFailure],
+        `Database migration failed and foreign-key enforcement could not be restored: ${migrationFailure instanceof Error ? migrationFailure.message : String(migrationFailure)}`
+      ),
+      'migration',
+      migration.id
+    )
+  }
+  if (migrationFailure) throw classifyDatabaseFailure(migrationFailure, 'migration', migration.id)
+  if (restoreFailure) throw classifyDatabaseFailure(restoreFailure, 'migration', migration.id)
 }
 
 const reportDatabaseCompatibility = async (
@@ -717,6 +888,7 @@ const migrateApplicationDatabaseWithManifest = async (
   const complete = async (result: SchemaMigrationResult): Promise<SchemaMigrationResult> => {
     try {
       await verifyCurrentRuntimeSchema(client)
+      await verifyManagedFileVersionDomain(client)
     } catch (error) {
       throw classifyDatabaseFailure(error, 'validation', latest.id)
     }
@@ -766,11 +938,19 @@ const migrateApplicationDatabaseWithManifest = async (
   let nextIndex = appliedCount
   if (nextIndex === 0) {
     const baseline = manifest[0]!
+    const currentSchemaMigrationIndex = manifest.findIndex(
+      (migration) => migration.id === managedFileVersionFoundationMigration.id
+    )
+    const currentSchemaMigrations =
+      currentSchemaMigrationIndex > 0 ? manifest.slice(1, currentSchemaMigrationIndex + 1) : []
     options.onProgress?.({ phase: 'migrating', migrationId: baseline.id })
     await backupBeforeMigration(baseline)
-    await applyBaselineMigration(client, baseline)
+    const adoptedTarget = await applyBaselineMigration(client, baseline, currentSchemaMigrations)
     applied.push(baseline.id)
-    nextIndex = 1
+    if (adoptedTarget === 'current') {
+      applied.push(...currentSchemaMigrations.map((migration) => migration.id))
+    }
+    nextIndex = adoptedTarget === 'current' ? currentSchemaMigrationIndex + 1 : 1
   }
 
   for (const migration of manifest.slice(nextIndex)) {

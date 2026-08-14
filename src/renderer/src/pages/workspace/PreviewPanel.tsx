@@ -11,9 +11,10 @@ import type {
   PreviewToolItem
 } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { workbenchPreviewGuardScope } from '@/stores/preview-leave-guard'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
-import { PreviewFileSurface } from './PreviewFileSurface'
+import { PreviewFileSurface, type PreviewFileSurfaceHandle } from './PreviewFileSurface'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { PreviewToolContent } from './previews/PreviewToolContent'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
@@ -100,7 +101,7 @@ const PreviewTab = ({
   containerRef: (element: HTMLDivElement | null) => void
   tabRef: (element: HTMLButtonElement | null) => void
   onActivate: (id: string) => void
-  onClose: (id: string) => void
+  onClose: (id: string) => boolean
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }): React.JSX.Element => (
   <div
@@ -168,7 +169,7 @@ const PreviewTabBar = ({
   tabs: PreviewItem[]
   activeItemId: string | undefined
   onActivate: (id: string) => void
-  onClose: (id: string) => void
+  onClose: (id: string) => boolean
 }): React.JSX.Element => {
   const tabListRef = useHorizontalScrollFade<HTMLDivElement>()
   const tabContainerRefs = useRef<Array<HTMLDivElement | null>>([])
@@ -228,8 +229,7 @@ const PreviewTabBar = ({
 
       event.preventDefault()
       const fallbackIndex = index < lastIndex ? index + 1 : index - 1
-      if (fallbackIndex >= 0) moveToTab(fallbackIndex)
-      onClose(tab.id)
+      if (onClose(tab.id) && fallbackIndex >= 0) moveToTab(fallbackIndex)
       return
     }
 
@@ -346,12 +346,14 @@ const PreviewFilePanel = ({
 }: {
   item: PreviewFileItem
   contentKey: string
-  onClose: (id: string) => void
+  onClose: (id: string) => boolean
 }): React.JSX.Element => {
   const [isFullScreenOpen, setIsFullScreenOpen] = useState(false)
   const surfaceRef = useRef<HTMLElement | null>(null)
+  const previewSurfaceRef = useRef<PreviewFileSurfaceHandle | null>(null)
 
-  const closeFullScreen = useCallback((): void => {
+  const closeFullScreen = useCallback((checkGuard = true): void => {
+    if (checkGuard && previewSurfaceRef.current?.confirmLeave() === false) return
     setIsFullScreenOpen(false)
   }, [])
 
@@ -361,7 +363,7 @@ const PreviewFilePanel = ({
 
   usePreviewModalSurface({
     isOpen: isFullScreenOpen,
-    onClose: closeFullScreen,
+    onClose: () => closeFullScreen(true),
     surfaceRef,
     itemId: item.id
   })
@@ -373,7 +375,7 @@ const PreviewFilePanel = ({
           aria-hidden="true"
           data-state="open"
           className={`${dialogOverlayClassName} z-[60] cursor-default`}
-          onClick={closeFullScreen}
+          onClick={() => closeFullScreen(true)}
         />
       ) : null}
       <section
@@ -397,13 +399,16 @@ const PreviewFilePanel = ({
         }
       >
         <PreviewFileSurface
+          ref={previewSurfaceRef}
           item={item}
           contentKey={contentKey}
           // Full-screen mode floats above the modal panel (z-[61]); tooltips must follow.
           tooltipClassName={isFullScreenOpen ? 'z-[70]' : undefined}
-          onClose={isFullScreenOpen ? closeFullScreen : () => onClose(item.id)}
+          onClose={isFullScreenOpen ? () => closeFullScreen(true) : () => onClose(item.id)}
           onOpenFullScreen={isFullScreenOpen ? undefined : openFullScreen}
           provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
+          leaveGuardScope={workbenchPreviewGuardScope(item.projectId, item.id)}
+          workbenchConnected
         />
       </section>
     </>
@@ -519,7 +524,11 @@ const PreviewPanelSurface = ({
             tabs={items}
             activeItemId={activeItemId}
             onActivate={activateItem}
-            onClose={removeItem}
+            onClose={(itemId) => {
+              const before = usePreviewWorkbenchStore.getState().items.length
+              removeItem(itemId)
+              return usePreviewWorkbenchStore.getState().items.length < before
+            }}
           />
         </div>
       ) : null}
@@ -552,7 +561,11 @@ const PreviewPanelSurface = ({
               key={item.id}
               item={item}
               contentKey={activeContentKey}
-              onClose={removeItem}
+              onClose={(itemId) => {
+                const before = usePreviewWorkbenchStore.getState().items.length
+                removeItem(itemId)
+                return usePreviewWorkbenchStore.getState().items.length < before
+              }}
             />
           ) : (
             <section

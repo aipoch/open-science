@@ -210,6 +210,9 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
   group('lifecycle', 'lifecycle', [
     ['getClientId', 'lifecycle:client-id'],
   ]),
+  group('managed-file-versions', 'managedFileVersions', [
+    ['getCapability', 'managed-file-versions:get-capability', DELEGATED_NATIVE], ['inspect', 'managed-file-versions:inspect', ELECTRON], ['diffText', 'managed-file-versions:diff-text', ELECTRON], ['cancelDiff', 'managed-file-versions:cancel-diff', ELECTRON], ['saveTextEdit', 'managed-file-versions:save-text-edit', ELECTRON],
+  ]),
   group('local-fs', 'localFs', [
     ['getRoots', 'local-fs:get-roots', LOCAL], ['grantRoot', 'local-fs:grant-root', LOCAL], ['listDir', 'local-fs:list-dir', LOCAL],
     ['listDrives', 'local-fs:list-drives', LOCAL], ['listGrantedRoots', 'local-fs:granted-roots:list', LOCAL], ['openPath', 'local-fs:open-path', LOCAL], ['readPreview', 'local-fs:read-preview', LOCAL],

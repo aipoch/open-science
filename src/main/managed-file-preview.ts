@@ -7,13 +7,26 @@ const DEFAULT_PREVIEW_BYTES = 8192
 // without truncation; callers that only need a thumbnail keep passing a smaller explicit maxBytes.
 const MAX_PREVIEW_BYTES = 10 * 1024 * 1024
 
-// Reads a caller-bounded preview from an already-validated managed file path.
-const readBoundedManagedFilePreview = async (
-  filePath: string,
+type ManagedFilePreviewReadLease = Readonly<{
+  size: number
+  read: (
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number
+  ) => Promise<{ bytesRead: number }>
+  verifyUnchanged: () => Promise<void>
+  close: () => Promise<void>
+}>
+
+type ManagedFilePreviewReader = Pick<ManagedFilePreviewReadLease, 'size' | 'read'> &
+  Partial<Pick<ManagedFilePreviewReadLease, 'verifyUnchanged'>>
+
+const readBoundedManagedFilePreviewFromReader = async (
+  reader: ManagedFilePreviewReader,
   request: ReadArtifactPreviewRequest,
   invalidEncodingMessage: string
 ): Promise<ArtifactPreviewResult> => {
-  const fileStat = await stat(filePath)
   // Normalize the optional byte limit before applying the repository-wide hard cap.
   const requestedBytes =
     typeof request.maxBytes === 'number' && Number.isFinite(request.maxBytes)
@@ -25,7 +38,7 @@ const readBoundedManagedFilePreview = async (
   if (encoding !== 'utf8' && encoding !== 'base64') {
     throw new Error(invalidEncodingMessage)
   }
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > fileStat.size) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > reader.size) {
     throw new Error('Invalid managed file preview offset.')
   }
 
@@ -33,32 +46,55 @@ const readBoundedManagedFilePreview = async (
   const includePageMetadata = request.offset !== undefined
   // UTF-8 pages may read up to three extra bytes so the final character is never split.
   const readBudget = encoding === 'utf8' ? maxBytes + 3 : maxBytes
-  const bytesToRead = Math.min(fileStat.size - offset, readBudget)
+  const bytesToRead = Math.min(reader.size - offset, readBudget)
   const buffer = Buffer.alloc(bytesToRead)
+  const { bytesRead } = await reader.read(buffer, 0, bytesToRead, offset)
+  let contentBytesRead = Math.min(bytesRead, maxBytes)
+  if (encoding === 'utf8') {
+    while (contentBytesRead < bytesRead && (buffer[contentBytesRead] & 0xc0) === 0x80) {
+      contentBytesRead += 1
+    }
+  }
+  const endOffset = offset + contentBytesRead
+  await reader.verifyUnchanged?.()
+
+  return {
+    content: buffer.subarray(0, contentBytesRead).toString(encoding),
+    encoding,
+    size: reader.size,
+    truncated: reader.size > endOffset,
+    ...(includePageMetadata ? { offset } : {}),
+    ...(includePageMetadata && reader.size > endOffset ? { nextOffset: endOffset } : {})
+  }
+}
+
+// Reads a caller-bounded preview from an already-validated managed file path.
+const readBoundedManagedFilePreview = async (
+  filePath: string,
+  request: ReadArtifactPreviewRequest,
+  invalidEncodingMessage: string
+): Promise<ArtifactPreviewResult> => {
+  const fileStat = await stat(filePath)
   // Use an explicit file handle so the bounded read never streams the whole file by accident.
   const fileHandle = await open(filePath, 'r')
 
   try {
-    const { bytesRead } = await fileHandle.read(buffer, 0, bytesToRead, offset)
-    let contentBytesRead = Math.min(bytesRead, maxBytes)
-    if (encoding === 'utf8') {
-      while (contentBytesRead < bytesRead && (buffer[contentBytesRead] & 0xc0) === 0x80) {
-        contentBytesRead += 1
-      }
-    }
-    const endOffset = offset + contentBytesRead
-
-    return {
-      content: buffer.subarray(0, contentBytesRead).toString(encoding),
-      encoding,
-      size: fileStat.size,
-      truncated: fileStat.size > endOffset,
-      ...(includePageMetadata ? { offset } : {}),
-      ...(includePageMetadata && fileStat.size > endOffset ? { nextOffset: endOffset } : {})
-    }
+    return await readBoundedManagedFilePreviewFromReader(
+      { size: fileStat.size, read: fileHandle.read.bind(fileHandle) },
+      request,
+      invalidEncodingMessage
+    )
   } finally {
     await fileHandle.close()
   }
 }
 
-export { readBoundedManagedFilePreview }
+const readBoundedManagedFilePreviewLease = (
+  lease: ManagedFilePreviewReadLease,
+  request: ReadArtifactPreviewRequest,
+  invalidEncodingMessage: string
+): Promise<ArtifactPreviewResult> =>
+  readBoundedManagedFilePreviewFromReader(lease, request, invalidEncodingMessage)
+
+export { readBoundedManagedFilePreview, readBoundedManagedFilePreviewLease }
+export type { ManagedFilePreviewReadLease }

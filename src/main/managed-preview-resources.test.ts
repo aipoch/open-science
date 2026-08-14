@@ -77,6 +77,104 @@ describe('ManagedPreviewResources', () => {
     })
   })
 
+  it('passes a default logical Artifact identity to the resolver at capability acquisition', async () => {
+    const filePath = await createFile(Buffer.from('head bytes'))
+    const resolvePath = vi.fn().mockResolvedValue(filePath)
+    const resources = new ManagedPreviewResources({ resolvePath, createId: () => 'head-resource' })
+
+    await resources.acquire(17, {
+      source: 'artifact',
+      path: 'artifact-version:stale-projection',
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
+
+    expect(resolvePath).toHaveBeenCalledWith('artifact', {
+      source: 'artifact',
+      path: 'artifact-version:stale-projection',
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
+  })
+
+  it('reads a logical managed version through its trusted lease and closes it on release', async () => {
+    const filePath = await createFile(Buffer.from('path replacement'))
+    const trustedBytes = Buffer.from('verified inode')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({
+      path: '/managed/verified.pdf',
+      size: trustedBytes.byteLength,
+      versionToken: 42,
+      snapshot: { dev: 1n, ino: 2n, size: BigInt(trustedBytes.byteLength), mtimeNs: 3n },
+      read: vi.fn(),
+      readRange: vi.fn(async (begin: number, end: number) => trustedBytes.subarray(begin, end)),
+      copyTo: vi.fn(),
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      close
+    })
+    const resolvePath = vi.fn().mockResolvedValue(filePath)
+    const resources = new ManagedPreviewResources({
+      resolvePath,
+      openManagedFileVersion,
+      createId: () => 'trusted-resource'
+    } as never)
+
+    const resource = await resources.acquire(17, {
+      source: 'upload',
+      path: 'stale-projection',
+      projectId: 'project-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v2'
+    })
+
+    await expect(
+      resources.readRange(17, { resourceId: resource.id, begin: 0, end: trustedBytes.byteLength })
+    ).resolves.toEqual({
+      begin: 0,
+      end: trustedBytes.byteLength,
+      total: trustedBytes.byteLength,
+      data: new Uint8Array(trustedBytes)
+    })
+    expect(openManagedFileVersion).toHaveBeenCalledWith('upload', {
+      projectId: 'project-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v2'
+    })
+    expect(resolvePath).not.toHaveBeenCalled()
+
+    resources.release(17, { resourceId: resource.id })
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('closes the temporary trusted lease used for Office admission inspection', async () => {
+    const close = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({
+      path: '/managed/report.xlsx',
+      size: 6,
+      versionToken: 42,
+      snapshot: { dev: 1n, ino: 2n, size: 6n, mtimeNs: 3n },
+      read: vi.fn(),
+      readRange: vi.fn(),
+      copyTo: vi.fn(),
+      verifyUnchanged: vi.fn(),
+      close
+    })
+    const resources = new ManagedPreviewResources({
+      resolvePath: vi.fn(),
+      openManagedFileVersion
+    } as never)
+
+    await expect(
+      resources.inspect({
+        source: 'artifact',
+        path: 'stale-projection',
+        projectId: 'project-1',
+        fileId: 'artifact-1'
+      })
+    ).resolves.toEqual({ size: 6, version: 42, dev: 1n, ino: 2n, mtimeNs: 3n })
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('inspects authoritative metadata without minting a resource capability', async () => {
     const filePath = await createFile(Buffer.from('office'))
     const createId = vi.fn(() => 'resource-1')

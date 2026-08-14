@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import type { Page } from 'playwright'
+import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 
 const PROJECT_NAME = 'Project files journey'
@@ -10,6 +10,8 @@ const IMAGE_CONTENT = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64'
 )
+const VERSION_TWO_CONTENT = '# Fixture findings\n\nFirst edited version.'
+const VERSION_THREE_CONTENT = '# Fixture findings\n\nSecond edited version.'
 
 const createProject = async (page: Page): Promise<void> => {
   await page.getByRole('button', { name: 'New project' }).click()
@@ -19,7 +21,20 @@ const createProject = async (page: Page): Promise<void> => {
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
-test('uploads an attachment and previews it from Project files', async ({ app }) => {
+const saveTextVersion = async (
+  preview: Locator,
+  baseline: string,
+  nextContent: string
+): Promise<void> => {
+  await preview.getByRole('button', { name: `Edit ${FILE_NAME}` }).click()
+  const editor = preview.getByRole('textbox', { name: `Edit ${FILE_NAME} source` })
+  await expect(editor).toHaveValue(baseline)
+  await editor.fill(nextContent)
+  await preview.getByRole('button', { name: 'Save changes' }).click()
+  await expect(editor).toBeHidden()
+}
+
+test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   await createProject(page)
@@ -43,6 +58,48 @@ test('uploads an attachment and previews it from Project files', async ({ app })
   await expect(preview).toBeVisible()
   await expect(preview.getByText('Fixture findings', { exact: true })).toBeVisible()
   await expect(preview.getByText('Deterministic preview content.', { exact: true })).toBeVisible()
+
+  // Three immutable versions let this journey prove that an active diff follows version changes.
+  const versionNavigation = preview.getByTestId('managed-preview-version-navigation')
+  await saveTextVersion(preview, FILE_CONTENT, VERSION_TWO_CONTENT)
+  await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
+  await expect(preview.getByText('First edited version.', { exact: true })).toBeVisible()
+
+  await saveTextVersion(preview, VERSION_TWO_CONTENT, VERSION_THREE_CONTENT)
+  await expect(versionNavigation.getByText('v3', { exact: true })).toBeVisible()
+  await expect(preview.getByText('Second edited version.', { exact: true })).toBeVisible()
+
+  await preview
+    .getByRole('button', { name: `Compare ${FILE_NAME} with its source version` })
+    .click()
+  const differences = preview.getByRole('region', { name: 'File version differences' })
+  await expect(
+    differences.locator('[data-diff-kind="removed"]').filter({ hasText: 'First edited version.' })
+  ).toBeVisible()
+  await expect(
+    differences.locator('[data-diff-kind="added"]').filter({ hasText: 'Second edited version.' })
+  ).toBeVisible()
+
+  await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
+  await expect(versionNavigation.getByText('v2', { exact: true })).toBeVisible()
+  await expect(preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` })).toBeVisible()
+  await expect(
+    differences
+      .locator('[data-diff-kind="removed"]')
+      .filter({ hasText: 'Deterministic preview content.' })
+  ).toBeVisible()
+  await expect(
+    differences.locator('[data-diff-kind="added"]').filter({ hasText: 'First edited version.' })
+  ).toBeVisible()
+
+  await preview.getByRole('button', { name: `Stop comparing ${FILE_NAME}` }).click()
+  await expect(differences).toBeHidden()
+  await expect(preview.getByText('First edited version.', { exact: true })).toBeVisible()
+  await versionNavigation.getByRole('button', { name: 'Previous file version' }).click()
+  await expect(versionNavigation.getByText('v1', { exact: true })).toBeVisible()
+  await expect(preview.getByText('Deterministic preview content.', { exact: true })).toBeVisible()
+  await expect(preview.locator('[data-diff-kind]')).toHaveCount(0)
+
   await preview.getByRole('button', { name: `Close preview of ${FILE_NAME}` }).click()
   await expect(preview).toBeHidden()
 })

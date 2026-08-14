@@ -15,16 +15,27 @@ const useUnavailablePreviewProbe = ({
   enabled,
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   path,
   source
 }: {
   enabled: boolean
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   path: string
   source: PreviewFileSource
 }): boolean => {
-  const requestKey = JSON.stringify([projectId ?? null, sessionId ?? null, source, path])
+  const requestKey = JSON.stringify([
+    projectId ?? null,
+    sessionId ?? null,
+    source,
+    managedFileId ?? null,
+    selectedVersionId ?? null,
+    path
+  ])
   const [result, setResult] = useState<UnavailableProbeResult | null>(null)
   const hasCurrentResult = result?.requestKey === requestKey
 
@@ -38,6 +49,8 @@ const useUnavailablePreviewProbe = ({
     void readPreview({
       ...createPreviewRequestScope({ projectId, sessionId, source, path }),
       path,
+      ...(managedFileId ? { fileId: managedFileId } : {}),
+      ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
       maxBytes: 1,
       encoding: 'base64'
     }).then(
@@ -54,7 +67,17 @@ const useUnavailablePreviewProbe = ({
     return () => {
       canceled = true
     }
-  }, [enabled, hasCurrentResult, path, projectId, requestKey, sessionId, source])
+  }, [
+    enabled,
+    hasCurrentResult,
+    managedFileId,
+    path,
+    projectId,
+    requestKey,
+    selectedVersionId,
+    sessionId,
+    source
+  ])
 
   return hasCurrentResult ? result.unavailable : false
 }

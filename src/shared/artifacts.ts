@@ -27,12 +27,18 @@ export type ArtifactFile = ProjectIdScope & {
 // composer `@` mention. Carries the durable path so the runtime can resolve and attach the file.
 export type ArtifactReference = {
   id: string
+  // Stable ManagedFile identity. Optional only for legacy Message parts written before file
+  // versioning; new Project Files pickers persist it separately from the UI row id.
+  sourceFileId?: string
   name: string
   path: string
   source: 'upload' | 'artifact'
   mimeType?: string
   // Carries immutable version identity when the selected artifact has native provenance.
   versionId?: string
+  // Trusted content identity resolved for one Agent turn. Persisted references may omit it because
+  // the immutable Version id remains the authority and Notebook validates the checksum from DB.
+  checksum?: string
 }
 
 // Reserved reference shape for future user-linked folders. Persist only a granted root id and a
@@ -109,6 +115,8 @@ export type ReadArtifactPreviewRequest = {
   path: string
   projectId?: string
   sessionId?: string
+  fileId?: string
+  versionId?: string
   maxBytes?: number
   encoding?: 'utf8' | 'base64'
   offset?: number

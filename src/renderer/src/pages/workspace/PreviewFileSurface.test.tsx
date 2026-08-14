@@ -8,6 +8,7 @@ import {
   type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import {
   createInitialSessionState,
   type ChatSession,
@@ -16,9 +17,14 @@ import {
 
 const provenancePanelSpy = vi.hoisted(() => vi.fn())
 const previewContentSpy = vi.hoisted(() => vi.fn())
+const markdownSpy = vi.hoisted(() => vi.fn())
 
 vi.mock('./ArtifactProvenancePanel', () => ({
-  ArtifactProvenancePanel: (props: { onClose: () => void }) => {
+  ArtifactProvenancePanel: (props: {
+    item: PreviewFileItem
+    onClose: () => void
+    onVersionChange?: (item: PreviewFileItem) => boolean
+  }) => {
     provenancePanelSpy(props)
     return (
       <div data-testid="provenance-panel">
@@ -42,6 +48,13 @@ vi.mock('./previews/PreviewFileContent', () => ({
         Preview content
       </div>
     )
+  }
+}))
+
+vi.mock('@/components/streamdown/AgentMarkdown', () => ({
+  AgentMarkdown: (props: { content: string; allowMedia?: boolean }) => {
+    markdownSpy(props)
+    return <div data-testid="safe-markdown">{props.content}</div>
   }
 }))
 
@@ -126,6 +139,14 @@ const click = async (element: HTMLElement | null): Promise<void> => {
   await act(async () => element.click())
 }
 
+const changeTextarea = async (textarea: HTMLTextAreaElement, value: string): Promise<void> => {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  await act(async () => {
+    setter?.call(textarea, value)
+    textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
 const openMenu = async (trigger: Element | null): Promise<void> => {
   if (!trigger) throw new Error('menu trigger not found')
   act(() => {
@@ -142,8 +163,10 @@ const zIndexFromClassName = (element: Element): number => {
 }
 
 beforeEach(() => {
+  previewLeaveGuards.clear()
   provenancePanelSpy.mockClear()
   previewContentSpy.mockClear()
+  markdownSpy.mockClear()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   usePreviewWorkbenchStore.getState().activateProject('project-1')
   useSessionStore.setState(createInitialSessionState())
@@ -157,6 +180,15 @@ beforeEach(() => {
           originSession: { sessionId: 'session-1', state: 'active', title: 'Sine' },
           versions: [descriptor, secondDescriptor]
         })
+      },
+      managedFileVersions: {
+        inspect: vi.fn().mockResolvedValue({
+          ok: false,
+          error: { code: 'VERSION_NOT_FOUND', message: 'not managed' }
+        }),
+        diffText: vi.fn(),
+        cancelDiff: vi.fn().mockResolvedValue({ ok: true, value: { cancelled: true } }),
+        saveTextEdit: vi.fn()
       }
     }
   })
@@ -165,13 +197,931 @@ beforeEach(() => {
   root = createRoot(container)
 })
 
+const managedUploadItem: PreviewFileItem = {
+  id: 'upload:upload-file-1',
+  managedFileId: 'upload-file-1',
+  selectedVersionId: 'upload-v2',
+  projectId: 'project-1',
+  sessionId: 'session-1',
+  type: 'file',
+  title: 'README.md',
+  name: 'README.md',
+  path: 'upload-version:project-1/session-1/upload-v2',
+  format: 'markdown',
+  source: 'upload'
+}
+
+const managedInspect = {
+  source: 'upload' as const,
+  projectId: 'project-1',
+  fileId: 'upload-file-1',
+  sessionId: 'session-1',
+  displayName: 'README.md',
+  headVersionId: 'upload-v2',
+  selectedVersionId: 'upload-v2',
+  versions: [
+    {
+      id: 'upload-v1',
+      source: 'upload' as const,
+      fileId: 'upload-file-1',
+      versionNumber: 1,
+      displayName: 'README.md',
+      originKind: 'user_upload' as const,
+      basedOnVersionId: null,
+      contentType: 'text/markdown',
+      sizeBytes: 8,
+      checksum: '1',
+      createdAt: '2026-08-11T00:00:00.000Z'
+    },
+    {
+      id: 'upload-v2',
+      source: 'upload' as const,
+      fileId: 'upload-file-1',
+      versionNumber: 2,
+      displayName: 'README.md',
+      originKind: 'user_edit' as const,
+      basedOnVersionId: 'upload-v1',
+      contentType: 'text/markdown',
+      sizeBytes: 9,
+      checksum: '2',
+      createdAt: '2026-08-12T00:00:00.000Z'
+    }
+  ],
+  canEdit: true,
+  canDiff: true,
+  text: '# Current\n',
+  textFormat: { hasUtf8Bom: false, newline: 'lf' as const, hasTrailingNewline: true }
+}
+
+describe('PreviewFileSurface managed text versions', () => {
+  beforeEach(() => {
+    window.api.managedFileVersions.inspect = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: managedInspect })
+  })
+
+  it('stays read-only when the Web runtime exposes capability detection without managed operations', async () => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        artifacts: window.api.artifacts,
+        managedFileVersions: {
+          getCapability: vi.fn(() => ({
+            available: false,
+            reason: 'NATIVE_WRITE_REQUIRED'
+          }))
+        }
+      }
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[aria-label="Edit README.md"]')).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Compare README.md with its source version"]')
+    ).toBeNull()
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+  })
+
+  it('uses the exact item passed to an independent surface instead of a same-id workbench tab', async () => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem({
+      ...managedUploadItem,
+      projectId: 'project-1',
+      managedFileId: 'workbench-file',
+      selectedVersionId: 'workbench-v2',
+      path: 'upload-version:project-1/session-1/workbench-v2'
+    })
+    const dialogItem = {
+      ...managedUploadItem,
+      projectId: 'project-2',
+      managedFileId: 'dialog-file',
+      selectedVersionId: 'dialog-v3',
+      path: 'upload-version:project-2/session-2/dialog-v3'
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={dialogItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(window.api.managedFileVersions.inspect).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'project-2',
+      fileId: 'dialog-file',
+      versionId: 'dialog-v3'
+    })
+  })
+
+  it('inspects uploads with the database file id and edits raw Markdown in a plain textarea', async () => {
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { kind: 'noop', version: managedInspect.versions[1], headVersionId: 'upload-v2' }
+    })
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    expect(window.api.managedFileVersions.inspect).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-file-1',
+      versionId: 'upload-v2'
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    const textarea = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Edit README.md source"]'
+    )
+    expect(textarea?.value).toBe('# Current\n')
+    expect(container.querySelector('[data-testid="preview-content"]')).toBeNull()
+    expect(
+      container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')?.disabled
+    ).toBe(true)
+  })
+
+  it('preserves a dirty draft on conflict and offers the latest version', async () => {
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        kind: 'conflict',
+        expectedHeadVersionId: 'upload-v2',
+        actualHead: { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+      }
+    })
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
+    await changeTextarea(textarea, '# Draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
+    expect(container.textContent).toContain('View latest version')
+    expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileId: 'upload-file-1',
+        basedOnVersionId: 'upload-v2',
+        expectedHeadVersionId: 'upload-v2',
+        content: '# Draft\n',
+        operationId: expect.any(String)
+      })
+    )
+  })
+
+  it('ignores a save result that arrives after the surface moves to another file', async () => {
+    let resolveSave!: (value: unknown) => void
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve
+      })
+    )
+    const otherItem: PreviewFileItem = {
+      ...managedUploadItem,
+      id: 'upload:upload-file-2',
+      managedFileId: 'upload-file-2',
+      selectedVersionId: 'other-v1',
+      name: 'OTHER.md',
+      title: 'OTHER.md',
+      path: 'upload-version:project-1/session-1/other-v1'
+    }
+    const otherInspect = {
+      ...managedInspect,
+      fileId: 'upload-file-2',
+      displayName: 'OTHER.md',
+      headVersionId: 'other-v1',
+      selectedVersionId: 'other-v1',
+      versions: [
+        {
+          ...managedInspect.versions[0],
+          id: 'other-v1',
+          fileId: 'upload-file-2',
+          displayName: 'OTHER.md',
+          basedOnVersionId: null
+        }
+      ],
+      canDiff: false,
+      text: '# Other\n'
+    }
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
+      ok: true as const,
+      value: request.fileId === 'upload-file-2' ? otherInspect : managedInspect
+    }))
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# A draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={otherItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit OTHER.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# B draft\n')
+
+    await act(async () => {
+      resolveSave({
+        ok: true,
+        value: {
+          kind: 'created',
+          replayed: false,
+          version: { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 },
+          headVersionId: 'upload-v3'
+        }
+      })
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# B draft\n')
+  })
+
+  it('ignores a save result that arrives after the surface unmounts', async () => {
+    let resolveSave!: (value: unknown) => void
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve
+      })
+    )
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
+    const upsertItem = vi.spyOn(usePreviewWorkbenchStore.getState(), 'upsertItem')
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+    await act(async () => root.unmount())
+
+    await act(async () => {
+      resolveSave({
+        ok: true,
+        value: {
+          kind: 'created',
+          replayed: false,
+          version: { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 },
+          headVersionId: 'upload-v3'
+        }
+      })
+      await Promise.resolve()
+    })
+
+    expect(upsertItem).not.toHaveBeenCalled()
+    root = createRoot(container)
+  })
+
+  it('does not let a late save replace the Version selected while that save was pending', async () => {
+    let resolveSave!: (value: unknown) => void
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveSave = resolve
+      })
+    )
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+    expect(confirm).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      resolveSave({
+        ok: true,
+        value: {
+          kind: 'created',
+          replayed: false,
+          version: { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 },
+          headVersionId: 'upload-v3'
+        }
+      })
+      await Promise.resolve()
+    })
+
+    expect(previewContentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        item: expect.objectContaining({ selectedVersionId: 'upload-v1' })
+      })
+    )
+  })
+
+  it('renders diff through restricted Markdown and cancels the task when toggled off', async () => {
+    let resolveDiff!: (value: unknown) => void
+    window.api.managedFileVersions.diffText = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveDiff = resolve
+      })
+    )
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    expect(window.api.managedFileVersions.diffText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileId: 'upload-file-1',
+        versionId: 'upload-v2',
+        requestId: expect.any(String)
+      })
+    )
+    await click(container.querySelector('[aria-label="Stop comparing README.md"]'))
+    expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledWith({
+      requestId: expect.any(String)
+    })
+    resolveDiff({
+      ok: true,
+      value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+    })
+  })
+
+  it('leaves diff mode and cancels the old request when switching to a version without a base', async () => {
+    let resolveDiff!: (value: unknown) => void
+    window.api.managedFileVersions.diffText = vi.fn().mockReturnValue(
+      new Promise((resolve) => {
+        resolveDiff = resolve
+      })
+    )
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
+      ok: true as const,
+      value:
+        request.versionId === 'upload-v1'
+          ? {
+              ...managedInspect,
+              headVersionId: 'upload-v2',
+              selectedVersionId: 'upload-v1',
+              canDiff: false,
+              text: '# Original\n'
+            }
+          : managedInspect
+    }))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledWith({
+      requestId: expect.any(String)
+    })
+    expect(container.textContent).not.toContain('Comparing versions...')
+    expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
+    resolveDiff({
+      ok: true,
+      value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+    })
+  })
+
+  it('keeps diff mode and reloads it when switching to another version with a base', async () => {
+    const thirdVersion = {
+      ...managedInspect.versions[1],
+      id: 'upload-v3',
+      versionNumber: 3,
+      basedOnVersionId: 'upload-v2'
+    }
+    const inspectV3 = {
+      ...managedInspect,
+      headVersionId: 'upload-v3',
+      selectedVersionId: 'upload-v3',
+      versions: [...managedInspect.versions, thirdVersion],
+      text: '# Third\n'
+    }
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
+      ok: true as const,
+      value:
+        request.versionId === 'upload-v2'
+          ? { ...inspectV3, selectedVersionId: 'upload-v2', text: '# Current\n' }
+          : inspectV3
+    }))
+    type DiffResult = Awaited<ReturnType<typeof window.api.managedFileVersions.diffText>>
+    const pending: Array<(value: DiffResult) => void> = []
+    window.api.managedFileVersions.diffText = vi.fn(
+      () =>
+        new Promise<Awaited<ReturnType<typeof window.api.managedFileVersions.diffText>>>(
+          (resolve) => {
+            pending.push(resolve)
+          }
+        )
+    )
+    const versionThreeItem = {
+      ...managedUploadItem,
+      selectedVersionId: 'upload-v3',
+      versionNumber: 3,
+      path: 'upload-version:project-1/session-1/upload-v3'
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={versionThreeItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledWith({
+      requestId: expect.any(String)
+    })
+    expect(window.api.managedFileVersions.diffText).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'upload-v2' })
+    )
+    expect(container.querySelector('[aria-label="Stop comparing README.md"]')).not.toBeNull()
+    for (const resolve of pending) {
+      resolve({
+        ok: true,
+        value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+      })
+    }
+  })
+
+  it('keeps diff mode through a connected store switch to another version with a base', async () => {
+    const thirdVersion = {
+      ...managedInspect.versions[1],
+      id: 'upload-v3',
+      versionNumber: 3,
+      basedOnVersionId: 'upload-v2'
+    }
+    const inspectV3 = {
+      ...managedInspect,
+      headVersionId: 'upload-v3',
+      selectedVersionId: 'upload-v3',
+      versions: [...managedInspect.versions, thirdVersion],
+      text: '# Third\n'
+    }
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
+      ok: true as const,
+      value:
+        request.versionId === 'upload-v2'
+          ? { ...inspectV3, selectedVersionId: 'upload-v2', text: '# Current\n' }
+          : inspectV3
+    }))
+    type DiffResult = Awaited<ReturnType<typeof window.api.managedFileVersions.diffText>>
+    const pending: Array<(value: DiffResult) => void> = []
+    window.api.managedFileVersions.diffText = vi.fn(
+      () =>
+        new Promise<DiffResult>((resolve) => {
+          pending.push(resolve)
+        })
+    )
+    const versionThreeItem: PreviewFileItem = {
+      ...managedUploadItem,
+      selectedVersionId: 'upload-v3',
+      versionNumber: 3,
+      path: 'upload-version:project-1/session-1/upload-v3'
+    }
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(versionThreeItem)
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={versionThreeItem}
+          onClose={vi.fn()}
+          leaveGuardScope="workbench:project-1:upload:upload-file-1"
+          workbenchConnected
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      selectedVersionId: 'upload-v2'
+    })
+    expect(window.api.managedFileVersions.cancelDiff).toHaveBeenCalledWith({
+      requestId: expect.any(String)
+    })
+    expect(window.api.managedFileVersions.diffText).toHaveBeenLastCalledWith(
+      expect.objectContaining({ versionId: 'upload-v2' })
+    )
+    expect(container.querySelector('[aria-label="Stop comparing README.md"]')).not.toBeNull()
+    for (const resolve of pending) {
+      resolve({
+        ok: true,
+        value: { baseVersionId: 'upload-v1', selectedVersionId: 'upload-v2', lines: [] }
+      })
+    }
+  })
+
+  it('uses one workbench guard for an atomic connected version switch', async () => {
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false)
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={managedUploadItem}
+          onClose={vi.fn()}
+          leaveGuardScope="workbench:project-1:upload:upload-file-1"
+          workbenchConnected
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await click(container.querySelector('[aria-label="Previous file version"]'))
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      selectedVersionId: 'upload-v1'
+    })
+    expect(container.querySelector('textarea')).toBeNull()
+  })
+
+  it('lets the surface atomically reject a dirty Provenance version switch', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const managedArtifactItem: PreviewFileItem = {
+      ...managedUploadItem,
+      id: 'artifact-1',
+      artifactId: 'artifact-1',
+      managedFileId: 'artifact-file-1',
+      source: 'artifact'
+    }
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={managedArtifactItem}
+          onClose={vi.fn()}
+          provenanceEntry="leading"
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await click(container.querySelector('[aria-label="Open Provenance for README.md"]'))
+
+    const nextItem: PreviewFileItem = {
+      ...managedArtifactItem,
+      selectedVersionId: 'upload-v1',
+      versionNumber: 1,
+      path: 'upload-version:project-1/session-1/upload-v1'
+    }
+    const panelProps = provenancePanelSpy.mock.calls.at(-1)?.[0] as {
+      onVersionChange?: (item: PreviewFileItem) => boolean
+    }
+
+    expect(panelProps.onVersionChange?.(nextItem)).toBe(false)
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+    expect(panelProps.onVersionChange?.(nextItem)).toBe(false)
+    expect(confirm).toHaveBeenCalledTimes(2)
+  })
+
+  it('commits one accepted dirty Provenance switch to the dialog store and clears the draft', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const managedArtifactItem: PreviewFileItem = {
+      ...managedUploadItem,
+      id: 'artifact-1',
+      artifactId: 'artifact-1',
+      managedFileId: 'artifact-file-1',
+      source: 'artifact'
+    }
+    usePreviewWorkbenchStore.getState().openFileDialog(managedArtifactItem)
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={managedArtifactItem}
+          onClose={vi.fn()}
+          onItemChange={(nextItem) =>
+            usePreviewWorkbenchStore.getState().openFileDialog(nextItem, true)
+          }
+          provenanceEntry="leading"
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await click(container.querySelector('[aria-label="Open Provenance for README.md"]'))
+
+    const nextItem: PreviewFileItem = {
+      ...managedArtifactItem,
+      selectedVersionId: 'upload-v1',
+      versionNumber: 1,
+      path: 'artifact-version:project-1/session-1/artifact-1/upload-v1'
+    }
+    const panelProps = provenancePanelSpy.mock.calls.at(-1)?.[0] as {
+      onClose: () => void
+      onVersionChange?: (item: PreviewFileItem) => boolean
+    }
+    await act(async () => {
+      expect(panelProps.onVersionChange?.(nextItem)).toBe(true)
+    })
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
+      selectedVersionId: 'upload-v1',
+      path: nextItem.path
+    })
+    expect(provenancePanelSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      item: { selectedVersionId: 'upload-v1', path: nextItem.path }
+    })
+    await act(async () => panelProps.onClose())
+    expect(container.querySelector('textarea')).toBeNull()
+  })
+
+  it('does not guard again when a connected save publishes its new version', async () => {
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const version = { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 }
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { kind: 'created', replayed: false, version, headVersionId: version.id }
+    })
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={managedUploadItem}
+          onClose={vi.fn()}
+          leaveGuardScope="workbench:project-1:upload:upload-file-1"
+          workbenchConnected
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Saved\n')
+    await click(container.querySelector('[aria-label="Save changes"]'))
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+      selectedVersionId: 'upload-v3'
+    })
+  })
+
+  it('uses one workbench guard when the connected surface closes its tab', async () => {
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(managedUploadItem)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={managedUploadItem}
+          onClose={() => {
+            usePreviewWorkbenchStore.getState().removeItem(managedUploadItem.id)
+          }}
+          leaveGuardScope="workbench:project-1:upload:upload-file-1"
+          workbenchConnected
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+    await click(container.querySelector('[aria-label="Close preview of README.md"]'))
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('uses safe Markdown with media disabled for changed Markdown blocks', async () => {
+    window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        baseVersionId: 'upload-v1',
+        selectedVersionId: 'upload-v2',
+        lines: [
+          {
+            kind: 'added',
+            newLineNumber: 1,
+            segments: [
+              { kind: 'added', text: '<script>bad()</script> ![x](https://bad.invalid/x.png)' }
+            ]
+          }
+        ]
+      }
+    })
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(markdownSpy).toHaveBeenCalledWith(expect.objectContaining({ allowMedia: false }))
+    expect(container.querySelector('script')).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('renders each adjacent complex Markdown change block as one safe document fragment', async () => {
+    window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        baseVersionId: 'upload-v1',
+        selectedVersionId: 'upload-v2',
+        lines: [
+          {
+            kind: 'removed',
+            oldLineNumber: 1,
+            segments: [{ kind: 'removed', text: '- old one' }]
+          },
+          {
+            kind: 'removed',
+            oldLineNumber: 2,
+            segments: [{ kind: 'removed', text: '- old two' }]
+          },
+          {
+            kind: 'added',
+            newLineNumber: 1,
+            segments: [{ kind: 'added', text: '- new one' }]
+          },
+          {
+            kind: 'added',
+            newLineNumber: 2,
+            segments: [{ kind: 'added', text: '- new two' }]
+          }
+        ]
+      }
+    })
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(markdownSpy.mock.calls.map(([props]) => props.content)).toEqual([
+      '- old one\n- old two',
+      '- new one\n- new two'
+    ])
+  })
+
+  it('keeps an entire fenced Markdown diff block together across plain code lines', async () => {
+    window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        baseVersionId: 'upload-v1',
+        selectedVersionId: 'upload-v2',
+        lines: [
+          {
+            kind: 'added',
+            newLineNumber: 1,
+            segments: [{ kind: 'added', text: '```ts' }]
+          },
+          {
+            kind: 'added',
+            newLineNumber: 2,
+            segments: [{ kind: 'added', text: 'const safe = true' }]
+          },
+          {
+            kind: 'added',
+            newLineNumber: 3,
+            segments: [{ kind: 'added', text: '```' }]
+          }
+        ]
+      }
+    })
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(markdownSpy.mock.calls.map(([props]) => props.content)).toEqual([
+      '```ts\nconst safe = true\n```'
+    ])
+  })
+
+  it('clears a dirty baseline when the same logical item is externally replaced by another locator', async () => {
+    const replacement = {
+      ...managedUploadItem,
+      selectedVersionId: 'upload-v1',
+      path: 'upload-version:project-1/session-1/upload-v1'
+    }
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
+      ok: true as const,
+      value:
+        request.versionId === 'upload-v1'
+          ? {
+              ...managedInspect,
+              selectedVersionId: 'upload-v1',
+              canDiff: false,
+              text: '# Original\n'
+            }
+          : managedInspect
+    }))
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    await changeTextarea(container.querySelector<HTMLTextAreaElement>('textarea')!, '# Draft\n')
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={replacement} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(window.api.managedFileVersions.inspect).toHaveBeenLastCalledWith({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-file-1',
+      versionId: 'upload-v1'
+    })
+  })
+
+  it('shows character-level markers inline for simple changed Markdown text', async () => {
+    window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        baseVersionId: 'upload-v1',
+        selectedVersionId: 'upload-v2',
+        lines: [
+          {
+            kind: 'added',
+            newLineNumber: 1,
+            segments: [
+              { kind: 'context', text: 'Sub title ' },
+              { kind: 'added', text: 'three' }
+            ]
+          }
+        ]
+      }
+    })
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const inline = container.querySelector('[data-diff-inline="true"]')
+    expect(inline?.textContent).toBe('Sub title three')
+    expect(inline?.querySelector('[data-diff-segment="added"]')?.textContent).toBe('three')
+    expect(markdownSpy).not.toHaveBeenCalled()
+  })
+})
+
 afterEach(() => {
   act(() => root.unmount())
+  previewLeaveGuards.clear()
   container.remove()
   document.body.innerHTML = ''
+  vi.restoreAllMocks()
 })
 
 describe('PreviewFileSurface Provenance entry', () => {
+  it('keeps a default managed Artifact preview on its logical DB head', async () => {
+    const managedArtifact = {
+      ...item,
+      managedFileId: 'artifact-1',
+      projectId: 'project-1',
+      selectedVersionId: undefined,
+      versionNumber: undefined,
+      path: '/stale/managed-file-projection.png'
+    }
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedArtifact} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(previewContentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        item: expect.objectContaining({
+          managedFileId: 'artifact-1',
+          path: '/stale/managed-file-projection.png',
+          selectedVersionId: undefined
+        })
+      })
+    )
+    expect(container.querySelector('[aria-label="Next Artifact version"]')).toBeNull()
+  })
+
   it('opens and closes Provenance from the full-screen preview header', async () => {
     await act(async () => {
       root.render(<PreviewFileSurface item={item} provenanceEntry="leading" onClose={vi.fn()} />)
@@ -238,14 +1188,63 @@ describe('PreviewFileSurface Provenance entry', () => {
   })
 
   it('switches Artifact versions while keeping the image preview open', async () => {
+    const managedArtifact = {
+      ...item,
+      managedFileId: 'artifact-1',
+      projectId: 'project-1',
+      path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+    }
+    window.api.managedFileVersions.inspect = vi.fn(async (request) => ({
+      ok: true as const,
+      value: {
+        source: 'artifact' as const,
+        projectId: 'project-1',
+        fileId: 'artifact-1',
+        sessionId: 'session-1',
+        displayName: 'sin.png',
+        headVersionId: 'version-2',
+        selectedVersionId: request.versionId ?? 'version-1',
+        versions: [
+          {
+            id: 'version-1',
+            source: 'artifact' as const,
+            fileId: 'artifact-1',
+            versionNumber: 1,
+            displayName: 'sin.png',
+            originKind: 'agent_generated' as const,
+            basedOnVersionId: null,
+            contentType: 'image/png',
+            sizeBytes: 12,
+            checksum: 'checksum-1',
+            createdAt: descriptor.createdAt
+          },
+          {
+            id: 'version-2',
+            source: 'artifact' as const,
+            fileId: 'artifact-1',
+            versionNumber: 2,
+            displayName: 'sin.png',
+            originKind: 'user_edit' as const,
+            basedOnVersionId: 'version-1',
+            contentType: 'image/png',
+            sizeBytes: 18,
+            checksum: 'checksum-2',
+            createdAt: secondDescriptor.createdAt
+          }
+        ],
+        canEdit: false,
+        canDiff: true
+      }
+    }))
+
     await act(async () => {
-      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      root.render(<PreviewFileSurface item={managedArtifact} onClose={vi.fn()} />)
       await Promise.resolve()
       await Promise.resolve()
     })
 
     const next = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Next Artifact version"]'
+      'button[aria-label="Next file version"]'
     )
     expect(next).not.toBeNull()
 
@@ -253,7 +1252,9 @@ describe('PreviewFileSurface Provenance entry', () => {
 
     expect(container.querySelector('[data-testid="provenance-panel"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
-    expect(container.textContent).toContain('v2')
+    const navigation = container.querySelector('[data-testid="managed-preview-version-navigation"]')
+    expect(navigation?.textContent).toBe('v2')
+    expect(navigation?.querySelector('button[aria-label="Previous file version"]')).not.toBeNull()
     expect(previewContentSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
         item: expect.objectContaining({
@@ -291,7 +1292,7 @@ describe('PreviewFileSurface Provenance entry', () => {
     }
 
     await act(async () => {
-      root.render(<PreviewFileSurface item={versionTwoItem} onClose={vi.fn()} />)
+      root.render(<PreviewFileSurface item={versionTwoItem} onClose={vi.fn()} workbenchConnected />)
       await Promise.resolve()
       await Promise.resolve()
     })

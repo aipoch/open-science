@@ -231,6 +231,7 @@ describe('validateProvenanceMigrationState', () => {
         state: 'pending',
         contentStorageKey: `${versionRoot}/content`,
         evidenceStorageKey: `${versionRoot}/evidence.json`,
+        evidenceSchemaVersion: 1,
         contentType: 'text/plain',
         sizeBytes: BigInt(Buffer.byteLength(artifactContent)),
         checksum: artifactChecksum,
@@ -301,6 +302,7 @@ describe('validateProvenanceMigrationState', () => {
           'artifacts/project-2/session-2/.provenance/artifact-1/versions/version-1/content',
         evidenceStorageKey:
           'artifacts/project-1/session-1/.provenance/artifact-1/versions/version-1/evidence.json',
+        evidenceSchemaVersion: 1,
         contentType: 'text/plain',
         sizeBytes: 0,
         checksum: sha256(''),

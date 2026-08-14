@@ -10,6 +10,8 @@ const Probe = (): React.JSX.Element => {
     projectId: 'project-1',
     sessionId: 'active-session',
     source: 'upload',
+    managedFileId: 'upload-file-1',
+    selectedVersionId: 'upload-version-1',
     path: 'upload-version:project-1/source-session/upload-version-1'
   })
 
@@ -47,6 +49,8 @@ describe('usePreviewFileContent', () => {
     expect(window.api.uploads.readPreview).toHaveBeenCalledWith({
       projectId: 'project-1',
       sessionId: 'source-session',
+      fileId: 'upload-file-1',
+      versionId: 'upload-version-1',
       path: 'upload-version:project-1/source-session/upload-version-1',
       maxBytes: 1024 * 1024,
       encoding: 'utf8',

@@ -1,6 +1,8 @@
-import { Prisma, type PrismaClient } from '@prisma/client'
+import type { PrismaClient } from '@prisma/client'
 
 import {
+  RUNTIME_SCHEMA_INDEX_DDLS as CURRENT_RUNTIME_SCHEMA_INDEX_DDLS,
+  RUNTIME_SCHEMA_TABLE_DDLS as CURRENT_RUNTIME_SCHEMA_TABLE_DDLS,
   RUNTIME_SCHEMA_TABLES as CURRENT_RUNTIME_SCHEMA_TABLES,
   RUNTIME_SCHEMA_TARGET_SQL as CURRENT_RUNTIME_SCHEMA_TARGET_SQL
 } from './generated/runtime-schema'
@@ -54,17 +56,6 @@ const RETIRED_LEGACY_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   Review: ['summary', 'checks', 'reasoning'],
   Finding: ['severity']
 }
-
-const CURRENT_TABLE_COLUMNS = new Map(
-  Prisma.dmmf.datamodel.models.map((model) => [
-    model.dbName ?? model.name,
-    new Set(
-      model.fields
-        .filter((field) => field.kind !== 'object')
-        .map((field) => field.dbName ?? field.name)
-    )
-  ])
-)
 
 type TargetColumn = {
   name: string
@@ -341,10 +332,21 @@ const TARGET_TABLES = createTargetTables(RUNTIME_SCHEMA_BASELINE_TARGET_SQL)
 const TARGET_INDEXES = createTargetIndexes(RUNTIME_SCHEMA_BASELINE_TARGET_SQL)
 const CURRENT_TARGET_TABLES = createTargetTables(CURRENT_RUNTIME_SCHEMA_TARGET_SQL)
 const CURRENT_TARGET_INDEXES = createTargetIndexes(CURRENT_RUNTIME_SCHEMA_TARGET_SQL)
+const CURRENT_RUNTIME_SCHEMA_TABLE_DDL_BY_NAME = new Map(
+  CURRENT_RUNTIME_SCHEMA_TABLE_DDLS.flatMap((ddl) => {
+    const parsed = parseTargetTable(ddl)
+    return parsed ? [[parsed[0], ddl] as const] : []
+  })
+)
+const CURRENT_TABLE_COLUMNS = new Map(
+  [...CURRENT_TARGET_TABLES].map(([tableName, table]) => [tableName, new Set(table.columns.keys())])
+)
 // Post-baseline migrations can add indexes (e.g. 0003's GrantedLocalRoot_path_key), so a pre-ledger
-// database carrying them must still classify: known indexes are the baseline ∪ current target union,
-// mirroring the unknown-table check, which already classifies against the current target.
-const TARGET_INDEX_NAMES = new Set([...TARGET_INDEXES.keys(), ...CURRENT_TARGET_INDEXES.keys()])
+// database carrying them must still classify against the baseline and current target union.
+const CURRENT_TARGET_INDEX_NAMES = new Set([
+  ...TARGET_INDEXES.keys(),
+  ...CURRENT_TARGET_INDEXES.keys()
+])
 
 type RuntimeSchemaTarget = {
   tableNames: readonly string[]
@@ -419,6 +421,40 @@ const addColumnIfMissing = async (
 // Creates the schema if missing. Idempotent; no projects are seeded, so a fresh install starts empty.
 type PreparedRuntimeSchemaBaseline = {
   pendingCheckConstraints: readonly SqliteCheckConstraintMigration[]
+  verificationTarget: 'baseline' | 'current'
+}
+
+const CURRENT_PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS: readonly SqliteCheckConstraintMigration[] =
+  PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS.map((migration) => {
+    const target = CURRENT_TARGET_TABLES.get(migration.tableName)
+    const canonicalTableDdl = CURRENT_RUNTIME_SCHEMA_TABLE_DDL_BY_NAME.get(migration.tableName)
+    if (!target || !canonicalTableDdl) {
+      throw new Error(`Current SQLite schema is missing ${migration.tableName}.`)
+    }
+    return {
+      ...migration,
+      constraintNames: [...target.checks.keys()],
+      canonicalTableDdl
+    }
+  })
+
+const hasCurrentManagedFileVersionFoundation = async (client: PrismaClient): Promise<boolean> => {
+  const requiredColumns = [
+    ['ArtifactLineage', 'currentVersionId'],
+    ['UploadFile', 'currentVersionId'],
+    ['ArtifactVersion', 'originKind'],
+    ['ArtifactVersion', 'basedOnVersionId'],
+    ['ArtifactVersion', 'storageTag'],
+    ['ArtifactVersion', 'storedFilename'],
+    ['UploadVersion', 'originKind'],
+    ['UploadVersion', 'basedOnVersionId'],
+    ['UploadVersion', 'storageTag'],
+    ['UploadVersion', 'storedFilename']
+  ] as const
+  const present = await Promise.all(
+    requiredColumns.map(([tableName, columnName]) => hasTableColumn(client, tableName, columnName))
+  )
+  return present.every(Boolean)
 }
 
 const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
@@ -484,7 +520,7 @@ const classifyLegacySchema = async (client: PrismaClient): Promise<void> => {
   )
   const unknownIndexes = indexes
     .map((index) => index.name)
-    .filter((indexName) => !TARGET_INDEX_NAMES.has(indexName))
+    .filter((indexName) => !CURRENT_TARGET_INDEX_NAMES.has(indexName))
   if (unknownIndexes.length > 0) {
     throw new DatabaseValidationError(`Legacy database classification found unknown indexes.`, {
       kind: 'unknown-indexes',
@@ -512,11 +548,17 @@ const prepareRuntimeSchemaBaseline = async (
   client: PrismaClient
 ): Promise<PreparedRuntimeSchemaBaseline> => {
   await classifyLegacySchema(client)
+  const verificationTarget = (await hasCurrentManagedFileVersionFoundation(client))
+    ? 'current'
+    : 'baseline'
   return {
     pendingCheckConstraints: await findPendingSqliteCheckConstraints(
       client,
-      PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS
-    )
+      verificationTarget === 'current'
+        ? CURRENT_PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS
+        : PROVENANCE_CHECK_CONSTRAINT_MIGRATIONS
+    ),
+    verificationTarget
   }
 }
 
@@ -854,7 +896,11 @@ const applyRuntimeSchemaBaseline = async (
     COMPUTE_JOB_ADD_NOTIFICATION_CONSUMED_AT_DDL
   )
 
-  await applySqliteCheckConstraints(client, prepared.pendingCheckConstraints)
+  await applySqliteCheckConstraints(
+    client,
+    prepared.pendingCheckConstraints,
+    prepared.verificationTarget === 'current' ? CURRENT_RUNTIME_SCHEMA_INDEX_DDLS : []
+  )
   for (const ddl of RUNTIME_SCHEMA_INDEX_DDLS) {
     await migrationSqlExecutor.execute(client, ddl)
   }

@@ -267,6 +267,10 @@ type AcpRuntimeArtifactOptions = {
         'resolveVersionContent'
       >
     >
+  managedFileVersions?: Pick<
+    import('../managed-file-versions/service').ManagedFileVersionService,
+    'openResolved'
+  >
 }
 
 type AcpRuntimeUploadOptions = {

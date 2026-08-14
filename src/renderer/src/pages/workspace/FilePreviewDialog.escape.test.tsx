@@ -3,17 +3,41 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import {
+  createInitialPreviewWorkbenchState,
+  type PreviewFileItem,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
+import { dialogPreviewGuardScope, previewLeaveGuards } from '@/stores/preview-leave-guard'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-vi.mock('./PreviewFileSurface', () => ({
-  PreviewFileSurface: ({ item, onClose }: { item: PreviewFileItem; onClose: () => void }) => (
-    <button type="button" data-testid="preview-surface" onClick={onClose}>
-      {item.title}
-    </button>
-  )
-}))
+const previewSurfaceHarness = vi.hoisted(() => ({ confirmLeave: vi.fn(() => true) }))
+
+vi.mock('./PreviewFileSurface', async () => {
+  const React = await vi.importActual<typeof import('react')>('react')
+  const MockPreviewFileSurface = React.forwardRef<
+    { confirmLeave: () => boolean },
+    { item: PreviewFileItem; onClose: () => void }
+  >(({ item, onClose }, ref) => {
+    React.useImperativeHandle(ref, () => ({ confirmLeave: previewSurfaceHarness.confirmLeave }))
+    return (
+      <button
+        type="button"
+        data-testid="preview-surface"
+        onClick={() => {
+          if (previewSurfaceHarness.confirmLeave()) onClose()
+        }}
+      >
+        {item.title}
+      </button>
+    )
+  })
+  MockPreviewFileSurface.displayName = 'MockPreviewFileSurface'
+  return {
+    PreviewFileSurface: MockPreviewFileSurface
+  }
+})
 
 import { FilePreviewDialog } from './FilePreviewDialog'
 
@@ -32,6 +56,10 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  previewSurfaceHarness.confirmLeave.mockReset()
+  previewSurfaceHarness.confirmLeave.mockReturnValue(true)
+  previewLeaveGuards.clear()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   container = document.createElement('div')
   container.id = 'root'
   document.body.appendChild(container)
@@ -41,6 +69,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  previewLeaveGuards.clear()
   vi.restoreAllMocks()
 })
 
@@ -61,4 +90,60 @@ describe('FilePreviewDialog Escape dismissal', () => {
 
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it('keeps the dialog open when its dirty surface refuses Escape dismissal', async () => {
+    previewSurfaceHarness.confirmLeave.mockReturnValue(false)
+    const onClose = vi.fn()
+    await act(async () => root.render(<FilePreviewDialog item={item} onClose={onClose} />))
+    const surface = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="preview-surface"]'
+    )
+
+    await act(async () => {
+      surface?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+    })
+
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['header', 'click'],
+    ['Escape', 'escape']
+  ] as const)(
+    'uses the real store close chain with one accepted guard for %s dismissal',
+    async (_label, action) => {
+      const dialogItem = { ...item, projectId: 'project-1' }
+      usePreviewWorkbenchStore.getState().openFileDialog(dialogItem)
+      previewSurfaceHarness.confirmLeave.mockReturnValueOnce(true).mockReturnValueOnce(false)
+      previewLeaveGuards.register(
+        dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)!,
+        previewSurfaceHarness.confirmLeave
+      )
+      await act(async () =>
+        root.render(
+          <FilePreviewDialog
+            item={dialogItem}
+            onClose={usePreviewWorkbenchStore.getState().closeFileDialog}
+          />
+        )
+      )
+      const surface = document.body.querySelector<HTMLButtonElement>(
+        '[data-testid="preview-surface"]'
+      )
+
+      await act(async () => {
+        if (action === 'click') surface?.click()
+        else {
+          surface?.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+          )
+        }
+      })
+
+      expect(previewSurfaceHarness.confirmLeave).toHaveBeenCalledOnce()
+      expect(usePreviewWorkbenchStore.getState().fileDialogItem).toBeUndefined()
+    }
+  )
 })

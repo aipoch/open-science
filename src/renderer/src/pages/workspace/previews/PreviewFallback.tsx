@@ -231,11 +231,17 @@ export const PreviewErrorCard = (props: {
 export const PreviewUnsupportedContent = ({
   path,
   name,
-  source = 'artifact'
+  source = 'artifact',
+  projectId,
+  fileId,
+  versionId
 }: {
   path: string
   name: string
   source?: PreviewFileSource
+  projectId?: string
+  fileId?: string
+  versionId?: string
 }): React.JSX.Element => {
   const runtime = usePreviewRuntime()
   const presentation = getFormatPresentation(runtime?.item.format ?? 'unknown', name)
@@ -258,6 +264,9 @@ export const PreviewUnsupportedContent = ({
             <ManagedFileDownloadButton
               source={source}
               path={path}
+              projectId={projectId}
+              fileId={fileId}
+              versionId={versionId}
               suggestedName={name}
               appearance="primary"
               wrapperClassName="mt-3"

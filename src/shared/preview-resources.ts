@@ -9,6 +9,8 @@ export type AcquireManagedPreviewRequest = {
   path: string
   projectId?: string
   sessionId?: string
+  fileId?: string
+  versionId?: string
   mimeType?: string
   maxBytes?: number
 }

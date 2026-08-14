@@ -65,7 +65,6 @@ export const useCloseActivePaneShortcut = (
           // never leaves the third column open on its empty state. `items` is the pre-removal
           // snapshot, so length 1 means this was the final tab.
           preview.removeItem(activeItem.id)
-          if (preview.items.length <= 1) preview.collapsePanel()
           return
         }
 

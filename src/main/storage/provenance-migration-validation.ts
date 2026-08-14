@@ -8,6 +8,7 @@ import { NOTEBOOK_RUN_FILE } from '../../shared/notebook'
 import { normalizeSessionFile } from '../../shared/session-persistence'
 import { operationJournalPath, RuntimeOperationJournal } from '../notebook/operation-journal'
 import { createProjectDbClient } from '../projects/prisma-client'
+import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const storageKey = (...segments: string[]): string => segments.join('/')
@@ -294,31 +295,29 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
         if (version.state === 'staging') {
           throw new Error(`Unfinished Artifact staging blocks migration: ${version.id}`)
         }
-        if (
-          createHash('sha256').update(version.evidenceJson).digest('hex') !==
-          version.evidenceChecksum
-        ) {
-          throw new Error(`Artifact canonical evidence checksum mismatch: ${version.id}`)
+        const agentVersion =
+          version.originKind === 'agent_generated'
+            ? requireAgentArtifactVersion(version)
+            : undefined
+        const versionRoot = agentVersion
+          ? storageKey(
+              'artifacts',
+              agentVersion.artifact.projectId,
+              agentVersion.artifact.sessionId,
+              '.provenance',
+              agentVersion.artifactId,
+              'versions',
+              agentVersion.id
+            )
+          : undefined
+        if (agentVersion && versionRoot) {
+          assertStorageKey(
+            agentVersion.contentStorageKey,
+            storageKey(versionRoot, 'content'),
+            `Artifact ${agentVersion.id} content`
+          )
         }
-        const versionRoot = storageKey(
-          'artifacts',
-          version.artifact.projectId,
-          version.artifact.sessionId,
-          '.provenance',
-          version.artifactId,
-          'versions',
-          version.id
-        )
-        assertStorageKey(
-          version.contentStorageKey,
-          storageKey(versionRoot, 'content'),
-          `Artifact ${version.id} content`
-        )
-        assertStorageKey(
-          version.evidenceStorageKey,
-          storageKey(versionRoot, 'evidence.json'),
-          `Artifact ${version.id} evidence`
-        )
+
         const contentPath = resolveManagedStorageKey(dataRoot, version.contentStorageKey)
         if (
           (await stat(contentPath)).size !== Number(version.sizeBytes) ||
@@ -326,27 +325,39 @@ const validateSqliteStore = async (dataRoot: string, authorityRoot: string): Pro
         ) {
           throw new Error(`Artifact SQLite content checksum mismatch: ${version.id}`)
         }
-        const evidencePath = resolveManagedStorageKey(dataRoot, version.evidenceStorageKey)
-        if ((await readFile(evidencePath, 'utf8')) !== version.evidenceJson) {
-          throw new Error(`Artifact evidence mirror mismatch: ${version.id}`)
+        if (!agentVersion || !versionRoot) continue
+        if (
+          createHash('sha256').update(agentVersion.evidenceJson).digest('hex') !==
+          agentVersion.evidenceChecksum
+        ) {
+          throw new Error(`Artifact canonical evidence checksum mismatch: ${agentVersion.id}`)
         }
-        if (version.executionSnapshotJson) {
+        assertStorageKey(
+          agentVersion.evidenceStorageKey,
+          storageKey(versionRoot, 'evidence.json'),
+          `Artifact ${agentVersion.id} evidence`
+        )
+        const evidencePath = resolveManagedStorageKey(dataRoot, agentVersion.evidenceStorageKey)
+        if ((await readFile(evidencePath, 'utf8')) !== agentVersion.evidenceJson) {
+          throw new Error(`Artifact evidence mirror mismatch: ${agentVersion.id}`)
+        }
+        if (agentVersion.executionSnapshotJson) {
           assertStorageKey(
-            version.executionSnapshotStorageKey ?? '',
+            agentVersion.executionSnapshotStorageKey ?? '',
             storageKey(versionRoot, 'execution.json'),
-            `Artifact ${version.id} execution`
+            `Artifact ${agentVersion.id} execution`
           )
           if (
-            !version.executionSnapshotChecksum ||
-            !version.executionSnapshotStorageKey ||
-            createHash('sha256').update(version.executionSnapshotJson).digest('hex') !==
-              version.executionSnapshotChecksum ||
+            !agentVersion.executionSnapshotChecksum ||
+            !agentVersion.executionSnapshotStorageKey ||
+            createHash('sha256').update(agentVersion.executionSnapshotJson).digest('hex') !==
+              agentVersion.executionSnapshotChecksum ||
             (await readFile(
-              resolveManagedStorageKey(dataRoot, version.executionSnapshotStorageKey),
+              resolveManagedStorageKey(dataRoot, agentVersion.executionSnapshotStorageKey),
               'utf8'
-            )) !== version.executionSnapshotJson
+            )) !== agentVersion.executionSnapshotJson
           ) {
-            throw new Error(`Artifact execution mirror mismatch: ${version.id}`)
+            throw new Error(`Artifact execution mirror mismatch: ${agentVersion.id}`)
           }
         }
       }

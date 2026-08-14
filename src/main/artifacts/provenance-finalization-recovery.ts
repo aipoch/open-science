@@ -15,6 +15,7 @@ import {
   validateDurableMessageOwnership
 } from './provenance-message-finalization'
 import type { ArtifactRepository, PendingArtifactRunPublication } from './repository'
+import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 type ArtifactProjectReconciliationState = {
   readonly projectId: string
@@ -45,7 +46,10 @@ type ArtifactProvenanceFinalizationRecoveryOptions = {
     ArtifactRepository,
     'listPendingRunPublications' | 'findRunFinalizationMarker' | 'finalizeRunArtifacts'
   >
-  messageFinalizer: Pick<ArtifactProvenanceMessageFinalizer, 'finalizeRunWithDurableSession'>
+  messageFinalizer: Pick<
+    ArtifactProvenanceMessageFinalizer,
+    'finalizeRunWithDurableSession' | 'activateFinalizedRunWithDurableSession'
+  >
 }
 
 // Resolves the one agent message produced by the prepared prompt turn. It deliberately considers
@@ -157,12 +161,15 @@ class ArtifactProvenanceFinalizationRecovery {
     }
 
     const client = await this.options.getClient()
-    const allFinalizationVersions = await client.artifactVersion.findMany({
-      where: {
-        state: { in: ['pending', 'finalized'] },
-        artifact: { is: { projectId, sessionId: appSessionId } }
-      }
-    })
+    const allFinalizationVersions = (
+      await client.artifactVersion.findMany({
+        where: {
+          originKind: 'agent_generated',
+          state: { in: ['pending', 'finalized'] },
+          artifact: { is: { projectId, sessionId: appSessionId } }
+        }
+      })
+    ).map(requireAgentArtifactVersion)
     const candidateVersions = allFinalizationVersions.filter(
       (version) =>
         version.state === 'pending' ||
@@ -274,6 +281,10 @@ class ArtifactProvenanceFinalizationRecovery {
         artifactVersionIds: markerVersionIds,
         provenanceContext: markerContext
       })
+      await this.options.messageFinalizer.activateFinalizedRunWithDurableSession(
+        finalizationRequest,
+        durableSession
+      )
       result.recoveredVersionIds.push(
         ...finalized
           .filter((version) => pendingVersionIds.has(version.versionId!))

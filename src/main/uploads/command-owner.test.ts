@@ -455,4 +455,72 @@ describe('upload command owner', () => {
 
     expect(stagedOwner).toBe(owner)
   })
+
+  it('resolves a logical Upload preview at read time and preserves an explicit Version', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-upload-preview-owner-'))
+    temporaryRoots.push(root)
+    const currentPath = join(root, 'current.txt')
+    await writeFile(currentPath, 'current upload head')
+    const resolveManagedFilePath = vi.fn().mockResolvedValue(currentPath)
+    const readManagedUploadPreview = vi.fn()
+    const owner = createUploadCommandOwner(
+      { readManagedUploadPreview } as unknown as UploadRepository,
+      { resolveManagedFilePath }
+    )
+    const leases = new ApplicationCallerLeaseRegistry()
+    const caller = createCaller(leases, 16)
+    const request = {
+      path: '/stale/upload.txt',
+      projectId: 'project-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v1',
+      maxBytes: 1024
+    }
+
+    await expect(
+      owner.readPreview(invocationFor(caller, [request] as const))
+    ).resolves.toMatchObject({ content: 'current upload head' })
+    expect(resolveManagedFilePath).toHaveBeenCalledWith(request)
+    expect(readManagedUploadPreview).not.toHaveBeenCalled()
+  })
+
+  it('reads a logical Upload preview through the verified lease and always closes it', async () => {
+    const bytes = Buffer.from('verified upload bytes')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const verifyUnchanged = vi.fn().mockResolvedValue(undefined)
+    const openManagedFileVersion = vi.fn().mockResolvedValue({
+      size: bytes.byteLength,
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        const chunk = bytes.subarray(position, position + length)
+        buffer.set(chunk, offset)
+        return { bytesRead: chunk.byteLength }
+      }),
+      verifyUnchanged,
+      close
+    })
+    const resolveManagedFilePath = vi.fn().mockRejectedValue(new Error('must not resolve a path'))
+    const readManagedUploadPreview = vi.fn()
+    const owner = createUploadCommandOwner(
+      { readManagedUploadPreview } as unknown as UploadRepository,
+      { openManagedFileVersion, resolveManagedFilePath }
+    )
+    const leases = new ApplicationCallerLeaseRegistry()
+    const caller = createCaller(leases, 17)
+    const request = {
+      path: '/replaceable/upload.txt',
+      projectId: 'project-1',
+      fileId: 'upload-1',
+      versionId: 'upload-v1',
+      maxBytes: 1024
+    }
+
+    await expect(
+      owner.readPreview(invocationFor(caller, [request] as const))
+    ).resolves.toMatchObject({ content: 'verified upload bytes' })
+    expect(openManagedFileVersion).toHaveBeenCalledWith(request)
+    expect(resolveManagedFilePath).not.toHaveBeenCalled()
+    expect(readManagedUploadPreview).not.toHaveBeenCalled()
+    expect(verifyUnchanged).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+  })
 })

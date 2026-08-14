@@ -202,6 +202,46 @@ describe('managed preview protocol', () => {
     }
   })
 
+  it('streams a logical managed resource from its verified lease after the path is replaced', async () => {
+    const verified = Buffer.from('verified managed version')
+    const close = vi.fn().mockResolvedValue(undefined)
+    const lease = {
+      path: '/managed/report.xlsx',
+      size: verified.byteLength,
+      versionToken: 42,
+      snapshot: { dev: 1n, ino: 2n, size: BigInt(verified.byteLength), mtimeNs: 3n },
+      read: vi.fn(async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+        buffer.set(verified.subarray(position, position + length), offset)
+        return { bytesRead: length }
+      }),
+      readRange: vi.fn(),
+      copyTo: vi.fn(),
+      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+      close
+    }
+    const resources = new (await import('./managed-preview-resources')).ManagedPreviewResources({
+      resolvePath: vi.fn(),
+      openManagedFileVersion: vi.fn().mockResolvedValue(lease),
+      createId: () => 'trusted-resource'
+    } as never)
+    await resources.acquire(17, {
+      source: 'artifact',
+      path: 'stale-projection',
+      projectId: 'project-1',
+      fileId: 'artifact-1'
+    })
+
+    const response = await createManagedPreviewProtocolHandler(resources)(
+      new Request('open-science-preview://trusted-resource/report.xlsx')
+    )
+
+    await expect(response.text()).resolves.toBe('verified managed version')
+    expect(lease.read).toHaveBeenCalled()
+    expect(close).not.toHaveBeenCalled()
+    resources.release(17, { resourceId: 'trusted-resource' })
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('rejects URLs that are not an acquired resource capability', async () => {
     const resources = {
       resolveProtocolResource: vi

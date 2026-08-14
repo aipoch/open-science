@@ -136,6 +136,7 @@ const WorkspacePage = ({
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
+  const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
   const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
   const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
@@ -534,6 +535,7 @@ const WorkspacePage = ({
     changeComposerDraftDoc(
       appendArtifactMention(draftDoc, {
         id: file.id,
+        sourceFileId: file.sourceFileId,
         name: file.name,
         path: file.path,
         source: file.source,
@@ -1172,6 +1174,7 @@ const WorkspacePage = ({
             : undefined
         }
         onClose={closeFileDialog}
+        onItemChange={openFileDialog}
       />
 
       <SessionNotebookDialog

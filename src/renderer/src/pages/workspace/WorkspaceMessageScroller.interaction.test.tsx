@@ -1380,6 +1380,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       size: 48128,
       mtimeMs: 1710000000100,
       artifactId: 'artifact-lineage-1',
+      managedFileId: 'artifact-lineage-1',
       selectedVersionId: 'artifact-version-1',
       versionNumber: 2
     })
@@ -2424,6 +2425,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
     expect(upsertAndActivateItem).toHaveBeenCalledWith({
       id: 'upload:upload-1',
+      managedFileId: 'upload-1',
       sessionId: 'session-42',
       title: 'first.png',
       type: 'file',
@@ -2454,7 +2456,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           parts: [
             {
               type: 'artifact',
-              id: 'upload-version-1',
+              id: 'upload:upload-file-1',
               name: 'shared.csv',
               path,
               source: 'upload'
@@ -2486,6 +2488,15 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       encoding: 'utf8'
     })
     expect(upsertAndActivateItem).toHaveBeenCalledTimes(1)
+    expect(upsertAndActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'upload:upload-file-1',
+        managedFileId: 'upload-file-1',
+        selectedVersionId: 'upload-version-1',
+        projectId: 'project-1',
+        sessionId: 'source-session'
+      })
+    )
   })
 
   const linkedFolderSession = (): ChatSession =>

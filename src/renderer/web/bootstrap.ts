@@ -9,6 +9,7 @@ import {
   webRpcResponseSchema
 } from '../../shared/web-rpc-contract'
 import { installWebRendererContracts } from './api-installer'
+import { managedFileVersionHostCapability } from '../../shared/managed-file-versions'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
 
@@ -254,6 +255,7 @@ const installWebApi = async (): Promise<void> => {
     subscribe,
     nativeAdapters: {
       getRuntimeVersions: () => bootstrap.versions,
+      'managedFileVersions.getCapability': () => managedFileVersionHostCapability(false),
       saveBlobFile: (request: { suggestedName: string; mimeType: string; data: ArrayBuffer }) => {
         downloadBlob(new Blob([request.data], { type: request.mimeType }), request.suggestedName)
         return Promise.resolve({ saved: true })

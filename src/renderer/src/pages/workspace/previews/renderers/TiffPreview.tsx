@@ -107,6 +107,8 @@ const TiffPreviewContent = ({
   source = 'artifact',
   projectId,
   sessionId,
+  managedFileId,
+  selectedVersionId,
   mimeType,
   size,
   mtimeMs,
@@ -118,6 +120,8 @@ const TiffPreviewContent = ({
   source?: PreviewFileSource
   projectId?: string
   sessionId?: string
+  managedFileId?: string
+  selectedVersionId?: string
   mimeType?: string
   size?: number
   mtimeMs?: number
@@ -129,6 +133,8 @@ const TiffPreviewContent = ({
     sessionId,
     source,
     path,
+    managedFileId,
+    selectedVersionId,
     mimeType,
     size,
     mtimeMs
@@ -146,6 +152,8 @@ const TiffPreviewContent = ({
     {
       projectId,
       sessionId,
+      managedFileId,
+      selectedVersionId,
       path,
       source,
       mimeType,
@@ -343,6 +351,8 @@ const TiffPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Elem
     source={item.source}
     projectId={item.projectId}
     sessionId={item.sessionId}
+    managedFileId={item.managedFileId}
+    selectedVersionId={item.selectedVersionId}
     mimeType={item.mimeType}
     size={item.size}
     mtimeMs={item.mtimeMs}

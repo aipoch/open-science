@@ -9,6 +9,7 @@ import {
   usePreviewWorkbenchStore,
   type PreviewItem
 } from '@/stores/preview-workbench-store'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 
 import {
   decideCloseActivePaneAction,
@@ -99,6 +100,7 @@ describe('useCloseActivePaneShortcut', () => {
   beforeEach(() => {
     closeActivePane = undefined
     close.mockClear()
+    previewLeaveGuards.clear()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     ;(window as unknown as { api: unknown }).api = {
       window: {
@@ -145,6 +147,25 @@ describe('useCloseActivePaneShortcut', () => {
     expect(state.items).toHaveLength(0)
     expect(state.panelState).toBe('collapsed')
     expect(close).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('asks once and keeps the last dirty tab visible when Cmd-W leave is refused', () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    usePreviewWorkbenchStore.getState().activateProject('project-a')
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(fileTab('only'))
+    const guard = vi.fn(() => false)
+    previewLeaveGuards.register('workbench:project-a:only', guard)
+
+    const { unmount } = renderHook(() => useCloseActivePaneShortcut())
+    act(() => closeActivePane?.())
+
+    expect(guard).toHaveBeenCalledOnce()
+    expect(usePreviewWorkbenchStore.getState()).toMatchObject({
+      activeItemId: 'only',
+      panelState: 'open'
+    })
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
     unmount()
   })
 

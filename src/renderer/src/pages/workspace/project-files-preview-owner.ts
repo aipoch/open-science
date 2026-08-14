@@ -21,6 +21,7 @@ type ProjectFilePreviewTarget = {
   artifact: MessageArtifact
   projectId: string
   sessionId: string
+  fileId: string
   cacheKey: string
   encoding?: 'utf8' | 'base64'
 }
@@ -77,7 +78,8 @@ const createProjectFilePreviewTarget = (file: ProjectFileItem): ProjectFilePrevi
     source: file.source,
     artifact,
     projectId: file.projectId,
-    sessionId: file.sessionId
+    sessionId: file.sessionId,
+    fileId: file.sourceFileId
   }
 
   return {
@@ -117,6 +119,7 @@ const readProjectFilePreview = async (
         source: target.source,
         path: target.path
       }),
+      fileId: target.fileId,
       maxBytes:
         target.encoding === 'base64' ? ARTIFACT_IMAGE_PREVIEW_BYTES : ARTIFACT_PREVIEW_BYTES,
       encoding: target.encoding

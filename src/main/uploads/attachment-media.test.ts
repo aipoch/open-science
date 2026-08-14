@@ -30,10 +30,12 @@ type FakeImage = {
 let fakeImage: FakeImage
 // The wrapper ignores the path arg at runtime; the spy just records that a decode was attempted.
 const createFromPath = vi.fn(() => fakeImage)
+const createFromBuffer = vi.fn(() => fakeImage)
 
 vi.mock('electron', () => ({
   nativeImage: {
-    createFromPath: () => createFromPath()
+    createFromPath: () => createFromPath(),
+    createFromBuffer: () => createFromBuffer()
   }
 }))
 
@@ -59,6 +61,7 @@ let root: string
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'attachment-media-'))
   createFromPath.mockClear()
+  createFromBuffer.mockClear()
   getDocument.mockClear()
   fakeImage = {
     isEmpty: () => false,
@@ -113,6 +116,21 @@ describe('buildImageContentData', () => {
     expect(createFromPath).not.toHaveBeenCalled()
   })
 
+  it('reads small managed images from the trusted byte source instead of the path', async () => {
+    const bytes = Buffer.from('trusted-image-bytes')
+    const readBytes = vi.fn(async () => bytes)
+
+    const result = await buildImageContentData(
+      join(root, 'missing.png'),
+      'image/png',
+      bytes.byteLength,
+      readBytes
+    )
+
+    expect(result).toEqual({ data: bytes.toString('base64'), mimeType: 'image/png' })
+    expect(readBytes).toHaveBeenCalledOnce()
+  })
+
   it('downscales large images to the long-edge cap and re-encodes to JPEG', async () => {
     const filePath = join(root, 'large.jpg')
     await writeFile(filePath, Buffer.from('ignored-because-nativeimage-is-mocked'))
@@ -124,6 +142,23 @@ describe('buildImageContentData', () => {
       expect.objectContaining({ width: 1568, height: 784 })
     )
     expect(result.mimeType).toBe('image/jpeg')
+    expect(result.data).toBe(Buffer.from('jpeg-80').toString('base64'))
+  })
+
+  it('decodes large managed images from trusted bytes instead of reopening the path', async () => {
+    const bytes = Buffer.from('trusted-large-image')
+    const readBytes = vi.fn(async () => bytes)
+
+    const result = await buildImageContentData(
+      join(root, 'missing-large.jpg'),
+      'image/jpeg',
+      3 * 1024 * 1024,
+      readBytes
+    )
+
+    expect(createFromBuffer).toHaveBeenCalledOnce()
+    expect(createFromPath).not.toHaveBeenCalled()
+    expect(readBytes).toHaveBeenCalledOnce()
     expect(result.data).toBe(Buffer.from('jpeg-80').toString('base64'))
   })
 
@@ -251,6 +286,19 @@ describe('extractPdfText', () => {
     expect(result.pageCount).toBe(2)
     expect(result.truncated).toBe(false)
     expect(result.text).toBe('--- Page 1 ---\nHello world\n\n--- Page 2 ---\nSecond page')
+  })
+
+  it('extracts managed PDFs from the trusted byte source instead of the path', async () => {
+    const bytes = Buffer.from('%PDF-1.4 trusted')
+    const readBytes = vi.fn(async () => bytes)
+
+    const result = await extractPdfText(join(root, 'missing.pdf'), {
+      size: bytes.byteLength,
+      readBytes
+    })
+
+    expect(readBytes).toHaveBeenCalledOnce()
+    expect(result.text).toContain('Hello world')
   })
 
   it('returns empty text for a PDF with no extractable content', async () => {

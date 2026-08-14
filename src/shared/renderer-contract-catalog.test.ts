@@ -16,22 +16,28 @@ describe('renderer contract catalog', () => {
   it('pins the complete capability-owned inventory and legacy map projection', () => {
     const projection = projectRendererContractMaps(RENDERER_CONTRACT_CATALOG)
 
-    expect(RENDERER_CONTRACT_GROUPS).toHaveLength(33)
-    expect(RENDERER_CONTRACT_CATALOG).toHaveLength(355)
+    expect(RENDERER_CONTRACT_GROUPS).toHaveLength(34)
+    expect(RENDERER_CONTRACT_CATALOG).toHaveLength(360)
     expect(projection.invoke).toEqual(WEB_INVOKE_CHANNELS)
     expect(projection.event).toEqual(WEB_EVENT_CHANNELS)
-    expect(Object.keys(projection.invoke)).toHaveLength(256)
+    expect(Object.keys(projection.invoke)).toHaveLength(257)
     expect(Object.keys(projection.event)).toHaveLength(37)
   })
 
   it('separates actual Web installation from the generated compatibility projection', () => {
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb !== 'unavailable')
-    ).toHaveLength(288)
+    ).toHaveLength(289)
 
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'browser-native')
-    ).toEqual(['getRuntimeVersions', 'saveBlobFile', 'saveManagedFile', 'window.close'])
+    ).toEqual([
+      'getRuntimeVersions',
+      'managedFileVersions.getCapability',
+      'saveBlobFile',
+      'saveManagedFile',
+      'window.close'
+    ])
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
         ['saveBlobFile', 'window.close'].includes(publicPath)
@@ -58,7 +64,7 @@ describe('renderer contract catalog', () => {
     })
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.localWeb === 'unavailable')
-    ).toHaveLength(67)
+    ).toHaveLength(71)
     expect(
       paths(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
     ).toHaveLength(70)
