@@ -12,7 +12,6 @@ import type {
   LocalDirEntry
 } from '../../../../shared/local-fs'
 import {
-  canBrowseGrantedPath,
   describeLocalListingError,
   isLocalPathRoot,
   parentLocalPath,
