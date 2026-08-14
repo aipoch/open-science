@@ -1,3 +1,5 @@
+import type { TFunction } from 'i18next'
+
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
 type CapturedNotebookFigure = {
@@ -35,10 +37,7 @@ const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] 
   return captured
 }
 
-const formatNotebookRunFigureMeta = (
-  run: NotebookRunRecord,
-  t: (key: string, options?: { count: number; defaultValue_one?: string }) => string = (key) => key
-): string | undefined => {
+const formatNotebookRunFigureMeta = (run: NotebookRunRecord, t: TFunction): string | undefined => {
   const figureCount = resolveNotebookRunFigures(run).length
 
   if (figureCount === 0) return undefined

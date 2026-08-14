@@ -106,7 +106,7 @@ const WorkspaceToolDetailsRow = ({
   onToggle
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun) : undefined
+  const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun, t) : undefined
   const notebookRunMeta = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
 
   const renderSection = (section: ToolDetailSection, index: number): React.JSX.Element => {
