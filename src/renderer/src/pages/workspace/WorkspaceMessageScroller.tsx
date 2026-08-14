@@ -528,13 +528,29 @@ const WorkspaceMessageScrollerImpl = ({
     () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
     [activeSession, rawConversationItems]
   )
-  // Assistant text can be split into several messages around tool calls. All fragments share the
-  // prompt they respond to, but only the last visible fragment in that turn owns whole-turn metadata.
-  // Legacy unlinked messages remain independent so older transcripts do not lose their timestamps.
-  const assistantFooterMessageIds = useMemo(
-    () => resolveTurnTerminalAgentMessageIds(activeSession?.messages ?? []),
-    [activeSession?.messages]
-  )
+  const openPromptMessageId =
+    activeSession &&
+    (activeSession.activeRun ||
+      activeSession.agentPromptInFlight ||
+      activeSession.status.startsWith('waiting-'))
+      ? (activeSession.activeRun?.promptMessageId ??
+        activeSession.messages.findLast((message) => message.role === 'user')?.id)
+      : undefined
+
+  // Provider stops complete individual Agent messages during Ask-User continuations. Keep the
+  // current logical prompt's footer and terminal announcement hidden until that prompt settles.
+  const assistantFooterMessageIds = useMemo(() => {
+    const messages = activeSession?.messages ?? []
+    const footerIds = resolveTurnTerminalAgentMessageIds(messages)
+    if (!openPromptMessageId) return footerIds
+
+    for (const message of messages) {
+      if (message.role === 'agent' && message.responseToMessageId === openPromptMessageId) {
+        footerIds.delete(message.id)
+      }
+    }
+    return footerIds
+  }, [activeSession?.messages, openPromptMessageId])
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
   const [terminalAnnouncement, setTerminalAnnouncement] = useState<
     TerminalAnnouncement | undefined

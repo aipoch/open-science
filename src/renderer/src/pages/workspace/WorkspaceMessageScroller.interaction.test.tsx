@@ -650,6 +650,66 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(failureRegion?.textContent).toBe('Response failed.')
   })
 
+  it('waits to announce completion until an ask-user continuation settles', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const prompt = createMessage({ id: 'prompt-continuation', sortIndex: 1, createdAt: 100 })
+    const streamingReply = createMessage({
+      id: 'reply-continuation',
+      role: 'agent',
+      content: 'Choose a chart type.',
+      status: 'streaming',
+      streamId: 'stream-continuation',
+      responseToMessageId: prompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const render = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render(
+      createSession({
+        activeRun: { promptMessageId: prompt.id, startedAt: 100 },
+        messages: [prompt, streamingReply]
+      })
+    )
+
+    const completionRegion = container.querySelector(
+      '[data-testid="message-completion-live-region"]'
+    )
+    const completedReply = {
+      ...streamingReply,
+      status: 'complete' as const,
+      completedAt: 102,
+      updatedAt: 102
+    }
+    await render(
+      createSession({
+        activeRun: undefined,
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true,
+        messages: [prompt, completedReply]
+      })
+    )
+    expect(completionRegion?.textContent).toBe('')
+
+    await render(
+      createSession({
+        status: 'idle',
+        activeRun: undefined,
+        agentPromptInFlight: false,
+        awaitingFirstAgentOutput: false,
+        messages: [prompt, completedReply]
+      })
+    )
+    expect(completionRegion?.textContent).toBe('Response completed.')
+  })
+
   it('does not replay a buffered assistant message after switching sessions', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(

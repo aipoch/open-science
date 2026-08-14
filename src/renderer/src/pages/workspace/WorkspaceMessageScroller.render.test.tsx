@@ -907,6 +907,47 @@ describe('WorkspaceMessageScroller loading render', () => {
     )
   })
 
+  it('hides only the current prompt footer while an ask-user continuation is running', async () => {
+    const html = await renderScroller(
+      createSession({
+        status: 'running',
+        activeRun: undefined,
+        agentPromptInFlight: true,
+        awaitingFirstAgentOutput: true,
+        messages: [
+          createMessage({ id: 'prompt-1', content: 'First prompt', sortIndex: 1 }),
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'First answer',
+            responseToMessageId: 'prompt-1',
+            completedAt: 1710000001000,
+            sortIndex: 2
+          }),
+          createMessage({ id: 'prompt-2', content: 'Create a chart', sortIndex: 3 }),
+          createMessage({
+            id: 'reply-2',
+            role: 'agent',
+            content: 'Choose a chart type.',
+            responseToMessageId: 'prompt-2',
+            completedAt: 1710000003000,
+            turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 },
+            sortIndex: 4
+          })
+        ]
+      })
+    )
+
+    expect(html).toContain('>Thinking</span>')
+    expect(html.match(/data-slot="assistant-message-footer"/g)).toHaveLength(1)
+    expect(html.indexOf('data-slot="assistant-message-footer"')).toBeGreaterThan(
+      html.indexOf('First answer')
+    )
+    expect(html.indexOf('data-slot="assistant-message-footer"')).toBeLessThan(
+      html.indexOf('Choose a chart type.')
+    )
+  })
+
   it('does not present an interrupted tool turn as completed before its final activity', async () => {
     const html = await renderScroller(
       createSession({
