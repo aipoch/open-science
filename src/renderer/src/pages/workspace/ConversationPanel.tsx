@@ -239,6 +239,7 @@ type ConversationPanelContextWindow = {
 
 type ConversationPanelReview = {
   disabled: boolean
+  running: boolean
   request: () => void
 }
 
@@ -353,7 +354,7 @@ const ConversationPanel = ({
     compactDisabledReason: compactContextDisabledReason,
     compact: onCompactContext
   } = contextWindow
-  const { disabled: isRequestReviewDisabled, request: onRequestReview } = review
+  const { disabled: isRequestReviewDisabled, running: isReviewing, request: onRequestReview } = review
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
   const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
   const specialistId = activeSession
