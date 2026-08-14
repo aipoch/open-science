@@ -70,8 +70,13 @@ class ReviewerModelRuntimeOwner {
   }
 
   admit(): Promise<ReviewerModelRuntimeAdmission> {
-    const updateGate = this.updateGatePromise
-    if (updateGate) return updateGate.then(() => this.admit())
+    if (this.updateGatePromise) {
+      return Promise.reject(
+        new Error(
+          'Reviewer cannot start while an update is preparing to install. Retry if the update does not proceed.'
+        )
+      )
+    }
     const admission = this.admitOwned()
     const settled = admission.then(
       () => undefined,

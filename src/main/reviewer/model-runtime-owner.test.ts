@@ -174,7 +174,11 @@ describe('ReviewerModelRuntimeOwner', () => {
   })
 
   it('uses a non-latching update gate before admitting a fresh runtime', async () => {
-    const firstShutdown = vi.fn(async () => ({ reaped: true }))
+    let finishFirstShutdown: ((outcome: { reaped: boolean }) => void) | undefined
+    const firstShutdownOutcome = new Promise<{ reaped: boolean }>((resolve) => {
+      finishFirstShutdown = resolve
+    })
+    const firstShutdown = vi.fn(() => firstShutdownOutcome)
     const secondShutdown = vi.fn(async () => ({ reaped: true }))
     const runtimes = [firstShutdown, secondShutdown].map(
       (shutdownForQuit) =>
@@ -213,8 +217,13 @@ describe('ReviewerModelRuntimeOwner', () => {
 
     const firstAdmission = await owner.admit()
 
-    await expect(owner.shutdownForUpdateGate()).resolves.toEqual({ reaped: true })
-    expect(firstShutdown).toHaveBeenCalledOnce()
+    const updateGate = owner.shutdownForUpdateGate()
+    await vi.waitFor(() => expect(firstShutdown).toHaveBeenCalledOnce())
+    await expect(owner.admit()).rejects.toThrow(
+      'Reviewer cannot start while an update is preparing to install.'
+    )
+    finishFirstShutdown?.({ reaped: true })
+    await expect(updateGate).resolves.toEqual({ reaped: true })
     await firstAdmission.release()
     expect(firstShutdown).toHaveBeenCalledOnce()
 
