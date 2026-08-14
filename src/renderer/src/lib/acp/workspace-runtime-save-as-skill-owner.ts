@@ -114,6 +114,9 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           }
         })
         prepared.acceptPrompt(controlMessage.messageId)
+        if (contextReset) {
+          useSessionStore.getState().clearPendingHistoryReplay(session.id, { kind: 'all' })
+        }
       } catch (error) {
         const current = useSessionStore
           .getState()

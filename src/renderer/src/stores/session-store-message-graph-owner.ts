@@ -112,7 +112,12 @@ export const createSessionMessageGraphOwner = <
         runtimeSegmentId = conversationGraph.runtimeSegments
           .filter((segment) => segment.agentFrameId === conversationGraph.activeFrameId)
           .at(-1)?.id
-        return { ...session, conversationGraph, updatedAt: now }
+        return {
+          ...session,
+          pendingHistoryReplay: session.pendingHistoryReplay ?? { kind: 'all' },
+          conversationGraph,
+          updatedAt: now
+        }
       })
     } as Partial<State>)
     return runtimeSegmentId

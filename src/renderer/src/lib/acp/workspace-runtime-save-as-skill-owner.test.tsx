@@ -142,12 +142,25 @@ describe('workspace Save as skill owner', () => {
   })
 
   it('keeps a rejected hidden turn recoverable', async () => {
-    useSessionStore.setState({ sessions: [session] })
+    useSessionStore.setState({
+      sessions: [{ ...session, branchContextResetRequired: true }]
+    })
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { acp: { saveAsSkill: vi.fn(async () => Promise.reject(new Error('Disconnected'))) } }
+      value: {
+        acp: { saveAsSkill: vi.fn(async () => Promise.reject(new Error('Disconnected'))) },
+        notebook: { shutdown: vi.fn(async () => ({ sessionId: session.id, status: 'shutdown' })) }
+      }
     })
-    const runtime = { state: { sessionIds: ['session-1'] }, resumeSession: vi.fn() } as never
+    const runtime = {
+      state: { sessionIds: ['session-1'] },
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(async () => ({
+        sessionId: session.id,
+        cwd: session.cwd,
+        contextReset: true
+      }))
+    } as never
     let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
@@ -180,6 +193,7 @@ describe('workspace Save as skill owner', () => {
       cause: 'connection-lost',
       promptMessageId: control?.id
     })
+    expect(rejected?.pendingHistoryReplay).toEqual({ kind: 'all' })
   })
 
   it.each([
@@ -243,6 +257,7 @@ describe('workspace Save as skill owner', () => {
         agentModel: 'selected-model',
         activeRun: { promptMessageId: controlMessage?.id }
       })
+      expect(persistedSession?.pendingHistoryReplay).toBeUndefined()
 
       expect(saveAsSkill).toHaveBeenCalledWith({
         projectId: session.projectId,
