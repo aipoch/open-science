@@ -253,6 +253,7 @@ export class AcpProviderSessionResumer {
         backendSystemPromptAppends: backend.prompt.systemPromptAppends,
         extraSystemPromptAppends: projectContextAppend ? [projectContextAppend] : [],
         sessionOptions: backend.session.options,
+        skillRuntime: backend.skillRuntime,
         specialistSkills: await this.resolveSpecialistSkills(specialistId)
       })
 
@@ -262,6 +263,9 @@ export class AcpProviderSessionResumer {
           sessionId: providerSessionId,
           cwd,
           mcpServers: capability.mcpServers,
+          ...(backend.adapter.additionalDirectories?.length
+            ? { additionalDirectories: [...backend.adapter.additionalDirectories] }
+            : {}),
           ...setup.metaArg
         })
       } catch (error) {

@@ -1,5 +1,5 @@
 import type { FSWatcher, watch } from 'node:fs'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
@@ -100,6 +100,38 @@ describe('UserSkillCatalogObserver', () => {
 
     observer.dispose()
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'publishes a chmod-only executable-bit change through the catalog fingerprint',
+    async () => {
+      const storageRoot = await makeStorage()
+      const skillDirectory = join(storageRoot, 'skills', 'personal', 'executable')
+      const scriptPath = join(skillDirectory, 'scripts', 'run.sh')
+      await mkdir(join(skillDirectory, 'scripts'), { recursive: true })
+      await writeFile(
+        join(skillDirectory, 'SKILL.md'),
+        '---\nname: executable\ndescription: Executable.\n---\nRun the script.\n'
+      )
+      await writeFile(scriptPath, '#!/bin/sh\n', { mode: 0o644 })
+      const watcher = fakeWatcher()
+      const onCatalogChanged = vi.fn()
+      const observer = new UserSkillCatalogObserver({
+        storageRoot,
+        catalog: new UserSkillRepository(storageRoot),
+        onCatalogChanged,
+        watchDirectory: watcher.watchDirectory,
+        debounceMs: 1,
+        reconcileIntervalMs: 60_000
+      })
+      await observer.start()
+
+      await chmod(scriptPath, 0o755)
+      watcher.emitChange()
+      await waitForCalls(onCatalogChanged, 1)
+
+      observer.dispose()
+    }
+  )
 
   it('forces one shared notification for explicit catalog mutations', async () => {
     const watcher = fakeWatcher()

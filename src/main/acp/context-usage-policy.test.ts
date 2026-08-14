@@ -14,6 +14,30 @@ const backend = (overrides: Partial<AcpBackendGenerationView> = {}): AcpBackendG
 })
 
 describe('AcpContextUsagePolicy', () => {
+  it('keeps Skill Runtime setup aligned with the published generation', () => {
+    const buildSessionSetup = vi.fn(() => ({}))
+    const skillRuntime = {
+      projectionRoot: '/runtime/projection',
+      discoveryRoot: '/runtime/projection/skills',
+      descriptors: [],
+      environment: {}
+    }
+    const policy = new AcpContextUsagePolicy({
+      backend: () =>
+        backend({
+          framework: { ...opencodeFramework, buildSessionSetup },
+          skillRuntime
+        }),
+      appliedModel: () => 'confirmed/model',
+      systemPromptAppends: () => [],
+      tooling: () => ({ artifacts: false, notebook: false, skillImport: false })
+    })
+
+    policy.resolve('session-1')
+
+    expect(buildSessionSetup).toHaveBeenCalledWith(expect.objectContaining({ skillRuntime }))
+  })
+
   it('rejects an OpenCode model and window until the Session confirms its applied model', () => {
     const selection: { appliedModel?: string } = {}
     const currentBackend = vi.fn(() => backend())

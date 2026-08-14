@@ -26,12 +26,14 @@ import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
 type AnthropicBridgeLease = ResolvedAgentBackend['anthropicBridgeLease']
 type ProviderTransportLease = ResolvedAgentBackend['providerTransportLease']
+type SkillRuntimeLease = ResolvedAgentBackend['skillRuntimeLease']
 type CandidateCleanupStage =
   | 'connection'
   | 'agent-process'
   | 'bridge-lease'
   | 'anthropic-bridge-lease'
   | 'provider-transport-lease'
+  | 'skill-runtime-lease'
 type AcpProcessEventContext = Readonly<{
   process: ChildProcessWithoutNullStreams
   framework: AgentFramework['id']
@@ -111,6 +113,7 @@ class AcpAgentConnectionAdapter {
     let bridgeLease: ResponsesBridgeLease
     let anthropicBridgeLease: AnthropicBridgeLease
     let providerTransportLease: ProviderTransportLease
+    let skillRuntimeLease: SkillRuntimeLease
     let backendAttempt: AcpBackendGenerationAttempt | undefined
     let framework: AgentFramework['id'] = 'claude-code'
 
@@ -159,6 +162,13 @@ class AcpAgentConnectionAdapter {
           reportCleanupFailure('provider-transport-lease', error)
         }
       }
+      if (skillRuntimeLease) {
+        try {
+          await skillRuntimeLease.release()
+        } catch (error) {
+          reportCleanupFailure('skill-runtime-lease', error)
+        }
+      }
     }
 
     try {
@@ -167,6 +177,7 @@ class AcpAgentConnectionAdapter {
       bridgeLease = backend.responsesBridgeLease
       anthropicBridgeLease = backend.anthropicBridgeLease
       providerTransportLease = backend.providerTransportLease
+      skillRuntimeLease = backend.skillRuntimeLease
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
       process = input.spawnAgent
@@ -238,7 +249,8 @@ class AcpAgentConnectionAdapter {
           framework,
           bridgeLease,
           anthropicBridgeLease,
-          providerTransportLease
+          providerTransportLease,
+          skillRuntimeLease
         })
         state = 'transferred'
         openedConnection.closed.then(() => {

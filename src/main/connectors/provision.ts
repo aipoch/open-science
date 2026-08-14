@@ -150,8 +150,8 @@ export async function syncCustomServerSkillDocs(
   return { materializedNames, failures }
 }
 
-// Copies only successfully generated custom Connector docs from the canonical app-owned Claude
-// Skill root into an isolated ACP runtime root. The projection-provided names are the authorization
+// Copies only successfully generated custom Connector docs from the versioned app-owned derived
+// source into an isolated ACP runtime root. The projection-provided names are the authorization
 // boundary: stale custom dirs are removed, while bundled Connector dirs remain owned by
 // syncConnectorSkillDocs. Reading and writing the exact SKILL.md avoids copying arbitrary trees.
 export async function syncMaterializedCustomServerSkillDocs(

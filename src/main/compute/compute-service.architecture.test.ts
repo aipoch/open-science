@@ -324,6 +324,20 @@ describe('Compute service architecture', () => {
     expect(backgroundProjectRecovery).toBeGreaterThan(backgroundOrphanRecovery)
   })
 
+  it('invalidates private Skill runtimes without writing rollback framework catalogs', () => {
+    const computeIpc = readSource(computePaths.ipc)
+    const computeImports = importSpecifiersFrom(computePaths.ipc)
+    const mainIpc = readSource(computePaths.mainIpc)
+
+    expect(computeImports).not.toContain('./skill-doc')
+    expect(computeImports).not.toContain('../settings/provider-env')
+    expect(computeImports).not.toContain('../agent-framework/codex')
+    expect(computeImports).not.toContain('../agent-framework/opencode')
+    expect(computeIpc).not.toContain('syncCurrentComputeSkillDocuments')
+    expect(computeIpc.match(/await refreshSkillCatalog\(\)/g)).toHaveLength(3)
+    expect(mainIpc).toContain('requestSkillCatalogRefresh\n    }\n  )')
+  })
+
   it('treats unreadable Session authority as unknown during Compute Job recovery', () => {
     const source = readSource(computePaths.mainIpc)
     const livenessStart = source.indexOf('const isComputeJobOwnerLive')

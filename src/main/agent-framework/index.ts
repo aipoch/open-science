@@ -4,3 +4,8 @@ export { codexFramework } from './codex'
 export { opencodeFramework } from './opencode'
 export { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework, listAgentFrameworks } from './registry'
 export { releaseResolvedAgentBackendLeases } from './resolved-agent-backend-leases'
+export {
+  rebaseResolvedAgentBackendSkillRuntime,
+  rebaseSkillRuntimeEnvironment,
+  skillRuntimeEnvironment
+} from './skill-runtime-binding'

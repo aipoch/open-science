@@ -48,6 +48,7 @@ type ProductionFrameworkRuntimeOptions = Readonly<{
 
 const openCodeModelConfig = (backend: ResolvedAgentBackend): AgentModelConfig => ({
   env: { ...backend.env },
+  ...(backend.skillRuntime ? { skillRuntime: backend.skillRuntime } : {}),
   configFiles: [
     {
       path: 'opencode.json',
@@ -62,7 +63,8 @@ const sessionSetup = (backend: ResolvedAgentBackend): SessionSetup =>
       ...(backend.systemPromptAppends ?? []),
       ...(backend.persistentSystemPrompt ? [backend.persistentSystemPrompt] : [])
     ],
-    ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {})
+    ...(backend.sessionOptions ? { sessionOptions: backend.sessionOptions } : {}),
+    ...(backend.skillRuntime ? { skillRuntime: backend.skillRuntime } : {})
   })
 
 const createProductionDelegatedFrameworkRuntime = (
@@ -92,13 +94,28 @@ const createProductionDelegatedFrameworkRuntime = (
           throw new Error('Delegated Attempt has no admitted model snapshot.')
         }
         const resolveAdmitted = options.runtime.settingsService.resolveAdmittedSubagentBackend
-        if (!input.executionBackend && !resolveAdmitted) {
+        if (!input.acquireExecutionBackend && !resolveAdmitted) {
           throw new Error('Admitted delegated backend resolution is unavailable.')
         }
-        const releaseResolvedBackend = input.executionBackend === undefined
+        const releaseResolvedBackend = input.acquireExecutionBackend === undefined
         const backend =
-          input.executionBackend ??
-          (await resolveAdmitted!.call(options.runtime.settingsService, input.executionModel))
+          (await input.acquireExecutionBackend?.({
+            lifecycle: {
+              sessionId: input.session.sessionId,
+              agentFrameId: input.frameId,
+              runtimeSegmentId: input.runtimeSegmentId
+            }
+          })) ??
+          (await resolveAdmitted!.call(options.runtime.settingsService, input.executionModel, {
+            skillRuntime: {
+              lifecycle: {
+                sessionId: input.session.sessionId,
+                agentFrameId: input.frameId,
+                runtimeSegmentId: input.runtimeSegmentId
+              },
+              scope: { kind: 'subagent' }
+            }
+          }))
         if (backend.framework.id !== frameworkId) {
           if (releaseResolvedBackend) await releaseResolvedAgentBackendLeases(backend)
           throw new Error('Resolved delegated backend changed framework during admission.')

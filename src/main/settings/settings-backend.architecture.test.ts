@@ -765,6 +765,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/provider-accounts.ts'
     ])
     expect(manifest.modules.settings_backend_resolution.ownerPaths).toEqual([
+      'src/main/settings/agent-skill-runtime-projection.ts',
       'src/main/settings/backend-resolver.ts',
       'src/main/settings/backend-selection-owner.ts',
       'src/main/settings/backend-route-planner.ts',

@@ -3,7 +3,8 @@ import type {
   AgentFramework,
   AgentModelChangeTarget,
   AgentModelRoute,
-  ResolvedAgentBackend
+  ResolvedAgentBackend,
+  SkillRuntimeView
 } from '../agent-framework'
 
 type AcpBackendGenerationAttemptIdentity = Readonly<{
@@ -16,6 +17,7 @@ export type AcpBackendGenerationView = Readonly<{
   backendId?: string
   modelRoute?: AgentModelRoute
   providerContinuityToken?: string
+  skillRuntime?: SkillRuntimeView
   session: Readonly<{
     model?: string
     modelRequired: boolean
@@ -33,6 +35,7 @@ export type AcpBackendGenerationView = Readonly<{
   }>
   adapter: Readonly<{
     codexHome?: string
+    additionalDirectories?: readonly string[]
     nativeMcpEnabled: boolean
     bridgeMcpAliasesEnabled: boolean
   }>
@@ -73,6 +76,9 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
       : undefined
   const bridgeMcpAliasesEnabled =
     backend.framework.id === 'codex' && backend.providerConfiguration !== undefined
+  const skillRuntime = backend.skillRuntime
+    ? deepFreeze(structuredClone(backend.skillRuntime))
+    : undefined
 
   return Object.freeze({
     framework: backend.framework,
@@ -81,6 +87,7 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
     ...(backend.providerContinuityToken
       ? { providerContinuityToken: backend.providerContinuityToken }
       : {}),
+    ...(skillRuntime ? { skillRuntime } : {}),
     session: Object.freeze({
       ...(backend.sessionModel ? { model: backend.sessionModel } : {}),
       modelRequired: backend.sessionModelRequired ?? false,
@@ -102,6 +109,7 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
     }),
     adapter: Object.freeze({
       ...(codexHome ? { codexHome } : {}),
+      additionalDirectories: Object.freeze(skillRuntime ? [skillRuntime.projectionRoot] : []),
       nativeMcpEnabled: backend.framework.id !== 'codex' || !bridgeMcpAliasesEnabled,
       bridgeMcpAliasesEnabled
     })

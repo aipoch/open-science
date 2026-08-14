@@ -228,6 +228,7 @@ describe('AcpConnectionResourceOwner', () => {
     const child = process('physical')
     const close = vi.fn()
     const release = vi.fn(async () => undefined)
+    const releaseSkillRuntime = vi.fn(async () => undefined)
     const handle = await owner.connect(async (attempt) => {
       attempt.attach({
         process: child,
@@ -238,7 +239,8 @@ describe('AcpConnectionResourceOwner', () => {
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => true),
           release
-        }
+        },
+        skillRuntimeLease: { release: releaseSkillRuntime }
       })
       return attempt.publish({ close: true, delete: false, resume: true })
     })
@@ -250,12 +252,38 @@ describe('AcpConnectionResourceOwner', () => {
     expect(close).toHaveBeenCalledOnce()
     expect(terminateProcessTree).toHaveBeenCalledOnce()
     expect(release).toHaveBeenCalledOnce()
+    expect(releaseSkillRuntime).toHaveBeenCalledOnce()
     expect(() => handle.assertCurrent()).toThrow('ACP connection was superseded.')
 
     await owner.teardown(teardownEpoch, vi.fn())
     expect(close).toHaveBeenCalledOnce()
     expect(terminateProcessTree).toHaveBeenCalledOnce()
     expect(release).toHaveBeenCalledOnce()
+    expect(releaseSkillRuntime).toHaveBeenCalledOnce()
+  })
+
+  it('releases an unattached Skill Runtime lease from a failed startup candidate', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const release = vi.fn(async () => undefined)
+    const skillRuntimeLease = { release }
+
+    await owner.cleanupUnattached({ skillRuntimeLease })
+    await owner.cleanupUnattached({ skillRuntimeLease })
+
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('reports and retries a failed Skill Runtime lease release on the next cleanup', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const failure = new Error('runtime release failed')
+    const release = vi.fn().mockRejectedValueOnce(failure).mockResolvedValueOnce(undefined)
+    const onFailure = vi.fn()
+
+    await owner.cleanupUnattached({ skillRuntimeLease: { release } }, onFailure)
+    expect(onFailure).toHaveBeenCalledWith('skill-runtime-lease', failure)
+
+    await owner.cleanupUnattached({}, onFailure)
+    expect(release).toHaveBeenCalledTimes(2)
   })
 
   it('retargets and releases the generation-scoped Anthropic bridge', async () => {
@@ -318,6 +346,7 @@ describe('AcpConnectionResourceOwner', () => {
       throw new Error('kill failed')
     })
     const release = vi.fn(async () => undefined)
+    const releaseSkillRuntime = vi.fn(async () => undefined)
     await owner.connect(async (attempt) => {
       attempt.attach({
         process: { killed: false, kill } as unknown as ChildProcessWithoutNullStreams,
@@ -328,7 +357,8 @@ describe('AcpConnectionResourceOwner', () => {
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => true),
           release
-        }
+        },
+        skillRuntimeLease: { release: releaseSkillRuntime }
       })
       return attempt.publish({ close: true, delete: false, resume: true })
     })
@@ -339,6 +369,7 @@ describe('AcpConnectionResourceOwner', () => {
     try {
       expect(() => owner.shutdownSynchronously(vi.fn())).not.toThrow()
       await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(releaseSkillRuntime).toHaveBeenCalledOnce())
       expect(close).toHaveBeenCalledOnce()
       expect(kill).toHaveBeenCalledOnce()
       expect(owner.isShuttingDown).toBe(true)
@@ -418,6 +449,7 @@ describe('AcpConnectionResourceOwner', () => {
     const closeMcpHost = vi.fn(async () => undefined)
     const owner = new AcpConnectionResourceOwner({ closeMcpHost })
     const release = vi.fn(async () => undefined)
+    const releaseSkillRuntime = vi.fn(async () => undefined)
     await owner.connect(async (attempt) => {
       attempt.attach({
         process: process('unexpected'),
@@ -428,7 +460,8 @@ describe('AcpConnectionResourceOwner', () => {
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => true),
           release
-        }
+        },
+        skillRuntimeLease: { release: releaseSkillRuntime }
       })
       return attempt.publish({ close: true, delete: false, resume: true })
     })
@@ -438,6 +471,7 @@ describe('AcpConnectionResourceOwner', () => {
     await owner.closeMcp(owner.epoch)
 
     await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(releaseSkillRuntime).toHaveBeenCalledOnce())
     expect(terminateProcessTree).toHaveBeenCalledOnce()
     expect(closeMcpHost).toHaveBeenCalledOnce()
   })

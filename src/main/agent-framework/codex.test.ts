@@ -15,6 +15,48 @@ import { CODEX_VERSION } from '../settings/managed-codex'
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
 describe('codexFramework', () => {
+  it.each([
+    {
+      name: 'subscription',
+      provider: { type: 'codex-isolated', model: 'gpt-5.4' } as const,
+      legacyHome: join('/data', 'codex-subscription')
+    },
+    {
+      name: 'custom',
+      provider: {
+        type: 'custom',
+        apiEndpoints: ['responses'] as const,
+        baseUrl: 'https://gateway.example/v1',
+        model: 'gpt-coding'
+      } as const,
+      legacyHome: join('/data', 'codex')
+    }
+  ])(
+    'adds the Skill Runtime environment without replacing the $name Codex profile',
+    ({ provider, legacyHome }) => {
+      const framework = createCodexFramework()
+      const config = framework.prepareModelConfig(provider, {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        skillRuntime: {
+          projectionRoot: '/runtime/projections/g-1',
+          discoveryRoot: '/runtime/projections/g-1/skills',
+          environment: { XDG_CACHE_HOME: '/runtime/cache/b-1' },
+          descriptors: []
+        }
+      })
+
+      expect(config.env).toMatchObject({
+        HOME: legacyHome,
+        CODEX_HOME: legacyHome,
+        XDG_CACHE_HOME: '/runtime/cache/b-1',
+        OPEN_SCIENCE_SKILL_RUNTIME_ROOT: '/runtime/projections/g-1/skills',
+        OPEN_SCIENCE_SKILL_DISCOVERY_ROOT: '/runtime/projections/g-1/skills',
+        OPEN_SCIENCE_SKILL_PROJECTION_ROOT: '/runtime/projections/g-1'
+      })
+    }
+  )
+
   it('disables every Codex native multi-agent implementation in every spawned profile', () => {
     const framework = createCodexFramework()
     const configurations = [
@@ -802,7 +844,11 @@ describe('codexFramework', () => {
         OPENAI_API_KEY: 'inherited-openai-key',
         CODEX_API_KEY: 'inherited-codex-key',
         CODEX_PATH: '/untrusted/codex',
-        CODEX_CONFIG: '{"untrusted":true}'
+        CODEX_CONFIG: '{"untrusted":true}',
+        OPEN_SCIENCE_SKILL_RUNTIME_ROOT: '/stale/runtime',
+        OPEN_SCIENCE_SKILL_DISCOVERY_ROOT: '/stale/discovery',
+        OPEN_SCIENCE_SKILL_PROJECTION_ROOT: '/stale/projection',
+        OPEN_SCIENCE_CODEX_DISABLED_SKILL_PATHS: '["/stale/SKILL.md"]'
       },
       spawnProcess
     })
@@ -812,7 +858,8 @@ describe('codexFramework', () => {
       env: {
         CODEX_HOME: '/data/codex',
         CODEX_API_KEY: 'app-key',
-        CODEX_CONFIG: '{"app":true}'
+        CODEX_CONFIG: '{"app":true}',
+        OPEN_SCIENCE_CODEX_DISABLED_SKILL_PATHS: '["/data/codex/skills/legacy/SKILL.md"]'
       },
       args: []
     })
@@ -822,10 +869,14 @@ describe('codexFramework', () => {
       PATH: expect.stringContaining('/isolated-parent-bin'),
       CODEX_HOME: '/data/codex',
       CODEX_API_KEY: 'app-key',
-      CODEX_CONFIG: '{"app":true}'
+      CODEX_CONFIG: '{"app":true}',
+      OPEN_SCIENCE_CODEX_DISABLED_SKILL_PATHS: '["/data/codex/skills/legacy/SKILL.md"]'
     })
     expect(env.OPENAI_API_KEY).toBeUndefined()
     expect(env.CODEX_PATH).toBeUndefined()
+    expect(env.OPEN_SCIENCE_SKILL_RUNTIME_ROOT).toBeUndefined()
+    expect(env.OPEN_SCIENCE_SKILL_DISCOVERY_ROOT).toBeUndefined()
+    expect(env.OPEN_SCIENCE_SKILL_PROJECTION_ROOT).toBeUndefined()
   })
 
   it('replaces every inherited proxy shape for a subscription spawn', () => {

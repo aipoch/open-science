@@ -311,6 +311,31 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('reauthorizes the pinned Skill Runtime root on provider Session resume', async () => {
+    const harness = createHarness({
+      initialBackend: {
+        ...backend,
+        skillRuntime: {
+          projectionRoot: '/runtime/projection',
+          discoveryRoot: '/runtime/projection/skills',
+          descriptors: [],
+          environment: {}
+        },
+        adapter: {
+          ...backend.adapter,
+          additionalDirectories: ['/runtime/projection']
+        }
+      }
+    })
+
+    await harness.resume()
+
+    expect(harness.request).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ additionalDirectories: ['/runtime/projection'] })
+    )
+  })
+
   it('preserves the runtime capability policy on compatible provider resume', async () => {
     const harness = createHarness({ capabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
 

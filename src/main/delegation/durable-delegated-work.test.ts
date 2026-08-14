@@ -450,7 +450,10 @@ describe('durable delegated work', () => {
       env: { OPENAI_API_KEY: 'admission-memory-secret' }
     } as never
     const backendLease = {
-      claim: vi.fn(() => ({ backend, release: claimReleases[nextClaim++] })),
+      claim: vi.fn(() => ({
+        acquireAttemptBackend: vi.fn(async () => backend),
+        release: claimReleases[nextClaim++]
+      })),
       release: admissionRelease
     }
     const resolveExecutionModel = vi.fn(async () => ({ snapshot, backendLease }))
@@ -469,10 +472,7 @@ describe('durable delegated work', () => {
     await expect.poll(() => execution.controls()).toHaveLength(2)
     expect(backendLease.claim).toHaveBeenCalledTimes(2)
     expect(admissionRelease).toHaveBeenCalledOnce()
-    expect(execution.controls().map(({ input }) => input.executionBackend)).toEqual([
-      backend,
-      backend
-    ])
+    expect(execution.controls().every(({ input }) => input.acquireExecutionBackend)).toBe(true)
     expect(execution.controls().map(({ input }) => input.executionModel)).toEqual([
       expect.objectContaining({
         providerId: 'provider-b',

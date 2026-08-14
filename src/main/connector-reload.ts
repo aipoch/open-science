@@ -1,7 +1,7 @@
 // The Connector Settings workflow uses this settle rule after starting its derived projection refresh.
-// The skills reload MUST run on BOTH settle paths — a non-Claude framework
-// (Codex, opencode) materializes connector docs into its own home at spawn, so it has to pick up a
-// connector change even if the doc re-sync itself fails. Hence `.finally`, never `.then`.
+// The Skills reload MUST run on BOTH settle paths: every framework captures Connector docs in a
+// private runtime generation, so a later turn must rebuild that generation even if source re-sync
+// fails. Hence `.finally`, never `.then`.
 export const wireConnectorReload = (
   refreshConnectorSkillDocs: () => Promise<unknown>,
   requestSkillsReload: () => void

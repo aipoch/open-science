@@ -141,6 +141,51 @@ const setup = (): Fixture => {
 }
 
 describe('AcpPromptPreparationOwner', () => {
+  it('keeps the generation Skill Runtime on turn framework setup', async () => {
+    const fixture = setup()
+    const buildSessionSetup = vi.fn(() => ({}))
+    const skillRuntime = {
+      projectionRoot: '/runtime/projection',
+      discoveryRoot: '/runtime/projection/skills',
+      descriptors: [
+        {
+          id: 'research',
+          name: 'Research',
+          description: 'Research Skill',
+          path: '/runtime/projection/skills/os-research/SKILL.md'
+        }
+      ],
+      environment: {}
+    }
+    fixture.turnSkill.prepareProvider.mockResolvedValueOnce({
+      text: 'prepared task',
+      codexSkillInputs: []
+    })
+
+    await fixture.prepare({
+      backend: {
+        framework: { ...codexFramework, buildSessionSetup },
+        skillRuntime,
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'baked instructions' },
+        context: { window: 100_000, supportsImageInput: true },
+        adapter: {
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          codexHome: '/codex',
+          additionalDirectories: ['/runtime/projection']
+        }
+      }
+    })
+
+    expect(buildSessionSetup).toHaveBeenCalledWith(expect.objectContaining({ skillRuntime }))
+    expect(fixture.turnSkill.prepareProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codex: expect.objectContaining({ runtimeDescriptors: skillRuntime.descriptors })
+      })
+    )
+  })
+
   it('composes handoff, presentation, Notebook and prompt content and transfers Context once', async () => {
     const fixture = setup()
 

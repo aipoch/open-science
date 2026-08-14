@@ -79,6 +79,15 @@ const userSkillSourceDir = (catalog: SkillCatalogModule, source: 'personal' | 'i
   join(catalogStorageRoots.get(catalog)!, 'skills', source)
 
 describe('SkillCatalogModule', () => {
+  it('exposes the complete installed catalog to the agent-facing runtime projection', async () => {
+    const catalog = await createCatalog(true)
+
+    expect((await catalog.runtimeProjectionCatalog()).map((skill) => skill.id)).toEqual([
+      'demo',
+      'skill-creator'
+    ])
+  })
+
   it('keeps only the newest user Skill when Personal and Imported packages share a name', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
     roots.push(storageRoot)

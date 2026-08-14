@@ -1,6 +1,6 @@
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import type { ResolvedAgentBackend } from '../agent-framework'
+import type { ResolvedAgentBackend, SkillRuntimeDescriptor } from '../agent-framework'
 import { createLogger } from '../logger'
 import type {
   ResponsesBridgeSkillCandidate,
@@ -25,6 +25,7 @@ type ProviderPreparationInput = Readonly<{
   promptText: string
   codex?: Readonly<{
     home?: string
+    runtimeDescriptors?: readonly SkillRuntimeDescriptor[]
     bridgeSkillsAvailable: boolean
     selectSkills: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
     signal?: AbortSignal
@@ -141,23 +142,50 @@ class AcpTurnSkillOwner {
     input: ProviderPreparationInput
   ): Promise<ResponsesBridgeSkillInput[]> {
     if (input.frameworkId !== 'codex') return []
+    const runtimeDescriptors = input.codex?.runtimeDescriptors
     if (state.selectedSkillIds.length > 0) {
+      if (runtimeDescriptors) {
+        const descriptorsById = new Map(runtimeDescriptors.map((skill) => [skill.id, skill]))
+        const seen = new Set<string>()
+        return state.selectedSkillIds.flatMap((id) => {
+          if (seen.has(id)) return []
+          seen.add(id)
+          const skill = descriptorsById.get(id)
+          return skill ? [{ name: skill.name, path: skill.path }] : []
+        })
+      }
       return (
         this.options.skills?.descriptorsForIds?.([...state.selectedSkillIds], input.codex?.home) ??
         []
       )
     }
     const codex = input.codex
-    if (!codex?.bridgeSkillsAvailable || !this.options.skills?.catalogForCodexHome) return []
+    if (!codex?.bridgeSkillsAvailable) return []
     let catalog: ResponsesBridgeSkillCandidate[]
-    try {
-      catalog = await this.options.skills.catalogForCodexHome(codex.home)
-    } catch {
-      return this.selectionFailed('catalog-error')
+    if (runtimeDescriptors) {
+      catalog = runtimeDescriptors.map(({ name, description, path }) => ({
+        name,
+        description,
+        path
+      }))
+    } else {
+      if (!this.options.skills?.catalogForCodexHome) return []
+      try {
+        catalog = await this.options.skills.catalogForCodexHome(codex.home)
+      } catch {
+        return this.selectionFailed('catalog-error')
+      }
     }
     if (state.scope?.kind === 'specialist') {
+      const allowedIds = new Set(state.scope.skillIds)
       const allowed = new Set(state.scope.frameworkNames)
-      catalog = catalog.filter((skill) => allowed.has(skill.name))
+      catalog = catalog.filter((skill) => {
+        if (allowed.has(skill.name)) return true
+        const descriptor = runtimeDescriptors?.find(
+          (candidate) => candidate.name === skill.name && candidate.path === skill.path
+        )
+        return descriptor ? allowedIds.has(descriptor.id) : false
+      })
     }
     if (catalog.length === 0) return []
     try {

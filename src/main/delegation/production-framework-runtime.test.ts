@@ -140,6 +140,86 @@ const delegatedSession = (frameworkId: AgentFrameworkId): PersistedChatSession =
 })
 
 describe('production delegated framework runtime bridge', () => {
+  it('keeps the admitted Skill Runtime in delegated branch Session setup', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-framework-skill-runtime-'))
+    const workspaceCwd = await mkdtemp(join(tmpdir(), 'delegated-framework-workspace-'))
+    const durable = delegatedSession('claude-code')
+    const buildSessionSetup = vi.fn((input) => claudeCodeFramework.buildSessionSetup(input))
+    const skillRuntime = {
+      projectionRoot: '/runtime/projection',
+      discoveryRoot: '/runtime/projection/skills',
+      descriptors: [],
+      environment: { XDG_CACHE_HOME: '/runtime/cache' }
+    }
+    const admittedBackend: ResolvedAgentBackend = {
+      ...backend('claude-code'),
+      framework: { ...claudeCodeFramework, buildSessionSetup },
+      skillRuntime
+    }
+    const acquireExecutionBackend = vi.fn(async () => admittedBackend)
+    const frameworks = createProductionDelegatedFrameworkRuntime({
+      capacity: 1,
+      dataRoot,
+      runtime: { settingsService: {} } as never,
+      notebookRpcServer: () =>
+        ({
+          issueDelegatedNotebookConnection: async () => ({
+            endpoint: 'http://127.0.0.1:1',
+            token: 'attempt-token',
+            release: () => undefined,
+            revoke: async () => undefined
+          })
+        }) as never,
+      readSession: async () => durable
+    })
+
+    try {
+      const selected = await frameworks.forSession(durable)
+      const reservation = await selected.execution.reserve(1)
+      const running = selected.execution.run(
+        {
+          session: { projectId: durable.projectId, sessionId: durable.id },
+          frameId: 'child-frame',
+          attemptId: 'attempt-1',
+          runtimeSegmentId: 'runtime-1',
+          executionModel: {
+            frameworkId: 'claude-code',
+            providerId: 'provider-a',
+            backendId: 'claude-code:provider-a',
+            modelRoute: 'claude-anthropic',
+            model: 'model-a',
+            reasoningEffort: 'default'
+          },
+          acquireExecutionBackend,
+          task: 'Investigate',
+          inputs: [],
+          workspaceCwd,
+          continuation: true
+        },
+        reservation.slotIds[0]
+      )
+
+      await vi.waitFor(() => expect(buildSessionSetup).toHaveBeenCalled())
+      expect(acquireExecutionBackend).toHaveBeenCalledWith({
+        lifecycle: {
+          sessionId: durable.id,
+          agentFrameId: 'child-frame',
+          runtimeSegmentId: 'runtime-1'
+        }
+      })
+      expect(buildSessionSetup.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({ skillRuntime })
+      )
+      await running.cancel()
+      await running.completion.catch(() => undefined)
+    } finally {
+      await Promise.all([
+        rm(dataRoot, { recursive: true, force: true }),
+        rm(workspaceCwd, { recursive: true, force: true })
+      ])
+    }
+  })
+
   it('prepares an admitted Attempt from its transient backend after the provider was deleted', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'delegated-framework-deleted-provider-'))
     const workspaceCwd = await mkdtemp(join(tmpdir(), 'delegated-framework-workspace-'))
@@ -180,7 +260,7 @@ describe('production delegated framework runtime bridge', () => {
           attemptId: 'attempt-1',
           runtimeSegmentId: 'runtime-1',
           executionModel,
-          executionBackend: admittedBackend,
+          acquireExecutionBackend: async () => admittedBackend,
           task: 'Investigate',
           inputs: [],
           workspaceCwd,

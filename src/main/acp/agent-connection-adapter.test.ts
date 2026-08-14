@@ -159,6 +159,7 @@ describe('AcpAgentConnectionAdapter', () => {
     const releaseBridge = vi.fn(async () => undefined)
     const releaseAnthropic = vi.fn(async () => undefined)
     const releaseProviderTransport = vi.fn(async () => undefined)
+    const releaseSkillRuntime = vi.fn(async () => undefined)
     const backend: ResolvedAgentBackend = {
       framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
       executablePath: '/bin/agent',
@@ -176,7 +177,8 @@ describe('AcpAgentConnectionAdapter', () => {
       providerTransportLease: {
         setTarget: vi.fn(() => true),
         release: releaseProviderTransport
-      }
+      },
+      skillRuntimeLease: { release: releaseSkillRuntime }
     }
     const candidate = await openCandidate(process, backend)
 
@@ -188,6 +190,32 @@ describe('AcpAgentConnectionAdapter', () => {
     expect(releaseBridge).toHaveBeenCalledOnce()
     expect(releaseAnthropic).toHaveBeenCalledOnce()
     expect(releaseProviderTransport).toHaveBeenCalledOnce()
+    expect(releaseSkillRuntime).toHaveBeenCalledOnce()
+  })
+
+  it('reports an untransferred Skill Runtime lease release failure at its cleanup stage', async () => {
+    const process = new FakeAgentProcess()
+    const failure = new Error('runtime release failed')
+    const connectionHooks = hooks()
+    const candidate = await openCandidate(
+      process,
+      {
+        framework: claudeCodeFramework,
+        executablePath: '',
+        env: {},
+        skillRuntimeLease: { release: vi.fn(async () => Promise.reject(failure)) }
+      },
+      connectionHooks
+    )
+
+    await candidate.dispose()
+
+    expect(connectionHooks.reportCleanupFailure).toHaveBeenCalledWith(
+      'skill-runtime-lease',
+      failure,
+      'claude-code',
+      1
+    )
   })
 
   it('rejects a transfer to a different owner epoch without consuming the candidate', async () => {
@@ -214,6 +242,7 @@ describe('AcpAgentConnectionAdapter', () => {
     const releaseBridge = vi.fn(async () => undefined)
     const releaseAnthropic = vi.fn(async () => undefined)
     const releaseProviderTransport = vi.fn(async () => undefined)
+    const releaseSkillRuntime = vi.fn(async () => undefined)
     const owner = new AcpConnectionResourceOwner()
     let candidateDispose: (() => Promise<void>) | undefined
     await owner.connect(async (attempt) => {
@@ -234,7 +263,8 @@ describe('AcpAgentConnectionAdapter', () => {
         providerTransportLease: {
           setTarget: vi.fn(() => true),
           release: releaseProviderTransport
-        }
+        },
+        skillRuntimeLease: { release: releaseSkillRuntime }
       })
       candidateDispose = candidate.dispose
       const transferred = candidate.transferTo(attempt)
@@ -259,6 +289,7 @@ describe('AcpAgentConnectionAdapter', () => {
       expect(releaseBridge).not.toHaveBeenCalled()
       expect(releaseAnthropic).not.toHaveBeenCalled()
       expect(releaseProviderTransport).not.toHaveBeenCalled()
+      expect(releaseSkillRuntime).not.toHaveBeenCalled()
       return attempt.publish({ close: false, delete: false, resume: false })
     })
 
@@ -267,12 +298,14 @@ describe('AcpAgentConnectionAdapter', () => {
     expect(releaseBridge).not.toHaveBeenCalled()
     expect(releaseAnthropic).not.toHaveBeenCalled()
     expect(releaseProviderTransport).not.toHaveBeenCalled()
+    expect(releaseSkillRuntime).not.toHaveBeenCalled()
 
     await owner.teardown(owner.epoch)
     expect(terminateProcessTree).toHaveBeenCalledOnce()
     expect(releaseBridge).toHaveBeenCalledOnce()
     expect(releaseAnthropic).toHaveBeenCalledOnce()
     expect(releaseProviderTransport).toHaveBeenCalledOnce()
+    expect(releaseSkillRuntime).toHaveBeenCalledOnce()
   })
 
   it('retains cleanup ownership when the resource owner rejects transfer', async () => {

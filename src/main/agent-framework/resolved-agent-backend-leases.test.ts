@@ -12,10 +12,12 @@ describe('resolved agent backend lease owner', () => {
     const transportRelease = vi.fn(() => {
       throw new Error('synchronous close failure')
     })
+    const skillRuntimeRelease = vi.fn(async () => undefined)
     const backend = {
       responsesBridgeLease: { release: responsesRelease },
       anthropicBridgeLease: { release: anthropicRelease },
-      providerTransportLease: { release: transportRelease }
+      providerTransportLease: { release: transportRelease },
+      skillRuntimeLease: { release: skillRuntimeRelease }
     } as unknown as ResolvedAgentBackend
 
     const first = releaseResolvedAgentBackendLeases(backend)
@@ -26,8 +28,10 @@ describe('resolved agent backend lease owner', () => {
     expect(responsesRelease).toHaveBeenCalledOnce()
     expect(anthropicRelease).toHaveBeenCalledOnce()
     expect(transportRelease).toHaveBeenCalledOnce()
+    expect(skillRuntimeRelease).toHaveBeenCalledOnce()
     await releaseResolvedAgentBackendLeases(backend)
     expect(responsesRelease).toHaveBeenCalledOnce()
+    expect(skillRuntimeRelease).toHaveBeenCalledOnce()
   })
 
   it('releases an aliased lease only once', async () => {
@@ -36,7 +40,8 @@ describe('resolved agent backend lease owner', () => {
     const backend = {
       responsesBridgeLease: aliasedLease,
       anthropicBridgeLease: aliasedLease,
-      providerTransportLease: aliasedLease
+      providerTransportLease: aliasedLease,
+      skillRuntimeLease: aliasedLease
     } as unknown as ResolvedAgentBackend
 
     await releaseResolvedAgentBackendLeases(backend)

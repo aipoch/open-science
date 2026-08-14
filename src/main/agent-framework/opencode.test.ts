@@ -3,8 +3,65 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { buildOpencodeConfig, opencodeFramework } from './opencode'
+import type { SkillRuntimeView } from './types'
+
+const skillRuntime: SkillRuntimeView = {
+  projectionRoot: '/runtime/skills-projection',
+  discoveryRoot: '/runtime/skills-projection/skills',
+  descriptors: [
+    {
+      id: 'research',
+      name: 'Research',
+      description: 'Research primary sources.',
+      path: '/runtime/skills-projection/skills/os-research/SKILL.md'
+    }
+  ],
+  environment: {
+    TMPDIR: '/runtime/tmp',
+    XDG_CACHE_HOME: '/runtime/cache'
+  }
+}
 
 describe('opencodeFramework.prepareModelConfig', () => {
+  it('adds runtime skill paths to both native config layers while preserving isolation', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      {
+        storageRoot: '/data',
+        executablePath: '/bin/opencode',
+        skillRuntime
+      }
+    )
+
+    const writtenConfig = JSON.parse(
+      config.configFiles?.find((file) => file.path.endsWith('opencode.json'))?.content ?? '{}'
+    )
+    const pinnedConfig = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}')
+
+    expect(config.skillRuntime).toBe(skillRuntime)
+    expect(writtenConfig.skills).toEqual({ paths: [skillRuntime.discoveryRoot] })
+    expect(pinnedConfig.skills).toEqual({ paths: [skillRuntime.discoveryRoot] })
+    expect(config.env).toMatchObject({
+      ...skillRuntime.environment,
+      OPEN_SCIENCE_SKILL_RUNTIME_ROOT: skillRuntime.discoveryRoot,
+      OPEN_SCIENCE_SKILL_DISCOVERY_ROOT: skillRuntime.discoveryRoot,
+      OPEN_SCIENCE_SKILL_PROJECTION_ROOT: skillRuntime.projectionRoot,
+      XDG_CONFIG_HOME: join('/runtime', 'tmp', 'opencode-config'),
+      XDG_DATA_HOME: join('/data', 'opencode', 'data'),
+      OPENCODE_DISABLE_EXTERNAL_SKILLS: 'true',
+      OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: 'true',
+      OPENCODE_DISABLE_PROJECT_CONFIG: 'true'
+    })
+    expect(config.configFiles?.map((file) => file.path)).toEqual(
+      expect.arrayContaining([
+        join('/runtime', 'tmp', 'opencode-config', 'opencode', 'opencode.json')
+      ])
+    )
+    expect(
+      config.configFiles?.every((file) => !file.path.startsWith(join('/data', 'opencode')))
+    ).toBe(true)
+  })
+
   it('writes connector conventions and wires them into opencode.json instructions', () => {
     const config = opencodeFramework.prepareModelConfig(
       { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },

@@ -8,6 +8,14 @@ describe('AcpBackendGenerationOwner', () => {
     const owner = new AcpBackendGenerationOwner(claudeCodeFramework)
     const sessionOptions = { settingSources: ['user'] }
     const systemPromptAppends = ['Use the app tools.']
+    const descriptors = [
+      {
+        id: 'literature-review',
+        name: 'literature-review',
+        description: 'Review the literature.',
+        path: '/runtime/projection/skills/os-literature-review/SKILL.md'
+      }
+    ]
     const attempt = owner.prepare(
       { epoch: 7, assertCurrent: vi.fn() },
       {
@@ -15,6 +23,12 @@ describe('AcpBackendGenerationOwner', () => {
         backendId: 'codex:isolated',
         executablePath: '/private/provider/bin/codex-acp',
         env: { CODEX_HOME: '/data/codex', PROVIDER_TOKEN: 'spawn-secret' },
+        skillRuntime: {
+          projectionRoot: '/runtime/projection',
+          discoveryRoot: '/runtime/projection/skills',
+          descriptors,
+          environment: { XDG_CACHE_HOME: '/runtime/cache' }
+        },
         args: ['--token=argument-secret'],
         sessionModel: 'gpt-selected',
         sessionModelRequired: true,
@@ -44,6 +58,12 @@ describe('AcpBackendGenerationOwner', () => {
     const view = attempt.publish()
     sessionOptions.settingSources.push('project')
     systemPromptAppends.push('late mutation')
+    descriptors.push({
+      id: 'late-skill',
+      name: 'late-skill',
+      description: 'Late mutation.',
+      path: '/runtime/late/SKILL.md'
+    })
 
     expect(owner.current).toBe(view)
     expect(view).toMatchObject({
@@ -62,17 +82,41 @@ describe('AcpBackendGenerationOwner', () => {
       context: { window: 1_000_000, model: 'provider-model', supportsImageInput: true },
       adapter: {
         codexHome: '/data/codex',
+        additionalDirectories: ['/runtime/projection'],
         nativeMcpEnabled: false,
         bridgeMcpAliasesEnabled: true
+      },
+      skillRuntime: {
+        projectionRoot: '/runtime/projection',
+        discoveryRoot: '/runtime/projection/skills',
+        descriptors: [
+          {
+            id: 'literature-review',
+            name: 'literature-review',
+            description: 'Review the literature.',
+            path: '/runtime/projection/skills/os-literature-review/SKILL.md'
+          }
+        ],
+        environment: { XDG_CACHE_HOME: '/runtime/cache' }
       }
     })
     expect(Object.isFrozen(view)).toBe(true)
     expect(Object.isFrozen(view.session)).toBe(true)
     expect(Object.isFrozen(view.session.options)).toBe(true)
     expect(Object.isFrozen(view.prompt.systemPromptAppends)).toBe(true)
+    expect(Object.isFrozen(view.skillRuntime)).toBe(true)
+    expect(Object.isFrozen(view.skillRuntime?.descriptors)).toBe(true)
+    expect(Object.isFrozen(view.skillRuntime?.descriptors[0])).toBe(true)
     expect(JSON.stringify(view)).not.toMatch(
       /spawn-secret|argument-secret|provider-secret|usage-secret|provider\.example|\/private\/provider/
     )
+  })
+
+  it('keeps legacy generations free of Skill Runtime roots', () => {
+    const owner = new AcpBackendGenerationOwner(claudeCodeFramework)
+
+    expect(owner.current.skillRuntime).toBeUndefined()
+    expect(owner.current.adapter.additionalDirectories).toEqual([])
   })
 
   it('consumes attempt-bound initialize material exactly once', () => {

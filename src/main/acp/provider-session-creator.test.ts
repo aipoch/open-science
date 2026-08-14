@@ -9,6 +9,7 @@ import {
   opencodeFramework,
   type AgentFramework
 } from '../agent-framework'
+import type { SkillRuntimeView } from '../agent-framework/types'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import { AcpProviderSessionCreator } from './provider-session-creator'
@@ -55,6 +56,7 @@ const createHarness = (options: {
   backendId?: string
   projectAgentContext?: string
   specialistIdentity?: { append: string; prefix: string }
+  skillRuntime?: SkillRuntimeView
 }): CreatorHarness => {
   const order = options.order ?? []
   const sessionSetupAppends: string[][] = []
@@ -92,7 +94,11 @@ const createHarness = (options: {
     session: { modelRequired: false },
     prompt: { systemPromptAppends: [] },
     context: { supportsImageInput: false },
+    ...(options.skillRuntime ? { skillRuntime: options.skillRuntime } : {}),
     adapter: {
+      ...(options.skillRuntime
+        ? { additionalDirectories: [options.skillRuntime.projectionRoot] }
+        : {}),
       nativeMcpEnabled: options.nativeMcpEnabled ?? true,
       bridgeMcpAliasesEnabled: options.bridgeMcpAliasesEnabled ?? false
     }
@@ -181,6 +187,22 @@ const createHarness = (options: {
 }
 
 describe('AcpProviderSessionCreator', () => {
+  it('authorizes the pinned Skill Runtime root on a new Codex provider Session', async () => {
+    const skillRuntime = {
+      projectionRoot: '/runtime/projection',
+      discoveryRoot: '/runtime/projection/skills',
+      descriptors: [],
+      environment: {}
+    }
+    const harness = createHarness({ order: [], framework: codexFramework, skillRuntime })
+
+    await harness.creator.create({ cwd: '/workspace' })
+
+    expect(harness.buildSession).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalDirectories: ['/runtime/projection'] })
+    )
+  })
+
   it('publishes the provider-returned id as the fresh application Session id', async () => {
     const harness = createHarness({ order: [] })
 

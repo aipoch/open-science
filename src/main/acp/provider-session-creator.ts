@@ -100,11 +100,19 @@ export class AcpProviderSessionCreator {
         ),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
         sessionOptions: startupBackend.session.options,
+        skillRuntime: startupBackend.skillRuntime,
         specialistSkills: specialist.skills
       })
       log.info('createSession: buildSession', this.deps.diagnosticContext())
       const session = await connection.agent
-        .buildSession({ cwd, mcpServers: capability.mcpServers, ...setup.metaArg })
+        .buildSession({
+          cwd,
+          mcpServers: capability.mcpServers,
+          ...(startupBackend.adapter.additionalDirectories?.length
+            ? { additionalDirectories: [...startupBackend.adapter.additionalDirectories] }
+            : {}),
+          ...setup.metaArg
+        })
         .start()
       provisionalSession = session
 

@@ -8,7 +8,8 @@ import type {
   ComputeApprovalRequest,
   ComputeHost,
   ComputeJob,
-  CreateComputeHostRequest
+  CreateComputeHostRequest,
+  ProbeResult
 } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { decodeRemoteFsError } from '../../shared/remote-fs'
@@ -206,12 +207,12 @@ describe('compute handlers', () => {
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
   })
 
-  it('refreshes the canonical Compute Skill after host create and delete', async () => {
+  it('invalidates the Skill catalog after host create and delete', async () => {
     const create = vi.fn(() => Promise.resolve(sampleHost()))
     const del = vi.fn(() => Promise.resolve())
-    const syncComputeSkill = vi.fn(() => Promise.resolve())
+    const requestSkillCatalogRefresh = vi.fn()
     const handlers = createComputeHandlers(
-      mockRepository({ create, delete: del }),
+      mockRepository({ create, delete: del, get: vi.fn(() => Promise.resolve(sampleHost())) }),
       undefined,
       undefined,
       undefined,
@@ -222,13 +223,42 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       undefined,
-      syncComputeSkill
+      undefined,
+      {
+        pruneSessionEnabledHosts: vi.fn(async (_providerId, afterPrune) => afterPrune?.()),
+        requestSkillCatalogRefresh
+      }
     )
 
     await handlers.create({ sshAlias: 'biowulf' })
     await handlers.delete('ssh:biowulf')
 
-    expect(syncComputeSkill).toHaveBeenCalledTimes(2)
+    expect(requestSkillCatalogRefresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not invalidate the Skill catalog when host deletion fails', async () => {
+    const requestSkillCatalogRefresh = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: vi.fn(() => Promise.reject(new Error('delete failed'))) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        pruneSessionEnabledHosts: vi.fn(async (_providerId, afterPrune) => afterPrune?.()),
+        requestSkillCatalogRefresh
+      }
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow('delete failed')
+    expect(requestSkillCatalogRefresh).not.toHaveBeenCalled()
   })
 
   it('sshConfigAliases uses the injected alias lister', async () => {
@@ -248,12 +278,125 @@ describe('compute handlers', () => {
       detectedScheduler: 'slurm' as const
     }
     const probe = vi.fn(() => Promise.resolve(probeResult))
-    const handlers = createComputeHandlers(mockRepository({}), undefined, mockService({ probe }))
+    const requestSkillCatalogRefresh = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ probe }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestSkillCatalogRefresh
+    )
 
     const result = await handlers.probe('ssh:biowulf')
     expect(probe).toHaveBeenCalledWith('ssh:biowulf')
+    expect(requestSkillCatalogRefresh).toHaveBeenCalledOnce()
     expect(result.ok).toBe(true)
     expect(result.cpus).toBe(64)
+  })
+
+  it('invalidates the Skill catalog after a persisted failed probe result', async () => {
+    const result: ProbeResult = {
+      ok: false,
+      probedAt: '2026-01-01T00:00:00Z',
+      exitCode: 255,
+      errorTail: 'Connection failed'
+    }
+    const requestSkillCatalogRefresh = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ probe: vi.fn(() => Promise.resolve(result)) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestSkillCatalogRefresh
+    )
+
+    await expect(handlers.probe('ssh:biowulf')).resolves.toBe(result)
+    expect(requestSkillCatalogRefresh).toHaveBeenCalledOnce()
+  })
+
+  it('does not invalidate the Skill catalog when probe produces no result', async () => {
+    const requestSkillCatalogRefresh = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ probe: vi.fn(() => Promise.reject(new Error('host not found'))) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestSkillCatalogRefresh
+    )
+
+    await expect(handlers.probe('ssh:missing')).rejects.toThrow('host not found')
+    expect(requestSkillCatalogRefresh).not.toHaveBeenCalled()
+  })
+
+  it('keeps a probe result when Skill catalog invalidation fails', async () => {
+    const result: ProbeResult = {
+      ok: true,
+      probedAt: '2026-01-01T00:00:00Z',
+      exitCode: 0,
+      errorTail: null
+    }
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ probe: vi.fn(() => Promise.resolve(result)) }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      vi.fn(() => Promise.reject(new Error('refresh failed')))
+    )
+
+    await expect(handlers.probe('ssh:biowulf')).resolves.toBe(result)
+  })
+
+  it('does not invalidate the Skill catalog for list and get reads', async () => {
+    const requestSkillCatalogRefresh = vi.fn(() => Promise.resolve())
+    const handlers = createComputeHandlers(
+      mockRepository({
+        list: vi.fn(() => Promise.resolve([sampleHost()])),
+        get: vi.fn(() => Promise.resolve(sampleHost()))
+      }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestSkillCatalogRefresh
+    )
+
+    await handlers.list()
+    await handlers.get('ssh:biowulf')
+    expect(requestSkillCatalogRefresh).not.toHaveBeenCalled()
   })
 
   it('listDir delegates to the injected ComputeService', async () => {

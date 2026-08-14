@@ -73,9 +73,11 @@ type DelegateExecutionInput = Readonly<{
   attemptId: string
   runtimeSegmentId: string
   executionModel?: ResolvedSubagentModelSnapshot
-  // Admission-only capability. It is never persisted; the durable owner releases it after this
-  // Attempt settles, while the production runtime consumes only the lease-free backend view.
-  executionBackend?: ResolvedAgentBackend
+  // Admission-only capability. It is never persisted. The durable owner retains release authority,
+  // while the production runtime can acquire exactly one lease-free backend for this Attempt.
+  acquireExecutionBackend?: (
+    request: DelegateExecutionAttemptBackendRequest
+  ) => Promise<ResolvedAgentBackend>
   task: string
   inputs: readonly string[]
   workspaceCwd?: string
@@ -86,8 +88,18 @@ type DelegateExecutionInput = Readonly<{
   turn?: DelegateChildTurnIdentity
 }>
 
+type DelegateExecutionAttemptBackendRequest = Readonly<{
+  lifecycle: Readonly<{
+    sessionId: string
+    agentFrameId: string
+    runtimeSegmentId: string
+  }>
+}>
+
 type DelegateExecutionBackendClaim = Readonly<{
-  backend: ResolvedAgentBackend
+  acquireAttemptBackend(
+    request: DelegateExecutionAttemptBackendRequest
+  ): Promise<ResolvedAgentBackend>
   release(): Promise<void>
 }>
 
@@ -142,6 +154,7 @@ export type {
   DelegateCapacityReservation,
   DelegateExecutionBackendClaim,
   DelegateExecutionBackendLease,
+  DelegateExecutionAttemptBackendRequest,
   DelegateExecution,
   DelegateExecutionErrorCode,
   DelegateExecutionEvent,

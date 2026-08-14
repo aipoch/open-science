@@ -31,6 +31,7 @@ import { isCodexSubscriptionProvider } from '../../shared/settings'
 import { CODEX_VERSION } from '../settings/managed-codex'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
+import { rebaseSkillRuntimeEnvironment, skillRuntimeEnvironment } from './skill-runtime-binding'
 
 const CODEX_PROVIDER_ID = 'open-science'
 // Catalog model used only for Codex's local metadata; the Responses bridge rewrites it to the selected
@@ -75,6 +76,10 @@ const CODEX_DELEGATION_FEATURES = Object.freeze({
 const CODEX_ENV_KEYS = [
   'CODEX_API_KEY',
   'OPENAI_API_KEY',
+  'OPEN_SCIENCE_SKILL_RUNTIME_ROOT',
+  'OPEN_SCIENCE_SKILL_DISCOVERY_ROOT',
+  'OPEN_SCIENCE_SKILL_PROJECTION_ROOT',
+  'OPEN_SCIENCE_CODEX_DISABLED_SKILL_PATHS',
   'CODEX_CONFIG',
   'CODEX_HOME',
   'CODEX_PATH',
@@ -433,6 +438,7 @@ export const createCodexFramework = ({
       const codexHome = codexSubscriptionStorageDir(ctx.storageRoot)
       return {
         env: {
+          ...skillRuntimeEnvironment(ctx.skillRuntime),
           ...isolatedCodexHomeEnv(codexHome, platform),
           ...(codexConfigJson ? { CODEX_CONFIG: codexConfigJson } : {})
         },
@@ -502,6 +508,7 @@ export const createCodexFramework = ({
     }
     return {
       env: {
+        ...skillRuntimeEnvironment(ctx.skillRuntime),
         ...isolatedCodexHomeEnv(codexHome, platform),
         CODEX_CONFIG: JSON.stringify(codexConfig),
         MODEL_PROVIDER: CODEX_PROVIDER_ID,
@@ -539,6 +546,8 @@ export const createCodexFramework = ({
       ...(persistentSystemPrompt ? { persistentSystemPrompt } : {})
     }
   },
+
+  rebaseSkillRuntime: rebaseSkillRuntimeEnvironment,
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
     // Production backends pass no stable appends here because developer_instructions owns them.

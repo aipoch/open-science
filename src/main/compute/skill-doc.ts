@@ -46,6 +46,9 @@ const withHostProjection = (document: string, projection: string): string => {
   return document
 }
 
+const projectComputeSkillDoc = (document: string, hosts: readonly ComputeHost[]): string =>
+  withHostProjection(document, renderHostProjection(hosts))
+
 const extractHostProjection = (document: string): string | undefined => {
   const match = projectionPattern.exec(document)
   if (!match) return undefined
@@ -75,7 +78,7 @@ const syncComputeSkillDoc = async (
     return
   }
 
-  const updated = withHostProjection(document, renderHostProjection(hosts))
+  const updated = projectComputeSkillDoc(document, hosts)
   if (updated === document) return
 
   // Materialized Skills are normally read-only. Temporarily restore only this application-owned
@@ -107,6 +110,7 @@ export {
   COMPUTE_SKILL_DIRECTORY,
   COMPUTE_SKILL_ID,
   hasCanonicalComputeSkillDoc,
+  projectComputeSkillDoc,
   preserveComputeHostProjection,
   syncComputeSkillDoc
 }

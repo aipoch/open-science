@@ -1,7 +1,13 @@
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import type { StoredConnectors } from '../settings/types'
+import { ALL_CONNECTOR_IDS } from './registry'
 import { ConnectorRuntimeSettingsProjection } from './runtime-settings-projection'
+import { connectorSkillSourceRoot } from './skill-source'
 
 const connectors = (overrides: Partial<StoredConnectors> = {}): StoredConnectors => ({
   enabledIds: [],
@@ -10,6 +16,58 @@ const connectors = (overrides: Partial<StoredConnectors> = {}): StoredConnectors
 })
 
 describe('ConnectorRuntimeSettingsProjection', () => {
+  it('writes derived documents without changing framework rollback catalogs', async () => {
+    const configRoot = await mkdtemp(join(tmpdir(), 'open-science-connector-source-'))
+    const rollbackRoots = [
+      join(configRoot, 'claude', 'skills'),
+      join(configRoot, 'opencode', 'config', 'opencode', 'skills'),
+      join(configRoot, 'codex', 'skills'),
+      join(configRoot, 'codex-subscription', 'skills')
+    ]
+    try {
+      for (const root of rollbackRoots) {
+        await mkdir(root, { recursive: true })
+        await writeFile(join(root, 'rollback-sentinel.txt'), 'preserve', 'utf8')
+      }
+      const customServer = {
+        id: 'derived-id',
+        name: 'derived',
+        displayName: 'Derived',
+        transport: 'stdio' as const,
+        command: 'mcp',
+        enabled: true
+      }
+      const projection = new ConnectorRuntimeSettingsProjection({
+        readConnectors: vi.fn().mockResolvedValue(
+          connectors({
+            disabledConnectorIds: ALL_CONNECTOR_IDS.filter((id) => id !== 'pubmed'),
+            customMcpServers: [customServer]
+          })
+        ),
+        skillsDir: connectorSkillSourceRoot(configRoot),
+        mcpClientManager: { listTools: vi.fn().mockResolvedValue([]) }
+      })
+
+      await projection.refresh()
+
+      await expect(
+        readFile(join(connectorSkillSourceRoot(configRoot), 'mcp-pubmed', 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: mcp-pubmed')
+      await expect(
+        readFile(join(connectorSkillSourceRoot(configRoot), 'mcp-derived', 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: mcp-derived')
+      expect(projection.materializedCustomSkillNames()).toEqual(['mcp-derived'])
+      for (const root of rollbackRoots) {
+        expect(await readdir(root)).toEqual(['rollback-sentinel.txt'])
+        await expect(readFile(join(root, 'rollback-sentinel.txt'), 'utf8')).resolves.toBe(
+          'preserve'
+        )
+      }
+    } finally {
+      await rm(configRoot, { recursive: true, force: true })
+    }
+  })
+
   it('owns the current snapshot and synchronizes bundled and enabled custom Skill docs', async () => {
     const stored = connectors({
       disabledConnectorIds: ['chemistry'],
@@ -38,9 +96,10 @@ describe('ConnectorRuntimeSettingsProjection', () => {
       await loadTools(servers[0])
       return { materializedNames: ['enabled'], failures: [] }
     })
+    const derivedSource = connectorSkillSourceRoot('/config')
     const projection = new ConnectorRuntimeSettingsProjection({
       readConnectors: vi.fn().mockResolvedValue(stored),
-      skillsDir: '/config/skills',
+      skillsDir: derivedSource,
       mcpClientManager: { listTools },
       syncBundledSkillDocs,
       syncCustomSkillDocs
@@ -50,11 +109,11 @@ describe('ConnectorRuntimeSettingsProjection', () => {
 
     expect(projection.current()).toBe(stored)
     expect(syncBundledSkillDocs).toHaveBeenCalledWith(
-      '/config/skills',
+      derivedSource,
       expect.not.arrayContaining(['chemistry'])
     )
     expect(syncCustomSkillDocs).toHaveBeenCalledWith(
-      '/config/skills',
+      derivedSource,
       [stored.customMcpServers?.[0]],
       expect.any(Function)
     )

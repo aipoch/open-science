@@ -6,8 +6,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createLogger, diagnosticErrorFields } from '../logger'
 
 const log = createLogger('skills')
-const CACHE_VERSION = 1
-const COMPATIBILITY_VERSION = 'sha256-tree-v2'
+const CACHE_VERSION = 2
+const COMPATIBILITY_VERSION = 'sha256-tree-v3'
 const SHA256_HEX = /^[a-f0-9]{64}$/
 const NON_NEGATIVE_INTEGER = /^\d+$/
 const INTEGER = /^-?\d+$/
@@ -16,6 +16,7 @@ type FileMetadata = {
   size: string
   mtimeNs: string
   ctimeNs: string
+  executable: boolean
 }
 
 type CachedFile = FileMetadata & {
@@ -55,7 +56,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const sameMetadata = (left: FileMetadata | undefined, right: FileMetadata): boolean =>
-  left?.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs
+  left?.size === right.size &&
+  left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs &&
+  left.executable === right.executable
 
 const streamFileHash: HashFile = async (path) => {
   const hash = createHash('sha256')
@@ -74,7 +78,7 @@ class UserSkillCompatibilityIndex {
 
   constructor(storageRoot: string, options: UserSkillCompatibilityIndexOptions = {}) {
     this.skillsRoot = resolve(storageRoot, 'skills')
-    this.cachePath = join(storageRoot, 'runtime-support', 'user-skill-compatibility-v1.json')
+    this.cachePath = join(storageRoot, 'runtime-support', 'user-skill-compatibility-v2.json')
     this.hashFile = options.hashFile ?? streamFileHash
   }
 
@@ -173,6 +177,8 @@ class UserSkillCompatibilityIndex {
       compatibilityHash.update('\0')
       compatibilityHash.update(file.sha256)
       compatibilityHash.update('\0')
+      compatibilityHash.update(file.executable ? 'executable' : 'regular')
+      compatibilityHash.update('\0')
     }
     return {
       package: { files },
@@ -187,7 +193,8 @@ class UserSkillCompatibilityIndex {
       ? {
           size: metadata.size.toString(),
           mtimeNs: metadata.mtimeNs.toString(),
-          ctimeNs: metadata.ctimeNs.toString()
+          ctimeNs: metadata.ctimeNs.toString(),
+          executable: process.platform !== 'win32' && (metadata.mode & 0o111n) !== 0n
         }
       : undefined
   }
@@ -211,6 +218,7 @@ class UserSkillCompatibilityIndex {
             INTEGER.test(fileValue.mtimeNs) &&
             typeof fileValue.ctimeNs === 'string' &&
             INTEGER.test(fileValue.ctimeNs) &&
+            typeof fileValue.executable === 'boolean' &&
             typeof fileValue.sha256 === 'string' &&
             SHA256_HEX.test(fileValue.sha256)
           ) {
@@ -218,6 +226,7 @@ class UserSkillCompatibilityIndex {
               size: fileValue.size,
               mtimeNs: fileValue.mtimeNs,
               ctimeNs: fileValue.ctimeNs,
+              executable: fileValue.executable,
               sha256: fileValue.sha256
             }
           }

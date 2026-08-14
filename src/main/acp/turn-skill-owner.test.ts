@@ -246,6 +246,53 @@ describe('AcpTurnSkillOwner', () => {
     })
   })
 
+  it('uses the current runtime descriptors as the authoritative explicit Codex Skill input', async () => {
+    const descriptorsForIds = vi.fn(async () => [
+      { name: 'Legacy', path: '/codex/skills/os-personal-research/SKILL.md' }
+    ])
+    const owner = new AcpTurnSkillOwner({
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        descriptorsForIds
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({
+      selectedSkillIds: ['personal-research', 'second-skill', 'personal-research']
+    })
+    const runtimeSkill = {
+      id: 'personal-research',
+      name: 'Research',
+      description: 'Current generation',
+      path: '/runtime/catalogs/current/skills/os-personal-research/SKILL.md'
+    }
+    const secondRuntimeSkill = {
+      id: 'second-skill',
+      name: 'Second',
+      description: 'Second current generation Skill',
+      path: '/runtime/catalogs/current/skills/os-second-skill/SKILL.md'
+    }
+
+    const prepared = await handle.prepareProvider({
+      frameworkId: codexFramework.id,
+      selectionText: 'find papers',
+      promptText: 'find papers',
+      codex: {
+        home: '/codex',
+        runtimeDescriptors: [secondRuntimeSkill, runtimeSkill],
+        bridgeSkillsAvailable: true,
+        selectSkills: vi.fn()
+      }
+    })
+
+    expect(descriptorsForIds).not.toHaveBeenCalled()
+    expect(prepared.codexSkillInputs).toEqual([
+      { name: 'Research', path: runtimeSkill.path },
+      { name: 'Second', path: secondRuntimeSkill.path }
+    ])
+  })
+
   it('scopes Codex automatic selection and rejects stale selector results', async () => {
     const oldSkill = {
       name: 'mcp-old',
@@ -289,6 +336,74 @@ describe('AcpTurnSkillOwner', () => {
 
     expect(selectSkills).toHaveBeenCalledWith('use the current connector', [currentSkill], signal)
     expect(prepared.codexSkillInputs).toEqual([currentSkill])
+  })
+
+  it('builds and Specialist-filters the automatic Codex catalog from the current runtime', async () => {
+    const catalogForCodexHome = vi.fn(async () => [
+      { name: 'legacy', description: 'Legacy', path: '/codex/skills/legacy/SKILL.md' }
+    ])
+    const runtimeSkills = [
+      {
+        id: 'allowed-id',
+        name: 'allowed-name',
+        description: 'Allowed runtime Skill',
+        path: '/runtime/current/skills/os-allowed-id/SKILL.md'
+      },
+      {
+        id: 'blocked-id',
+        name: 'blocked-name',
+        description: 'Blocked runtime Skill',
+        path: '/runtime/current/skills/os-blocked-id/SKILL.md'
+      }
+    ]
+    const selectSkills = vi.fn(async (_text, catalog) => catalog)
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist',
+        skillIds: ['allowed-id'],
+        frameworkNames: ['allowed-name'],
+        missingSkillIds: []
+      }),
+      skills: {
+        needForceLoad: async () => [],
+        namesForIds: async () => [],
+        catalogForCodexHome
+      },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({ specialistId: 'specialist-1' })
+
+    const prepared = await handle.prepareProvider({
+      frameworkId: codexFramework.id,
+      selectionText: 'use a Skill',
+      promptText: 'use a Skill',
+      codex: {
+        home: '/codex',
+        runtimeDescriptors: runtimeSkills,
+        bridgeSkillsAvailable: true,
+        selectSkills
+      }
+    })
+
+    expect(catalogForCodexHome).not.toHaveBeenCalled()
+    expect(selectSkills).toHaveBeenCalledWith(
+      'use a Skill',
+      [
+        {
+          name: 'allowed-name',
+          description: 'Allowed runtime Skill',
+          path: runtimeSkills[0]!.path
+        }
+      ],
+      undefined
+    )
+    expect(prepared.codexSkillInputs).toEqual([
+      {
+        name: 'allowed-name',
+        description: 'Allowed runtime Skill',
+        path: runtimeSkills[0]!.path
+      }
+    ])
   })
 
   it('passes cancellation to the Codex selector and fails open when it aborts', async () => {

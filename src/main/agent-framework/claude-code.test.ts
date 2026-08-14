@@ -4,8 +4,92 @@ import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { claudeCodeFramework } from './claude-code'
 import { codexFramework } from './codex'
 import { opencodeFramework } from './opencode'
+import type { SkillRuntimeView } from './types'
+
+const skillRuntime: SkillRuntimeView = {
+  projectionRoot: '/runtime/skills-projection',
+  discoveryRoot: '/runtime/skills-projection/skills',
+  descriptors: [
+    {
+      id: 'research',
+      name: 'Research',
+      description: 'Research primary sources.',
+      path: '/runtime/skills-projection/skills/os-research/SKILL.md'
+    }
+  ],
+  environment: {
+    XDG_CACHE_HOME: '/runtime/cache'
+  }
+}
 
 describe('claudeCodeFramework', () => {
+  it('adds the skill runtime through Claude native discovery without replacing legacy options', () => {
+    const modelConfig = claudeCodeFramework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw.example/v1', model: 'm', key: 'k' },
+      {
+        storageRoot: '/data',
+        executablePath: '/bin/claude',
+        skillRuntime
+      }
+    )
+
+    expect(modelConfig.skillRuntime).toBe(skillRuntime)
+    expect(modelConfig.env).toMatchObject({
+      ...skillRuntime.environment,
+      OPEN_SCIENCE_SKILL_RUNTIME_ROOT: skillRuntime.discoveryRoot,
+      OPEN_SCIENCE_SKILL_DISCOVERY_ROOT: skillRuntime.discoveryRoot,
+      OPEN_SCIENCE_SKILL_PROJECTION_ROOT: skillRuntime.projectionRoot
+    })
+
+    const setup = claudeCodeFramework.buildSessionSetup({
+      systemPromptAppends: [],
+      skillRuntime: modelConfig.skillRuntime,
+      skillWhitelist: ['legacy-skill'],
+      sessionOptions: {
+        settings: '/legacy/settings.json',
+        plugins: [{ type: 'local', path: '/legacy/plugin' }],
+        additionalDirectories: ['/legacy/read'],
+        env: { LEGACY_SESSION_ENV: 'kept', XDG_CACHE_HOME: '/legacy/cache' },
+        sandbox: {
+          enabled: true,
+          network: { allowedDomains: ['example.com'] },
+          filesystem: {
+            allowRead: ['/legacy/read'],
+            denyWrite: ['/legacy/write']
+          }
+        }
+      }
+    })
+    const options = (setup.meta?.claudeCode as { options: Record<string, unknown> }).options
+
+    expect(options.settings).toBe('/legacy/settings.json')
+    expect(options.managedSettings).toMatchObject({
+      strictPluginOnlyCustomization: ['skills']
+    })
+    expect(options.skills).toEqual(['legacy-skill'])
+    expect(options.plugins).toEqual([
+      { type: 'local', path: '/legacy/plugin' },
+      { type: 'local', path: skillRuntime.projectionRoot }
+    ])
+    expect(JSON.stringify(options.plugins)).not.toContain('skipMcpDiscovery')
+    expect(options.additionalDirectories).toEqual(['/legacy/read', skillRuntime.projectionRoot])
+    expect(options.env).toMatchObject({
+      LEGACY_SESSION_ENV: 'kept',
+      ...skillRuntime.environment,
+      OPEN_SCIENCE_SKILL_RUNTIME_ROOT: skillRuntime.discoveryRoot,
+      OPEN_SCIENCE_SKILL_DISCOVERY_ROOT: skillRuntime.discoveryRoot,
+      OPEN_SCIENCE_SKILL_PROJECTION_ROOT: skillRuntime.projectionRoot
+    })
+    expect(options.sandbox).toEqual({
+      enabled: true,
+      network: { allowedDomains: ['example.com'] },
+      filesystem: {
+        allowRead: ['/legacy/read', skillRuntime.projectionRoot],
+        denyWrite: ['/legacy/write', skillRuntime.projectionRoot]
+      }
+    })
+  })
+
   it('disables every Claude-native delegation path without removing ordinary built-in tools', () => {
     const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
 
@@ -17,7 +101,8 @@ describe('claudeCodeFramework', () => {
           managedSettings: {
             disableAgentView: true,
             disableWorkflows: true,
-            workflowKeywordTriggerEnabled: false
+            workflowKeywordTriggerEnabled: false,
+            strictPluginOnlyCustomization: ['skills']
           },
           env: {
             CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
@@ -75,7 +160,7 @@ describe('claudeCodeFramework', () => {
   it('injects resolved settings and local plugins into Claude session options', () => {
     const sessionOptions = {
       settings: '/app/claude/settings.json',
-      plugins: [{ type: 'local', path: '/app/claude', skipMcpDiscovery: true }]
+      plugins: [{ type: 'local', path: '/app/claude' }]
     }
 
     const setup = claudeCodeFramework.buildSessionSetup({

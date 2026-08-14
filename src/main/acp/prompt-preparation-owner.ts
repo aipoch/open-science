@@ -144,6 +144,9 @@ class AcpPromptPreparationOwner {
         promptText: requestText,
         codex: {
           home: input.backend.adapter.codexHome,
+          ...(input.backend.skillRuntime
+            ? { runtimeDescriptors: input.backend.skillRuntime.descriptors }
+            : {}),
           bridgeSkillsAvailable: input.bridgeSkillsAvailable,
           selectSkills: async (text, catalog, signal) =>
             (await this.options.selectBridgeSkills(text, catalog, signal)) ?? [],
@@ -158,6 +161,7 @@ class AcpPromptPreparationOwner {
         backendSystemPromptAppends: input.backend.prompt.systemPromptAppends,
         persistentSystemPrompt: input.backend.prompt.persistentSystemPrompt,
         sessionOptions: input.backend.session.options,
+        ...(input.backend.skillRuntime ? { skillRuntime: input.backend.skillRuntime } : {}),
         specialistPrefix: input.specialistPrefix,
         sessionSetupPromptPrefix: input.sessionSetupPromptPrefix,
         turnPromptReminders: [

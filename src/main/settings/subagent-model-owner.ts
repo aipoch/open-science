@@ -105,12 +105,15 @@ class SubagentModelOwner {
       throw new Error('The configured Subagent model provider validation failed.')
     }
 
-    const backend = await this.options.backendResolver.resolveExplicitTarget({
-      frameworkId,
-      providerId: configuration.providerId,
-      model: { kind: 'required', id: configuration.model },
-      reasoningEffort: configuration.reasoningEffort
-    })
+    const backend = await this.options.backendResolver.resolveExplicitTarget(
+      {
+        frameworkId,
+        providerId: configuration.providerId,
+        model: { kind: 'required', id: configuration.model },
+        reasoningEffort: configuration.reasoningEffort
+      },
+      { skillRuntime: { scope: { kind: 'subagent' } } }
+    )
     try {
       if (!backend.backendId || !backend.modelRoute) {
         throw new Error('The configured Subagent model has no stable runtime route.')
@@ -146,6 +149,9 @@ class SubagentModelOwner {
     snapshot: ResolvedSubagentModelSnapshot,
     context: AgentBackendResolutionContext = {}
   ): Promise<ResolvedAgentBackend> {
+    const scopedContext: AgentBackendResolutionContext = context.skillRuntime
+      ? context
+      : { ...context, skillRuntime: { scope: { kind: 'subagent' } } }
     return this.options.backendResolver.resolveAdmittedTarget(
       {
         frameworkId: snapshot.frameworkId,
@@ -156,7 +162,7 @@ class SubagentModelOwner {
         expectedBackendId: snapshot.backendId,
         expectedModelRoute: snapshot.modelRoute
       },
-      context
+      scopedContext
     )
   }
 }

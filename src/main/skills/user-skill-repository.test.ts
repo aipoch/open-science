@@ -421,7 +421,7 @@ describe('UserSkillRepository', () => {
       name: 'foo',
       source: 'imported',
       license: 'MIT',
-      compatibility: expect.stringMatching(/^sha256-tree-v2:/)
+      compatibility: expect.stringMatching(/^sha256-tree-v3:/)
     })
   })
 

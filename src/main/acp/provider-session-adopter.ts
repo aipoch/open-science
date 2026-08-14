@@ -109,10 +109,18 @@ export class AcpProviderSessionAdopter {
         ].filter((append): append is string => Boolean(append)),
         persistentSystemPrompt: startupBackend.prompt.persistentSystemPrompt,
         sessionOptions: startupBackend.session.options,
+        skillRuntime: startupBackend.skillRuntime,
         specialistSkills
       })
       provisionalSession = await request.connection.agent
-        .buildSession({ cwd: request.cwd, mcpServers: capability.mcpServers, ...setup.metaArg })
+        .buildSession({
+          cwd: request.cwd,
+          mcpServers: capability.mcpServers,
+          ...(startupBackend.adapter.additionalDirectories?.length
+            ? { additionalDirectories: [...startupBackend.adapter.additionalDirectories] }
+            : {}),
+          ...setup.metaArg
+        })
         .start()
       adoptedProviderSessionId = provisionalSession.sessionId
 

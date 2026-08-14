@@ -108,6 +108,7 @@ type ProvisionOptions = {
   // `undefined` preserves the existing projection (validation probes must not perturb a live
   // backend); `null` explicitly clears a catalog owned by a previously active provider.
   modelConfig?: ClaudeRuntimeModelConfig | null
+  materializeSkills?: boolean
 }
 
 // Ensures the app config dir + asset subdirs exist, writes the file-tool deny rules, then materializes
@@ -136,7 +137,7 @@ const provisionAppClaudeConfigDir = async (
   const disabled = new Set(options.disabledSkillIds ?? [])
   const enabled = skills.filter((skill) => !disabled.has(skill.id))
 
-  await materializer.sync(configDir, enabled)
+  if (options.materializeSkills !== false) await materializer.sync(configDir, enabled)
 }
 
 export {

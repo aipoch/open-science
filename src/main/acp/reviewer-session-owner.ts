@@ -13,7 +13,7 @@ import { join } from 'node:path'
 
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
 import type { AgentFrameworkId } from '../../shared/settings'
-import type { AgentFramework } from '../agent-framework'
+import type { AgentFramework, SkillRuntimeView } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '../logger'
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
 import { extractProviderToolName } from './runtime-events'
@@ -121,6 +121,8 @@ export type ReviewerSessionOwnerDependencies = {
   currentSessionSetup: () => {
     framework: AgentFramework
     sessionOptions: Record<string, unknown> | undefined
+    skillRuntime?: SkillRuntimeView
+    additionalDirectories?: readonly string[]
   }
   currentStartupGeneration: () => number
   isPrimarySessionIdClaimed: (sessionId: string) => boolean
@@ -151,12 +153,14 @@ export class ReviewerSessionOwner {
     const mcpServerNames = this.validateRequest(request)
     const connection = await capability.ensureConnected(request.cwd)
     this.dependencies.assertCurrentConnection(connection)
-    const { framework, sessionOptions } = this.dependencies.currentSessionSetup()
+    const { framework, sessionOptions, skillRuntime, additionalDirectories } =
+      this.dependencies.currentSessionSetup()
     const startupGeneration = this.dependencies.currentStartupGeneration()
     const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
     const setup = framework.buildSessionSetup({
       systemPromptAppends: request.systemPromptAppend ? [request.systemPromptAppend] : [],
-      sessionOptions
+      sessionOptions,
+      ...(skillRuntime ? { skillRuntime } : {})
     })
     const reviewerMeta: Record<string, unknown> = {
       ...(setup.meta ?? {}),
@@ -184,6 +188,9 @@ export class ReviewerSessionOwner {
         .buildSession({
           cwd: reviewerCwd,
           mcpServers: request.mcpServers,
+          ...(additionalDirectories?.length
+            ? { additionalDirectories: [...additionalDirectories] }
+            : {}),
           _meta: reviewerMeta
         })
         .start()

@@ -21,10 +21,13 @@ import type {
   AgentSpawnInput,
   ModelConfigContext,
   SessionSetup,
-  SessionSetupContext
+  SessionSetupContext,
+  SkillRuntimeRebase,
+  SkillRuntimeView
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { renderAppMcpToolReferences } from './app-mcp-names'
+import { rebaseSkillRuntimeEnvironment, skillRuntimeEnvironment } from './skill-runtime-binding'
 
 // opencode speaks ACP over `opencode acp` (stdio JSON-RPC). Only the shapes that differ from Claude
 // are implemented here: model config (a generated opencode.json, not ANTHROPIC_* env), system-prompt
@@ -32,17 +35,28 @@ import { renderAppMcpToolReferences } from './app-mcp-names'
 // config dir, which its native skill tool discovers). Everything else reuses the generic runtime.
 // See docs/internal/pluggable-agent-framework-feasibility.md.
 
-// opencode is isolated the way Claude uses CLAUDE_CONFIG_DIR: it reads config from
-// $XDG_CONFIG_HOME/opencode and auth/data from $XDG_DATA_HOME/opencode. Pointing both at app-owned
-// dirs means the app fully owns opencode's config + auth (the app provider is the only credential)
-// and the user's own ~/.config/opencode + auth.json are never read or written. Verified: with these
-// set, the user's global providers/auth disappear and only the app-injected provider remains.
+// OpenCode reads config from $XDG_CONFIG_HOME/opencode and auth/data from $XDG_DATA_HOME/opencode.
+// Production config is generated inside the disposable Skill runtime while data/auth remains in the
+// stable app-owned directory. The user's own ~/.config/opencode + auth.json are never read or written.
 const opencodeConfigHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'config')
 const opencodeDataHome = (storageRoot: string): string => join(storageRoot, 'opencode', 'data')
 
-// The root of opencode's app-owned XDG subtree (both config and data live under here): opencode.json,
-// materialized skills, connector instructions, and auth.json. The agent's Read tool must never surface
-// it, so the runtime adds this to its protected-read roots.
+const opencodeSkillRuntimeConfigHome = (skillRuntime: SkillRuntimeView): string => {
+  const writableRoot = skillRuntime.environment.TMPDIR ?? skillRuntime.environment.XDG_CACHE_HOME
+  if (!writableRoot) {
+    throw new Error('OpenCode Skill runtime has no writable config root.')
+  }
+  return join(writableRoot, 'opencode-config')
+}
+
+const resolvedOpencodeConfigHome = (
+  storageRoot: string,
+  skillRuntime: SkillRuntimeView | undefined
+): string =>
+  skillRuntime ? opencodeSkillRuntimeConfigHome(skillRuntime) : opencodeConfigHome(storageRoot)
+
+// Stable OpenCode state: auth/data, isolated home, and the rollback release's legacy config catalog.
+// The agent's Read tool must never surface it, so the runtime adds this to its protected-read roots.
 export const opencodeStorageDir = (storageRoot: string): string => join(storageRoot, 'opencode')
 
 // An app-owned stand-in for opencode's notion of `$HOME`, passed via OPENCODE_TEST_HOME. It is a stable,
@@ -50,9 +64,8 @@ export const opencodeStorageDir = (storageRoot: string): string => join(storageR
 const opencodeHomeDir = (storageRoot: string): string =>
   join(opencodeStorageDir(storageRoot), 'home')
 
-// The opencode config directory ($XDG_CONFIG_HOME/opencode) where opencode.json and skills/ live.
-// opencode discovers skills at <configDir>/skills/<name>/SKILL.md — the same layout Claude uses under
-// its config dir — so the app materializes the enabled skill set here for opencode too.
+// The rollback-owned OpenCode config directory. Current sessions use an ephemeral config home and a
+// private runtime projection; this stable path remains addressable only by rollback maintenance code.
 export const opencodeConfigDir = (storageRoot: string): string =>
   join(opencodeConfigHome(storageRoot), 'opencode')
 
@@ -329,7 +342,8 @@ const buildOpencodeProviders = (
 const buildAppConfigContent = (
   provider: ResolvedProvider,
   reasoningEffort?: ModelReasoningEffort,
-  catalog: readonly AgentModelCatalogEntry[] = []
+  catalog: readonly AgentModelCatalogEntry[] = [],
+  skillPaths: readonly string[] = []
 ): Record<string, unknown> => {
   const { bareModel, providerId } = resolveOpencodeEndpoint(provider)
 
@@ -337,7 +351,40 @@ const buildAppConfigContent = (
     ...(bareModel ? { model: `${providerId}/${bareModel}` } : {}),
     permission: { ...OPENCODE_PERMISSION_RULES },
     agent: { ...OPENCODE_DISABLED_NATIVE_AGENTS },
+    ...(skillPaths.length > 0 ? { skills: { paths: [...new Set(skillPaths)] } } : {}),
     provider: buildOpencodeProviders(provider, reasoningEffort, catalog)
+  }
+}
+
+const rebaseOpenCodeSkillRuntime = (input: SkillRuntimeRebase): Record<string, string> => {
+  const environment = {
+    ...rebaseSkillRuntimeEnvironment(input),
+    XDG_CONFIG_HOME: opencodeSkillRuntimeConfigHome(input.next)
+  }
+  const content = input.environment.OPENCODE_CONFIG_CONTENT
+  if (content === undefined) return environment
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch (error) {
+    throw new Error(
+      'Cannot rebase OpenCode Skill runtime from malformed OPENCODE_CONFIG_CONTENT.',
+      { cause: error }
+    )
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Cannot rebase OpenCode Skill runtime from non-object OPENCODE_CONFIG_CONTENT.')
+  }
+
+  const config = parsed as Record<string, unknown>
+  const skills = asRecord(config.skills)
+  return {
+    ...environment,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      ...config,
+      skills: { ...skills, paths: [input.next.discoveryRoot] }
+    })
   }
 }
 
@@ -351,7 +398,8 @@ const buildOpencodeConfig = (
   baseConfig: Record<string, unknown> = {},
   instructionPaths: string[] = [],
   reasoningEffort?: ModelReasoningEffort,
-  catalog: readonly AgentModelCatalogEntry[] = []
+  catalog: readonly AgentModelCatalogEntry[] = [],
+  skillPaths: readonly string[] = []
 ): string => {
   const { bareModel, providerId } = resolveOpencodeEndpoint(provider)
 
@@ -362,6 +410,11 @@ const buildOpencodeConfig = (
     ? baseConfig.instructions.filter((entry): entry is string => typeof entry === 'string')
     : []
   const instructions = [...new Set([...baseInstructions, ...instructionPaths])]
+  const baseSkills = asRecord(baseConfig.skills)
+  const baseSkillPaths = Array.isArray(baseSkills.paths)
+    ? baseSkills.paths.filter((entry): entry is string => typeof entry === 'string')
+    : []
+  const mergedSkillPaths = [...new Set([...baseSkillPaths, ...skillPaths])]
 
   const merged: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
@@ -380,6 +433,7 @@ const buildOpencodeConfig = (
       ...asRecord(baseConfig.agent),
       ...OPENCODE_DISABLED_NATIVE_AGENTS
     },
+    ...(mergedSkillPaths.length > 0 ? { skills: { ...baseSkills, paths: mergedSkillPaths } } : {}),
     provider: buildOpencodeProviders(provider, reasoningEffort, catalog, baseProviders)
   }
 
@@ -430,7 +484,10 @@ export const opencodeFramework: AgentFramework = {
     // Isolate opencode via app-owned XDG dirs (mirror of CLAUDE_CONFIG_DIR): opencode reads its config
     // from $XDG_CONFIG_HOME/opencode and auth/data from $XDG_DATA_HOME/opencode. We own the whole
     // config here, so the app provider/model is written clean (no merge with the user's global config).
-    const configHome = opencodeConfigHome(ctx.storageRoot)
+    // Config and generated instructions belong to the disposable runtime lease. Keep XDG_DATA_HOME
+    // stable below because it owns OpenCode auth/state; rollback releases therefore retain their
+    // existing data while never observing this version's ephemeral config files.
+    const configHome = resolvedOpencodeConfigHome(ctx.storageRoot, ctx.skillRuntime)
     const dataHome = opencodeDataHome(ctx.storageRoot)
     const opencodeDir = join(configHome, 'opencode')
     const configPath = join(opencodeDir, 'opencode.json')
@@ -465,11 +522,13 @@ export const opencodeFramework: AgentFramework = {
       {},
       instructionPaths,
       ctx.reasoningEffort,
-      ctx.providerModelCatalog
+      ctx.providerModelCatalog,
+      ctx.skillRuntime ? [ctx.skillRuntime.discoveryRoot] : []
     )
 
     return {
       env: {
+        ...skillRuntimeEnvironment(ctx.skillRuntime),
         XDG_CONFIG_HOME: configHome,
         XDG_DATA_HOME: dataHome,
         // Redirect opencode's Global.Path.home (= `OPENCODE_TEST_HOME ?? os.homedir()`) to an app-owned,
@@ -498,7 +557,12 @@ export const opencodeFramework: AgentFramework = {
         // active provider's baseURL or swap the model to an attacker provider while inheriting the app's
         // `{env:...}` key ref. The key itself never rides this layer, only its env reference.
         OPENCODE_CONFIG_CONTENT: JSON.stringify(
-          buildAppConfigContent(provider, ctx.reasoningEffort, ctx.providerModelCatalog)
+          buildAppConfigContent(
+            provider,
+            ctx.reasoningEffort,
+            ctx.providerModelCatalog,
+            ctx.skillRuntime ? [ctx.skillRuntime.discoveryRoot] : []
+          )
         ),
         // Pass credentials only through referenced environment values. Generation-local transport
         // routes use distinct variables so late OpenCode background work cannot inherit a new route.
@@ -512,6 +576,7 @@ export const opencodeFramework: AgentFramework = {
         )
       },
       configFiles,
+      ...(ctx.skillRuntime ? { skillRuntime: ctx.skillRuntime } : {}),
       ...(provider.agentProviderId && provider.model
         ? { sessionModel: `${provider.agentProviderId}/${provider.model}` }
         : {}),
@@ -520,6 +585,8 @@ export const opencodeFramework: AgentFramework = {
         : {})
     }
   },
+
+  rebaseSkillRuntime: rebaseOpenCodeSkillRuntime,
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
     // Production backends pass no stable appends here because they are already installed in native

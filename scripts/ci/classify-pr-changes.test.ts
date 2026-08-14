@@ -328,8 +328,11 @@ describe('pull request change classification', () => {
     ['session persistence', 'src/main/session-persistence/ipc.ts'],
     ['notebook shell process', 'src/main/notebook/shell-process.ts'],
     ['file save', 'src/main/file-save.ts'],
+    ['local filesystem service', 'src/main/local-fs/service.ts'],
     ['specialist repository', 'src/main/specialist/repository.ts'],
     ['notebook runtime settings', 'src/main/settings/notebook-runtime-settings.ts'],
+    ['Agent Skill runtime environment', 'src/main/skills/agent-skill-runtime-environment.ts'],
+    ['User Skill compatibility index', 'src/main/skills/user-skill-compatibility-index.ts'],
     ['preferences', 'src/main/settings/preferences.ts']
   ])('adds native Windows lanes for %s changes', (_category, path) => {
     const plan = classifyChanges([{ path, status: 'modified' }])

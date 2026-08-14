@@ -6,6 +6,7 @@ import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { AgentConfigFile, AgentFrameworkId } from '../agent-framework'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
+import type { AgentSkillRuntimeLease } from '../skills/agent-skill-runtime'
 import type { ResolvedProvider } from './provider-env'
 import type { ProviderRuntimeTarget, RuntimeProviderModelSelection } from './provider-accounts'
 import type { StoredProvider, StoredSettings } from './types'
@@ -152,6 +153,7 @@ type HarnessOptions = {
   connectorIds?: string[]
   connectorSkillNames?: string[]
   materializedConnectorSkillNames?: string[]
+  legacyCodexSkillDocumentPaths?: string[]
   rejectRequiredModels?: ReadonlySet<string>
   targetOverride?: (
     provider: StoredProvider,
@@ -163,6 +165,7 @@ type HarnessOptions = {
   anthropicProviderBridgeBuilder?: (index: number) => AnthropicProviderBridgeDouble
   openAiProviderBridgeBuilder?: (index: number) => OpenAiProviderBridgeDouble
   nextGenerationId?: () => string
+  skillRuntimeAcquireError?: Error
 }
 
 // The inferred return preserves each Vitest mock's concrete call signature for assertions below.
@@ -234,17 +237,75 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveRuntimeReasoningEffortProfile
   }
 
+  const acquiredSkillRuntimeLeases: AgentSkillRuntimeLease[] = []
+
   const runtime = {
     resolveClaudeExecutable: vi.fn(async () => '/runtime/claude'),
     resolveOpencodeExecutable: vi.fn(async () => '/runtime/opencode'),
     resolveCodexExecutable: vi.fn(async () => '/runtime/codex-acp'),
     probeCodexNativeVersion: vi.fn(async () => '0.144.6'),
     provisionClaudeRuntimeConfig: vi.fn(async () => '/storage/claude-config'),
-    materializeAgentSkills: vi.fn(
-      async () =>
+    acquireAgentSkillRuntime: vi.fn(async () => {
+      if (options.skillRuntimeAcquireError) throw options.skillRuntimeAcquireError
+      const projectionRoot = '/storage/runtime/agent-skills/v1/catalogs/revision'
+      const discoveryRoot = join(projectionRoot, 'skills')
+      const projectedConnectorSkillNames =
         options.materializedConnectorSkillNames ??
         options.connectorSkillNames ??
         (options.connectorIds ?? []).map((id) => `mcp-${id}`)
+      const lease: AgentSkillRuntimeLease = {
+        catalogRevision: 'sha256:revision',
+        projectionRoot,
+        discoveryRoot,
+        skills: [
+          {
+            id: 'research',
+            name: 'research',
+            description: 'Research primary sources.',
+            packageRoot: join(discoveryRoot, 'os-research'),
+            skillDocumentPath: join(discoveryRoot, 'os-research', 'SKILL.md'),
+            packageRevision: 'sha256:research'
+          },
+          ...projectedConnectorSkillNames.map((name) => ({
+            id: name,
+            name,
+            description: `Connector ${name}.`,
+            packageRoot: join(discoveryRoot, name),
+            skillDocumentPath: join(discoveryRoot, name, 'SKILL.md'),
+            packageRevision: `sha256:${name}`
+          }))
+        ],
+        cacheRoot: '/storage/runtime/agent-skills/v1/leases/lease/cache',
+        tempRoot: '/storage/runtime/agent-skills/v1/leases/lease/tmp',
+        env: {
+          XDG_CACHE_HOME: '/storage/runtime/agent-skills/v1/leases/lease/cache',
+          TMPDIR: '/storage/runtime/agent-skills/v1/leases/lease/tmp'
+        },
+        release: vi.fn(async () => undefined)
+      }
+      acquiredSkillRuntimeLeases.push(lease)
+      return lease
+    }),
+    forkAgentSkillRuntime: vi.fn(async (catalog, lifecycle, scope) => {
+      void lifecycle
+      void scope
+      const leaseIndex = acquiredSkillRuntimeLeases.length + 1
+      const leaseRoot = `/storage/runtime/agent-skills/v1/leases/fork-${leaseIndex}`
+      const lease: AgentSkillRuntimeLease = {
+        ...catalog,
+        cacheRoot: `${leaseRoot}/cache`,
+        tempRoot: `${leaseRoot}/tmp`,
+        env: {
+          XDG_CACHE_HOME: `${leaseRoot}/cache`,
+          TMPDIR: `${leaseRoot}/tmp`
+        },
+        release: vi.fn(async () => undefined)
+      }
+      acquiredSkillRuntimeLeases.push(lease)
+      return lease
+    }),
+    listLegacyAgentSkillDocumentPaths: vi.fn(
+      async () => options.legacyCodexSkillDocumentPaths ?? []
     ),
     materializeAgentConfigFiles: vi.fn(async (files?: AgentConfigFile[]) => {
       void files
@@ -325,6 +386,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     nativeResponsesProxies,
     anthropicProviderBridges,
     openAiProviderBridges,
+    acquiredSkillRuntimeLeases,
     getSettings: () => currentSettings,
     setSettings: (settings: StoredSettings) => {
       currentSettings = settings
@@ -338,7 +400,7 @@ const expectRuntimeNotStarted = (runtime: ReturnType<typeof makeHarness>['runtim
   expect(runtime.resolveCodexExecutable).not.toHaveBeenCalled()
   expect(runtime.probeCodexNativeVersion).not.toHaveBeenCalled()
   expect(runtime.provisionClaudeRuntimeConfig).not.toHaveBeenCalled()
-  expect(runtime.materializeAgentSkills).not.toHaveBeenCalled()
+  expect(runtime.acquireAgentSkillRuntime).not.toHaveBeenCalled()
   expect(runtime.materializeAgentConfigFiles).not.toHaveBeenCalled()
   expect(runtime.reserveOpenCodeUsagePort).not.toHaveBeenCalled()
   expect(runtime.resolveCodexProxyEnvironment).not.toHaveBeenCalled()
@@ -539,7 +601,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
           'third-party/model-a': 'third-party/model-a',
           'third-party/model-b': 'third-party/model-b'
         }
-      }
+      },
+      false
     )
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
   })
@@ -983,7 +1046,19 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       reasoningEffort: 'high'
     })
 
-    expect(explicit).toEqual(configured)
+    const {
+      skillRuntimeLease: configuredLease,
+      skillRuntimeFork: configuredFork,
+      ...configuredStable
+    } = configured
+    const {
+      skillRuntimeLease: explicitLease,
+      skillRuntimeFork: explicitFork,
+      ...explicitStable
+    } = explicit
+    expect(explicitStable).toEqual(configuredStable)
+    expect(explicitLease).not.toBe(configuredLease)
+    expect(explicitFork).not.toBe(configuredFork)
     expect(harness.resolveRuntimeTarget).toHaveBeenNthCalledWith(
       1,
       settings.providers[0],
@@ -996,6 +1071,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       { kind: 'provider-default' },
       expect.objectContaining({ id: 'claude-code' })
     )
+    await configuredLease?.release()
+    await explicitLease?.release()
   })
 
   it('late-binds a configured selection but keeps an explicit target fixed', async () => {
@@ -1176,24 +1253,124 @@ describe('AgentBackendResolver runtime delegation', () => {
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
         harness.getSettings(),
         new Set(['forced-skill']),
-        null
+        null,
+        false
       )
-      expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
       expect(harness.runtime.materializeAgentConfigFiles).not.toHaveBeenCalled()
     } else {
-      expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledWith(
-        harness.getSettings(),
-        expect.any(String),
-        new Set(['forced-skill'])
-      )
       expect(harness.runtime.materializeAgentConfigFiles).toHaveBeenCalledTimes(1)
     }
+    expect(harness.runtime.listLegacyAgentSkillDocumentPaths).toHaveBeenCalledTimes(
+      testCase.frameworkId === 'codex' ? 1 : 0
+    )
     expect(harness.runtime.reserveOpenCodeUsagePort).toHaveBeenCalledTimes(
       testCase.frameworkId === 'opencode' ? 1 : 0
     )
     expect(harness.runtime.probeCodexNativeVersion).toHaveBeenCalledTimes(
       testCase.frameworkId === 'codex' ? 1 : 0
     )
+  })
+
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'acquires one framework-neutral Skill runtime after the %s legacy projection',
+    async (frameworkId) => {
+      const harness = makeHarness()
+      const lifecycle = {
+        sessionId: 'session-1',
+        agentFrameId: 'frame-1',
+        runtimeSegmentId: 'segment-1'
+      }
+
+      const backend = await harness.resolver.resolveExplicitTarget(
+        {
+          frameworkId,
+          providerId: 'provider-a',
+          model: { kind: 'provider-default' },
+          reasoningEffort: 'high'
+        },
+        {
+          forcedSkillIds: ['forced-skill'],
+          skillRuntime: { lifecycle, scope: { kind: 'main' } }
+        }
+      )
+
+      expect(harness.runtime.acquireAgentSkillRuntime).toHaveBeenCalledWith(harness.getSettings(), {
+        lifecycle,
+        scope: { kind: 'main' },
+        forcedSkillIds: ['forced-skill']
+      })
+      const lease = harness.acquiredSkillRuntimeLeases[0]!
+      expect(backend.skillRuntime).toEqual({
+        projectionRoot: lease.projectionRoot,
+        discoveryRoot: lease.discoveryRoot,
+        descriptors: [
+          {
+            id: 'research',
+            name: 'research',
+            description: 'Research primary sources.',
+            path: lease.skills[0]!.skillDocumentPath
+          }
+        ],
+        environment: lease.env
+      })
+      expect(backend.skillRuntimeLease).toBe(lease)
+      expect(backend.env).toMatchObject(lease.env)
+
+      const attemptLifecycle = {
+        sessionId: 'session-1',
+        agentFrameId: 'child-frame',
+        runtimeSegmentId: 'child-segment'
+      }
+      const forked = await backend.skillRuntimeFork!.acquire(attemptLifecycle)
+      expect(harness.runtime.forkAgentSkillRuntime).toHaveBeenCalledWith(lease, attemptLifecycle, {
+        kind: 'main'
+      })
+      expect(forked.view.projectionRoot).toBe(lease.projectionRoot)
+      expect(forked.view.environment).not.toEqual(lease.env)
+      await forked.lease.release()
+    }
+  )
+
+  it('disables the Codex stable Skill documents without modifying the rollback catalog', async () => {
+    const harness = makeHarness({
+      legacyCodexSkillDocumentPaths: [
+        '/storage/codex/skills/os-research/SKILL.md',
+        '/storage/codex/skills/mcp-pubmed/SKILL.md'
+      ]
+    })
+
+    const backend = await harness.resolver.resolveExplicitTarget({
+      frameworkId: 'codex',
+      providerId: 'provider-a',
+      model: { kind: 'provider-default' },
+      reasoningEffort: 'high'
+    })
+
+    expect(harness.runtime.listLegacyAgentSkillDocumentPaths).toHaveBeenCalledWith('/storage/codex')
+    expect(backend.env.OPEN_SCIENCE_CODEX_DISABLED_SKILL_PATHS).toBe(
+      JSON.stringify([
+        '/storage/codex/skills/os-research/SKILL.md',
+        '/storage/codex/skills/mcp-pubmed/SKILL.md'
+      ])
+    )
+  })
+
+  it('fails closed when the new Skill runtime cannot be acquired after legacy provisioning', async () => {
+    const acquireError = new Error('Skill runtime unavailable')
+    const harness = makeHarness({ skillRuntimeAcquireError: acquireError })
+
+    await expect(
+      harness.resolver.resolveExplicitTarget({
+        frameworkId: 'claude-code',
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' },
+        reasoningEffort: 'high'
+      })
+    ).rejects.toBe(acquireError)
+
+    expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledTimes(1)
+    expect(harness.runtime.acquireAgentSkillRuntime).toHaveBeenCalledTimes(1)
+    expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
   })
 })
 
@@ -1263,49 +1440,43 @@ describe('AgentBackendResolver bridge predicates', () => {
         provider: { apiEndpoints: ['openai'] as const }
       }
     }
-  ])(
-    'rematerializes exact enabled Connector Skill names for each $name generation',
-    async (testCase) => {
-      const harness = makeHarness({
-        connectorIds: ['pubmed', 'literature'],
-        connectorSkillNames: ['mcp-pubmed', 'mcp-literature', 'mcp-custom-chemistry'],
-        targetOverride: () => testCase.target
-      })
-      const target = {
-        frameworkId: testCase.frameworkId,
-        providerId: 'provider-a',
-        model: { kind: 'provider-default' as const },
-        reasoningEffort: 'high' as const
-      }
-
-      const previousBackend = await harness.resolver.resolveExplicitTarget(target)
-      await previousBackend.anthropicBridgeLease?.release()
-      await previousBackend.responsesBridgeLease?.release()
-      await previousBackend.providerTransportLease?.release()
-
-      const backend = await harness.resolver.resolveExplicitTarget(target)
-      const instructions =
-        testCase.frameworkId === 'claude-code'
-          ? backend.systemPromptAppends?.join('\n\n')
-          : backend.persistentSystemPrompt
-
-      expect(instructions).toContain(
-        'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
-      )
-      expect(instructions).toContain('Allowed Specialist Skills for this session')
-      expect(instructions).not.toContain('host.mcp("custom-chemistry"')
-      expect(instructions).not.toContain('`mcp-openalex`')
-      expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledTimes(
-        testCase.frameworkId === 'claude-code' ? 2 : 0
-      )
-      expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledTimes(
-        testCase.frameworkId === 'claude-code' ? 0 : 2
-      )
-      await backend.anthropicBridgeLease?.release()
-      await backend.responsesBridgeLease?.release()
-      await backend.providerTransportLease?.release()
+  ])('projects exact enabled Connector Skill names for each $name generation', async (testCase) => {
+    const harness = makeHarness({
+      connectorIds: ['pubmed', 'literature'],
+      connectorSkillNames: ['mcp-pubmed', 'mcp-literature', 'mcp-custom-chemistry'],
+      targetOverride: () => testCase.target
+    })
+    const target = {
+      frameworkId: testCase.frameworkId,
+      providerId: 'provider-a',
+      model: { kind: 'provider-default' as const },
+      reasoningEffort: 'high' as const
     }
-  )
+
+    const previousBackend = await harness.resolver.resolveExplicitTarget(target)
+    await previousBackend.anthropicBridgeLease?.release()
+    await previousBackend.responsesBridgeLease?.release()
+    await previousBackend.providerTransportLease?.release()
+
+    const backend = await harness.resolver.resolveExplicitTarget(target)
+    const instructions =
+      testCase.frameworkId === 'claude-code'
+        ? backend.systemPromptAppends?.join('\n\n')
+        : backend.persistentSystemPrompt
+
+    expect(instructions).toContain(
+      'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
+    )
+    expect(instructions).toContain('Allowed Specialist Skills for this session')
+    expect(instructions).not.toContain('host.mcp("custom-chemistry"')
+    expect(instructions).not.toContain('`mcp-openalex`')
+    expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledTimes(
+      testCase.frameworkId === 'claude-code' ? 2 : 0
+    )
+    await backend.anthropicBridgeLease?.release()
+    await backend.responsesBridgeLease?.release()
+    await backend.providerTransportLease?.release()
+  })
 
   it.each([
     { name: 'OpenCode', frameworkId: 'opencode' as const, target: {} },

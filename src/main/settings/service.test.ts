@@ -1,4 +1,15 @@
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { dirname, join, normalize } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
@@ -52,6 +63,7 @@ const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist
 const { net: mockedNet } = (await import('electron')) as unknown as {
   net: { fetch: ReturnType<typeof vi.fn> }
 }
+const { connectorSkillSourceRoot } = await import('../connectors/skill-source')
 
 // Production captures the non-secret framework selection at generation construction, then resolves
 // current credentials and provider configuration at spawn. Integration tests use that same public seam.
@@ -85,7 +97,21 @@ const MANAGED_CODEX_ADAPTER_FIXTURE = [
   '        return null;',
   '    }',
   '  }).filter((block) => block !== null);',
-  '}'
+  '}',
+  '  async refreshSkills(cwd, additionalRoots) {',
+  '    if (!cwd) {',
+  '      return;',
+  '    }',
+  '    const skillExtraRoots = additionalRoots.map((root) => path4.join(root, ".agents", "skills"));',
+  '    if (!arraysEqual(this.skillExtraRoots, skillExtraRoots)) {',
+  '      await this.codexClient.skillsExtraRootsSet({ extraRoots: skillExtraRoots });',
+  '      this.skillExtraRoots = skillExtraRoots;',
+  '    }',
+  '    await this.codexClient.listSkills({',
+  '      cwds: [cwd, ...additionalRoots],',
+  '      forceReload: true',
+  '    });',
+  '  }'
 ].join('\n')
 
 const validAnthropicResponse = (): Response =>
@@ -257,9 +283,17 @@ beforeEach(async () => {
   await writeFile(join(userCodexDir, 'auth.json'), '{"tokens":{"access_token":"test"}}')
 })
 
+const makeTreeWritable = async (directory: string): Promise<void> => {
+  for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+    if (entry.isDirectory()) await makeTreeWritable(join(directory, entry.name))
+  }
+  await chmod(directory, 0o755).catch(() => undefined)
+}
+
 afterEach(async () => {
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
+  await makeTreeWritable(storageRoot)
   await rm(storageRoot, { recursive: true, force: true })
 })
 
@@ -1215,7 +1249,7 @@ describe('SettingsService: providers', () => {
     await service.setActiveProvider(provider.id)
 
     const customSkillName = 'mcp-xt'
-    const customSkillSource = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    const customSkillSource = join(connectorSkillSourceRoot(storageRoot), customSkillName)
     await mkdir(customSkillSource, { recursive: true })
     await writeFile(
       join(customSkillSource, 'SKILL.md'),
@@ -1233,43 +1267,39 @@ describe('SettingsService: providers', () => {
     })
 
     expect(backend.persistentSystemPrompt).toContain('Stable Open Science app guidance.')
-    const appInstructions = await readFile(
-      join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'open-science.md'),
-      'utf8'
-    )
-    expect(appInstructions).toContain('Stable Open Science app guidance.')
-    expect(appInstructions).toContain(join(storageRoot, 'skills', 'personal'))
-    expect(appInstructions).toContain(join(storageRoot, 'skills', 'imported'))
-
-    const baseline = await readFile(
-      join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'connectors.md'),
-      'utf8'
-    )
+    expect(backend.persistentSystemPrompt).toContain(join(storageRoot, 'skills', 'personal'))
+    expect(backend.persistentSystemPrompt).toContain(join(storageRoot, 'skills', 'imported'))
+    const baseline = backend.persistentSystemPrompt ?? ''
     expect(baseline).toContain('host.mcp')
     expect(baseline).toContain('mcp-*')
     expect(baseline).toContain('Load the matching `mcp-*` skill before the first `host.mcp` call')
     expect(baseline).toContain('Never guess a connector server or method name')
     expect(baseline).toContain('`mcp-xt`')
     expect(baseline).not.toContain('Use XT records.')
+    const customDescriptor = backend.skillRuntime?.descriptors.find(
+      (descriptor) => descriptor.id === customSkillName
+    )
+    expect(customDescriptor?.path).toContain(backend.skillRuntime?.discoveryRoot)
+    await expect(readFile(customDescriptor!.path, 'utf8')).resolves.toContain('Use XT records.')
     expect(baseline).not.toContain('host.mcp("xt"')
     expect(baseline).not.toContain('pubchem_get_compounds')
     expect(baseline).not.toContain('search_articles')
     expect(baseline).not.toContain('```json')
-    expect(baseline.length).toBeLessThan(2_500)
 
-    const chemistrySkill = await readFile(
-      join(storageRoot, 'opencode', 'config', 'opencode', 'skills', 'mcp-chemistry', 'SKILL.md'),
-      'utf8'
+    const chemistryDescriptor = backend.skillRuntime?.descriptors.find(
+      (descriptor) => descriptor.id === 'mcp-chemistry'
     )
+    const chemistrySkill = await readFile(chemistryDescriptor!.path, 'utf8')
     expect(chemistrySkill).toContain('pubchem_get_compounds')
     expect(chemistrySkill).toContain('**Input:**')
     expect(chemistrySkill).not.toContain('```json')
+    expect(chemistryDescriptor?.path).toContain(backend.skillRuntime?.discoveryRoot)
     await expect(
       readFile(
         join(storageRoot, 'opencode', 'config', 'opencode', 'skills', customSkillName, 'SKILL.md'),
         'utf8'
       )
-    ).resolves.toContain('Use XT records.')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects an invalid custom context window when IPC bypasses the form', async () => {
@@ -2821,13 +2851,16 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(upstreamMessages).not.toContain('<open_science_connector_instructions>')
     expect(upstreamMessages).not.toContain('host.mcp("pubmed", "search_articles"')
 
-    // Connector skill docs (host.mcp guidance) must be materialized into Codex's own home, not only
-    // the Claude config dir, or bridged Codex never learns to reach connectors via the notebook.
-    const pubmedSkill = await readFile(
-      join(storageRoot, 'codex', 'skills', 'mcp-pubmed', 'SKILL.md'),
-      'utf8'
+    // Connector Skill docs live in the private generation runtime, never the stable CODEX_HOME.
+    const pubmedDescriptor = backend.skillRuntime?.descriptors.find(
+      (descriptor) => descriptor.id === 'mcp-pubmed'
     )
+    expect(pubmedDescriptor?.path).toContain(backend.skillRuntime?.discoveryRoot)
+    const pubmedSkill = await readFile(pubmedDescriptor!.path, 'utf8')
     expect(pubmedSkill).toContain('host.mcp')
+    await expect(
+      readFile(join(storageRoot, 'codex', 'skills', 'mcp-pubmed', 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
 
     await backend.responsesBridgeLease?.release()
     await repository.setConversationSkillImportEnabled(false)
@@ -3807,31 +3840,36 @@ describe('SettingsService: skills', () => {
     await service.setActiveProvider(created.id)
     await service.setSkillEnabled({ id: 'demo', enabled: false })
 
-    const skillDir = join(getAppClaudeConfigDir(storageRoot), 'skills', 'os-demo')
-    const exists = async (path: string): Promise<boolean> =>
-      readFile(join(path, 'SKILL.md'), 'utf8').then(
-        () => true,
-        () => false
-      )
+    const stableSkillFile = join(
+      getAppClaudeConfigDir(storageRoot),
+      'skills',
+      'os-demo',
+      'SKILL.md'
+    )
+    await mkdir(dirname(stableSkillFile), { recursive: true })
+    await writeFile(stableSkillFile, '# Legacy demo', 'utf8')
 
-    // Disabled: the skill is not materialized on a normal spawn.
-    await resolveActiveBackend(service)
-    expect(await exists(skillDir)).toBe(false)
+    // Disabled: the skill is absent from a normal private runtime.
+    const normalBackend = await resolveActiveBackend(service)
+    expect(normalBackend.skillRuntime?.descriptors.some(({ id }) => id === 'demo')).toBe(false)
 
-    // Turn-forced: the disabled skill is materialized for this spawn only.
-    await resolveActiveBackend(service, { forcedSkillIds: ['demo'] })
-    expect(await exists(skillDir)).toBe(true)
+    // Turn-forced: the disabled skill exists only in this private runtime.
+    const forcedBackend = await resolveActiveBackend(service, { forcedSkillIds: ['demo'] })
+    const forcedDescriptor = forcedBackend.skillRuntime?.descriptors.find(({ id }) => id === 'demo')
+    expect(forcedDescriptor?.path).toContain(forcedBackend.skillRuntime?.discoveryRoot)
+    await expect(readFile(forcedDescriptor!.path, 'utf8')).resolves.toContain('demo body')
 
     // The stored disabled set is untouched, so the skill still lists as disabled.
     const skills = await service.listSkills()
     expect(skills.find((skill) => skill.id === 'demo')?.enabled).toBe(false)
 
-    // Clearing the force set removes it again on the next spawn.
-    await resolveActiveBackend(service)
-    expect(await exists(skillDir)).toBe(false)
+    // Clearing the force set removes it from the next runtime without rewriting the rollback copy.
+    const nextBackend = await resolveActiveBackend(service)
+    expect(nextBackend.skillRuntime?.descriptors.some(({ id }) => id === 'demo')).toBe(false)
+    await expect(readFile(stableSkillFile, 'utf8')).resolves.toBe('# Legacy demo')
   })
 
-  it('provisions Open Science assets into the shared Claude runtime directory', async () => {
+  it('projects Open Science assets privately without rewriting shared Claude catalogs', async () => {
     const userClaudeDir = join(storageRoot, 'shared-claude')
     const userSkillDir = join(userClaudeDir, 'skills', 'os-user-owned')
     const userConnectorDir = join(userClaudeDir, 'skills', 'mcp-pubmed')
@@ -3860,46 +3898,42 @@ describe('SettingsService: skills', () => {
 
     const managedSkillDir = join(appClaudeDir, 'skills', 'os-demo')
     const managedSkillFile = join(managedSkillDir, 'SKILL.md')
-    try {
-      const config = await resolveActiveBackend(service)
-      const backend = await resolveActiveBackend(service)
+    await mkdir(managedSkillDir, { recursive: true })
+    await writeFile(managedSkillFile, '# Legacy demo', 'utf8')
+    const config = await resolveActiveBackend(service)
+    const backend = await resolveActiveBackend(service)
 
-      expect(config.env.CLAUDE_CONFIG_DIR).toBe(userClaudeDir)
-      expect(config.sessionOptions).toEqual({
-        settings: join(appClaudeDir, 'settings.json'),
-        plugins: [{ type: 'local', path: appClaudeDir, skipMcpDiscovery: true }]
-      })
-      expect(await readFile(managedSkillFile, 'utf8')).toContain('demo body')
-      expect(await readFile(join(userSkillDir, 'SKILL.md'), 'utf8')).toBe('# User skill')
-      expect(await readFile(join(userConnectorDir, 'SKILL.md'), 'utf8')).toBe(
-        '# User connector skill'
-      )
-      expect(
-        await readFile(join(appClaudeDir, 'skills', 'mcp-pubmed', 'SKILL.md'), 'utf8')
-      ).toContain('name: mcp-pubmed')
-      expect(await readFile(join(customConnectorDir, 'SKILL.md'), 'utf8')).toBe(
-        '# Custom connector doc'
-      )
-      expect(JSON.parse(await readFile(join(userClaudeDir, 'settings.json'), 'utf8'))).toEqual({
-        model: 'keep-user-model'
-      })
-      const appSettings = JSON.parse(await readFile(join(appClaudeDir, 'settings.json'), 'utf8'))
-      expect(appSettings.disableBundledSkills).toBe(true)
-      expect(appSettings.permissions.deny).toEqual(
-        expect.arrayContaining([expect.stringMatching(/^Read/)])
-      )
-      expect(backend.systemPromptAppends).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining(join(storageRoot, 'skills', 'personal')),
-          expect.stringContaining(
-            'Load the matching `mcp-*` skill before the first `host.mcp` call'
-          )
-        ])
-      )
-    } finally {
-      await chmod(managedSkillFile, 0o644).catch(() => undefined)
-      await chmod(managedSkillDir, 0o755).catch(() => undefined)
-    }
+    expect(config.env.CLAUDE_CONFIG_DIR).toBe(userClaudeDir)
+    expect(config.sessionOptions).toEqual({
+      settings: join(appClaudeDir, 'settings.json')
+    })
+    const demoDescriptor = config.skillRuntime?.descriptors.find(({ id }) => id === 'demo')
+    expect(demoDescriptor?.path).toContain(config.skillRuntime?.discoveryRoot)
+    await expect(readFile(demoDescriptor!.path, 'utf8')).resolves.toContain('demo body')
+    expect(await readFile(managedSkillFile, 'utf8')).toBe('# Legacy demo')
+    expect(await readFile(join(userSkillDir, 'SKILL.md'), 'utf8')).toBe('# User skill')
+    expect(await readFile(join(userConnectorDir, 'SKILL.md'), 'utf8')).toBe(
+      '# User connector skill'
+    )
+    const pubmedDescriptor = config.skillRuntime?.descriptors.find(({ id }) => id === 'mcp-pubmed')
+    await expect(readFile(pubmedDescriptor!.path, 'utf8')).resolves.toContain('name: mcp-pubmed')
+    expect(await readFile(join(customConnectorDir, 'SKILL.md'), 'utf8')).toBe(
+      '# Custom connector doc'
+    )
+    expect(JSON.parse(await readFile(join(userClaudeDir, 'settings.json'), 'utf8'))).toEqual({
+      model: 'keep-user-model'
+    })
+    const appSettings = JSON.parse(await readFile(join(appClaudeDir, 'settings.json'), 'utf8'))
+    expect(appSettings.disableBundledSkills).toBe(true)
+    expect(appSettings.permissions.deny).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^Read/)])
+    )
+    expect(backend.systemPromptAppends).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(join(storageRoot, 'skills', 'personal')),
+        expect.stringContaining('Load the matching `mcp-*` skill before the first `host.mcp` call')
+      ])
+    )
   })
 
   it('injects the selected shared Claude model context window into the spawn config', async () => {
@@ -3913,7 +3947,7 @@ describe('SettingsService: skills', () => {
     })
   })
 
-  it('materializes enabled skills into the app-owned CODEX_HOME before spawn', async () => {
+  it('projects enabled skills privately without rewriting the app-owned CODEX_HOME', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
@@ -3957,7 +3991,7 @@ describe('SettingsService: skills', () => {
     await service.setActiveProvider(provider.id)
 
     const customSkillName = 'mcp-xt'
-    const customSkillSource = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    const customSkillSource = join(connectorSkillSourceRoot(storageRoot), customSkillName)
     await mkdir(customSkillSource, { recursive: true })
     await writeFile(
       join(customSkillSource, 'SKILL.md'),
@@ -3970,51 +4004,19 @@ describe('SettingsService: skills', () => {
       isRefreshing: () => false
     })
 
-    await resolveActiveBackend(service)
-
-    const materializedDir = join(storageRoot, 'codex', 'skills', 'os-demo')
-    const materializedFile = join(materializedDir, 'SKILL.md')
-    try {
-      expect(await readFile(materializedFile, 'utf8')).toContain('demo body')
-      await expect(
-        service.codexSkillDescriptorsForIds(['demo', 'missing'], join(storageRoot, 'codex'))
-      ).resolves.toEqual([{ name: 'demo', path: materializedFile }])
-      await expect(
-        readFile(join(storageRoot, 'codex', 'skills', customSkillName, 'SKILL.md'), 'utf8')
-      ).resolves.toContain('Use XT records.')
-      const selectorCatalog = await service.codexSkillCatalog(join(storageRoot, 'codex'))
-      expect(selectorCatalog).toEqual(
-        expect.arrayContaining([
-          { name: 'demo', description: 'A demo skill.', path: materializedFile },
-          {
-            name: customSkillName,
-            description: 'Use XT records.',
-            path: join(storageRoot, 'codex', 'skills', customSkillName, 'SKILL.md'),
-            source: 'connector'
-          },
-          expect.objectContaining({
-            name: 'mcp-pubmed',
-            description: expect.stringContaining('biomedical literature'),
-            path: join(storageRoot, 'codex', 'skills', 'mcp-pubmed', 'SKILL.md'),
-            source: 'connector'
-          })
-        ])
-      )
-
-      await service.setSkillEnabled({ id: 'demo', enabled: false })
-      const catalogWithoutDemo = await service.codexSkillCatalog(join(storageRoot, 'codex'))
-      expect(catalogWithoutDemo.some(({ name }) => name === 'demo')).toBe(false)
-      expect(catalogWithoutDemo.some(({ name }) => name === 'mcp-pubmed')).toBe(true)
-
-      await service.setConnectorEnabled({ id: 'pubmed', enabled: false })
-      const catalogWithoutPubmed = await service.codexSkillCatalog(join(storageRoot, 'codex'))
-      expect(catalogWithoutPubmed.some(({ name }) => name === 'mcp-pubmed')).toBe(false)
-    } finally {
-      // The materializer intentionally makes agent-visible skills read-only; restore permissions so
-      // the test temp root can be removed on every platform.
-      await chmod(materializedFile, 0o644)
-      await chmod(materializedDir, 0o755)
+    const stableSkillFile = join(storageRoot, 'codex', 'skills', 'os-demo', 'SKILL.md')
+    await mkdir(dirname(stableSkillFile), { recursive: true })
+    await writeFile(stableSkillFile, '# Legacy demo', 'utf8')
+    const backend = await resolveActiveBackend(service)
+    for (const id of ['demo', customSkillName, 'mcp-pubmed']) {
+      const descriptor = backend.skillRuntime?.descriptors.find((entry) => entry.id === id)
+      expect(descriptor?.path).toContain(backend.skillRuntime?.discoveryRoot)
+      await expect(readFile(descriptor!.path, 'utf8')).resolves.toBeTruthy()
     }
+    await expect(readFile(stableSkillFile, 'utf8')).resolves.toBe('# Legacy demo')
+    await expect(
+      readFile(join(storageRoot, 'codex', 'skills', customSkillName, 'SKILL.md'), 'utf8')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('builds the Codex skill catalog from one settings snapshot', async () => {
@@ -4054,7 +4056,7 @@ describe('SettingsService: skills', () => {
     expect(getSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('materializes ordinary and custom Connector Skills into the subscription home only', async () => {
+  it('projects ordinary and custom Connector Skills without rewriting either Codex home', async () => {
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
@@ -4083,7 +4085,7 @@ describe('SettingsService: skills', () => {
     })
     await repository.setAgentFramework('codex')
     const customSkillName = 'mcp-xt'
-    const customSkillSource = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    const customSkillSource = join(connectorSkillSourceRoot(storageRoot), customSkillName)
     await mkdir(customSkillSource, { recursive: true })
     await writeFile(
       join(customSkillSource, 'SKILL.md'),
@@ -4104,28 +4106,38 @@ describe('SettingsService: skills', () => {
     })
     await service.setActiveProvider(CODEX_SHARED_PROVIDER_ID)
 
-    await resolveActiveBackend(service)
+    const subscriptionLegacyFile = join(
+      storageRoot,
+      'codex-subscription',
+      'skills',
+      'os-demo',
+      'SKILL.md'
+    )
+    await mkdir(dirname(subscriptionLegacyFile), { recursive: true })
+    await writeFile(subscriptionLegacyFile, '# Legacy subscription demo', 'utf8')
+    const backend = await resolveActiveBackend(service)
 
-    expect(
-      await readFile(
-        join(storageRoot, 'codex-subscription', 'skills', 'os-demo', 'SKILL.md'),
-        'utf8'
-      )
-    ).toContain('demo body')
+    expect(backend.env.CODEX_HOME).toBe(join(storageRoot, 'codex-subscription'))
+    for (const id of ['demo', customSkillName, 'mcp-pubmed']) {
+      const descriptor = backend.skillRuntime?.descriptors.find((entry) => entry.id === id)
+      expect(descriptor?.path).toContain(backend.skillRuntime?.discoveryRoot)
+      await expect(readFile(descriptor!.path, 'utf8')).resolves.toBeTruthy()
+    }
+    await expect(readFile(subscriptionLegacyFile, 'utf8')).resolves.toBe(
+      '# Legacy subscription demo'
+    )
     await expect(
       readFile(
         join(storageRoot, 'codex-subscription', 'skills', customSkillName, 'SKILL.md'),
         'utf8'
       )
-    ).resolves.toContain('Use XT records.')
+    ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       readFile(join(storageRoot, 'workspace', '.agents', 'skills', 'os-demo', 'SKILL.md'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(
       readFile(join(storageRoot, 'codex', 'skills', customSkillName, 'SKILL.md'), 'utf8')
     ).rejects.toMatchObject({ code: 'ENOENT' })
-    await chmod(join(storageRoot, 'codex-subscription', 'skills', 'os-demo', 'SKILL.md'), 0o644)
-    await chmod(join(storageRoot, 'codex-subscription', 'skills', 'os-demo'), 0o755)
   })
 
   it('reports disabled picks and resolves agent-readable skill nudge names', async () => {
@@ -5187,7 +5199,14 @@ describe('SettingsService: Subagent model', () => {
       providerId: provider.id,
       model: 'subagent-model'
     })
-    expect(claim.backend).toMatchObject({
+    const claimedBackend = await claim.acquireAttemptBackend({
+      lifecycle: {
+        sessionId: 'session-1',
+        agentFrameId: 'frame-1',
+        runtimeSegmentId: 'runtime-1'
+      }
+    })
+    expect(claimedBackend).toMatchObject({
       framework: { id: 'claude-code' },
       env: { ANTHROPIC_AUTH_TOKEN: 'secret' }
     })
@@ -6157,9 +6176,24 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     logoutIsolated: vi.fn().mockResolvedValue({ supported: true, authenticated: false })
   }
 
-  it('verifies a pasted token with Claude under the app-owned config before reporting success', async () => {
-    const probe = vi.fn<(executablePath: string, env: NodeJS.ProcessEnv) => Promise<void>>()
-    probe.mockResolvedValue(undefined)
+  it('verifies a pasted token in a disposable Claude config without touching legacy Skills', async () => {
+    const stableConfigDir = getAppClaudeConfigDir(storageRoot)
+    const legacySkillDocument = join(stableConfigDir, 'skills', 'legacy', 'SKILL.md')
+    await mkdir(dirname(legacySkillDocument), { recursive: true })
+    await writeFile(legacySkillDocument, 'legacy rollback skill')
+    let probeConfigDir: string | undefined
+    const probe = vi.fn(async (_executablePath: string, env: NodeJS.ProcessEnv) => {
+      probeConfigDir = env.CLAUDE_CONFIG_DIR
+      expect(
+        probeConfigDir?.startsWith(join(storageRoot, 'runtime', 'claude-probes', 'v1', 'probe-'))
+      ).toBe(true)
+      expect(probeConfigDir).not.toBe(stableConfigDir)
+      await expect(lstat(probeConfigDir!)).resolves.toMatchObject({})
+      await expect(readdir(join(probeConfigDir!, 'skills'))).resolves.toEqual([])
+      await expect(readFile(join(probeConfigDir!, 'settings.json'), 'utf8')).resolves.toContain(
+        '"disableBundledSkills": true'
+      )
+    })
     const service = createService(undefined, {
       claudeIsolatedAuth: successAuth,
       executeClaudeProbe: probe
@@ -6178,10 +6212,12 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     expect(probe).toHaveBeenCalledWith(
       '/bin/claude',
       expect.objectContaining({
-        CLAUDE_CONFIG_DIR: getAppClaudeConfigDir(storageRoot),
+        CLAUDE_CONFIG_DIR: probeConfigDir,
         CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-valid'
       })
     )
+    await expect(readFile(legacySkillDocument, 'utf8')).resolves.toBe('legacy rollback skill')
+    await expect(lstat(probeConfigDir!)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('keeps a rejected setup token unverified and records an actionable auth failure', async () => {
@@ -6897,12 +6933,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(probe).toHaveBeenCalledWith(
       execPath,
       expect.objectContaining({ ANTHROPIC_MODEL: 'claude-opus-4-6' }),
-      [
-        '--settings',
-        join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
-        '--plugin-dir',
-        getAppClaudeConfigDir(storageRoot)
-      ]
+      ['--settings', join(getAppClaudeConfigDir(storageRoot), 'settings.json')]
     )
   })
 
@@ -7042,12 +7073,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(probe).toHaveBeenCalledWith(
       execPath,
       expect.objectContaining({ ANTHROPIC_MODEL: 'claude-bad-model' }),
-      [
-        '--settings',
-        join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
-        '--plugin-dir',
-        getAppClaudeConfigDir(storageRoot)
-      ]
+      ['--settings', join(getAppClaudeConfigDir(storageRoot), 'settings.json')]
     )
     expect(
       (await service.getSettingsView()).providers.find(

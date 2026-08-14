@@ -392,7 +392,7 @@ const CODEX_ACP_SKILL_INPUT_SOURCE = [
   '        return { type: "text", text: block.text, text_elements: [] };'
 ].join('\n')
 
-const CODEX_ACP_SKILL_INPUT_REPLACEMENT = [
+const CODEX_ACP_SKILL_INPUT_LEGACY_REPLACEMENT = [
   'function buildPromptItems(prompt) {',
   '  return prompt.flatMap((block) => {',
   '    switch (block.type) {',
@@ -435,6 +435,81 @@ const CODEX_ACP_SKILL_INPUT_REPLACEMENT = [
   '      }'
 ].join('\n')
 
+const CODEX_ACP_SKILL_INPUT_ROLLBACK_SENTINEL = [
+  '/* open-science:codex-acp-skill-input-rollback-v1',
+  CODEX_ACP_SKILL_INPUT_LEGACY_REPLACEMENT,
+  '*/'
+].join('\n')
+
+const CODEX_ACP_SKILL_INPUT_REPLACEMENT = [
+  CODEX_ACP_SKILL_INPUT_LEGACY_REPLACEMENT.replace(
+    [
+      '        const codexHome = typeof process.env.CODEX_HOME === "string" ? process.env.CODEX_HOME : "";',
+      '        const skillRoot = codexHome ? path4.join(codexHome, "skills") : "";'
+    ].join('\n'),
+    [
+      '        const runtimeSkillRoot = typeof process.env.OPEN_SCIENCE_SKILL_RUNTIME_ROOT === "string"',
+      '          ? process.env.OPEN_SCIENCE_SKILL_RUNTIME_ROOT.trim()',
+      '          : "";',
+      '        const codexHome = typeof process.env.CODEX_HOME === "string" ? process.env.CODEX_HOME : "";',
+      '        const skillRoot = runtimeSkillRoot || (codexHome ? path4.join(codexHome, "skills") : "");'
+    ].join('\n')
+  ),
+  // A rollback application recognizes its already-installed Skill-input patch by exact source
+  // inclusion before launching the adapter. Preserve that previous patch text in a dead comment so
+  // the additive runtime-root support remains executable by both the new and rollback application.
+  CODEX_ACP_SKILL_INPUT_ROLLBACK_SENTINEL
+].join('\n')
+
+const CODEX_ACP_SKILL_EXTRA_ROOTS_SOURCE = [
+  '  async refreshSkills(cwd, additionalRoots) {',
+  '    if (!cwd) {',
+  '      return;',
+  '    }',
+  '    const skillExtraRoots = additionalRoots.map((root) => path4.join(root, ".agents", "skills"));',
+  '    if (!arraysEqual(this.skillExtraRoots, skillExtraRoots)) {',
+  '      await this.codexClient.skillsExtraRootsSet({ extraRoots: skillExtraRoots });',
+  '      this.skillExtraRoots = skillExtraRoots;',
+  '    }',
+  '    await this.codexClient.listSkills({',
+  '      cwds: [cwd, ...additionalRoots],',
+  '      forceReload: true',
+  '    });',
+  '  }'
+].join('\n')
+
+const CODEX_ACP_SKILL_EXTRA_ROOTS_LEGACY_REPLACEMENT = CODEX_ACP_SKILL_EXTRA_ROOTS_SOURCE.replace(
+  '    const skillExtraRoots = additionalRoots.map((root) => path4.join(root, ".agents", "skills"));',
+  [
+    '    const openScienceSkillRoot = typeof process.env.OPEN_SCIENCE_SKILL_RUNTIME_ROOT === "string"',
+    '      ? process.env.OPEN_SCIENCE_SKILL_RUNTIME_ROOT.trim()',
+    '      : "";',
+    '    const skillExtraRoots = Array.from(new Set([',
+    '      ...(openScienceSkillRoot ? [openScienceSkillRoot] : []),',
+    '      ...additionalRoots.map((root) => path4.join(root, ".agents", "skills"))',
+    '    ]));'
+  ].join('\n')
+)
+
+const CODEX_ACP_SKILL_EXTRA_ROOTS_REPLACEMENT = CODEX_ACP_SKILL_EXTRA_ROOTS_SOURCE.replace(
+  '    const skillExtraRoots = additionalRoots.map((root) => path4.join(root, ".agents", "skills"));',
+  [
+    '    const openScienceDiscoveryRoot = typeof process.env.OPEN_SCIENCE_SKILL_DISCOVERY_ROOT === "string"',
+    '      ? process.env.OPEN_SCIENCE_SKILL_DISCOVERY_ROOT.trim()',
+    '      : "";',
+    '    const openScienceProjectionRoot = typeof process.env.OPEN_SCIENCE_SKILL_PROJECTION_ROOT === "string"',
+    '      ? process.env.OPEN_SCIENCE_SKILL_PROJECTION_ROOT.trim()',
+    '      : "";',
+    '    const openScienceDiscoveryAuthorized = openScienceDiscoveryRoot && openScienceProjectionRoot',
+    '      ? additionalRoots.some((root) => path4.resolve(root) === path4.resolve(openScienceProjectionRoot))',
+    '      : false;',
+    '    const skillExtraRoots = Array.from(new Set([',
+    '      ...(openScienceDiscoveryAuthorized ? [openScienceDiscoveryRoot] : []),',
+    '      ...additionalRoots.map((root) => path4.join(root, ".agents", "skills"))',
+    '    ]));'
+  ].join('\n')
+)
+
 const CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE = [
   'function startCodexConnection(codexPath, env) {',
   '  const spawnEnv = env ?? process.env;',
@@ -447,7 +522,7 @@ const CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE = [
   '  }'
 ].join('\n')
 
-const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
+const CODEX_ACP_MODEL_CATALOG_STARTUP_LEGACY_REPLACEMENT = [
   'function startCodexConnection(codexPath, env) {',
   '  const spawnEnv = env ?? process.env;',
   '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
@@ -467,6 +542,45 @@ const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
   '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
   '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerArgs], { env: spawnEnv });',
   '  }'
+].join('\n')
+
+const CODEX_ACP_MODEL_CATALOG_STARTUP_ROLLBACK_SENTINEL = [
+  '/* open-science:codex-acp-model-catalog-startup-rollback-v1',
+  CODEX_ACP_MODEL_CATALOG_STARTUP_LEGACY_REPLACEMENT,
+  '*/'
+].join('\n')
+
+const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
+  'function startCodexConnection(codexPath, env) {',
+  '  const spawnEnv = env ?? process.env;',
+  '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
+  '  const startupConfig = startupConfigString ? JSON.parse(startupConfigString) : void 0;',
+  '  const modelCatalogPath = typeof startupConfig?.model_catalog_json === "string"',
+  '    ? startupConfig.model_catalog_json',
+  '    : void 0;',
+  '  const disabledSkillPathsString = spawnEnv["OPEN_SCIENCE_CODEX_DISABLED_SKILL_PATHS"];',
+  '  const disabledSkillPaths = disabledSkillPathsString ? JSON.parse(disabledSkillPathsString) : [];',
+  '  if (!Array.isArray(disabledSkillPaths) || disabledSkillPaths.some((value) => typeof value !== "string" || !path4.isAbsolute(value))) {',
+  '    throw new Error("Invalid Open Science Codex disabled Skill paths.");',
+  '  }',
+  '  const appServerArgs = ["app-server"];',
+  '  if (modelCatalogPath) appServerArgs.push("-c", `model_catalog_json=${JSON.stringify(modelCatalogPath)}`);',
+  '  if (disabledSkillPaths.length > 0) {',
+  '    const disabledSkillsConfig = disabledSkillPaths',
+  '      .map((skillPath) => `{ path = ${JSON.stringify(skillPath)}, enabled = false }`)',
+  '      .join(", ");',
+  '    appServerArgs.push("-c", `skills.config=[${disabledSkillsConfig}]`);',
+  '  }',
+  '  let codex;',
+  '  if (codexPath) {',
+  '    codex = process.platform === "win32"',
+  '      ? spawn(`"${codexPath}" app-server`, appServerArgs.slice(1), { shell: true, env: spawnEnv })',
+  '      : spawn(codexPath, appServerArgs, { env: spawnEnv });',
+  '  } else {',
+  '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+  '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerArgs], { env: spawnEnv });',
+  '  }',
+  CODEX_ACP_MODEL_CATALOG_STARTUP_ROLLBACK_SENTINEL
 ].join('\n')
 
 const CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
@@ -626,6 +740,13 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
 export const patchCodexAcpSkillInputSource = (source: string): string => {
   if (source.includes(CODEX_ACP_SKILL_INPUT_REPLACEMENT)) return source
 
+  if (source.includes(CODEX_ACP_SKILL_INPUT_LEGACY_REPLACEMENT)) {
+    return source.replace(
+      CODEX_ACP_SKILL_INPUT_LEGACY_REPLACEMENT,
+      CODEX_ACP_SKILL_INPUT_REPLACEMENT
+    )
+  }
+
   const matches = source.split(CODEX_ACP_SKILL_INPUT_SOURCE).length - 1
   if (matches === 1) {
     return source.replace(CODEX_ACP_SKILL_INPUT_SOURCE, CODEX_ACP_SKILL_INPUT_REPLACEMENT)
@@ -634,12 +755,40 @@ export const patchCodexAcpSkillInputSource = (source: string): string => {
   throw new Error('Pinned Codex ACP Skill-input patch no longer matches the adapter bundle')
 }
 
+export const patchCodexAcpSkillExtraRootsSource = (source: string): string => {
+  if (source.includes(CODEX_ACP_SKILL_EXTRA_ROOTS_REPLACEMENT)) return source
+
+  if (source.includes(CODEX_ACP_SKILL_EXTRA_ROOTS_LEGACY_REPLACEMENT)) {
+    return source.replace(
+      CODEX_ACP_SKILL_EXTRA_ROOTS_LEGACY_REPLACEMENT,
+      CODEX_ACP_SKILL_EXTRA_ROOTS_REPLACEMENT
+    )
+  }
+
+  const matches = source.split(CODEX_ACP_SKILL_EXTRA_ROOTS_SOURCE).length - 1
+  if (matches === 1) {
+    return source.replace(
+      CODEX_ACP_SKILL_EXTRA_ROOTS_SOURCE,
+      CODEX_ACP_SKILL_EXTRA_ROOTS_REPLACEMENT
+    )
+  }
+
+  throw new Error('Pinned Codex ACP Skill extra-roots patch no longer matches the adapter bundle')
+}
+
 // Codex builds its ModelsManager once when app-server starts. The adapter otherwise forwards
 // CODEX_CONFIG only in thread/start, which is too late for a generated model catalog to participate
 // in model lookup. Project just that immutable catalog path into this native process's CLI override;
 // the remaining request-scoped config continues through codex-acp unchanged.
 export const patchCodexAcpModelCatalogStartupSource = (source: string): string => {
   if (source.includes(CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT)) return source
+
+  if (source.includes(CODEX_ACP_MODEL_CATALOG_STARTUP_LEGACY_REPLACEMENT)) {
+    return source.replace(
+      CODEX_ACP_MODEL_CATALOG_STARTUP_LEGACY_REPLACEMENT,
+      CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT
+    )
+  }
 
   const matches = source.split(CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE).length - 1
   if (matches === 1) {
@@ -656,9 +805,11 @@ export const patchCodexAcpModelCatalogStartupSource = (source: string): string =
 
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
-  const patched = patchCodexAcpModelCatalogStartupSource(
-    patchCodexAcpSkillInputSource(
-      patchCodexAcpTurnUsageSource(patchCodexAcpContextUsageSource(source))
+  const patched = patchCodexAcpSkillExtraRootsSource(
+    patchCodexAcpModelCatalogStartupSource(
+      patchCodexAcpSkillInputSource(
+        patchCodexAcpTurnUsageSource(patchCodexAcpContextUsageSource(source))
+      )
     )
   )
 

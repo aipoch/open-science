@@ -8,7 +8,11 @@ import { terminateProcessTree } from '../process-tree'
 type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
 type AnthropicBridgeLease = ResolvedAgentBackend['anthropicBridgeLease']
 type ProviderTransportLease = ResolvedAgentBackend['providerTransportLease']
-type CleanupFailure = (stage: 'connection' | 'agent-process', error: unknown) => void
+type SkillRuntimeLease = NonNullable<ResolvedAgentBackend['skillRuntimeLease']>
+type CleanupFailure = (
+  stage: 'connection' | 'agent-process' | 'skill-runtime-lease',
+  error: unknown
+) => void
 
 const log = createLogger('acp')
 const safeLogCleanupError = (message: string, error: unknown): void => {
@@ -32,6 +36,7 @@ export type AcpAttachedConnectionResource = {
   bridgeLease: ResponsesBridgeLease
   anthropicBridgeLease?: AnthropicBridgeLease
   providerTransportLease?: ProviderTransportLease
+  skillRuntimeLease?: SkillRuntimeLease
 }
 
 export type AcpConnectionResourceReadyHandle = Readonly<{
@@ -56,6 +61,7 @@ export type AcpUnattachedConnectionResource = Readonly<{
   bridgeLease?: ResponsesBridgeLease
   anthropicBridgeLease?: AnthropicBridgeLease
   providerTransportLease?: ProviderTransportLease
+  skillRuntimeLease?: SkillRuntimeLease
 }>
 
 export type AcpConnectionShutdownHandle = Readonly<{
@@ -86,6 +92,9 @@ export class AcpConnectionResourceOwner {
   private connectInFlight: Promise<AcpConnectionResourceReadyHandle> | undefined
   private readonly expectedProcessExits = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly releasedBridgeLeases = new WeakSet<object>()
+  private readonly releasedSkillRuntimeLeases = new WeakSet<object>()
+  private readonly pendingSkillRuntimeLeases = new Set<SkillRuntimeLease>()
+  private readonly skillRuntimeReleaseAttempts = new WeakMap<SkillRuntimeLease, Promise<void>>()
   private shuttingDown = false
   private lastTreeKillReaped = true
 
@@ -168,6 +177,7 @@ export class AcpConnectionResourceOwner {
     // Ownership transfers synchronously before the first cleanup await, so a successor may attach
     // without an older process or lease remaining reachable through this owner.
     const resource = this.detach(expectedEpoch)
+    await this.retryPendingSkillRuntimeLeases(onFailure)
     if (!resource) return
     this.expectedProcessExits.add(resource.process)
 
@@ -185,6 +195,7 @@ export class AcpConnectionResourceOwner {
     await this.releaseBridgeLease(resource.bridgeLease)
     await this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
     await this.releaseProviderTransportLease(resource.providerTransportLease)
+    await this.releaseSkillRuntimeLease(resource.skillRuntimeLease, onFailure)
   }
 
   async cleanupUnattached(
@@ -192,6 +203,7 @@ export class AcpConnectionResourceOwner {
     onFailure: CleanupFailure = (stage, error) =>
       safeLogCleanupError(`unattached ACP ${stage} cleanup failed`, error)
   ): Promise<void> {
+    await this.retryPendingSkillRuntimeLeases(onFailure)
     if (resource.process) this.expectedProcessExits.add(resource.process)
     try {
       resource.connection?.close()
@@ -209,15 +221,18 @@ export class AcpConnectionResourceOwner {
     await this.releaseBridgeLease(resource.bridgeLease)
     await this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
     await this.releaseProviderTransportLease(resource.providerTransportLease)
+    await this.releaseSkillRuntimeLease(resource.skillRuntimeLease, onFailure)
   }
 
   cleanupUnexpectedClose(expectedEpoch: number): void {
     const resource = this.detach(expectedEpoch)
     if (!resource) return
     this.expectedProcessExits.add(resource.process)
-    void this.reapProcessTree(resource.process).catch((error) => {
-      safeLogCleanupError('agent process cleanup after unexpected close failed', error)
-    })
+    void this.reapProcessTree(resource.process)
+      .catch((error) => {
+        safeLogCleanupError('agent process cleanup after unexpected close failed', error)
+      })
+      .finally(() => this.releaseSkillRuntimeLease(resource.skillRuntimeLease))
     void this.releaseBridgeLease(resource.bridgeLease)
     void this.releaseAnthropicBridgeLease(resource.anthropicBridgeLease)
     void this.releaseProviderTransportLease(resource.providerTransportLease)
@@ -242,10 +257,20 @@ export class AcpConnectionResourceOwner {
         } catch (error) {
           safeLogCleanupError('agent process kill during shutdown failed', error)
         }
+        void this.reapProcessTree(resource.process)
+          .catch((error) => {
+            safeLogCleanupError('agent process cleanup during shutdown failed', error)
+          })
+          .finally(() => this.releaseSkillRuntimeLease(resource.skillRuntimeLease))
+      } else {
+        void this.releaseSkillRuntimeLease(resource?.skillRuntimeLease)
       }
       void this.releaseBridgeLease(resource?.bridgeLease)
       void this.releaseAnthropicBridgeLease(resource?.anthropicBridgeLease)
       void this.releaseProviderTransportLease(resource?.providerTransportLease)
+      for (const lease of this.pendingSkillRuntimeLeases) {
+        void this.releaseSkillRuntimeLease(lease)
+      }
       void this.closeMcp()
     }
   }
@@ -373,6 +398,39 @@ export class AcpConnectionResourceOwner {
       await lease.release()
     } catch (error) {
       safeLogCleanupError('provider transport lease release failed', error)
+    }
+  }
+
+  private async releaseSkillRuntimeLease(
+    lease: SkillRuntimeLease | undefined,
+    onFailure?: CleanupFailure
+  ): Promise<void> {
+    if (!lease || this.releasedSkillRuntimeLeases.has(lease)) return
+    const existing = this.skillRuntimeReleaseAttempts.get(lease)
+    if (existing) return existing
+    this.pendingSkillRuntimeLeases.add(lease)
+    const attempt = Promise.resolve()
+      .then(() => lease.release())
+      .then(() => {
+        this.pendingSkillRuntimeLeases.delete(lease)
+        this.releasedSkillRuntimeLeases.add(lease)
+      })
+      .catch((error) => {
+        if (onFailure) this.reportCleanupFailure(onFailure, 'skill-runtime-lease', error)
+        else safeLogCleanupError('Skill Runtime lease release failed', error)
+      })
+      .finally(() => {
+        if (this.skillRuntimeReleaseAttempts.get(lease) === attempt) {
+          this.skillRuntimeReleaseAttempts.delete(lease)
+        }
+      })
+    this.skillRuntimeReleaseAttempts.set(lease, attempt)
+    return attempt
+  }
+
+  private async retryPendingSkillRuntimeLeases(onFailure: CleanupFailure): Promise<void> {
+    for (const lease of [...this.pendingSkillRuntimeLeases]) {
+      await this.releaseSkillRuntimeLease(lease, onFailure)
     }
   }
 

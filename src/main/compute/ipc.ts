@@ -19,10 +19,7 @@ import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createLogger, errorLogFields } from '../logger'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
-import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
-import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { opencodeConfigDir } from '../agent-framework/opencode'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
@@ -44,7 +41,6 @@ import {
   createComputePermissionGrantAdapter,
   type LegacyComputeGrantPort
 } from './permission-grant-adapter'
-import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from './skill-doc'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 const log = createLogger('compute')
@@ -182,6 +178,7 @@ type ComputeHandlers = {
 
 type ComputeHostLifecycle = Readonly<{
   pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
+  requestSkillCatalogRefresh?(): void
 }>
 
 // Adapts a repository into thin handlers.
@@ -200,7 +197,7 @@ const createComputeHandlers = (
     'handleComputeApproval' | 'settleAuthorization'
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
-  syncComputeSkillDocument?: () => Promise<void>,
+  notifySkillCatalogChanged?: () => Promise<void>,
   hostLifecycle?: ComputeHostLifecycle
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
@@ -265,6 +262,16 @@ const createComputeHandlers = (
     )
     return result
   }
+  const refreshSkillCatalog = async (): Promise<void> => {
+    try {
+      if (hostLifecycle?.requestSkillCatalogRefresh) hostLifecycle.requestSkillCatalogRefresh()
+      else await notifySkillCatalogChanged?.()
+    } catch (error) {
+      // Host state has already committed. A later catalog reconciliation can retry retirement, so a
+      // notification failure must not turn a successful Compute operation into a reported failure.
+      log.warn('Skill catalog refresh after Compute Host change failed', errorLogFields(error))
+    }
+  }
 
   // Construct the production service with the full job dependency set so agent submit_job works and
   // dispatcher status transitions (submitted→running/error) broadcast to the renderer. Positional
@@ -323,7 +330,7 @@ const createComputeHandlers = (
           }
         }
         const host = await repository.create(request)
-        await syncComputeSkillDocument?.()
+        await refreshSkillCatalog()
         return host
       }),
     delete: (providerId) =>
@@ -353,17 +360,18 @@ const createComputeHandlers = (
               errorLogFields(error)
             )
           }
-          try {
-            await syncComputeSkillDocument?.()
-          } catch (error) {
-            log.warn('compute skill sync after host deletion failed', errorLogFields(error))
-          }
+          await refreshSkillCatalog()
         } finally {
           broker.completeProviderInvalidation(providerId)
         }
       }),
     sshConfigAliases: () => listSshAliases(),
-    probe: (providerId) => service.probe(providerId),
+    probe: async (providerId) => {
+      const result = await service.probe(providerId)
+      // Both successful and failed ProbeResult values are persisted host projection state.
+      await refreshSkillCatalog()
+      return result
+    },
     detailsGet: (providerId) => service.getDetails(providerId),
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
@@ -420,28 +428,6 @@ const createDefaultComputeHostRepository = (): ComputeHostRepository =>
 
 const createDefaultComputeJobRepository = (): ComputeJobRepository =>
   new ComputeJobRepository(() => getProjectDbClient(resolveStorageRoot()))
-
-const syncCurrentComputeSkillDocuments = async (
-  storageRoot: string,
-  repository: ComputeHostRepository
-): Promise<void> => {
-  const skillsDirs = [
-    join(getAppClaudeConfigDir(storageRoot), 'skills'),
-    join(opencodeConfigDir(storageRoot), 'skills'),
-    join(codexStorageDir(storageRoot), 'skills'),
-    join(codexSubscriptionStorageDir(storageRoot), 'skills')
-  ]
-  const existing = await Promise.all(
-    skillsDirs.map((skillsDir) => hasCanonicalComputeSkillDoc(skillsDir))
-  )
-  if (!existing.some(Boolean)) return
-  const hosts = await repository.list()
-  await Promise.all(
-    skillsDirs.map((skillsDir, index) =>
-      existing[index] ? syncComputeSkillDoc(skillsDir, hosts) : undefined
-    )
-  )
-}
 
 // Broadcasts a job summary to all renderer windows. Called by the JobPoller onJobUpdated hook
 // and by the job dispatcher on status transitions (Phase 3d, design.md §9).
@@ -517,7 +503,7 @@ const createComputeIpcModule = (
     dataRoot,
     taskNotifications,
     permissionGrantRegistry,
-    () => syncCurrentComputeSkillDocuments(storageRoot, repository),
+    undefined,
     hostLifecycle
   )
   const jobDeletionOwner = createComputeJobDeletionOwner({

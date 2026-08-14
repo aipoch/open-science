@@ -246,7 +246,9 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       permissionContext.clearCorrelationsForSession(sessionId),
     currentSessionSetup: () => ({
       framework: base.backendGeneration.current.framework,
-      sessionOptions: base.backendGeneration.current.session.options
+      sessionOptions: base.backendGeneration.current.session.options,
+      skillRuntime: base.backendGeneration.current.skillRuntime,
+      additionalDirectories: base.backendGeneration.current.adapter.additionalDirectories
     }),
     currentStartupGeneration: () => sessionRegistry.startupGeneration,
     isPrimarySessionIdClaimed: (sessionId) => sessionRegistry.isIdentityClaimed(sessionId),

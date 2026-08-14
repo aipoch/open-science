@@ -35,7 +35,8 @@ class AcpContextUsagePolicy {
       systemPromptAppends: backend.prompt.persistentSystemPrompt
         ? []
         : [...this.options.systemPromptAppends()],
-      sessionOptions: backend.session.options
+      sessionOptions: backend.session.options,
+      ...(backend.skillRuntime ? { skillRuntime: backend.skillRuntime } : {})
     })
     const persistentSystemPrompt =
       backend.prompt.persistentSystemPrompt ?? sessionSetup.persistentSystemPrompt

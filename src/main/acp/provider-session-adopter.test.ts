@@ -30,6 +30,7 @@ type ConfigurationFacts = {
 
 type AdopterHarness = {
   adopt: (specialistId?: string) => Promise<AcpCreateSessionResponse>
+  buildSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
   commitClaudeReplay: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
@@ -67,17 +68,18 @@ const createHarness = (
     sessionId: 'fresh-provider-session',
     dispose: vi.fn()
   } as unknown as ActiveSession
+  const buildSession = vi.fn(() => {
+    order.push('session/new prepared')
+    return {
+      start: vi.fn(async () => {
+        order.push('session/new')
+        return providerSession
+      })
+    }
+  })
   const connection = {
     agent: {
-      buildSession: vi.fn(() => {
-        order.push('session/new prepared')
-        return {
-          start: vi.fn(async () => {
-            order.push('session/new')
-            return providerSession
-          })
-        }
-      })
+      buildSession
     }
   } as unknown as ClientConnection
   const baseBackend: AcpBackendGenerationView = options.initialBackend ?? {
@@ -174,6 +176,7 @@ const createHarness = (
     })
   return {
     adopt,
+    buildSession,
     commit,
     commitClaudeReplay,
     configure,
@@ -192,6 +195,35 @@ const createHarness = (
 }
 
 describe('AcpProviderSessionAdopter', () => {
+  it('authorizes the pinned Skill Runtime root on an adopted provider Session', async () => {
+    const harness = createHarness({
+      initialBackend: {
+        framework: claudeCodeFramework,
+        backendId: 'claude-code',
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [] },
+        context: { supportsImageInput: false },
+        skillRuntime: {
+          projectionRoot: '/runtime/projection',
+          discoveryRoot: '/runtime/projection/skills',
+          descriptors: [],
+          environment: {}
+        },
+        adapter: {
+          additionalDirectories: ['/runtime/projection'],
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false
+        }
+      }
+    })
+
+    await harness.adopt()
+
+    expect(harness.buildSession).toHaveBeenCalledWith(
+      expect.objectContaining({ additionalDirectories: ['/runtime/projection'] })
+    )
+  })
+
   it('preserves the runtime capability policy while adopting a fresh provider Session', async () => {
     const harness = createHarness({ capabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY })
 

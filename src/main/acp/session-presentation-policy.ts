@@ -1,6 +1,6 @@
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
-import type { AgentFramework, SessionSetup } from '../agent-framework/types'
+import type { AgentFramework, SessionSetup, SkillRuntimeView } from '../agent-framework/types'
 import type { EffectiveSpecialistSkills, SpecialistProfileView } from '../../shared/specialist'
 import type { AcpPromptRequest } from '../../shared/acp'
 
@@ -17,6 +17,7 @@ type AcpSessionSetupPresentationInput = Readonly<{
   extraSystemPromptAppends?: readonly string[]
   persistentSystemPrompt?: string
   sessionOptions?: Record<string, unknown>
+  skillRuntime?: SkillRuntimeView
   specialistSkills?: EffectiveSpecialistSkills
 }>
 
@@ -117,6 +118,7 @@ class AcpSessionPresentationPolicy {
     const setup = input.framework.buildSessionSetup({
       systemPromptAppends: this.systemPromptAppends(input),
       sessionOptions: input.sessionOptions,
+      ...(input.skillRuntime ? { skillRuntime: input.skillRuntime } : {}),
       ...(skillWhitelist !== undefined ? { skillWhitelist } : {})
     })
 
@@ -170,7 +172,8 @@ class AcpSessionPresentationPolicy {
         ...(specialistSkillGuidance ? [specialistSkillGuidance] : []),
         ...(input.turnPromptReminders ?? [])
       ],
-      sessionOptions: input.sessionOptions
+      sessionOptions: input.sessionOptions,
+      ...(input.skillRuntime ? { skillRuntime: input.skillRuntime } : {})
     })
 
     const turnPromptPrefix =

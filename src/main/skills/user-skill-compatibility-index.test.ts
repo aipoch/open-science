@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -13,6 +13,26 @@ const hashFileContents = async (path: string): Promise<string> =>
     .digest('hex')
 
 describe('UserSkillCompatibilityIndex', () => {
+  it('writes the v2 cache without reading or modifying the legacy v1 rollback cache', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'user-skill-index-rollback-'))
+    const sourceDir = join(storageRoot, 'skills', 'personal', 'rollback-safe')
+    const runtimeSupport = join(storageRoot, 'runtime-support')
+    const legacyPath = join(runtimeSupport, 'user-skill-compatibility-v1.json')
+    const currentPath = join(runtimeSupport, 'user-skill-compatibility-v2.json')
+    const legacyContents = '{"version":1,"rollback":"preserve-exactly"}'
+    await mkdir(sourceDir, { recursive: true })
+    await mkdir(runtimeSupport, { recursive: true })
+    await writeFile(join(sourceDir, 'SKILL.md'), '---\nname: rollback-safe\n---\nBody\n')
+    await writeFile(legacyPath, legacyContents)
+
+    await new UserSkillCompatibilityIndex(storageRoot).scan([sourceDir])
+
+    await expect(readFile(legacyPath, 'utf8')).resolves.toBe(legacyContents)
+    await expect(readFile(currentPath, 'utf8').then(JSON.parse)).resolves.toMatchObject({
+      version: 2
+    })
+  })
+
   it('reuses persisted file hashes when an unchanged package is scanned after restart', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'user-skill-index-'))
     const sourceDir = join(storageRoot, 'skills', 'personal', 'large-skill')
@@ -32,7 +52,7 @@ describe('UserSkillCompatibilityIndex', () => {
     expect('compatibility' in first).toBe(true)
     expect(firstHash).toHaveBeenCalledTimes(2)
     const persisted = await readFile(
-      join(storageRoot, 'runtime-support', 'user-skill-compatibility-v1.json'),
+      join(storageRoot, 'runtime-support', 'user-skill-compatibility-v2.json'),
       'utf8'
     )
     expect(persisted).toContain('personal/large-skill')
@@ -52,7 +72,7 @@ describe('UserSkillCompatibilityIndex', () => {
     const sourceDir = join(storageRoot, 'skills', 'imported', 'recoverable')
     await mkdir(sourceDir, { recursive: true })
     await writeFile(join(sourceDir, 'SKILL.md'), '---\nname: recoverable\n---\nBody\n')
-    const cachePath = join(storageRoot, 'runtime-support', 'user-skill-compatibility-v1.json')
+    const cachePath = join(storageRoot, 'runtime-support', 'user-skill-compatibility-v2.json')
     await mkdir(join(storageRoot, 'runtime-support'), { recursive: true })
     await writeFile(cachePath, '{"version":1,"packages":null}')
 
@@ -69,7 +89,7 @@ describe('UserSkillCompatibilityIndex', () => {
   it('rehashes a cached file whose persisted SHA-256 is malformed', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'user-skill-index-hash-corrupt-'))
     const sourceDir = join(storageRoot, 'skills', 'personal', 'corrupt-hash')
-    const cachePath = join(storageRoot, 'runtime-support', 'user-skill-compatibility-v1.json')
+    const cachePath = join(storageRoot, 'runtime-support', 'user-skill-compatibility-v2.json')
     await mkdir(sourceDir, { recursive: true })
     await writeFile(join(sourceDir, 'SKILL.md'), '---\nname: corrupt-hash\n---\nBody\n')
     await new UserSkillCompatibilityIndex(storageRoot, { hashFile: hashFileContents }).scan([
@@ -113,6 +133,30 @@ describe('UserSkillCompatibilityIndex', () => {
     expect(after).not.toEqual(before)
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'changes compatibility for a chmod-only executable-bit update without rehashing content',
+    async () => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'user-skill-index-mode-'))
+      const sourceDir = join(storageRoot, 'skills', 'personal', 'mode-skill')
+      const scriptPath = join(sourceDir, 'scripts', 'run.sh')
+      await mkdir(join(sourceDir, 'scripts'), { recursive: true })
+      await writeFile(join(sourceDir, 'SKILL.md'), '---\nname: mode-skill\n---\nBody\n')
+      await writeFile(scriptPath, '#!/bin/sh\n', { mode: 0o644 })
+      const index = new UserSkillCompatibilityIndex(storageRoot, { hashFile: hashFileContents })
+      const [before] = await index.scan([sourceDir])
+
+      await chmod(scriptPath, 0o755)
+      const hashFile = vi.fn(hashFileContents)
+      const [after] = await new UserSkillCompatibilityIndex(storageRoot, { hashFile }).scan([
+        sourceDir
+      ])
+
+      expect(after).not.toEqual(before)
+      expect(hashFile).toHaveBeenCalledOnce()
+      expect(hashFile).toHaveBeenCalledWith(scriptPath)
+    }
+  )
+
   it('keeps the loaded compatibility cache in memory across repeated catalog reads', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'user-skill-index-memory-'))
     const sourceDir = join(storageRoot, 'skills', 'personal', 'repeated')
@@ -123,7 +167,7 @@ describe('UserSkillCompatibilityIndex', () => {
     const index = new UserSkillCompatibilityIndex(storageRoot, { hashFile })
     await index.scan([sourceDir])
     await writeFile(
-      join(storageRoot, 'runtime-support', 'user-skill-compatibility-v1.json'),
+      join(storageRoot, 'runtime-support', 'user-skill-compatibility-v2.json'),
       'corrupt after load'
     )
 
@@ -181,7 +225,7 @@ describe('UserSkillCompatibilityIndex', () => {
 
     expect(result).toMatchObject({
       sourceDir,
-      compatibility: expect.stringMatching(/^sha256-tree-v2:[a-f0-9]{64}$/)
+      compatibility: expect.stringMatching(/^sha256-tree-v3:[a-f0-9]{64}$/)
     })
   })
 
