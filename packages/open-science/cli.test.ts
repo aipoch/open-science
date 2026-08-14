@@ -123,6 +123,18 @@ describe('task CLI', () => {
     )
     expect(() => parseCliArgs(['run', '--cwd', '   '])).toThrow('--cwd requires a non-empty path.')
     expect(() => parseCliArgs(['status', '--unknown'])).toThrow('Unknown option: --unknown')
+    expect(parseCliArgs(['codex', 'login', '--force'])).toEqual({
+      command: 'codex',
+      subcommand: 'login',
+      options: { open: true, json: false, force: true }
+    })
+    expect(() => parseCliArgs(['codex', 'login', '--json'])).toThrow(
+      'codex login does not support machine-readable output.'
+    )
+    expect(() => parseCliArgs(['codex', 'login', 'extra'])).toThrow(
+      'codex login accepts no arguments.'
+    )
+    expect(() => parseCliArgs(['status', '--force'])).toThrow('--force requires codex login.')
   })
 
   it('reads a prompt file, waits for completion, and emits one JSON result', async () => {
