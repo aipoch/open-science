@@ -19,7 +19,7 @@ type OwnedReviewerAcpRuntime = ReviewerAcpRuntime & Pick<AcpRuntime, 'shutdownFo
 
 type ActiveReviewerRuntime = Readonly<{
   runtime: OwnedReviewerAcpRuntime
-  close: () => Promise<void>
+  close: () => Promise<{ reaped: boolean }>
 }>
 
 type ReviewerModelRuntimeAdmission = Readonly<{
@@ -62,6 +62,7 @@ class ReviewerModelRuntimeOwner {
   private readonly runtimeFactory: NonNullable<ReviewerModelRuntimeOwnerOptions['createRuntime']>
   private readonly activeRuntimes = new Set<ActiveReviewerRuntime>()
   private readonly pendingAdmissions = new Set<Promise<void>>()
+  private updateGatePromise: Promise<{ reaped: boolean }> | undefined
   private shuttingDown = false
 
   constructor(private readonly options: ReviewerModelRuntimeOwnerOptions) {
@@ -69,6 +70,8 @@ class ReviewerModelRuntimeOwner {
   }
 
   admit(): Promise<ReviewerModelRuntimeAdmission> {
+    const updateGate = this.updateGatePromise
+    if (updateGate) return updateGate.then(() => this.admit())
     const admission = this.admitOwned()
     const settled = admission.then(
       () => undefined,
@@ -126,13 +129,13 @@ class ReviewerModelRuntimeOwner {
       throw error
     }
 
-    let closePromise: Promise<void> | undefined
+    let closePromise: Promise<{ reaped: boolean }> | undefined
     const active: ActiveReviewerRuntime = Object.freeze({
       runtime,
       close: () => {
         closePromise ??= (async () => {
           try {
-            await runtime.shutdownForQuit()
+            return await runtime.shutdownForQuit()
           } finally {
             if (!claimed) await releaseResolvedAgentBackendLeases(backend)
           }
@@ -155,14 +158,40 @@ class ReviewerModelRuntimeOwner {
     })
   }
 
-  async shutdown(): Promise<void> {
+  shutdownForUpdateGate(): Promise<{ reaped: boolean }> {
+    if (this.shuttingDown) return this.shutdown()
+    if (this.updateGatePromise) return this.updateGatePromise
+
+    const gate = this.closeActiveRuntimes()
+    this.updateGatePromise = gate
+    void gate.finally(() => {
+      if (this.updateGatePromise === gate) this.updateGatePromise = undefined
+    })
+    return gate
+  }
+
+  async shutdown(): Promise<{ reaped: boolean }> {
     this.shuttingDown = true
+    const updateGateOutcome = await this.updateGatePromise
+    const activeOutcome = await this.closeActiveRuntimes()
+    return {
+      reaped: (updateGateOutcome?.reaped ?? true) && activeOutcome.reaped
+    }
+  }
+
+  private async closeActiveRuntimes(): Promise<{ reaped: boolean }> {
     await Promise.all([...this.pendingAdmissions])
     const runtimes = [...this.activeRuntimes]
+    let outcomes: PromiseSettledResult<{ reaped: boolean }>[] = []
     try {
-      await Promise.all(runtimes.map((runtime) => runtime.close()))
+      outcomes = await Promise.allSettled(runtimes.map((runtime) => runtime.close()))
     } finally {
       for (const runtime of runtimes) this.activeRuntimes.delete(runtime)
+    }
+    return {
+      reaped: outcomes.every(
+        (outcome) => outcome.status === 'fulfilled' && outcome.value.reaped === true
+      )
     }
   }
 }

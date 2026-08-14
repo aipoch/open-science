@@ -34,7 +34,7 @@ describe('ReviewerModelRuntimeOwner', () => {
   ] as const)(
     'owns an isolated runtime without rewriting the $path backend',
     async ({ path, frameworkId, modelRoute }) => {
-      const shutdownForQuit = vi.fn(async () => [])
+      const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
       const fixedRuntime = {
         buildReviewerSession: vi.fn(),
         disposeReviewerSession: vi.fn(),
@@ -90,7 +90,7 @@ describe('ReviewerModelRuntimeOwner', () => {
   )
 
   it('shuts down every admitted runtime and closes further admission', async () => {
-    const shutdownForQuit = vi.fn(async () => [])
+    const shutdownForQuit = vi.fn(async () => ({ reaped: true }))
     const releaseBridge = vi.fn(async () => undefined)
     const fixedRuntime = {
       buildReviewerSession: vi.fn(),
@@ -173,9 +173,60 @@ describe('ReviewerModelRuntimeOwner', () => {
     expect(createRuntime).not.toHaveBeenCalled()
   })
 
+  it('uses a non-latching update gate before admitting a fresh runtime', async () => {
+    const firstShutdown = vi.fn(async () => ({ reaped: true }))
+    const secondShutdown = vi.fn(async () => ({ reaped: true }))
+    const runtimes = [firstShutdown, secondShutdown].map(
+      (shutdownForQuit) =>
+        ({
+          buildReviewerSession: vi.fn(),
+          disposeReviewerSession: vi.fn(),
+          sendPrompt: vi.fn(),
+          shutdownForQuit
+        }) as unknown as AcpRuntime
+    )
+    const owner = new ReviewerModelRuntimeOwner({
+      appVersion: 'test',
+      captureModel: async () => ({
+        model: 'reviewer-model',
+        fixedTarget: {
+          frameworkId: 'claude-code',
+          providerId: 'reviewer-provider',
+          model: { kind: 'required', id: 'reviewer-model' },
+          reasoningEffort: 'high'
+        }
+      }),
+      resolveTarget: vi.fn(
+        async () =>
+          ({
+            framework: { id: 'claude-code' },
+            executablePath: '/agent',
+            env: {}
+          }) as ResolvedAgentBackend
+      ),
+      createRuntime: vi.fn(() => {
+        const runtime = runtimes.shift()
+        if (!runtime) throw new Error('Unexpected Reviewer runtime creation.')
+        return runtime
+      })
+    })
+
+    const firstAdmission = await owner.admit()
+
+    await expect(owner.shutdownForUpdateGate()).resolves.toEqual({ reaped: true })
+    expect(firstShutdown).toHaveBeenCalledOnce()
+    await firstAdmission.release()
+    expect(firstShutdown).toHaveBeenCalledOnce()
+
+    const secondAdmission = await owner.admit()
+    expect(secondAdmission.reviewerAcpRuntime).toBeDefined()
+    await expect(owner.shutdown()).resolves.toEqual({ reaped: true })
+    expect(secondShutdown).toHaveBeenCalledOnce()
+  })
+
   it('makes shutdown await a release that is already closing its runtime', async () => {
-    let finishRuntimeShutdown: (() => void) | undefined
-    const runtimeShutdown = new Promise<void>((resolve) => {
+    let finishRuntimeShutdown: ((outcome: { reaped: boolean }) => void) | undefined
+    const runtimeShutdown = new Promise<{ reaped: boolean }>((resolve) => {
       finishRuntimeShutdown = resolve
     })
     const shutdownForQuit = vi.fn(() => runtimeShutdown)
@@ -217,7 +268,7 @@ describe('ReviewerModelRuntimeOwner', () => {
     await Promise.resolve()
     expect(shutdownFinished).toBe(false)
 
-    finishRuntimeShutdown?.()
+    finishRuntimeShutdown?.({ reaped: true })
     await Promise.all([release, shutdown])
     expect(shutdownForQuit).toHaveBeenCalledOnce()
   })

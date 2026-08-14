@@ -683,7 +683,7 @@ class AcpRuntime {
   // failures. On success the generation view tracks the new level, so sessions created later in this
   // process inherit it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
-    if (!this.modelChanges.barrier && this.generationActivity.blockers().reconnect) return false
+    if (!this.modelChanges.barrier && this.generationActivity.blocksLiveEffortChange()) return false
     return this.modelChanges.applyReasoningEffort(effort)
   }
 

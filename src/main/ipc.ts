@@ -2052,8 +2052,25 @@ const createApplicationModules = async (
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Update handling is deliberately constructed below, after this dependency is complete.
+  let reviewerModelRuntimeShutdown:
+    Pick<ReviewerModelRuntimeOwner, 'shutdown' | 'shutdownForUpdateGate'> | undefined
   const shutdownCoordinator = new BackendShutdownCoordinator({
-    runtime,
+    runtime: {
+      shutdownForQuit: async () => {
+        const [main, reviewer] = await Promise.all([
+          runtime.shutdownForQuit(),
+          reviewerModelRuntimeShutdown?.shutdown() ?? Promise.resolve({ reaped: true })
+        ])
+        return { reaped: main.reaped && reviewer.reaped }
+      },
+      shutdownForUpdateGate: async () => {
+        const [main, reviewer] = await Promise.all([
+          runtime.shutdownForUpdateGate(),
+          reviewerModelRuntimeShutdown?.shutdownForUpdateGate() ?? Promise.resolve({ reaped: true })
+        ])
+        return { reaped: main.reaped && reviewer.reaped }
+      }
+    },
     notebook: notebookService,
     log: createLogger('shutdown')
   })
@@ -2577,10 +2594,20 @@ const createApplicationModules = async (
     },
     (options) => {
       const owner = new ReviewerModelRuntimeOwner(options)
+      reviewerModelRuntimeShutdown = owner
       return {
         name: 'reviewer-model-runtime',
         capability: owner,
-        dispose: () => owner.shutdown()
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
+        dispose: async () => {
+          try {
+            if (!(await owner.shutdown()).reaped) {
+              throw new BackendShutdownOutcomeError('degraded')
+            }
+          } finally {
+            if (reviewerModelRuntimeShutdown === owner) reviewerModelRuntimeShutdown = undefined
+          }
+        }
       }
     }
   )
