@@ -727,8 +727,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         2
                       )
                       void navigator.clipboard.writeText(json).then(
-                        () => setReportStatus('Report copied'),
-                        () => setReportStatus('Could not copy report')
+                        () => setReportStatus(t('Report copied')),
+                        () => setReportStatus(t('Could not copy report'))
                       )
                     }}
                   >
@@ -743,9 +743,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                       void window.api.specialist
                         .savePackageReport({ candidateToken: packagePreview.candidateToken })
                         .then((result) =>
-                          setReportStatus(result.saved ? 'Report saved' : undefined)
+                          setReportStatus(result.saved ? t('Report saved') : undefined)
                         )
-                        .catch(() => setReportStatus('Could not save report'))
+                        .catch(() => setReportStatus(t('Could not save report')))
                     }}
                   >
                     <Download data-icon="inline-start" aria-hidden="true" />

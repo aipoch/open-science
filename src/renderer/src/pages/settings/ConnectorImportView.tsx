@@ -49,7 +49,7 @@ export function ConnectorImportView({
       const result = await window.api.settings.selectCustomServerTemplate(request)
       if (!result.cancelled) setSelection(result)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not validate the configuration.')
+      setError(cause instanceof Error ? cause.message : t('Could not validate the configuration.'))
     } finally {
       setSelecting(false)
     }
@@ -59,17 +59,17 @@ export function ConnectorImportView({
     if (selecting || files.length === 0) return
     setSelection(undefined)
     if (files.length !== 1) {
-      setError('Choose one Connector configuration at a time.')
+      setError(t('Choose one Connector configuration at a time.'))
       return
     }
     const file = files[0]
     if (!file.name.toLowerCase().endsWith('.json')) {
-      setError('Connector configurations must be JSON files.')
+      setError(t('Connector configurations must be JSON files.'))
       return
     }
     if (file.size > CONNECTOR_TEMPLATE_MAX_BYTES) {
       setError(
-        `Connector configuration files must be ${kb(CONNECTOR_TEMPLATE_MAX_BYTES)} or smaller.`
+        t('Connector configuration files must be {{size}} or smaller.', { size: kb(CONNECTOR_TEMPLATE_MAX_BYTES) })
       )
       return
     }
