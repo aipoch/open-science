@@ -1,5 +1,6 @@
 import type { AcpCreateSessionResponse, AcpRuntimeEvent } from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
+import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
@@ -38,7 +39,7 @@ const findUnansweredUserTurn = (messages: ChatMessage[]): ChatMessage | undefine
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
 
-    if (message.role !== 'user') continue
+    if (message.role !== 'user' || isHiddenControlMessage(message)) continue
 
     const hasSuccessfulReply = messages
       .slice(index + 1)
@@ -91,8 +92,8 @@ const replaceWorkspaceProviderIdentity = (
 const ensureWorkspaceSessionReady = async (
   runtime: WorkspaceMessageRuntime,
   sessionId: string
-): Promise<void> => {
-  if (runtime.state.sessionIds.includes(sessionId)) return
+): Promise<boolean> => {
+  if (runtime.state.sessionIds.includes(sessionId)) return false
   const session = workspaceSession(sessionId)
   if (!session) throw new Error(`Session not found: ${sessionId}`)
   const cwd = session.cwd || runtime.state.cwd
@@ -119,6 +120,7 @@ const ensureWorkspaceSessionReady = async (
         }
       : undefined
   )
+  return resumed?.contextReset === true
 }
 
 const continueInterruptedWorkspaceTurn = async (
@@ -618,8 +620,8 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
     compact(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<boolean> {
       return compactWorkspaceSession(runtime, sessionId)
     },
-    ensureReady(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<void> {
-      return ensureWorkspaceSessionReady(runtime, sessionId)
+    async ensureReady(runtime: WorkspaceMessageRuntime, sessionId: string): Promise<void> {
+      await ensureWorkspaceSessionReady(runtime, sessionId)
     },
     resume(
       runtime: WorkspaceMessageRuntime,

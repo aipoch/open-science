@@ -124,4 +124,28 @@ describe('preview state repository (integration)', () => {
     const loaded = await repository.get('project-a')
     expect(loaded?.items[0].path).toBe(absolutePath)
   })
+
+  it('rejects an escaping $DATA path from persisted Preview state', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+
+    const state = createState()
+    await client.projectPreviewState.create({
+      data: {
+        projectId: 'project-a',
+        panelState: state.panelState,
+        activeItemId: state.activeItemId ?? null,
+        items: JSON.stringify(state.items.map((item) => ({ ...item, path: '$DATA/../../outside' })))
+      }
+    })
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    await expect(repository.get('project-a')).rejects.toThrow(
+      /portable relative path within the data root/
+    )
+  })
 })

@@ -62,6 +62,17 @@ export type AgentBackendResolutionContext = {
   forceCodexNativeResponsesCompatibility?: boolean
 }
 
+const userSkillDirectorySystemPromptAppend = (storageRoot: string): string =>
+  [
+    '<open_science_user_skill_directories>',
+    `When the user explicitly asks you to author a new Skill, write its complete \`<name>/SKILL.md\` package under \`${join(storageRoot, 'skills', 'personal')}\`.`,
+    `Externally obtained Skill packages that the user or application has directly copied are discovered under \`${join(storageRoot, 'skills', 'imported')}\`. This path is informational; do not download, unpack, or copy an external Skill there yourself.`,
+    'For a GitHub URL, eligible attachment, Skill name or keywords, or any source requiring preview or confirmation, use `request_skill_import` when it is available; otherwise direct the user to the application import flow.',
+    'Use a stable name of 1–64 lowercase letters or numbers separated by single hyphens.',
+    'Changes in either directory are discovered automatically.',
+    '</open_science_user_skill_directories>'
+  ].join('\n')
+
 export type AgentSpawnConfig = {
   envOverrides: Record<string, string>
   executablePath: string
@@ -292,6 +303,7 @@ export class AgentBackendResolver {
       )
     }
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
+    const userSkillDirectoryGuidance = userSkillDirectorySystemPromptAppend(this.storageRoot)
     let connectorInstructions =
       framework.id === 'claude-code'
         ? renderConnectorInstructions(this.connectors.connectorSkillNames(settings.connectors))
@@ -354,7 +366,10 @@ export class AgentBackendResolver {
         contextWindow,
         ...(target.provider.supportsImageInput ? { supportsImageInput: true } : {}),
         contextUsageModel: target.effectiveModel,
-        ...(connectorInstructions ? { systemPromptAppends: [connectorInstructions] } : {}),
+        systemPromptAppends: [
+          userSkillDirectoryGuidance,
+          ...(connectorInstructions ? [connectorInstructions] : [])
+        ],
         ...(transport.anthropicBridgeLease
           ? { anthropicBridgeLease: transport.anthropicBridgeLease }
           : {})
@@ -383,6 +398,7 @@ export class AgentBackendResolver {
     const providerModelCatalog = transport.providerModelCatalog ?? plan.providerModelCatalog
     const responsesBridge = transport.responsesBridge
     const persistentSystemPromptAppends = [
+      userSkillDirectoryGuidance,
       ...(context.systemPromptAppends ?? []),
       ...(framework.id === 'codex' && connectorInstructions ? [connectorInstructions] : [])
     ]

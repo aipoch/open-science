@@ -99,6 +99,8 @@ describe('module test impact commands', () => {
     const direct = createModuleTestPlan('user_skills_repository')
     expect(direct.testFiles).toEqual(
       expect.arrayContaining([
+        'src/main/skills/user-skill-catalog-observer.test.ts',
+        'src/main/skills/user-skill-compatibility-index.test.ts',
         'src/main/skills/user-skill-repository.architecture.test.ts',
         'src/main/skills/user-skill-repository.atomic.test.ts',
         'src/main/skills/user-skill-repository.test.ts',
@@ -119,6 +121,8 @@ describe('module test impact commands', () => {
     )
 
     for (const { path, status } of [
+      { path: 'src/main/skills/user-skill-catalog-observer.ts', status: 'modified' },
+      { path: 'src/main/skills/user-skill-compatibility-index.ts', status: 'added' },
       { path: 'src/main/skills/user-skill-repository.ts', status: 'modified' },
       { path: 'src/main/skills/user-skill-store.ts', status: 'modified' },
       { path: 'src/main/skills/agent-home-skill-owner.ts', status: 'added' },

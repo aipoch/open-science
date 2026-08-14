@@ -35,6 +35,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",
         "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
       ],
       "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
@@ -44,6 +45,7 @@
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts",
           "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx",
+          "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx",
           "src/renderer/src/lib/acp/workspace-events.test.ts"
         ],
         "contract": [
@@ -235,6 +237,8 @@
     },
     "user_skills_repository": {
       "ownerPaths": [
+        "src/main/skills/user-skill-catalog-observer.ts",
+        "src/main/skills/user-skill-compatibility-index.ts",
         "src/main/skills/user-skill-repository.ts",
         "src/main/skills/user-skill-store.ts",
         "src/main/skills/agent-home-skill-owner.ts",
@@ -243,10 +247,15 @@
         "src/main/skills/skill-mutation-owner.ts",
         "src/main/skills/skill-package-transaction-owner.ts"
       ],
-      "interfacePaths": ["src/main/skills/user-skill-repository.ts"],
+      "interfacePaths": [
+        "src/main/skills/user-skill-repository.ts",
+        "src/main/skills/user-skill-catalog-observer.ts"
+      ],
       "consumerModules": ["settings_service_facade"],
       "testFiles": {
         "owner": [
+          "src/main/skills/user-skill-catalog-observer.test.ts",
+          "src/main/skills/user-skill-compatibility-index.test.ts",
           "src/main/skills/user-skill-repository.architecture.test.ts",
           "src/main/skills/user-skill-repository.atomic.test.ts",
           "src/main/skills/user-skill-repository.test.ts"

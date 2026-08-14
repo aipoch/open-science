@@ -1237,7 +1237,9 @@ describe('SettingsService: providers', () => {
       join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'open-science.md'),
       'utf8'
     )
-    expect(appInstructions).toBe('Stable Open Science app guidance.')
+    expect(appInstructions).toContain('Stable Open Science app guidance.')
+    expect(appInstructions).toContain(join(storageRoot, 'skills', 'personal'))
+    expect(appInstructions).toContain(join(storageRoot, 'skills', 'imported'))
 
     const baseline = await readFile(
       join(storageRoot, 'opencode', 'config', 'opencode', 'instructions', 'connectors.md'),
@@ -3886,9 +3888,14 @@ describe('SettingsService: skills', () => {
       expect(appSettings.permissions.deny).toEqual(
         expect.arrayContaining([expect.stringMatching(/^Read/)])
       )
-      expect(backend.systemPromptAppends).toEqual([
-        expect.stringContaining('Load the matching `mcp-*` skill before the first `host.mcp` call')
-      ])
+      expect(backend.systemPromptAppends).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(join(storageRoot, 'skills', 'personal')),
+          expect.stringContaining(
+            'Load the matching `mcp-*` skill before the first `host.mcp` call'
+          )
+        ])
+      )
     } finally {
       await chmod(managedSkillFile, 0o644).catch(() => undefined)
       await chmod(managedSkillDir, 0o755).catch(() => undefined)
@@ -4975,9 +4982,12 @@ describe('SettingsService: reasoning effort', () => {
 
     expect(backend.framework.id).toBe('claude-code')
     expect(backend.sessionEffort).toBe('low')
-    expect(backend.systemPromptAppends).toEqual([
-      expect.stringContaining('Load the matching `mcp-*` skill before the first `host.mcp` call')
-    ])
+    expect(backend.systemPromptAppends).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(join(storageRoot, 'skills', 'personal')),
+        expect.stringContaining('Load the matching `mcp-*` skill before the first `host.mcp` call')
+      ])
+    )
     expect(backend.systemPromptAppends?.join('\n')).not.toContain('search_articles')
   })
 

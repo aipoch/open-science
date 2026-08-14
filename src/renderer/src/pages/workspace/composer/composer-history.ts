@@ -1,4 +1,4 @@
-import type { MessagePart } from '../../../../../shared/session-persistence'
+import { isHiddenControlMessage, type MessagePart } from '../../../../../shared/session-persistence'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 
 import {
@@ -16,7 +16,10 @@ export type ComposerHistoryEntry = {
   doc: ComposerDoc
 }
 
-type HistoryMessage = Pick<ChatMessage, 'id' | 'role' | 'content' | 'parts' | 'uploads'>
+type HistoryMessage = Pick<
+  ChatMessage,
+  'id' | 'role' | 'content' | 'parts' | 'uploads' | 'turnIntent'
+>
 type HistorySession = Pick<ChatSession, 'id' | 'messages' | 'isPending' | 'createdAt' | 'updatedAt'>
 
 const docFromHistoryMessage = (message: HistoryMessage): ComposerDoc => {
@@ -31,7 +34,12 @@ const entryFromMessage = (
   sessionId: string,
   message: HistoryMessage
 ): ComposerHistoryEntry | null => {
-  if (message.role !== 'user' || (message.uploads?.length ?? 0) > 0) return null
+  if (
+    message.role !== 'user' ||
+    isHiddenControlMessage(message) ||
+    (message.uploads?.length ?? 0) > 0
+  )
+    return null
   const doc = docFromHistoryMessage(message)
   if (docIsEmpty(doc)) return null
   return { id: `${sessionId}:${message.id}`, messageId: message.id, doc }

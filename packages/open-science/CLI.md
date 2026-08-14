@@ -55,6 +55,35 @@ human-readable, JSON, and JSONL output never includes the local token.
 Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
 Open Science executable. Development builds also support `--config-root <path>`.
 
+## Codex subscription sign-in
+
+Sign the Open Science Codex profile in from a server terminal without starting the daemon or opening
+the Web UI:
+
+```bash
+open-science codex login
+```
+
+The command runs the native Codex version already configured by Open Science with OAuth device-code
+authentication. It prints a verification URL and one-time code in the current terminal; open the URL
+on any browser-capable device, enter the code, and keep the terminal open until Codex reports
+success. Credentials are written only to the app-owned
+<code>codex-subscription/auth.json</code> profile.
+
+The native login follows the profile's saved Network proxy mode. Manual uses the configured proxy,
+Direct clears inherited proxy variables, and System uses the environment that launched the CLI.
+
+When that profile already contains credentials, the command exits without replacing them. Start a
+new device-code flow explicitly with:
+
+```bash
+open-science codex login --force
+```
+
+The login command is interactive and intentionally does not support <code>--json</code> or
+<code>--jsonl</code>. It does not contact the Open Science daemon or expose the one-time code through
+daemon logs.
+
 ### Linux AppImage sandbox fallback
 
 `open-science start` keeps Chromium sandboxing enabled by default. On some Linux hosts, an AppImage

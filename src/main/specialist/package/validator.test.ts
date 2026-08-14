@@ -4,6 +4,7 @@ import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialis
 import { validateSpecialistPackage } from './validator'
 
 const encoder = new TextEncoder()
+const overlongSkillName = 'a'.repeat(65)
 const packageFiles = (
   manifest: unknown,
   specialist: unknown,
@@ -410,6 +411,16 @@ describe('validateSpecialistPackage', () => {
     {
       path: 'skills/Analysis/SKILL.md',
       body: '---\nname: Analysis\n---\nBody',
+      code: 'skill.id-invalid'
+    },
+    {
+      path: 'skills/foo--bar/SKILL.md',
+      body: '---\nname: foo--bar\n---\nBody',
+      code: 'skill.id-invalid'
+    },
+    {
+      path: `skills/${overlongSkillName}/SKILL.md`,
+      body: `---\nname: ${overlongSkillName}\n---\nBody`,
       code: 'skill.id-invalid'
     },
     {

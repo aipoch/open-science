@@ -28,6 +28,7 @@ type WorkspaceSessionControllerOptions = {
   loadSpecialists: () => Promise<void>
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
+  saveAsSkillInFlightSessionIds: string[]
   hasUnfinishedTransfers: (sessionId: string) => boolean
   beginSessionDeletion: (sessionId: string) => boolean
   settleSessionDeletion: (sessionId: string, deleted: boolean) => void
@@ -122,6 +123,7 @@ const useWorkspaceSessionController = ({
   loadSpecialists,
   promptInFlightSessionIds,
   sendPreparationInFlightSessionIds,
+  saveAsSkillInFlightSessionIds,
   hasUnfinishedTransfers,
   beginSessionDeletion,
   settleSessionDeletion,
@@ -217,6 +219,7 @@ const useWorkspaceSessionController = ({
     !deletingIds.has(session.id) &&
     !promptInFlightSessionIds.includes(session.id) &&
     !sendPreparationInFlightSessionIds.includes(session.id) &&
+    !saveAsSkillInFlightSessionIds.includes(session.id) &&
     session.status !== 'running' &&
     session.status !== 'waiting-for-user' &&
     session.status !== 'waiting-permission' &&

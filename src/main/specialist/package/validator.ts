@@ -24,9 +24,12 @@ export type SpecialistPackageFile = { path: string; bytes: Uint8Array }
 
 const decoder = new TextDecoder('utf-8', { fatal: true })
 const SAFE_ID = /^[a-z0-9-]+$/
+const SAFE_SKILL_NAME = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/
 const RESERVED_ID_PREFIXES = ['os-', 'mcp-'] as const
 const isSafeContributionId = (value: string): boolean =>
   SAFE_ID.test(value) && !RESERVED_ID_PREFIXES.some((prefix) => value.startsWith(prefix))
+const isSafeSkillName = (value: string): boolean =>
+  SAFE_SKILL_NAME.test(value) && !RESERVED_ID_PREFIXES.some((prefix) => value.startsWith(prefix))
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -429,7 +432,7 @@ const planBundledSkills = (
   const plans: SpecialistPackageSkillPlan[] = []
   for (const id of [...roots].sort()) {
     const root = `skills/${id}`
-    if (!isSafeContributionId(id)) {
+    if (!isSafeSkillName(id)) {
       warning(
         diagnostics,
         'skill.id-invalid',

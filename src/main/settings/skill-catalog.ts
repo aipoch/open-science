@@ -45,7 +45,12 @@ import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { readSkillFile } from '../skills/skill-files'
 import { buildSkillExportArchive, type SkillExportArchive } from '../skills/export'
-import { SAFE_SKILL_DIRECTORY_NAME, UserSkillRepository } from '../skills/user-skill-repository'
+import {
+  SAFE_SKILL_DIRECTORY_NAME,
+  UserSkillRepository,
+  isReservedSkillName
+} from '../skills/user-skill-repository'
+import { createLogger } from '../logger'
 import {
   provisionAppClaudeConfigDir,
   type ClaudeRuntimeModelConfig
@@ -77,6 +82,8 @@ type DiscoveredAgentHomeSkill = {
   fallbackAliases: AgentHomeSkillRef[]
   matchedFallbackDirectoryNames: Set<string>
 }
+
+const log = createLogger('skills')
 
 type SkillCatalogModuleOptions = {
   repository: SettingsRepository
@@ -149,8 +156,31 @@ class SkillCatalogModule {
 
   private async catalog(): Promise<BundledSkill[]> {
     const [featured, user] = await Promise.all([this.skillRegistry.list(), this.userSkills.list()])
+    const bundledNames = new Set(featured.map((skill) => skill.name))
+    const bundledIds = new Set(featured.map((skill) => skill.id))
+    const userIdCounts = new Map<string, number>()
+    for (const skill of user) userIdCounts.set(skill.id, (userIdCounts.get(skill.id) ?? 0) + 1)
+    const eligibleUserSkills = user.filter((skill) => {
+      const reason = isReservedSkillName(skill.name)
+        ? 'reserved prefix (os- or mcp-)'
+        : bundledNames.has(skill.name)
+          ? 'bundled Skill name'
+          : bundledIds.has(skill.id)
+            ? 'bundled Skill id'
+            : (userIdCounts.get(skill.id) ?? 0) > 1
+              ? 'duplicate user Skill id'
+              : undefined
+      if (!reason) return true
+      log.warn('skipping user Skill with protected identity', {
+        source: skill.source,
+        id: skill.id,
+        name: skill.name,
+        reason
+      })
+      return false
+    })
     const newestByName = new Map<string, BundledSkill>()
-    for (const skill of [...featured, ...user]) {
+    for (const skill of [...featured, ...eligibleUserSkills]) {
       const existing = newestByName.get(skill.name)
       if (!existing || this.isNewerSkill(skill, existing)) newestByName.set(skill.name, skill)
     }
@@ -189,8 +219,11 @@ class SkillCatalogModule {
     id: string,
     read: (skill: BundledSkill) => Promise<T>
   ): Promise<T | undefined> {
-    const bundled = (await this.skillRegistry.list()).find((skill) => skill.id === id)
-    return bundled ? read(bundled) : this.userSkills.withSkillReadLock(id, read)
+    const selected = (await this.catalog()).find((skill) => skill.id === id)
+    if (!selected) return undefined
+    return selected.source === 'featured'
+      ? read(selected)
+      : this.userSkills.withSkillReadLock(id, read)
   }
 
   async publishHostSkill(name: string, sourcePath: string, overwrite: boolean): Promise<string> {

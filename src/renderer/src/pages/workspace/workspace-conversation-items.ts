@@ -1,6 +1,7 @@
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
 import { ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME } from '../../../../shared/acp'
 import type { HandoffLifecycleEvent } from '../../../../shared/handoff-lifecycle'
+import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 
 import {
   projectHandoffLifecycle,
@@ -200,13 +201,19 @@ const createConversationItems = (
   handoffEvents: readonly HandoffLifecycleEvent[] = []
 ): ConversationItem[] => {
   const messages: ConversationItem[] =
-    session?.messages.map((message, index) => ({
-      id: message.id,
-      type: 'message',
-      createdAt: message.createdAt,
-      sortIndex: message.sortIndex ?? index,
-      message
-    })) ?? []
+    session?.messages.flatMap((message, index): ConversationItem[] =>
+      isHiddenControlMessage(message)
+        ? []
+        : [
+            {
+              id: message.id,
+              type: 'message',
+              createdAt: message.createdAt,
+              sortIndex: message.sortIndex ?? index,
+              message
+            }
+          ]
+    ) ?? []
   const activities: ConversationItem[] =
     session?.activities?.flatMap((activity): ConversationItem[] => {
       const planToolKind = getPlanToolKind(activity)

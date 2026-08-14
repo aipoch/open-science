@@ -106,6 +106,27 @@ describe('conversation export projection', () => {
     expect(JSON.stringify(document)).not.toContain('private chain of thought')
   })
 
+  it('excludes hidden control messages from content and title projection', () => {
+    const session = createSession()
+    session.title = ''
+    session.messages.unshift({
+      id: 'hidden-control',
+      role: 'user',
+      content: 'Save as skill',
+      status: 'complete',
+      eventIds: [],
+      turnIntent: 'save-as-skill',
+      createdAt: 1_709_999_999_000,
+      updatedAt: 1_709_999_999_000
+    })
+
+    const document = createConversationExportDocument(session, 1_710_000_003_000)
+
+    expect(document.title).toBe('Question Use **Markdown**.')
+    expect(document.messages).toHaveLength(2)
+    expect(JSON.stringify(document)).not.toContain('Save as skill')
+  })
+
   it('preserves think tags supplied by the user while removing assistant reasoning blocks', () => {
     const session = createSession()
     session.messages[0].content = 'Explain `<think>` and preserve <think>this example</think>.'

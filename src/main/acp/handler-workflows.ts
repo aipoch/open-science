@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 
 import type {
   AcpCreateSessionRequest,
@@ -6,13 +7,22 @@ import type {
   AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSaveAsSkillRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
-import { continueInterruptedTurn } from './interrupted-turn-continuation'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
+import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
+import {
+  getActiveConversationContext,
+  resolveMessageBranchPath
+} from '../../shared/conversation-graph'
+import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
+import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
+import type { HistoryReplayDescriptor, HistoryReplayTarget } from '../../shared/history-preamble'
+import type { AcpBackendGenerationView } from './backend-generation-owner'
 
 const log = createLogger('acp')
 const resumeLogHashKey = randomBytes(32)
@@ -28,13 +38,15 @@ const SAFE_RESUME_ERROR_KINDS = new Set([
   'conversation_restore_failed'
 ])
 const SAFE_RESUME_SERVICES = new Set(['session', 'provider', 'mcp', 'transport'])
-
 type AcpHandlerWorkflowRuntime = {
   getSnapshot(): AcpStateSnapshot
+  hasLiveSession(projectId: string, sessionId: string): boolean
+  captureSessionBackend(sessionId: string): AcpBackendGenerationView | undefined
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
   startContinuation(request: AcpPromptRequest): Promise<void>
+  startContinuationWhen(request: AcpPromptRequest, validate: () => Promise<void>): Promise<unknown>
 }
 
 type PromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -55,6 +67,7 @@ type AcpHandlerWorkflows = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpStateSnapshot>
+  saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpStateSnapshot>
   sendPrompt(request: AcpPromptRequest): Promise<AcpStateSnapshot>
 }
 
@@ -62,11 +75,130 @@ type InterruptedTurnSessionSource = {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
 }
 
+type SaveAsSkillAdmission = (sessionId: string) => void | Promise<void>
+
 const safeRead = (value: object, key: string): unknown => {
   try {
     return (value as Record<string, unknown>)[key]
   } catch {
     return undefined
+  }
+}
+
+const saveAsSkillReplayTargetForBackend = (
+  backend: AcpBackendGenerationView
+): HistoryReplayTarget => {
+  if (backend.framework.id === 'opencode') return 'opencode'
+  if (backend.framework.id === 'codex') {
+    return backend.modelRoute === 'codex-bridge' ? 'codex-bridge' : 'codex-response'
+  }
+  return 'claude-code'
+}
+
+const prepareSaveAsSkillContinuation = (
+  runtime: Pick<AcpHandlerWorkflowRuntime, 'captureSessionBackend' | 'hasLiveSession'>,
+  session: PersistedChatSession | undefined,
+  request: AcpSaveAsSkillRequest
+): { session: PersistedChatSession; continuation: AcpPromptRequest } => {
+  if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
+    throw new Error('Save as skill Session is unavailable.')
+  }
+  const sessionBackend = runtime.captureSessionBackend(session.id)
+  if (
+    !sessionBackend ||
+    (session.agentFrameworkId && session.agentFrameworkId !== sessionBackend.framework.id) ||
+    (session.agentBackendId && session.agentBackendId !== sessionBackend.backendId)
+  ) {
+    throw new Error('Save as skill Session backend is unavailable or changed.')
+  }
+  const replayDescriptor: HistoryReplayDescriptor = {
+    target: saveAsSkillReplayTargetForBackend(sessionBackend),
+    ...(sessionBackend.context.window ? { contextWindow: sessionBackend.context.window } : {})
+  }
+  const preparedControlRun =
+    session.status === 'running' && session.activeRun?.promptMessageId === request.promptMessageId
+  const recoveredPreparedControlRun =
+    session.resumeRecovery?.kind === 'resume-required' &&
+    session.resumeRecovery.promptMessageId === request.promptMessageId &&
+    !session.pendingHistoryReplay &&
+    runtime.hasLiveSession(session.projectId, session.id)
+  if (session.pendingHistoryReplay || (session.resumeRecovery && !recoveredPreparedControlRun)) {
+    throw new Error('Save as skill requires a prepared Session.')
+  }
+  if (hasCurrentRunningDelegatedAttempt(session)) {
+    throw new Error('Save as skill is unavailable while delegated work is still running.')
+  }
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+  if (
+    !graph ||
+    !frame ||
+    frame.id !== request.agentFrameId ||
+    frame.activeBranchId !== request.messageBranchId
+  ) {
+    throw new Error('Save as skill stopped because the active conversation branch changed.')
+  }
+  const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
+  const controlMessage = activeBranchMessages.at(-1)
+  const previousMessage = activeBranchMessages.at(-2)
+  if (
+    (!preparedControlRun && !recoveredPreparedControlRun) ||
+    controlMessage?.id !== request.promptMessageId ||
+    controlMessage.role !== 'user' ||
+    controlMessage.turnIntent !== 'save-as-skill' ||
+    previousMessage?.role !== 'agent' ||
+    previousMessage.status !== 'complete'
+  ) {
+    throw new Error('Save as skill requires a prepared control turn.')
+  }
+
+  const controlRuntimeSegment = graph.runtimeSegments.find(
+    ({ id }) => id === controlMessage.runtimeSegmentId
+  )
+  const latestFrameRuntimeSegment = graph.runtimeSegments
+    .filter(({ agentFrameId }) => agentFrameId === frame.id)
+    .at(-1)
+  const verifiedContextReset = Boolean(
+    controlMessage.runtimeSegmentId &&
+    previousMessage.runtimeSegmentId &&
+    controlMessage.runtimeSegmentId !== previousMessage.runtimeSegmentId &&
+    controlRuntimeSegment?.id === latestFrameRuntimeSegment?.id &&
+    controlRuntimeSegment?.agentFrameId === frame.id &&
+    controlRuntimeSegment?.frameworkId === sessionBackend.framework.id &&
+    (!session.agentFrameworkId || session.agentFrameworkId === sessionBackend.framework.id)
+  )
+
+  const historyReplay = buildSessionHistoryReplay(
+    activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),
+    replayDescriptor,
+    session.projectId,
+    sessionBackend.context.supportsImageInput
+  )
+  if (!historyReplay) {
+    throw new Error('Save as skill conversation history could not be replayed.')
+  }
+  const provenanceContext = getActiveConversationContext(graph, request.promptMessageId)
+  return {
+    session,
+    continuation: {
+      sessionId: session.id,
+      text: SAVE_AS_SKILL_PROMPT,
+      suppressUserMessage: true,
+      provenanceContext,
+      resumeFallback: {
+        historyPreamble: historyReplay.historyPreamble,
+        historyAttachments: historyReplay.historyAttachments,
+        historyImages: historyReplay.historyImages
+      },
+      ...(verifiedContextReset
+        ? {
+            historyPreamble: historyReplay.historyPreamble,
+            historyAttachments: historyReplay.historyAttachments,
+            historyImages: historyReplay.historyImages,
+            contextReset: true
+          }
+        : {})
+    }
   }
 }
 
@@ -121,7 +253,8 @@ const createAcpHandlerWorkflows = (
   createSessionWorkflow: AcpCreateSessionWorkflow,
   taskNotifications?: PromptNotifications,
   archiveAvailability?: SessionArchiveAvailability,
-  interruptedTurnSessions?: InterruptedTurnSessionSource
+  interruptedTurnSessions?: InterruptedTurnSessionSource,
+  saveAsSkillAdmission?: SaveAsSkillAdmission
 ): AcpHandlerWorkflows => ({
   async createSession(request): Promise<AcpCreateSessionResponse> {
     try {
@@ -190,6 +323,41 @@ const createAcpHandlerWorkflows = (
     return archiveAvailability
       ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, run)
       : run()
+  },
+
+  async saveAsSkill(request): Promise<AcpStateSnapshot> {
+    const save = async (): Promise<AcpStateSnapshot> => {
+      if (!interruptedTurnSessions) throw new Error('Save as skill is not available.')
+      const prepared = prepareSaveAsSkillContinuation(
+        runtime,
+        await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
+        request
+      )
+      const tracked = taskNotifications?.trackPrompt({
+        sessionId: prepared.session.id,
+        text: 'Save as skill'
+      })
+      try {
+        await runtime.startContinuationWhen(prepared.continuation, async () => {
+          await saveAsSkillAdmission?.(request.sessionId)
+          const admitted = prepareSaveAsSkillContinuation(
+            runtime,
+            await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
+            request
+          )
+          if (!isDeepStrictEqual(admitted.continuation, prepared.continuation)) {
+            throw new Error('Save as skill Session changed before provider admission.')
+          }
+        })
+      } catch (error) {
+        if (tracked) taskNotifications?.untrackPrompt(prepared.session.id, tracked)
+        throw error
+      }
+      return runtime.getSnapshot()
+    }
+    return archiveAvailability
+      ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, save)
+      : save()
   },
 
   async sendPrompt(request): Promise<AcpStateSnapshot> {

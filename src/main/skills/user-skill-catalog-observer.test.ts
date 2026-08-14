@@ -119,4 +119,133 @@ describe('UserSkillCatalogObserver', () => {
     expect(onCatalogChanged).toHaveBeenCalledOnce()
     observer.dispose()
   })
+
+  it('coalesces a burst to one running and one pending reconciliation', async () => {
+    const watcher = fakeWatcher()
+    let finishRunningScan: ((skills: []) => void) | undefined
+    const list = vi
+      .fn<() => Promise<[]>>()
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => new Promise<[]>((resolve) => (finishRunningScan = resolve)))
+      .mockResolvedValue([])
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged: vi.fn(),
+      watchDirectory: watcher.watchDirectory,
+      reconcileIntervalMs: 60_000
+    })
+    await observer.start()
+
+    const first = observer.notifyCatalogChanged()
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    const second = observer.notifyCatalogChanged()
+    const third = observer.notifyCatalogChanged()
+    expect(list).toHaveBeenCalledTimes(2)
+
+    finishRunningScan?.([])
+    await Promise.all([first, second, third])
+
+    expect(list).toHaveBeenCalledTimes(3)
+    observer.dispose()
+  })
+
+  it('upgrades a pending watcher reconciliation when a forced notification joins it', async () => {
+    const watcher = fakeWatcher()
+    let finishRunningScan: ((skills: []) => void) | undefined
+    const list = vi
+      .fn<() => Promise<[]>>()
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => new Promise<[]>((resolve) => (finishRunningScan = resolve)))
+      .mockResolvedValue([])
+    const onCatalogChanged = vi.fn()
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      debounceMs: 1,
+      reconcileIntervalMs: 60_000
+    })
+    await observer.start()
+
+    watcher.emitChange()
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    const forced = observer.notifyCatalogChanged()
+    finishRunningScan?.([])
+    await forced
+
+    expect(list).toHaveBeenCalledTimes(3)
+    expect(onCatalogChanged).toHaveBeenCalledOnce()
+    observer.dispose()
+  })
+
+  it('reconciles every thirty seconds when recursive watching is unavailable', async () => {
+    vi.useFakeTimers()
+    const list = vi.fn<() => Promise<[]>>().mockResolvedValue([])
+    const watchDirectory = vi.fn(() => {
+      throw new Error('recursive watch unavailable')
+    }) as unknown as typeof watch
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged: vi.fn(),
+      watchDirectory,
+      debounceMs: 1
+    })
+
+    try {
+      await observer.start()
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(list).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(2)
+      expect(list).toHaveBeenCalledTimes(2)
+    } finally {
+      observer.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not poll when recursive watching starts successfully', async () => {
+    vi.useFakeTimers()
+    const watcher = fakeWatcher()
+    const list = vi.fn<() => Promise<[]>>().mockResolvedValue([])
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged: vi.fn(),
+      watchDirectory: watcher.watchDirectory
+    })
+
+    try {
+      await observer.start()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(list).toHaveBeenCalledOnce()
+    } finally {
+      observer.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('accepts a new notification immediately after an awaited drain', async () => {
+    const watcher = fakeWatcher()
+    const list = vi.fn<() => Promise<[]>>().mockResolvedValue([])
+    const onCatalogChanged = vi.fn()
+    const observer = new UserSkillCatalogObserver({
+      storageRoot: await makeStorage(),
+      catalog: { list },
+      onCatalogChanged,
+      watchDirectory: watcher.watchDirectory,
+      reconcileIntervalMs: 60_000
+    })
+    await observer.start()
+
+    await observer.notifyCatalogChanged()
+    await observer.notifyCatalogChanged()
+
+    expect(list).toHaveBeenCalledTimes(3)
+    expect(onCatalogChanged).toHaveBeenCalledTimes(2)
+    observer.dispose()
+  })
 })

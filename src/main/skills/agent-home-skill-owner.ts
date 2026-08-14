@@ -11,11 +11,7 @@ import {
   type StagedSkillPackage
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
-import { SAFE_SKILL_DIRECTORY_NAME, type UserSkillStore } from './user-skill-store'
-
-// Agent Home owns this external address field. Keep `slug` in its DTO/provenance while translating
-// copied packages to Open Science directory/name terminology at this adapter boundary.
-const SAFE_AGENT_HOME_SKILL_SLUG = SAFE_SKILL_DIRECTORY_NAME
+import { assertUsableSkillName, isUsableSkillName, type UserSkillStore } from './user-skill-store'
 
 export type ImportedAgentHomeIdentitySnapshot = {
   importedDirectoryName: string
@@ -394,8 +390,7 @@ class AgentHomeSkillOwner {
       entries = (await readdir(homeSkillsDir, { withFileTypes: true }))
         .filter(
           (entry) =>
-            (entry.isDirectory() || entry.isSymbolicLink()) &&
-            SAFE_AGENT_HOME_SKILL_SLUG.test(entry.name)
+            (entry.isDirectory() || entry.isSymbolicLink()) && isUsableSkillName(entry.name)
         )
         .map((entry) => entry.name)
         .sort()
@@ -481,9 +476,7 @@ class AgentHomeSkillOwner {
     options: AgentHomeImportOptions = {}
   ): Promise<ImportOutcome> {
     const requestedSlug = skill.slug
-    if (!SAFE_AGENT_HOME_SKILL_SLUG.test(requestedSlug)) {
-      throw new Error(`Refusing to import agent-home skill with unsafe slug: ${requestedSlug}`)
-    }
+    assertUsableSkillName(requestedSlug)
 
     // Stat the source up front so a missing path fails loudly instead of leaving a half-copied
     // destination behind. The caller (IPC layer) is expected to pass paths that came from

@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 import { findServiceState, readWebToken, resolveConfigRoot, STATE_FILE } from './config-root.mjs'
+import { codexLoginCommand } from './codex-login.mjs'
 import { connectToOpenScience } from './index.mjs'
 import { locateApp } from './locate-app.mjs'
 
@@ -26,6 +27,7 @@ Commands:
   stop        Gracefully stop the backend
   status      Show backend status
   url         Print the authenticated web URL
+  codex login [--force]
   project list
   project create <name> [--description <text>]
   run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--wait]
@@ -56,6 +58,7 @@ Options:
   --yes                  Confirm the offline rollback conversion
   --no-open              Do not open the browser after start
   --no-sandbox           Disable Chromium's process sandbox (security risk; start only)
+  --force                Sign in again even when Codex credentials already exist
   --json                 Emit one machine-readable result
   -h, --help             Show this help`
 
@@ -78,7 +81,7 @@ const VALUE_OPTIONS = {
 }
 
 const TASK_COMMANDS = new Set(['project', 'run', 'session', 'artifacts'])
-const GROUP_COMMANDS = new Set(['project', 'session', 'artifacts'])
+const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'artifacts'])
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -110,6 +113,7 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--no-sandbox') options.noSandbox = true
     else if (arg === '--json') options.json = true
     else if (arg === '--yes') options.yes = true
+    else if (arg === '--force') options.force = true
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
     else if (arg === '--cancel-on-timeout') options.cancelOnTimeout = true
@@ -171,6 +175,15 @@ export const parseCliArgs = (argv) => {
   }
   if (options.dataRoot && command !== 'rollback-to-0.7.3') {
     throw new CliUsageError('--data-root requires rollback-to-0.7.3.')
+  }
+  if (options.force && (command !== 'codex' || subcommand !== 'login')) {
+    throw new CliUsageError('--force requires codex login.')
+  }
+  if (command === 'codex' && subcommand === 'login') {
+    if (options.json || options.jsonl) {
+      throw new CliUsageError('codex login does not support machine-readable output.')
+    }
+    if (positionals.length > 0) throw new CliUsageError('codex login accepts no arguments.')
   }
   return {
     command,
@@ -826,6 +839,7 @@ export const runCli = async (argv = process.argv.slice(2)) => {
   else if (command === 'stop') await stopCommand(options)
   else if (command === 'status') await statusCommand(options)
   else if (command === 'url') await urlCommand(options)
+  else if (command === 'codex' && parsed.subcommand === 'login') await codexLoginCommand(options)
   else if (command === 'rollback-to-0.7.3') await rollbackCommand(options)
   else if (TASK_COMMANDS.has(command)) await runTaskCommand(parsed)
   else throw new CliUsageError(`Unknown command: ${command}\n\n${usage}`)

@@ -3,22 +3,32 @@ import type {
   AcpPromptRequest,
   AcpStateSnapshot
 } from '../../shared/acp'
-import { getActiveConversationContext } from '../../shared/conversation-graph'
+import {
+  getActiveConversationContext,
+  resolveActiveConversationMessages
+} from '../../shared/conversation-graph'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../shared/uploads'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 
 const INTERRUPTED_TURN_CONTINUATION_PROMPT =
   'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
+const SAVE_AS_SKILL_PROMPT = `[System] Distill this session into a reusable Skill.
+
+Review the active conversation branch: what was the goal, which agents and tools were used, what were the key steps, and what steering or corrections did the user provide along the way? Capture the reusable pattern, not a verbatim transcript.
+
+First decide whether the branch contains a settled procedure the user is likely to run again. If it does not, briefly explain why and stop. If it does, load Customize and follow its Skill Creator workflow.`
 
 const buildContinuationPrompt = (
   prompt: PersistedChatSession['messages'][number],
   contextReset: boolean
 ): string =>
-  contextReset
-    ? INTERRUPTED_TURN_CONTINUATION_PROMPT
-    : `${INTERRUPTED_TURN_CONTINUATION_PROMPT}\n\nOriginal user request:\n${prompt.content}`
+  prompt.turnIntent === 'save-as-skill'
+    ? SAVE_AS_SKILL_PROMPT
+    : contextReset
+      ? INTERRUPTED_TURN_CONTINUATION_PROMPT
+      : `${INTERRUPTED_TURN_CONTINUATION_PROMPT}\n\nOriginal user request:\n${prompt.content}`
 
 type InterruptedTurnContinuationRuntime = {
   getSnapshot(): AcpStateSnapshot
@@ -124,13 +134,18 @@ const buildContinuationRequest = (
   const provenanceContext = resolveProvenanceContext(session, request)
   const contextReset = request.contextReset
   const replayMessages = contextReset
-    ? session.messages.map((message) =>
-        message.role === 'agent' &&
-        message.responseToMessageId === request.promptMessageId &&
-        message.status === 'error'
-          ? { ...message, status: 'complete' as const }
-          : message
+    ? (session.conversationGraph
+        ? resolveActiveConversationMessages(session.conversationGraph)
+        : session.messages
       )
+        .filter((message) => !isHiddenControlMessage(message))
+        .map((message) =>
+          message.role === 'agent' &&
+          message.responseToMessageId === request.promptMessageId &&
+          message.status === 'error'
+            ? { ...message, status: 'complete' as const }
+            : message
+        )
     : undefined
   const replay =
     contextReset && replayMessages
@@ -144,6 +159,9 @@ const buildContinuationRequest = (
           contextReset.supportsImageInput
         )
       : undefined
+  if (contextReset && !replay) {
+    throw new Error('Interrupted conversation history could not be replayed after context reset.')
+  }
   const attachments = contextReset
     ? undefined
     : livePrompt?.attachments?.length
@@ -159,11 +177,13 @@ const buildContinuationRequest = (
     ...(prompt.turnIntent === 'plan-first' || livePrompt?.turnIntent === 'plan-first'
       ? { turnIntent: 'plan-first' as const }
       : {}),
-    ...(livePrompt?.forcedSkillIds?.length
-      ? { forcedSkillIds: livePrompt.forcedSkillIds }
-      : skillIds?.length
-        ? { forcedSkillIds: skillIds }
-        : {}),
+    ...(prompt.turnIntent === 'save-as-skill'
+      ? {}
+      : livePrompt?.forcedSkillIds?.length
+        ? { forcedSkillIds: livePrompt.forcedSkillIds }
+        : skillIds?.length
+          ? { forcedSkillIds: skillIds }
+          : {}),
     ...(livePrompt?.referencedArtifacts?.length
       ? { referencedArtifacts: livePrompt.referencedArtifacts }
       : referencedArtifacts?.length
@@ -220,3 +240,4 @@ export const continueInterruptedTurn = async (
 }
 
 export type { InterruptedTurnContinuationDependencies, InterruptedTurnContinuationRuntime }
+export { SAVE_AS_SKILL_PROMPT }

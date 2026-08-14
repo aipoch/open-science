@@ -251,10 +251,12 @@ describe('workspace Agent Runtime hook contract', () => {
         'delegatedWorkUnavailableBySession',
         'promptInFlightSessionIds',
         'sendPreparationInFlightSessionIds',
+        'saveAsSkillInFlightSessionIds',
         'nativeContextCompactionSessionIds',
         'subscribeToSubagentRuntimeUpdates',
         'compactContext',
         'ensureSessionReady',
+        'saveAsSkill',
         'sendMessage',
         'resendEditedMessage',
         'cancelRun',
@@ -275,6 +277,7 @@ describe('workspace Agent Runtime hook contract', () => {
       delegatedWorkUnavailableBySession: {},
       promptInFlightSessionIds: ['session-1'],
       sendPreparationInFlightSessionIds: [],
+      saveAsSkillInFlightSessionIds: [],
       nativeContextCompactionSessionIds: ['session-1']
     })
   })

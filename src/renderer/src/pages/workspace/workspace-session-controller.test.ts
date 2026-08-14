@@ -122,6 +122,7 @@ const renderController = (overrides: Partial<Options> = {}): ControllerHook => {
     loadSpecialists: vi.fn().mockResolvedValue(undefined),
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
+    saveAsSkillInFlightSessionIds: [],
     hasUnfinishedTransfers: vi.fn(() => false),
     beginSessionDeletion: vi.fn(() => true),
     settleSessionDeletion: vi.fn(),
@@ -239,6 +240,21 @@ describe('workspace session controller', () => {
     mounted.push(hook)
 
     expect(hook.result.current.lifecycle.canArchive(active)).toBe(false)
+  })
+
+  it('does not archive while Save as skill owns prompt admission', () => {
+    const active = session()
+    const updateSessionArchive = vi.fn()
+    useSessionStore.setState({ sessions: [active], updateSessionArchive })
+    const hook = renderController({
+      activeSession: active,
+      saveAsSkillInFlightSessionIds: [active.id]
+    })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canArchive(active)).toBe(false)
+    act(() => hook.result.current.actions.archive(active))
+    expect(updateSessionArchive).not.toHaveBeenCalled()
   })
 
   it('fails closed and retains pending identity when the send barrier rejects', async () => {

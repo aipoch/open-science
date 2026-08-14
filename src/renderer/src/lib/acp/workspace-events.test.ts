@@ -386,6 +386,7 @@ describe('workspace runtime events', () => {
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('error')
+    expect(session.activeRun).toBeUndefined()
     expect(session.resumeRecovery).toMatchObject({
       kind: 'resume-required',
       cause: 'cancelled',
@@ -2695,6 +2696,32 @@ describe('workspace runtime events', () => {
       await vi.runAllTimersAsync()
 
       expect(reviewerRun).not.toHaveBeenCalled()
+
+      vi.unstubAllGlobals()
+    })
+
+    it('does not auto-review a hidden Save as skill evaluation', async () => {
+      const reviewerRun = vi.fn().mockResolvedValue(undefined)
+
+      vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun } } })
+      useSessionStore.getState().setAutoReviewEnabled('transport-session-1', true)
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'transport-session-1',
+        content: 'Evaluate this conversation for a reusable skill.',
+        turnIntent: 'save-as-skill'
+      })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'transport-session-1',
+        streamId: 'stream-skill-evaluation',
+        eventId: 'event-skill-evaluation',
+        content: 'This conversation is too simple to save as a skill.'
+      })
+
+      await applyWorkspaceRuntimeEvent(createEvent({ id: 'stop-skill-evaluation', kind: 'stop' }))
+      await vi.runAllTimersAsync()
+
+      expect(reviewerRun).not.toHaveBeenCalled()
+      expect(assembleReviewRunRequest('transport-session-1')).toBeDefined()
 
       vi.unstubAllGlobals()
     })

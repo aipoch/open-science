@@ -38,6 +38,7 @@ const readMetadata = async (directory: string): Promise<PackageSkillMetadata | u
     ) as PackageSkillMetadata
     return value &&
       typeof value.id === 'string' &&
+      SAFE_DIRECTORY_NAME.test(value.id) &&
       typeof value.version === 'string' &&
       typeof value.contentHash === 'string' &&
       typeof value.standalone === 'boolean' &&

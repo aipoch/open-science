@@ -53,6 +53,7 @@ const options = (
     isReviewing: false,
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
+    saveAsSkillInFlightSessionIds: [],
     hasBlockingRootPermissionRequest: false,
     newConversationAutoReviewEnabled: false,
     newConversationEnabledComputeHosts: [],
@@ -199,6 +200,18 @@ describe('workspace conversation controller', () => {
 
   it('blocks submit and revision while waiting for a user answer', () => {
     const input = options({ activeSession: session({ status: 'waiting-for-user' }) })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    act(() => hook.result.current.actions.revise('message-a', textDoc('changed')))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+  })
+
+  it('blocks submit and revision while Save as skill owns prompt admission', () => {
+    const input = options({ saveAsSkillInFlightSessionIds: ['session-a'] })
     const hook = renderController(input)
     mounted.push(hook)
 

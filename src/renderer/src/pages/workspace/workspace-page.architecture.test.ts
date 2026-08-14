@@ -189,7 +189,7 @@ describe('workspace page architecture', () => {
       'elicitation',
       'agentControls',
       'contextWindow',
-      'review',
+      'workflows',
       'sessionTools',
       'subagents'
     ])

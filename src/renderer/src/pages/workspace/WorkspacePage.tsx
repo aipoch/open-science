@@ -27,6 +27,7 @@ import {
 } from '@/lib/acp/workspace-events'
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
+import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 
 import {
   appendArtifactMention,
@@ -58,6 +59,7 @@ import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
 import { useWorkspaceSessionController } from './workspace-session-controller'
 import { useSideChatController } from './use-side-chat-controller'
+import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -213,6 +215,7 @@ const WorkspacePage = ({
     delegatedWorkUnavailableBySession = {},
     promptInFlightSessionIds = [],
     sendPreparationInFlightSessionIds = [],
+    saveAsSkillInFlightSessionIds = [],
     nativeContextCompactionSessionIds,
     compactContext,
     respondToPermission,
@@ -263,6 +266,7 @@ const WorkspacePage = ({
     loadSpecialists,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
+    saveAsSkillInFlightSessionIds,
     hasUnfinishedTransfers: (sessionId) => composer.lifecycle.hasUnfinishedTransfers(sessionId),
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
@@ -270,6 +274,7 @@ const WorkspacePage = ({
     deleteRuntimeSession: runtime.deleteRuntimeSession
   })
   const historySpecialistId = sessionController.view.specialist.historyId
+  const activeSpecialistId = activeSession?.specialistId
   const catalogSkillIds = useMemo(
     () => new Set(catalogSkills.map((skill) => skill.id)),
     [catalogSkills]
@@ -290,11 +295,32 @@ const WorkspacePage = ({
     )
     return effective.kind === 'specialist' ? new Set(effective.skillIds) : new Set<string>()
   }, [catalogSkills, historySpecialistId, specialistItems])
+  const activeSpecialistAllowedSkillIds = useMemo(() => {
+    if (activeSpecialistId === undefined) return undefined
+    const specialist = specialistItems.find(
+      (item) => item.kind === 'custom' && item.enabled && item.id === activeSpecialistId
+    )
+    if (specialist?.kind !== 'custom') return new Set<string>()
+    const effective = resolveEffectiveSpecialistSkills(
+      specialist,
+      catalogSkills.map((skill) => ({
+        id: skill.id,
+        frameworkName: skill.source === 'featured' ? skill.id : skill.name,
+        displayName: skill.name
+      }))
+    )
+    return effective.kind === 'specialist' ? new Set(effective.skillIds) : new Set<string>()
+  }, [activeSpecialistId, catalogSkills, specialistItems])
   const activeSessionHasSendPreparation = activeSession
     ? sendPreparationInFlightSessionIds.includes(activeSession.id)
     : false
+  const activeSessionSaveAsSkillPending = activeSession
+    ? saveAsSkillInFlightSessionIds.includes(activeSession.id)
+    : false
   const activeSessionHasRuntimeInteraction = activeSession
-    ? promptInFlightSessionIds.includes(activeSession.id) || activeSessionHasSendPreparation
+    ? promptInFlightSessionIds.includes(activeSession.id) ||
+      activeSessionHasSendPreparation ||
+      activeSessionSaveAsSkillPending
     : false
   const canEditDraft =
     isSessionPersistenceReady &&
@@ -435,6 +461,7 @@ const WorkspacePage = ({
     isReviewing,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
+    saveAsSkillInFlightSessionIds,
     hasBlockingRootPermissionRequest: hasBlockingRootPermissionRequest(
       pendingPermissions,
       activeSession?.id
@@ -526,9 +553,11 @@ const WorkspacePage = ({
   useEffect(() => {
     const sessionId = activeSession?.id
     if (!sessionId) return
-    useSessionStore.getState().setBranchSwitchBlocked(sessionId, !canEditMessage)
+    useSessionStore
+      .getState()
+      .setBranchSwitchBlocked(sessionId, !canEditMessage || activeSessionSaveAsSkillPending)
     return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
-  }, [activeSession?.id, canEditMessage])
+  }, [activeSession?.id, activeSessionSaveAsSkillPending, canEditMessage])
   const canChangeAgentControls =
     isSessionPersistenceReady &&
     activeSession?.status !== 'running' &&
@@ -546,6 +575,22 @@ const WorkspacePage = ({
     !activeSession.interrupted &&
     !activeSession.fixLoopActive &&
     !activeSession.compacting
+  const customizeAvailable =
+    catalogSkillIds.has('customize') &&
+    !sessionController.view.specialist.unavailable &&
+    (!activeSpecialistAllowedSkillIds || activeSpecialistAllowedSkillIds.has('customize'))
+  const activeSessionSaveAsSkillRunning =
+    activeSessionSaveAsSkillPending || isSaveAsSkillRunning(activeSession)
+  const saveAsSkillAvailability = resolveSaveAsSkillAvailability({
+    session: activeSession,
+    persistenceReady: isSessionPersistenceReady,
+    runtimeInteraction: activeSessionHasRuntimeInteraction,
+    pending: activeSessionSaveAsSkillPending,
+    running: activeSessionSaveAsSkillRunning,
+    customizeAvailable,
+    hasRunningSubagents: hasCurrentRunningDelegatedAttempt(activeSession),
+    sideChatOpen: sideChat.view !== undefined
+  })
   const compactContextDisabledReason = !activeSessionSupportsNativeCompaction
     ? 'Send a message to reconnect this session before compacting.'
     : activeSession?.status === 'error'
@@ -812,6 +857,24 @@ const WorkspacePage = ({
     void window.api.reviewer.run({ ...request, origin: 'manual' })
   }
 
+  const requestSaveAsSkill = (): void => {
+    if (!activeSession || !saveAsSkillAvailability.enabled) return
+    const graph = activeSession.conversationGraph
+    const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+    if (!frame) return
+    setAttachmentError(null)
+    void runtime
+      .saveAsSkill({
+        projectId: activeSession.projectId,
+        sessionId: activeSession.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId
+      })
+      .catch((error: unknown) => {
+        setAttachmentError(error instanceof Error ? error.message : String(error))
+      })
+  }
+
   // Revokes one app-owned grant for the visible Agent session; new conversations have no grants.
   const revokeActivePermissionGrant = (categoryKey: string): void => {
     if (!activeSession) return
@@ -1043,10 +1106,18 @@ const WorkspacePage = ({
               compactDisabledReason: compactContextDisabledReason,
               compact: compactActiveContext
             }}
-            review={{
-              disabled: isRequestReviewDisabled,
-              running: isReviewing,
-              request: requestManualReview
+            workflows={{
+              review: {
+                disabled: isRequestReviewDisabled,
+                running: isReviewing,
+                request: requestManualReview
+              },
+              saveAsSkill: {
+                disabled: !saveAsSkillAvailability.enabled,
+                disabledReason: saveAsSkillAvailability.disabledReason,
+                running: activeSessionSaveAsSkillRunning,
+                request: requestSaveAsSkill
+              }
             }}
             sessionTools={{
               notebookReference: activeNotebookReference,

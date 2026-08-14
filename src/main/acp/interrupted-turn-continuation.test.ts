@@ -60,6 +60,37 @@ const session = (messages: PersistedChatMessage[]): PersistedChatSession => ({
 })
 
 describe('continueInterruptedTurn', () => {
+  it('reconstructs the hidden Save as skill turn after restart', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
+    ])
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+    await continueInterruptedTurn(
+      {
+        runtime: {
+          getSnapshot: vi.fn(() => snapshot()),
+          getLatestUserPrompt: vi.fn(() => undefined),
+          startContinuation
+        },
+        loadSession: vi.fn(async () => durable)
+      },
+      { sessionId: 'session-1', projectId: 'project-1', promptMessageId: 'prompt-1' }
+    )
+
+    const request = startContinuation.mock.calls[0][0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        text: expect.stringMatching(
+          /Distill this session.*Review the active conversation branch.*First decide.*If it does not.*If it does.*load Customize/s
+        ),
+        suppressUserMessage: true,
+        provenanceContext: expect.objectContaining({ promptMessageId: 'prompt-1' })
+      })
+    )
+    expect(request).not.toHaveProperty('forcedSkillIds')
+  })
+
   it('reconstructs app-owned continuation authority from the durable active user turn', async () => {
     const durable = session([
       message('prompt-1', 'user', 'Analyze the attached evidence', {
@@ -195,6 +226,10 @@ describe('continueInterruptedTurn', () => {
       const durable = session([
         message('prompt-0', 'user', 'Collect baseline evidence'),
         message('answer-0', 'agent', 'Baseline is ready', { responseToMessageId: 'prompt-0' }),
+        message('save-control-0', 'user', 'Save as skill', { turnIntent: 'save-as-skill' }),
+        message('save-answer-0', 'agent', 'No reusable workflow was found', {
+          responseToMessageId: 'save-control-0'
+        }),
         message('prompt-1', 'user', 'Compare the cohorts'),
         message('answer-1', 'agent', 'I loaded both cohort tables', {
           responseToMessageId: 'prompt-1',
@@ -238,9 +273,113 @@ describe('continueInterruptedTurn', () => {
       expect(request.historyPreamble).toContain('Collect baseline evidence')
       expect(request.historyPreamble).toContain('Compare the cohorts')
       expect(request.historyPreamble).toContain('I loaded both cohort tables')
+      expect(request.historyPreamble).not.toContain('Save as skill')
       expect(request.text).not.toContain('Compare the cohorts')
     }
   )
+
+  it('replays only the durable active branch when a hidden turn recovers after context reset', async () => {
+    const durable = session([
+      message('prompt-0', 'user', 'Build the active workflow'),
+      message('answer-0', 'agent', 'The active workflow is ready', {
+        responseToMessageId: 'prompt-0'
+      }),
+      message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
+    ])
+    const graph = durable.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    const inactiveMessage = message('inactive-prompt', 'user', 'Use unrelated branch rules')
+    durable.messages.push(inactiveMessage)
+    graph.messages.push({
+      ...inactiveMessage,
+      agentFrameId: frame.id,
+      introducedOnBranchId: 'inactive-branch',
+      parentMessageId: 'answer-0',
+      revisionRootMessageId: inactiveMessage.id,
+      runtimeSegmentId: graph.runtimeSegments[0].id
+    })
+    graph.branches.push({
+      id: 'inactive-branch',
+      agentFrameId: frame.id,
+      parentBranchId: frame.activeBranchId,
+      forkMessageId: 'answer-0',
+      headMessageId: inactiveMessage.id,
+      createdAt: 2,
+      updatedAt: 2
+    })
+    graph.runtimeSegments.push({
+      id: 'runtime-resumed',
+      agentFrameId: frame.id,
+      frameworkId: 'claude-code',
+      startedAt: 2
+    })
+    const startContinuation = vi.fn<(request: AcpPromptRequest) => Promise<void>>(async () => {})
+
+    await continueInterruptedTurn(
+      {
+        runtime: {
+          getSnapshot: () => snapshot(),
+          getLatestUserPrompt: () => undefined,
+          startContinuation
+        },
+        loadSession: vi.fn(async () => durable)
+      },
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        promptMessageId: 'prompt-1',
+        contextReset: {
+          runtimeSegmentId: 'runtime-resumed',
+          historyReplayTarget: 'claude-code',
+          contextWindow: 100_000,
+          supportsImageInput: false
+        }
+      }
+    )
+
+    const request = startContinuation.mock.calls[0][0]
+    expect(request.historyPreamble).toContain('Build the active workflow')
+    expect(request.historyPreamble).not.toContain('Use unrelated branch rules')
+    expect(request.historyPreamble).not.toContain('Save as skill')
+  })
+
+  it('fails closed after context reset when only hidden controls remain for replay', async () => {
+    const durable = session([
+      message('prompt-1', 'user', 'Save as skill', { turnIntent: 'save-as-skill' })
+    ])
+    durable.conversationGraph!.runtimeSegments.push({
+      id: 'runtime-resumed',
+      agentFrameId: durable.conversationGraph!.activeFrameId,
+      frameworkId: 'claude-code',
+      startedAt: 2
+    })
+    const startContinuation = vi.fn()
+
+    await expect(
+      continueInterruptedTurn(
+        {
+          runtime: {
+            getSnapshot: () => snapshot(),
+            getLatestUserPrompt: () => undefined,
+            startContinuation
+          },
+          loadSession: vi.fn(async () => durable)
+        },
+        {
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          promptMessageId: 'prompt-1',
+          contextReset: {
+            runtimeSegmentId: 'runtime-resumed',
+            historyReplayTarget: 'claude-code',
+            contextWindow: 100_000,
+            supportsImageInput: false
+          }
+        }
+      )
+    ).rejects.toThrow('history could not be replayed after context reset')
+    expect(startContinuation).not.toHaveBeenCalled()
+  })
 
   it('does not dispatch a second continuation while the recovered prompt is already running', async () => {
     const durable = session([message('prompt-1', 'user', 'Keep going')])

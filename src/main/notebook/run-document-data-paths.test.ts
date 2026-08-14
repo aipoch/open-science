@@ -170,4 +170,12 @@ describe('run document data-path codec', () => {
     const doc = { ...buildDocument(), workspaceCwd: '/Users/x/proj' }
     expect(encodeRunDocumentDataPaths(doc, ROOT).workspaceCwd).toBe('/Users/x/proj')
   })
+
+  it('rejects an escaping $DATA path during Notebook hydration', () => {
+    const doc = { ...buildDocument(), workspaceCwd: '$DATA/../../outside' }
+
+    expect(() => decodeRunDocumentDataPaths(doc, ROOT)).toThrow(
+      /portable relative path within the data root/
+    )
+  })
 })

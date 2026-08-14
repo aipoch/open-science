@@ -17,7 +17,8 @@ import {
   type AcpContextUsage,
   type AcpPermissionGrant,
   type AcpPermissionRequest,
-  type AcpPermissionResponse
+  type AcpPermissionResponse,
+  type AcpSaveAsSkillRequest
 } from '../../../../shared/acp'
 import {
   DEFAULT_PERMISSION_PROFILE,
@@ -60,6 +61,7 @@ import {
   createPermissionResponseAttemptOwner,
   pendingWorkspacePermissions
 } from './workspace-permission-response-attempt-owner'
+import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
 
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type WorkspacePermissionProfileRuntime = Pick<
@@ -98,10 +100,14 @@ type WorkspaceAgentRuntime = {
   delegatedWorkUnavailableBySession: Record<string, string>
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
+  saveAsSkillInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
   subscribeToSubagentRuntimeUpdates: (listener: SubagentRuntimeListener) => () => void
   compactContext: (sessionId: string) => Promise<boolean>
   ensureSessionReady: (sessionId: string) => Promise<void>
+  saveAsSkill: (
+    request: Omit<AcpSaveAsSkillRequest, 'historyReplay' | 'promptMessageId'>
+  ) => Promise<void>
   sendMessage: (
     input: SendWorkspaceMessageIntent
   ) => Promise<SendWorkspaceMessageResult | undefined>
@@ -385,6 +391,11 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     (sessionId: string): Promise<void> => lifecycleOwner.ensureReady(runtime, sessionId),
     [lifecycleOwner, runtime]
   )
+  const { saveAsSkillInFlightSessionIds, saveAsSkill } = useWorkspaceRuntimeSaveAsSkillOwner({
+    runtime,
+    historyReplayDescriptor,
+    drainRuntimeEvents
+  })
   const resumeInterruptedSession = useCallback(
     (sessionId: string): Promise<void> =>
       lifecycleOwner.resume(runtime, sessionId, drainRuntimeEvents, {
@@ -535,10 +546,12 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     delegatedWorkUnavailableBySession: runtime.state.delegatedWorkUnavailableBySession ?? {},
     promptInFlightSessionIds: runtime.state.promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
+    saveAsSkillInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
     subscribeToSubagentRuntimeUpdates,
     compactContext,
     ensureSessionReady,
+    saveAsSkill,
     sendMessage,
     resendEditedMessage,
     cancelRun,

@@ -728,6 +728,15 @@ export type AcpCompactSessionRequest = {
   reason?: 'manual' | 'overflow-recovery'
 }
 
+export type AcpSaveAsSkillRequest = {
+  projectId: string
+  sessionId: string
+  agentFrameId: string
+  messageBranchId: string
+  // Durable hidden control Message created on the active Branch before dispatch.
+  promptMessageId: string
+}
+
 export type AcpSetPermissionProfileRequest = {
   sessionId: string
   profile: PermissionProfileId

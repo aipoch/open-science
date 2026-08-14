@@ -1,10 +1,11 @@
 import { Marked, Renderer } from 'marked'
 
-import type {
-  PersistedArtifact,
-  PersistedChatMessage,
-  PersistedChatSession,
-  PersistedMessageImage
+import {
+  isHiddenControlMessage,
+  type PersistedArtifact,
+  type PersistedChatMessage,
+  type PersistedChatSession,
+  type PersistedMessageImage
 } from './session-persistence'
 
 export type ConversationExportFormat = 'markdown' | 'pdf'
@@ -78,9 +79,12 @@ const deriveTitleFromPrompt = (content: string): string => {
   return normalizedPrompt.trim()
 }
 
-const resolveConversationExportTitle = (session: PersistedChatSession): string => {
+const resolveConversationExportTitle = (
+  session: PersistedChatSession,
+  messages: readonly PersistedChatMessage[]
+): string => {
   const storedTitle = normalizeInlineText(session.title)
-  const firstUserMessage = session.messages.find((message) => message.role === 'user')
+  const firstUserMessage = messages.find((message) => message.role === 'user')
   const prompt = firstUserMessage?.content ?? ''
 
   if (prompt && isKnownTruncatedAutoTitle(storedTitle, prompt)) {
@@ -206,14 +210,15 @@ export const createConversationExportDocument = (
   const artifactsById = new Map(
     (session.artifacts ?? []).map((artifact) => [artifact.id, artifact])
   )
+  const messages = session.messages.filter((message) => !isHiddenControlMessage(message))
 
   return {
     version: 1,
-    title: resolveConversationExportTitle(session),
+    title: resolveConversationExportTitle(session, messages),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     exportedAt,
-    messages: session.messages.map((message) => ({
+    messages: messages.map((message) => ({
       role: message.role === 'agent' ? 'assistant' : 'user',
       createdAt: message.createdAt,
       markdown:

@@ -10,6 +10,7 @@ import type {
   ElicitationResponse,
   AcpPromptRequest,
   AcpResumeSessionRequest,
+  AcpSaveAsSkillRequest,
   AcpRevokePermissionGrantRequest,
   AcpSetPermissionProfileRequest,
   AcpStateSnapshot
@@ -67,6 +68,11 @@ const acpCommands = Object.freeze({
     readonly [request: AcpPromptRequest],
     AcpStateSnapshot
   >('acp:send-prompt'),
+  saveAsSkill: defineApplicationCommand<
+    'acp:save-as-skill',
+    readonly [request: AcpSaveAsSkillRequest],
+    AcpStateSnapshot
+  >('acp:save-as-skill'),
   cancel: defineApplicationCommand<
     'acp:cancel',
     readonly [request: AcpCancelPromptRequest],
@@ -119,6 +125,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.resetSessionContext,
   acpCommands.compactSession,
   acpCommands.sendPrompt,
+  acpCommands.saveAsSkill,
   acpCommands.cancel,
   acpCommands.deleteSession,
   acpCommands.respondPermission,
@@ -212,6 +219,12 @@ const registerAcpCommands = (
           continuation: undefined,
           suppressUserMessage: undefined
         })
+      },
+      'acp:save-as-skill': (invocation) => {
+        if (!canSatisfyHumanApproval(invocation.callerContext)) {
+          throw new Error('Only a current human caller can save a Session as a Skill.')
+        }
+        return dependencies.workflows.saveAsSkill(invocation.args[0])
       },
       'acp:cancel': (invocation) => dependencies.runtime.cancelPrompt(invocation.args[0]),
       'acp:delete-session': (invocation) => dependencies.runtime.deleteSession(invocation.args[0]),

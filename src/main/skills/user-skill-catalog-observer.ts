@@ -8,7 +8,7 @@ import type { BundledSkill } from './registry'
 
 const log = createLogger('skills')
 const DEFAULT_DEBOUNCE_MS = 150
-const DEFAULT_RECONCILE_INTERVAL_MS = 2_000
+const DEFAULT_RECONCILE_INTERVAL_MS = 30_000
 const OBSERVED_SOURCES: readonly Extract<SkillSource, 'imported' | 'personal'>[] = [
   'imported',
   'personal'
@@ -54,7 +54,9 @@ class UserSkillCatalogObserver {
   private debounceTimer: ReturnType<typeof setTimeout> | undefined
   private reconcileTimer: ReturnType<typeof setInterval> | undefined
   private fingerprint = ''
-  private reconcileTail = Promise.resolve()
+  private reconcileDrain: Promise<void> | undefined
+  private reconcilePending = false
+  private reconcileForcePending = false
   private disposed = false
 
   constructor(private readonly options: UserSkillCatalogObserverOptions) {}
@@ -99,6 +101,8 @@ class UserSkillCatalogObserver {
     if (this.reconcileTimer) clearInterval(this.reconcileTimer)
     this.debounceTimer = undefined
     this.reconcileTimer = undefined
+    this.reconcilePending = false
+    this.reconcileForcePending = false
   }
 
   private scheduleReconcile(): void {
@@ -121,11 +125,32 @@ class UserSkillCatalogObserver {
   }
 
   private enqueueReconcile(force: boolean): Promise<void> {
-    const reconcile = this.reconcileTail.then(() => this.reconcile(force))
-    this.reconcileTail = reconcile.catch((error) => {
-      log.warn('user skill catalog reconciliation failed', diagnosticErrorFields(error))
+    this.reconcilePending = true
+    this.reconcileForcePending ||= force
+    if (this.reconcileDrain) return this.reconcileDrain
+
+    const drain = this.drainReconciles().finally(() => {
+      if (this.reconcileDrain === drain) this.reconcileDrain = undefined
     })
-    return reconcile
+    this.reconcileDrain = drain
+    void drain.catch(() => undefined)
+    return drain
+  }
+
+  private async drainReconciles(): Promise<void> {
+    let failure: unknown
+    while (!this.disposed && this.reconcilePending) {
+      const force = this.reconcileForcePending
+      this.reconcilePending = false
+      this.reconcileForcePending = false
+      try {
+        await this.reconcile(force)
+      } catch (error) {
+        failure ??= error
+        log.warn('user skill catalog reconciliation failed', diagnosticErrorFields(error))
+      }
+    }
+    if (failure) throw failure
   }
 
   private async reconcile(force: boolean): Promise<void> {

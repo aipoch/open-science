@@ -223,6 +223,24 @@ describe('agent-aware history replay', () => {
     expect(replay.historyAttachments.map((item) => item.id)).toEqual(['upload-9', 'document-9'])
   })
 
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'excludes a completed hidden control from a later %s replay',
+    (target) => {
+      const replay = buildWorkspaceHistoryReplay(
+        [
+          message({ role: 'user', content: 'Build a reusable workflow.' }),
+          message({ role: 'agent', content: 'The workflow is complete.' }),
+          message({ role: 'user', content: 'Save as skill', turnIntent: 'save-as-skill' }),
+          message({ role: 'agent', content: 'This workflow is not reusable yet.' })
+        ],
+        { target }
+      )!
+
+      expect(replay.historyPreamble).not.toContain('Save as skill')
+      expect(replay.historyPreamble).toContain('This workflow is not reusable yet.')
+    }
+  )
+
   it('reserves capped upload replay for an older selected image before recent documents', () => {
     const messages = [
       message({

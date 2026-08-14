@@ -73,7 +73,8 @@ const ownerNames = [
   'workspace-runtime-event-owner',
   'workspace-runtime-prompt-preparation-owner',
   'workspace-runtime-command-owner',
-  'workspace-runtime-session-lifecycle-owner'
+  'workspace-runtime-session-lifecycle-owner',
+  'workspace-runtime-save-as-skill-owner'
 ] as const
 const ownerTargets = new Map(ownerNames.map((name) => [name, modulePath(resolve(__dirname, name))]))
 const ownerFilePath = (name: (typeof ownerNames)[number]): string => `${ownerTargets.get(name)}.ts`
@@ -452,10 +453,12 @@ const hookKeys = [
   'delegatedWorkUnavailableBySession',
   'promptInFlightSessionIds',
   'sendPreparationInFlightSessionIds',
+  'saveAsSkillInFlightSessionIds',
   'nativeContextCompactionSessionIds',
   'subscribeToSubagentRuntimeUpdates',
   'compactContext',
   'ensureSessionReady',
+  'saveAsSkill',
   'sendMessage',
   'resendEditedMessage',
   'cancelRun',
@@ -515,7 +518,7 @@ const privateOwnerBoundaryViolations = (path: string, source = readSource(path))
 }
 describe('workspace runtime architecture', () => {
   const facadeFile = sourceFileFor(facadePath)
-  it('keeps the facade, four deep owners, and presentation adapter within their completion gates', () => {
+  it('keeps the facade, deep owners, and presentation adapter within their completion gates', () => {
     expect(physicalLines(facadePath), 'workspace runtime facade').toBeLessThanOrEqual(600)
     for (const name of ownerNames) {
       expect(physicalLines(ownerFilePath(name)), name).toBeLessThanOrEqual(660)
@@ -607,7 +610,8 @@ describe('workspace runtime architecture', () => {
       'workspace-runtime-session-lifecycle-owner': [
         'workspace-runtime-prompt-preparation-owner',
         'workspace-runtime-command-owner'
-      ]
+      ],
+      'workspace-runtime-save-as-skill-owner': ['workspace-runtime-prompt-preparation-owner']
     })
     expect(importsFrom(facadePath).map((reference) => reference.target)).toContain(
       subagentPresentationTarget

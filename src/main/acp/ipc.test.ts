@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpCompactSessionRequest, AcpResumeSessionRequest } from '../../shared/acp'
+import { materializeSessionConversationGraph } from '../../shared/session-persistence'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import {
   beginMigration,
@@ -43,6 +44,7 @@ const {
   disconnect,
   resetSessionContext,
   resumeSession,
+  sendAppContinuation,
   sendPrompt,
   AcpRuntimeMock
 } = vi.hoisted(() => {
@@ -57,27 +59,39 @@ const {
     .fn()
     .mockResolvedValue({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
   const resumeSession = vi.fn().mockResolvedValue({ sessionId: 's-1', cwd: '/workspace' })
+  const sendAppContinuation = vi.fn().mockResolvedValue(undefined)
   const sendPrompt = vi.fn().mockResolvedValue(undefined)
-  const AcpRuntimeMock = vi.fn().mockImplementation(function () {
+  const AcpRuntimeMock = vi.fn().mockImplementation(function (options) {
     return {
       createSession,
       cancelPrompt,
       compactSession,
       deleteSession,
       disconnect,
+      captureBackend: vi.fn().mockReturnValue({
+        framework: { id: 'claude-code' },
+        modelRoute: 'claude-anthropic',
+        context: { window: 100_000, supportsImageInput: true }
+      }),
       resetSessionContext,
       resumeSession,
+      sendAppContinuation: (request, promptAttemptId) => {
+        const prompting = sendAppContinuation(request, promptAttemptId)
+        options.callbacks?.onProviderPromptAccepted?.(request.sessionId, promptAttemptId)
+        return prompting
+      },
       sendPrompt,
       getSnapshot: vi.fn().mockReturnValue({
         status: 'idle',
         cwd: '/workspace',
-        sessionIds: [],
+        sessionIds: ['session-1'],
         events: [],
         pendingPermissions: [],
         permissionProfiles: {},
         permissionGrants: {},
         promptInFlight: false,
-        promptInFlightSessionIds: []
+        promptInFlightSessionIds: [],
+        contextUsageBySession: {}
       })
     }
   })
@@ -89,6 +103,7 @@ const {
     disconnect,
     resetSessionContext,
     resumeSession,
+    sendAppContinuation,
     sendPrompt,
     AcpRuntimeMock
   }
@@ -142,6 +157,7 @@ const registerWithFakes = (overrides?: {
   provisionedConnectorSkillNames?: string[]
   customMcpServers?: Array<{ id: string; name: string }>
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
+  interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
 }): AcpTestOptions => {
   const taskNotifications =
     overrides?.taskNotifications ??
@@ -187,7 +203,8 @@ const registerWithFakes = (overrides?: {
       runtime,
       createSessionWorkflow,
       options.taskNotifications,
-      overrides?.archiveAvailability
+      overrides?.archiveAvailability,
+      overrides?.interruptedTurnSessions
     )
   )
   return options as AcpTestOptions
@@ -206,6 +223,8 @@ afterEach(() => {
   deleteSession.mockClear()
   disconnect.mockClear()
   resumeSession.mockClear()
+  sendAppContinuation.mockReset()
+  sendAppContinuation.mockResolvedValue(undefined)
   sendPrompt.mockReset()
   sendPrompt.mockResolvedValue(undefined)
   errorLogSpy.mockClear()
@@ -247,6 +266,99 @@ it('routes delegated question responses to their owner without touching Main eli
 })
 
 describe('ACP module transport seam', () => {
+  it('holds archive admission until Save as skill is accepted without awaiting turn completion', async () => {
+    const session = materializeSessionConversationGraph({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Session',
+      cwd: '/workspace',
+      status: 'running',
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Build a reusable workflow.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'answer-1',
+          role: 'agent',
+          content: 'Done.',
+          status: 'complete',
+          eventIds: [],
+          responseToMessageId: 'prompt-1',
+          createdAt: 2,
+          completedAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'save-as-skill-control',
+          role: 'user',
+          content: 'Save as skill',
+          status: 'complete',
+          eventIds: [],
+          turnIntent: 'save-as-skill',
+          createdAt: 3,
+          updatedAt: 3
+        }
+      ],
+      activeRun: { promptMessageId: 'save-as-skill-control', startedAt: 3 },
+      createdAt: 1,
+      updatedAt: 3
+    })
+    const graph = session.conversationGraph!
+    const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+    let admissionActive = false
+    const admitted = vi.fn()
+    registerWithFakes({
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          projectId: string,
+          sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => {
+          admitted(projectId, sessionId)
+          admissionActive = true
+          try {
+            return await operation()
+          } finally {
+            admissionActive = false
+          }
+        },
+        withSessionAvailableById: async <Result>(
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation()
+      },
+      interruptedTurnSessions: { loadSession: vi.fn(async () => session) }
+    })
+    let completeTurn!: () => void
+    sendAppContinuation.mockImplementationOnce(() => {
+      expect(admissionActive).toBe(true)
+      return new Promise((resolve) => {
+        completeTurn = () => resolve(undefined)
+      })
+    })
+
+    await handlers.get('acp:save-as-skill')?.(
+      {},
+      {
+        projectId: session.projectId,
+        sessionId: session.id,
+        agentFrameId: frame.id,
+        messageBranchId: frame.activeBranchId,
+        promptMessageId: 'save-as-skill-control'
+      }
+    )
+
+    expect(admitted).toHaveBeenCalledWith('project-1', 'session-1')
+    expect(admissionActive).toBe(false)
+    completeTurn()
+  })
+
   it('pins the complete ACP call and event inventory shared by Electron and Web', () => {
     registerWithFakes()
 
@@ -275,6 +387,7 @@ describe('ACP module transport seam', () => {
       'acp:respond-plan',
       'acp:resume-session',
       'acp:revoke-permission-grant',
+      'acp:save-as-skill',
       'acp:send-prompt',
       'acp:set-permission-profile'
     ])

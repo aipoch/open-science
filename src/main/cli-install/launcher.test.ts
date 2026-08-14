@@ -76,7 +76,7 @@ describe('planCliLauncher', () => {
     expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/a b/$(x)`y`\\z/o'\\''brien'")
   })
 
-  it('uses the stable AppImage file and resolves the CLI entry after the current mount starts', () => {
+  it('mounts the stable AppImage without passing Node flags through AppRun', () => {
     const plan = planCliLauncher(
       posixEnv({
         appExecPath: '/tmp/.mount_open-scienceOLD/open-science',
@@ -85,23 +85,25 @@ describe('planCliLauncher', () => {
       })
     )
 
-    expect(plan.shim).toContain(
-      "OPEN_SCIENCE_APP_PATH='/home/alice/Open Science'\\''s build.AppImage'"
-    )
-    expect(plan.shim).toContain("exec '/home/alice/Open Science'\\''s build.AppImage' -e")
-    expect(plan.shim).toContain('process.resourcesPath')
-    expect(plan.shim).toContain('process.argv.slice(1)')
-    expect(plan.shim).toContain(' -- "$@"')
+    expect(plan.shim).toContain("app_image='/home/alice/Open Science'\\''s build.AppImage'")
+    expect(plan.shim).toContain('"$app_image" --appimage-mount')
+    expect(plan.shim).toContain('app_exec="$mount_dir"/\'open-science\'')
+    expect(plan.shim).toContain('cli_entry="$mount_dir"/\'resources/cli/index.mjs\'')
+    expect(plan.shim).toContain('"$app_exec" "$cli_entry" "$@"')
+    expect(plan.shim).not.toContain(' -e ')
     expect(plan.shim).not.toContain('/tmp/.mount_open-scienceOLD')
   })
 
-  it('preserves a leading CLI flag after terminating Node runtime options', () => {
-    const probe = spawnSync(
-      process.execPath,
-      ['-e', 'process.stdout.write(JSON.stringify(process.argv.slice(1)))', '--', '--help'],
-      { encoding: 'utf8' }
-    )
-    expect(probe).toMatchObject({ status: 0, stdout: '["--help"]' })
+  it('rejects AppImage payload paths outside the current mount', () => {
+    expect(() =>
+      planCliLauncher(
+        posixEnv({
+          appExecPath: '/tmp/.mount_open-science/open-science',
+          cliEntryPath: '/opt/Open Science/resources/cli/index.mjs',
+          appImagePath: '/home/alice/Open Science.AppImage'
+        })
+      )
+    ).toThrow('inside the current AppImage mount')
   })
 
   it('targets a per-user bin dir with a .cmd shim on Windows', () => {
@@ -235,6 +237,65 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     expect(await isCliShimStale(appImageEnv())).toBe(false)
   })
 
+  it('runs the CLI through the mounted payload and cleans up the mount process', async () => {
+    const mountDir = join(home, 'mounted AppImage')
+    const appImagePath = join(home, "Open Science's build.AppImage")
+    const resultPath = join(home, 'cli-result.txt')
+    const stoppedPath = join(home, 'mount-stopped.txt')
+    const cliDir = join(mountDir, 'resources', 'cli')
+    await mkdir(cliDir, { recursive: true })
+    await writeFile(
+      appImagePath,
+      [
+        '#!/bin/sh',
+        '[ "$1" = "--appimage-mount" ] || exit 90',
+        'printf "%s\\n" "$FAKE_MOUNT_DIR"',
+        'trap \'printf stopped > "$FAKE_STOPPED"; exit 0\' 1 2 15',
+        'while :; do sleep 0.05; done'
+      ].join('\n'),
+      { mode: 0o755 }
+    )
+    await writeFile(
+      join(mountDir, 'open-science'),
+      [
+        '#!/bin/sh',
+        'printf "%s\\n" "$OPEN_SCIENCE_APP_PATH" > "$FAKE_RESULT"',
+        'printf "%s\\n" "$ELECTRON_RUN_AS_NODE" >> "$FAKE_RESULT"',
+        'printf "%s\\n" "$@" >> "$FAKE_RESULT"',
+        'exit 23'
+      ].join('\n'),
+      { mode: 0o755 }
+    )
+    await writeFile(join(cliDir, 'index.mjs'), '')
+
+    const env = appImageEnv({
+      appExecPath: '/tmp/.mount_current/open-science',
+      cliEntryPath: '/tmp/.mount_current/resources/cli/index.mjs',
+      appImagePath
+    })
+    await installCliLauncher(env)
+    const run = spawnSync(planCliLauncher(env).target, ['--help', 'two words'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        FAKE_MOUNT_DIR: mountDir,
+        FAKE_RESULT: resultPath,
+        FAKE_STOPPED: stoppedPath
+      },
+      timeout: 10_000
+    })
+
+    expect(run).toMatchObject({ status: 23, signal: null })
+    expect((await readFile(resultPath, 'utf8')).trim().split('\n')).toEqual([
+      appImagePath,
+      '1',
+      join(mountDir, 'resources', 'cli', 'index.mjs'),
+      '--help',
+      'two words'
+    ])
+    await expect(readFile(stoppedPath, 'utf8')).resolves.toBe('stopped')
+  })
+
   it('detects and migrates a legacy shim that pins an old FUSE mount', async () => {
     await installCliLauncher(posixEnv())
     const env = appImageEnv()
@@ -244,7 +305,7 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     expect(result).toMatchObject({ installed: true })
 
     const shim = await readFile(result!.target, 'utf8')
-    expect(shim).toContain("OPEN_SCIENCE_APP_PATH='/home/alice/Open Science.AppImage'")
+    expect(shim).toContain("app_image='/home/alice/Open Science.AppImage'")
     expect(shim).not.toContain('/tmp/.mount_open-scienceNEW')
   })
 
@@ -255,7 +316,7 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
     expect(await isCliShimStale(moved)).toBe(true)
     await ensureCliLauncherCurrent(moved)
     expect(await readFile(planCliLauncher(moved).target, 'utf8')).toContain(
-      "OPEN_SCIENCE_APP_PATH='/home/alice/Applications/Open Science.AppImage'"
+      "app_image='/home/alice/Applications/Open Science.AppImage'"
     )
   })
 

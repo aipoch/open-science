@@ -459,10 +459,17 @@ const createPanelDefaults = (): PanelProps => ({
     compactDisabledReason: '',
     compact: vi.fn()
   },
-  review: {
-    disabled: false,
-    running: false,
-    request: vi.fn()
+  workflows: {
+    review: {
+      disabled: false,
+      running: false,
+      request: vi.fn()
+    },
+    saveAsSkill: {
+      disabled: false,
+      running: false,
+      request: vi.fn()
+    }
   },
   sessionTools: {
     notebookReference: undefined,
@@ -2654,10 +2661,18 @@ describe('ConversationPanel + menu', () => {
     const attachItem = container.querySelector('[data-testid="menu-attach-files"]')
     const contextWindowItem = container.querySelector('[data-testid="menu-context-window"]')
     const reviewItem = container.querySelector('[data-testid="menu-request-review"]')
+    const saveAsSkillItem = container.querySelector('[data-testid="menu-save-as-skill"]')
 
     expect(attachItem).not.toBeNull()
     expect(contextWindowItem).not.toBeNull()
     expect(reviewItem).not.toBeNull()
+    expect(saveAsSkillItem).not.toBeNull()
+    expect(reviewItem?.compareDocumentPosition(saveAsSkillItem as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(saveAsSkillItem?.compareDocumentPosition(contextWindowItem as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
     expect(reviewItem?.compareDocumentPosition(contextWindowItem as Node)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -2669,7 +2684,9 @@ describe('ConversationPanel + menu', () => {
 
     expect(
       [...container.querySelectorAll('[data-testid="tooltip-content"]')].some(
-        (node) => node.textContent === 'Add attachment, view context window, or request review'
+        (node) =>
+          node.textContent ===
+          'Add attachment, save as skill, view context window, or request review'
       )
     ).toBe(true)
   })
@@ -3077,9 +3094,11 @@ describe('ConversationPanel + menu', () => {
   it('Request review calls onRequestReview when enabled', () => {
     const onRequestReview = vi.fn()
     renderPanel({
-      review: {
-        request: onRequestReview,
-        disabled: false
+      workflows: {
+        review: {
+          request: onRequestReview,
+          disabled: false
+        }
       }
     })
 
@@ -3092,12 +3111,59 @@ describe('ConversationPanel + menu', () => {
     expect(onRequestReview).toHaveBeenCalledTimes(1)
   })
 
+  it('Save as skill calls its action only when enabled', () => {
+    const request = vi.fn()
+    renderPanel({ workflows: { saveAsSkill: { request, disabled: false } } })
+
+    const item = container.querySelector<HTMLButtonElement>('[data-testid="menu-save-as-skill"]')
+    act(() => item?.click())
+    expect(request).toHaveBeenCalledOnce()
+
+    renderPanel({
+      workflows: {
+        saveAsSkill: {
+          request,
+          disabled: true,
+          disabledReason: 'Wait for the current agent activity to finish.'
+        }
+      }
+    })
+    const disabledItem = container.querySelector<HTMLButtonElement>(
+      '[data-testid="menu-save-as-skill"]'
+    )
+    expect(disabledItem?.disabled).toBe(false)
+    expect(disabledItem?.getAttribute('aria-disabled')).toBe('true')
+    act(() => disabledItem?.click())
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('shows a running Save as skill without losing its disabled interaction contract', () => {
+    renderPanel({
+      workflows: {
+        saveAsSkill: {
+          disabled: true,
+          disabledReason: 'Save as skill is running.',
+          running: true
+        }
+      }
+    })
+
+    const item = container.querySelector<HTMLButtonElement>('[data-testid="menu-save-as-skill"]')
+    expect(item?.disabled).toBe(false)
+    expect(item?.getAttribute('aria-disabled')).toBe('true')
+    expect(item?.getAttribute('aria-busy')).toBe('true')
+    expect(item?.querySelector('svg')?.classList.contains('animate-spin')).toBe(true)
+    expect(item?.textContent).toBe('Saving as skill…')
+  })
+
   it('Request review is disabled when isRequestReviewDisabled is true', () => {
     const onRequestReview = vi.fn()
     renderPanel({
-      review: {
-        request: onRequestReview,
-        disabled: true
+      workflows: {
+        review: {
+          request: onRequestReview,
+          disabled: true
+        }
       }
     })
 
@@ -3120,10 +3186,12 @@ describe('ConversationPanel + menu', () => {
   it('shows a disabled loading state while the active session is being reviewed', () => {
     const onRequestReview = vi.fn()
     renderPanel({
-      review: {
-        disabled: true,
-        running: true,
-        request: onRequestReview
+      workflows: {
+        review: {
+          disabled: true,
+          running: true,
+          request: onRequestReview
+        }
       }
     })
 
@@ -3148,9 +3216,11 @@ describe('ConversationPanel + menu', () => {
   it('Request review is not called when disabled is true (onSelect guard)', () => {
     const onRequestReview = vi.fn()
     renderPanel({
-      review: {
-        request: onRequestReview,
-        disabled: true
+      workflows: {
+        review: {
+          request: onRequestReview,
+          disabled: true
+        }
       }
     })
 

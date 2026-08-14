@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 
 import type { CliLauncherStatus } from '../../shared/cli'
 
@@ -42,20 +42,24 @@ const isOnPath = (binDir: string, pathVar: string, platform: NodeJS.Platform): b
     .some((entry) => entry === binDir)
 }
 
-// AppImage exposes APPIMAGE as the stable bundle path and APPDIR/process paths inside its ephemeral
-// FUSE mount. Start the stable bundle in Node mode, then resolve the CLI entry from the new process's
-// resourcesPath so the launcher remains usable while the desktop app is not running.
-const appImageCliBootstrap = [
-  "Promise.all([import('node:path'), import('node:url')])",
-  '.then(([{ join }, { pathToFileURL }]) =>',
-  "import(pathToFileURL(join(process.resourcesPath, 'cli', 'index.mjs')).href))",
-  '.then(({ reportCliError, runCli }) => runCli(process.argv.slice(1)).catch(reportCliError))',
-  '.catch((error) => { console.error(error instanceof Error ? error.message : error);',
-  'process.exitCode = 1 })'
-].join('')
-
 const isLinuxAppImage = (env: CliLauncherEnv): boolean =>
   env.platform === 'linux' && env.packaged && Boolean(env.appImagePath)
+
+// electron-builder's AppRun may prepend --no-sandbox before user arguments when user namespaces are
+// unavailable. Node mode rejects that Chromium flag before it can reach a script argument. Ask the
+// AppImage runtime to mount and wait instead, then invoke the payload directly for the lifetime of the
+// CLI process so AppRun never gets a chance to rewrite the Node argument list.
+const appImagePayloadPaths = (env: CliLauncherEnv): { executable: string; cliEntry: string } => {
+  const currentMount = posix.dirname(env.appExecPath)
+  const executable = posix.relative(currentMount, env.appExecPath)
+  const cliEntry = posix.relative(currentMount, env.cliEntryPath)
+  const isInsideMount = (path: string): boolean =>
+    path.length > 0 && !posix.isAbsolute(path) && path !== '..' && !path.startsWith('../')
+  if (!isInsideMount(executable) || !isInsideMount(cliEntry)) {
+    throw new Error('AppImage CLI paths must be inside the current AppImage mount.')
+  }
+  return { executable, cliEntry }
+}
 
 // POSIX: a /bin/sh shim in ~/.local/bin. Single-quote every path so it survives spaces and shell
 // metacharacters: inside single quotes nothing is special (no $, backtick, or backslash expansion),
@@ -64,16 +68,61 @@ const isLinuxAppImage = (env: CliLauncherEnv): boolean =>
 // $/backtick and need backslash handling.
 const posixShim = (env: CliLauncherEnv): string => {
   const quote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`
-  const command = isLinuxAppImage(env) ? env.appImagePath! : env.appExecPath
-  const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(command)} ` : ''
-  const args = isLinuxAppImage(env)
-    ? `-e ${quote(appImageCliBootstrap)} -- "$@"`
-    : `${quote(env.cliEntryPath)} "$@"`
+  if (isLinuxAppImage(env)) {
+    const { executable, cliEntry } = appImagePayloadPaths(env)
+    return [
+      '#!/bin/sh',
+      '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
+      '# tool); edits will be overwritten on reinstall. Mounts the AppImage for this CLI process.',
+      `app_image=${quote(env.appImagePath!)}`,
+      'mount_output=$(mktemp "${TMPDIR:-/tmp}/open-science-cli.XXXXXX") || {',
+      "  echo 'Open Science could not create a temporary file for the AppImage mount.' >&2",
+      '  exit 1',
+      '}',
+      'mount_pid=',
+      'cleanup() {',
+      '  if [ -n "$mount_pid" ]; then',
+      '    kill "$mount_pid" 2>/dev/null || :',
+      '    wait "$mount_pid" 2>/dev/null || :',
+      '  fi',
+      '  rm -f "$mount_output"',
+      '}',
+      'trap cleanup 0',
+      "trap 'exit 129' 1",
+      "trap 'exit 130' 2",
+      "trap 'exit 143' 15",
+      '"$app_image" --appimage-mount >"$mount_output" &',
+      'mount_pid=$!',
+      'while [ ! -s "$mount_output" ]; do',
+      '  if ! kill -0 "$mount_pid" 2>/dev/null; then',
+      '    wait "$mount_pid"',
+      '    mount_status=$?',
+      '    if [ "$mount_status" -eq 0 ]; then mount_status=1; fi',
+      "    echo 'Open Science AppImage exited before reporting its mount point.' >&2",
+      '    exit "$mount_status"',
+      '  fi',
+      '  sleep 0.05',
+      'done',
+      'mount_dir=$(sed -n \'1p\' "$mount_output")',
+      `app_exec="$mount_dir"/${quote(executable)}`,
+      `cli_entry="$mount_dir"/${quote(cliEntry)}`,
+      'if [ ! -x "$app_exec" ] || [ ! -f "$cli_entry" ]; then',
+      "  echo 'Open Science AppImage is missing its executable or CLI entry.' >&2",
+      '  exit 1',
+      'fi',
+      'OPEN_SCIENCE_APP_PATH="$app_image" ELECTRON_RUN_AS_NODE=1 \\',
+      '  "$app_exec" "$cli_entry" "$@"',
+      'status=$?',
+      'exit "$status"',
+      ''
+    ].join('\n')
+  }
+  const appPathLine = env.packaged ? `OPEN_SCIENCE_APP_PATH=${quote(env.appExecPath)} ` : ''
   return [
     '#!/bin/sh',
     '# Open Science command-line launcher. Managed by the app (Settings -> General -> Command line',
     "# tool); edits will be overwritten on reinstall. Runs the app's Electron in Node mode.",
-    `${appPathLine}ELECTRON_RUN_AS_NODE=1 exec ${quote(command)} ${args}`,
+    `${appPathLine}ELECTRON_RUN_AS_NODE=1 exec ${quote(env.appExecPath)} ${quote(env.cliEntryPath)} "$@"`,
     ''
   ].join('\n')
 }
@@ -210,7 +259,7 @@ export const getCliLauncherStatus = async (env: CliLauncherEnv): Promise<CliLaun
 }
 
 // Only an existing app-managed AppImage launcher is eligible for automatic migration. Comparing the
-// complete planned content covers the stable AppImage path, bootstrap, and CLI entry behavior.
+// complete planned content covers the stable AppImage path, mount procedure, and CLI entry behavior.
 export const isCliShimStale = async (env: CliLauncherEnv): Promise<boolean> => {
   if (!isLinuxAppImage(env)) return false
   const plan = planCliLauncher(env)

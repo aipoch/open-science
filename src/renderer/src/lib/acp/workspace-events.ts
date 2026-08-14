@@ -16,6 +16,7 @@ import {
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import {
   INTERRUPTED_TURN_ERROR,
+  isHiddenControlMessage,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview-file-item'
@@ -442,6 +443,16 @@ const triggerAutoReview = async (sessionId: string): Promise<void> => {
     const request = assembleReviewRunRequest(sessionId)
 
     if (!request) return
+
+    const reviewedMessage = session.messages.find((message) => message.id === request.turnMessageId)
+    if (
+      session.messages.some(
+        (message) =>
+          message.id === reviewedMessage?.responseToMessageId && isHiddenControlMessage(message)
+      )
+    ) {
+      return
+    }
 
     // Retry a started:false a bounded number of times, but ONLY for reasons a persistence race can
     // produce (the session may not be flushed to disk yet). Every other reason is terminal for the auto

@@ -60,6 +60,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     createSession: vi.fn(async () => sessionResponse),
     resumeSession: vi.fn(async () => sessionResponse),
     continueInterruptedTurn: vi.fn(async () => snapshot),
+    saveAsSkill: vi.fn(async () => snapshot),
     sendPrompt: vi.fn(async () => snapshot)
   }
 })
@@ -125,6 +126,7 @@ describe('ACP application commands', () => {
       'acp:respond-plan',
       'acp:resume-session',
       'acp:revoke-permission-grant',
+      'acp:save-as-skill',
       'acp:send-prompt',
       'acp:set-permission-profile'
     ])
@@ -265,6 +267,35 @@ describe('ACP application commands', () => {
       suppressUserMessage: undefined
     })
     expect(request.continuation.originatingTurnToken).toBe('renderer-forged-turn')
+  })
+
+  it('accepts Save as skill only from a current human caller', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      agentFrameId: 'root-frame',
+      messageBranchId: 'active-branch',
+      promptMessageId: 'save-as-skill-control'
+    }
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.saveAsSkill,
+        invocation([request], createWebCallerContext('local-web'))
+      )
+    ).resolves.toBe(snapshot)
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.saveAsSkill,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller can save a Session as a Skill.')
+
+    expect(dependencies.workflows.saveAsSkill).toHaveBeenCalledOnce()
+    expect(dependencies.workflows.saveAsSkill).toHaveBeenCalledWith(request)
   })
 
   it('accepts only the exact Plan first turn intent at the application-command seam', async () => {

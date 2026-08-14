@@ -273,7 +273,7 @@ describe('message part persistence', () => {
 })
 
 describe('interrupted turn intent persistence', () => {
-  it('preserves only the closed Plan-first intent on user messages', () => {
+  it('preserves only closed application-owned intents on user messages', () => {
     const restored = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
@@ -287,26 +287,38 @@ describe('interrupted turn intent persistence', () => {
           updatedAt: 1
         },
         {
+          id: 'user-save-as-skill',
+          role: 'user',
+          content: 'Save as skill',
+          turnIntent: 'save-as-skill',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
           id: 'user-unknown',
           role: 'user',
           content: 'Do not restore arbitrary intent',
           turnIntent: 'hidden-injection',
-          createdAt: 2,
-          updatedAt: 2
+          createdAt: 3,
+          updatedAt: 3
         },
         {
           id: 'agent-plan',
           role: 'agent',
           content: 'No user intent here',
           turnIntent: 'plan-first',
-          createdAt: 3,
-          updatedAt: 3
+          createdAt: 4,
+          updatedAt: 4
         }
       ]
     })
 
     expect(restored?.messages).toEqual([
       expect.objectContaining({ id: 'user-plan', turnIntent: 'plan-first' }),
+      expect.objectContaining({
+        id: 'user-save-as-skill',
+        turnIntent: 'save-as-skill'
+      }),
       expect.not.objectContaining({ turnIntent: expect.anything() }),
       expect.not.objectContaining({ turnIntent: expect.anything() })
     ])
@@ -2372,6 +2384,44 @@ describe('normalizeSessionFile with activities', () => {
       kind: 'resume-required',
       cause: 'app-restart',
       promptMessageId: 'prompt-1'
+    })
+  })
+
+  it('restores an active hidden Save as skill turn with its durable intent', () => {
+    const restored = normalizeSessionFile({
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Interrupted session',
+      cwd: '/workspace',
+      status: 'running',
+      activeRun: { promptMessageId: 'save-as-skill-control', startedAt: 5 },
+      messages: [
+        {
+          id: 'save-as-skill-control',
+          role: 'user',
+          content: 'Save as skill',
+          turnIntent: 'save-as-skill',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 5,
+          updatedAt: 5
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 5
+    })
+
+    expect(restored?.messages).toEqual([
+      expect.objectContaining({
+        id: 'save-as-skill-control',
+        turnIntent: 'save-as-skill',
+        interrupted: true
+      })
+    ])
+    expect(restored?.resumeRecovery).toEqual({
+      kind: 'resume-required',
+      cause: 'app-restart',
+      promptMessageId: 'save-as-skill-control'
     })
   })
 
