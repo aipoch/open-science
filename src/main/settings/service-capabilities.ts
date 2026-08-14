@@ -12,6 +12,7 @@ export type AcpSettingsCapabilities = Pick<
   | 'codexSkillDescriptorsForIds'
   | 'codexSkillCatalog'
   | 'getConversationSkillImportEnabled'
+  | 'getConnectors'
   | 'listSpecialistSkillCatalog'
   | 'provisionedConnectorSkillNames'
 > &

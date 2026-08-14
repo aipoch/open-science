@@ -54,6 +54,24 @@ afterEach(() => {
 })
 
 describe('StorageMigrationModal', () => {
+  it('continues a covered migration while suppressing its presentation', async () => {
+    const api = installApi()
+
+    await act(async () => {
+      root.render(<StorageMigrationModal active={false} targetPath="/mnt/data" onClose={vi.fn()} />)
+      await Promise.resolve()
+    })
+
+    expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+
+    await act(async () => {
+      root.render(<StorageMigrationModal active targetPath="/mnt/data" onClose={vi.fn()} />)
+    })
+
+    expect(document.body.textContent).toMatch(/data copied/i)
+  })
+
   it('advances past "Checking…" under StrictMode instead of stranding on detect (mountedRef reset)', async () => {
     // Regression: StrictMode's dev mount→unmount→mount left mountedRef false for the real mount, so
     // every async guard bailed and the modal stuck on the detecting copy. Rendering under StrictMode
@@ -112,6 +130,10 @@ describe('StorageMigrationModal', () => {
 
     expect(document.body.textContent).toContain('/home/u/.open-science/artifacts/report.pdf')
     expect(document.body.textContent).toMatch(/50%/)
+    const progressBar = document.body.querySelector<HTMLElement>('[style*="scaleX"]')
+    expect(progressBar?.className).toContain('transition-transform')
+    expect(progressBar?.className).toContain('motion-reduce:transition-none')
+    expect(progressBar?.className).not.toContain('transition-all')
 
     // The migrating stage shows a running elapsed clock and a don't-quit warning (design follow-up).
     expect(document.body.textContent).toMatch(/Elapsed 0:00/)
@@ -135,6 +157,8 @@ describe('StorageMigrationModal', () => {
 
     // Done stage: copy is complete but nothing is committed. "Restart now" commits + relaunches.
     expect(document.body.textContent).toMatch(/data copied/i)
+    expect(document.body.querySelector('.bg-status-success-accent\\/10')).not.toBeNull()
+    expect(document.body.querySelector('.text-emerald-600')).toBeNull()
     expect(api.commitAndRelaunch).not.toHaveBeenCalled()
     await act(async () => {
       clickButton((button) => button.textContent?.trim() === 'Restart now')
@@ -222,6 +246,32 @@ describe('StorageMigrationModal', () => {
     })
 
     expect(api.migrate).toHaveBeenCalledWith('/mnt/data')
+  })
+
+  it('blocks migration for delegated work and only lets the user return to stop it manually', async () => {
+    const api = installApi({
+      detectActive: vi
+        .fn()
+        .mockResolvedValue([{ projectId: 'proj-a', sessionId: 'delegated-1', kind: 'delegated' }])
+    })
+    const onClose = vi.fn()
+
+    await act(async () => {
+      root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={onClose} />)
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toMatch(/subagents are still running/i)
+    expect(document.body.textContent).toMatch(/stop its subagents/i)
+    expect(document.body.textContent).not.toContain('Interrupt and move')
+    expect(api.migrate).not.toHaveBeenCalled()
+    expect(api.cancelMigrate).not.toHaveBeenCalled()
+
+    clickButton((button) => button.textContent?.trim() === 'Return to tasks')
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(api.migrate).not.toHaveBeenCalled()
+    expect(api.cancelMigrate).not.toHaveBeenCalled()
   })
 
   it('cancels an in-flight migration and closes without showing an error', async () => {

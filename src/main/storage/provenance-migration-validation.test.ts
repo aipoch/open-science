@@ -579,7 +579,7 @@ describe('validateProvenanceMigrationState', () => {
       join(notebookDirectory, 'run.json'),
       JSON.stringify({
         version: 1,
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'notebook-session-1',
         runs: [
           {

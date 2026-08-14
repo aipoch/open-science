@@ -69,6 +69,25 @@ afterEach(() => {
 })
 
 describe('LegacyDataMoveDialog', () => {
+  it('keeps a covered legacy prompt pending without dismissing it', async () => {
+    const api = installApi()
+
+    await act(async () => {
+      root.render(
+        <LegacyDataMoveDialog
+          active={false}
+          currentDataRoot="/home/u/.open-science"
+          defaultParent="/home/u"
+          onDismiss={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(api.dismissLegacyMovePrompt).not.toHaveBeenCalled()
+  })
+
   it('uses shared settings dialog chrome without changing the move choices', async () => {
     installApi()
     await renderDialog()
@@ -86,6 +105,17 @@ describe('LegacyDataMoveDialog', () => {
     expect(dialog?.className).toContain('bg-card')
     expect(dialog?.className).toContain('shadow-dialog')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(dialog?.className).toContain('overflow-hidden')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-b border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-t border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
     expect(document.body.textContent).toContain('Move to OpenScience')
     expect(document.body.textContent).toContain('Choose another folder')
     expect(document.body.textContent).toContain('Keep it in the current folder')

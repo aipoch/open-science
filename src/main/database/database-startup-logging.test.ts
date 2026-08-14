@@ -109,6 +109,43 @@ describe('database startup logging', () => {
     )
   })
 
+  it('records a timed operation for each database startup attempt', () => {
+    const { log, records } = createLog()
+    const options = createDatabaseStartupLogging(log, '0.13.0').migrationOptions(vi.fn())
+
+    options.onProgress?.({ phase: 'checking' })
+    options.onCompatibilityVerified?.({ sqliteVersion: '3.49.1' })
+    options.onCompleted?.({
+      from: '0003_granted_local_roots',
+      to: '0003_granted_local_roots',
+      applied: [],
+      adoptedLegacy: false
+    })
+
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: 'operation phase',
+          data: expect.objectContaining({
+            operation: 'database-startup',
+            phase: 'runtime-verified',
+            elapsedMs: expect.any(Number),
+            phaseDurationMs: expect.any(Number)
+          })
+        }),
+        expect.objectContaining({
+          message: 'operation completed',
+          data: expect.objectContaining({
+            operation: 'database-startup',
+            outcome: 'completed',
+            appliedCount: 0,
+            durationMs: expect.any(Number)
+          })
+        })
+      ])
+    )
+  })
+
   it('records structured validation details through the mandatory redactor', () => {
     const sensitiveValue = 'customer-secret-value'
     const cause = new DatabaseValidationError('Schema mismatch.', {
@@ -126,9 +163,11 @@ describe('database startup logging', () => {
     )
     const { log, records } = createLog()
 
-    createDatabaseStartupLogging(log, '0.13.0').reportBlocked(error)
+    const logging = createDatabaseStartupLogging(log, '0.13.0')
+    logging.migrationOptions(vi.fn())
+    logging.reportBlocked(error)
 
-    const record = records[0]!
+    const record = records.find(({ message }) => message === 'database startup blocked')!
     const line = formatLine('error', 'main', record.message, record.data)
     expect(line).not.toContain(sensitiveValue)
     expect(JSON.parse(line)).toMatchObject({
@@ -147,6 +186,19 @@ describe('database startup logging', () => {
         }
       }
     })
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: 'error',
+          message: 'operation failed',
+          data: expect.objectContaining({
+            operation: 'database-startup',
+            outcome: 'failed',
+            code: 'database_validation_failed'
+          })
+        })
+      ])
+    )
   })
 
   it('records non-blocking backup retirement failures', () => {
@@ -158,7 +210,9 @@ describe('database startup logging', () => {
       error: Object.assign(new Error('permission denied'), { code: 'EACCES' })
     })
 
-    expect(records).toEqual([
+    expect(
+      records.filter(({ message }) => message === 'database migration backup retirement failed')
+    ).toEqual([
       expect.objectContaining({
         level: 'warn',
         message: 'database migration backup retirement failed',
@@ -178,7 +232,9 @@ describe('database startup logging', () => {
 
     options.onBackupRetired?.({ migrationId: '0001_runtime_schema_baseline', path })
 
-    expect(records).toEqual([
+    expect(
+      records.filter(({ message }) => message === 'database migration backup retired')
+    ).toEqual([
       {
         level: 'info',
         message: 'database migration backup retired',

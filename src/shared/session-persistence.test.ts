@@ -1017,6 +1017,7 @@ describe('sanitizeToolActivity', () => {
       title: 'Edit app.ts',
       activityGroupId: 'group-1',
       promptMessageId: 'prompt-1',
+      executionInvocationId: 'execution-1',
       status: 'completed',
       sortIndex: 3,
       eventIds: ['event-1'],
@@ -1038,6 +1039,7 @@ describe('sanitizeToolActivity', () => {
       title: 'Edit app.ts',
       activityGroupId: 'group-1',
       promptMessageId: 'prompt-1',
+      executionInvocationId: 'execution-1',
       status: 'completed',
       providerToolName: 'Edit',
       toolKind: 'edit',
@@ -1048,6 +1050,36 @@ describe('sanitizeToolActivity', () => {
       { type: 'content', content: { type: 'text', text: 'ok' } },
       { type: 'diff', path: '/repo/app.ts', oldText: 'a', newText: 'b' }
     ])
+  })
+
+  it('keeps legacy activities without an execution invocation identity', () => {
+    const activity = sanitizeToolActivity({ id: 'legacy-tool', status: 'in_progress' })
+
+    expect(activity).not.toHaveProperty('executionInvocationId')
+  })
+
+  it('keeps only known tool dispositions', () => {
+    expect(
+      sanitizeToolActivity({
+        id: 'tool-closed',
+        status: 'in_progress',
+        toolDisposition: 'permission-closed'
+      })
+    ).toMatchObject({ toolDisposition: 'permission-closed' })
+    expect(
+      sanitizeToolActivity({
+        id: 'tool-declined',
+        status: 'completed',
+        toolDisposition: 'declined'
+      })?.toolDisposition
+    ).toBe('declined')
+    expect(
+      sanitizeToolActivity({
+        id: 'tool-unknown',
+        status: 'completed',
+        toolDisposition: 'cancelled'
+      })?.toolDisposition
+    ).toBeUndefined()
   })
 
   it('truncates oversized terminal output', () => {
@@ -2078,6 +2110,71 @@ describe('normalizeSessionFile with activities', () => {
         id: 'activity-1',
         kind: 'tool',
         title: 'downloading',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+    )
+
+    expect(activities?.[0]?.status).toBe('failed')
+  })
+
+  it.each([
+    'mcp__open-science-notebook__notebook_execute',
+    'open_science_notebook_repl_execute',
+    'mcp.open-science-notebook.bash_execute',
+    'open-science-notebook/notebook_execute'
+  ])('restores an unowned Notebook activity as static code for %s', (providerToolName) => {
+    const activities = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: providerToolName,
+        providerToolName,
+        executionInvocationId: 'stale-invocation',
+        status: 'in_progress',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      })
+    )
+
+    expect(activities?.[0]).toMatchObject({
+      status: 'in_progress',
+      toolDisposition: 'permission-closed'
+    })
+    expect(activities?.[0]).not.toHaveProperty('executionInvocationId')
+  })
+
+  it('keeps terminal Notebook Run correlation for historical projection', () => {
+    const activities = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'mcp__open-science-notebook__notebook_execute',
+        providerToolName: 'mcp__open-science-notebook__notebook_execute',
+        executionInvocationId: 'completed-invocation',
+        status: 'completed',
+        sortIndex: 1,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 2
+      })
+    )
+
+    expect(activities?.[0]?.executionInvocationId).toBe('completed-invocation')
+  })
+
+  it('does not treat a lookalike Notebook server as app-owned static code', () => {
+    const activities = getRestoredActivities(
+      createSessionWithActivity({
+        id: 'activity-1',
+        kind: 'tool',
+        title: 'mcp__open-science-notebook-staging__notebook_execute',
+        providerToolName: 'mcp__open-science-notebook-staging__notebook_execute',
         status: 'in_progress',
         sortIndex: 1,
         eventIds: [],

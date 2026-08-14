@@ -410,10 +410,13 @@ class ProviderAccountsModule {
       }
     }
 
-    const result = await listProviderModels({
-      url: modelsUrl,
-      key: this.resolveProvider(stored).key
-    })
+    const result = await listProviderModels(
+      {
+        url: modelsUrl,
+        key: this.resolveProvider(stored).key
+      },
+      { fetchImpl: netFetchStandard }
+    )
     if (!result.ok || !result.models) {
       return {
         ok: false,

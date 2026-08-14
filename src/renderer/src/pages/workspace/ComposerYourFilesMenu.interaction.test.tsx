@@ -58,7 +58,10 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
   }>): React.JSX.Element =>
     // asChild items keep their real child element; wire the select handler onto its click.
     asChild && isValidElement(children) ? (
-      cloneElement(children as ReactElement<{ onClick?: () => void }>, { onClick: onSelect })
+      cloneElement(children as ReactElement<{ onClick?: () => void }>, {
+        ...rest,
+        onClick: onSelect
+      })
     ) : (
       <button type="button" disabled={disabled} onClick={onSelect} {...rest}>
         {children}
@@ -158,6 +161,42 @@ describe('ComposerYourFilesMenu', () => {
     expect(rootRow?.textContent).toContain('ro')
   })
 
+  it('keeps hidden row actions visible to keyboard and no-hover users', async () => {
+    renderMenu()
+
+    const removeButton = container.querySelector('[data-testid="your-files-remove-root-1"]')
+    expect(removeButton?.classList).not.toContain('opacity-0')
+    expect(removeButton?.classList).toContain('[@media(hover:hover)]:opacity-0')
+    expect(removeButton?.classList).toContain('[@media(hover:hover)]:focus-visible:opacity-100')
+    expect(removeButton?.classList).toContain('focus-visible:ring-[3px]')
+    expect(removeButton?.classList).toContain('[@media(pointer:coarse)]:size-11')
+    expect(removeButton?.parentElement?.classList).toContain('[@media(pointer:coarse)]:h-11')
+
+    await click(container.querySelector('[data-testid="your-files-root-toggle-root-1"]'))
+    await flush()
+
+    const sendButton = container.querySelector('[data-testid="your-files-send-root-1-study.csv"]')
+    expect(sendButton?.classList).not.toContain('opacity-0')
+    expect(sendButton?.classList).toContain('[@media(hover:hover)]:opacity-0')
+    expect(sendButton?.classList).toContain('[@media(hover:hover)]:focus-visible:opacity-100')
+    expect(sendButton?.classList).toContain('focus-visible:ring-[3px]')
+    expect(sendButton?.classList).toContain('[@media(pointer:coarse)]:size-11')
+    expect(sendButton?.parentElement?.classList).toContain('[@media(pointer:coarse)]:min-h-11')
+  })
+  it('gives root and nested directory toggles coarse-pointer hit targets', async () => {
+    renderMenu()
+
+    const rootToggle = container.querySelector('[data-testid="your-files-root-toggle-root-1"]')
+    expect(rootToggle?.classList).toContain('[@media(pointer:coarse)]:min-h-11')
+
+    await click(rootToggle)
+    await flush()
+
+    const nestedToggle = container.querySelector('[data-testid="your-files-dir-root-1-raw"]')
+    expect(nestedToggle?.classList).toContain('[@media(pointer:coarse)]:min-h-11')
+    expect(nestedToggle?.parentElement?.classList).toContain('[@media(pointer:coarse)]:py-0')
+  })
+
   it('shows a quiet hint when no folders are granted', () => {
     useGrantedFoldersStore.setState({ roots: [], loaded: true })
     renderMenu()
@@ -237,7 +276,11 @@ describe('ComposerYourFilesMenu', () => {
   it('removes access via the store from the hover × action', async () => {
     renderMenu()
 
-    await click(container.querySelector('[data-testid="your-files-remove-root-1"]'))
+    const removeButton = container.querySelector('[data-testid="your-files-remove-root-1"]')
+    expect(removeButton?.className).toContain('focus-visible:opacity-100')
+    expect(removeButton?.className).toContain('[@media(hover:none)]:opacity-100')
+    expect(removeButton?.className).toContain('motion-reduce:transition-none')
+    await click(removeButton)
     await flush()
 
     expect(removeGrantedRoot).toHaveBeenCalledWith({ id: 'root-1' })

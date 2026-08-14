@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -66,8 +63,6 @@ describe('DataRootMissingDialog', () => {
       element.className.includes('bg-black/50')
     )
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
-    const source = readFileSync(resolve(__dirname, 'DataRootMissingDialog.tsx'), 'utf8')
-
     expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
     expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
     expect(overlay?.className).not.toContain('backdrop-blur')
@@ -77,8 +72,17 @@ describe('DataRootMissingDialog', () => {
     expect(dialog?.className).toContain('shadow-dialog')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
-    expect(source).toContain('dialogOverlayClassName')
-    expect(source).toContain('dialogPanelClassName')
+    expect(dialog?.className).toContain('overflow-hidden')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-b border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-t border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
   })
 
   it('renders the folder-not-found copy with the configured path when open', async () => {

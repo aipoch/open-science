@@ -43,6 +43,7 @@ Options:
   --data-root <path>     Current Data Root override (rollback only)
   --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
+  --cwd <path>           Working directory for a new or matching existing session
   --prompt <text>        Prompt text (or read stdin when omitted)
   --prompt-file <path>   Read the prompt from a UTF-8 file
   --approval-profile <profile>  ask, auto, or full (default: ask)
@@ -67,6 +68,7 @@ const VALUE_OPTIONS = {
   '--data-root': 'dataRoot',
   '--project': 'project',
   '--session': 'session',
+  '--cwd': 'cwd',
   '--prompt': 'prompt',
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
@@ -145,6 +147,12 @@ export const parseCliArgs = (argv) => {
   }
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
+  }
+  if (options.cwd !== undefined && !options.cwd.trim()) {
+    throw new CliUsageError('--cwd requires a non-empty path.')
+  }
+  if (options.cwd && (command !== 'run' || subcommand)) {
+    throw new CliUsageError('--cwd requires run.')
   }
   if (options.jsonl && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--jsonl requires run --wait.')
@@ -730,6 +738,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       const started = await client.startRun({
         project: options.project,
         prompt,
+        ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
         ...(options.session ? { sessionId: options.session } : {}),
         ...(options.approvalProfile ? { permissionProfile: options.approvalProfile } : {}),
         ...(options.skills?.length ? { skillIds: options.skills } : {})

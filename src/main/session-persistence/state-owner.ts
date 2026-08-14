@@ -121,9 +121,7 @@ const rebaseSafeSessionFields = (
         rebased.autoReviewEnabled = submitted.autoReviewEnabled
         break
       case 'enabledComputeHosts':
-        rebased.enabledComputeHosts = submitted.enabledComputeHosts
-          ? [...submitted.enabledComputeHosts]
-          : undefined
+        // Retained in the wire-compatible enum, but this field is now changed only by its command.
         break
       case 'pinned':
         rebased.pinned = submitted.pinned
@@ -259,13 +257,10 @@ class SessionPersistenceStateOwner {
   private readonly validatedBindingTopologies = new Map<string, string>()
   private sessionMetadata = new Map<string, SessionMetadata>()
   private isSessionMetadataComplete = false
-
   constructor(private readonly options: SessionPersistenceStateOwnerOptions) {}
-
   beginHydration(): void {
     this.validatedBindingTopologies.clear()
   }
-
   replaceMetadata(sessions: readonly PersistedChatSession[], isComplete: boolean): void {
     this.sessionMetadata = new Map(
       sessions.map((session) => [
@@ -275,7 +270,6 @@ class SessionPersistenceStateOwner {
     )
     this.isSessionMetadataComplete = isComplete
   }
-
   recordSession(session: PersistedChatSession): void {
     this.sessionMetadata.set(session.id, {
       id: session.id,
@@ -283,38 +277,31 @@ class SessionPersistenceStateOwner {
       title: session.title
     })
   }
-
   markMetadataIncomplete(): void {
     this.isSessionMetadataComplete = false
   }
-
   removeSession(projectId: string, sessionId: string): void {
     this.sessionMetadata.delete(sessionId)
     this.invalidateBindingTopology(projectId, sessionId)
   }
-
   removeProject(projectId: string, sessionIds: readonly string[]): void {
     for (const [sessionId, metadata] of this.sessionMetadata) {
       if (metadata.projectId === projectId) this.sessionMetadata.delete(sessionId)
     }
     for (const sessionId of sessionIds) this.invalidateBindingTopology(projectId, sessionId)
   }
-
   metadataSnapshot(): SessionMetadataSnapshot {
     return {
       sessions: [...this.sessionMetadata.values()],
       isComplete: this.isSessionMetadataComplete
     }
   }
-
   sessionProjectId(sessionId: string): string | undefined {
     return this.sessionMetadata.get(sessionId)?.projectId
   }
-
   invalidateBindingTopology(projectId: string, sessionId: string): void {
     this.validatedBindingTopologies.delete(`${projectId}:${sessionId}`)
   }
-
   async containsMessageOnActiveBranch(
     projectId: string,
     sessionId: string,
@@ -459,6 +446,72 @@ class SessionPersistenceStateOwner {
     return message
   }
 
+  async setEnabledComputeHosts(
+    projectId: string,
+    sessionId: string,
+    providerIds: readonly string[]
+  ): Promise<PersistedChatSession> {
+    this.options.assertMutable(projectId, sessionId, 'mutate')
+    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    if (loaded.status !== 'found') {
+      throw new Error(`Cannot update enabled Compute Hosts for a ${loaded.status} Session.`)
+    }
+    const durableSession: PersistedChatSession = {
+      ...loaded.session,
+      enabledComputeHosts: [...providerIds],
+      updatedAt: Math.max(loaded.session.updatedAt + 1, Date.now())
+    }
+    await this.options.repository.saveSession(durableSession)
+    this.recordSession(durableSession)
+    return durableSession
+  }
+
+  async pruneEnabledComputeHosts(
+    sessions: readonly PersistedChatSession[],
+    validProviderIds: ReadonlySet<string>
+  ): Promise<PersistedChatSession[]> {
+    const durableSessions: PersistedChatSession[] = []
+    const attemptedSessions: PersistedChatSession[] = []
+    try {
+      for (const session of sessions) {
+        const current = session.enabledComputeHosts ?? []
+        const enabledComputeHosts = current.filter((providerId) => validProviderIds.has(providerId))
+        if (enabledComputeHosts.length === current.length) {
+          durableSessions.push(session)
+          continue
+        }
+        this.options.assertMutable(session.projectId, session.id, 'mutate')
+        const durableSession: PersistedChatSession = {
+          ...session,
+          enabledComputeHosts,
+          updatedAt: Math.max(session.updatedAt + 1, Date.now())
+        }
+        attemptedSessions.push(session)
+        await this.options.repository.saveSession(durableSession)
+        this.recordSession(durableSession)
+        durableSessions.push(durableSession)
+      }
+      return durableSessions
+    } catch (error) {
+      const rollbackErrors: unknown[] = []
+      for (const session of attemptedSessions) {
+        try {
+          await this.options.repository.saveSession(session)
+          this.recordSession(session)
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError)
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          'Compute Host pruning failed and affected Sessions could not all be restored.'
+        )
+      }
+      throw error
+    }
+  }
+
   async saveSession(
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
@@ -494,9 +547,16 @@ class SessionPersistenceStateOwner {
       messages: mergeMainOwnedRelayMessages(rendererOwnedSession.messages, authority?.messages),
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
+      ...(authority
+        ? {
+            enabledComputeHosts: authority.enabledComputeHosts
+              ? [...authority.enabledComputeHosts]
+              : undefined
+          }
+        : {}),
       ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),
       updatedAt:
-        authority?.runtimeContext || mainOwnedStatus
+        authority?.runtimeContext || mainOwnedStatus || authority?.enabledComputeHosts !== undefined
           ? Math.max(rendererOwnedSession.updatedAt, (authority?.updatedAt ?? -1) + 1, Date.now())
           : rendererOwnedSession.updatedAt
     }

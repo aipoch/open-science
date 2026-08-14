@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import type { SpecialistPackageSkillPlan } from '../../shared/specialist-package'
 import type { SpecialistPackageSkillPort } from '../specialist/package/skill-port'
 import { type SkillMutationOwner, skillMutationOwnerFor } from './skill-mutation-owner'
 
-const SAFE_SLUG = /^[a-z0-9-]+$/
+const SAFE_DIRECTORY_NAME = /^[a-z0-9-]+$/
 
 export const SPECIALIST_PACKAGE_SKILL_METADATA = '.specialist-package.json'
 
@@ -16,6 +16,13 @@ type PackageSkillMetadata = {
   contentHash: string
   standalone: boolean
   ownerIds: string[]
+}
+
+type SkillStorageSource = 'imported' | 'personal'
+
+type PackageSkillTransaction = {
+  mode: 'install' | 'delete'
+  locations: Map<string, { directoryName: string; source: SkillStorageSource }>
 }
 
 const exists = (path: string): Promise<boolean> =>
@@ -41,6 +48,43 @@ const readMetadata = async (directory: string): Promise<PackageSkillMetadata | u
   } catch {
     return undefined
   }
+}
+
+const readTransaction = async (root: string): Promise<PackageSkillTransaction> => {
+  const value = JSON.parse(await readFile(join(root, 'transaction.json'), 'utf8')) as {
+    mode?: unknown
+    skills?: unknown
+    skillIds?: unknown
+  }
+  const locations = new Map<string, { directoryName: string; source: SkillStorageSource }>()
+  if (Array.isArray(value.skills)) {
+    for (const skill of value.skills) {
+      if (
+        typeof skill === 'object' &&
+        skill !== null &&
+        'localId' in skill &&
+        'directoryName' in skill &&
+        typeof skill.localId === 'string' &&
+        typeof skill.directoryName === 'string' &&
+        SAFE_DIRECTORY_NAME.test(skill.localId) &&
+        SAFE_DIRECTORY_NAME.test(skill.directoryName)
+      ) {
+        locations.set(skill.localId, {
+          directoryName: skill.directoryName,
+          source: 'source' in skill && skill.source === 'imported' ? 'imported' : 'personal'
+        })
+      }
+    }
+  }
+  // Transactions written before local IDs and directory names diverged only stored skillIds.
+  if (Array.isArray(value.skillIds)) {
+    for (const id of value.skillIds) {
+      if (typeof id === 'string' && SAFE_DIRECTORY_NAME.test(id) && !locations.has(id)) {
+        locations.set(id, { directoryName: id, source: 'personal' })
+      }
+    }
+  }
+  return { mode: value.mode === 'delete' ? 'delete' : 'install', locations }
 }
 
 const directoryHash = async (directory: string): Promise<string> => {
@@ -90,14 +134,15 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     _specialistId: string,
     skills: readonly SpecialistPackageSkillPlan[]
   ): Promise<void> {
-    if (!SAFE_SLUG.test(transactionId) || this.mutationReleases.has(transactionId)) {
+    if (!SAFE_DIRECTORY_NAME.test(transactionId) || this.mutationReleases.has(transactionId)) {
       throw new Error('Invalid package transaction identity.')
     }
     const release = await this.mutationOwner.acquire()
     try {
       const live = await this.snapshot()
       for (const skill of skills) {
-        const current = live.find((candidate) => candidate.id === skill.id)
+        const localId = skill.localId ?? skill.id
+        const current = live.find((candidate) => candidate.id === localId)
         if (skill.disposition === 'install') {
           if (current || (await exists(join(this.personalRoot, skill.id)))) {
             throw new Error(`Skill ${skill.id} changed after preview.`)
@@ -142,7 +187,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         continue
       }
       for (const entry of entries.sort()) {
-        if (!SAFE_SLUG.test(entry)) continue
+        if (!SAFE_DIRECTORY_NAME.test(entry)) continue
         const directory = join(root, entry)
         const metadata = await readMetadata(directory)
         if (metadata) result.push(metadata)
@@ -166,7 +211,8 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
 
   async exportSnapshot(skillIds: readonly string[]): Promise<
     Array<{
-      id: string
+      localId: string
+      name: string
       version: string
       contentHash: string
       files: Array<{ path: string; bytes: Uint8Array }>
@@ -174,7 +220,8 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
   > {
     const requested = new Set(skillIds)
     const result: Array<{
-      id: string
+      localId: string
+      name: string
       version: string
       contentHash: string
       files: Array<{ path: string; bytes: Uint8Array }>
@@ -188,12 +235,12 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         continue
       }
       for (const entry of entries.sort()) {
-        if (!SAFE_SLUG.test(entry)) continue
+        if (!SAFE_DIRECTORY_NAME.test(entry)) continue
         const directory = join(root, entry)
         const beforeMetadata = await readMetadata(directory)
-        const sourceId = beforeMetadata?.id ?? `${source}-${entry}`
-        if (!requested.has(sourceId)) continue
-        const id = beforeMetadata?.id ?? entry
+        const localId = beforeMetadata?.id ?? `${source}-${entry}`
+        if (!requested.has(localId)) continue
+        const name = entry
         const beforeHash = await directoryHash(directory)
         const files: Array<{ path: string; bytes: Uint8Array }> = []
         const visit = async (current: string, prefix = ''): Promise<void> => {
@@ -226,15 +273,15 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           throw new Error('Skill changed during export. Preview again and retry.')
         }
         result.push({
-          id,
-          ...(sourceId === id ? {} : { sourceId }),
+          localId,
+          name,
           version: beforeMetadata?.version ?? '0.1.0',
           contentHash: afterHash,
           files
         })
       }
     }
-    return result.sort((left, right) => left.id.localeCompare(right.id))
+    return result.sort((left, right) => left.name.localeCompare(right.name))
   }
 
   async prepare(
@@ -242,21 +289,55 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     specialistId: string,
     skills: readonly SpecialistPackageSkillPlan[]
   ): Promise<void> {
-    if (!SAFE_SLUG.test(transactionId) || !SAFE_SLUG.test(specialistId)) {
+    if (!SAFE_DIRECTORY_NAME.test(transactionId) || !SAFE_DIRECTORY_NAME.test(specialistId)) {
       throw new Error('Invalid package transaction identity.')
     }
     const root = this.transactionDir(transactionId)
     await rm(root, { recursive: true, force: true })
     try {
       await mkdir(root, { recursive: true })
+      const locations = new Map(
+        await Promise.all(
+          skills.map(async (skill) => {
+            const localId = skill.localId ?? skill.id
+            const existingDirectory = await this.findSkillDirectory(localId)
+            return [
+              localId,
+              {
+                directoryName: existingDirectory ? basename(existingDirectory) : skill.id,
+                source:
+                  existingDirectory && dirname(existingDirectory) !== this.personalRoot
+                    ? ('imported' as const)
+                    : ('personal' as const),
+                existingDirectory
+              }
+            ] as const
+          })
+        )
+      )
       await writeFile(
         join(root, 'transaction.json'),
-        `${JSON.stringify({ mode: 'install', skillIds: skills.map((skill) => skill.id).sort() })}\n`,
+        `${JSON.stringify({
+          mode: 'install',
+          skills: skills
+            .map((skill) => {
+              const localId = skill.localId ?? skill.id
+              const location = locations.get(localId)!
+              return {
+                localId,
+                directoryName: location.directoryName,
+                source: location.source
+              }
+            })
+            .sort((left, right) => left.localId.localeCompare(right.localId))
+        })}\n`,
         { flag: 'wx' }
       )
       for (const skill of skills) {
-        if (!SAFE_SLUG.test(skill.id)) throw new Error('Invalid bundled Skill ID.')
-        const staging = join(root, 'staging', skill.id)
+        if (!SAFE_DIRECTORY_NAME.test(skill.id)) throw new Error('Invalid bundled Skill ID.')
+        const localId = skill.localId ?? skill.id
+        if (!SAFE_DIRECTORY_NAME.test(localId)) throw new Error('Invalid local Skill ID.')
+        const staging = join(root, 'staging', localId)
         const stagingRoot = resolve(staging)
         await mkdir(staging, { recursive: true })
         for (const file of skill.filesToInstall) {
@@ -271,10 +352,12 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
           await mkdir(dirname(target), { recursive: true })
           await writeFile(target, file.bytes, { flag: 'wx' })
         }
-        const existing = await readMetadata(join(this.personalRoot, skill.id))
+        const existingDirectory =
+          locations.get(localId)?.existingDirectory ?? join(this.personalRoot, skill.id)
+        const existing = await readMetadata(existingDirectory)
         const ownerIds = [...new Set([...(existing?.ownerIds ?? []), specialistId])].sort()
         const metadata: PackageSkillMetadata = {
-          id: skill.id,
+          id: localId,
           version: skill.version,
           contentHash: skill.contentHash,
           standalone: existing?.standalone ?? false,
@@ -298,7 +381,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     ownedSkillIds: readonly string[],
     deleteSkillIds: readonly string[]
   ): Promise<void> {
-    if (!SAFE_SLUG.test(transactionId) || !SAFE_SLUG.test(specialistId)) {
+    if (!SAFE_DIRECTORY_NAME.test(transactionId) || !SAFE_DIRECTORY_NAME.test(specialistId)) {
       throw new Error('Invalid package transaction identity.')
     }
     const affected = [...new Set(ownedSkillIds)].sort()
@@ -310,23 +393,45 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     await rm(root, { recursive: true, force: true })
     try {
       await mkdir(root, { recursive: true })
+      const transactionSkills = await Promise.all(
+        affected.map(async (id) => {
+          if (!SAFE_DIRECTORY_NAME.test(id)) throw new Error('Invalid owned Skill ID.')
+          const live = await this.findSkillDirectory(id)
+          if (!live) {
+            if (deleting.has(id)) throw new Error(`Selected Skill ${id} is no longer installed.`)
+            return undefined
+          }
+          const metadata = await readMetadata(live)
+          if (!metadata || !metadata.ownerIds.includes(specialistId)) {
+            if (deleting.has(id)) throw new Error(`Selected Skill ${id} is no longer owned.`)
+            return undefined
+          }
+          return {
+            localId: id,
+            directoryName: basename(live),
+            source:
+              dirname(live) === this.personalRoot ? ('personal' as const) : ('imported' as const),
+            live,
+            metadata
+          }
+        })
+      )
+      const ownedTransactionSkills = transactionSkills.filter(
+        (skill): skill is NonNullable<typeof skill> => skill !== undefined
+      )
       await writeFile(
         join(root, 'transaction.json'),
-        `${JSON.stringify({ mode: 'delete', skillIds: affected })}\n`,
+        `${JSON.stringify({
+          mode: 'delete',
+          skills: ownedTransactionSkills.map(({ localId, directoryName, source }) => ({
+            localId,
+            directoryName,
+            source
+          }))
+        })}\n`,
         { flag: 'wx' }
       )
-      for (const id of affected) {
-        if (!SAFE_SLUG.test(id)) throw new Error('Invalid owned Skill ID.')
-        const live = await this.findSkillDirectory(id)
-        if (!live) {
-          if (deleting.has(id)) throw new Error(`Selected Skill ${id} is no longer installed.`)
-          continue
-        }
-        const metadata = await readMetadata(live)
-        if (!metadata || !metadata.ownerIds.includes(specialistId)) {
-          if (deleting.has(id)) throw new Error(`Selected Skill ${id} is no longer owned.`)
-          continue
-        }
+      for (const { localId: id, live, metadata } of ownedTransactionSkills) {
         if (deleting.has(id)) continue
         const staging = join(root, 'staging', id)
         await mkdir(dirname(staging), { recursive: true })
@@ -351,28 +456,29 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
   async commit(transactionId: string): Promise<void> {
     const root = this.transactionDir(transactionId)
     const stagingRoot = join(root, 'staging')
-    const ids = new Set<string>()
+    const locations = new Map<string, { directoryName: string; source: SkillStorageSource }>()
     try {
-      const transaction = JSON.parse(await readFile(join(root, 'transaction.json'), 'utf8')) as {
-        skillIds?: unknown
-      }
-      if (Array.isArray(transaction.skillIds)) {
-        for (const id of transaction.skillIds) {
-          if (typeof id === 'string' && SAFE_SLUG.test(id)) ids.add(id)
-        }
+      for (const [id, location] of (await readTransaction(root)).locations) {
+        locations.set(id, location)
       }
     } catch {
       // Staging evidence below remains authoritative for legacy transactions.
     }
     try {
-      for (const id of await readdir(stagingRoot)) if (SAFE_SLUG.test(id)) ids.add(id)
+      for (const id of await readdir(stagingRoot)) {
+        if (SAFE_DIRECTORY_NAME.test(id) && !locations.has(id)) {
+          locations.set(id, { directoryName: id, source: 'personal' })
+        }
+      }
     } catch {
       // A delete-only transaction intentionally has no staging directory.
     }
     await mkdir(this.personalRoot, { recursive: true })
     await mkdir(join(root, 'backup'), { recursive: true })
-    for (const id of [...ids].sort()) {
-      const live = join(this.personalRoot, id)
+    for (const [id, { directoryName, source }] of [...locations].sort(([left], [right]) =>
+      left.localeCompare(right)
+    )) {
+      const live = join(dirname(this.personalRoot), source, directoryName)
       const backup = join(root, 'backup', id)
       const staging = join(stagingRoot, id)
       if (await exists(live)) await rename(live, backup)
@@ -392,7 +498,7 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       } catch {
         return
       }
-      for (const id of transactions.filter((entry) => SAFE_SLUG.test(entry))) {
+      for (const id of transactions.filter((entry) => SAFE_DIRECTORY_NAME.test(entry))) {
         await this.recover(id, 'rollback')
       }
       return
@@ -400,31 +506,33 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
     const root = this.transactionDir(transactionId)
     const stagingRoot = join(root, 'staging')
     const backupRoot = join(root, 'backup')
-    const ids = new Set<string>()
+    const locations = new Map<string, { directoryName: string; source: SkillStorageSource }>()
     let mode: 'install' | 'delete' = 'install'
     try {
-      const transaction = JSON.parse(await readFile(join(root, 'transaction.json'), 'utf8')) as {
-        skillIds?: unknown
-        mode?: unknown
-      }
-      if (transaction.mode === 'delete') mode = 'delete'
-      if (Array.isArray(transaction.skillIds)) {
-        for (const id of transaction.skillIds)
-          if (typeof id === 'string' && SAFE_SLUG.test(id)) ids.add(id)
+      const transaction = await readTransaction(root)
+      mode = transaction.mode
+      for (const [id, location] of transaction.locations) {
+        locations.set(id, location)
       }
     } catch {
       // Legacy or partially prepared transaction; directory evidence below remains authoritative.
     }
     for (const directory of [stagingRoot, backupRoot]) {
       try {
-        for (const id of await readdir(directory)) if (SAFE_SLUG.test(id)) ids.add(id)
+        for (const id of await readdir(directory)) {
+          if (SAFE_DIRECTORY_NAME.test(id) && !locations.has(id)) {
+            locations.set(id, { directoryName: id, source: 'personal' })
+          }
+        }
       } catch {
         // A missing phase directory is an expected durable state.
       }
     }
     if (outcome === 'rollback') {
-      for (const id of [...ids].sort()) {
-        const live = join(this.personalRoot, id)
+      for (const [id, { directoryName, source }] of [...locations].sort(([left], [right]) =>
+        left.localeCompare(right)
+      )) {
+        const live = join(dirname(this.personalRoot), source, directoryName)
         const staging = join(stagingRoot, id)
         const backup = join(backupRoot, id)
         if (await exists(backup)) {
@@ -436,8 +544,10 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
         }
       }
     } else {
-      for (const id of [...ids].sort()) {
-        const live = join(this.personalRoot, id)
+      for (const [id, { directoryName, source }] of [...locations].sort(([left], [right]) =>
+        left.localeCompare(right)
+      )) {
+        const live = join(dirname(this.personalRoot), source, directoryName)
         const staging = join(stagingRoot, id)
         const backup = join(backupRoot, id)
         if (await exists(staging)) {
@@ -452,7 +562,9 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
   }
 
   private transactionDir(transactionId: string): string {
-    if (!SAFE_SLUG.test(transactionId)) throw new Error('Invalid package transaction identity.')
+    if (!SAFE_DIRECTORY_NAME.test(transactionId)) {
+      throw new Error('Invalid package transaction identity.')
+    }
     return join(this.transactionRoot, transactionId)
   }
 
@@ -465,7 +577,9 @@ export class UserSkillSpecialistPackageAdapter implements SpecialistPackageSkill
       } catch {
         continue
       }
-      for (const entry of entries.filter((candidate) => SAFE_SLUG.test(candidate)).sort()) {
+      for (const entry of entries
+        .filter((candidate) => SAFE_DIRECTORY_NAME.test(candidate))
+        .sort()) {
         const directory = join(root, entry)
         if ((await readMetadata(directory))?.id === id) return directory
       }

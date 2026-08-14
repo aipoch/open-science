@@ -73,7 +73,7 @@ describe('useNotebookRunsById', () => {
     await waitFor(() => expect(result.current.get('run-1')).toBeDefined())
     expect(window.api.notebook.state).toHaveBeenCalledWith({
       sessionId: 'session-1',
-      projectName: 'project-1',
+      projectId: 'project-1',
       workspaceCwd: '/workspace'
     })
     expect(result.current.get('run-1')?.outputs).toEqual([

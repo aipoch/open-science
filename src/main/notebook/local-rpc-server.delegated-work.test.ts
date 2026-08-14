@@ -121,11 +121,11 @@ describe('authenticated delegatedWorkCall route', () => {
       'host.children': 'unavailable',
       'host.collect': 'unavailable',
       'host.delegate': 'available',
-      'host.message_receipt': 'unavailable',
-      'host.resolve_message': 'unavailable',
-      'host.send_frame_message': 'unavailable',
-      'host.stop_child': 'unavailable',
-      'host.submit_output': 'unavailable'
+      'host.messageReceipt': 'unavailable',
+      'host.resolveMessage': 'unavailable',
+      'host.sendFrameMessage': 'unavailable',
+      'host.stopChild': 'unavailable',
+      'host.submitOutput': 'unavailable'
     })
     await expect(
       fetch(child.endpoint, {
@@ -136,21 +136,81 @@ describe('authenticated delegatedWorkCall route', () => {
         },
         body: JSON.stringify({
           method: 'hostSdkHelp',
-          params: { query: 'send_frame_message', caller_role: 'main' }
+          params: { query: 'sendFrameMessage', caller_role: 'main' }
         })
       }).then((response) => response.json())
     ).resolves.toMatchObject({
       result: {
-        id: 'host.send_frame_message',
+        id: 'host.sendFrameMessage',
         availability: {
           status: 'unavailable',
-          reason: 'host.send_frame_message is not provisioned for this Session.'
+          reason: 'host.sendFrameMessage is not provisioned for this Session.'
         }
       }
     })
 
     main.release()
     child.release()
+  })
+
+  it('keeps delegated-work RPC diagnostics on the private snake_case contract', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: {
+        delegate: vi.fn(),
+        children: vi.fn(),
+        stopChildren: vi.fn(),
+        sendMessage: vi.fn()
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'session-1',
+      'project-1',
+      'child-frame',
+      { role: 'delegate', attemptId: 'attempt-1' }
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1',
+      originatingUserMessageId: 'message-1'
+    })
+    const call = async (
+      params: Record<string, unknown>,
+      method = 'delegatedWorkCall'
+    ): Promise<unknown> => {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method, params })
+      })
+      expect(response.status).toBe(500)
+      return response.json()
+    }
+
+    await expect(call({ value: 'done' }, 'delegatedOutputCall')).resolves.toEqual({
+      error: 'host.submit_output is not configured.'
+    })
+    await expect(
+      call({
+        op: 'send_message',
+        target: 'child-frame',
+        message: 'hello',
+        options: { request_id: 42 }
+      })
+    ).resolves.toEqual({ error: 'host.send_frame_message request_id must be a string.' })
+    await expect(call({ op: 'children', frame_ids: 'child-frame' })).resolves.toEqual({
+      error: 'host.children frame_ids must be an array of strings.'
+    })
+    await expect(call({ operation: 'stop_children', frame_ids: [] })).resolves.toEqual({
+      error: 'host.stop_child requires one or more frame ids.'
+    })
+
+    endInvocation()
+    connection.release()
   })
 
   it('forwards a request array through the authenticated host seam without reordering it', async () => {
@@ -633,7 +693,7 @@ describe('authenticated delegatedWorkCall route', () => {
     connection.release()
   })
 
-  it('routes an authenticated send_message to terminal-child continuation', async () => {
+  it('routes an authenticated sendFrameMessage call to terminal-child continuation', async () => {
     const session = { projectId: 'project-1', sessionId: 'session-1' }
     const execution = createDeterministicDelegateExecution()
     const records = createInMemoryDelegatedWorkRecords({

@@ -9,6 +9,7 @@ import {
   net,
   Notification,
   protocol,
+  session,
   shell,
   webContents,
   type WebContents
@@ -28,6 +29,10 @@ import {
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 import type { ApplicationInvocation } from './application-command-router'
 import { createApplicationEventModule, type ApplicationEventSource } from './application-events'
+import {
+  LIFECYCLE_CHANNELS,
+  MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
+} from '../shared/lifecycle-events'
 
 import { createAcpRuntime } from './acp/runtime-composition'
 import { SideChatRelayOwner } from './acp/side-chat-relay-owner'
@@ -51,9 +56,11 @@ import { ArtifactRunRegistry } from './artifacts/run-registry'
 import { createComputeIpcModule } from './compute/ipc'
 import type { ComputeJobOwnerLiveness } from './compute/job-deletion-owner'
 import { attachEnabledComputeHosts } from './compute/enabled-hosts-registry'
+import { SessionEnabledComputeHostsOwner } from './compute/session-enabled-hosts-owner'
 import { createComputeJobRuntime } from './compute/job-runtime'
 import { waitForInitialConnectorRefresh } from './connector-reload'
 import { ApprovalBroker } from './connectors/approval-broker'
+import { ParserEngine } from './connectors/engine'
 import { McpClientManager } from './connectors/mcp-client-manager'
 import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './connectors/custom-mcp-bootstrap'
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
@@ -64,6 +71,7 @@ import { registerFileSaveHandlers } from './file-save'
 import { ImmutableInputAuthority } from './immutable-input-authority'
 import { createSessionArtifactFileResolver } from './session-artifact-file-resolver'
 import { createCliCommandOwner, registerCliInstallIpcHandlers } from './cli-install/ipc'
+
 import { createGithubCommandOwner, registerGithubIpcHandlers } from './github-ipc'
 import {
   BackendShutdownOutcomeError,
@@ -134,6 +142,7 @@ import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../shared/uploads'
 import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../shared/artifacts'
 import type { NotebookLanguage } from '../shared/notebook'
+import { MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID } from '../shared/lifecycle-events'
 import { OFFICE_PREVIEW_STATE_CHANNEL } from '../shared/office-preview'
 import { prepareExternalPythonRuntime } from './notebook/venv-overlay'
 import {
@@ -188,6 +197,7 @@ import { LocalFsService } from './local-fs/service'
 import { getAppClaudeConfigDir } from './settings/provider-env'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
+import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
 import type { NotebookRuntimeSettings } from './settings/capabilities'
 import type { WindowSettingsCapabilities } from './settings/service-capabilities'
 import { createProductionDelegatedWorkComposition } from './delegation/production-composition'
@@ -207,8 +217,8 @@ import {
   selectSpecialistArchive
 } from './specialist/package/electron-adapter'
 import { UserSkillSpecialistPackageAdapter } from './skills/specialist-package-adapter'
-import { BundledSkillSpecialistPackageAdapter } from './skills/builtin-specialist-package-adapter'
 import { saveSkillExport } from './skills/export'
+import { netFetchStandard } from './skills/net-fetch'
 import { AgentsService } from './agents/agents-service'
 import {
   CompletionGateCoordinator,
@@ -251,7 +261,7 @@ import { registerStorageIpcHandlers } from './storage/ipc'
 import { createStorageCommandOwner } from './storage/command-owner'
 import { withDataRootWrite } from './storage/migration-state'
 import { normalizeLegacyDataPaths } from './storage/normalize-legacy-paths'
-import { detectActiveSessions } from './storage/detect-active'
+import { createDelegatedActivityProjection, detectActiveSessions } from './storage/detect-active'
 import {
   computeDefaultDataRoot,
   initDataRoot,
@@ -262,6 +272,7 @@ import {
 } from './storage-root'
 import { createUpdateCommandOwner, registerUpdateIpcHandlers } from './update/ipc'
 import { createUpdateStrategy } from './update/create-strategy'
+import { createDelegatedSafeInstallGate } from './update/strategy'
 import { startUpdateScheduler } from './update/scheduler'
 import { createDefaultUploadRepository, registerUploadIpcHandlers } from './uploads/ipc'
 import { createUploadCommandOwner } from './uploads/command-owner'
@@ -273,6 +284,7 @@ import {
 } from './runtime-electron-wiring'
 import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/conversation-import'
 import { HostSkillsService, type HostSkillsCatalog } from './skills/host-skills-service'
+import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
 import type { TaskAgentPort } from './tasks/task-runner'
 
@@ -369,11 +381,20 @@ const createApplicationModules = async (
   )
   // One settings service backs both the settings IPC and the ACP spawn config (single source of truth).
   const settingsRepository = new SettingsRepository(resolveStorageRoot())
+  const networkProxyRuntime = new NetworkProxyRuntime({
+    setProxy: (config) => session.defaultSession.setProxy(config)
+  })
   const settingsService = await modules.add(undefined, () => ({
-    capability: new SettingsService({ repository: settingsRepository })
+    capability: new SettingsService({
+      repository: settingsRepository,
+      applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined),
+      resolveCodexProxyEnvironment: () =>
+        Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
+    })
   }))
   const storedSettings = await settingsService.getStoredSettings()
   const storageLog = createLogger('storage')
+  await networkProxyRuntime.apply(storedSettings.networkProxy)
   // Prime the data-root cache from settings before any data repository is constructed below. A change
   // to this value only takes effect after a restart, so reading it once here is sufficient.
   initDataRoot(storedSettings.dataRoot)
@@ -408,6 +429,17 @@ const createApplicationModules = async (
   // startup runs before the runtime exists, while later reads must preserve live prompt state.
   const runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined } = {
     current: undefined
+  }
+  const userSkillCatalogObserverRef: { current: UserSkillCatalogObserver | undefined } = {
+    current: undefined
+  }
+  const requestSkillCatalogRefresh = (): void => {
+    const observer = userSkillCatalogObserverRef.current
+    if (observer) {
+      void observer.notifyCatalogChanged()
+      return
+    }
+    void runtimeRef.current?.requestSkillsReload()
   }
   const sideChatOwnerRef: { current: SideChatRuntimeOwner | undefined } = {
     current: undefined
@@ -531,8 +563,7 @@ const createApplicationModules = async (
     current: undefined
   }
   const notebookActivityRef: {
-    current:
-      { getActiveNotebookSessions(): { projectName: string; sessionId: string }[] } | undefined
+    current: { getActiveNotebookSessions(): { projectId: string; sessionId: string }[] } | undefined
   } = { current: undefined }
 
   // Construct one storage/index/deletion graph for every related IPC surface. Sharing these instances
@@ -619,6 +650,14 @@ const createApplicationModules = async (
       return computeJobDeletionRef.current.abortProjectJobDeletion(projectId)
     }
   }
+  // Delegated execution can outlive its root Turn and therefore is absent from the ACP runtime's
+  // active-prompt list. Keep a synchronous projection of durable delegated mutations for the
+  // close/quit and storage-migration safety gates. The selector deliberately ignores active routes:
+  // inactive-branch work still owns processes/files and must block disruptive operations.
+  const delegatedActivity = createDelegatedActivityProjection()
+  const getActiveDelegatedSessions = (): { projectName: string; sessionId: string }[] =>
+    delegatedActivity.getActiveDelegatedSessions()
+
   const sessionPersistenceCoordinator = new SessionPersistenceCoordinator(
     sessionRepository,
     projectFilesRepository,
@@ -631,7 +670,14 @@ const createApplicationModules = async (
         reconcilePermissionGrantOwners(permissionGrantRegistry, { sessions })
     },
     undefined,
-    computeJobDeletionPort
+    computeJobDeletionPort,
+    (session) => {
+      delegatedActivity.recordSession(session)
+      broadcastToRenderers(LIFECYCLE_CHANNELS.sessionUpdated, {
+        session,
+        originClientId: MAIN_DELEGATED_WORK_LIFECYCLE_CLIENT_ID
+      })
+    }
   )
   const sideChatRelay = new SideChatRelayOwner({
     targetState: (parentSessionId) => {
@@ -688,6 +734,7 @@ const createApplicationModules = async (
       runtime: {
         getActivePromptSessions: () => runtimeRef.current?.getActivePromptSessions() ?? []
       },
+      delegated: { getActiveDelegatedSessions },
       notebook: {
         getActiveNotebookSessions: () =>
           notebookActivityRef.current?.getActiveNotebookSessions() ?? []
@@ -713,11 +760,14 @@ const createApplicationModules = async (
   archiveCoordinator.setMarkReadSessions((sessionIds) =>
     notificationInbox.markSessionsRead(sessionIds)
   )
+  const sessionEnabledComputeHostsOwnerRef: { current?: SessionEnabledComputeHostsOwner } = {}
   bindNotificationInboxDeletionRuntime({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
-    onSessionsDeleted: (sessionIds) =>
-      sideChatOwnerRef.current?.invalidateParents(sessionIds) ?? Promise.resolve()
+    onSessionsDeleted: async (sessionIds) => {
+      await sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds)
+      await (sideChatOwnerRef.current?.invalidateParents(sessionIds) ?? Promise.resolve())
+    }
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
@@ -732,8 +782,22 @@ const createApplicationModules = async (
   // the next message. Shared by persistSessionSpecialist (stash) and saveSession (flush).
   const pendingSpecialistBindings = new PendingSessionSpecialistBindings()
   const sessionPersistenceBackend: SessionPersistenceBackend = {
-    loadAll: () =>
-      loadSessionsAfterProjectRecovery(projectDeletionCoordinator, sessionPersistenceCoordinator),
+    loadAll: async () => {
+      const result = await loadSessionsAfterProjectRecovery(
+        projectDeletionCoordinator,
+        sessionPersistenceCoordinator
+      )
+      if (!sessionEnabledComputeHostsOwnerRef.current) {
+        throw new Error('Session enabled Compute Host ownership is not initialized.')
+      }
+      return {
+        ...result,
+        sessions: await sessionEnabledComputeHostsOwnerRef.current.reconcile(
+          result.sessions,
+          result.diagnostics?.isComplete === true
+        )
+      }
+    },
     loadOne: async ({ projectId, sessionId }) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
       return sessionRepository.loadSession(projectId, sessionId)
@@ -742,7 +806,16 @@ const createApplicationModules = async (
       await projectDeletionCoordinator.recoverPendingDeletions()
       const created =
         (await sessionRepository.loadSession(session.projectId, session.id)) === undefined
-      const durableSession = await sessionPersistenceCoordinator.saveSession(session, options)
+      const durableSession = created
+        ? await (() => {
+            if (!sessionEnabledComputeHostsOwnerRef.current) {
+              throw new Error('Session enabled Compute Host ownership is not initialized.')
+            }
+            return sessionEnabledComputeHostsOwnerRef.current.createSession(session, (candidate) =>
+              sessionPersistenceCoordinator.saveSession(candidate, options)
+            )
+          })()
+        : await sessionPersistenceCoordinator.saveSession(session, options)
       // Flush any approved host.agents.switch binding stashed while this session was not yet durable,
       // so the approved target survives a restart before the next message (the in-memory binding
       // alone does not persist across restart).
@@ -800,7 +873,7 @@ const createApplicationModules = async (
     {
       configRoot: resolveConfigRoot(),
       dataRoot: resolveDataRoot(),
-      projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+      projectId: DEFAULT_ARTIFACT_PROJECT_NAME,
       repository: new NotebookRunRepository(resolveDataRoot()),
       getPackageMirror: () => settingsService.getPackageMirror(),
       notebookRuntimeSettings,
@@ -826,7 +899,6 @@ const createApplicationModules = async (
   const appVersion = app.getVersion()
   const specialistSkills = await settingsService.listSpecialistSkillCatalog()
   const specialistPackageSkillAdapter = new UserSkillSpecialistPackageAdapter(resolveStorageRoot())
-  const builtinSpecialistPackageSkillAdapter = new BundledSkillSpecialistPackageAdapter()
   const packageSkills = await specialistPackageSkillAdapter.snapshot()
   const builtinRegistry = new BuiltinSpecialistRegistry({
     appVersion,
@@ -835,6 +907,7 @@ const createApplicationModules = async (
       const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
       return {
         id: skill.id,
+        name: skill.frameworkName,
         builtin: skill.source === 'featured',
         displayName: skill.displayName,
         source: skill.source,
@@ -865,20 +938,25 @@ const createApplicationModules = async (
           const packageSkill = packageSkills.find((candidate) => candidate.id === skill.id)
           return {
             id: skill.id,
+            name: skill.frameworkName,
             builtin: skill.source === 'featured',
             displayName: skill.displayName,
             source: skill.source,
             ...(packageSkill ?? {})
           }
         }),
-        connectorIds: Array.from(
-          new Set([
-            ...ALL_CONNECTOR_IDS,
-            ...customMcpServers
-              .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
-              .map((server) => server.name)
-          ])
-        ),
+        connectorIds: [
+          ...ALL_CONNECTOR_IDS,
+          ...customMcpServers
+            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
+            .map((server) => server.id)
+        ],
+        connectorAliases: Object.fromEntries([
+          ...ALL_CONNECTOR_IDS.map((id) => [id, id] as const),
+          ...customMcpServers
+            .filter((server) => isCustomMcpServerRouteSafe(server, customMcpServers))
+            .map((server) => [server.id, server.name] as const)
+        ]),
         protectedSpecialistIds: ['reviewer'],
         protectedSpecialistNames: ['Reviewer']
       }
@@ -899,7 +977,6 @@ const createApplicationModules = async (
       }
     },
     skillPort: specialistPackageSkillAdapter,
-    builtinSkillPort: builtinSpecialistPackageSkillAdapter,
     onCommitted: () => {
       broadcastToRenderers(SPECIALIST_IPC.CATALOG_CHANGED, undefined)
       void runtime.requestSkillsReload()
@@ -1067,7 +1144,7 @@ const createApplicationModules = async (
       skillImportApprovalBroker.request(request, cancellation),
     // If a prompt is active the coordinator defers the reconnect until its terminal event, making the
     // new Skill available on the next user turn without interrupting the importing tool call.
-    onSkillsChanged: () => void runtimeRef.current?.requestSkillsReload()
+    onSkillsChanged: requestSkillCatalogRefresh
   })
   const moleculePreviewHandler = createMoleculePreviewHandler({
     writeArtifactForCurrentRun: (sessionId, input) => {
@@ -1076,6 +1153,7 @@ const createApplicationModules = async (
     }
   })
   const connectorService = new ConnectorService({
+    engine: new ParserEngine({ fetchImpl: netFetchStandard }),
     getConnectors: () => connectorRuntimeSettings.current(),
     getConnectorsFresh: () => settingsService.getConnectors(),
     resolveApiKey: (ref) => tryDecryptKey(ref),
@@ -1115,7 +1193,28 @@ const createApplicationModules = async (
     undefined,
     taskNotifications,
     permissionGrantRegistry,
-    settingsRepository
+    settingsRepository,
+    {
+      pruneSessionEnabledHosts: async (providerId, afterPrune) => {
+        if (!sessionEnabledComputeHostsOwnerRef.current) {
+          throw new Error('Session enabled Compute Host ownership is not initialized.')
+        }
+        const sessions = await sessionEnabledComputeHostsOwnerRef.current.pruneProvider(
+          providerId,
+          afterPrune
+        )
+        for (const session of sessions) {
+          try {
+            applicationEvents.publish('session:updated', {
+              session,
+              originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
+            })
+          } catch {
+            // The durable repair and cache projection have committed; lifecycle delivery is best effort.
+          }
+        }
+      }
+    }
   )
   surfaceAdapters = beforeAcpAdapters
   const {
@@ -1125,6 +1224,14 @@ const createApplicationModules = async (
     hostRepository,
     enabledComputeHostsRegistry: hostsRegistry
   } = computeIpcModule
+  const sessionEnabledComputeHostsOwner = new SessionEnabledComputeHostsOwner({
+    registry: hostsRegistry,
+    hostExists: async (providerId) => (await hostRepository.get(providerId)) !== null,
+    listHostIds: async () => (await hostRepository.list()).map((host) => host.providerId),
+    sessionAuthority: sessionPersistenceCoordinator,
+    withDataRootWrite
+  })
+  sessionEnabledComputeHostsOwnerRef.current = sessionEnabledComputeHostsOwner
   computeJobDeletionRef.current = jobDeletionOwner
   await projectDeletionCoordinator.restorePendingDeletionBarriers()
   await jobDeletionOwner.restoreOrphanJobDeletionBarriers(isComputeJobOwnerLive)
@@ -1485,7 +1592,7 @@ const createApplicationModules = async (
         rawInput: { skillApproval: { kind: 'delete', ...payload } }
       })
     },
-    onPublishedSkillsChanged: () => void runtimeRef.current?.requestSkillsReload()
+    onPublishedSkillsChanged: requestSkillCatalogRefresh
   })
   const hostLlmLog = createLogger('notebook:host-llm')
   const hostLlmService = new HostLlmService({
@@ -1634,7 +1741,10 @@ const createApplicationModules = async (
     )
 
   const cliCommandOwner = createCliCommandOwner()
-  const githubCommandOwner = createGithubCommandOwner()
+  // Reconcile an existing legacy AppImage shim before startup completes. The owner scopes the
+  // operation to Linux AppImage and records any filesystem failure without aborting the app.
+  await cliCommandOwner.ensureCurrent()
+  const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })
   const logsCommandOwner = createLogsCommandOwner()
   declareElectronAdapter('desktop-utilities', () => {
     registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })
@@ -1698,6 +1808,27 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  const userSkillCatalogObserver = await modules.add(
+    {
+      storageRoot: configRoot,
+      catalog: { list: () => settingsService.listUserSkills() },
+      onCatalogChanged: async () => {
+        broadcastToRenderers('skills:catalog-changed', undefined)
+        await runtime.requestSkillsReload()
+      }
+    },
+    (options) => {
+      const observer = new UserSkillCatalogObserver(options)
+      return {
+        name: 'user-skill-catalog-observer',
+        capability: observer,
+        start: () => observer.start(),
+        rollback: () => observer.dispose(),
+        dispose: () => observer.dispose()
+      }
+    }
+  )
+  userSkillCatalogObserverRef.current = userSkillCatalogObserver
   const sideChatLog = createLogger('side-chat')
   const sideChatRuntime = await modules.add(
     {
@@ -1900,7 +2031,10 @@ const createApplicationModules = async (
   // this immutable dependency from construction; the manifest fallback ignores it because it does not
   // quit the running app to install.
   const updateStrategy = createUpdateStrategy(process.platform, {
-    installGate: () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+    installGate: createDelegatedSafeInstallGate(
+      () => getActiveDelegatedSessions().length > 0,
+      () => shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS)
+    )
   })
   const updateCommandOwner = createUpdateCommandOwner(updateStrategy)
   let stopUpdateScheduler: (() => void) | undefined
@@ -1975,7 +2109,10 @@ const createApplicationModules = async (
         return mainApplied && sideChatApplied
       }
     },
-    skills: { requestSkillsReload: () => void runtime.requestSkillsReload() },
+    skills: {
+      requestSkillsReload: () => void runtime.requestSkillsReload(),
+      notifySkillCatalogChanged: requestSkillCatalogRefresh
+    },
     connectors: {
       invalidatePermissionProjection: () => permissionGrantProjection.invalidateProjection(),
       refreshConnectorSkillDocs: (customServerId) =>
@@ -2294,6 +2431,7 @@ const createApplicationModules = async (
     runtime,
     notebook: notebookService,
     getActivePromptSessions: () => runtime.getActivePromptSessions(),
+    getActiveDelegatedSessions,
     settingsService,
     micromambaRunner
   })
@@ -2303,6 +2441,7 @@ const createApplicationModules = async (
         runtime,
         notebook: notebookService,
         getActivePromptSessions: () => runtime.getActivePromptSessions(),
+        getActiveDelegatedSessions,
         settingsService
       },
       storageCommandOwner
@@ -2469,7 +2608,8 @@ const createApplicationModules = async (
         get: (providerId) => settingsService.getComputeBookmarks(providerId),
         set: (providerId, folders) => settingsService.setComputeBookmarks(providerId, folders)
       },
-      enabledHosts: hostsRegistry
+      enabledHosts: sessionEnabledComputeHostsOwner,
+      events: applicationEvents
     },
     permissionGrants: permissionGrantProjection,
     dataContent: {
@@ -2564,12 +2704,16 @@ const createApplicationModules = async (
     detectActiveSessions: () =>
       detectActiveSessions({
         runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
+        delegated: { getActiveDelegatedSessions },
         notebook: notebookService
       }),
     prepareForQuit: () => runtime.prepareForQuit(),
     electronAdapters: {
       beforeCompute: beforeComputeAdapters,
-      compute: computeIpcModule,
+      compute: {
+        handlers: computeIpcModule.handlers,
+        enabledHosts: sessionEnabledComputeHostsOwner
+      },
       beforeAcp: beforeAcpAdapters,
       acp: {
         runtime,

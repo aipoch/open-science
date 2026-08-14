@@ -66,6 +66,7 @@ const installApi = (): void => {
           enabled: true
         }
       ]),
+      onSkillCatalogChanged: vi.fn(() => vi.fn()),
       getSkillDetail: vi.fn().mockResolvedValue({
         id: 'alpha',
         name: 'Alpha',
@@ -1163,6 +1164,160 @@ describe('SettingsPage layout', () => {
     ).toHaveBeenCalledOnce()
   })
 
+  it('exits loading when the initial remote access snapshot fails', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const retrySnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: false, loggedIn: false, registered: false },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    let finishRetry!: (snapshot: typeof retrySnapshot) => void
+    remoteAccess.getSnapshot
+      .mockRejectedValueOnce(new Error('Remote access is unavailable.'))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRetry = resolve
+          })
+      )
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+
+    expect(document.body.textContent).not.toContain('Loading remote access')
+    expect(document.body.textContent).toContain('Remote access is unavailable.')
+    const retryButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Try again')
+    )
+    expect(retryButton).not.toBeUndefined()
+
+    act(() => {
+      retryButton?.click()
+      retryButton?.click()
+    })
+
+    expect(remoteAccess.getSnapshot).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).toContain('Loading remote access')
+    expect(document.body.textContent).not.toContain('Try again')
+
+    await act(async () => {
+      finishRetry(retrySnapshot)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).not.toContain('Remote access is unavailable.')
+    expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
+      'Remote access is off'
+    )
+  })
+
+  it('does not detect after leaving Remote control during the initial snapshot load', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const manageableSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: false, loggedIn: false, registered: false },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    let finishInitialLoad!: (snapshot: typeof manageableSnapshot) => void
+    remoteAccess.getSnapshot.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishInitialLoad = resolve
+        })
+    )
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Remote control')?.click())
+    expect(document.body.textContent).toContain('Loading remote access')
+
+    act(() => navButton('Model')?.click())
+    await act(async () => {
+      finishInitialLoad(manageableSnapshot)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(remoteAccess.detect).not.toHaveBeenCalled()
+  })
+
+  it('does not detect after leaving Remote control during an initial-load retry', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const manageableSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'off',
+      enabled: false,
+      lifecycle: 'disabled',
+      remoteIt: { installed: false, loggedIn: false, registered: false },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    let finishRetry!: (snapshot: typeof manageableSnapshot) => void
+    remoteAccess.getSnapshot
+      .mockRejectedValueOnce(new Error('Remote access is unavailable.'))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRetry = resolve
+          })
+      )
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Remote control')?.click())
+    const retryButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Try again')
+    )
+    act(() => retryButton?.click())
+
+    act(() => navButton('Model')?.click())
+    await act(async () => {
+      finishRetry(manageableSnapshot)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(remoteAccess.detect).not.toHaveBeenCalled()
+  })
+
   it('covers the whole app while a remote mode system command is still running', async () => {
     const remoteAccess = (
       window as unknown as {
@@ -1217,10 +1372,16 @@ describe('SettingsPage layout', () => {
 
     expect(remoteAccess.setMode).toHaveBeenCalledTimes(1)
     const overlay = document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
+    const scrim = document.body.querySelector('[data-testid="remote-access-operation-scrim"]')
+    expect(scrim).not.toBeNull()
+
     expect(overlay).not.toBeNull()
     expect(overlay?.textContent).toContain('Applying remote access settings')
-    expect(overlay?.className).toContain('fixed')
-    expect(overlay?.className).toContain('inset-0')
+    expect(scrim?.className).toContain('fixed')
+    expect(scrim?.className).toContain('inset-0')
+    expect(overlay?.getAttribute('role')).toBe('dialog')
+    expect(overlay?.getAttribute('aria-modal')).toBe('true')
+    expect(overlay?.contains(document.activeElement)).toBe(true)
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
       'Changing access mode…'
     )
@@ -1252,6 +1413,7 @@ describe('SettingsPage layout', () => {
     expect(
       document.body.querySelector('[data-testid="remote-access-operation-overlay"]')
     ).toBeNull()
+    expect(document.activeElement).toBe(remoteItMode)
     expect(document.body.querySelector('[data-testid="remote-access-status"]')?.textContent).toBe(
       'App access is on'
     )
@@ -1622,6 +1784,58 @@ describe('SettingsPage layout', () => {
     ).toBeNull()
     expect(settingsSection('Remote Browser Access')).not.toBeUndefined()
     expect(settingsSection('Remote App Access')).toBeUndefined()
+  })
+
+  it('reports and announces a rejected browser-link copy attempt', async () => {
+    const remoteAccess = (
+      window as unknown as {
+        api: {
+          remoteAccess: {
+            getSnapshot: ReturnType<typeof vi.fn>
+            detect: ReturnType<typeof vi.fn>
+          }
+        }
+      }
+    ).api.remoteAccess
+    const publicSnapshot = {
+      canManage: true,
+      canManagePairing: true,
+      mode: 'remoteit-public',
+      enabled: true,
+      lifecycle: 'running',
+      accessUrl: 'https://open-science.connect.remote.it/',
+      remoteItPublicUrl: 'https://open-science.connect.remote.it/',
+      remoteIt: {
+        installed: true,
+        loggedIn: true,
+        registered: true,
+        service: { id: 'service-1', host: '127.0.0.1', port: 44100, enabled: true, ready: true }
+      },
+      pendingRequests: [],
+      trustedBrowsers: []
+    }
+    remoteAccess.getSnapshot.mockResolvedValue(publicSnapshot)
+    remoteAccess.detect.mockResolvedValue(publicSnapshot)
+    const writeText = vi.fn().mockRejectedValue(new Error('Clipboard permission denied'))
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+    await act(async () => navButton('Remote control')?.click())
+    const copyButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Copy'
+    )
+
+    await act(async () => {
+      copyButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(writeText).toHaveBeenCalledWith(publicSnapshot.accessUrl)
+    const copyError = document.body.querySelector('[data-testid="remote-link-copy-error"]')
+    expect(copyError?.getAttribute('role')).toBe('alert')
+    expect(copyError?.textContent).toContain('Could not copy the browser link')
   })
 
   it('explains Remote.It Device setup after a pre-install selection failed', async () => {

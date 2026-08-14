@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
@@ -21,6 +22,8 @@ describe('task CLI', () => {
         'task.md',
         '--session',
         'session-1',
+        '--cwd',
+        'workspace',
         '--approval-profile',
         'auto',
         '--wait',
@@ -36,6 +39,7 @@ describe('task CLI', () => {
         project: 'systematic-review',
         promptFile: 'task.md',
         session: 'session-1',
+        cwd: 'workspace',
         approvalProfile: 'auto'
       }
     })
@@ -114,6 +118,10 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--json', '--jsonl', '--wait'])).toThrow(
       'Use only one of --json or --jsonl.'
     )
+    expect(() => parseCliArgs(['run', 'status', 'run-1', '--cwd', '.'])).toThrow(
+      '--cwd requires run.'
+    )
+    expect(() => parseCliArgs(['run', '--cwd', '   '])).toThrow('--cwd requires a non-empty path.')
     expect(() => parseCliArgs(['status', '--unknown'])).toThrow('Unknown option: --unknown')
   })
 
@@ -139,6 +147,7 @@ describe('task CLI', () => {
         options: {
           project: 'project-1',
           promptFile: 'task.md',
+          cwd: 'workspace',
           approvalProfile: 'auto',
           wait: true,
           json: true,
@@ -156,6 +165,7 @@ describe('task CLI', () => {
     expect(client.startRun).toHaveBeenCalledWith({
       project: 'project-1',
       prompt: 'Research this.',
+      cwd: resolve('workspace'),
       permissionProfile: 'auto'
     })
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')

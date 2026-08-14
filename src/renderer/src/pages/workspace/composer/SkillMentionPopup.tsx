@@ -19,6 +19,8 @@ const TIER_DESCRIPTION = 0
 type SkillMentionPopupProps = {
   query: string
   allowedSkillIds?: readonly string[]
+  listboxId?: string
+  onActiveOptionIdChange?: (optionId: string | undefined) => void
   onSelect: (skill: SkillView) => void
   onClose: () => void
 }
@@ -33,12 +35,15 @@ const SOURCE_LABELS: Record<SkillSource, string> = {
 export const SkillMentionPopup = ({
   query,
   allowedSkillIds,
+  listboxId,
+  onActiveOptionIdChange,
   onSelect,
   onClose
 }: SkillMentionPopupProps): React.JSX.Element | null => {
   const skills = useSettingsStore((state) => state.skills)
   const loadSkills = useSettingsStore((state) => state.loadSkills)
-  const listboxId = useId()
+  const generatedListboxId = useId()
+  const resolvedListboxId = listboxId ?? generatedListboxId
 
   // The skill list is loaded lazily by the Settings panel; the composer may open before that ever ran,
   // so hydrate it here when empty. Cheap and idempotent — the store keeps the result after the first load.
@@ -93,6 +98,18 @@ export const SkillMentionPopup = ({
 
   // Keep the highlight within the current match set even after filtering shrinks it.
   const safeIndex = matches.length === 0 ? 0 : Math.min(activeIndex, matches.length - 1)
+  const activeOptionId = matches.length > 0 ? `${resolvedListboxId}-option-${safeIndex}` : undefined
+
+  // Focus remains in the editor, so keep its active-descendant target synchronized and visible.
+  useEffect(() => {
+    onActiveOptionIdChange?.(activeOptionId)
+    return () => onActiveOptionIdChange?.(undefined)
+  }, [activeOptionId, onActiveOptionIdChange])
+
+  useEffect(() => {
+    if (activeOptionId)
+      document.getElementById(activeOptionId)?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeOptionId])
 
   // Handle navigation keys at the document level while mounted, since focus stays in the editor.
   useEffect(() => {
@@ -129,7 +146,7 @@ export const SkillMentionPopup = ({
   return (
     <div className="absolute bottom-full left-0 mb-1 z-50 bg-bg-000 border-0.5 border-border-200 rounded-xl shadow-[0_4px_16px_hsl(var(--always-black)/10%)] p-1.5 min-w-[320px] max-w-[440px] max-h-[min(45vh,18rem)] overflow-hidden">
       <ul
-        id={`${listboxId}-listbox`}
+        id={resolvedListboxId}
         role="listbox"
         aria-label="Skill suggestions"
         className="overflow-y-auto max-h-[min(45vh,18rem)]"
@@ -139,7 +156,7 @@ export const SkillMentionPopup = ({
           return (
             <li
               key={skill.id}
-              id={`${listboxId}-option-${index}`}
+              id={`${resolvedListboxId}-option-${index}`}
               role="option"
               aria-selected={isActive}
               onMouseEnter={() => setActiveIndex(index)}

@@ -3,6 +3,7 @@ import type {
   AcpRuntimeEvent,
   AcpStateSnapshot
 } from '../../../../shared/acp'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1881,7 +1882,7 @@ describe('workspace agent message sending', () => {
     expect(shutdown).toHaveBeenCalledWith({
       sessionId: 'transport-session-1',
       workspaceCwd: '/workspace/project',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     expect(resetSessionContext).toHaveBeenCalledOnce()
     expect(shutdown.mock.invocationCallOrder[0]).toBeLessThan(
@@ -2381,6 +2382,78 @@ describe('workspace agent message sending', () => {
       expect.objectContaining({ promptMessageId: expect.any(String) }),
       false
     )
+  })
+
+  it('persists enabled Compute Hosts before dispatching a new Session prompt', async () => {
+    const persisted = createDeferred<PersistedChatSession>()
+    const saveSession = vi.fn((session: PersistedChatSession) => {
+      void session
+      return persisted.promise
+    })
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Inspect the cluster',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      enabledComputeHosts: ['ssh:cluster']
+    })
+
+    await vi.waitFor(() => expect(saveSession).toHaveBeenCalledOnce())
+    expect(saveSession.mock.calls[0]?.[0]).toMatchObject({
+      id: 'transport-session-1',
+      enabledComputeHosts: ['ssh:cluster']
+    })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    persisted.resolve(saveSession.mock.calls[0]![0])
+    await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+  })
+
+  it('deletes a new runtime Session when enabled Compute Host persistence fails', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          saveSession: vi.fn().mockRejectedValue(new Error('Session write failed'))
+        }
+      }
+    })
+    const deleteSession = vi.fn().mockResolvedValue(createSnapshot())
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'transport-session-1',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      deleteSession,
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Inspect the cluster',
+      cwd: '/workspace/project',
+      projectId: 'project-1',
+      enabledComputeHosts: ['ssh:cluster']
+    })
+
+    await vi.waitFor(() => expect(deleteSession).toHaveBeenCalledWith('transport-session-1'))
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Session write failed'
+    })
   })
 
   it('retains Plan first while a new Session waits for ACP creation', async () => {

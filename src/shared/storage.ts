@@ -38,9 +38,14 @@ export type ActiveSessionInfo = {
   // project name or session title — the renderer maps this id + sessionId to display strings.
   projectId: string
   sessionId: string
-  kind: 'agent' | 'notebook'
+  // delegated is distinct because disruptive operations must be blocked until the user returns to
+  // the task and explicitly stops its subagents; it is not force-interruptible from a global dialog.
+  kind: 'agent' | 'delegated' | 'notebook'
   title?: string
 }
+
+export const hasDelegatedActiveSession = (sessions: readonly ActiveSessionInfo[]): boolean =>
+  sessions.some((session) => session.kind === 'delegated')
 
 export type MigrationPhase = 'scan' | 'copy' | 'verify' | 'delete'
 export type MigrationProgress = {

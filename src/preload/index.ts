@@ -259,6 +259,8 @@ const api: OpenScienceAPI = {
     getPackageMirror: () => electronRendererContracts.invoke('settings.getPackageMirror'),
     setPackageMirror: (request) =>
       electronRendererContracts.invoke('settings.setPackageMirror', request),
+    setNetworkProxy: (request) =>
+      electronRendererContracts.invoke('settings.setNetworkProxy', request),
     listSkills: () => electronRendererContracts.invoke('settings.listSkills'),
     getGitHubTokenStatus: () => electronRendererContracts.invoke('settings.getGitHubTokenStatus'),
     saveGitHubToken: (request: SaveGitHubTokenRequest) =>
@@ -329,6 +331,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),
     onConnectorRuntimeChanged: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorRuntimeChanged', listener),
+    onSkillCatalogChanged: (listener) =>
+      electronRendererContracts.subscribe('settings.onSkillCatalogChanged', listener),
     onSkillImportApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onSkillImportApprovalRequest', listener),
     onSkillImportApprovalSettled: (listener) =>

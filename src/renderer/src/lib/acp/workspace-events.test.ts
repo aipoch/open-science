@@ -235,6 +235,46 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it('projects Notebook authorization and declined permission metadata', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'tool-prepared',
+        kind: 'tool',
+        toolCallId: 'tool-approved',
+        providerToolName: 'mcp__open-science-notebook__notebook_execute',
+        status: 'in_progress'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'tool-authorized',
+        kind: 'tool',
+        toolCallId: 'tool-approved',
+        status: 'in_progress',
+        executionInvocationId: 'invocation-1'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'tool-declined',
+        kind: 'tool',
+        toolCallId: 'tool-declined',
+        providerToolName: 'mcp__open-science-notebook__notebook_execute',
+        status: 'completed',
+        toolDisposition: 'declined'
+      })
+    )
+
+    expect(useSessionStore.getState().sessions[0].activities).toEqual([
+      expect.objectContaining({
+        id: 'tool-approved',
+        executionInvocationId: 'invocation-1',
+        eventIds: ['tool-prepared', 'tool-authorized']
+      }),
+      expect.objectContaining({ id: 'tool-declined', toolDisposition: 'declined' })
+    ])
+  })
+
   it('applies assistant image events without creating placeholder text', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({

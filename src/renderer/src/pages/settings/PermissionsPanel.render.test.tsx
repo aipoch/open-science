@@ -130,6 +130,10 @@ describe('PermissionsPanel', () => {
     await choose('Full access')
     expect(setDefaultPermissionProfile).toHaveBeenCalledTimes(1)
     expect(document.body.textContent).toContain('Use Full access by default?')
+    const dialog = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="alertdialog"]')
+    ).find((candidate) => candidate.textContent?.includes('Use Full access by default?'))
+    expect(dialog?.className).toContain('p-0')
 
     const confirm = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent?.trim() === 'Use Full access'

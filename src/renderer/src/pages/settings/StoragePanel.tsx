@@ -5,13 +5,19 @@ import {
   FolderInput,
   FolderOpen,
   RefreshCw,
-  TriangleAlert
+  TriangleAlert,
+  X
 } from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -51,12 +57,12 @@ const CATEGORY_LABELS: Record<UsageCategoryKey, string> = {
 // Fixed swatch palette keyed by category so the stacked bar and legend always agree on color,
 // even though the bar only renders non-zero segments while the legend lists every category.
 const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
-  artifacts: 'bg-sky-500',
-  delegation: 'bg-cyan-500',
-  runtime: 'bg-violet-500',
-  uploads: 'bg-amber-500',
-  notebooks: 'bg-emerald-500',
-  workspaces: 'bg-rose-500'
+  artifacts: 'bg-storage-artifacts',
+  delegation: 'bg-storage-delegation',
+  runtime: 'bg-storage-runtime',
+  uploads: 'bg-storage-uploads',
+  notebooks: 'bg-storage-notebooks',
+  workspaces: 'bg-storage-workspaces'
 }
 
 // Shared path-pill style, matching GeneralPanel's log-file display so every settings path reads the same.
@@ -550,19 +556,40 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       <AlertDialog.Root open={warnOpen} onOpenChange={setWarnOpen}>
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
-            <AlertDialog.Title className={dialogTitleClassName}>
-              Change data location?
-            </AlertDialog.Title>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              You can move Open Science&apos;s data to another folder on this device.
-            </AlertDialog.Description>
-            <div className="mt-3">
-              <DataRootWarning />
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  Change data location?
+                </AlertDialog.Title>
+              </div>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Close"
+                  className={dialogCloseButtonClassName}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                You can move Open Science&apos;s data to another folder on this device.
+              </AlertDialog.Description>
+              <div className="mt-3">
+                <DataRootWarning />
+              </div>
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
                   Cancel
                 </Button>
               </AlertDialog.Cancel>
@@ -585,22 +612,45 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
       <AlertDialog.Root open={adoptConfirmOpen} onOpenChange={setAdoptConfirmOpen}>
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
-            <AlertDialog.Title className={dialogTitleClassName}>Use this folder?</AlertDialog.Title>
-            <pre className={cn('mt-3', PATH_PILL)}>{inspection?.dataRoot ?? trimmedNewPath}</pre>
-            <AlertDialog.Description className={cn(dialogDescriptionClassName, 'mt-3')}>
-              Open Science will restart and use this folder as-is —{' '}
-              <strong className="font-semibold text-text-000">
-                its contents are not merged with your current data
-              </strong>
-              , and anything it&apos;s missing will show as unavailable.{' '}
-              <strong className="font-semibold text-text-000">
-                Your current data folder is left untouched, so you can switch back.
-              </strong>
-            </AlertDialog.Description>
-            <div className="mt-6 flex justify-end gap-2">
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  Use this folder?
+                </AlertDialog.Title>
+              </div>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Close"
+                  className={dialogCloseButtonClassName}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+
+            <div className={dialogBodyClassName}>
+              <pre className={PATH_PILL}>{inspection?.dataRoot ?? trimmedNewPath}</pre>
+              <AlertDialog.Description className={cn(dialogDescriptionClassName, 'mt-3')}>
+                Open Science will restart and use this folder as-is —{' '}
+                <strong className="font-semibold text-text-000">
+                  its contents are not merged with your current data
+                </strong>
+                , and anything it&apos;s missing will show as unavailable.{' '}
+                <strong className="font-semibold text-text-000">
+                  Your current data folder is left untouched, so you can switch back.
+                </strong>
+              </AlertDialog.Description>
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
                   Cancel
                 </Button>
               </AlertDialog.Cancel>

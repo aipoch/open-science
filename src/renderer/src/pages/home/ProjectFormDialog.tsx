@@ -3,9 +3,14 @@ import { Dialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
-  dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogFormHelpClassName,
+  dialogFormInputClassName,
+  dialogFormLabelClassName,
+  dialogFormTextareaClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
@@ -30,9 +35,6 @@ type ProjectFormDialogProps = {
   onCancel: () => void
   onConfirm: (event: React.FormEvent<HTMLFormElement>) => void
 }
-
-const dialogInputClassName =
-  'h-9 rounded-lg border-border bg-card px-3 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25'
 
 // Shared name + description + agent context form for creating and editing a project. All are
 // stored in the project DB.
@@ -69,15 +71,13 @@ const ProjectFormDialog = ({
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
-          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}
+          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
         >
           <form onSubmit={onConfirm}>
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <Dialog.Title className={dialogTitleClassName}>{dialogTitle}</Dialog.Title>
-                <Dialog.Description className={dialogDescriptionClassName}>
-                  {dialogDescription}
-                </Dialog.Description>
+                <Dialog.Description className="sr-only">{dialogDescription}</Dialog.Description>
               </div>
               <Button
                 type="button"
@@ -90,12 +90,9 @@ const ProjectFormDialog = ({
                 <X className="size-4" aria-hidden="true" />
               </Button>
             </div>
-            <div className="mt-4 space-y-3">
-              <div className="space-y-1.5">
-                <label
-                  className="text-xs font-medium text-muted-foreground"
-                  htmlFor="project-form-name"
-                >
+            <div className={`${dialogBodyClassName} space-y-4`}>
+              <div>
+                <label className={dialogFormLabelClassName} htmlFor="project-form-name">
                   Name
                 </label>
                 <Input
@@ -104,20 +101,14 @@ const ProjectFormDialog = ({
                   onChange={(event) => onNameChange(event.target.value)}
                   placeholder="e.g. Reproduction of published research"
                   autoFocus
-                  className={dialogInputClassName}
+                  className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label
-                  className="text-xs font-medium text-muted-foreground"
-                  htmlFor="project-form-description"
-                >
+              <div>
+                <label className={dialogFormLabelClassName} htmlFor="project-form-description">
                   Description
                 </label>
-                <p
-                  id="project-form-description-help"
-                  className="text-xs leading-relaxed text-muted-foreground"
-                >
+                <p id="project-form-description-help" className={dialogFormHelpClassName}>
                   Shown in the project list for your reference — not included in the agent’s prompt.
                 </p>
                 <textarea
@@ -127,20 +118,14 @@ const ProjectFormDialog = ({
                   onChange={(event) => onDescriptionChange(event.target.value)}
                   placeholder="Describe what this project is about…"
                   rows={3}
-                  className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
+                  className={dialogFormTextareaClassName}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label
-                  className="text-xs font-medium text-muted-foreground"
-                  htmlFor="project-form-agent-context"
-                >
+              <div>
+                <label className={dialogFormLabelClassName} htmlFor="project-form-agent-context">
                   Agent Context
                 </label>
-                <p
-                  id="project-form-agent-context-help"
-                  className="text-xs leading-relaxed text-muted-foreground"
-                >
+                <p id="project-form-agent-context-help" className={dialogFormHelpClassName}>
                   Injected into the system prompt of every agent session in this project, including
                   resumed ones. Sent to the model provider with every session — do not include
                   secrets.
@@ -153,17 +138,22 @@ const ProjectFormDialog = ({
                   placeholder="e.g. Always cite sources with DOIs. Prefer Python for analysis. Report p-values with effect sizes."
                   rows={4}
                   maxLength={16000}
-                  className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25"
+                  className={dialogFormTextareaClassName}
                 />
               </div>
             </div>
             {error ? (
-              <p className="mt-3 text-sm text-danger-000" role="alert">
+              <p className="px-5 pb-4 text-sm text-danger-000" role="alert">
                 {error}
               </p>
             ) : null}
             <div className={dialogFooterClassName}>
-              <Button type="button" variant="outline" onClick={onCancel}>
+              <Button
+                type="button"
+                variant="ghost"
+                className={dialogCancelButtonClassName}
+                onClick={onCancel}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={nameDraft.trim().length === 0 || isSubmitting}>

@@ -160,6 +160,7 @@ describe('notebook run repository', () => {
 
     expect(document).toMatchObject({
       version: 1,
+      projectId: 'default-project',
       projectName: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
@@ -174,9 +175,14 @@ describe('notebook run repository', () => {
       },
       runs: []
     })
-    await expect(
-      readFile(join(root, 'notebooks', 'default-project', 'session-1', 'run.json'), 'utf8')
-    ).resolves.toContain('"sessionId": "session-1"')
+    const persisted = JSON.parse(
+      await readFile(join(root, 'notebooks', 'default-project', 'session-1', 'run.json'), 'utf8')
+    )
+    expect(persisted).toMatchObject({
+      projectId: 'default-project',
+      sessionId: 'session-1'
+    })
+    expect(persisted.projectName).toBeUndefined()
   })
 
   it('appends completed runs with working file metadata but not file contents', async () => {
@@ -397,6 +403,8 @@ describe('notebook run repository', () => {
 
     // Simulate a pre-kernelKind run.json written before this field existed.
     const legacyDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    delete legacyDocument.projectId
+    legacyDocument.projectName = 'default-project'
     legacyDocument.runs = [
       {
         runId: 'legacy-run-1',
@@ -417,6 +425,62 @@ describe('notebook run repository', () => {
     const reloaded = await repository.findExisting('default-project', 'session-1')
 
     expect(reloaded?.runs[0]).toMatchObject({ runId: 'legacy-run-1', kernelKind: 'python' })
+  })
+
+  it('loads canonical projectId values before legacy aliases', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const runJsonPath = join(root, 'notebooks', 'canonical-project', 'session-1', 'run.json')
+
+    await repository.loadOrCreate({
+      projectName: 'canonical-project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('canonical-project', 'session-1', 'root-frame-session-1'),
+      workspaceCwd: '/workspace'
+    })
+
+    const persisted = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    persisted.projectId = 'canonical-project'
+    persisted.projectName = 'renamed-project'
+    persisted.runs = [
+      {
+        runId: 'run-1',
+        cellId: 'cell-1',
+        source: 'agent',
+        kernelKind: 'python',
+        script: '1',
+        status: 'completed',
+        startedAt: 100,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [],
+        artifacts: [
+          {
+            id: 'artifact-1',
+            projectId: 'canonical-project',
+            projectName: 'renamed-project',
+            sessionId: 'session-1',
+            name: 'result.txt',
+            path: '$DATA/notebooks/canonical-project/session-1/data/processed/result.txt',
+            size: 1,
+            mtimeMs: 1
+          }
+        ],
+        workingFiles: []
+      }
+    ]
+    await writeFile(runJsonPath, JSON.stringify(persisted, null, 2), 'utf8')
+
+    const reloaded = await repository.findExisting('canonical-project', 'session-1')
+
+    expect(reloaded).toMatchObject({
+      projectId: 'canonical-project',
+      projectName: 'canonical-project',
+      notebookSessionRoot: join(root, 'notebooks', 'canonical-project', 'session-1')
+    })
+    expect(reloaded?.runs[0].artifacts[0]).toMatchObject({
+      projectId: 'canonical-project',
+      projectName: 'canonical-project'
+    })
   })
 
   it('keeps an explicit kernelKind when loading a run record from disk', async () => {

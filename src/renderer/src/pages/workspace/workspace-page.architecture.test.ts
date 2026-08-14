@@ -7,8 +7,11 @@ import {
   isExportDeclaration,
   isIdentifier,
   isImportDeclaration,
+  isPropertySignature,
   isPropertyAccessExpression,
   isStringLiteralLike,
+  isTypeAliasDeclaration,
+  isTypeLiteralNode,
   ScriptKind,
   ScriptTarget,
   type Node
@@ -21,6 +24,7 @@ const repositoryRoot = resolve(workspaceDirectory, '../../../../..')
 const rendererRoot = resolve(workspaceDirectory, '../..')
 const manifestPath = resolve(repositoryRoot, 'scripts/ci/module-impact.json')
 const architectureTestPath = 'src/renderer/src/pages/workspace/workspace-page.architecture.test.ts'
+const conversationPanelPath = resolve(workspaceDirectory, 'ConversationPanel.tsx')
 const ownerPaths = {
   page: resolve(workspaceDirectory, 'WorkspacePage.tsx'),
   layout: resolve(workspaceDirectory, 'workspace-panel-layout.tsx'),
@@ -115,6 +119,23 @@ const conversationCommandCalls = (sourcePath: string): string[] => {
   return calls
 }
 
+const conversationPanelPropNames = (): string[] => {
+  const sourceFile = createSourceFile(
+    conversationPanelPath,
+    readSource(conversationPanelPath),
+    ScriptTarget.Latest,
+    true,
+    ScriptKind.TSX
+  )
+  const props = sourceFile.statements
+    .filter(isTypeAliasDeclaration)
+    .find((statement) => statement.name.text === 'ConversationPanelProps')
+  if (!props || !isTypeLiteralNode(props.type)) return []
+  return props.type.members
+    .filter(isPropertySignature)
+    .map((property) => (isIdentifier(property.name) ? property.name.text : property.name.getText()))
+}
+
 describe('workspace page architecture', () => {
   it('keeps the page and extracted owners within their completion gates', () => {
     expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_200)
@@ -131,14 +152,19 @@ describe('workspace page architecture', () => {
 
   it('keeps private controller consumers explicit and bounded', () => {
     expect(importersOf(ownerPaths.composer)).toEqual([
+      'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
     expect(importersOf(ownerPaths.session)).toEqual([
+      'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
-    expect(importersOf(ownerPaths.conversation)).toEqual(['pages/workspace/WorkspacePage.tsx'])
+    expect(importersOf(ownerPaths.conversation)).toEqual([
+      'pages/workspace/ConversationPanel.tsx',
+      'pages/workspace/WorkspacePage.tsx'
+    ])
     expect(importersOf(ownerPaths.sideChat)).toEqual([
       'App.tsx',
       'pages/workspace/ConversationPanel.tsx',
@@ -149,17 +175,45 @@ describe('workspace page architecture', () => {
     ])
   })
 
+  it('keeps the conversation panel interface scenario-based instead of feature-shaped', () => {
+    const propNames = conversationPanelPropNames()
+
+    expect(propNames).toEqual([
+      'view',
+      'composer',
+      'conversation',
+      'sideChat',
+      'specialist',
+      'layout',
+      'permissions',
+      'elicitation',
+      'agentControls',
+      'contextWindow',
+      'review',
+      'sessionTools',
+      'subagents'
+    ])
+    expect(propNames).toHaveLength(13)
+    expect(propNames.some((name) => name.startsWith('on'))).toBe(false)
+  })
+
   it('keeps conversation command calls out of the page and behind injected ports', () => {
     const pageSource = readSource(ownerPaths.page)
     const conversationSource = readSource(ownerPaths.conversation)
+    const panelSource = readSource(conversationPanelPath)
 
     expect(conversationCommandCalls(ownerPaths.page)).toEqual([])
-    expect(pageSource).toContain('conversation.actions.submit.draft')
+    expect(pageSource).toContain('conversation={conversation}')
     expect(pageSource).toContain('conversation.actions.submit.restoredPlan')
-    expect(pageSource).toContain('conversation.actions.revise')
-    expect(pageSource).toContain('conversation.actions.resume')
-    expect(pageSource).toContain('conversation.actions.cancel')
     expect(pageSource).toContain('conversation.actions.delete')
+    expect(pageSource).not.toContain('conversation.actions.submit.draft')
+    expect(pageSource).not.toContain('conversation.actions.revise')
+    expect(pageSource).not.toContain('conversation.actions.resume')
+    expect(pageSource).not.toContain('conversation.actions.cancel')
+    expect(panelSource).toContain('draft: submitDraft')
+    expect(panelSource).toContain('revise: onSendEditedMessage')
+    expect(panelSource).toContain('resume: onResumeSession')
+    expect(panelSource).toContain('cancel: onCancelRun')
     for (const directOwner of [
       'window.api',
       'useSessionStore',

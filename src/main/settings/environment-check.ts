@@ -1,6 +1,5 @@
 import { arch as hostArchitecture } from 'node:os'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { request as httpsRequest } from 'node:https'
 import { join } from 'node:path'
 
 import type {
@@ -11,6 +10,7 @@ import type {
   ManagedClaudeRegistry
 } from '../../shared/settings'
 import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
+import { netFetchStandard } from '../skills/net-fetch'
 import { getManagedPlatform } from './managed-claude'
 import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
 import { resolveManagedCodexPlatform } from './managed-codex'
@@ -71,46 +71,29 @@ const verifyStorageAccess = async (storageRoot: string): Promise<void> => {
   }
 }
 
-// Uses the same direct HTTPS route as the managed downloader and follows a small number of redirects.
-// A HEAD request keeps the required basic source check lightweight on every startup. Omitting
-// packagePath probes the registry root, which answers plain internet reachability.
-const probeRegistryReachability: RegistryProbe = (registry, packagePath = '') => {
+// Uses Electron's Chromium network stack so this observes the configured System, Manual, or Direct
+// proxy mode. A HEAD request keeps the required source check lightweight.
+const probeRegistryReachability: RegistryProbe = async (registry, packagePath = '') => {
   const startedAt = Date.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REGISTRY_PROBE_TIMEOUT_MS)
 
-  return new Promise<number>((resolve, reject) => {
-    const visit = (url: string, redirectsLeft: number): void => {
-      const request = httpsRequest(url, { method: 'HEAD' }, (response) => {
-        const status = response.statusCode ?? 0
-
-        if (status >= 300 && status < 400 && response.headers.location) {
-          response.resume()
-          if (redirectsLeft <= 0) {
-            reject(new Error(`Too many redirects while checking ${registry}`))
-            return
-          }
-
-          visit(new URL(response.headers.location, url).toString(), redirectsLeft - 1)
-          return
-        }
-
-        response.resume()
-        if (status < 200 || status >= 300) {
-          reject(new Error(`HTTP ${status} while checking ${registry}`))
-          return
-        }
-
-        resolve(Date.now() - startedAt)
-      })
-
-      request.setTimeout(REGISTRY_PROBE_TIMEOUT_MS, () => {
-        request.destroy(new Error(`Timed out while checking ${registry}`))
-      })
-      request.on('error', reject)
-      request.end()
+  try {
+    const response = await netFetchStandard(`${REGISTRY_URLS[registry]}${packagePath}`, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: controller.signal
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status} while checking ${registry}`)
+    return Date.now() - startedAt
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Timed out while checking ${registry}`)
     }
-
-    visit(`${REGISTRY_URLS[registry]}${packagePath}`, 3)
-  })
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 const inspectRegistry = async (

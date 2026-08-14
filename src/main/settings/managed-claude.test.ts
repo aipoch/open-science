@@ -4,10 +4,16 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { netFetchStandard } = vi.hoisted(() => ({ netFetchStandard: vi.fn() }))
+
+vi.mock('../skills/net-fetch', () => ({ netFetchStandard }))
 
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
+  defaultFetchJson,
+  defaultFetchTarball,
   downloadAndVerify,
   extractFileFromTgz,
   getManagedPlatform,
@@ -51,6 +57,158 @@ const buildTgz = (entries: { name: string; content: Buffer }[]): Buffer => {
 
 const sha512 = (data: Buffer): string =>
   `sha512-${createHash('sha512').update(data).digest('base64')}`
+
+describe('managed-claude: default transport', () => {
+  beforeEach(() => netFetchStandard.mockReset())
+  afterEach(() => vi.useRealTimers())
+
+  it('loads registry metadata through Electron net.fetch', async () => {
+    netFetchStandard.mockResolvedValue(
+      new Response(JSON.stringify({ version: '1.2.3' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+
+    await expect(defaultFetchJson('https://registry.example.test/package')).resolves.toEqual({
+      version: '1.2.3'
+    })
+    expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package', {
+      redirect: 'manual',
+      signal: expect.any(AbortSignal)
+    })
+  })
+
+  it('follows bounded HTTPS redirects for registry metadata', async () => {
+    netFetchStandard
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://cdn.example.test/package' }
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ version: '1.2.3' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      )
+
+    await expect(defaultFetchJson('https://registry.example.test/package')).resolves.toEqual({
+      version: '1.2.3'
+    })
+    expect(netFetchStandard.mock.calls.map(([url]) => url)).toEqual([
+      'https://registry.example.test/package',
+      'https://cdn.example.test/package'
+    ])
+  })
+
+  it('rejects an HTTPS installer redirect that downgrades to HTTP', async () => {
+    netFetchStandard.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'http://cdn.example.test/package.tgz' }
+      })
+    )
+
+    await expect(defaultFetchTarball('https://registry.example.test/package.tgz')).rejects.toThrow(
+      /redirect.*non-HTTPS/i
+    )
+    expect(netFetchStandard).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects more than five HTTPS installer redirects', async () => {
+    for (let index = 1; index <= 6; index += 1) {
+      netFetchStandard.mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: `https://cdn.example.test/redirect-${index}` }
+        })
+      )
+    }
+
+    await expect(defaultFetchTarball('https://registry.example.test/package.tgz')).rejects.toThrow(
+      'Too many redirects'
+    )
+    expect(netFetchStandard).toHaveBeenCalledTimes(6)
+  })
+
+  it('streams tarballs through Electron net.fetch and preserves content length', async () => {
+    const payload = Buffer.from('managed-runtime-tarball')
+    netFetchStandard.mockResolvedValue(
+      new Response(payload, {
+        status: 200,
+        headers: { 'content-length': String(payload.length) }
+      })
+    )
+
+    const result = await defaultFetchTarball('https://registry.example.test/package.tgz')
+    const chunks: Buffer[] = []
+    for await (const chunk of result.stream) chunks.push(Buffer.from(chunk as Uint8Array))
+
+    expect(Buffer.concat(chunks)).toEqual(payload)
+    expect(result.totalBytes).toBe(payload.length)
+    expect(netFetchStandard).toHaveBeenCalledWith('https://registry.example.test/package.tgz', {
+      redirect: 'manual',
+      signal: expect.any(AbortSignal)
+    })
+  })
+
+  it('aborts a tarball stream after 20 seconds without progress', async () => {
+    vi.useFakeTimers()
+    netFetchStandard.mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start: () => undefined
+        }),
+        { status: 200 }
+      )
+    )
+
+    const result = await defaultFetchTarball('https://registry.example.test/stalled.tgz')
+    const streamError = new Promise<Error>((resolve) =>
+      result.stream.once('error', (error) => resolve(error as Error))
+    )
+    result.stream.resume()
+
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect((await streamError).message).toBe(
+      'Request timed out for https://registry.example.test/stalled.tgz'
+    )
+    const init = netFetchStandard.mock.calls[0]?.[1] as RequestInit
+    expect(init.signal?.aborted).toBe(true)
+  })
+
+  it('resets the inactivity timeout whenever a tarball chunk arrives', async () => {
+    vi.useFakeTimers()
+    let body!: ReadableStreamDefaultController<Uint8Array>
+    netFetchStandard.mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            body = controller
+          }
+        }),
+        { status: 200 }
+      )
+    )
+
+    const result = await defaultFetchTarball('https://registry.example.test/progress.tgz')
+    const errors: Error[] = []
+    result.stream.on('error', (error) => errors.push(error as Error))
+    result.stream.resume()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    const received = new Promise<void>((resolve) => result.stream.once('data', () => resolve()))
+    body.enqueue(new Uint8Array([1]))
+    await received
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(errors).toEqual([])
+    body.close()
+  })
+})
 
 describe('managed-claude: platform key', () => {
   it('maps darwin arm64', () => {

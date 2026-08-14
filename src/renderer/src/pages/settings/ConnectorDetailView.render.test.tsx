@@ -13,6 +13,7 @@ let root: Root
 
 const detail: ConnectorDetail = {
   id: 'ensembl',
+  name: 'ensembl',
   displayName: 'Ensembl',
   description: 'Query the Ensembl genome database.',
   sources: ['Ensembl'],
@@ -158,6 +159,7 @@ describe('ConnectorDetailView', () => {
       connectors: [
         {
           id: 'ensembl',
+          name: 'ensembl',
           displayName: 'Ensembl',
           description: 'Query the Ensembl genome database.',
           sources: ['Ensembl'],

@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
-  permissionRequestFingerprint
+  permissionRequestFingerprint,
+  type DurablePermissionWaitCandidate
 } from './permission-broker'
 import { withTrustedNativeToolIdentity } from './permission-policy'
 
@@ -113,6 +114,18 @@ const createCodexCommandPermissionRequest = (
   ]
 })
 
+const createCodexExecutePermissionRequest = (command: string): RequestPermissionRequest => {
+  const request = createCodexCommandPermissionRequest()
+  return {
+    ...request,
+    toolCall: {
+      ...request.toolCall,
+      title: command,
+      rawInput: { command }
+    }
+  }
+}
+
 // Codex MCP requests send two allow_always variants: a session-scoped one and a persistent one.
 const createCodexMcpPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequest => ({
   sessionId,
@@ -180,6 +193,104 @@ describe('ACP permission broker', () => {
     await expect(providerResponse).resolves.toEqual({
       outcome: { outcome: 'selected', optionId: 'reject-once' }
     })
+  })
+
+  it('serializes durable permission requests for the same session', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    let activeRequestId: string | undefined
+    const persist = vi.fn(async (candidate: DurablePermissionWaitCandidate) => {
+      if (activeRequestId) {
+        throw new Error('Another durable permission request already owns this Session.')
+      }
+      activeRequestId = candidate.request.requestId
+      return true
+    })
+    const settleLive = vi.fn(async (candidate: DurablePermissionWaitCandidate) => {
+      expect(activeRequestId).toBe(candidate.request.requestId)
+      activeRequestId = undefined
+    })
+    const broker = new AcpPermissionBroker(
+      (request) => emitted.push(request),
+      undefined,
+      undefined,
+      undefined,
+      { persist, settleLive }
+    )
+    const policy = {
+      profile: 'ask' as const,
+      frameworkId: 'codex' as const,
+      cwd: '/workspace',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    }
+
+    const first = broker.requestPermission(
+      createCodexExecutePermissionRequest('python first.py'),
+      policy
+    )
+    const second = broker.requestPermission(
+      createCodexExecutePermissionRequest('python second.py'),
+      policy
+    )
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(emitted.map(({ title }) => title)).toEqual(['python first.py'])
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual(['python first.py'])
+
+    await broker.respond({
+      requestId: emitted[0].requestId,
+      optionId: emitted[0].options.find((option) => option.kind === 'allow_once')?.optionId
+    })
+    await expect(first).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow_once' }
+    })
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(emitted.map(({ title }) => title)).toEqual(['python first.py', 'python second.py'])
+    expect(broker.getPendingRequests().map(({ title }) => title)).toEqual(['python second.py'])
+
+    await broker.respond({ requestId: emitted[1].requestId, cancelled: true })
+    await expect(second).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(persist).toHaveBeenCalledTimes(2)
+    expect(settleLive).toHaveBeenCalledTimes(2)
+  })
+
+  it('cancels queued durable permission requests without persisting or publishing them', async () => {
+    const emitted: EmittedPermissionRequest[] = []
+    const persist = vi.fn(async () => true)
+    const settleLive = vi.fn(async () => undefined)
+    const broker = new AcpPermissionBroker(
+      (request) => emitted.push(request),
+      undefined,
+      undefined,
+      undefined,
+      { persist, settleLive }
+    )
+    const policy = {
+      profile: 'ask' as const,
+      frameworkId: 'codex' as const,
+      cwd: '/workspace',
+      projectId: 'project-1',
+      promptMessageId: 'prompt-1'
+    }
+    const first = broker.requestPermission(
+      createCodexExecutePermissionRequest('python first.py'),
+      policy
+    )
+    const second = broker.requestPermission(
+      createCodexExecutePermissionRequest('python second.py'),
+      policy
+    )
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    broker.cancelForSession('session-1')
+
+    await expect(first).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    await expect(second).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(persist).toHaveBeenCalledOnce()
+    expect(settleLive).toHaveBeenCalledOnce()
+    expect(emitted.map(({ title }) => title)).toEqual(['python first.py'])
+    expect(broker.getPendingRequests()).toEqual([])
   })
 
   it('abandons a durable provider RPC during teardown without settling its restored card', async () => {

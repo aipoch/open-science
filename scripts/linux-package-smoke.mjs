@@ -13,6 +13,7 @@ import {
   verifyLegacyProjectPreserved,
   writeDatabaseMigrationCertification
 } from './database-migration-ledger-smoke.mjs'
+import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs'
 
 const APPIMAGE_PATTERN = /^aipoch-open-science-(.+)-linux-x86_64\.AppImage$/
 const SMOKE_ROOT_PREFIX = 'open-science-linux-package-smoke-'
@@ -39,12 +40,15 @@ const appImageVersion = (path) => {
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/
+    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
   const url = new URL(match[1])
   const token = url.searchParams.get('token')
-  return token ? { endpoint: url.origin, auth: `token=${encodeURIComponent(token)}` } : undefined
+  return {
+    endpoint: url.origin,
+    ...(token ? { auth: `token=${encodeURIComponent(token)}` } : {})
+  }
 }
 
 const pathExists = async (path) => {
@@ -145,7 +149,9 @@ const launchAndProbe = async ({ executable, expectedVersion, env }) => {
 
   try {
     const service = await Promise.race([
-      waitFor('the packaged Linux web service', async () => parsePackagedAppEndpoint(output)),
+      waitFor('the packaged Linux web service', async () =>
+        authenticatePackagedAppEndpoint(output, [env.OPEN_SCIENCE_E2E_STORAGE_ROOT])
+      ),
       exit.then((code) => {
         throw new Error(`Packaged Linux app exited before becoming healthy (${code}).\n${output}`)
       })
@@ -291,6 +297,7 @@ if (invokedAsScript) {
 }
 
 export {
+  authenticatePackagedAppEndpoint,
   appImageVersion,
   assertPackagedResources,
   findOne,

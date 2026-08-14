@@ -5,9 +5,11 @@ import type { ToolActivity } from '@/stores/session-store'
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
 import { isActivityActive } from './workspace-conversation-items'
 import { getActivitySurfaceClassName } from './workspace-tool-activity-style'
+import type { ToolExecutionPhase } from './tool-execution-phase'
 
 type WorkspaceToolActivityRowButtonProps = {
   activity: ToolActivity
+  phase?: ToolExecutionPhase
   label: string
   subtitle?: ReactNode
   metaLabel?: string
@@ -26,6 +28,7 @@ const createRowDetailsDomId = (activityId: string): string =>
 // The shared expandable row shell: icon + "label · subtitle" + right meta, with its detail panel.
 const WorkspaceToolActivityRowButton = ({
   activity,
+  phase,
   label,
   subtitle,
   metaLabel,
@@ -36,14 +39,14 @@ const WorkspaceToolActivityRowButton = ({
   onToggle,
   children
 }: WorkspaceToolActivityRowButtonProps): React.JSX.Element => {
-  const isActive = isActivityActive(activity)
+  const isActive = phase ? phase === 'executing' : isActivityActive(activity)
   const detailsDomId = createRowDetailsDomId(activity.id)
 
   return (
     <>
       <button
         type="button"
-        className={getActivitySurfaceClassName(activity)}
+        className={getActivitySurfaceClassName(activity, phase)}
         data-testid="tool-chip"
         aria-expanded={canExpand ? isExpanded : undefined}
         aria-controls={canExpand ? detailsDomId : undefined}
@@ -52,7 +55,7 @@ const WorkspaceToolActivityRowButton = ({
         onClick={() => onToggle(activity.id, !isExpanded)}
       >
         <span className="mt-0.5 inline-flex shrink-0 items-center md:mt-0">
-          <WorkspaceActivityIcon activity={activity} />
+          <WorkspaceActivityIcon activity={activity} phase={phase} />
         </span>
         <span className="min-w-0 flex-1 text-left md:flex md:items-center md:gap-2">
           <span className="block shrink-0 text-text-000">{label}</span>

@@ -34,7 +34,12 @@ const createProjector = (
     availableModeIds: ['default', 'bypassPermissions'],
     fullAccessAvailable: true
   },
-  acceptProviderPermissionProfile = true
+  acceptProviderPermissionProfile = true,
+  presentationToolCallId: (
+    notification: SessionNotification,
+    context: Readonly<{ sessionId: string }>,
+    providerToolCallId: string
+  ) => string = (_notification, _context, providerToolCallId) => providerToolCallId
 ): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
@@ -87,6 +92,7 @@ const createProjector = (
     currentFramework: () => routing.framework ?? 'claude-code',
     reconnectPending: () => routing.reconnectPending,
     mcpServerNamesFor: () => routing.mcpServerNames,
+    presentationToolCallId,
     nextEventId: () => routing.eventId,
     setProviderPermissionProfile: (sessionId, profile) => {
       if (!acceptProviderPermissionProfile) return false
@@ -115,6 +121,49 @@ const createProjector = (
 }
 
 describe('AcpSessionUpdateProjector', () => {
+  it('projects a provider tool replay through its app presentation identity', () => {
+    const projector = createProjector(
+      undefined,
+      true,
+      (_notification, context, providerToolCallId) =>
+        context.sessionId === 'stable-session' && providerToolCallId === 'tool-replayed'
+          ? 'tool-original'
+          : providerToolCallId
+    )
+
+    const effects = projector.route(
+      {
+        sessionId: 'provider-session',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-replayed',
+          title: 'mcp__open-science-notebook__notebook_execute',
+          kind: 'other',
+          status: 'pending',
+          rawInput: { language: 'python', code: 'print(1)' }
+        }
+      },
+      {
+        framework: 'claude-code',
+        appSessionId: 'stable-session',
+        eventId: 'event-replayed',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: ['open-science-notebook']
+      }
+    )
+
+    expect(effects).toContainEqual(
+      expect.objectContaining({
+        kind: 'visible-event',
+        event: expect.objectContaining({
+          sessionId: 'stable-session',
+          toolCallId: 'tool-original'
+        })
+      })
+    )
+  })
+
   it('routes stable Session usage through context owners in projection order', () => {
     const journal: string[] = []
     const beginSession = vi.fn(() => journal.push('context:begin'))
@@ -145,6 +194,7 @@ describe('AcpSessionUpdateProjector', () => {
       currentFramework: () => 'claude-code',
       reconnectPending: () => false,
       mcpServerNamesFor: () => [],
+      presentationToolCallId: (_notification, _context, providerToolCallId) => providerToolCallId,
       nextEventId,
       setProviderPermissionProfile: () => true,
       emitState: () => journal.push('state:emit'),

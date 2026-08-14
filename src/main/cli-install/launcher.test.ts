@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,8 +9,10 @@ const pdescribe = describe.skipIf(process.platform === 'win32')
 
 import {
   buildWindowsPathCommand,
+  ensureCliLauncherCurrent,
   getCliLauncherStatus,
   installCliLauncher,
+  isCliShimStale,
   planCliLauncher,
   uninstallCliLauncher,
   type CliLauncherEnv
@@ -71,6 +74,34 @@ describe('planCliLauncher', () => {
     const plan = planCliLauncher(posixEnv({ appExecPath: nasty, packaged: true }))
     // The whole path sits inside single quotes; the embedded ' is closed-escaped-reopened as '\''.
     expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/a b/$(x)`y`\\z/o'\\''brien'")
+  })
+
+  it('uses the stable AppImage file and resolves the CLI entry after the current mount starts', () => {
+    const plan = planCliLauncher(
+      posixEnv({
+        appExecPath: '/tmp/.mount_open-scienceOLD/open-science',
+        cliEntryPath: '/tmp/.mount_open-scienceOLD/resources/cli/index.mjs',
+        appImagePath: "/home/alice/Open Science's build.AppImage"
+      })
+    )
+
+    expect(plan.shim).toContain(
+      "OPEN_SCIENCE_APP_PATH='/home/alice/Open Science'\\''s build.AppImage'"
+    )
+    expect(plan.shim).toContain("exec '/home/alice/Open Science'\\''s build.AppImage' -e")
+    expect(plan.shim).toContain('process.resourcesPath')
+    expect(plan.shim).toContain('process.argv.slice(1)')
+    expect(plan.shim).toContain(' -- "$@"')
+    expect(plan.shim).not.toContain('/tmp/.mount_open-scienceOLD')
+  })
+
+  it('preserves a leading CLI flag after terminating Node runtime options', () => {
+    const probe = spawnSync(
+      process.execPath,
+      ['-e', 'process.stdout.write(JSON.stringify(process.argv.slice(1)))', '--', '--help'],
+      { encoding: 'utf8' }
+    )
+    expect(probe).toMatchObject({ status: 0, stdout: '["--help"]' })
   })
 
   it('targets a per-user bin dir with a .cmd shim on Windows', () => {
@@ -183,5 +214,94 @@ describe('installCliLauncher on Windows PATH edit', () => {
     expect(called).toBe(false)
     expect(status.onPath).toBe(true)
     expect(status.pathHint).toBeUndefined()
+  })
+})
+
+pdescribe('AppImage launcher reconciliation (POSIX)', () => {
+  const appImageEnv = (overrides: Partial<CliLauncherEnv> = {}): CliLauncherEnv =>
+    posixEnv({
+      appExecPath: '/tmp/.mount_open-scienceNEW/open-science',
+      cliEntryPath: '/tmp/.mount_open-scienceNEW/resources/cli/index.mjs',
+      appImagePath: '/home/alice/Open Science.AppImage',
+      ...overrides
+    })
+
+  it('returns false when no shim exists', async () => {
+    expect(await isCliShimStale(appImageEnv())).toBe(false)
+  })
+
+  it('returns false when the stable AppImage shim is current', async () => {
+    await installCliLauncher(appImageEnv())
+    expect(await isCliShimStale(appImageEnv())).toBe(false)
+  })
+
+  it('detects and migrates a legacy shim that pins an old FUSE mount', async () => {
+    await installCliLauncher(posixEnv())
+    const env = appImageEnv()
+
+    expect(await isCliShimStale(env)).toBe(true)
+    const result = await ensureCliLauncherCurrent(env)
+    expect(result).toMatchObject({ installed: true })
+
+    const shim = await readFile(result!.target, 'utf8')
+    expect(shim).toContain("OPEN_SCIENCE_APP_PATH='/home/alice/Open Science.AppImage'")
+    expect(shim).not.toContain('/tmp/.mount_open-scienceNEW')
+  })
+
+  it('updates the stable shim after the AppImage file moves', async () => {
+    await installCliLauncher(appImageEnv())
+    const moved = appImageEnv({ appImagePath: '/home/alice/Applications/Open Science.AppImage' })
+
+    expect(await isCliShimStale(moved)).toBe(true)
+    await ensureCliLauncherCurrent(moved)
+    expect(await readFile(planCliLauncher(moved).target, 'utf8')).toContain(
+      "OPEN_SCIENCE_APP_PATH='/home/alice/Applications/Open Science.AppImage'"
+    )
+  })
+
+  it('does nothing when shim is up to date', async () => {
+    await installCliLauncher(appImageEnv())
+    const result = await ensureCliLauncherCurrent(appImageEnv())
+    expect(result).toBeUndefined()
+  })
+
+  it('reports a legacy AppImage shim as not installed until reconciliation succeeds', async () => {
+    await installCliLauncher(posixEnv())
+    expect(await getCliLauncherStatus(appImageEnv())).toMatchObject({ installed: false })
+  })
+
+  it('does not overwrite an unmanaged launcher', async () => {
+    const env = appImageEnv()
+    const plan = planCliLauncher(env)
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, '#!/bin/sh\necho custom\n')
+
+    expect(await isCliShimStale(env)).toBe(false)
+    expect(await ensureCliLauncherCurrent(env)).toBeUndefined()
+    expect(await readFile(plan.target, 'utf8')).toBe('#!/bin/sh\necho custom\n')
+  })
+
+  it('does nothing when CLI is not installed', async () => {
+    const result = await ensureCliLauncherCurrent(appImageEnv())
+    expect(result).toBeUndefined()
+  })
+})
+
+describe('AppImage reconciliation platform boundary', () => {
+  it.each([
+    ['win32', () => winEnv({ appImagePath: 'C:\\Users\\me\\Open Science.AppImage' })],
+    [
+      'darwin',
+      () => posixEnv({ platform: 'darwin', appImagePath: '/Applications/Open Science.AppImage' })
+    ]
+  ])('does not rewrite a packaged %s launcher', async (_platform, createEnv) => {
+    const env = createEnv()
+    const plan = planCliLauncher(env)
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, 'user-managed launcher')
+
+    expect(await isCliShimStale(env)).toBe(false)
+    expect(await ensureCliLauncherCurrent(env)).toBeUndefined()
+    expect(await readFile(plan.target, 'utf8')).toBe('user-managed launcher')
   })
 })

@@ -188,24 +188,24 @@ vi.mock('./WorkspaceSidebar', () => ({
 
 vi.mock('./ConversationPanel', () => ({
   ConversationPanel: ({
-    isPreviewPanelCollapsed,
-    onTogglePreviewPanel,
-    onOpenSidebar
+    layout: { isPreviewPanelCollapsed, togglePreviewPanel, openSidebar }
   }: {
-    isPreviewPanelCollapsed: boolean
-    onTogglePreviewPanel: () => void
-    onOpenSidebar?: () => void
+    layout: {
+      isPreviewPanelCollapsed: boolean
+      togglePreviewPanel: () => void
+      openSidebar: () => void
+    }
   }): React.JSX.Element => (
     <section data-testid="conversation-panel">
       <button
         type="button"
         data-testid="preview-toggle"
         data-collapsed={isPreviewPanelCollapsed ? 'true' : 'false'}
-        onClick={onTogglePreviewPanel}
+        onClick={togglePreviewPanel}
       >
         Toggle preview
       </button>
-      <button type="button" data-testid="navigation-toggle" onClick={onOpenSidebar}>
+      <button type="button" data-testid="navigation-toggle" onClick={openSidebar}>
         Toggle navigation
       </button>
     </section>
@@ -892,10 +892,11 @@ describe('WorkspacePage preview panel resize sync', () => {
     expect(workspacePageHarness.previewPanelMinSize).toBe('30%')
   })
 
-  // Open sidebar should not shrink below the default open width.
-  it('keeps the open sidebar min size at the default open width', async () => {
+  // Open sidebar keeps enough room for its navigation content while remaining collapsible.
+  it('keeps the open sidebar min size at sixteen percent', async () => {
     await renderPage()
 
+    expect(workspacePageHarness.sidebarPanelDefaultSize).toBe('16%')
     expect(workspacePageHarness.sidebarPanelMinSize).toBe('16%')
 
     const toggleButton = getSidebarToggle()

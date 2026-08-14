@@ -133,7 +133,7 @@ export const ComposerYourFilesMenu = ({
             return (
               <div key={childPath}>
                 <div
-                  className="group flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-[13px] text-text-000 hover:bg-bg-200"
+                  className="group flex items-center gap-1.5 rounded-md py-1 pr-1.5 text-[13px] text-text-000 hover:bg-bg-200 [@media(pointer:coarse)]:py-0"
                   style={{ paddingLeft: indentForDepth(depth) }}
                 >
                   <button
@@ -141,7 +141,7 @@ export const ComposerYourFilesMenu = ({
                     aria-expanded={isExpanded}
                     data-testid={`your-files-dir-${root.id}-${relativePath}`}
                     onClick={() => toggleDir(childPath)}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left [@media(pointer:coarse)]:min-h-11"
                   >
                     <ChevronRight
                       className={cn(
@@ -170,7 +170,7 @@ export const ComposerYourFilesMenu = ({
               title={relativePath}
               // Same metrics as the directory rows above: identical padding, text size, icon size,
               // and hover background so every tree row has one consistent height and hover style.
-              className="group relative flex items-center gap-0.5 rounded-md py-1 pr-1.5 text-[13px] text-text-000 hover:bg-bg-200"
+              className="group relative flex items-center gap-0.5 rounded-md py-1 pr-1.5 text-[13px] text-text-000 hover:bg-bg-200 [@media(pointer:coarse)]:min-h-11"
               style={{ paddingLeft: indentForDepth(depth) }}
             >
               <File
@@ -196,10 +196,10 @@ export const ComposerYourFilesMenu = ({
                         className={cn(
                           // min-h-0/p-0/transparent backgrounds cancel the DropdownMenuItem base
                           // chrome — this is a bare icon, not a full-size menu row.
-                          'flex min-h-0 shrink-0 items-center justify-center p-0 transition-opacity hover:bg-transparent data-[highlighted]:bg-transparent',
+                          'relative flex min-h-0 shrink-0 items-center justify-center p-0 opacity-100 transition-opacity hover:bg-transparent focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[highlighted]:bg-transparent [@media(pointer:coarse)]:size-11',
                           isAdded
                             ? 'text-mention-chip-foreground'
-                            : 'text-text-100 opacity-0 hover:text-text-000 group-hover:opacity-100 data-[highlighted]:text-text-000 data-[highlighted]:opacity-100'
+                            : 'text-text-100 hover:text-text-000 data-[highlighted]:text-text-000 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:hover)]:data-[highlighted]:opacity-100'
                         )}
                       >
                         <button
@@ -269,13 +269,13 @@ export const ComposerYourFilesMenu = ({
                 <div key={root.id} data-testid={`your-files-root-${root.id}`}>
                   {/* Fixed height + opacity-based reveal for the × action: hover only changes the
                       background, so the row (and the list below it) never shifts. */}
-                  <div className="group flex h-[30px] items-center gap-1.5 rounded-md pr-1.5 pl-1.5 text-[13px] text-text-000 hover:bg-bg-200">
+                  <div className="group flex h-[30px] items-center gap-1.5 rounded-md pr-1.5 pl-1.5 text-[13px] text-text-000 hover:bg-bg-200 [@media(pointer:coarse)]:h-11">
                     <button
                       type="button"
                       aria-expanded={isExpanded}
                       data-testid={`your-files-root-toggle-${root.id}`}
                       onClick={() => toggleDir(root.path)}
-                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left [@media(pointer:coarse)]:min-h-11"
                     >
                       <ChevronRight
                         className={cn(
@@ -305,7 +305,7 @@ export const ComposerYourFilesMenu = ({
                         event.preventDefault()
                         void remove(root.id).catch(() => undefined)
                       }}
-                      className="flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 opacity-0 transition-opacity hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100"
+                      className="relative flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-text-100 opacity-100 transition-opacity duration-150 hover:bg-bg-300 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:transition-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:none)]:opacity-100 [@media(pointer:coarse)]:size-11"
                     >
                       <X className="size-3.5" strokeWidth={2} aria-hidden="true" />
                     </button>

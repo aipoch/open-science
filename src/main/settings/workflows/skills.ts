@@ -26,6 +26,7 @@ type SkillSettingsWorkflowStore = Pick<
 
 type SkillSettingsWorkflowEffects = {
   requestSkillsReload: () => void
+  notifySkillCatalogChanged: () => void
 }
 
 type WorkflowResult<Method extends keyof SkillSettingsWorkflowStore> = Promise<
@@ -82,14 +83,14 @@ class SkillSettingsWorkflows {
   ): WorkflowResult<'importAgentHomeSkills'> {
     const result = await this.settings.importAgentHomeSkills(request)
     if (result.results.some((item) => item.status === 'imported' || item.status === 'updated')) {
-      this.effects.requestSkillsReload()
+      this.effects.notifySkillCatalogChanged()
     }
     return result
   }
 
   private async afterSkillsChanged<Result>(mutation: () => Promise<Result>): Promise<Result> {
     const result = await mutation()
-    this.effects.requestSkillsReload()
+    this.effects.notifySkillCatalogChanged()
     return result
   }
 }

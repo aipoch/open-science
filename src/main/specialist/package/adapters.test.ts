@@ -52,7 +52,8 @@ describe('Specialist package source adapters', () => {
 
       expect(snapshot).toEqual([
         expect.objectContaining({
-          id: 'analysis-tools',
+          localId: 'analysis-tools',
+          name: 'analysis-tools',
           version: '1.2.3',
           files: [
             expect.objectContaining({ path: 'references/guide.md' }),
@@ -66,21 +67,24 @@ describe('Specialist package source adapters', () => {
     }
   })
 
-  it('exports a user Skill with its original slug instead of the storage source prefix', async () => {
+  it('exports a Personal Skill with its immutable name instead of the storage source prefix', async () => {
     const root = await mkdtemp(join(tmpdir(), 'specialist-export-snapshot-'))
     try {
       const skill = join(root, 'skills', 'personal', 'literature-review')
       await mkdir(skill, { recursive: true })
       await writeFile(
         join(skill, 'SKILL.md'),
-        '---\nname: Literature Review\ndescription: Review literature\n---\nReview.'
+        '---\nname: literature-review\ndescription: Review literature\n---\nReview.'
       )
 
       const adapter = new UserSkillSpecialistPackageAdapter(root)
       const snapshot = await adapter.exportSnapshot(['personal-literature-review'])
 
       expect(snapshot).toEqual([
-        expect.objectContaining({ id: 'literature-review', sourceId: 'personal-literature-review' })
+        expect.objectContaining({
+          localId: 'personal-literature-review',
+          name: 'literature-review'
+        })
       ])
     } finally {
       await rm(root, { recursive: true, force: true })

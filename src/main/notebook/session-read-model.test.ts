@@ -42,12 +42,12 @@ const makeSession = (
   withRuntimeBinding = false
 ): NotebookSessionReadSource => {
   const sessionId = 'session-1'
-  const projectName = 'default-project'
-  const notebookSessionRoot = join(storageRoot, 'notebooks', projectName, sessionId)
+  const projectId = 'default-project'
+  const notebookSessionRoot = join(storageRoot, 'notebooks', projectId, sessionId)
   const snapshot: NotebookSessionSnapshot = {
     id: `notebook-session-${sessionId}`,
     sessionId,
-    projectName,
+    projectId,
     cwd: join(storageRoot, 'workspace'),
     notebookSessionRoot,
     dataRoot: join(notebookSessionRoot, 'data'),
@@ -61,13 +61,13 @@ const makeSession = (
   return {
     id: snapshot.id,
     sessionId,
-    projectName,
+    projectId,
     cwd: snapshot.cwd,
     notebookSessionRoot,
     dataRoot: snapshot.dataRoot,
     runtimeRoot: snapshot.runtimeRoot,
     runJsonPath: snapshot.runJsonPath,
-    lane: createFrameNotebookLane(projectName, sessionId, 'root-frame-session-1'),
+    lane: createFrameNotebookLane(projectId, sessionId, 'root-frame-session-1'),
     snapshot: () => snapshot,
     kernelStatusEntries: () => snapshot.kernelStatuses.map((entry) => [...entry]),
     runtimeBindingEntries: () =>
@@ -97,7 +97,7 @@ const makeReadModel = (
 ): NotebookSessionReadModel<NotebookSessionReadSource> =>
   new NotebookSessionReadModel({
     storageRoot,
-    defaultProjectName: 'default-project',
+    defaultProjectId: 'default-project',
     repository,
     findSession: vi.fn(() => session),
     runtimeBindings: () => ({
@@ -164,7 +164,7 @@ describe('NotebookSessionReadModel', () => {
       ]
     })
     await repository.loadOrCreate({
-      projectName: session.projectName,
+      projectName: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: session.cwd,
@@ -212,7 +212,7 @@ describe('NotebookSessionReadModel', () => {
 
     const persistedWorkspace = join(storageRoot, 'persisted-workspace')
     await repository.loadOrCreate({
-      projectName: session.projectName,
+      projectName: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: persistedWorkspace
@@ -225,12 +225,13 @@ describe('NotebookSessionReadModel', () => {
       })
     ).resolves.toEqual({
       sessionId: session.sessionId,
-      projectName: session.projectName,
+      projectId: session.projectId,
+      projectName: session.projectId,
       workspaceCwd: persistedWorkspace,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
       runtimeRoot: session.runtimeRoot,
-      runJsonPath: getNotebookRunJsonPath(storageRoot, session.projectName, session.sessionId)
+      runJsonPath: getNotebookRunJsonPath(storageRoot, session.projectId, session.sessionId)
     })
     await expect(
       durableModel.getSessionReference({

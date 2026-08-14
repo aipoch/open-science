@@ -230,11 +230,11 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
   // ---- Content layer: bundled Skills ----
   'skill.path-noncanonical': plain(
     'Non-standard Skill layout',
-    'Bundled Skill files must use skills/<skill-id>/<file>.'
+    'Bundled Skill files must use skills/<skill-name>/<file>.'
   ),
   'skill.id-invalid': plain(
     'Invalid Skill folder name',
-    'Bundled Skill folder names must be safe canonical IDs with lowercase letters, digits and dashes.'
+    'Bundled Skill folder names must be safe Skill names with lowercase letters, digits and dashes.'
   ),
   'skill.document-missing': plain(
     'Skill document missing',
@@ -243,7 +243,7 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
   'skill.document-invalid': plain('Invalid SKILL.md', 'SKILL.md must contain valid UTF-8 text.'),
   'skill.name-mismatch': plain(
     'Skill name does not match its folder',
-    'The SKILL.md name must exactly match its folder ID. Make them identical and rebuild the ZIP.'
+    'The SKILL.md name must exactly match its directory name. Make them identical and rebuild the ZIP.'
   ),
   'skill.version-invalid': plain(
     'Invalid Skill version',
@@ -255,7 +255,7 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
   ),
   'skill.existing-conflict': plain(
     'Skill conflict',
-    'A Skill with this ID is already installed with different content or version. Resolve the conflict and rebuild the ZIP.'
+    'A Skill with this name is already installed with different content or version. Resolve the conflict and rebuild the ZIP.'
   ),
 
   // ---- Overwrite preview (package/service.ts) ----

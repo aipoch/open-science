@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ArtifactFile } from '../../../../shared/artifacts'
 import { useSessionStore } from '@/stores/session-store'
 
-// Loads every on-disk artifact for a project (the storage project name matches the durable project id)
+// Loads every on-disk artifact for an immutable Project id.
 // so the file library can surface files whose owning session was deleted. Re-fetches when the project
 // changes or when the set of sessions in it changes — the only events that can create or clear an
 // orphan (a delete removes the metadata that was keeping a file "owned"). Failures resolve to an empty
@@ -34,7 +34,7 @@ export const useProjectArtifactFiles = (projectId: string | undefined): Artifact
     const load = async (): Promise<ArtifactFile[]> => {
       if (!projectId) return []
       try {
-        return await window.api.artifacts.listProjectFiles({ projectName: projectId })
+        return await window.api.artifacts.listProjectFiles({ projectId })
       } catch {
         return []
       }

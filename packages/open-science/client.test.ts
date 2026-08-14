@@ -51,6 +51,7 @@ describe('OpenScienceClient', () => {
             id: 'run-1',
             sessionId: 'session-1',
             projectId: 'project-1',
+            cwd: '/workspace/research',
             status: 'running',
             startedAt: 1,
             artifacts: []
@@ -63,6 +64,7 @@ describe('OpenScienceClient', () => {
             id: 'run-1',
             sessionId: 'session-1',
             projectId: 'project-1',
+            cwd: '/workspace/research',
             status: 'running',
             startedAt: 1,
             artifacts: []
@@ -75,6 +77,7 @@ describe('OpenScienceClient', () => {
             id: 'run-1',
             sessionId: 'session-1',
             projectId: 'project-1',
+            cwd: '/workspace/research',
             status: 'completed',
             startedAt: 1,
             completedAt: 2,
@@ -93,12 +96,17 @@ describe('OpenScienceClient', () => {
     const started = await client.startRun({
       project: 'project-1',
       prompt: 'Research this.',
+      cwd: '/workspace/research',
       permissionProfile: 'auto',
       skillIds: ['literature-review']
     })
     const completed = await client.waitForRun(started.id)
 
-    expect(completed).toMatchObject({ status: 'completed', output: 'Done' })
+    expect(completed).toMatchObject({
+      cwd: '/workspace/research',
+      status: 'completed',
+      output: 'Done'
+    })
     expect(fetch).toHaveBeenNthCalledWith(
       1,
       'http://127.0.0.1:44100/api/v1/runs',
@@ -108,6 +116,7 @@ describe('OpenScienceClient', () => {
         body: JSON.stringify({
           project: 'project-1',
           prompt: 'Research this.',
+          cwd: '/workspace/research',
           permissionProfile: 'auto',
           skillIds: ['literature-review']
         })

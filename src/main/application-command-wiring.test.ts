@@ -119,10 +119,14 @@ describe('production application command wiring', () => {
     expect(legacyAdapterBlock).toContain('registerPreviewStateIpcHandlers(previewStateRepository)')
 
     expect(compact(ipcSource)).toContain(
-      'electronAdapters: { beforeCompute: beforeComputeAdapters, compute: computeIpcModule,'
+      'electronAdapters: { beforeCompute: beforeComputeAdapters, compute: { handlers: computeIpcModule.handlers, enabledHosts: sessionEnabledComputeHostsOwner },'
     )
     expect(dependencyBlock).toContain('compute: computeIpcModule.handlers')
-    expect(dependencyBlock).toContain('enabledHosts: hostsRegistry')
+    expect(ipcSource).toContain('await cliCommandOwner.ensureCurrent()')
+    expect(dependencyBlock).toContain('enabledHosts: sessionEnabledComputeHostsOwner')
+    expect(ipcSource).toContain(
+      'const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })'
+    )
   })
 
   it('keeps native-only commands inside the Electron owner adapter and exposes only narrow views', () => {

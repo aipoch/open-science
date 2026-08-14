@@ -707,6 +707,7 @@ describe('startWebHttpServer', () => {
         id: 'run-1',
         sessionId: 'session-1',
         projectId: 'project-1',
+        cwd: '/workspace/research',
         status: 'running' as const,
         startedAt: 1,
         artifacts: []
@@ -1267,6 +1268,7 @@ describe('startWebHttpServer', () => {
         id: 'run-1',
         sessionId: 'session-1',
         projectId: 'project-1',
+        cwd: '/workspace/research',
         status: 'running',
         startedAt: 1,
         artifacts: []
@@ -1275,6 +1277,7 @@ describe('startWebHttpServer', () => {
         id: 'run-1',
         sessionId: 'session-1',
         projectId: 'project-1',
+        cwd: '/workspace/research',
         status: 'completed',
         startedAt: 1,
         completedAt: 2,
@@ -1285,6 +1288,7 @@ describe('startWebHttpServer', () => {
         id: 'run/1',
         sessionId: 'session-1',
         projectId: 'project-1',
+        cwd: '/workspace/research',
         status: 'cancelled',
         startedAt: 1,
         cancelRequestedAt: 2,
@@ -1397,14 +1401,22 @@ describe('startWebHttpServer', () => {
       body: JSON.stringify({
         project: 'project-1',
         prompt: 'Research this.',
+        cwd: '/workspace/research',
         permissionProfile: 'auto'
       })
     })
     expect(started.status).toBe(202)
-    expect(await started.json()).toMatchObject({ data: { id: 'run-1', status: 'running' } })
+    expect(await started.json()).toMatchObject({
+      data: {
+        id: 'run-1',
+        cwd: '/workspace/research',
+        status: 'running'
+      }
+    })
     expect(tasks.startRun).toHaveBeenCalledWith({
       project: 'project-1',
       prompt: 'Research this.',
+      cwd: '/workspace/research',
       permissionProfile: 'auto'
     })
 

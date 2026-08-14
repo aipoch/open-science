@@ -203,6 +203,7 @@ const SpecialistEditor = ({
   // cannot silently broaden the profile when it returns. Main-disabled installed connectors remain
   // selectable: Main's toggle is not a Specialist capability limit.
   const connectorRows = useMemo(() => {
+    const referencedIds = new Set([...form.excludedConnectorIds, ...form.connectorIds])
     const known: ConnectorRow[] = [
       ...connectors.map((connector) => ({
         id: connector.id,
@@ -212,7 +213,8 @@ const SpecialistEditor = ({
         available: true
       })),
       ...customServers.map((server) => ({
-        id: server.name,
+        id:
+          referencedIds.has(server.name) && !referencedIds.has(server.id) ? server.name : server.id,
         name: server.displayName,
         description: server.description ? `${server.name} · ${server.description}` : server.name,
         mainEnabled: server.enabled,
@@ -222,7 +224,20 @@ const SpecialistEditor = ({
     ]
     const ids = new Set(known.map((row) => row.id))
     for (const id of [...form.excludedConnectorIds, ...form.connectorIds]) {
-      if (!ids.has(id)) known.push({ id, name: id, mainEnabled: false, available: false })
+      if (ids.has(id)) continue
+      const legacy = customServers.find((server) => server.name === id)
+      if (legacy) {
+        known.push({
+          id,
+          name: legacy.displayName,
+          description: legacy.description ? `${legacy.name} · ${legacy.description}` : legacy.name,
+          mainEnabled: legacy.enabled,
+          available: legacy.availability === undefined,
+          availability: legacy.availability
+        })
+      } else {
+        known.push({ id, name: id, mainEnabled: false, available: false })
+      }
     }
     return known.sort((a, b) => a.name.localeCompare(b.name))
   }, [connectors, customServers, form.connectorIds, form.excludedConnectorIds])
@@ -289,7 +304,7 @@ const SpecialistEditor = ({
         available: true
       })),
       ...customServers.map((server) => ({
-        id: server.name,
+        id: server.id,
         name: server.displayName,
         description: server.description ? `${server.name} · ${server.description}` : server.name,
         mainEnabled: server.enabled,
@@ -298,7 +313,13 @@ const SpecialistEditor = ({
       }))
     ]
     return all
-      .filter((row) => row.available && !form.connectorIds.includes(row.id))
+      .filter((row) => {
+        if (!row.available) return false
+        const custom = customServers.find((server) => server.id === row.id)
+        return !form.connectorIds.some(
+          (id) => id === row.id || (custom !== undefined && id === custom.name)
+        )
+      })
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [connectors, customServers, form.connectorIds])
 

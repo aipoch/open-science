@@ -75,8 +75,32 @@ describe('diagnostic operation', () => {
         filesCopied: 3,
         operation: 'data-root-migration',
         operationId: 'migration-1',
-        phase: 'copy'
+        phase: 'copy',
+        elapsedMs: 0,
+        phaseDurationMs: 0
       }
+    })
+  })
+
+  it('records cumulative and previous-phase duration for every phase', () => {
+    const { logger, records } = createRecordingLogger()
+    let timestamp = 100
+    const operation = startDiagnosticOperation(logger, {
+      operation: 'application-startup',
+      operationId: 'startup-1',
+      now: () => timestamp
+    })
+
+    timestamp = 125
+    operation.phase('database-startup')
+    timestamp = 170
+    operation.phase('compose-runtime')
+
+    expect(records[1]).toMatchObject({
+      data: { phase: 'database-startup', elapsedMs: 25, phaseDurationMs: 25 }
+    })
+    expect(records[2]).toMatchObject({
+      data: { phase: 'compose-runtime', elapsedMs: 70, phaseDurationMs: 45 }
     })
   })
 
@@ -237,7 +261,9 @@ describe('diagnostic operation', () => {
       scalar: 1,
       operation: 'update-check',
       operationId: 'update-1',
-      phase: 'checking'
+      phase: 'checking',
+      elapsedMs: 0,
+      phaseDurationMs: 0
     })
     expect(records[2].data).toEqual({
       result: true,

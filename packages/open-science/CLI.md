@@ -89,8 +89,20 @@ Provide a prompt directly, read it from a UTF-8 file, or pipe it through stdin:
 ```bash
 open-science run --project "Systematic review" --prompt "Summarize the evidence" --wait
 open-science run --project "Systematic review" --prompt-file ./task.md --wait --json
+open-science run --project "Systematic review" --cwd ./research --prompt-file ./task.md --wait --json
 printf '%s\n' "Summarize the evidence" | open-science run --project "Systematic review" --wait --json
 ```
+
+`--cwd <path>` selects an externally owned working directory for the Session. The CLI resolves a
+relative path from the directory where the command is invoked. Open Science then resolves the real
+path, verifies that it exists, is a directory, and is readable and writable, and persists that
+canonical path on a newly created Session. Open Science does not take ownership of or remove an
+external working directory. Without `--cwd`, Open Science allocates its usual managed workspace.
+
+The working directory is a Session boundary, not a per-Run override. When `--session` and `--cwd`
+are used together, the requested path must resolve to the Session's recorded working directory. A
+different, missing, or otherwise invalid recorded directory is rejected; it is not migrated,
+replaced, or repaired by the Run request.
 
 Without `--wait`, the command returns as soon as the run starts. Use the returned `id` and `sessionId`
 to poll its state:
@@ -132,6 +144,8 @@ The default approval profile is `ask`. Unattended workflows must explicitly use
 
 Use `--json` to emit one result. `--jsonl` requires `run --wait` and emits progress events followed by
 the final run object, one JSON value per line:
+
+Every Run object includes its effective `cwd`; progress events and Session summaries do not.
 
 The event stream includes `run.progress` phase changes and ten-second liveness heartbeats before the
 first visible provider output. Each progress payload includes `runId`, `sessionId`, `projectId`,

@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
+import type { OptionalProjectIdScope } from '../../shared/project-scope'
 import type {
   NotebookEnvironmentPackageChange,
   NotebookLanguage,
@@ -40,7 +41,7 @@ import {
   runtimeRoot
 } from './runtime-paths'
 
-export type InstallRequest = {
+export type InstallRequest = OptionalProjectIdScope & {
   language: NotebookLanguage
   packages: string[]
   usePip?: boolean
@@ -52,13 +53,12 @@ export type InstallRequest = {
   // notebook tool call). Lets managePackages consult THIS session's runtime binding so an install into
   // a bound external env is gated on that env's per-env install authorization. Absent -> managed path.
   sessionId?: string
-  // workspaceCwd/projectName travel on every notebook RPC call too (the local RPC requires
+  // workspaceCwd/projectId travel on every notebook RPC call too (the local RPC requires
   // workspaceCwd; mcp-server injects both). managePackages uses them to ensureSession() — loading and
   // rehydrating persisted runtime bindings — BEFORE resolving the binding, so the FIRST install after
   // an app restart (session not yet in memory) still sees the persisted binding instead of silently
   // targeting the default env.
   workspaceCwd?: string
-  projectName?: string
 }
 // method records which installer actually ran: conda (micromamba), pip, or cran (R install.packages
 // fallback) — useful to verify the path taken, especially when conda falls back.

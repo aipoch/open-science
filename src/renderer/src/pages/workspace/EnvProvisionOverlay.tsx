@@ -35,8 +35,8 @@ const EnvProvisionOverlay = ({
               for overall position while the detail line adds speed/ETA/resume during the fetch. */}
           <div className="h-1.5 w-56 overflow-hidden rounded-full bg-bg-300">
             <div
-              className="h-full bg-primary transition-all"
-              style={{ width: `${Math.round(ui.progress * 100)}%` }}
+              className="h-full w-full origin-left bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none"
+              style={{ transform: `scaleX(${ui.progress})` }}
             />
           </div>
           {ui.download ? (

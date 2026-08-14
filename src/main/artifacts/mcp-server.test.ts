@@ -360,6 +360,7 @@ describe('artifact MCP server', () => {
       env: [
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
         { name: 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT', value: '/Users/example/.open-science' },
+        { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID', value: 'default-project' },
         { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME', value: 'default-project' },
         { name: 'OPEN_SCIENCE_ARTIFACT_SESSION_ID', value: 'session-1' },
         {
@@ -411,11 +412,32 @@ describe('artifact MCP server', () => {
       })
     ).toEqual({
       storageRoot: '/Users/example/.open-science',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       currentRunFile: '/tmp/current-run.json',
       allowedImportRoots: ['/Users/example/workspace', '/Users/example/.open-science/notebooks']
     })
+  })
+
+  it('prefers projectId and rejects a conflicting legacy projectName environment value', () => {
+    const base = {
+      OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT: '/Users/example/.open-science',
+      OPEN_SCIENCE_ARTIFACT_SESSION_ID: 'session-1',
+      OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE: '/tmp/current-run.json'
+    }
+    expect(
+      createArtifactMcpEnvironmentFromProcess({
+        ...base,
+        OPEN_SCIENCE_ARTIFACT_PROJECT_ID: 'project-1'
+      }).projectId
+    ).toBe('project-1')
+    expect(() =>
+      createArtifactMcpEnvironmentFromProcess({
+        ...base,
+        OPEN_SCIENCE_ARTIFACT_PROJECT_ID: 'project-1',
+        OPEN_SCIENCE_ARTIFACT_PROJECT_NAME: 'renamed-project'
+      })
+    ).toThrow('Conflicting projectId and legacy projectName values.')
   })
 
   it('reads the notebook data dir and session root from the per-turn handoff', async () => {

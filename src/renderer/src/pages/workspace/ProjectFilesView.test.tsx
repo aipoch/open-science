@@ -803,7 +803,7 @@ describe('ProjectFilesView', () => {
         )
         ?.focus()
     })
-    expect(document.body.textContent).toContain('Open in split view beside the session')
+    expect(document.body.textContent).toContain('Open result.txt in split view beside the session')
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="List view"]')?.click()
@@ -958,7 +958,7 @@ describe('ProjectFilesView', () => {
     expect(clearButton?.className).not.toContain('focus-visible:ring-2')
 
     await act(async () => clearButton?.focus())
-    expect(document.body.textContent).toContain('Clear search')
+    expect(document.body.textContent).toContain('Clear file search')
 
     await act(async () => clearButton?.click())
     expect(search?.value).toBe('')
@@ -1107,6 +1107,27 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
     expect(repairIndex).toHaveBeenCalledWith({ projectId: 'default' })
+  })
+
+  it('wraps and announces a long file loading error while keeping retry available', async () => {
+    const message =
+      'Could not load project files because the remote catalog returned a detailed error that must remain readable on narrow screens.'
+
+    await renderView([], false, () => {
+      vi.mocked(window.api.projectFiles.getOverview).mockRejectedValue(new Error(message))
+    })
+
+    await vi.waitFor(() => {
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(message)
+    })
+
+    const alert = container.querySelector<HTMLElement>('[role="alert"]')
+    const errorText = alert?.querySelector('span')
+    expect(alert?.getAttribute('aria-atomic')).toBe('true')
+    expect(errorText?.className).toContain('whitespace-pre-wrap')
+    expect(errorText?.className).toContain('break-words')
+    expect(errorText?.className).not.toContain('truncate')
+    expect(alert?.querySelector<HTMLButtonElement>('button')?.textContent).toBe('Retry')
   })
 
   it('renders uploaded files under Your uploads without a session group', async () => {

@@ -217,6 +217,7 @@ import type {
   RefreshProviderModelsResult,
   SetActiveProviderRequest,
   SetPackageMirrorRequest,
+  SetNetworkProxyRequest,
   SetAgentFrameworkRequest,
   SetConversationSkillImportEnabledRequest,
   SetNotificationsEnabledRequest,
@@ -278,6 +279,7 @@ import type {
   ValidateProviderResult
 } from '../shared/settings'
 import type { PackageMirror } from '../shared/mirror'
+import type { NetworkProxySettings } from '../shared/network-proxy'
 import type { NetworkInfo } from '../shared/network'
 import type {
   ActiveSessionInfo,
@@ -484,6 +486,7 @@ export interface OpenScienceAPI {
     markOnboardingComplete(): Promise<SettingsSnapshot>
     getPackageMirror(): Promise<PackageMirror>
     setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror>
+    setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings>
     listSkills(): Promise<SkillView[]>
     getGitHubTokenStatus(): Promise<GitHubTokenStatus>
     saveGitHubToken(request: SaveGitHubTokenRequest): Promise<GitHubTokenStatus>
@@ -527,6 +530,7 @@ export interface OpenScienceAPI {
     retryCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
     onConnectorRuntimeChanged(listener: AcpListener<undefined>): RemoveListener
+    onSkillCatalogChanged(listener: AcpListener<undefined>): RemoveListener
     onSkillImportApprovalRequest(
       listener: AcpListener<ConversationSkillImportApprovalRequest>
     ): RemoveListener
@@ -693,10 +697,9 @@ export interface OpenScienceAPI {
     jobsMarkConsumed(sessionId: string, jobIds: string[]): Promise<void>
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated(listener: (job: JobSummary) => void): () => void
-    // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session JSON);
-    // the main-process registry is the runtime cache for list_compute RPC ops.
+    // Per-session enabled Compute Hosts. Main owns durable Session JSON and projects the runtime cache.
     enabledHostsGet(sessionId: string): Promise<string[]>
-    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<void>
+    enabledHostsSet(sessionId: string, providerIds: string[]): Promise<PersistedChatSession>
   }
   preview: {
     load(request: LoadPreviewStateRequest): Promise<PersistedPreviewState | null>

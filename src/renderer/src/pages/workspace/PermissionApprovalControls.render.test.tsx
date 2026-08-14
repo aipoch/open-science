@@ -409,7 +409,7 @@ describe('PermissionApprovalControls', () => {
       />
     )
     expect(notebookHtml).toContain('data-testid="permission-code-toggle"')
-    expect(notebookHtml).toContain('Run notebook cell')
+    expect(notebookHtml).toContain('Start Notebook run')
 
     const bashHtml = renderToStaticMarkup(
       <PermissionApprovalControls requests={[bashPermissionRequest]} onRespond={() => undefined} />
@@ -466,7 +466,7 @@ describe('PermissionApprovalControls', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[brokerShape]} onRespond={() => undefined} />
     )
-    expect(html).toContain('Run notebook cell')
+    expect(html).toContain('Start Notebook run')
     expect(html).toContain('data-testid="permission-impact-info"')
     expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).toContain('data-language="python"')
@@ -491,7 +491,7 @@ describe('PermissionApprovalControls', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls requests={[opencodeShape]} onRespond={() => undefined} />
     )
-    expect(html).toContain('Run notebook cell')
+    expect(html).toContain('Start Notebook run')
     expect(html).toContain('data-testid="permission-tool-info"')
     expect(html).toContain('data-language="python"')
     expect(html).not.toContain('data-language="bash"')
@@ -560,7 +560,7 @@ describe('PermissionApprovalControls', () => {
     )
     expect(html).toContain('data-testid="tool-code-block"')
     expect(html).toContain('DROP TABLE users')
-    expect(html).not.toContain('Run notebook cell')
+    expect(html).not.toContain('Start Notebook run')
   })
 
   it('treats a notebook_execute from another MCP server as generic JSON, not a notebook', () => {
@@ -583,7 +583,7 @@ describe('PermissionApprovalControls', () => {
     // JSON path shows every argument, including the production target the notebook path would hide.
     expect(html).toContain('data-language="json"')
     expect(html).toContain('prod')
-    expect(html).not.toContain('Run notebook cell')
+    expect(html).not.toContain('Start Notebook run')
     expect(html).toContain('External service</span>')
   })
 

@@ -102,6 +102,15 @@ describe('DownloadProjectArtifactsDialog', () => {
 
     expect(document.body.textContent).toContain('Download project artifacts')
     expect(document.body.textContent).toContain('3 of 3 selected')
+    const dividerClassNames = [...document.body.querySelectorAll<HTMLElement>('div')]
+      .map((element) => element.className)
+      .filter((className) => className.includes('border-b') || className.includes('border-t'))
+    expect(dividerClassNames).toContain(
+      'flex shrink-0 items-center justify-between gap-4 border-b border-border-300/90 px-5 py-3.5'
+    )
+    expect(dividerClassNames).toContain(
+      'flex shrink-0 items-center justify-between gap-3 border-t border-border-300/90 px-5 py-3.5'
+    )
 
     const headings = [
       ...document.body.querySelectorAll<HTMLElement>('[data-testid="project-artifacts-group"]')

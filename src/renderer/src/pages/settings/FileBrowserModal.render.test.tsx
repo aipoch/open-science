@@ -14,6 +14,20 @@ import { useProjectStore } from '@/stores/project-store'
 let container: HTMLDivElement
 let root: Root
 
+const deferred = <T,>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+} => {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 const connectedHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   id: 'host-1',
   providerId: 'ssh:biowulf',
@@ -263,6 +277,253 @@ describe('FileBrowserModal', () => {
     })
     // Should show success message
     expect(document.body.textContent).toContain('Saved to Downloads')
+  })
+
+  it('keeps the active host listing when the previous host responds last', async () => {
+    const hostAListing = deferred<DirListing>()
+    const hostBListing = deferred<DirListing>()
+    const download = vi.fn().mockResolvedValue({
+      path: '/Users/user/Downloads/from-host-b.txt',
+      name: 'from-host-b.txt',
+      size: 2,
+      mimeType: 'text/plain'
+    } as LocalFile)
+    const listDir = vi.fn((providerId: string) =>
+      providerId === 'ssh:host-a' ? hostAListing.promise : hostBListing.promise
+    )
+    useComputeStore.setState({
+      ...createInitialComputeState(),
+      isLoaded: true,
+      loadHosts: vi.fn(),
+      hosts: [
+        connectedHost({
+          id: 'host-a',
+          providerId: 'ssh:host-a',
+          displayName: 'host-a',
+          sshAlias: 'host-a',
+          scratchRoot: '/scratch/a'
+        }),
+        connectedHost({
+          id: 'host-b',
+          providerId: 'ssh:host-b',
+          displayName: 'host-b',
+          sshAlias: 'host-b',
+          scratchRoot: '/scratch/b'
+        })
+      ]
+    })
+    setComputeApi({
+      listDir,
+      bookmarksGet: vi.fn().mockResolvedValue([]),
+      bookmarksSet: vi.fn().mockResolvedValue(undefined),
+      download,
+      revealInFolder: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId={'ssh:host-a'} />
+      )
+    })
+
+    const hostBButton = Array.from(document.querySelectorAll('button')).find(
+      (element) => element.textContent?.trim() === 'host-b'
+    ) as HTMLButtonElement | undefined
+    await act(async () => {
+      hostBButton?.click()
+    })
+
+    await act(async () => {
+      hostBListing.resolve({
+        entries: [{ name: 'from-host-b.txt', isDirectory: false, size: 2, mtimeMs: 1704067200000 }],
+        truncated: false,
+        roots: { home: '/home/b', scratch: '/scratch/b' },
+        resolvedPath: '/scratch/b'
+      })
+      await hostBListing.promise
+    })
+    expect(document.body.textContent).toContain('from-host-b.txt')
+
+    await act(async () => {
+      hostAListing.resolve({
+        entries: [{ name: 'from-host-a.txt', isDirectory: false, size: 1, mtimeMs: 1704067200000 }],
+        truncated: false,
+        roots: { home: '/home/a', scratch: '/scratch/a' },
+        resolvedPath: '/scratch/a'
+      })
+      await hostAListing.promise
+    })
+
+    expect(document.body.textContent).toContain('from-host-b.txt')
+    expect(document.body.textContent).not.toContain('from-host-a.txt')
+
+    const fileButton = Array.from(document.querySelectorAll('[role=option]')).find((element) =>
+      element.textContent?.includes('from-host-b.txt')
+    ) as HTMLButtonElement | undefined
+    await act(async () => {
+      fileButton?.click()
+    })
+    const downloadButton = Array.from(document.querySelectorAll('button')).find((element) =>
+      element.getAttribute('aria-label')?.includes('OS Downloads')
+    ) as HTMLButtonElement | undefined
+    await act(async () => {
+      downloadButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(download).toHaveBeenCalledWith('ssh:host-b', '/scratch/b/from-host-b.txt', {
+      kind: 'os-downloads'
+    })
+  })
+
+  it('keeps the active host bookmarks when the previous host responds last', async () => {
+    const hostABookmarks = deferred<string[]>()
+    const hostBBookmarks = deferred<string[]>()
+    const bookmarksGet = vi.fn((providerId: string) =>
+      providerId === 'ssh:host-a' ? hostABookmarks.promise : hostBBookmarks.promise
+    )
+    useComputeStore.setState({
+      ...createInitialComputeState(),
+      isLoaded: true,
+      loadHosts: vi.fn(),
+      hosts: [
+        connectedHost({
+          id: 'host-a',
+          providerId: 'ssh:host-a',
+          displayName: 'host-a',
+          sshAlias: 'host-a',
+          scratchRoot: '/scratch/a'
+        }),
+        connectedHost({
+          id: 'host-b',
+          providerId: 'ssh:host-b',
+          displayName: 'host-b',
+          sshAlias: 'host-b',
+          scratchRoot: '/scratch/b'
+        })
+      ]
+    })
+    setComputeApi({
+      listDir: vi.fn((providerId: string) =>
+        Promise.resolve({
+          ...mockListing,
+          resolvedPath: providerId === 'ssh:host-a' ? '/scratch/a' : '/scratch/b'
+        })
+      ),
+      bookmarksGet,
+      bookmarksSet: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId={'ssh:host-a'} />
+      )
+      await Promise.resolve()
+    })
+    const hostBButton = Array.from(document.querySelectorAll('button')).find(
+      (element) => element.textContent?.trim() === 'host-b'
+    ) as HTMLButtonElement | undefined
+    await act(async () => {
+      hostBButton?.click()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      hostBBookmarks.resolve(['/scratch/b/pinned'])
+      await hostBBookmarks.promise
+    })
+    await act(async () => {
+      hostABookmarks.resolve(['/scratch/a/pinned'])
+      await hostABookmarks.promise
+    })
+
+    const goToButton = document.querySelector('[aria-haspopup=listbox]') as
+      HTMLButtonElement | undefined
+    await act(async () => {
+      goToButton?.click()
+    })
+
+    expect(document.body.textContent).toContain('/scratch/b/pinned')
+    expect(document.body.textContent).not.toContain('/scratch/a/pinned')
+  })
+
+  it('shows an inline error when bookmarks fail to load', async () => {
+    setComputeApi({
+      listDir: vi.fn().mockResolvedValue(mockListing),
+      bookmarksGet: vi.fn().mockRejectedValue(new Error('Bookmark service unavailable')),
+      bookmarksSet: vi.fn().mockResolvedValue(undefined)
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId={'ssh:biowulf'} />
+      )
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain("Couldn't load bookmarks.")
+    expect(document.body.textContent).toContain('Bookmark service unavailable')
+  })
+
+  it('restores bookmarks and shows an inline error when saving fails', async () => {
+    setComputeApi({
+      listDir: vi.fn().mockResolvedValue(mockListing),
+      bookmarksGet: vi.fn().mockResolvedValue([]),
+      bookmarksSet: vi.fn().mockRejectedValue(new Error('Bookmark write failed'))
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId={'ssh:biowulf'} />
+      )
+      await Promise.resolve()
+    })
+    const goToButton = document.querySelector('[aria-haspopup=listbox]') as
+      HTMLButtonElement | undefined
+    await act(async () => {
+      goToButton?.click()
+    })
+    const pinButton = Array.from(document.querySelectorAll('button')).find((element) =>
+      element.textContent?.includes('Pin current folder')
+    ) as HTMLButtonElement | undefined
+    await act(async () => {
+      pinButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(document.body.textContent).toContain("Couldn't update bookmarks.")
+    expect(document.body.textContent).toContain('Bookmark write failed')
+  })
+
+  it('removes a bookmark and persists the updated list', async () => {
+    const bookmarksSet = vi.fn().mockResolvedValue(undefined)
+    setComputeApi({
+      listDir: vi.fn().mockResolvedValue(mockListing),
+      bookmarksGet: vi.fn().mockResolvedValue(['/scratch/user/pinned']),
+      bookmarksSet
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId={'ssh:biowulf'} />
+      )
+      await Promise.resolve()
+    })
+    const goToButton = document.querySelector('[aria-haspopup=listbox]') as
+      HTMLButtonElement | undefined
+    await act(async () => {
+      goToButton?.click()
+    })
+    const removeButton = Array.from(document.querySelectorAll('button')).find(
+      (element) => element.getAttribute('aria-label') === 'Remove bookmark /scratch/user/pinned'
+    ) as HTMLButtonElement | undefined
+    await act(async () => {
+      removeButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(bookmarksSet).toHaveBeenCalledWith('ssh:biowulf', [])
+    expect(document.body.textContent).not.toContain('/scratch/user/pinned')
   })
 
   it('shows Add to project button when a project is active', async () => {

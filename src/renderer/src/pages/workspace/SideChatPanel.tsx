@@ -39,6 +39,26 @@ type SideChatPresentationState = Readonly<{
   entryIds: Set<string>
 }>
 
+type VisibleSideChatEntrySnapshot = Readonly<{
+  generation: number | undefined
+  entryIds: Set<string>
+}>
+
+const VisibleSideChatEntrySnapshotCommit = ({
+  generation,
+  entryIdsKey,
+  onCommit
+}: {
+  generation: number
+  entryIdsKey: string
+  onCommit: (generation: number, entryIds: Set<string>) => void
+}): null => {
+  useLayoutEffect(() => {
+    onCommit(generation, new Set(JSON.parse(entryIdsKey)))
+  }, [entryIdsKey, generation, onCommit])
+  return null
+}
+
 const SideChatAssistantMessage = ({
   entry,
   sourceOpen,
@@ -79,6 +99,10 @@ const SideChatPanel = ({
     generation: view.generation,
     entryIds: new Set()
   }))
+  const [visibleEntrySnapshot, setVisibleEntrySnapshot] = useState<VisibleSideChatEntrySnapshot>(
+    () => ({ generation: undefined, entryIds: new Set() })
+  )
+  const generationRemainedVisible = visibleEntrySnapshot.generation === view.generation
   const lastUserEntryIndex = view.entries.findLastIndex(
     (entry) => entry.kind === 'message' && entry.role === 'user'
   )
@@ -90,6 +114,18 @@ const SideChatPanel = ({
       : new Set<string>()
   const presentationBarrierIndex = view.entries.findIndex((entry) =>
     presentingEntryIds.has(entry.id)
+  )
+  const visibleEntryIds = (
+    presentationBarrierIndex >= 0
+      ? view.entries.slice(0, presentationBarrierIndex + 1)
+      : view.entries
+  ).map((entry) => entry.id)
+  const visibleEntryIdsKey = JSON.stringify(visibleEntryIds)
+  const handleVisibleEntrySnapshotCommit = useCallback(
+    (generation: number, entryIds: Set<string>): void => {
+      setVisibleEntrySnapshot({ generation, entryIds })
+    },
+    []
   )
   const handlePresentationChange = useCallback(
     (entryId: string, presenting: boolean): void => {
@@ -173,13 +209,21 @@ const SideChatPanel = ({
             className="h-full overscroll-contain text-[14px] leading-6"
           >
             <div className="px-5 py-4">
+              <VisibleSideChatEntrySnapshotCommit
+                generation={view.generation}
+                entryIdsKey={visibleEntryIdsKey}
+                onCommit={handleVisibleEntrySnapshotCommit}
+              />
               {view.entries.map((entry, entryIndex) => {
                 if (presentationBarrierIndex >= 0 && entryIndex > presentationBarrierIndex) {
                   return null
                 }
                 if (entry.kind === 'tool') {
                   return (
-                    <div key={entry.id} className="my-2 text-[12px] text-text-300">
+                    <div
+                      key={JSON.stringify([view.generation, entry.id])}
+                      className="my-2 text-[12px] text-text-300"
+                    >
                       {entry.title}
                       {entry.status ? ` · ${entry.status}` : ''}
                     </div>
@@ -187,7 +231,10 @@ const SideChatPanel = ({
                 }
                 if (entry.role === 'user') {
                   return (
-                    <div key={entry.id} className="my-3 flex justify-end">
+                    <div
+                      key={JSON.stringify([view.generation, entry.id])}
+                      className="my-3 flex justify-end"
+                    >
                       <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-2xl bg-bg-200 px-3 py-2 text-text-000">
                         {entry.text}
                       </div>
@@ -195,12 +242,19 @@ const SideChatPanel = ({
                   )
                 }
 
-                const animateOnMount =
+                const belongsToLiveTurn =
                   lastUserEntryId === liveTurnUserId && entryIndex > lastUserEntryIndex
                 const sourceOpen =
-                  animateOnMount && view.running && entryIndex === view.entries.length - 1
+                  belongsToLiveTurn && view.running && entryIndex === view.entries.length - 1
+                const animateOnMount =
+                  sourceOpen &&
+                  generationRemainedVisible &&
+                  !visibleEntrySnapshot.entryIds.has(entry.id)
                 return (
-                  <div key={entry.id} className="my-3 min-w-0 text-text-000">
+                  <div
+                    key={JSON.stringify([view.generation, entry.id])}
+                    className="my-3 min-w-0 text-text-000"
+                  >
                     <SideChatAssistantMessage
                       entry={entry}
                       sourceOpen={sourceOpen}

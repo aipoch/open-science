@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   assertPackagedResources,
+  authenticatePackagedAppEndpoint,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
   cleanupSmokeRoot,
@@ -100,16 +101,33 @@ describe('Windows installer smoke plan', () => {
     expect(text).toHaveBeenCalledOnce()
   })
 
-  it('discovers the authenticated service endpoint from packaged app output', () => {
-    expect(
-      parsePackagedAppEndpoint(`
-[main] app starting
-Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE
-`)
-    ).toEqual({
-      auth: 'token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE',
+  it('authenticates token-free readiness through state while accepting legacy token output', async () => {
+    const output = 'Open Science Web: http://127.0.0.1:52378/'
+    expect(parsePackagedAppEndpoint(output)).toEqual({
       endpoint: 'http://127.0.0.1:52378'
     })
+    await expect(
+      authenticatePackagedAppEndpoint(output, ['C:\\profile\\.open-science'], {
+        readText: async (path: string) =>
+          path.endsWith('web-service.json')
+            ? JSON.stringify({ port: 52378 })
+            : 'windows_smoke_token_12345678901234567890\n'
+      })
+    ).resolves.toEqual({
+      auth: 'token=windows_smoke_token_12345678901234567890',
+      endpoint: 'http://127.0.0.1:52378'
+    })
+
+    const legacyOutput = `
+[main] app starting
+Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE
+`
+    const legacyService = {
+      auth: 'token=iUFHGSACwBz2k1kSJfPixHbclDywVg0CrcdTs42uvLE',
+      endpoint: 'http://127.0.0.1:52378'
+    }
+    expect(parsePackagedAppEndpoint(legacyOutput)).toEqual(legacyService)
+    await expect(authenticatePackagedAppEndpoint(legacyOutput)).resolves.toEqual(legacyService)
     expect(parsePackagedAppEndpoint('[main] app starting')).toBeUndefined()
   })
 

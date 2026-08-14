@@ -23,6 +23,7 @@ import { SessionPlanInteractionOwner } from '../session-plan/session-plan-intera
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { RuntimeEventInput } from './runtime-snapshot-owner'
 import { AcpPermissionContext } from './permission-context'
+import { permissionRequestFingerprint } from './permission-broker'
 import { ContextUsageTracker, type TokenCounter } from './context-usage-tracker'
 import {
   ACP_PROMPT_FAILED_EVENT_TITLE,
@@ -733,6 +734,9 @@ const startPermissionProbeAgent = (
     codexMcpTitle?: string
     codexMcpApprovalViaElicitation?: boolean
     announceToolCall?: boolean
+    toolCallUpdateRawInput?: unknown
+    toolCallUpdateCount?: number
+    skipPermissionRequest?: boolean
     sparseCodexMcpApproval?: boolean
     modes?: SessionModeState
     onSetMode?: (context: {
@@ -800,6 +804,18 @@ const startPermissionProbeAgent = (
         })
       }
 
+      for (let index = 0; index < (options.toolCallUpdateCount ?? 0); index += 1) {
+        await ctx.client.notify(acp.methods.client.session.update, {
+          sessionId: ctx.params.sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: options.toolCallId,
+            status: 'in_progress',
+            rawInput: options.toolCallUpdateRawInput
+          }
+        })
+      }
+
       if (options.codexMcpIdentity) {
         await ctx.client.notify(acp.methods.client.session.update, {
           sessionId: ctx.params.sessionId,
@@ -835,6 +851,8 @@ const startPermissionProbeAgent = (
         options.onPermissionResponse?.(response)
         return { stopReason: 'end_turn' }
       }
+
+      if (options.skipPermissionRequest) return { stopReason: 'end_turn' }
 
       const response = await ctx.client.request(acp.methods.client.session.requestPermission, {
         sessionId: ctx.params.sessionId,
@@ -1690,6 +1708,486 @@ describe('ACP runtime provider prompt acceptance', () => {
   )
 })
 
+const PERMISSION_PROJECTION_FRAMEWORKS = [
+  ['Claude Code', claudeCodeFramework, 'claude-anthropic', 'claude-code:provider-a'],
+  ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
+  ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
+  ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+] as const
+
+const PERMISSION_PROJECTION_DECISIONS = [
+  ['allow', 'allow-once', undefined],
+  ['deny', 'reject-once', 'declined'],
+  ['cancel', undefined, 'permission-closed']
+] as const
+
+describe('ACP Notebook permission presentation contract', () => {
+  it.each([
+    [
+      'Claude Code',
+      claudeCodeFramework,
+      'claude-anthropic',
+      'claude-code:provider-a',
+      createModes(['default', 'bypassPermissions']),
+      true
+    ],
+    [
+      'Codex Responses',
+      codexFramework,
+      'codex-responses',
+      'codex:provider-a',
+      createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      false
+    ],
+    [
+      'Codex Bridge',
+      codexFramework,
+      'codex-bridge',
+      'codex:provider-a',
+      createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      false
+    ]
+  ] as const)(
+    'projects native Full Access %s Notebook calls as executing without a permission request',
+    async (_name, framework, modelRoute, backendId, modes, lateInput) => {
+      const process = new FakeAgentProcess()
+      const toolCallId = `native-full-${modelRoute}`
+      const authorizeExecution = vi.fn(() => `invocation-${toolCallId}`)
+      const onPermissionRequest = vi.fn()
+      const isCodex = framework.id === 'codex'
+      startPermissionProbeAgent(process, {
+        newSessionId: `session-${modelRoute}`,
+        toolCallId,
+        toolTitle: isCodex
+          ? 'mcp.open-science-notebook.notebook_execute'
+          : 'mcp__open-science-notebook__notebook_execute',
+        toolKind: 'execute',
+        toolRawInput: lateInput ? {} : { language: 'python', code: 'print(1)' },
+        ...(lateInput
+          ? {
+              toolCallUpdateRawInput: { language: 'python', code: 'print(1)' },
+              toolCallUpdateCount: 2
+            }
+          : {}),
+        ...(isCodex
+          ? {
+              codexMcpIdentity: {
+                server: 'open-science-notebook',
+                tool: 'notebook_execute',
+                arguments: { language: 'python', code: 'print(1)' }
+              }
+            }
+          : {
+              announceToolCall: true,
+              announcedProviderToolName: 'mcp__open-science-notebook__notebook_execute'
+            }),
+        modes,
+        skipPermissionRequest: true
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+          authorizeExecution
+        },
+        callbacks: { onPermissionRequest },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'run this notebook cell',
+        provenanceContext: { promptMessageId: 'prompt-native-full' }
+      })
+
+      expect(onPermissionRequest).not.toHaveBeenCalled()
+      expect(authorizeExecution.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            sessionId: session.sessionId,
+            toolCallId,
+            promptMessageId: 'prompt-native-full',
+            method: 'execute',
+            rawInput: { language: 'python', code: 'print(1)' }
+          })
+        ]
+      ])
+      expect(runtime.getSnapshot().events).toContainEqual(
+        expect.objectContaining({
+          kind: 'tool',
+          toolCallId,
+          executionInvocationId: `invocation-${toolCallId}`
+        })
+      )
+    },
+    30_000
+  )
+
+  it.each([
+    [
+      'OpenCode broker Full Access',
+      opencodeFramework,
+      createModes(['build', 'plan'], 'build'),
+      {
+        announceToolCall: true,
+        announcedProviderToolName: 'open_science_notebook_notebook_execute'
+      }
+    ],
+    [
+      'untrusted Codex metadata',
+      codexFramework,
+      createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+      {
+        codexMcpIdentity: {
+          server: 'open-science-notebook',
+          tool: 'notebook_execute',
+          arguments: { language: 'python', code: 'print(1)' }
+        },
+        codexMcpMarker: false
+      }
+    ]
+  ] as const)(
+    'does not infer execution authorization from %s provider updates',
+    async (_name, framework, modes, providerOptions) => {
+      const process = new FakeAgentProcess()
+      const authorizeExecution = vi.fn(() => 'unexpected-invocation')
+      startPermissionProbeAgent(process, {
+        newSessionId: `session-${framework.id}`,
+        toolCallId: `untrusted-${framework.id}`,
+        toolTitle:
+          framework.id === 'codex'
+            ? 'mcp.open-science-notebook.notebook_execute'
+            : 'open_science_notebook_notebook_execute',
+        toolKind: 'execute',
+        toolRawInput: { language: 'python', code: 'print(1)' },
+        modes,
+        skipPermissionRequest: true,
+        ...providerOptions
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        framework,
+        spawnAgent: () => asAgentProcess(process),
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+          authorizeExecution
+        }
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'run this notebook cell',
+        provenanceContext: { promptMessageId: 'prompt-untrusted' }
+      })
+
+      expect(authorizeExecution).not.toHaveBeenCalled()
+      expect(
+        runtime.getSnapshot().events.some((event) => event.executionInvocationId != null)
+      ).toBe(false)
+    }
+  )
+
+  it.each(
+    PERMISSION_PROJECTION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      PERMISSION_PROJECTION_DECISIONS.map(
+        ([decision, optionId, disposition]) =>
+          [name, framework, modelRoute, backendId, decision, optionId, disposition] as const
+      )
+    )
+  )(
+    'projects session/request_permission %s %s without inventing execution',
+    async (_name, framework, modelRoute, backendId, _decision, optionId, disposition) => {
+      const process = new FakeAgentProcess()
+      const toolCallId = `notebook-${modelRoute}-${_decision}`
+      const isCodex = framework.id === 'codex'
+      let permissionResponse: unknown
+      startPermissionProbeAgent(process, {
+        newSessionId: `session-${modelRoute}-${_decision}`,
+        toolCallId,
+        toolTitle:
+          framework.id === 'claude-code'
+            ? 'mcp__open-science-notebook__notebook_execute'
+            : 'open_science_notebook_notebook_execute',
+        toolKind: 'execute',
+        toolRawInput: { language: 'python', code: 'print(1)' },
+        ...(isCodex
+          ? {
+              codexMcpIdentity: {
+                server: 'open-science-notebook',
+                tool: 'notebook_execute',
+                arguments: { language: 'python', code: 'print(1)' }
+              },
+              sparseCodexMcpApproval: true
+            }
+          : {
+              announceToolCall: true,
+              announcedProviderToolName:
+                framework.id === 'claude-code'
+                  ? 'mcp__open-science-notebook__notebook_execute'
+                  : 'open_science_notebook_notebook_execute'
+            }),
+        modes: isCodex
+          ? createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+          : undefined,
+        permissionOptions: [
+          { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+        ],
+        onPermissionResponse: (response) => {
+          permissionResponse = response
+        }
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+        },
+        callbacks: {
+          onPermissionRequest: (request) => {
+            void runtime.respondToPermission({
+              requestId: request.requestId,
+              ...(optionId ? { optionId } : { cancelled: true })
+            })
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run this notebook cell' })
+
+      expect(permissionResponse).toEqual(
+        optionId
+          ? { outcome: { outcome: 'selected', optionId } }
+          : { outcome: { outcome: 'cancelled' } }
+      )
+      const projected = runtime
+        .getSnapshot()
+        .events.filter((event) => event.toolCallId === toolCallId && event.toolDisposition)
+      if (disposition) {
+        expect(projected).toContainEqual(
+          expect.objectContaining({
+            kind: 'tool',
+            toolDisposition: disposition,
+            status: disposition === 'declined' ? 'completed' : 'in_progress'
+          })
+        )
+      } else {
+        expect(projected).toEqual([])
+      }
+    },
+    30_000
+  )
+
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'mcp__open-science-notebook__notebook_execute'],
+    ['OpenCode', opencodeFramework, 'open_science_notebook_notebook_execute']
+  ] as const)(
+    'issues a fresh execution identity for each %s call released by a remembered grant',
+    async (_name, framework, toolTitle) => {
+      const process = new FakeAgentProcess()
+      const permissionRequests: AcpPermissionRequest[] = []
+      const executionToolCallIds: string[] = []
+      let promptIndex = 0
+      acp
+        .agent({ name: 'remembered-notebook-permission-agent' })
+        .onRequest(acp.methods.agent.initialize, () => ({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+          authMethods: []
+        }))
+        .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'remembered-session' }))
+        .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+          const toolCallId = `remembered-call-${++promptIndex}`
+          const rawInput = { language: 'python', code: `print(${promptIndex})` }
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId,
+              title: toolTitle,
+              kind: 'other',
+              status: 'pending',
+              rawInput
+            }
+          })
+          await ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: ctx.params.sessionId,
+            toolCall: {
+              toolCallId,
+              title: toolTitle,
+              kind: 'other',
+              status: 'pending',
+              rawInput
+            },
+            options: [
+              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+              { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+            ]
+          })
+          return { stopReason: 'end_turn' }
+        })
+        .onRequest(acp.methods.agent.session.close, () => ({}))
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework,
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+          authorizeExecution: (authorization) => {
+            executionToolCallIds.push(authorization.toolCallId)
+            return `invocation-${authorization.toolCallId}`
+          }
+        },
+        callbacks: {
+          onPermissionRequest: (request) => {
+            permissionRequests.push(request)
+            const sessionOptionId = request.options.find(
+              (option) => option.scope === 'session'
+            )?.optionId
+            if (!sessionOptionId) throw new Error('Missing Session grant option')
+            void runtime.respondToPermission({
+              requestId: request.requestId,
+              optionId: sessionOptionId
+            })
+          }
+        }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'run once',
+        provenanceContext: { promptMessageId: 'prompt-1' }
+      })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'run again',
+        provenanceContext: { promptMessageId: 'prompt-2' }
+      })
+
+      expect(permissionRequests).toHaveLength(1)
+      expect(executionToolCallIds).toEqual(['remembered-call-1', 'remembered-call-2'])
+    }
+  )
+
+  it.each(
+    PERMISSION_PROJECTION_FRAMEWORKS.filter(([, framework]) => framework.id === 'codex').flatMap(
+      ([name, framework, modelRoute, backendId]) =>
+        PERMISSION_PROJECTION_DECISIONS.map(
+          ([decision, , disposition]) =>
+            [name, framework, modelRoute, backendId, decision, disposition] as const
+        )
+    )
+  )(
+    'projects elicitation/create %s %s without inventing execution',
+    async (_name, framework, modelRoute, backendId, _decision, disposition) => {
+      const process = new FakeAgentProcess()
+      const toolCallId = `elicitation-${modelRoute}-${_decision}`
+      let elicitationResponse: unknown
+      startPermissionProbeAgent(process, {
+        newSessionId: `elicitation-session-${modelRoute}-${_decision}`,
+        toolCallId,
+        toolTitle: 'unused by sparse Codex approval',
+        codexMcpIdentity: {
+          server: 'open-science-notebook',
+          tool: 'notebook_execute',
+          arguments: { language: 'python', code: 'print(1)' }
+        },
+        codexMcpApprovalViaElicitation: true,
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+        onPermissionResponse: (response) => {
+          elicitationResponse = response
+        }
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        notebook: {
+          projectName: 'default-project',
+          mcpEntryPath: '/app/out/main/index.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+        },
+        callbacks: {
+          onPermissionRequest: (request) => {
+            const decisionOptionId = request.options.find((option) =>
+              _decision === 'allow' ? option.kind === 'allow_once' : option.kind === 'reject_once'
+            )?.optionId
+            void runtime.respondToPermission({
+              requestId: request.requestId,
+              ...(_decision === 'cancel' ? { cancelled: true } : { optionId: decisionOptionId })
+            })
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+        })
+      })
+
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'run this notebook cell' })
+
+      expect(elicitationResponse).toEqual({
+        action: _decision === 'allow' ? 'accept' : _decision === 'deny' ? 'decline' : 'cancel'
+      })
+      const projected = runtime
+        .getSnapshot()
+        .events.filter((event) => event.toolCallId === toolCallId && event.toolDisposition)
+      if (disposition) {
+        expect(projected).toContainEqual(expect.objectContaining({ toolDisposition: disposition }))
+      } else {
+        expect(projected).toEqual([])
+      }
+    },
+    30_000
+  )
+})
+
 const createRestoredContinuationSession = (
   promptMessageId = 'prompt-1',
   sessionId = 'restored-session',
@@ -1849,6 +2347,152 @@ const RESTORED_CONTINUATION_FRAMEWORKS = [
 ] as const
 
 describe('ACP runtime restored permission continuation', () => {
+  it('keeps the original Notebook presentation id while authorizing the provider replay id', async () => {
+    const process = new FakeAgentProcess()
+    const originalToolCallId = 'notebook-original'
+    const replayToolCallId = 'notebook-replayed'
+    const toolTitle = 'mcp.open-science-notebook.notebook_execute'
+    const rawInput = { language: 'python', code: 'print(1)' }
+    const originalRequest: AcpPermissionRequest = {
+      requestId: 'permission-restored',
+      sessionId: 'restored-session',
+      toolCallId: originalToolCallId,
+      title: toolTitle,
+      providerToolName: 'notebook_execute',
+      isMcp: true,
+      mcpIdentity: 'open-science-notebook/notebook_execute',
+      toolKind: 'execute',
+      rawInput,
+      options: [
+        {
+          optionId: 'allow-once',
+          name: 'Allow once',
+          kind: 'allow_once',
+          scope: 'once'
+        }
+      ]
+    }
+    let runtimeContext: SessionRuntimeContext = {
+      version: 1,
+      revision: 1,
+      permission: {
+        state: 'pending',
+        request: originalRequest,
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: permissionRequestFingerprint(originalRequest)!,
+        createdAt: 1
+      }
+    }
+    const messages: PersistedChatSession['messages'] = [
+      {
+        id: 'prompt-1',
+        role: 'user',
+        content: 'Run the Notebook code.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const persistedSession: PersistedChatSession = {
+      id: 'restored-session',
+      projectId: 'project-1',
+      title: 'Restored Notebook permission',
+      cwd: '/workspace',
+      status: 'waiting-permission',
+      messages,
+      conversationGraph: createLinearConversationGraph({
+        sessionId: 'restored-session',
+        messages,
+        frameworkId: 'codex',
+        backendId: 'codex:provider-a',
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const authorizeExecution = vi.fn(() => 'execution-replayed')
+    startPermissionProbeAgent(process, {
+      newSessionId: 'restored-session',
+      toolCallId: replayToolCallId,
+      toolTitle,
+      toolKind: 'execute',
+      toolRawInput: rawInput,
+      codexMcpIdentity: {
+        server: 'open-science-notebook',
+        tool: 'notebook_execute',
+        arguments: rawInput
+      },
+      sparseCodexMcpApproval: true,
+      modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only'),
+      permissionOptions: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      notebook: {
+        projectName: 'project-1',
+        mcpEntryPath: '/app/out/main/index.js',
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+        authorizeExecution
+      },
+      permissionWait: {
+        sessions: {
+          readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
+          patchSessionRuntimeContext: vi.fn(async (command) => {
+            runtimeContext = {
+              ...runtimeContext,
+              ...command.patch,
+              revision: runtimeContext.revision + 1
+            }
+            return structuredClone(runtimeContext)
+          }),
+          containsMessageOnActiveBranch: vi.fn(async () => true),
+          loadSessionForContinuation: vi.fn(async () => structuredClone(persistedSession))
+        }
+      },
+      resolveBackend: () => ({
+        framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'codex:provider-a',
+        modelRoute: 'codex-responses',
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace', projectName: 'project-1' })
+
+    await runtime.respondToPermission({
+      requestId: originalRequest.requestId,
+      optionId: 'allow-once',
+      restored: { sessionId: 'restored-session', projectId: 'project-1' }
+    })
+
+    await vi.waitFor(() => expect(authorizeExecution).toHaveBeenCalledOnce())
+    expect(authorizeExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'restored-session',
+        toolCallId: replayToolCallId,
+        promptMessageId: 'prompt-1',
+        rawInput
+      })
+    )
+    const notebookEvents = runtime
+      .getSnapshot()
+      .events.filter((event) => event.kind === 'tool' && event.executionInvocationId)
+    expect(notebookEvents).toContainEqual(
+      expect.objectContaining({
+        toolCallId: originalToolCallId,
+        executionInvocationId: 'execution-replayed'
+      })
+    )
+    expect(
+      runtime
+        .getSnapshot()
+        .events.some((event) => event.kind === 'tool' && event.toolCallId === replayToolCallId)
+    ).toBe(false)
+  })
+
   it('cancels restored pending authority without a live ACP interaction', async () => {
     let runtimeContext: SessionRuntimeContext = {
       version: 1,
@@ -10486,6 +11130,12 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     const permissionRequests: AcpPermissionRequest[] = []
     const permissionResponses: unknown[] = []
+    const executionAuthorizations: Array<{
+      sessionId: string
+      toolCallId: string
+      promptMessageId: string
+      method: string
+    }> = []
     const toolInputs = [
       { code: 'x = 1', language: 'python' },
       { code: 'x = 1', language: 'python' },
@@ -10584,7 +11234,11 @@ describe('ACP runtime session management', () => {
       notebook: {
         projectName: 'default-project',
         mcpEntryPath: '/app/out/main/index.js',
-        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' })
+        getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
+        authorizeExecution: (authorization) => {
+          executionAuthorizations.push(authorization)
+          return `invocation-${authorization.toolCallId}`
+        }
       },
       callbacks: {
         onPermissionRequest: (request) => {
@@ -10605,8 +11259,12 @@ describe('ACP runtime session management', () => {
     const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
     expect(mcpServerNamesFor(runtime, session.sessionId)).toContain('open-science-notebook')
 
-    for (const toolInput of toolInputs) {
-      await runtime.sendPrompt({ sessionId: session.sessionId, text: `run ${toolInput.language}` })
+    for (const [index, toolInput] of toolInputs.entries()) {
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: `run ${toolInput.language}`,
+        provenanceContext: { promptMessageId: `prompt-${index + 1}` }
+      })
     }
 
     expect(permissionRequests).toHaveLength(2)
@@ -10617,6 +11275,15 @@ describe('ACP runtime session management', () => {
     expect(permissionResponses).toEqual(
       toolInputs.map(() => ({ outcome: { outcome: 'selected', optionId: 'once' } }))
     )
+    // Calls 2 and 3 are app-remembered Python grants, while call 4 establishes the R grant. Every
+    // released OpenCode call still creates a fresh one-shot execution identity.
+    expect(executionAuthorizations.map(({ toolCallId }) => toolCallId)).toEqual([
+      'opencode-notebook-1',
+      'opencode-notebook-2',
+      'opencode-notebook-3',
+      'opencode-notebook-4'
+    ])
+    expect(executionAuthorizations[3]).toMatchObject({ rawInput: toolInputs[3] })
     expect(runtime.getSnapshot().permissionGrants[session.sessionId]).toEqual([
       {
         categoryKey: 'mcp:open-science-notebook/notebook_execute:python',
@@ -20185,6 +20852,16 @@ describe('ACP runtime session management', () => {
 
     await vi.waitFor(() => expect(prompts).toHaveLength(2))
     expect(prompts[1]).toContain('permission')
+    expect(runtime.getSnapshot().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'tool',
+          toolCallId: 'denied-command',
+          status: 'completed',
+          toolDisposition: 'declined'
+        })
+      ])
+    )
     expect(runtime.getSnapshot().promptInFlightSessionIds).toEqual([session.sessionId])
 
     const cancelSnapshot = await runtime.cancelPrompt({ sessionId: session.sessionId })
@@ -20479,7 +21156,7 @@ describe('ACP runtime skill force-load + nudge', () => {
     expect(spawner.spawnCount()).toBe(2)
     expect(spawner.agents[1].resumedSessions).toHaveLength(1)
 
-    // The nudge names the skill by its slug id (the identifier the agent's Skill tool resolves),
+    // The nudge names the Skill by its stable id (the identifier the agent's Skill tool resolves),
     // NOT its human display name — a display name like "Deep Research" is unknown to the tool.
     expect(spawner.agents[1].prompts).toEqual([
       {

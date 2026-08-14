@@ -8,6 +8,7 @@ out/
 dist-e2e-mac/
 dist-e2e-win/
 release/
+packages/safe-file-publisher-native/build/
 
 # Test coverage reports
 coverage/

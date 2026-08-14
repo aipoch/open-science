@@ -1,7 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,6 +29,18 @@ afterEach(() => {
 })
 
 describe('UpdateDialog', () => {
+  it('preserves a covered update request while suppressing its presentation', () => {
+    useUpdateStore.setState({
+      isDialogOpen: true,
+      status: { state: 'available', current: '0.1.0', latest: '0.2.0' }
+    })
+
+    act(() => root.render(<UpdateDialog active={false} />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useUpdateStore.getState().isDialogOpen).toBe(true)
+  })
+
   it('uses shared settings dialog chrome and prevents outside-click dismissal', () => {
     useUpdateStore.setState({
       isDialogOpen: true,
@@ -43,8 +52,6 @@ describe('UpdateDialog', () => {
       element.className.includes('bg-black/50')
     )
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')
-    const source = readFileSync(resolve(__dirname, 'UpdateDialog.tsx'), 'utf8')
-
     expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
     expect(overlay?.className).toContain('data-[state=closed]:fill-mode-forwards')
     expect(dialog?.className).toContain('rounded-xl')
@@ -53,9 +60,17 @@ describe('UpdateDialog', () => {
     expect(dialog?.className).toContain('shadow-dialog')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
-    expect(source).toContain('dialogOverlayClassName')
-    expect(source).toContain('dialogPanelClassName')
-    expect(source).toContain('onInteractOutside={(event) => event.preventDefault()}')
+    expect(dialog?.className).toContain('overflow-hidden')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-b border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-t border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
   })
 
   it('renders nothing when the dialog is closed', () => {

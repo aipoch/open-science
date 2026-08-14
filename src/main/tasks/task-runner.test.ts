@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AcpRuntimeEvent } from '../../shared/acp'
 import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
@@ -11,6 +15,14 @@ import {
   type TaskRunnerDependencies,
   type TaskSessionPort
 } from './task-runner'
+
+const temporaryRoots: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+  )
+})
 
 const project: Project = {
   id: 'project-1',
@@ -194,12 +206,141 @@ describe('TaskRunner', () => {
         permissionProfile: 'unsafe' as never
       })
     ).rejects.toMatchObject({ code: 'invalid_request' })
+    await expect(
+      runner.startRun({ project: project.id, prompt: 'Research', cwd: 'relative/workspace' })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: 'Working directory must be an absolute path.'
+    })
+    await expect(
+      runner.startRun({ project: project.id, prompt: 'Research', cwd: 42 as never })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: 'Working directory must be a string.'
+    })
     expect(listedProjects).toBe(false)
   })
 
+  it('rejects missing and non-directory paths before creating an external-workspace Session', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-task-cwd-file-'))
+    temporaryRoots.push(root)
+    const filePath = join(root, 'input.txt')
+    await writeFile(filePath, 'not a directory', 'utf8')
+    const createSession = vi.fn(async () => ({ sessionId: 'must-not-create' }))
+    const runner = createRunner({
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession,
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      }
+    })
+
+    const missingPath = join(root, 'missing')
+    await expect(
+      runner.startRun({
+        project: project.id,
+        prompt: 'Research in a missing directory.',
+        cwd: missingPath
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: `Working directory does not exist: ${missingPath}`
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        prompt: 'Research this file.',
+        cwd: filePath
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: `Working directory is not a directory: ${filePath}`
+    })
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
+  it('rejects a cwd that conflicts with an existing Session workspace', async () => {
+    const existingRoot = await mkdtemp(join(tmpdir(), 'open-science-task-existing-cwd-'))
+    const requestedRoot = await mkdtemp(join(tmpdir(), 'open-science-task-requested-cwd-'))
+    temporaryRoots.push(existingRoot, requestedRoot)
+    const existing = { ...session, cwd: existingRoot }
+    const withSessionAvailable = vi.fn(async (_projectId, _sessionId, operation) => operation())
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save: async () => undefined },
+      agent: {
+        withSessionAvailable,
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'must-not-create' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Continue elsewhere.',
+        cwd: requestedRoot
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: `Working directory does not match Session ${existing.id}.`
+    })
+    expect(withSessionAvailable).not.toHaveBeenCalled()
+  })
+
+  it('keeps an existing explicit workspace spelling when cwd resolves to the same directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-task-equivalent-cwd-'))
+    temporaryRoots.push(root)
+    await mkdir(join(root, 'nested'))
+    const existingCwd = `${root}${sep}nested${sep}..`
+    const existing = { ...session, cwd: existingCwd }
+    const savedSessions: PersistedChatSession[] = []
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [existing.id],
+        createSession: async () => ({ sessionId: 'must-not-create' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      }
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Continue in place.',
+      cwd: root
+    })
+    expect(started.cwd).toBe(existingCwd)
+
+    await runner.waitForRun(started.id)
+    expect(savedSessions.at(-1)?.cwd).toBe(existingCwd)
+  })
+
   it('runs a prompt in a new durable session and returns the assistant output', async () => {
+    const requestedCwd = await mkdtemp(join(tmpdir(), 'open-science-task-cwd-'))
+    temporaryRoots.push(requestedCwd)
+    const canonicalCwd = await realpath(requestedCwd)
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     const savedSessions: PersistedChatSession[] = []
+    const createRequests: unknown[] = []
     const ids = ['user-message-1', 'run-1', 'assistant-message-1']
     const runner = createRunner({
       sessions: {
@@ -211,12 +352,15 @@ describe('TaskRunner', () => {
       agent: {
         withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
         listAttachedSessionIds: async () => [],
-        createSession: async () => ({
-          sessionId: 'session-1',
-          cwd: '/workspace/session-1',
-          frameworkId: 'codex',
-          backendId: 'codex:shared'
-        }),
+        createSession: async (request) => {
+          createRequests.push(request)
+          return {
+            sessionId: 'session-1',
+            cwd: canonicalCwd,
+            frameworkId: 'codex',
+            backendId: 'codex:shared'
+          }
+        },
         resumeSession: async (request) => ({ sessionId: request.sessionId }),
         setPermissionProfile: async () => undefined,
         cancelPrompt: async () => undefined,
@@ -254,22 +398,30 @@ describe('TaskRunner', () => {
     const started = await runner.startRun({
       project: project.name,
       prompt: 'Review these papers.',
-      permissionProfile: 'auto'
+      permissionProfile: 'auto',
+      cwd: requestedCwd
     })
     expect(started).toMatchObject({
       id: 'run-1',
       sessionId: 'session-1',
       projectId: project.id,
-      status: 'running'
+      status: 'running',
+      cwd: canonicalCwd
     })
+
+    expect(createRequests).toEqual([
+      { projectId: project.id, permissionProfile: 'auto', cwd: canonicalCwd }
+    ])
 
     await expect(runner.waitForRun('run-1')).resolves.toMatchObject({
       status: 'completed',
-      output: 'Research complete.'
+      output: 'Research complete.',
+      cwd: canonicalCwd
     })
     expect(savedSessions.at(-1)).toMatchObject({
       id: 'session-1',
       projectId: project.id,
+      cwd: canonicalCwd,
       status: 'idle',
       permissionProfile: 'auto',
       messages: [
@@ -282,6 +434,69 @@ describe('TaskRunner', () => {
         }
       ]
     })
+  })
+
+  it('keeps concurrent external-workspace Sessions isolated by canonical cwd', async () => {
+    const requestedCwds = await Promise.all([
+      mkdtemp(join(tmpdir(), 'open-science-task-concurrent-a-')),
+      mkdtemp(join(tmpdir(), 'open-science-task-concurrent-b-'))
+    ])
+    temporaryRoots.push(...requestedCwds)
+    const canonicalCwds = await Promise.all(requestedCwds.map((cwd) => realpath(cwd)))
+    const sessionIdByCwd = new Map([
+      [canonicalCwds[0], 'session-a'],
+      [canonicalCwds[1], 'session-b']
+    ])
+    const createRequests: Array<{ projectId: string; permissionProfile: string; cwd?: string }> = []
+    const savedSessions: PersistedChatSession[] = []
+    let nextId = 0
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async (request) => {
+          createRequests.push(request)
+          return {
+            sessionId: sessionIdByCwd.get(request.cwd ?? '') ?? 'unexpected-session',
+            cwd: request.cwd
+          }
+        },
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      },
+      createId: () => `generated-${++nextId}`
+    })
+
+    const started = await Promise.all(
+      requestedCwds.map((cwd, index) =>
+        runner.startRun({ project: project.id, prompt: `Research stream ${index + 1}.`, cwd })
+      )
+    )
+    const completed = await Promise.all(started.map((run) => runner.waitForRun(run.id)))
+
+    expect(createRequests).toEqual(
+      expect.arrayContaining(
+        canonicalCwds.map((cwd) => ({ projectId: project.id, permissionProfile: 'ask', cwd }))
+      )
+    )
+    for (const [index, cwd] of canonicalCwds.entries()) {
+      const sessionId = sessionIdByCwd.get(cwd)
+      expect(started[index]).toMatchObject({ sessionId, cwd })
+      expect(completed[index]).toMatchObject({ sessionId, cwd, status: 'completed' })
+      expect(savedSessions.findLast((saved) => saved.id === sessionId)).toMatchObject({
+        id: sessionId,
+        cwd,
+        status: 'idle'
+      })
+    }
   })
 
   it('publishes ordered Run progress from acceptance through completion', async () => {

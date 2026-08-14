@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -15,11 +15,15 @@ import { AgentStep } from './AgentStep'
 import { EnvironmentStep } from './EnvironmentStep'
 import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
+import { onboardingErrorMessage } from './onboarding-error'
 import { ProviderStep } from './ProviderStep'
 
 // Location is last: it doubles as the wizard's Finish step, so the confirm-restart dialog can
 // show only once the provider is already validated.
 type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
+type OnboardingWizardProps = {
+  loadStorageInfo?: () => Promise<StorageInfo>
+}
 
 const STEP_ORDER: WizardStep[] = ['environment', 'agent', 'provider', 'notebook', 'location']
 const STEP_LABELS: Record<WizardStep, string> = {
@@ -29,6 +33,7 @@ const STEP_LABELS: Record<WizardStep, string> = {
   notebook: 'Notebook runtime',
   location: 'Data location'
 }
+const loadStorageInfoFromBridge = (): Promise<StorageInfo> => window.api.storage.getInfo()
 
 // Keeps the five-step sequence visible without turning the lightweight setup flow into navigation.
 const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element => {
@@ -72,7 +77,9 @@ const OnboardingProgress = ({ step }: { step: WizardStep }): React.JSX.Element =
 // First-run gate: inspect the host, install the agent runtime, configure and validate a model
 // provider, optionally set up the notebook runtime, then choose where data lives — one focused
 // step each. Completed users repair later environment regressions from the relevant Settings panel.
-const OnboardingWizard = (): React.JSX.Element => {
+const OnboardingWizard = ({
+  loadStorageInfo = loadStorageInfoFromBridge
+}: OnboardingWizardProps): React.JSX.Element => {
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
@@ -91,6 +98,7 @@ const OnboardingWizard = (): React.JSX.Element => {
   // Fetched once, up front, so the Location step has the default to show and the provider step can
   // later tell whether the user's choice actually differs from it.
   const [dataRootInfo, setDataRootInfo] = useState<StorageInfo | null>(null)
+  const [dataRootError, setDataRootError] = useState<string | undefined>(undefined)
   // Like the provider draft, the data-location choice belongs to the stable shell so Back/Continue
   // does not discard it when LocationStep unmounts.
   const [locationDraft, setLocationDraft] = useState<LocationDraft>({
@@ -108,9 +116,22 @@ const OnboardingWizard = (): React.JSX.Element => {
 
   // Fetch the default data location once, up front, so the Location step has something to show
   // and the provider step can later tell whether the user's choice actually differs from it.
-  useEffect(() => {
-    void window.api.storage.getInfo().then(setDataRootInfo)
+  const handleDataRootInfoSuccess = useCallback((info: StorageInfo): void => {
+    setDataRootInfo(info)
+    setDataRootError(undefined)
   }, [])
+  const handleDataRootInfoFailure = useCallback((error: unknown): void => {
+    setDataRootError(
+      onboardingErrorMessage(error, 'Could not load the default data location. Please try again.')
+    )
+  }, [])
+  const retryDataRootInfo = useCallback((): void => {
+    void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
+  }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
+
+  useEffect(() => {
+    void loadStorageInfo().then(handleDataRootInfoSuccess, handleDataRootInfoFailure)
+  }, [handleDataRootInfoFailure, handleDataRootInfoSuccess, loadStorageInfo])
 
   // App starts this check on every launch. This local fallback also keeps the wizard self-contained in
   // tests or alternate entry surfaces where it may be mounted without App as its parent.
@@ -145,7 +166,7 @@ const OnboardingWizard = (): React.JSX.Element => {
 
   return (
     <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
-      <div className="mx-auto min-h-full w-full max-w-[1040px] px-8 py-7">
+      <div className="mx-auto min-h-full w-full max-w-[1040px] px-4 py-5 sm:px-8 sm:py-7">
         <a
           href={APP.links.website}
           target="_blank"
@@ -157,9 +178,9 @@ const OnboardingWizard = (): React.JSX.Element => {
 
         <div
           data-onboarding-layout="split"
-          className="mt-12 grid grid-cols-[240px_minmax(0,1fr)] gap-10"
+          className="mt-8 grid grid-cols-1 gap-6 md:mt-12 md:grid-cols-[240px_minmax(0,1fr)] md:gap-10"
         >
-          <section aria-labelledby="onboarding-introduction-title" className="pt-2">
+          <section aria-labelledby="onboarding-introduction-title" className="md:pt-2">
             <p className="text-[11px] font-medium text-muted-foreground">FIRST-TIME SETUP</p>
             <h1
               id="onboarding-introduction-title"
@@ -200,10 +221,12 @@ const OnboardingWizard = (): React.JSX.Element => {
             ) : (
               <LocationStep
                 dataRootInfo={dataRootInfo}
+                dataRootError={dataRootError}
                 locationDraft={locationDraft}
                 onLocationDraftChange={setLocationDraft}
                 relaunchError={relaunchError}
                 onRelaunchErrorChange={setRelaunchError}
+                onRetryDataRootInfo={retryDataRootInfo}
                 onBack={() => setStep('notebook')}
                 setIsRelaunching={setIsRelaunching}
               />

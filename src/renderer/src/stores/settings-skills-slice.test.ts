@@ -47,6 +47,7 @@ const preview: SkillImportPreviewContent = {
 
 const createCommands = (): SkillCommands => ({
   listSkills: vi.fn(async () => []),
+  onSkillCatalogChanged: vi.fn(() => () => undefined),
   setSkillEnabled: vi.fn(async () => []),
   createSkill: vi.fn(async () => []),
   updateSkill: vi.fn(async () => []),
@@ -108,6 +109,24 @@ describe('settings Skills slice', () => {
     await store.getState().loadSkills()
 
     expect(store.getState().skills).toEqual([skill('loaded')])
+  })
+
+  it('subscribes once and reconciles a catalog change published by main', async () => {
+    let onCatalogChanged: ((payload: undefined) => void) | undefined
+    vi.mocked(commands.onSkillCatalogChanged).mockImplementation((listener) => {
+      onCatalogChanged = listener
+      return () => undefined
+    })
+    vi.mocked(commands.listSkills)
+      .mockResolvedValueOnce([skill('initial')])
+      .mockResolvedValueOnce([skill('direct')])
+
+    await store.getState().loadSkills()
+    await store.getState().loadSkills()
+    onCatalogChanged?.(undefined)
+    await vi.waitFor(() => expect(store.getState().skills).toEqual([skill('direct')]))
+
+    expect(commands.onSkillCatalogChanged).toHaveBeenCalledOnce()
   })
 
   it('optimistically toggles a Skill before reconciling the authoritative catalog', async () => {

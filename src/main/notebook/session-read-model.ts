@@ -19,6 +19,7 @@ import {
 } from './repository'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
+import { resolveProjectId } from '../../shared/project-scope'
 
 type NotebookHandoffContext = {
   activeRunId?: string
@@ -47,7 +48,7 @@ type NotebookHandoffContext = {
 type NotebookSessionReadSource = {
   readonly id: string
   readonly sessionId: string
-  readonly projectName: string
+  readonly projectId: string
   readonly cwd: string
   readonly notebookSessionRoot: string
   readonly dataRoot: string
@@ -61,7 +62,7 @@ type NotebookSessionReadSource = {
 
 type NotebookSessionReadModelOptions<Session extends NotebookSessionReadSource> = {
   storageRoot: string
-  defaultProjectName: string
+  defaultProjectId: string
   repository: NotebookRunRepository
   findSession: (sessionId: string) => Session | undefined
   runtimeBindings: (session: Session) => NotebookRuntimeBindings
@@ -128,16 +129,13 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     session: Session
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.options.repository.loadOrCreate({
-      projectName: session.projectName,
+      projectName: session.projectId,
       sessionId: session.sessionId,
       workspaceCwd: session.cwd,
       lane: session.lane
     })
     const snapshot = session.snapshot()
-    const runs = await this.options.repository.readSessionRuns(
-      session.projectName,
-      session.sessionId
-    )
+    const runs = await this.options.repository.readSessionRuns(session.projectId, session.sessionId)
 
     return {
       id: session.id,
@@ -162,35 +160,39 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   async getSessionReference(
     request: NotebookSessionRequest
   ): Promise<NotebookSessionReference | null> {
+    const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const live = this.options.findSession(request.sessionId)
     if (live) return this.toSessionReference(live)
 
-    const projectName = request.projectName ?? this.options.defaultProjectName
-    const document = await this.options.repository.findAnyExisting(projectName, request.sessionId)
+    const document = await this.options.repository.findAnyExisting(projectId, request.sessionId)
     if (!document) return null
 
-    const rootDocument = await this.options.repository.findExisting(projectName, request.sessionId)
+    const rootDocument = await this.options.repository.findExisting(projectId, request.sessionId)
     const notebookSessionRoot = getNotebookSessionRoot(
       this.options.storageRoot,
-      projectName,
+      projectId,
       request.sessionId
     )
 
     return {
       sessionId: request.sessionId,
-      projectName,
+      projectId,
+      // Compatibility output for an older renderer/main pair; this value is the Project id.
+      projectName: projectId,
       workspaceCwd: rootDocument?.workspaceCwd ?? request.workspaceCwd,
       notebookSessionRoot,
-      dataRoot: getNotebookDataRoot(this.options.storageRoot, projectName, request.sessionId),
+      dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
       runtimeRoot: document.kernel.runtimeRoot,
-      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectName, request.sessionId)
+      runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectId, request.sessionId)
     }
   }
 
   toSessionReference(session: Session): NotebookSessionReference {
     return {
       sessionId: session.sessionId,
-      projectName: session.projectName,
+      projectId: session.projectId,
+      // Compatibility output for an older renderer/main pair; this value is the Project id.
+      projectName: session.projectId,
       workspaceCwd: session.cwd,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,

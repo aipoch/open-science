@@ -76,6 +76,24 @@ const findButtonByName = async (pattern: RegExp): Promise<HTMLButtonElement> => 
 }
 
 describe('CloseConfirmModal', () => {
+  it('retains a covered close request until its presentation becomes active', async () => {
+    act(() => root.render(<CloseConfirmModal active={false} />))
+    act(() => {
+      emit({ requestId: 'r-covered', variant: 'close-to-tray', sessions: [] })
+    })
+
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-covered', ack: true })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(sendResponse).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'r-covered', choice: expect.anything() })
+    )
+
+    act(() => root.render(<CloseConfirmModal active />))
+
+    await findByText(/Minimize or quit?/)
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+  })
+
   it('uses shared settings dialog chrome for the close confirmation', async () => {
     render()
     act(() => {
@@ -97,6 +115,17 @@ describe('CloseConfirmModal', () => {
     expect(dialog?.className).toContain('shadow-dialog')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(dialog?.className).toContain('data-[state=closed]:fill-mode-forwards')
+    expect(dialog?.className).toContain('overflow-hidden')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-b border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-t border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
   })
 
   it('reports whether the modal is obscuring the active conversation', async () => {
@@ -209,6 +238,24 @@ describe('CloseConfirmModal', () => {
     const quitButton = await findButtonByName(/^quit$/i)
     act(() => quitButton.click())
     expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r3', choice: 'quit' })
+  })
+
+  it('blocks quitting for delegated work and only acknowledges by staying in the app', async () => {
+    render()
+    act(() => {
+      emit({
+        requestId: 'r-delegated',
+        variant: 'quit',
+        sessions: [{ projectId: 'p', sessionId: 'child-running', kind: 'delegated' }]
+      })
+    })
+
+    await findByText(/Subagents are still running/)
+    expect(document.body.textContent).toMatch(/stop their subagents before quitting/i)
+    expect(document.body.textContent).not.toMatch(/\bQuit\b/)
+    const returnButton = await findButtonByName(/Return to tasks/)
+    act(() => returnButton.click())
+    expect(sendResponse).toHaveBeenCalledWith({ requestId: 'r-delegated', choice: 'cancel' })
   })
 
   it('renders null and does not throw when the desktop bridge is absent (web build)', () => {

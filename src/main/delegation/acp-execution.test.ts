@@ -307,7 +307,7 @@ describe('ACP delegate execution production adapter', () => {
         attemptId: 'with-schema',
         input: { outputSchema: { type: 'number' } },
         expected:
-          'Review evidence.\n\nReturn ordinary text and any Artifacts as usual. Before finishing, submit the structured result with host.submit_output(value) using this JSON Schema:\n{"type":"number"}'
+          'Review evidence.\n\nReturn ordinary text and any Artifacts as usual. Before finishing, submit the structured result with host.submitOutput(value) using this JSON Schema:\n{"type":"number"}'
       },
       {
         attemptId: 'with-both',
@@ -316,7 +316,7 @@ describe('ACP delegate execution production adapter', () => {
           outputSchema: { type: 'object', required: ['answer'] }
         },
         expected:
-          'Review evidence.\n\nImmutable input copies are available in the read-only ./inputs/ directory. Inspect that directory and read the relevant files.\n\nReturn ordinary text and any Artifacts as usual. Before finishing, submit the structured result with host.submit_output(value) using this JSON Schema:\n{"type":"object","required":["answer"]}'
+          'Review evidence.\n\nImmutable input copies are available in the read-only ./inputs/ directory. Inspect that directory and read the relevant files.\n\nReturn ordinary text and any Artifacts as usual. Before finishing, submit the structured result with host.submitOutput(value) using this JSON Schema:\n{"type":"object","required":["answer"]}'
       }
     ]
 

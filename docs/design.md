@@ -212,7 +212,7 @@ Target values for dark mode. Apply under `.dark` when dark theme is enabled:
 
 1. Default to shadcn semantic classes for new UI: `bg-background`, `text-foreground`, `bg-card`, `bg-accent`, `text-muted-foreground`, and so on.
 2. Use workspace classes only where this document names a workspace surface (shell, sidebar rows, composer, session menus, markdown blocks, and similar).
-3. Do not add new color token names. Extend styling only through the shadcn and workspace token sets below.
+3. Add color roles only when an existing semantic token cannot preserve the intended meaning and visual value. Register the role in `main.css` and document it here before using it in components.
 
 ### shadcn Semantic Tokens
 
@@ -259,6 +259,31 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 | `--shadow-card`                     | `shadow-card`                      | `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)` | Sidebar rail card and composer dock         |
 | `--shadow-card-opaque`              | `shadow-card-opaque`               | `0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1)`  | Composer form                               |
 | `--shadow-menu` / `--shadow-dialog` | `shadow-menu`, `shadow-dialog`     | `0 2px 8px rgb(0 0 0 / 0.08)`, `0 8px 32px rgb(10 10 10 / 12%)`   | Menus and modal dialogs                     |
+
+### Settings Status and Category Tokens
+
+Settings views use named aliases for categorical data and host status. The aliases in `main.css`
+resolve to the established Tailwind palette values, so semantic cleanup does not change the rendered
+colors.
+
+| Semantic role        | Tailwind classes                                                                                                                             | Usage                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Storage categories   | `bg-storage-artifacts`, `bg-storage-delegation`, `bg-storage-runtime`, `bg-storage-uploads`, `bg-storage-notebooks`, `bg-storage-workspaces` | Disk-usage bar segments and legend swatches    |
+| Success surface      | `bg-status-success-surface`, `text-status-success-foreground`                                                                                | Reachable Compute host icon and badge          |
+| Success accent       | `bg-status-success-accent/10`, `text-status-success-accent-foreground`                                                                       | Completed storage migration icon               |
+| Failure surface      | `bg-status-failure-surface`, `text-status-failure-foreground`                                                                                | Failed Compute host icon and badge             |
+| Failure detail       | `border-status-failure-border`, `bg-status-failure-subtle/50`, `text-status-failure-accent`, `text-status-failure-strong`                    | Compute probe failure panel                    |
+| Dark status variants | `dark:*-status-success-dark-*`, `dark:*-status-failure-dark-*`                                                                               | Preserve the existing dark-mode status palette |
+
+Do not use these tokens as general brand accents. Storage colors distinguish categories; status
+colors communicate a successful or failed probe/migration result.
+
+### Named Layer Tokens
+
+| Token                     | Tailwind class    | Value | Usage                                                              |
+| ------------------------- | ----------------- | ----- | ------------------------------------------------------------------ |
+| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content |
+| -----                     | --------------    | ----- | -----                                                              |
 
 ### Border Opacity
 
@@ -358,6 +383,18 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Workspace: `flex h-svh min-w-0 bg-bg-10 text-foreground overflow-hidden`.
 - Main content column: `min-w-0 flex-1 overflow-hidden`.
 - Use `ScrollArea` for scrollable content. Do not create multiple nested scroll containers in the same direction.
+- The App Shell presentation owner selects the only root presentation allowed to be interactive.
+  Feature stores retain their own requested/open state; they do not coordinate presentation order
+  with one another.
+- Root presentation priority is fixed: close confirmation, missing data-root recovery, legacy data
+  move, update, compute approval, Connector approval, Skill import approval, global search, Settings,
+  preview, then base content. A covered presentation stays requested and resumes when higher-priority
+  work clears.
+- Session visibility, App Shell shortcut eligibility, and `Cmd/Ctrl+W` routing must consume that
+  projection. Do not rebuild parallel Boolean gate lists in `AppContent` or feature components.
+- When a presentation above preview/base owns the shell, base content is `inert` and
+  `aria-hidden`. Nested dialogs and fullscreen viewers retain local priority before base-pane or
+  window close behavior.
 
 ### Button
 
@@ -613,9 +650,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 ### Onboarding
 
 - Root: `h-svh overflow-y-auto bg-bg-10 text-text-000`.
-- Container: `mx-auto min-h-full w-full max-w-[1040px] px-8 py-7`.
+- Container: `mx-auto min-h-full w-full max-w-[1040px] px-4 py-5 sm:px-8 sm:py-7`.
 - Brand: reuse the exact Home treatment, `font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000`; do not recolor it with `primary`.
-- Main layout: `mt-12 grid grid-cols-[240px_minmax(0,1fr)] gap-10`; the left column is unframed introduction/progress, and the right column is the only visible work card.
+- Main layout: one column with compact spacing below `md`; at `md` and wider use `mt-12 grid grid-cols-[240px_minmax(0,1fr)] gap-10`. The left column is unframed introduction/progress, and the right column is the only visible work card.
 - Work surface: one shadcn `Card`, `min-h-[420px] gap-0 rounded-lg bg-bg-000 py-0 shadow-card ring-1 ring-border-200`; do not nest visual cards inside it.
 - Current step uses `bg-primary text-primary-foreground`; completed and inactive labels remain neutral.
 - Commands use shadcn `Button`; primary commands inherit the shared deep-green `primary` variant.
@@ -657,8 +694,10 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Breadcrumb: a clickable root segment (`text-muted-foreground hover:text-foreground`), a muted `/` separator, and the truncated current page label in `text-foreground`, all at `text-sm font-semibold`.
 - Right content column uses `bg-card`; its content area scrolls independently (`min-h-0 flex-1 overflow-y-auto`). Panels pad with `p-5`, and maximize mode constrains inner content to `max-w-[880px]`.
 - First-level groups use `SettingsSection`: `text-base font-semibold` title, optional `text-[13px] leading-5 text-muted-foreground` description, and a hairline separator between groups. Do not wrap ordinary sections in cards.
-- Label/control pairs use `SettingsRow`: a two-column grid with the label and optional description on the left and a stable `12rem` to `20rem` control column on the right. Cards remain for repeated objects, install/status surfaces, paths, errors, and drop zones.
+- Preference label/control pairs use `SettingsRow`: a two-column grid with the label and optional description on the left and a stable `12rem` to `20rem` control column on the right. Create and edit forms use one consistent stacked field rhythm instead: a visible `text-sm font-medium` label above a full-width Input, Textarea, or Select, followed by helper or error text. Cards remain for repeated objects, install/status surfaces, paths, errors, and drop zones.
+- Editor fields needed for the primary task stay visible. Optional or uncommon fields live under a borderless **Advanced settings** disclosure with `aria-expanded` / `aria-controls`; it is collapsed by default and opens initially when imported credentials must be entered or existing advanced values would otherwise be hidden. Do not wrap the disclosure in a card.
 - Form textareas use the shared `Textarea`; binary settings use the shared `Switch`.
+- Network > Proxy is a breadcrumb-backed second-level form. It offers System (the historical default), Manual, and Direct modes; Manual uses a labeled proxy URL, optional bypass rules, blur/save validation, and explicit rejection of embedded credentials. System keeps per-request OS/PAC resolution inside Electron while new agent processes inherit only the proxy environment present when Open Science started; Manual supplies a fixed proxy to both stacks, and Direct clears proxy variables. Saving reports inline loading, error, or quiet success and explains that only new requests and processes adopt the change; live agents, notebook kernels, and installers are not restarted.
 - Select fields use `Select`, with a `32px` trigger height.
 - A visible Settings search or filter field owns the platform search shortcut: `Cmd+K` on macOS and `Ctrl+K` on Windows/Linux focus it without selecting or clearing its value. The topmost nested Settings dialog wins over a search behind it; hidden or disabled searches do not intercept the shortcut. Persistent list-toolbars show the shortcut as right-aligned keycaps inside the field, while transient searches such as runtime-package and Specialist capability filters expose the same behavior through `aria-keyshortcuts` without repeating the visual hint.
 
@@ -667,9 +706,9 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Connector, Skill, and Specialist `name` values are stable invocation identities. They are fixed after creation and are used by host APIs, generated Skill documents, package references, and policy routing. Editing a presentation label must never change these references.
 - `displayName` is presentation-only and may appear in lists, search results, prompts, and approval UI. Connector and Specialist editors may change it freely. A Skill may read an optional `displayName` from external `SKILL.md` frontmatter and falls back to `name`; built-in Skills and app-generated Skill exports omit that non-standard field, and the app does not maintain a separate Skill display-name field outside the manifest.
 - Connector context follows a distinct derived path: after live tool discovery the app generates an on-demand `mcp-<name>/SKILL.md`. Its frontmatter identity and every `host.mcp` example use immutable `name`; `displayName` may appear only in generated prose (or through an explicit `listConnectors()` result). Updating a Connector regenerates this document and reloads Skills without creating an invocation alias. Auth-recovery guidance derived from Connector configuration and discovered login tools remains part of the generated document.
-- A custom Connector also has an internal UUID `id`. Runtime calls and Specialist capability references use its immutable lowercase-hyphenated `name`; durable permission grants use the UUID. The UI shows `displayName` and exposes the immutable Connector ID separately. Display names and UUIDs are not invocation aliases.
+- A custom Connector also has an internal UUID `id`. Local Specialist capability references and durable permission grants use that UUID; runtime calls, generated Connector Skills, and portable package references use the immutable lowercase-hyphenated `name`. Package import/export resolves between the two through the live Connector catalog. The UI shows `displayName` and exposes the immutable Connector name separately. Display names and UUIDs are not invocation aliases.
 - Connector template schema v1 stores both `name` and `displayName` directly. Export never includes secrets, and import does not synthesize compatibility aliases from a display name.
-- Specialist package schema v1 remains byte-for-byte compatible in field shape: package `name` stays the immutable invocation identity and `displayName` stays editable presentation metadata.
+- Specialist package schema v1 remains byte-for-byte compatible in field shape: package `name` stays the immutable invocation identity and `displayName` stays editable presentation metadata. `skillIds` and `connectorIds` keep their released JSON keys but contain portable capability names; local Specialist persistence contains installation IDs. Featured Skills are exported as references and are never copied into `skills/`.
 - Public JavaScript host APIs and their object fields use camelCase (`listSkills`, `listConnectors`, `attachSkill`, `displayName`, `systemPrompt`, and related fields). Internal transport operation names may remain snake_case behind that boundary.
 
 #### Skills panel
@@ -681,7 +720,7 @@ Workspace-only tokens without a shadcn counterpart, plus shadow tokens. For shar
 - Skill row: `flex min-h-14 items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description (`text-xs text-muted-foreground`) is a flex-1 button opening the detail page; trailing controls use `SettingsIconAction` (`Button ghost icon-sm` + Tooltip) for export, edit, and delete, followed by the enable switch. Export is available only for Imported and Personal Skills in the desktop app; Featured Skills are built in and never expose the action.
 - Enable controls use the shared shadcn `Switch`, with `bg-primary` when checked and `bg-input` when unchecked. Skills, Connectors, and their detail pages reuse the same component.
 - Skill detail page: header row pairs a `size-6` scroll icon (`ScrollText`, `text-primary`) + `text-base font-semibold` name + a rounded source badge (`bg-muted text-xs text-muted-foreground`, e.g. Featured) against the same enable switch, with a `text-xs text-muted-foreground` "Updated N days ago" line and a `[text-wrap:pretty]` description below. A **Files** section (`border-t border-border pt-4`) renders the `SKILL.md` body via `AgentMarkdown`; a **Details** section lists frontmatter Author / License / Third-party as stacked `text-xs` label + `text-sm` value rows, shown only when present.
-- Editor (create / edit) is sectioned Identity + Content + References: Content offers a Write / Upload toggle where pasting a `SKILL.md` auto-fills the frontmatter; References is a dropzone writing into the skill's `references/`.
+- Editor (create / edit) uses the shared stacked field rhythm for Name, Description, and Content. Content offers a Write / Upload toggle where pasting a `SKILL.md` auto-fills the frontmatter. The optional References dropzone, which writes into the skill's `references/`, lives under **Advanced settings** and opens initially when the Skill already has reference files.
 - Import from GitHub is scan-first. Its labeled input accepts either keywords or a direct `owner/repo`, `owner/repo@ref`, or `github.com` URL, with **Find skills** as the main action. Direct references scan immediately; keywords search public GitHub repositories and render at most ten compact rows (`owner/repo`, optional two-line description, star count, neutral **Scan for skills** action). A selected repository keeps the results visible while its row action shows a spinner and **Scanning…**, then collapses the repository results after a successful scan; a full-size **Show repositories** / **Hide repositories** control restores or collapses them. A divider separates repository matches from Skill candidates. Scanned candidates use per-row checkboxes with **Select all** and **Invert selection** in a dedicated selection toolbar; already-imported skills (matched by exact source URL or by the same folder name) show a muted `Imported` pill and are not pre-selected. The neutral batch action shows its own spinner and **Importing…** while importing instead of a page-level loading message, and otherwise reads "Import selected (N)" (`border border-border bg-card hover:bg-muted`), never primary green. Empty searches keep the input as the recovery path; GitHub failures use the standard Settings danger banner.
 - The import header exposes a neutral **GitHub token** control. Expanding it reveals a separator-backed inline credential area (not a nested card) with a password input and **Verify and save** action. Main verifies the candidate against GitHub before replacing the existing credential, stores only an OS-encrypted reference plus a masked hint, and supports replacement and explicit **Remove token**. Search, scan, lazy preview, Settings import, and conversation-requested import all reuse the same authenticated request seam; the token is attached only to exact trusted GitHub API/raw-content hosts. Missing or undecryptable credentials fall back to anonymous requests without exposing plaintext to the renderer, and rate-limit errors direct the user back to this control.
 - A conversation-requested GitHub import uses the same preview-first semantics in an application modal: the app scans the resolved repo URL, pins candidates to the resolved commit so preview and import share one immutable snapshot, lists every discovered Skill, pre-selects candidates that are not already imported, loads a candidate's full preview only when requested, and writes only the user's confirmed selection. The agent never installs GitHub content directly into its own runtime Skill directory.

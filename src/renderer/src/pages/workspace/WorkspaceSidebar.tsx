@@ -639,31 +639,33 @@ const WorkspaceSidebarView = ({
             ))}
           </div>
 
-          <div className="relative flex shrink-0 items-center gap-1 p-2">
+          <div className="relative shrink-0 px-2 pt-2">
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-x-0 -top-12 h-12 bg-gradient-to-t from-rail-card-bg to-rail-card-bg/0"
             />
-            <NotificationBell
-              side="top"
-              align="start"
-              className="size-8 rounded-md"
-              onOpen={mobileMode ? onMobileClose : undefined}
-            />
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className={cn(
-                'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
-                sidebarInteractiveTransitionClassName
-              )}
-              aria-label="Settings"
-            >
-              <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-            </button>
-            <UpdateCapsule />
-            <GitHubStarBadge />
-            <NetworkStatusIndicator variant="icon" />
+            <UpdateCapsule variant="session" className="mb-1.5" />
+            <div className="flex items-center gap-1 pb-2">
+              <NotificationBell
+                side="top"
+                align="start"
+                className="size-8 rounded-md"
+                onOpen={mobileMode ? onMobileClose : undefined}
+              />
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className={cn(
+                  'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-text-300 hover:bg-bg-300 hover:text-text-000',
+                  sidebarInteractiveTransitionClassName
+                )}
+                aria-label="Settings"
+              >
+                <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+              </button>
+              <GitHubStarBadge />
+              <NetworkStatusIndicator variant="icon" />
+            </div>
           </div>
         </nav>
       </div>

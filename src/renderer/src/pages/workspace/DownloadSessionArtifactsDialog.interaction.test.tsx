@@ -94,6 +94,15 @@ describe('DownloadSessionArtifactsDialog', () => {
 
     expect(document.body.textContent).toContain('Download session artifacts')
     expect(document.body.textContent).toContain('2 of 2 selected')
+    const dividerClassNames = [...document.body.querySelectorAll<HTMLElement>('div')]
+      .map((element) => element.className)
+      .filter((className) => className.includes('border-b') || className.includes('border-t'))
+    expect(dividerClassNames).toContain(
+      'flex shrink-0 items-center justify-between gap-4 border-b border-border-300/90 px-5 py-3.5'
+    )
+    expect(dividerClassNames).toContain(
+      'flex shrink-0 items-center justify-between gap-3 border-t border-border-300/90 px-5 py-3.5'
+    )
     expect(document.body.textContent).toContain('report.csv')
     expect(document.body.textContent).toContain('figure.png')
     const checkboxes = [

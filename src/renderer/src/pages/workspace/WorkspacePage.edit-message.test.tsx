@@ -22,10 +22,7 @@ import {
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 
 // Capture the ConversationPanel props the page computes, notably canEditMessage and the resend handler.
-let conversationProps: {
-  canEditMessage: boolean
-  onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
-}
+let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
 
 const runtime = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -191,10 +188,10 @@ describe('WorkspacePage inline edit resend', () => {
   it('routes the edited prompt through the truncate-and-resend runtime flow', async () => {
     await renderPage()
 
-    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
 
     await act(async () => {
-      conversationProps.onSendEditedMessage('message-1', editedDoc)
+      conversationProps.conversation.actions.revise('message-1', editedDoc)
     })
 
     // The runtime receives the truncation point plus the adjusted prompt with its mentions resolved.
@@ -212,20 +209,20 @@ describe('WorkspacePage inline edit resend', () => {
     await act(async () => {
       setSession({ status: 'running', messages: [promptMessage] })
     })
-    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
 
     await act(async () => {
-      conversationProps.onSendEditedMessage('message-1', editedDoc)
+      conversationProps.conversation.actions.revise('message-1', editedDoc)
     })
     expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
 
     await act(async () => {
       setSession({ messages: [promptMessage] })
     })
-    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
 
     await act(async () => {
-      conversationProps.onSendEditedMessage('message-1', emptyDoc)
+      conversationProps.conversation.actions.revise('message-1', emptyDoc)
     })
     expect(runtime.resendEditedMessage).not.toHaveBeenCalled()
   })
@@ -233,22 +230,22 @@ describe('WorkspacePage inline edit resend', () => {
   it('gates editing while a run is active and restores it once settled', async () => {
     await renderPage()
 
-    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
 
     await act(async () => {
       setSession({ status: 'running', messages: [promptMessage] })
     })
-    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
 
     await act(async () => {
       setSession({ status: 'waiting-permission', messages: [promptMessage] })
     })
-    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
 
     await act(async () => {
       setSession({ fixLoopActive: true, messages: [promptMessage] })
     })
-    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
 
     // Compaction recovery idles the session but must keep the gate closed until the replay finishes.
     await act(async () => {
@@ -257,24 +254,24 @@ describe('WorkspacePage inline edit resend', () => {
     await act(async () => {
       useSessionStore.getState().beginCompaction('sess-a')
     })
-    expect(conversationProps.canEditMessage).toBe(false)
+    expect(conversationProps.conversation.availability.revise).toBe(false)
 
     await act(async () => {
       useSessionStore.getState().finishRun('sess-a')
     })
-    expect(conversationProps.canEditMessage).toBe(true)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
   })
 
   it('keeps the resend handler stable when only the branch-switch operation gate changes', async () => {
     await renderPage()
 
-    const initialHandler = conversationProps.onSendEditedMessage
+    const initialHandler = conversationProps.conversation.actions.revise
 
     await act(async () => {
       useSessionStore.getState().setBranchSwitchBlocked('sess-a', true)
     })
 
-    expect(conversationProps.canEditMessage).toBe(true)
-    expect(conversationProps.onSendEditedMessage).toBe(initialHandler)
+    expect(conversationProps.conversation.availability.revise).toBe(true)
+    expect(conversationProps.conversation.actions.revise).toBe(initialHandler)
   })
 })

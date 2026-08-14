@@ -32,9 +32,11 @@ type WorkflowJob = {
 
 type Workflow = {
   jobs: Record<string, WorkflowJob>
+  permissions?: Record<string, string>
   on?: {
     push?: { branches?: string[]; tags?: string[] }
     schedule?: Array<{ cron: string }>
+    workflow_run?: { workflows?: string[]; types?: string[] }
     workflow_call?: unknown
     workflow_dispatch?: unknown
   }
@@ -85,19 +87,13 @@ describe('post-merge Windows validation', () => {
   })
 
   it('hard-gates every packaged Windows build on a fresh install/start/uninstall smoke', () => {
-    const job = readWorkflow('build.yml').jobs.build
-    const buildIndex = job.steps?.findIndex(({ name }) => name === 'Build & package') ?? -1
-    const smokeIndex =
-      job.steps?.findIndex(({ name }) => name === 'Smoke test Windows installer') ?? -1
-    const uploadIndex = job.steps?.findIndex(({ name }) => name === 'Upload build artifacts') ?? -1
+    const job = readWorkflow('package-smoke.yml').jobs.smoke
     const smoke = findStep(job, 'Smoke test Windows installer')
 
-    expect(smoke.if).toBe("${{ matrix.platform == 'win' && !inputs.skip_verify }}")
+    expect(job['continue-on-error']).toBeUndefined()
+    expect(smoke.if).toBe("matrix.platform == 'win'")
     expect(smoke.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(smoke['timeout-minutes']).toBe(10)
-    expect(buildIndex).toBeGreaterThan(-1)
-    expect(smokeIndex).toBeGreaterThan(buildIndex)
-    expect(uploadIndex).toBeGreaterThan(smokeIndex)
   })
 
   it('keeps Windows packaging unsigned until signing credentials are available', () => {
@@ -147,16 +143,22 @@ describe('post-merge Windows validation', () => {
     expect(packageStep.run).not.toContain('publisherName')
   })
 
-  it('runs one canonical packaged P0 and visual gate plus native package smoke on every target', () => {
+  it('separates immutable builds from blocking package smoke and advisory regressions', () => {
     const setup = readWorkflow('build.yml').jobs.setup.steps?.find(({ id }) => id === 'set')
-    const job = readWorkflow('build.yml').jobs.build
-    const names = job.steps?.map(({ name }) => name) ?? []
-    const packaged = findStep(job, 'Resolve packaged Electron executable')
-    const p0 = findStep(job, 'Run P0 Electron certification')
-    const visual = findStep(job, 'Run desktop visual regression')
-    const macos = findStep(job, 'Smoke test macOS packages')
-    const linux = findStep(job, 'Smoke test Linux packages')
-    const evidence = findStep(job, 'Record platform certification evidence')
+    const build = readWorkflow('build.yml').jobs.build
+    const buildNames = build.steps?.map(({ name }) => name) ?? []
+    const upload = findStep(build, 'Upload build artifacts')
+    const smokeWorkflow = readWorkflow('package-smoke.yml')
+    const smoke = smokeWorkflow.jobs.smoke
+    const downloadPackage = findStep(smoke, 'Download packaged artifacts')
+    const macos = findStep(smoke, 'Smoke test macOS packages')
+    const windows = findStep(smoke, 'Smoke test Windows installer')
+    const linux = findStep(smoke, 'Smoke test Linux packages')
+    const evidence = findStep(smoke, 'Record platform certification evidence')
+    const uploadEvidence = findStep(smoke, 'Upload platform certification evidence')
+    const regressionWorkflow = readWorkflow('desktop-regression.yml')
+    const p0Regression = regressionWorkflow.jobs.p0
+    const visualRegression = regressionWorkflow.jobs.visual
     const notarize = readWorkflow('notarize-mac.yml').jobs.notarize
     const notarizeDryRun = readWorkflow('notarize-dryrun.yml').jobs.notarize
     const finalMacos = findStep(notarize, 'Smoke test final macOS packages')
@@ -164,32 +166,62 @@ describe('post-merge Windows validation', () => {
 
     expect(setup.run).toContain('"name":"macos-arm64","os":"macos-26"')
     expect(setup.run).toContain('"name":"macos-x64","os":"macos-26-intel"')
-    expect(job.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
+    expect(build.env?.MACOSX_DEPLOYMENT_TARGET).toBe(
       "${{ matrix.platform == 'mac' && '12.0' || '' }}"
     )
-    expect(packaged.id).toBe('packaged_app')
-    expect(packaged.run).toContain('Open Science.app/Contents/MacOS/Open Science')
-    expect(packaged.run).toContain('win-unpacked/open-science.exe')
-    expect(packaged.run).toContain('linux-unpacked/open-science')
-    expect(p0.env?.OPEN_SCIENCE_E2E_EXECUTABLE).toBe('${{ steps.packaged_app.outputs.executable }}')
-    expect(visual.env?.OPEN_SCIENCE_E2E_EXECUTABLE).toBe(
-      '${{ steps.packaged_app.outputs.executable }}'
+    expect(buildNames).not.toEqual(
+      expect.arrayContaining([
+        'Run P0 Electron certification',
+        'Run desktop visual regression',
+        'Smoke test macOS packages',
+        'Smoke test Windows installer',
+        'Smoke test Linux packages'
+      ])
     )
-    expect(p0.if).toContain("matrix.name == 'macos-arm64'")
-    expect(visual.if).toContain("matrix.name == 'macos-arm64'")
-    expect(p0.run).toBe('npm run test:e2e:p0')
-    expect(visual.run).toBe('npm run test:e2e:visual')
-    expect(macos.if).toBe("${{ matrix.platform == 'mac' && !inputs.skip_verify }}")
+    expect(upload.if).toBeUndefined()
+    expect(upload.with?.['retention-days']).toBe(7)
+    expect(smoke.strategy?.matrix).toEqual({
+      include: [
+        { name: 'macos-arm64', os: 'macos-26', platform: 'mac' },
+        { name: 'macos-x64', os: 'macos-26-intel', platform: 'mac' },
+        { name: 'linux-x64', os: 'ubuntu-latest', platform: 'linux' },
+        { name: 'windows-x64', os: 'windows-latest', platform: 'win' }
+      ]
+    })
+    expect(downloadPackage.with?.name).toBe('${{ matrix.name }}')
+    expect(downloadPackage.with?.path).toBe('dist')
+    expect(macos.if).toBe("matrix.platform == 'mac'")
     expect(macos.run).toBe('node scripts/macos-package-smoke.mjs --artifact-dir dist')
+    expect(windows.run).toBe('node scripts/windows-installer-smoke.mjs --installer-dir dist')
     expect(linux.run).toContain('scripts/linux-package-smoke.mjs')
-    expect(evidence.run).toContain('package_smoke=passed')
-    expect(evidence.run).toContain('electron_p0=not-applicable')
-    expect(evidence.run).toContain('visual_regression=not-applicable')
-    expect(evidence.run).toContain('--electron-p0 "$electron_p0"')
-    expect(evidence.run).toContain('--visual-regression "$visual_regression"')
-    expect(evidence.run).toContain(
-      '--database-migration-certification dist/database-migration-certification.json'
+    expect(evidence.run).toContain('--electron-p0 not-applicable')
+    expect(evidence.run).toContain('--visual-regression not-applicable')
+    expect(evidence.run).toContain('--package-smoke passed')
+    expect(evidence.run).toContain('database-migration-certification-${{ matrix.name }}.json')
+    expect(evidence.run).toContain('--database-migration-certification "$database_certification"')
+    expect(uploadEvidence.with?.name).toBe('certification-${{ matrix.name }}')
+    expect(uploadEvidence.with?.['retention-days']).toBe(7)
+    expect(p0Regression).toMatchObject({ needs: 'source', 'runs-on': 'macos-26' })
+    expect(p0Regression.if).toBe("needs.source.outputs.available == 'true'")
+    expect(p0Regression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
+    expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.name).toBe('macos-arm64')
+    expect(findStep(p0Regression, 'Download macOS ARM64 package').with?.['run-id']).toBe(
+      '${{ needs.source.outputs.run_id }}'
     )
+    expect(findStep(p0Regression, 'Extract packaged application').run).toContain('ditto -x -k')
+    expect(findStep(p0Regression, 'Run packaged P0 regression').run).toBe('npm run test:e2e:p0')
+    expect(
+      findStep(p0Regression, 'Run packaged P0 regression').env?.OPEN_SCIENCE_E2E_EXECUTABLE
+    ).toBe('${{ steps.packaged_app.outputs.executable }}')
+    expect(findStep(p0Regression, 'Upload P0 diagnostics').if).toBe('always()')
+    expect(visualRegression).toMatchObject({ needs: 'source', 'runs-on': 'macos-14' })
+    expect(visualRegression.if).toBe("needs.source.outputs.available == 'true'")
+    expect(visualRegression['continue-on-error']).toBe('${{ inputs.allow_failure }}')
+    expect(findStep(visualRegression, 'Build Electron application').run).toBe('npm run build:e2e')
+    expect(findStep(visualRegression, 'Run visual stability regression')).toMatchObject({
+      run: 'npm run test:e2e:visual -- --fail-on-flaky-tests'
+    })
+    expect(findStep(visualRegression, 'Upload visual diagnostics').if).toBe('always()')
     expect(finalMacos.run).toBe(
       'node scripts/macos-package-smoke.mjs --artifact-dir mac --gatekeeper'
     )
@@ -204,58 +236,51 @@ describe('post-merge Windows validation', () => {
     expect(refreshedMacosEvidence.run).toContain(
       '--database-migration-certification mac/database-migration-certification.json'
     )
-    expect(refreshedMacosEvidence.run).toContain("matrix.arch == 'arm64'")
+    expect(refreshedMacosEvidence.run).toContain('--electron-p0 not-applicable')
+    expect(refreshedMacosEvidence.run).toContain('--visual-regression not-applicable')
     expect(refreshedMacosEvidence.if).toContain('inputs.certified_build')
     expect(notarizeDryRun.with?.certified_build).toBe(false)
-    expect(names.indexOf('Record platform certification evidence')).toBeGreaterThan(
-      names.indexOf('Smoke test macOS packages')
-    )
-    expect(names.indexOf('Record platform certification evidence')).toBeGreaterThan(
-      names.indexOf('Smoke test Linux packages')
-    )
-    expect(names.indexOf('Upload build artifacts')).toBeGreaterThan(
-      names.indexOf('Record platform certification evidence')
-    )
     expect(notarize.steps?.indexOf(refreshedMacosEvidence)).toBeGreaterThan(
       notarize.steps?.indexOf(finalMacos) ?? -1
     )
   })
 
-  it('uploads built packages before enforcing collected certification outcomes', () => {
-    const job = readWorkflow('build.yml').jobs.build
-    const names = job.steps?.map(({ name }) => name) ?? []
-    const packaged = findStep(job, 'Build & package')
-    const p0 = findStep(job, 'Run P0 Electron certification')
-    const visual = findStep(job, 'Run desktop visual regression')
-    const macos = findStep(job, 'Smoke test macOS packages')
-    const windows = findStep(job, 'Smoke test Windows installer')
-    const linux = findStep(job, 'Smoke test Linux packages')
-    const evidence = findStep(job, 'Record platform certification evidence')
-    const upload = findStep(job, 'Upload build artifacts')
-    const enforce = findStep(job, 'Enforce platform certification')
+  it('keeps package smoke blocking while release and nightly regressions are advisory', () => {
+    const release = readWorkflow('release.yml')
+    const nightly = readWorkflow('nightly.yml')
+    const regression = readWorkflow('desktop-regression.yml')
 
-    expect(packaged.id).toBe('package')
-    for (const step of [p0, visual, macos, windows, linux]) {
-      expect(step.id).toBeDefined()
-      expect(step['continue-on-error']).toBe(true)
-    }
-    expect(evidence.if).toContain("steps.p0.outcome == 'success'")
-    expect(evidence.if).toContain("steps.visual.outcome == 'success'")
-    expect(evidence.if).toContain("matrix.name != 'macos-arm64'")
-    expect(evidence.if).toContain("steps.p0.outcome == 'skipped'")
-    expect(evidence.if).toContain("steps.visual.outcome == 'skipped'")
-    expect(upload.if).toBe("${{ always() && steps.package.outcome == 'success' }}")
-    expect(enforce.if).toBe('${{ !inputs.skip_verify && always() }}')
-    expect(enforce.env).toMatchObject({
-      MATRIX_NAME: '${{ matrix.name }}',
-      P0_OUTCOME: '${{ steps.p0.outcome }}',
-      VISUAL_OUTCOME: '${{ steps.visual.outcome }}'
+    expect(release.jobs.build.uses).toBe('./.github/workflows/build.yml')
+    expect(release).toMatchObject({ permissions: { actions: 'read', contents: 'write' } })
+    expect(release.jobs['package-smoke']).toMatchObject({
+      needs: 'build',
+      uses: './.github/workflows/package-smoke.yml'
     })
-    expect(enforce.run).toContain('if [[ "$MATRIX_NAME" == "macos-arm64" ]]')
-    expect(enforce.run).toContain('exit "$failed"')
-    expect(names.indexOf('Upload build artifacts')).toBeLessThan(
-      names.indexOf('Enforce platform certification')
+    expect(release.jobs['notarize-mac'].needs).toEqual(['build', 'package-smoke'])
+    expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
+    expect(nightly.jobs.build.uses).toBe('./.github/workflows/build.yml')
+    expect(nightly.jobs['package-smoke']).toMatchObject({
+      needs: 'build',
+      uses: './.github/workflows/package-smoke.yml'
+    })
+    expect(nightly.jobs.prepare.needs).toEqual(['plan', 'build', 'package-smoke'])
+    expect(regression.on).not.toHaveProperty('workflow_run')
+    expect(regression.on).toHaveProperty('workflow_dispatch')
+    expect(regression.on).toHaveProperty('workflow_call')
+    expect(regression.jobs.source['continue-on-error']).toBe('${{ inputs.allow_failure }}')
+    expect(findStep(regression.jobs.source, 'Resolve source run').run).toContain(
+      '.name == "macos-arm64" and (.expired | not)'
     )
+    expect(release.jobs.regression).toMatchObject({
+      needs: ['build', 'package-smoke'],
+      uses: './.github/workflows/desktop-regression.yml',
+      with: { allow_failure: true }
+    })
+    expect(nightly.jobs.regression).toMatchObject({
+      needs: ['build', 'package-smoke'],
+      uses: './.github/workflows/desktop-regression.yml',
+      with: { allow_failure: true }
+    })
   })
 
   it('builds every platform without repeating the verified typecheck', () => {
@@ -311,7 +336,7 @@ describe('post-merge Windows validation', () => {
     ).toMatchObject({ id: 'installer', 'continue-on-error': true })
     expect(release.jobs['windows-full-test']).toBeUndefined()
     expect(release.jobs['windows-upgrade-smoke']).toBeUndefined()
-    expect(release.jobs.publish.needs).toEqual(['build', 'notarize-mac'])
+    expect(release.jobs.publish.needs).toEqual(['build', 'package-smoke', 'notarize-mac'])
     expect(
       findStep(release.jobs.publish, 'Aggregate release certification evidence').run
     ).not.toContain('--require-signed-windows')
@@ -429,6 +454,11 @@ describe('post-merge Windows validation', () => {
 
   it('pins external actions in every changed release workflow', () => {
     for (const workflowName of [
+      'build.yml',
+      'desktop-regression.yml',
+      'nightly.yml',
+      'notarize-mac.yml',
+      'package-smoke.yml',
       'release.yml',
       'mirror-to-website.yml',
       'windows-upgrade-smoke.yml'

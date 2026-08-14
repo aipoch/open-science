@@ -3,18 +3,21 @@ import { Check, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { dialogCancelButtonClassName } from '@/components/ui/dialog-chrome'
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'
-import type {
-  ActiveSessionInfo,
-  MigrationOutcome,
-  MigrationPhase,
-  MigrationProgress
+import {
+  hasDelegatedActiveSession,
+  type ActiveSessionInfo,
+  type MigrationOutcome,
+  type MigrationPhase,
+  type MigrationProgress
 } from '../../../../shared/storage'
 
 type Stage = 'detecting' | 'confirm' | 'migrating' | 'done' | 'committing' | 'error'
 
 type StorageMigrationModalProps = {
+  active?: boolean
   targetPath: string
   onClose: () => void
 }
@@ -47,6 +50,7 @@ const formatElapsed = (ms: number): string => {
 // (moved / cancelled / switchover failed / failed) to matching UI. Mounted only while a move is in
 // flight, so unmount always means "tear down the progress subscription".
 const StorageMigrationModal = ({
+  active: isPresentationActive = true,
   targetPath,
   onClose
 }: StorageMigrationModalProps): React.JSX.Element => {
@@ -204,13 +208,14 @@ const StorageMigrationModal = ({
   // Derived (not stored) so the ticking effect never resets state synchronously; clamps to 0 before
   // the first tick, when `now` still holds its initial/prior value.
   const elapsedMs = stage === 'migrating' && startedAt !== null ? Math.max(0, now - startedAt) : 0
+  const hasDelegatedWork = hasDelegatedActiveSession(active)
 
   // switchoverFailed is a success-with-caveat (the data DID move; only the auto-restart didn't), so
   // the error stage renders it in a calmer, non-destructive tone than an outright failure.
   const isSwitchover = Boolean(outcome && 'switchoverFailed' in outcome)
 
   return (
-    <Dialog.Root open>
+    <Dialog.Root open={isPresentationActive}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
         <Dialog.Content
@@ -237,7 +242,9 @@ const StorageMigrationModal = ({
             <>
               <Dialog.Title className="text-sm font-semibold">Move app data?</Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-                Starting this move will interrupt the running sessions below and restart the app.
+                {hasDelegatedWork
+                  ? 'Subagents are still running. Return to each task below, stop its subagents, then try moving app data again.'
+                  : 'Starting this move will interrupt the running sessions below and restart the app.'}
               </Dialog.Description>
               <ul className="mt-3 max-h-40 space-y-1 overflow-auto rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground">
                 {active.map((session) => (
@@ -247,12 +254,19 @@ const StorageMigrationModal = ({
                 ))}
               </ul>
               <div className="mt-4 flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={onClose}>
-                  Cancel
+                <Button
+                  type="button"
+                  variant={hasDelegatedWork ? 'outline' : 'ghost'}
+                  className={hasDelegatedWork ? undefined : dialogCancelButtonClassName}
+                  onClick={onClose}
+                >
+                  {hasDelegatedWork ? 'Return to tasks' : 'Cancel'}
                 </Button>
-                <Button type="button" onClick={startMigration}>
-                  Interrupt and move
-                </Button>
+                {!hasDelegatedWork ? (
+                  <Button type="button" onClick={startMigration}>
+                    Interrupt and move
+                  </Button>
+                ) : null}
               </div>
             </>
           ) : null}
@@ -265,8 +279,8 @@ const StorageMigrationModal = ({
               </Dialog.Description>
               <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-bg-300">
                 <div
-                  className="h-full rounded-full bg-primary transition-all duration-150 ease-out"
-                  style={{ width: `${percent}%` }}
+                  className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-150 ease-out motion-reduce:transition-none"
+                  style={{ transform: `scaleX(${percent / 100})` }}
                 />
               </div>
               <p className="mt-1.5 text-xs tabular-nums text-muted-foreground">{percent}%</p>
@@ -291,7 +305,12 @@ const StorageMigrationModal = ({
                 Don&apos;t quit Open Science or turn off your computer until this finishes.
               </p>
               <div className="mt-4 flex justify-end">
-                <Button type="button" variant="outline" onClick={handleCancel}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  onClick={handleCancel}
+                >
                   Cancel
                 </Button>
               </div>
@@ -302,7 +321,7 @@ const StorageMigrationModal = ({
             <>
               <div className="flex items-start gap-3">
                 <span
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-status-success-accent/10 text-status-success-accent-foreground dark:text-status-success-dark-foreground"
                   aria-hidden="true"
                 >
                   <Check className="size-[18px]" />

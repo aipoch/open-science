@@ -883,12 +883,12 @@ describe('production delegated-work composition', () => {
       const initialPrompt = control.prompts[0]
       expect(initialPrompt).toContain('Return a structured count')
       expect(initialPrompt).toContain('read-only ./inputs/')
-      expect(initialPrompt).toContain('host.submit_output(value)')
+      expect(initialPrompt).toContain('host.submitOutput(value)')
       expect(initialPrompt.indexOf('Return a structured count')).toBeLessThan(
         initialPrompt.indexOf('read-only ./inputs/')
       )
       expect(initialPrompt.indexOf('read-only ./inputs/')).toBeLessThan(
-        initialPrompt.indexOf('host.submit_output(value)')
+        initialPrompt.indexOf('host.submitOutput(value)')
       )
       expect(initialPrompt).not.toContain(control.input.workspaceCwd!)
       expect(initialPrompt).not.toContain('upload-version:framework-input')
@@ -2097,8 +2097,15 @@ describe('production delegated-work composition', () => {
     })
     await expect.poll(() => execution.controls()).toHaveLength(1)
     const control = execution.controls()[0]
-    expect(control.input.artifactCurrentRunFile).toMatch(
-      /\.execution-handoffs\/artifact-run-10-1\.json$/
+    expect(control.input.artifactCurrentRunFile).toBe(
+      join(
+        root,
+        'artifacts',
+        'project-1',
+        'artifact-session-codex',
+        '.execution-handoffs',
+        'artifact-run-10-1.json'
+      )
     )
     const turn = turns.handleForExecution(control.input.attemptId)
     await turns.write(turn, { filename: 'evidence.md', content: 'exact child evidence' })

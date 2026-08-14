@@ -48,6 +48,15 @@ describe('ComputeApprovalDialog', () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
 
+  it('keeps a covered approval queued while suppressing its presentation', () => {
+    useComputeStore.setState({ pendingApprovals: [request] })
+
+    act(() => root.render(<ComputeApprovalDialog active={false} />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useComputeStore.getState().pendingApprovals).toEqual([request])
+  })
+
   it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
     useComputeStore.setState({
       pendingApprovals: [{ ...request, session_id: 'session-side' }]
@@ -71,6 +80,18 @@ describe('ComputeApprovalDialog', () => {
     expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
     expect(dialog?.className).toContain('z-[60]')
+    expect(dialog?.className).toContain('overflow-hidden')
+    expect(dialog?.textContent).toContain('Allow remote command?')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-b border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-t border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
     expect(document.body.textContent).toContain('Research cluster')
     expect(document.body.textContent).toContain('python ...')
   })

@@ -131,7 +131,8 @@ const validateReferencedEnvironmentManifests = async (
       const runPath = join(notebooksRoot, project.name, session.name, NOTEBOOK_RUN_FILE)
       if (!(await fileExists(runPath))) continue
       const document = await readRecord(runPath)
-      if (document.projectName !== project.name || document.sessionId !== session.name) {
+      const projectId = document.projectId ?? document.projectName
+      if (projectId !== project.name || document.sessionId !== session.name) {
         throw new Error(`Notebook run ownership is invalid: ${project.name}/${session.name}`)
       }
       const runs = Array.isArray(document.runs) ? document.runs : []

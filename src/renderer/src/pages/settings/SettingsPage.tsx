@@ -179,7 +179,7 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 // (skills: list / detail / create / edit / import; model: list / create / edit; connectors: list /
 // detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
 // Network panel sub-view: the package-mirror list vs. the configure form (a breadcrumb drill-in).
-type NetworkView = { kind: 'list' | 'configure' }
+type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
 
 type NavLocation = {
   panel: SettingsPanelId
@@ -492,7 +492,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           model: currentLocation.model,
           network: { kind: 'list' }
         },
-        leaf: 'Package mirror'
+        leaf: networkView.kind === 'proxy' ? 'Proxy' : 'Package mirror'
       }
     }
     if (activePanel === 'connectors' && connectorsView.kind !== 'list') {

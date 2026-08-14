@@ -37,6 +37,10 @@ describe('DownloadProgressLine', () => {
       )
     )
     expect(container.textContent).toContain('2.3 MB/s')
+    const progressBar = container.querySelector<HTMLElement>('[style*="scaleX"]')
+    expect(progressBar?.className).toContain('transition-transform')
+    expect(progressBar?.className).toContain('motion-reduce:transition-none')
+    expect(progressBar?.className).not.toContain('transition-all')
     expect(container.textContent).toContain('14%')
   })
 

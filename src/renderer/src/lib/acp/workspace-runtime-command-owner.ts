@@ -13,8 +13,9 @@ import {
   type UploadedAttachment
 } from '../../../../shared/uploads'
 import { getActiveConversationContext } from '../../../../shared/conversation-graph'
+import { saveSessionInOrder } from '../session-persistence/session-persistence'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
-import { useSessionStore, type ChatMessage } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
 import {
   buildWorkspaceHistoryReplay,
   resolveHistoryReplayTarget,
@@ -43,6 +44,7 @@ type SendWorkspaceMessageIntent = {
   referencedArtifacts?: FileReference[]
   parts?: MessagePart[]
   specialistId?: string | null
+  enabledComputeHosts?: string[]
 }
 
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
@@ -80,7 +82,8 @@ type ResendEditedWorkspaceMessageOptions = WorkspaceCommandLifecycle & {
 type WorkspaceCommandRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
->
+> &
+  Partial<Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>>
 type HistoryReplayContext = {
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
@@ -326,6 +329,33 @@ const startPendingPrompt = (
       return
     }
     if (!ownsPrompt(created.sessionId, bound.messageId)) return
+
+    const boundSession = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === created.sessionId)
+    if (boundSession?.enabledComputeHosts?.length) {
+      try {
+        await saveSessionInOrder(toPersistedSession(boundSession))
+      } catch (error) {
+        try {
+          const snapshot = await runtime.deleteSession?.(created.sessionId)
+          if (
+            runtime.deleteSession &&
+            (!snapshot || snapshot.sessionIds.includes(created.sessionId))
+          ) {
+            console.warn('Agent Session cleanup after persistence failure did not complete')
+          }
+        } catch (cleanupError) {
+          console.warn('Agent Session cleanup after persistence failure failed', cleanupError)
+        }
+        if (ownsPrompt(created.sessionId, bound.messageId)) {
+          useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
+        }
+        return
+      }
+      if (!ownsPrompt(created.sessionId, bound.messageId)) return
+    }
+
     dispatchPrompt(runtime, {
       sessionId: created.sessionId,
       messageId: bound.messageId,
@@ -566,7 +596,8 @@ const sendWorkspaceMessage = async (
     agentFrameworkId: input.agentFrameworkId,
     agentBackendId: input.agentBackendId,
     agentModel: input.agentModel,
-    specialistId: input.specialistId ?? undefined
+    specialistId: input.specialistId ?? undefined,
+    enabledComputeHosts: input.enabledComputeHosts
   })
   if (!pending) return undefined
   startPendingPrompt(runtime, {

@@ -371,7 +371,19 @@ describe('PermissionApprovalControls interactions', () => {
     const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
     expect(dialog).not.toBeNull()
     expect(dialog?.className).toContain('w-[min(420px,calc(100vw-2rem))]')
-    expect(dialog?.querySelector('h2')?.className).toContain('text-sm')
+    expect(dialog?.className).toContain('p-0')
+    expect(
+      Array.from(dialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-b border-border-300/90')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(dialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-t border-border-300/90')
+      )
+    ).toBe(true)
+    expect(dialog?.querySelector('h2')?.className).toContain('text-lg')
+    expect(dialog?.querySelector<HTMLButtonElement>('button[aria-label="Close"]')).not.toBeNull()
 
     const cancel = document.body.querySelector<HTMLButtonElement>(
       '[data-testid="permission-scope-cancel"]'

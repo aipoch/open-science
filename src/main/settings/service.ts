@@ -32,6 +32,7 @@ import type {
   SetConnectorEnabledRequest,
   SetNcbiCredentialsRequest,
   SetPackageMirrorRequest,
+  SetNetworkProxyRequest,
   SetSkillEnabledRequest,
   SetToolPermissionRequest,
   SettingsSnapshot,
@@ -59,19 +60,20 @@ import type {
   ValidateProviderRequest,
   ValidateProviderResult
 } from '../../shared/settings'
+import { createLogger, type Logger } from '../logger'
+import { startDiagnosticOperation } from '../diagnostics/operation'
 import type { PackageMirror } from '../../shared/mirror'
+import { resolveNetworkProxySettings, type NetworkProxySettings } from '../../shared/network-proxy'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement, RuntimeSelection } from '../../shared/notebook-runtime'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { resolveStorageRoot } from '../storage-root'
-import {
-  DEFAULT_AGENT_FRAMEWORK_ID,
-  listAgentFrameworks,
-  type AgentModelChangeTarget,
-  type AgentFrameworkId,
-  type ResolvedAgentBackend
+import type {
+  AgentModelChangeTarget,
+  AgentFrameworkId,
+  ResolvedAgentBackend
 } from '../agent-framework'
 import type { ClaudeDetectDeps } from './claude-detect'
 import type { OpencodeDetectDeps } from './opencode-detect'
@@ -82,7 +84,8 @@ import type { InstallManagedClaudeOptions, ManagedInstallOutcome } from './manag
 import { isEncryptionAvailable } from './crypto'
 import { getUserClaudeConfigDir } from './provider-env'
 import { SettingsRepository } from './repository'
-import { SettingsPreferencesModule, toSettingsPreferencesSnapshot } from './preferences'
+import { SettingsPreferencesModule } from './preferences'
+import { buildSettingsSnapshot } from './settings-view'
 import { NotebookRuntimeSettingsModule } from './notebook-runtime-settings'
 import { SkillCatalogModule } from './skill-catalog'
 import { ConnectorSettingsModule, type CustomServerSecurityChangeGuard } from './connector-settings'
@@ -119,6 +122,7 @@ export type UninstallResult = {
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   storageRoot?: string
+  log?: Logger
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
   // Reserves the authenticated loopback HTTP port exposed by `opencode acp`. Injectable so settings
@@ -157,6 +161,9 @@ export type SettingsServiceOptions = {
   // Resolves the user's current native/PAC proxy for Codex subscription traffic. Injectable so
   // tests do not depend on the host machine's Electron session configuration.
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
+  // Projects a persisted proxy preference into the live Electron Session and future child process
+  // environment. Tests omit it to keep SettingsService free of host-global side effects.
+  applyNetworkProxy?: (settings: NetworkProxySettings) => Promise<void>
   // Encrypted-token controller for claude-isolated; default-constructed against this.storageRoot
   // when omitted. Storage is delegated to the host's SettingsRepository + encrypt/tryDecryptKey
   // pipeline, mirroring how CodexAuthController delegates to openCodexAuthSession.
@@ -180,13 +187,17 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly subagentModels: SubagentModelOwner
   private readonly storageRoot: string
+  private readonly applyNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
   private readonly userClaudeDir: string
+  private readonly log: Logger
   private customServerAuthenticator?: (serverId: string) => Promise<void>
   private customServerAuthenticationCanceller?: (serverId: string) => Promise<void>
   private skillDeletionGuard?: (skillId: string) => Promise<void>
   constructor(options: SettingsServiceOptions = {}) {
     this.storageRoot = options.storageRoot ?? resolveStorageRoot()
     this.repository = options.repository ?? new SettingsRepository(this.storageRoot)
+    this.applyNetworkProxy = options.applyNetworkProxy ?? (async () => undefined)
+    this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
     this.connectors = new ConnectorSettingsModule(this.repository)
@@ -258,54 +269,19 @@ class SettingsService {
 
   // Returns the renderer-safe (masked) snapshot of settings.
   async getSettingsView(): Promise<SettingsSnapshot> {
-    const settings = await this.migrateLegacyKeyRefs(await this.repository.getSettings())
-    const preferences = toSettingsPreferencesSnapshot(settings)
-
-    return {
-      claude: settings.claude ?? {},
-      opencode: { resolvedPath: settings.opencodePath, version: settings.opencodeVersion },
-      codex: {
-        resolvedPath: settings.codex?.resolvedPath,
-        version: settings.codex?.version,
-        nativeVersion: settings.codex?.nativeVersion
-      },
-      claudeManaged: settings.claude?.resolvedPath
-        ? this.runtimeManager.isManagedRuntimePath('claude-code', settings.claude.resolvedPath)
-        : false,
-      opencodeManaged: settings.opencodePath
-        ? this.runtimeManager.isManagedRuntimePath('opencode', settings.opencodePath)
-        : false,
-      codexManaged: settings.codex?.resolvedPath
-        ? this.runtimeManager.isManagedRuntimePath('codex', settings.codex.resolvedPath)
-        : false,
-      activeProviderId: settings.activeProviderId,
-      claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
-      activeModel: settings.activeModel,
-      providers: settings.providers.map((provider) =>
-        this.providers.toProviderView(
-          provider,
-          provider.id === settings.activeProviderId ? settings.activeModel : undefined
-        )
-      ),
-      onboardingCompletedAt: preferences.onboardingCompletedAt,
-      packageMirror: settings.packageMirror,
-      reasoningEffort: preferences.reasoningEffort,
-      subagentModel: settings.subagentModel ?? { mode: 'inherit' },
-      notificationsEnabled: preferences.notificationsEnabled,
-      conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
-      closePreference: preferences.closePreference,
-      appIconVariant: preferences.appIconVariant,
-      projectFilesFilter: preferences.projectFilesFilter,
-      defaultPermissionProfile: preferences.defaultPermissionProfile,
-
-      agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
-      agentFrameworks: listAgentFrameworks().map((framework) => ({
-        id: framework.id,
-        displayName: framework.displayName,
-        supportsSkills: framework.supportsSkills,
-        supportsDelegatedWork: framework.supportsDelegatedWork,
-        supportedApiTypes: [...framework.supportedApiTypes]
-      }))
+    const operation = startDiagnosticOperation(this.log, { operation: 'settings-load' })
+    try {
+      operation.phase('read-authority')
+      const stored = await this.repository.getSettings()
+      operation.phase('migrate-legacy-key-refs')
+      const settings = await this.migrateLegacyKeyRefs(stored)
+      operation.phase('build-renderer-view')
+      const snapshot = buildSettingsSnapshot(settings, this.runtimeManager, this.providers)
+      operation.complete({ providerCount: settings.providers.length })
+      return snapshot
+    } catch (error) {
+      operation.fail(error)
+      throw error
     }
   }
 
@@ -372,6 +348,13 @@ class SettingsService {
 
   async setPackageMirror(request: SetPackageMirrorRequest): Promise<PackageMirror> {
     return this.notebookRuntimeSettings.setPackageMirror(request)
+  }
+
+  async setNetworkProxy(request: SetNetworkProxyRequest): Promise<NetworkProxySettings> {
+    const settings = await this.repository.setNetworkProxy(request)
+    const networkProxy = resolveNetworkProxySettings(settings.networkProxy)
+    await this.applyNetworkProxy(networkProxy)
+    return networkProxy
   }
 
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
@@ -501,6 +484,10 @@ class SettingsService {
   // internal Skills and returns source directories only to the trusted caller callback.
   async listHostSkills(): Promise<BundledSkill[]> {
     return this.skills.listHostSkills()
+  }
+
+  async listUserSkills(): Promise<BundledSkill[]> {
+    return this.skills.listUserSkills()
   }
 
   async withHostSkillRead<T>(

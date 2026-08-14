@@ -54,6 +54,104 @@ const createSession = (overrides: Partial<PersistedChatSession> = {}): Persisted
   ...overrides
 })
 
+const createIdleSessionWithRunningChild = (originMessageId = 'root-prompt'): PersistedChatSession =>
+  createSession({
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'root',
+      activeFrameId: 'root',
+      frames: [
+        {
+          id: 'root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'completed',
+          activeBranchId: 'root-branch',
+          createdAt: 1
+        },
+        {
+          id: 'child',
+          parentFrameId: 'root',
+          originMessageId,
+          originBindingState: 'validated',
+          kind: 'delegate',
+          status: 'running',
+          activeBranchId: 'child-branch',
+          createdAt: 2
+        }
+      ],
+      branches: [
+        {
+          id: 'root-branch',
+          agentFrameId: 'root',
+          headMessageId: 'root-prompt',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'child-branch',
+          agentFrameId: 'child',
+          createdAt: 2,
+          updatedAt: 2
+        },
+        {
+          id: 'inactive-root-branch',
+          agentFrameId: 'root',
+          headMessageId: 'inactive-root-prompt',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      messages: [
+        {
+          id: 'root-prompt',
+          role: 'user',
+          content: 'Delegate this task',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: 'root-branch',
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'inactive-root-prompt',
+          role: 'user',
+          content: 'Delegate from an alternate branch',
+          status: 'complete',
+          eventIds: [],
+          agentFrameId: 'root',
+          introducedOnBranchId: 'inactive-root-branch',
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'child',
+            attempts: [
+              {
+                id: 'child-attempt',
+                status: 'running',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: [],
+                startedAt: 2
+              }
+            ]
+          }
+        ]
+      }
+    }
+  })
+
 const createRuntimePlan = (
   overrides: Partial<SessionPlanRuntimeContext> = {}
 ): SessionPlanRuntimeContext => ({
@@ -980,6 +1078,163 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
   })
 
+  it('updates enabled Compute Hosts through the durable Session owner', async () => {
+    const previousUpdatedAt = Date.now() + 10_000
+    let durable = createSession({
+      title: 'Authoritative session',
+      enabledComputeHosts: ['ssh:old'],
+      updatedAt: previousUpdatedAt
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const result = await coordinator.setSessionEnabledComputeHosts('project-1', 'session-1', [
+      'ssh:new'
+    ])
+
+    expect(result).toEqual(durable)
+    expect(durable).toMatchObject({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Authoritative session',
+      enabledComputeHosts: ['ssh:new']
+    })
+    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+  })
+
+  it('preserves enabled Compute Host authority on an ordinary existing-Session save', async () => {
+    const authorityUpdatedAt = Date.now() + 10_000
+    let durable = createSession({
+      title: 'Before rename',
+      enabledComputeHosts: ['ssh:authoritative'],
+      updatedAt: authorityUpdatedAt
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const result = await coordinator.saveSession(
+      createSession({
+        title: 'Renamed',
+        enabledComputeHosts: ['ssh:stale'],
+        updatedAt: authorityUpdatedAt - 1_000
+      })
+    )
+
+    expect(result).toMatchObject({
+      title: 'Renamed',
+      enabledComputeHosts: ['ssh:authoritative']
+    })
+    expect(durable.enabledComputeHosts).toEqual(['ssh:authoritative'])
+    expect(durable.updatedAt).toBeGreaterThan(authorityUpdatedAt)
+  })
+
+  it('prunes missing Compute Hosts across a complete durable Session catalog', async () => {
+    let sessions = [
+      createSession({ enabledComputeHosts: ['ssh:kept', 'ssh:deleted'] }),
+      createSession({
+        id: 'session-2',
+        enabledComputeHosts: ['ssh:kept'],
+        updatedAt: 5
+      })
+    ]
+    const saveSession = vi.fn(async (session: PersistedChatSession) => {
+      sessions = sessions.map((candidate) =>
+        candidate.id === session.id ? structuredClone(session) : candidate
+      )
+    })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn(async () => ({
+        result: { sessions, manifest: { version: 1 as const } },
+        isComplete: true
+      })),
+      saveSession
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const result = await coordinator.pruneSessionEnabledComputeHosts(['ssh:kept'])
+
+    expect(result.sessions.map((session) => session.enabledComputeHosts)).toEqual([
+      ['ssh:kept'],
+      ['ssh:kept']
+    ])
+    expect(result.previousSelections).toEqual([
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        providerIds: ['ssh:kept', 'ssh:deleted']
+      }
+    ])
+    expect(saveSession).toHaveBeenCalledTimes(1)
+    expect(saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-1', enabledComputeHosts: ['ssh:kept'] })
+    )
+  })
+
+  it('restores every attempted Session when durable Compute Host pruning fails partway', async () => {
+    const originalSessions = [
+      createSession({ enabledComputeHosts: ['ssh:kept', 'ssh:deleted'] }),
+      createSession({
+        id: 'session-2',
+        enabledComputeHosts: ['ssh:deleted'],
+        updatedAt: 5
+      })
+    ]
+    let sessions = structuredClone(originalSessions)
+    let saveAttempts = 0
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn(async () => ({
+        result: { sessions, manifest: { version: 1 as const } },
+        isComplete: true
+      })),
+      saveSession: vi.fn(async (session) => {
+        saveAttempts += 1
+        sessions = sessions.map((candidate) =>
+          candidate.id === session.id ? structuredClone(session) : candidate
+        )
+        if (saveAttempts === 2) throw new Error('Session write failed')
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.pruneSessionEnabledComputeHosts(['ssh:kept'])).rejects.toThrow(
+      'Session write failed'
+    )
+
+    expect(sessions.map((session) => session.enabledComputeHosts)).toEqual(
+      originalSessions.map((session) => session.enabledComputeHosts)
+    )
+  })
+
+  it('refuses Compute Host pruning from an incomplete Session catalog', async () => {
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn(async () => ({
+        result: { sessions: [createSession()], manifest: { version: 1 as const } },
+        isComplete: false
+      }))
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.pruneSessionEnabledComputeHosts([])).rejects.toThrow(
+      'complete Session catalog'
+    )
+  })
+
   it('rejects Session archive while the Session is running', async () => {
     const repository = createSessionRepository({
       loadSessionWithDiagnostics: vi.fn(async () => ({
@@ -997,6 +1252,81 @@ describe('SessionPersistenceCoordinator', () => {
         expectedArchivedAt: null
       })
     ).rejects.toThrow('Finish or stop this session before archiving.')
+  })
+
+  it('rejects Project archive while an idle Session has a current child Attempt on any branch', async () => {
+    const repository = createSessionRepository({
+      loadProjectWithDiagnostics: vi.fn().mockResolvedValue({
+        sessions: [createIdleSessionWithRunningChild()],
+        isComplete: true
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.assertProjectArchivable('project-1')).rejects.toThrow(
+      'Finish or stop active sessions before archiving this project.'
+    )
+
+    const inactiveRoute = createIdleSessionWithRunningChild('inactive-root-prompt')
+    vi.mocked(repository.loadProjectWithDiagnostics).mockResolvedValue({
+      sessions: [inactiveRoute],
+      isComplete: true
+    })
+    await expect(coordinator.assertProjectArchivable('project-1')).rejects.toThrow(
+      'Finish or stop active sessions before archiving this project.'
+    )
+  })
+
+  it('rejects Session archive while its current child Attempt is still running', async () => {
+    const delegated = createIdleSessionWithRunningChild()
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn().mockResolvedValue({
+        status: 'found',
+        session: delegated
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.updateArchive({
+        projectId: delegated.projectId,
+        sessionId: delegated.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).rejects.toThrow('Finish or stop this session before archiving.')
+
+    expect(repository.saveSession).not.toHaveBeenCalled()
+
+    const inactiveRoute = createIdleSessionWithRunningChild('inactive-root-prompt')
+    vi.mocked(repository.loadSessionWithDiagnostics).mockResolvedValue({
+      status: 'found',
+      session: inactiveRoute
+    })
+    await expect(
+      coordinator.updateArchive({
+        projectId: inactiveRoute.projectId,
+        sessionId: inactiveRoute.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).rejects.toThrow('Finish or stop this session before archiving.')
+
+    const terminal = structuredClone(inactiveRoute)
+    const latest = terminal.runtimeContext?.delegatedWork?.records[0]?.attempts[0]
+    if (latest) Object.assign(latest, { status: 'completed', endedAt: 3 })
+    vi.mocked(repository.loadSessionWithDiagnostics).mockResolvedValue({
+      status: 'found',
+      session: terminal
+    })
+    await expect(
+      coordinator.updateArchive({
+        projectId: terminal.projectId,
+        sessionId: terminal.id,
+        archived: true,
+        expectedArchivedAt: null
+      })
+    ).resolves.toMatchObject({ archivedAt: expect.any(Number) })
   })
 
   it('does not let a renderer whole-session save create runtime authority', async () => {
@@ -2041,7 +2371,15 @@ describe('SessionPersistenceCoordinator', () => {
     const session = createSession({ title: 'Private analysis', cwd: '/private/workspace' })
     const result = { sessions: [session], manifest: { version: 1 as const } }
     const repository = createSessionRepository({
-      loadAllWithDiagnostics: vi.fn().mockResolvedValue({ result, isComplete: true })
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result,
+        isComplete: true,
+        scanMetrics: {
+          projectDirectoryCount: 1,
+          sessionFileCount: 1,
+          sessionBytes: 4096
+        }
+      })
     })
     const log = createTestLogger()
     const coordinator = new SessionPersistenceCoordinator(
@@ -2063,6 +2401,7 @@ describe('SessionPersistenceCoordinator', () => {
       'operation phase',
       'operation phase',
       'operation phase',
+      'operation phase',
       'operation completed'
     ])
     expect(
@@ -2071,6 +2410,7 @@ describe('SessionPersistenceCoordinator', () => {
         .filter(Boolean)
     ).toEqual([
       'load-authority',
+      'authority-loaded',
       'recover-delegation',
       'reconcile-unread-sessions',
       'reconcile-derived-state',
@@ -2092,6 +2432,15 @@ describe('SessionPersistenceCoordinator', () => {
       })
     )
     const diagnosticPayload = JSON.stringify(log.info.mock.calls)
+    expect(log.info).toHaveBeenCalledWith(
+      'operation phase',
+      expect.objectContaining({
+        phase: 'authority-loaded',
+        projectDirectoryCount: 1,
+        sessionFileCount: 1,
+        sessionBytes: 4096
+      })
+    )
     expect(diagnosticPayload).not.toContain('Private analysis')
     expect(diagnosticPayload).not.toContain('/private/workspace')
   })
@@ -2296,6 +2645,7 @@ describe('SessionPersistenceCoordinator', () => {
     expect(log.info.mock.calls.map(([message]) => message)).toEqual([
       'operation started',
       'operation phase',
+      'operation phase',
       'operation completed'
     ])
     expect(log.info).toHaveBeenLastCalledWith(
@@ -2304,7 +2654,7 @@ describe('SessionPersistenceCoordinator', () => {
         operation: 'session-hydration',
         operationId: expect.any(String),
         mode: 'read-only',
-        phase: 'load-authority',
+        phase: 'authority-loaded',
         outcome: 'completed',
         status: 'degraded',
         sessionCount: 1,
@@ -3557,7 +3907,7 @@ describe('SessionPersistenceCoordinator', () => {
       'operation completed',
       expect.objectContaining({
         operation: 'session-hydration',
-        phase: 'load-authority',
+        phase: 'authority-loaded',
         outcome: 'completed',
         status: 'partial',
         sessionCount: 1,

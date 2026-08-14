@@ -52,6 +52,8 @@ describe('SessionNotebookContent', () => {
 
     expect(html).toContain('No execution records for this session.')
     expect(html).toContain('0 agents · 0 cells')
+    expect(html).toContain('border-b border-border-300/90')
+    expect(html).toContain('border-t border-border-300/90')
   })
 
   it('renders one cell per run with a derived error badge and split output', () => {
@@ -71,6 +73,23 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('error (line 2)')
     expect(html).toContain('OPENALEX_API_KEY present: False')
     expect(html).toContain('ModuleNotFoundError')
+  })
+
+  it('renders timeout as a neutral limit instead of an error', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      status: 'ready',
+      runs: [
+        makeRun({
+          status: 'timeout',
+          text: { stdout: '', stderr: 'limit', traceback: '', plain: [] }
+        })
+      ]
+    })
+
+    expect(html).toContain('limit reached')
+    expect(html).not.toContain('>error<')
+    expect(html).not.toContain('text-danger-000')
   })
 
   it('shows exact registered input Versions inside the run that used them', () => {

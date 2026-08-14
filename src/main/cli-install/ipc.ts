@@ -11,6 +11,7 @@ import {
   getCliLauncherStatus,
   installCliLauncher,
   uninstallCliLauncher,
+  ensureCliLauncherCurrent,
   type CliLauncherEnv
 } from './launcher'
 
@@ -22,36 +23,50 @@ type CliCommandOwner = Readonly<{
   uninstall: () => Promise<CliLauncherStatus>
 }>
 
+type CliCommandOwnerWithLifecycle = CliCommandOwner &
+  Readonly<{
+    ensureCurrent: () => Promise<void>
+  }>
+
 // Resolves the launcher environment from Electron at call time. Packaged builds ship the CLI under
 // resources/cli (see electron-builder.yml extraResources); in dev it lives in the repo's cli/ dir.
-const resolveEnv = (): CliLauncherEnv => ({
+const resolveCliLauncherEnv = (): CliLauncherEnv => ({
   platform: process.platform,
   appExecPath: process.execPath,
   cliEntryPath: app.isPackaged
     ? join(process.resourcesPath, 'cli', 'index.mjs')
     : join(app.getAppPath(), 'cli', 'index.mjs'),
+  appImagePath: process.env.APPIMAGE,
   packaged: app.isPackaged,
   homeDir: app.getPath('home') ?? homedir(),
   userDataDir: app.getPath('userData'),
   pathVar: process.env.PATH ?? ''
 })
 
-const createCliCommandOwner = (): CliCommandOwner => ({
+const createCliCommandOwner = (): CliCommandOwnerWithLifecycle => ({
+  ensureCurrent: async (): Promise<void> => {
+    try {
+      const status = await ensureCliLauncherCurrent(resolveCliLauncherEnv())
+      if (status) logger.info('updated cli launcher', { target: status.target })
+    } catch (error) {
+      logger.error('cli launcher reconciliation failed', error)
+    }
+  },
   getStatus: async (): Promise<CliLauncherStatus> => {
     try {
-      return await getCliLauncherStatus(resolveEnv())
+      return await getCliLauncherStatus(resolveCliLauncherEnv())
     } catch (error) {
       logger.error('cli get-status failed', error)
       return { installed: false, target: '', onPath: false }
     }
   },
   install: async (): Promise<CliLauncherStatus> => {
-    const status = await installCliLauncher(resolveEnv())
+    const status = await installCliLauncher(resolveCliLauncherEnv())
     logger.info('installed cli launcher', { target: status.target, onPath: status.onPath })
     return status
   },
   uninstall: async (): Promise<CliLauncherStatus> => {
-    const status = await uninstallCliLauncher(resolveEnv())
+    const status = await uninstallCliLauncher(resolveCliLauncherEnv())
     logger.info('uninstalled cli launcher', { target: status.target })
     return status
   }

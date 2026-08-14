@@ -660,6 +660,8 @@ class ArtifactProvenanceRepository {
       createdAt: version.createdAt.toISOString(),
       producerRunId: version.producerRunId ?? undefined,
       environment,
+      projectId,
+      // Compatibility output for an older renderer/main pair; this value is the Project id.
       projectName: projectId,
       sessionId: appSessionId,
       runId: version.artifactRunId,

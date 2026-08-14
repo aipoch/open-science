@@ -105,6 +105,9 @@ into a profile or session (resolution is always live):
 1. **Understand scope.** What does the user want to create/change/delete/switch?
 2. **Live read.** Call `get`/`list` plus `listSkills`/`listConnectors` to read the current state and
    the catalogs before proposing anything.
+   Resolve persisted Custom Connector UUIDs through the live Connector catalog and use each
+   Connector's immutable `name` in drafts, reviews, and mutation inputs. Never show a Connector UUID
+   in ordinary prose. Bundled Connector IDs already equal their names; do not invent suffixes.
 3. **Complete draft.** Build the full target state, not a partial edit.
 4. **Review.** Show the complete target state to the user.
 5. **Applicable confirmation.** Get the confirmation that matches the operation kind (see below).

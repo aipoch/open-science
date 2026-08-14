@@ -11,6 +11,7 @@ import {
   projectInlineParentMessages,
   type InlineParentMessageProjection
 } from './subagent-release-projection'
+import { isNotebookExecutionActivity, type ToolExecutionPhase } from './tool-execution-phase'
 
 type ConversationMessageItem = {
   id: string
@@ -92,7 +93,7 @@ const formatNotebookToolName = (toolName: string): string | undefined => {
 
   switch (suffix) {
     case 'notebook_execute':
-      return 'Notebook cell'
+      return 'Notebook run'
     case 'notebook_state':
       return 'Notebook state'
     case 'notebook_restart':
@@ -106,7 +107,8 @@ const formatNotebookToolName = (toolName: string): string | undefined => {
 
 // Treats pending and in-progress tool calls as live activity rows.
 const isActivityActive = (activity: ToolActivity): boolean =>
-  activity.status === 'pending' || activity.status === 'in_progress'
+  (activity.status === 'pending' || activity.status === 'in_progress') &&
+  !isNotebookExecutionActivity(activity)
 
 const isContextCompactionActivity = (activity: ToolActivity): boolean =>
   activity.providerToolName === ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME
@@ -153,7 +155,9 @@ const formatActivityToolName = (activity: ToolActivity): string => {
 }
 
 // Builds the status-sensitive text for non-search activity chips.
-const formatActivityTitle = (activity: ToolActivity): string => {
+const formatActivityTitle = (activity: ToolActivity, phase?: ToolExecutionPhase): string => {
+  if (phase === 'closed') return `Request ended: ${formatActivityToolName(activity)}`
+
   if (isContextCompactionActivity(activity)) {
     const title = trimDetail(activity.title)
 
@@ -175,6 +179,15 @@ const formatActivityTitle = (activity: ToolActivity): string => {
 
   const toolName = formatActivityToolName(activity)
 
+  if (phase === 'declined') return `Declined by you: ${toolName}`
+  if (phase === 'awaiting-approval') return `Waiting for your approval: ${toolName}`
+  if (phase === 'prepared') return `Code shown: ${toolName}`
+  if (phase === 'limit-reached') return `Execution limit reached: ${toolName}`
+  if (phase === 'cancelled') return `Cancelled: ${toolName}`
+  if (phase === 'interrupted') return `Interrupted: ${toolName}`
+  if (phase === 'failed') return `Tool failed: ${toolName}`
+  if (phase === 'completed') return `Used tool: ${toolName}`
+  if (phase === 'executing') return `Using tool: ${toolName}`
   if (activity.status === 'failed') return `Tool failed: ${toolName}`
   if (activity.status === 'completed') return `Used tool: ${toolName}`
 

@@ -67,7 +67,7 @@ describe('validateSpecialistPackage', () => {
     expect(JSON.stringify(result.preview)).not.toContain(validSpecialist.systemPrompt)
   })
 
-  it('accepts optional Skill and Connector IDs in the user-editable Specialist payload', () => {
+  it('accepts optional Skill and Connector names in the user-editable Specialist payload', () => {
     const result = validateSpecialistPackage(
       packageFiles(validManifest, {
         ...validSpecialist,
@@ -98,25 +98,93 @@ describe('validateSpecialistPackage', () => {
     expect(result.plan?.connectorIds).toEqual(['reference-library'])
   })
 
-  it('canonicalizes legacy Connector aliases to the portable slug', () => {
+  it('resolves portable and legacy Connector names to the local Connector id', () => {
+    const localConnectorId = '550e8400-e29b-41d4-a716-446655440000'
     const result = validateSpecialistPackage(
       packageFiles(validManifest, {
         ...validSpecialist,
-        connectorIds: ['Example Connector', 'installed-uuid', 'example-connector']
+        connectorIds: ['Example Connector', 'installed-uuid', 'example-connector', localConnectorId]
       }),
       {
         ...catalog,
-        connectorIds: ['example-connector'],
+        connectorIds: [localConnectorId],
         connectorAliases: {
-          'Example Connector': 'example-connector',
-          'installed-uuid': 'example-connector'
+          [localConnectorId]: 'example-connector',
+          'Example Connector': localConnectorId,
+          'installed-uuid': localConnectorId
         }
       },
       'zip'
     )
 
     expect(result.preview.installable).toBe(true)
-    expect(result.plan?.connectorIds).toEqual(['example-connector'])
+    expect(result.plan?.connectorIds).toEqual([localConnectorId])
+  })
+
+  it('resolves portable Skill and Connector names to local installation ids', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        skillIds: ['paper-review'],
+        connectorIds: ['pubmed-private']
+      }),
+      {
+        ...catalog,
+        skills: [
+          {
+            id: 'imported-paper-review',
+            name: 'paper-review',
+            builtin: false
+          }
+        ],
+        connectorIds: ['550e8400-e29b-41d4-a716-446655440000'],
+        connectorAliases: {
+          '550e8400-e29b-41d4-a716-446655440000': 'pubmed-private'
+        }
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.payload).toMatchObject({
+      skillIds: ['paper-review'],
+      connectorIds: ['pubmed-private']
+    })
+    expect(result.plan?.skillIds).toEqual(['imported-paper-review'])
+    expect(result.plan?.connectorIds).toEqual(['550e8400-e29b-41d4-a716-446655440000'])
+  })
+
+  it('resolves legacy local Skill ids while preferring portable names', () => {
+    const result = validateSpecialistPackage(
+      packageFiles(validManifest, {
+        ...validSpecialist,
+        skillIds: ['personal-paper-review', 'shared-reference']
+      }),
+      {
+        ...catalog,
+        skills: [
+          {
+            id: 'personal-paper-review',
+            name: 'paper-review',
+            builtin: false
+          },
+          {
+            id: 'imported-shared-reference',
+            name: 'shared-reference',
+            builtin: false
+          },
+          {
+            id: 'shared-reference',
+            name: 'different-name',
+            builtin: false
+          }
+        ]
+      },
+      'zip'
+    )
+
+    expect(result.preview.installable).toBe(true)
+    expect(result.plan?.skillIds).toEqual(['personal-paper-review', 'imported-shared-reference'])
   })
 
   it('changes the package content identity when bundled Skill bytes change', () => {
@@ -283,6 +351,7 @@ describe('validateSpecialistPackage', () => {
     ])
     expect(result.plan?.skills[0]).toMatchObject({
       id: 'analysis-tools',
+      localId: 'personal-analysis-tools',
       version: '0.1.0',
       disposition: 'install'
     })
@@ -292,7 +361,7 @@ describe('validateSpecialistPackage', () => {
         relatedId: 'analysis-tools'
       })
     )
-    expect(result.plan?.skillIds).toEqual(['analysis-tools'])
+    expect(result.plan?.skillIds).toEqual(['personal-analysis-tools'])
   })
 
   it('keeps valid bundled Skill IDs selected when another bundled Skill cannot be parsed', () => {
@@ -312,7 +381,7 @@ describe('validateSpecialistPackage', () => {
     )
 
     expect(result.preview.installable).toBe(true)
-    expect(result.plan?.skillIds).toEqual(['analysis-tools'])
+    expect(result.plan?.skillIds).toEqual(['personal-analysis-tools'])
     expect(result.preview.diagnostics).toContainEqual(
       expect.objectContaining({
         severity: 'warning',

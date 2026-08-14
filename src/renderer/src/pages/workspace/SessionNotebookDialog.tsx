@@ -24,6 +24,7 @@ import {
   isProblemRunStatus,
   kernelKindLabel,
   kernelOriginLabel,
+  notebookRunStatusLabel,
   resolveRunErrorLine,
   resolveRunKernelKind
 } from './notebook-cell-utils'
@@ -62,6 +63,7 @@ const NotebookDialogCell = ({
   showInputData?: boolean
 }): React.JSX.Element => {
   const isProblem = isProblemRunStatus(run.status)
+  const statusLabel = notebookRunStatusLabel(run.status)
   const errorLine = isProblem ? resolveRunErrorLine(run) : undefined
   const kind = resolveRunKernelKind(run)
   const originLabel = kernelOriginLabel(kind)
@@ -80,6 +82,10 @@ const NotebookDialogCell = ({
             ) : (
               <span className="rounded bg-danger-900 px-1.5 py-0.5 text-danger-000">error</span>
             )
+          ) : statusLabel ? (
+            <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+              {statusLabel}
+            </span>
           ) : null}
         </div>
         {originLabel ? (
@@ -220,7 +226,7 @@ const SessionNotebookContent = ({
 
   return (
     <>
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3.5">
+      <div className="flex shrink-0 items-center justify-between border-b border-border-300/90 px-5 py-3.5">
         <h2 className="flex min-w-0 items-center gap-3 text-lg font-semibold text-foreground">
           <span>Session notebook</span>
           <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs font-normal text-muted-foreground">
@@ -336,7 +342,7 @@ const SessionNotebookContent = ({
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t border-border-300/15 px-5 py-3.5">
+      <div className="flex items-center justify-between gap-3 border-t border-border-300/90 px-5 py-3.5">
         <p
           className={cn(
             'min-w-0 truncate text-xs',
@@ -453,7 +459,7 @@ const SessionNotebookDialog = ({
 
       void loadSessionNotebookRuns(window.api.notebook, {
         sessionId,
-        projectName: projectId,
+        projectId,
         workspaceCwd: cwd ?? ''
       })
         .then((loadedRuns) => {
@@ -509,7 +515,7 @@ const SessionNotebookDialog = ({
               onExport={async (kernel, agentFrameFilter) => {
                 await window.api.notebook.exportIpynb({
                   sessionId: dialogSession.id,
-                  projectName: dialogSession.projectId,
+                  projectId: dialogSession.projectId,
                   workspaceCwd: dialogSession.cwd ?? '',
                   kernel,
                   ...(agentFrameFilter !== undefined ? { agentFrameFilter } : {})
@@ -518,7 +524,7 @@ const SessionNotebookDialog = ({
               onExportAll={async (agentFrameFilter) => {
                 const result = await window.api.notebook.exportIpynbAll({
                   sessionId: dialogSession.id,
-                  projectName: dialogSession.projectId,
+                  projectId: dialogSession.projectId,
                   workspaceCwd: dialogSession.cwd ?? '',
                   ...(agentFrameFilter !== undefined ? { agentFrameFilter } : {})
                 })

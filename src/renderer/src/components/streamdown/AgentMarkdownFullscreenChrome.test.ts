@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { Streamdown } from 'streamdown'
 
 import { describe, expect, it } from 'vitest'
 
@@ -14,6 +17,32 @@ describe('AgentMarkdown fullscreen chrome', () => {
     expect(streamingBlock).toContain('& > div > :empty:not(:last-child)')
     expect(streamingBlock).toContain('opacity: 1')
     expect(streamingBlock).not.toContain('cursor-blink')
+  })
+
+  it('anchors a thin streaming caret to the terminal text block', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const streamingBlock = css.slice(
+      css.indexOf('.agent-markdown-streaming'),
+      css.indexOf('/* --- Streamdown dropdown panels')
+    )
+    const markup = renderToStaticMarkup(
+      createElement(
+        Streamdown,
+        { animated: false, dir: 'auto', isAnimating: true, mode: 'streaming' },
+        'Example output with Python (matplotlib)'
+      )
+    )
+
+    expect(markup).toContain('style="display:contents"')
+    expect(markup).not.toContain('--streamdown-caret')
+    expect(streamingBlock).not.toContain('!important')
+    expect(streamingBlock).toContain('& .agent-markdown > :last-child:empty::after')
+    expect(streamingBlock).toContain('& .agent-markdown > :last-child > :last-child::after')
+    expect(streamingBlock).toContain("content: ''")
+    expect(streamingBlock).toContain('width: 1px')
+    expect(streamingBlock).toContain('height: 1.25em')
+    expect(streamingBlock).toContain('overflow: hidden')
+    expect(streamingBlock).toContain('background-color: currentColor')
   })
 
   it('keeps Mermaid fullscreen functionality enabled while matching the dialog overlay chrome', () => {
@@ -45,6 +74,7 @@ describe('AgentMarkdown fullscreen chrome', () => {
 
   it('uses theme-aware shared chrome for table fullscreen without changing table rendering', () => {
     const css = readFileSync(resolve(__dirname, '../../assets/agent-markdown.css'), 'utf8')
+    const themeCss = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
     const blockEnd = css.indexOf('/* Mermaid fullscreen portal')
     const blockStart = css.lastIndexOf("[data-streamdown='table-fullscreen'] {", blockEnd)
     const tableFullscreenBlock = css.slice(blockStart, blockEnd)
@@ -59,6 +89,10 @@ describe('AgentMarkdown fullscreen chrome', () => {
     expect(tableFullscreenBlock).toContain('z-[80]!')
     expect(tableFullscreenBlock).toContain('pointer-events: auto !important')
     expect(tableFullscreenBlock).toContain('pointer-events: none !important')
+    expect(css).toContain('z-markdown-menu')
+    expect(css).not.toContain('z-[10000]')
+    expect(themeCss).toContain('--z-index-markdown-menu: 200')
+    expect(themeCss).not.toContain('--z-index-markdown-menu: 10000')
   })
 
   it('disables both fullscreen animations when reduced motion is requested', () => {

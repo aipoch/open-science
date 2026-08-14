@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { chmod, mkdir, rm } from 'node:fs/promises'
-import { get } from 'node:https'
-import type { IncomingMessage } from 'node:http'
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { Transform, Writable } from 'node:stream'
+import { Readable, Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { createGunzip } from 'node:zlib'
 
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
+import { netFetchStandard } from '../skills/net-fetch'
 
 // App-managed Claude installer. The `@anthropic-ai/claude-code` npm package is a thin wrapper whose
 // real payload is a per-platform native binary shipped as an optionalDependency
@@ -514,57 +514,132 @@ const installManagedClaude = async ({
   return { result: { installId, ok: false, error: lastError } }
 }
 
-// ---- Default HTTPS transport (redirect-following) --------------------------------------------------
+// ---- Default Electron transport (Session-proxy-aware) ---------------------------------------------
 
-const httpsGetFollow = (
-  url: string,
-  { timeoutMs = 20_000, maxRedirects = 5 } = {}
-): Promise<IncomingMessage> =>
-  new Promise((resolve, reject) => {
-    const visit = (target: string, redirectsLeft: number): void => {
-      const req = get(target, (res) => {
-        const status = res.statusCode ?? 0
+const DOWNLOAD_INACTIVITY_TIMEOUT_MS = 20_000
+const MAX_HTTPS_REDIRECTS = 5
+const REDIRECT_STATUSES = new Set([300, 301, 302, 303, 307, 308])
 
-        if (status >= 300 && status < 400 && res.headers.location) {
-          res.resume()
-          if (redirectsLeft <= 0) {
-            reject(new Error(`Too many redirects for ${target}`))
-            return
-          }
-          visit(new URL(res.headers.location, target).toString(), redirectsLeft - 1)
-          return
-        }
+const fetchSuccessfulResponse = async (url: string, init?: RequestInit): Promise<Response> => {
+  let target = new URL(url)
+  if (target.protocol !== 'https:') {
+    throw new Error(`Refusing non-HTTPS installer request for ${target.toString()}`)
+  }
 
-        if (status < 200 || status >= 300) {
-          res.resume()
-          reject(new Error(`HTTP ${status} for ${target}`))
-          return
-        }
-
-        resolve(res)
-      })
-
-      req.setTimeout(timeoutMs, () => req.destroy(new Error(`Request timed out for ${target}`)))
-      req.on('error', reject)
+  for (let redirects = 0; ; redirects += 1) {
+    const response = await netFetchStandard(target.toString(), { ...init, redirect: 'manual' })
+    if (!REDIRECT_STATUSES.has(response.status)) {
+      if (!response.ok) throw new Error(`HTTP ${response.status} for ${target.toString()}`)
+      return response
     }
 
-    visit(url, maxRedirects)
+    const location = response.headers.get('location')
+    if (!location) {
+      await response.body?.cancel()
+      throw new Error(
+        `HTTP ${response.status} without a redirect location for ${target.toString()}`
+      )
+    }
+    if (redirects >= MAX_HTTPS_REDIRECTS) {
+      await response.body?.cancel()
+      throw new Error(`Too many redirects for ${url}`)
+    }
+
+    const next = new URL(location, target)
+    if (next.protocol !== 'https:') {
+      await response.body?.cancel()
+      throw new Error(
+        `Refusing installer redirect from ${target.toString()} to non-HTTPS ${next.toString()}`
+      )
+    }
+
+    await response.body?.cancel()
+    target = next
+  }
+}
+
+const withInactivityTimeout = (
+  source: Readable,
+  { url, abort }: { url: string; abort: (reason?: unknown) => void }
+): Readable => {
+  let timer: NodeJS.Timeout | undefined
+
+  const clear = (): void => {
+    if (timer) clearTimeout(timer)
+    timer = undefined
+  }
+  function reset(): void {
+    clear()
+    timer = setTimeout(
+      () => output.destroy(new Error(`Request timed out for ${url}`)),
+      DOWNLOAD_INACTIVITY_TIMEOUT_MS
+    )
+  }
+
+  const output = new Transform({
+    transform(chunk, _encoding, callback) {
+      reset()
+      callback(null, chunk)
+    }
   })
 
+  const forwardSourceError = (error: Error): void => {
+    output.destroy(error)
+  }
+  source.on('error', forwardSourceError)
+  output.once('finish', clear)
+  output.once('close', () => {
+    clear()
+    source.off('error', forwardSourceError)
+    if (!source.destroyed) {
+      abort()
+      source.destroy()
+    }
+  })
+
+  reset()
+  source.pipe(output)
+  return output
+}
+
 const defaultFetchJson: FetchJson = async (url) => {
-  const res = await httpsGetFollow(url)
-  const chunks: Buffer[] = []
-
-  for await (const chunk of res) chunks.push(chunk as Buffer)
-
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  const response = await fetchSuccessfulResponse(url, { signal: AbortSignal.timeout(20_000) })
+  return (await response.json()) as unknown
 }
 
 const defaultFetchTarball: FetchTarball = async (url) => {
-  const res = await httpsGetFollow(url)
-  const length = Number(res.headers['content-length'])
+  const controller = new AbortController()
+  const timeoutError = new Error(`Request timed out for ${url}`)
+  let headerTimedOut = false
+  const headerTimer = setTimeout(() => {
+    headerTimedOut = true
+    controller.abort(timeoutError)
+  }, DOWNLOAD_INACTIVITY_TIMEOUT_MS)
 
-  return { stream: res, totalBytes: Number.isFinite(length) ? length : undefined }
+  let response: Response
+  try {
+    response = await fetchSuccessfulResponse(url, { signal: controller.signal })
+  } catch (error) {
+    if (headerTimedOut) throw timeoutError
+    throw error
+  } finally {
+    clearTimeout(headerTimer)
+  }
+
+  if (!response.body) throw new Error(`Empty response body for ${url}`)
+
+  const contentLength = response.headers.get('content-length')
+  const length = contentLength === null ? undefined : Number(contentLength)
+  const source = Readable.fromWeb(response.body as unknown as NodeReadableStream<Uint8Array>)
+  const stream = withInactivityTimeout(source, {
+    url,
+    abort: (reason) => controller.abort(reason)
+  })
+
+  return {
+    stream,
+    totalBytes: length !== undefined && Number.isFinite(length) ? length : undefined
+  }
 }
 
 export {

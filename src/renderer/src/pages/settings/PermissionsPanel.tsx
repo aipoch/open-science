@@ -11,6 +11,7 @@ import type {
 } from '../../../../shared/permission-grants'
 import { Button } from '@/components/ui/button'
 import {
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -413,7 +414,7 @@ const PermissionsPanel = ({
           <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
           <AlertDialog.Content
             className={dialogPanelClassName(
-              'z-[60] w-[min(440px,calc(100vw-2rem))] overscroll-contain'
+              'z-[60] w-[min(440px,calc(100vw-2rem))] overscroll-contain p-0'
             )}
           >
             <div className={dialogHeaderClassName}>
@@ -445,7 +446,7 @@ const PermissionsPanel = ({
             </div>
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
+                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
                   Cancel
                 </Button>
               </AlertDialog.Cancel>

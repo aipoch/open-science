@@ -159,7 +159,11 @@ describe('SpecialistPackageService', () => {
       skillPort,
       catalog: async () => ({
         ...catalog,
-        skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false
+        }))
       })
     })
     const preview = await service.preview(bundledZip())
@@ -183,7 +187,7 @@ describe('SpecialistPackageService', () => {
     await expect(userSkills.body('imported-analysis-tools')).resolves.toContain(
       'Keep the GitHub version.'
     )
-    await expect(userSkills.body('analysis-tools')).resolves.toContain('Use the tools.')
+    await expect(userSkills.body('personal-analysis-tools')).resolves.toContain('Use the tools.')
   })
 
   it('keeps a reused standalone Skill when direct deletion races the durable Specialist commit', async () => {
@@ -194,7 +198,12 @@ describe('SpecialistPackageService', () => {
     await skillPort.prepare('seed-standalone', 'former-owner', [bundledPlan])
     await skillPort.commit('seed-standalone')
     await skillPort.recover('seed-standalone', 'commit')
-    await skillPort.prepareDeletion('release-standalone', 'former-owner', ['analysis-tools'], [])
+    await skillPort.prepareDeletion(
+      'release-standalone',
+      'former-owner',
+      ['personal-analysis-tools'],
+      []
+    )
     await skillPort.commit('release-standalone')
     await skillPort.recover('release-standalone', 'commit')
 
@@ -204,7 +213,11 @@ describe('SpecialistPackageService', () => {
       skillPort,
       catalog: async () => ({
         ...catalog,
-        skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false
+        }))
       })
     })
     const preview = await service.preview(bundledZip())
@@ -229,7 +242,7 @@ describe('SpecialistPackageService', () => {
 
     const installation = service.install({ candidateToken: preview.candidateToken })
     await mutationSignal
-    const deletion = userSkills.delete('analysis-tools', (skillId) =>
+    const deletion = userSkills.delete('personal-analysis-tools', (skillId) =>
       service.assertSkillDeletionAllowed(skillId)
     )
     continueCommit()
@@ -237,10 +250,10 @@ describe('SpecialistPackageService', () => {
     await expect(installation).resolves.toMatchObject({ status: 'installed' })
     await expect(deletion).rejects.toMatchObject({
       code: 'protected-skill',
-      skillId: 'analysis-tools',
+      skillId: 'personal-analysis-tools',
       specialistIds: ['research-synth']
     })
-    await expect(userSkills.body('analysis-tools')).resolves.toContain('Use the tools.')
+    await expect(userSkills.body('personal-analysis-tools')).resolves.toContain('Use the tools.')
   })
 
   it('previews a custom export with owned portable Skills selected by default', async () => {
@@ -274,9 +287,15 @@ describe('SpecialistPackageService', () => {
         }
       ],
       skills: [
-        { id: 'document-reader', builtin: true },
-        { id: 'analysis-tools', version: '1.2.3', builtin: false, ownerIds: ['research-synth'] },
-        { id: 'citation-manager', builtin: false, standalone: true }
+        { id: 'document-reader', name: 'document-reader', builtin: true },
+        {
+          id: 'analysis-tools',
+          name: 'analysis-tools',
+          version: '1.2.3',
+          builtin: false,
+          ownerIds: ['research-synth']
+        },
+        { id: 'citation-manager', name: 'citation-manager', builtin: false, standalone: true }
       ],
       connectorIds: ['reference-library'],
       protectedSpecialistIds: ['reviewer']
@@ -285,23 +304,6 @@ describe('SpecialistPackageService', () => {
       storageDir,
       repository,
       catalog: async () => exportCatalog,
-      builtinSkillPort: {
-        exportSnapshot: async () => [
-          {
-            id: 'document-reader',
-            version: 'builtin',
-            contentHash: 'builtin-stable',
-            files: [
-              {
-                path: 'SKILL.md',
-                bytes: encoder.encode(
-                  '---\nname: document-reader\ndescription: Read documents\n---\nRead documents.'
-                )
-              }
-            ]
-          }
-        ]
-      },
       skillPort: {
         snapshot: async () => [],
         prepare: async () => undefined,
@@ -310,7 +312,8 @@ describe('SpecialistPackageService', () => {
         recover: async () => undefined,
         exportSnapshot: async () => [
           {
-            id: 'analysis-tools',
+            localId: 'analysis-tools',
+            name: 'analysis-tools',
             version: '1.2.3',
             contentHash: 'stable',
             files: [
@@ -335,7 +338,7 @@ describe('SpecialistPackageService', () => {
       skills: [
         { id: 'analysis-tools', kind: 'owned', selected: true, version: '1.2.3' },
         { id: 'citation-manager', kind: 'referenced', selected: false, version: '0.1.0' },
-        { id: 'document-reader', kind: 'builtin', selected: true, selectable: true }
+        { id: 'document-reader', kind: 'builtin', selected: false, selectable: false }
       ],
       connectorIds: ['reference-library']
     })
@@ -408,8 +411,14 @@ describe('SpecialistPackageService', () => {
         }
       ],
       skills: [
-        { id: 'document-reader', builtin: true },
-        { id: 'analysis-tools', version: '1.2.3', builtin: false, ownerIds: ['research-synth'] }
+        { id: 'document-reader', name: 'document-reader', builtin: true },
+        {
+          id: 'analysis-tools',
+          name: 'analysis-tools',
+          version: '1.2.3',
+          builtin: false,
+          ownerIds: ['research-synth']
+        }
       ],
       connectorIds: ['reference-library'],
       protectedSpecialistIds: ['reviewer']
@@ -418,23 +427,6 @@ describe('SpecialistPackageService', () => {
       storageDir,
       repository,
       catalog: async () => exportCatalog,
-      builtinSkillPort: {
-        exportSnapshot: async () => [
-          {
-            id: 'document-reader',
-            version: 'builtin',
-            contentHash: 'builtin-stable',
-            files: [
-              {
-                path: 'SKILL.md',
-                bytes: encoder.encode(
-                  '---\nname: document-reader\ndisplayName: Document Reader\ndescription: Read documents\nversion: 9.9.9\n---\nRead documents.'
-                )
-              }
-            ]
-          }
-        ]
-      },
       skillPort: {
         snapshot: async () => [],
         prepare: async () => undefined,
@@ -443,7 +435,8 @@ describe('SpecialistPackageService', () => {
         recover: async () => undefined,
         exportSnapshot: async () => [
           {
-            id: 'analysis-tools',
+            localId: 'analysis-tools',
+            name: 'analysis-tools',
             version: '1.2.3',
             contentHash: 'stable',
             files: [
@@ -462,7 +455,7 @@ describe('SpecialistPackageService', () => {
     const exported = await service.export({
       specialistId: 'research-synth',
       expectedRevision: 3,
-      includedSkillIds: ['document-reader', 'analysis-tools']
+      includedSkillIds: ['analysis-tools']
     })
     const archive = unzipSync(exported.archiveBytes)
     const payload = JSON.parse(strFromU8(archive['specialist.json']!)) as Record<string, unknown>
@@ -477,11 +470,9 @@ describe('SpecialistPackageService', () => {
     ])
     expect(payload.skillIds).toEqual(['document-reader', 'analysis-tools'])
     expect(payload.connectorIds).toEqual(['reference-library'])
-    expect(archive['skills/document-reader/SKILL.md']).toBeDefined()
+    expect(archive['skills/document-reader/SKILL.md']).toBeUndefined()
     expect(archive['skills/analysis-tools/SKILL.md']).toBeDefined()
     expect(archive['skills/os-document-reader/SKILL.md']).toBeUndefined()
-    expect(strFromU8(archive['skills/document-reader/SKILL.md']!)).not.toContain('version: 9.9.9')
-    expect(strFromU8(archive['skills/document-reader/SKILL.md']!)).not.toContain('displayName')
     expect(strFromU8(archive['skills/analysis-tools/SKILL.md']!)).not.toContain('displayName')
   })
 
@@ -518,7 +509,11 @@ describe('SpecialistPackageService', () => {
       skillPort,
       catalog: async () => ({
         ...catalog,
-        skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^(?:personal|imported)-/, ''),
+          builtin: false
+        }))
       })
     })
 
@@ -669,7 +664,8 @@ describe('SpecialistPackageService', () => {
           await repository.update('research-synth', { description: 'Changed concurrently.' }, 1)
           return [
             {
-              id: 'analysis-tools',
+              localId: 'analysis-tools',
+              name: 'analysis-tools',
               version: '1.0.0',
               contentHash: 'stable',
               files: [
@@ -725,14 +721,15 @@ describe('SpecialistPackageService', () => {
         }
       ],
       skills: [
-        { id: 'document-reader', builtin: true },
+        { id: 'document-reader', name: 'document-reader', builtin: true },
         {
           id: 'analysis-tools',
+          name: 'analysis-tools',
           version: '1.2.3',
           builtin: false,
           ownerIds: ['research-synth']
         },
-        { id: 'citation-manager', builtin: false, standalone: true }
+        { id: 'citation-manager', name: 'citation-manager', builtin: false, standalone: true }
       ],
       connectorIds: ['reference-library'],
       protectedSpecialistIds: ['reviewer']
@@ -745,7 +742,8 @@ describe('SpecialistPackageService', () => {
       recover: async () => undefined,
       exportSnapshot: async () => [
         {
-          id: 'analysis-tools',
+          localId: 'analysis-tools',
+          name: 'analysis-tools',
           version: '1.2.3',
           contentHash: 'snapshot-hash',
           files: [
@@ -807,7 +805,7 @@ describe('SpecialistPackageService', () => {
         id: 'research-synth',
         version: '1.3.0',
         bundledSkillIds: ['analysis-tools'],
-        requiredSkillIds: ['document-reader', 'analysis-tools', 'citation-manager'],
+        requiredSkillIds: ['document-reader', 'personal-analysis-tools', 'citation-manager'],
         builtinSkillIds: ['document-reader'],
         skills: [expect.objectContaining({ id: 'analysis-tools', version: '1.2.3' })]
       }
@@ -822,10 +820,10 @@ describe('SpecialistPackageService', () => {
         importBaseline: { packageVersion: '1.3.0' },
         enabled: false,
         setupPending: true,
-        ownedSkillIds: ['analysis-tools'],
+        ownedSkillIds: ['personal-analysis-tools'],
         systemPrompt: 'Portable user-authored instructions.',
         selectedCapabilities: {
-          skillIds: ['document-reader', 'analysis-tools', 'citation-manager'],
+          skillIds: ['document-reader', 'personal-analysis-tools', 'citation-manager'],
           connectorIds: ['reference-library'],
           connectorTools: []
         }
@@ -841,7 +839,7 @@ describe('SpecialistPackageService', () => {
       prepare: async (transactionId, _specialistId, skills) => {
         staged.set(
           transactionId,
-          skills.map((skill) => skill.id)
+          skills.map((skill) => skill.localId ?? skill.id)
         )
       },
       commit: async (transactionId) => {
@@ -882,9 +880,9 @@ describe('SpecialistPackageService', () => {
       service.install({ candidateToken: preview.candidateToken })
     ).resolves.toMatchObject({
       status: 'installed',
-      specialist: { ownedSkillIds: ['analysis-tools'] }
+      specialist: { ownedSkillIds: ['personal-analysis-tools'] }
     })
-    expect([...live]).toEqual(['analysis-tools'])
+    expect([...live]).toEqual(['personal-analysis-tools'])
   })
 
   it('preserves prior Skill ownership when a confirmed overwrite adds a bundled Skill', async () => {
@@ -922,7 +920,10 @@ describe('SpecialistPackageService', () => {
       service.install({ candidateToken: preview.candidateToken, confirmOverwrite: true })
     ).resolves.toMatchObject({
       status: 'installed',
-      specialist: { ownedSkillIds: ['previously-owned', 'analysis-tools'], revision: 5 }
+      specialist: {
+        ownedSkillIds: ['previously-owned', 'personal-analysis-tools'],
+        revision: 5
+      }
     })
   })
 

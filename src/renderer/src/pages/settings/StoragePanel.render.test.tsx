@@ -140,6 +140,17 @@ describe('StoragePanel', () => {
     expect(warningDialog?.className).toContain('bg-card')
     expect(warningDialog?.className).toContain('shadow-dialog')
     expect(warningDialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(warningDialog?.className).toContain('p-0')
+    expect(
+      Array.from(warningDialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-b border-border-300/90')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(warningDialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-t border-border-300/90')
+      )
+    ).toBe(true)
 
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
@@ -158,6 +169,17 @@ describe('StoragePanel', () => {
     expect(adoptDialog?.className).toContain('border-border')
     expect(adoptDialog?.className).toContain('bg-card')
     expect(adoptDialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(adoptDialog?.className).toContain('p-0')
+    expect(
+      Array.from(adoptDialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-b border-border-300/90')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(adoptDialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-t border-border-300/90')
+      )
+    ).toBe(true)
   })
 
   it('shows the exact application-storage failure and reveals the trusted config root', async () => {
@@ -496,6 +518,10 @@ describe('StoragePanel', () => {
     expect(container.textContent).toContain('Total')
     expect(container.textContent).toContain('Available on disk')
     expect(container.textContent).toMatch(/530\.6 GB/)
+    expect(container.querySelector('.bg-storage-artifacts')).not.toBeNull()
+    expect(container.querySelector('.bg-storage-runtime')).not.toBeNull()
+    expect(container.querySelector('.bg-sky-500')).toBeNull()
+    expect(container.querySelector('.bg-violet-500')).toBeNull()
 
     // Children are collapsed until the runtime row is expanded.
     expect(container.textContent).not.toContain('python')

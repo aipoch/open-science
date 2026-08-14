@@ -4,12 +4,16 @@ import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import { cn } from '@/lib/utils'
 
 type DataRootMissingDialogProps = {
   open: boolean
@@ -74,28 +78,35 @@ const DataRootMissingDialog = ({
     <AlertDialog.Root open={open}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>
-          <AlertDialog.Title className={dialogTitleClassName}>
-            Data folder not found
-          </AlertDialog.Title>
-          <AlertDialog.Description className={dialogDescriptionClassName}>
-            Your data folder <span className="font-mono">{dialogDataRoot}</span> can&apos;t be
-            found. It may have been deleted, or it&apos;s on a drive that isn&apos;t connected.
-          </AlertDialog.Description>
+        <AlertDialog.Content
+          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
+        >
+          <div className={dialogHeaderClassName}>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              Data folder not found
+            </AlertDialog.Title>
+          </div>
 
-          {stillMissing ? (
-            <p className="mt-3 text-xs text-destructive" role="alert">
-              Still not found. Reconnect the drive and try again, or choose another location.
-            </p>
-          ) : null}
+          <div className={dialogBodyClassName}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              Your data folder <span className="font-mono">{dialogDataRoot}</span> can&apos;t be
+              found. It may have been deleted, or it&apos;s on a drive that isn&apos;t connected.
+            </AlertDialog.Description>
 
-          {chooseError ? (
-            <p className="mt-3 text-xs text-destructive" role="alert">
-              {chooseError}
-            </p>
-          ) : null}
+            {stillMissing ? (
+              <p className="mt-3 text-xs text-destructive" role="alert">
+                Still not found. Reconnect the drive and try again, or choose another location.
+              </p>
+            ) : null}
 
-          <div className="mt-6 flex flex-col gap-2">
+            {chooseError ? (
+              <p className="mt-3 text-xs text-destructive" role="alert">
+                {chooseError}
+              </p>
+            ) : null}
+          </div>
+
+          <div className={cn(dialogFooterClassName, 'flex-col items-stretch')}>
             <Button
               type="button"
               disabled={isRetrying || isChoosing}

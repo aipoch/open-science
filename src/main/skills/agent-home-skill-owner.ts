@@ -11,10 +11,14 @@ import {
   type StagedSkillPackage
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
-import { SAFE_SLUG, type UserSkillStore } from './user-skill-store'
+import { SAFE_SKILL_DIRECTORY_NAME, type UserSkillStore } from './user-skill-store'
+
+// Agent Home owns this external address field. Keep `slug` in its DTO/provenance while translating
+// copied packages to Open Science directory/name terminology at this adapter boundary.
+const SAFE_AGENT_HOME_SKILL_SLUG = SAFE_SKILL_DIRECTORY_NAME
 
 export type ImportedAgentHomeIdentitySnapshot = {
-  importedSlug: string
+  importedDirectoryName: string
   agentHome: AgentHomeSkillRef
   signature: string
 }
@@ -35,9 +39,10 @@ export type AgentHomeMatchResult = {
 
 export type AgentHomeImportOptions = {
   aliases?: readonly AgentHomeSkillRef[]
-  fallbackSlugs?: readonly string[]
+  fallbackDirectoryNames?: readonly string[]
   expectedSignature?: string
   expectedImportedIdentity?: ImportedAgentHomeIdentitySnapshot
+  reservedNames?: readonly string[]
 }
 
 export type AgentHomeSkillSummary = {
@@ -78,14 +83,14 @@ class AgentHomeSkillOwner {
   ) {}
 
   private async importedAgentHomeSignatures(): Promise<
-    Map<string, { importedSlug: string; signature?: string }>
+    Map<string, { importedDirectoryName: string; signature?: string }>
   > {
-    const signatures = new Map<string, { importedSlug: string; signature?: string }>()
-    for (const slug of await this.store.listSlugs('imported')) {
-      const source = await this.transactions.readImportedSource(slug)
+    const signatures = new Map<string, { importedDirectoryName: string; signature?: string }>()
+    for (const directoryName of await this.store.listDirectoryNames('imported')) {
+      const source = await this.transactions.readImportedSource(directoryName)
       if (source?.agentHome) {
         signatures.set(agentHomeKey(source.agentHome), {
-          importedSlug: slug,
+          importedDirectoryName: directoryName,
           signature: source.signature
         })
       }
@@ -97,15 +102,16 @@ class AgentHomeSkillOwner {
     candidateSlugs: ReadonlySet<string>
   ): Promise<Map<string, string>> {
     const signatures = new Map<string, string>()
-    for (const slug of await this.store.listSlugs('imported')) {
-      if (!candidateSlugs.has(slug)) continue
-      if ((await this.transactions.readImportedSource(slug))?.agentHome) continue
+    for (const directoryName of await this.store.listDirectoryNames('imported')) {
+      if (!candidateSlugs.has(directoryName)) continue
+      if ((await this.transactions.readImportedSource(directoryName))?.agentHome) continue
       try {
         signatures.set(
-          slug,
-          await this.signatureOfAgentHomeSkill(this.store.skillDir('imported', slug), {
-            skipSourceManifest: true
-          })
+          directoryName,
+          await this.signatureOfAgentHomeSkill(
+            this.store.skillDirectory('imported', directoryName),
+            { skipSourceManifest: true }
+          )
         )
       } catch {
         // A malformed imported tree cannot safely stand in for an installed skill. Leave it as an
@@ -154,7 +160,7 @@ class AgentHomeSkillOwner {
             if (record.signature !== signature) continue
             try {
               const importedSignature = await this.signatureOfAgentHomeSkill(
-                this.store.skillDir('imported', record.importedSlug),
+                this.store.skillDirectory('imported', record.importedDirectoryName),
                 { skipSourceManifest: true }
               )
               if (importedSignature === signature) matchingIdentities.push(record)
@@ -174,7 +180,7 @@ class AgentHomeSkillOwner {
             matchedIdentitySignature: matchingIdentities.length > 0 ? signature : undefined,
             matchedImportedIdentity: migrationMatch
               ? {
-                  importedSlug: migrationMatch.importedSlug,
+                  importedDirectoryName: migrationMatch.importedDirectoryName,
                   agentHome: migrationMatch.alias,
                   signature
                 }
@@ -196,33 +202,33 @@ class AgentHomeSkillOwner {
     )
   }
 
-  private async findImportedSlugByAgentHome(
+  private async findImportedDirectoryNameByAgentHome(
     skill: AgentHomeSkillRef,
     aliases: readonly AgentHomeSkillRef[]
   ): Promise<string | undefined> {
     const acceptedKeys = new Set([skill, ...aliases].map(agentHomeKey))
-    for (const slug of await this.store.listSlugs('imported')) {
-      const source = await this.transactions.readImportedSource(slug)
+    for (const directoryName of await this.store.listDirectoryNames('imported')) {
+      const source = await this.transactions.readImportedSource(directoryName)
       if (source?.agentHome && acceptedKeys.has(agentHomeKey(source.agentHome))) {
-        return slug
+        return directoryName
       }
     }
     return undefined
   }
 
-  private async findFallbackImportedSlug(
-    fallbackSlugs: ReadonlySet<string>,
+  private async findFallbackImportedDirectoryName(
+    fallbackDirectoryNames: ReadonlySet<string>,
     sourceSignature: string
   ): Promise<string | undefined> {
-    for (const slug of await this.store.listSlugs('imported')) {
-      if (!fallbackSlugs.has(slug)) continue
-      if ((await this.transactions.readImportedSource(slug))?.agentHome) continue
+    for (const directoryName of await this.store.listDirectoryNames('imported')) {
+      if (!fallbackDirectoryNames.has(directoryName)) continue
+      if ((await this.transactions.readImportedSource(directoryName))?.agentHome) continue
       try {
         const importedSignature = await this.signatureOfAgentHomeSkill(
-          this.store.skillDir('imported', slug),
+          this.store.skillDirectory('imported', directoryName),
           { skipSourceManifest: true }
         )
-        if (importedSignature === sourceSignature) return slug
+        if (importedSignature === sourceSignature) return directoryName
       } catch {
         // A malformed metadata-less record is not a safe fallback match.
       }
@@ -348,12 +354,12 @@ class AgentHomeSkillOwner {
   // and records both its stable source identity and content signature. The caller decides whether
   // that snapshot is unchanged or should be promoted over the live imported copy.
   private async stageAgentHomeSkill(
-    slug: string,
+    directoryName: string,
     sourcePath: string,
     skill: AgentHomeSkillRef
   ): Promise<StagedSkillPackage & { signature: string }> {
     let signature = ''
-    const staged = await this.transactions.stage('imported', slug, async (staging) => {
+    const staged = await this.transactions.stage('imported', directoryName, async (staging) => {
       await cp(sourcePath, staging, {
         recursive: true,
         force: false,
@@ -375,9 +381,9 @@ class AgentHomeSkillOwner {
   }
 
   // Lists the skill directories under a machine-level agent home (typically ~/.claude/skills/).
-  // A candidate must be a safe-slug directory with a readable SKILL.md; arbitrary sibling folders
-  // are not import choices. Frontmatter supplies the displayed name/description, while the directory
-  // name remains the stable slug. Hidden transaction directories are ignored.
+  // Agent Home addresses candidates by a safe external slug directory. Arbitrary siblings are not
+  // import choices. Frontmatter supplies the displayed name/description, while the directory name
+  // remains Agent Home's stable slug. Hidden transaction directories are ignored.
   async listAgentHomeSkills(
     homeSkillsDir: string,
     source: AgentHomeSkillSource
@@ -387,7 +393,9 @@ class AgentHomeSkillOwner {
     try {
       entries = (await readdir(homeSkillsDir, { withFileTypes: true }))
         .filter(
-          (entry) => (entry.isDirectory() || entry.isSymbolicLink()) && SAFE_SLUG.test(entry.name)
+          (entry) =>
+            (entry.isDirectory() || entry.isSymbolicLink()) &&
+            SAFE_AGENT_HOME_SKILL_SLUG.test(entry.name)
         )
         .map((entry) => entry.name)
         .sort()
@@ -473,7 +481,7 @@ class AgentHomeSkillOwner {
     options: AgentHomeImportOptions = {}
   ): Promise<ImportOutcome> {
     const requestedSlug = skill.slug
-    if (!SAFE_SLUG.test(requestedSlug)) {
+    if (!SAFE_AGENT_HOME_SKILL_SLUG.test(requestedSlug)) {
       throw new Error(`Refusing to import agent-home skill with unsafe slug: ${requestedSlug}`)
     }
 
@@ -489,24 +497,29 @@ class AgentHomeSkillOwner {
     }
 
     return this.transactions.runRecovered(async () => {
-      const existingSlug = await this.findImportedSlugByAgentHome(skill, options.aliases ?? [])
-      const slug = existingSlug ?? (await this.store.uniqueSlug('imported', requestedSlug))
-      const staged = await this.stageAgentHomeSkill(slug, sourcePath, skill)
+      const existingDirectoryName = await this.findImportedDirectoryNameByAgentHome(
+        skill,
+        options.aliases ?? []
+      )
+      const directoryName =
+        existingDirectoryName ??
+        (await this.store.uniqueImportedName(requestedSlug, options.reservedNames))
+      const staged = await this.stageAgentHomeSkill(directoryName, sourcePath, skill)
       try {
         if (options.expectedImportedIdentity) {
           const expected = options.expectedImportedIdentity
-          const current = await this.transactions.readImportedSource(expected.importedSlug)
+          const current = await this.transactions.readImportedSource(expected.importedDirectoryName)
           let currentTreeSignature: string | undefined
           try {
             currentTreeSignature = await this.signatureOfAgentHomeSkill(
-              this.store.skillDir('imported', expected.importedSlug),
+              this.store.skillDirectory('imported', expected.importedDirectoryName),
               { skipSourceManifest: true }
             )
           } catch {
             // Report every missing or malformed expected record as the same stale-scan condition.
           }
           if (
-            existingSlug !== expected.importedSlug ||
+            existingDirectoryName !== expected.importedDirectoryName ||
             !current?.agentHome ||
             agentHomeKey(current.agentHome) !== agentHomeKey(expected.agentHome) ||
             current.signature !== expected.signature ||
@@ -518,31 +531,31 @@ class AgentHomeSkillOwner {
         if (options.expectedSignature && staged.signature !== options.expectedSignature) {
           throw new Error('Installed skill changed during canonical identity migration.')
         }
-        if (!existingSlug) {
-          const fallbackSlug = await this.findFallbackImportedSlug(
-            new Set(options.fallbackSlugs ?? []),
+        if (!existingDirectoryName) {
+          const fallbackDirectoryName = await this.findFallbackImportedDirectoryName(
+            new Set(options.fallbackDirectoryNames ?? []),
             staged.signature
           )
-          if (fallbackSlug) {
+          if (fallbackDirectoryName) {
             await this.transactions.discard(staged)
-            return { status: 'unchanged', id: `imported-${fallbackSlug}` }
+            return { status: 'unchanged', id: `imported-${fallbackDirectoryName}` }
           }
         }
 
-        const existing = existingSlug
-          ? await this.transactions.readImportedSource(existingSlug)
+        const existing = existingDirectoryName
+          ? await this.transactions.readImportedSource(existingDirectoryName)
           : null
         const identityUnchanged =
           existing?.agentHome && agentHomeKey(existing.agentHome) === agentHomeKey(skill)
-        if (existingSlug && identityUnchanged && existing.signature === staged.signature) {
+        if (existingDirectoryName && identityUnchanged && existing.signature === staged.signature) {
           await this.transactions.discard(staged)
-          return { status: 'unchanged', id: `imported-${existingSlug}` }
+          return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
         }
 
         await this.transactions.promote(staged)
         return {
-          status: existingSlug ? 'updated' : 'imported',
-          id: `imported-${slug}`
+          status: existingDirectoryName ? 'updated' : 'imported',
+          id: `imported-${directoryName}`
         }
       } catch (error) {
         await this.transactions.discard(staged)

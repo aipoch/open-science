@@ -4,14 +4,20 @@ import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
 import { StorageMigrationModal } from '@/pages/settings/StorageMigrationModal'
 
 type LegacyDataMoveDialogProps = {
+  // App Shell presentation ownership may temporarily cover this prompt without discarding its state.
+  active?: boolean
   // The hidden config root where a legacy install's data currently lives (e.g. ~/.open-science).
   currentDataRoot: string
   // The parent the "Move to OpenScience" action relocates into; its derived data root (resolved via
@@ -28,6 +34,7 @@ type LegacyDataMoveDialogProps = {
 // restart. Moving sets settings.dataRoot, which by itself disqualifies the prompt on the next launch,
 // so only the "keep it here" path needs to persist a dismissal.
 const LegacyDataMoveDialog = ({
+  active = true,
   currentDataRoot,
   defaultParent,
   onDismiss
@@ -84,6 +91,7 @@ const LegacyDataMoveDialog = ({
   if (migrationTarget !== null) {
     return (
       <StorageMigrationModal
+        active={active}
         targetPath={migrationTarget}
         onClose={() => setMigrationTarget(null)}
       />
@@ -91,19 +99,23 @@ const LegacyDataMoveDialog = ({
   }
 
   return (
-    <AlertDialog.Root open>
+    <AlertDialog.Root open={active}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>
-          <AlertDialog.Title className={dialogTitleClassName}>
-            Move your data to a visible folder?
-          </AlertDialog.Title>
-          <AlertDialog.Description className={dialogDescriptionClassName}>
-            Your research data is in a hidden folder. Moving it into a visible OpenScience folder
-            makes it easy to find and back up — your settings and history stay where they are.
-          </AlertDialog.Description>
+        <AlertDialog.Content
+          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
+        >
+          <div className={dialogHeaderClassName}>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              Move your data to a visible folder?
+            </AlertDialog.Title>
+          </div>
 
-          <div className="mt-4 space-y-3">
+          <div className={cn(dialogBodyClassName, 'space-y-4')}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              Your research data is in a hidden folder. Moving it into a visible OpenScience folder
+              makes it easy to find and back up — your settings and history stay where they are.
+            </AlertDialog.Description>
             <div>
               <span className="text-xs font-medium text-text-100">Current (hidden)</span>
               <pre
@@ -122,15 +134,15 @@ const LegacyDataMoveDialog = ({
                 {destination ?? 'Resolving…'}
               </pre>
             </div>
+
+            {pickError ? (
+              <p className="text-xs text-destructive" role="alert">
+                {pickError}
+              </p>
+            ) : null}
           </div>
 
-          {pickError ? (
-            <p className="mt-3 text-xs text-destructive" role="alert">
-              {pickError}
-            </p>
-          ) : null}
-
-          <div className="mt-6 flex flex-col gap-2">
+          <div className={cn(dialogFooterClassName, 'flex-col items-stretch')}>
             <Button type="button" disabled={isPicking} onClick={handleMoveToDefault}>
               <FolderInput aria-hidden="true" />
               Move to OpenScience

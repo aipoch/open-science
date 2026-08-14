@@ -4,6 +4,7 @@ import { Dialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogOverlayClassName,
   dialogPanelClassName
@@ -210,7 +211,7 @@ const DownloadProjectArtifactsDialog = ({
             if (isDownloading) event.preventDefault()
           }}
         >
-          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border-300/90 px-5 py-3.5">
             <div className="flex min-w-0 items-center gap-2">
               <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0">
@@ -273,13 +274,13 @@ const DownloadProjectArtifactsDialog = ({
                     data-testid="project-artifacts-group"
                     data-group={group.label}
                   >
-                    <div className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <div className="px-5 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       {group.label}
                     </div>
                     {group.files.map((file) => (
                       <label
                         key={file.id}
-                        className="flex cursor-pointer items-center gap-3 px-4 py-2 transition-colors hover:bg-muted"
+                        className="flex cursor-pointer items-center gap-3 px-5 py-2 transition-colors hover:bg-muted"
                       >
                         <input
                           type="checkbox"
@@ -304,7 +305,7 @@ const DownloadProjectArtifactsDialog = ({
             )}
           </div>
 
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border-300/90 px-5 py-3.5">
             <Button
               type="button"
               variant="ghost"
@@ -322,7 +323,8 @@ const DownloadProjectArtifactsDialog = ({
               ) : null}
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
+                className={dialogCancelButtonClassName}
                 size="sm"
                 disabled={isDownloading}
                 onClick={onClose}

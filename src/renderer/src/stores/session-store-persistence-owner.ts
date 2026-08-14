@@ -35,6 +35,7 @@ import {
   type SessionInteractionState
 } from './session-store-interaction-state'
 import {
+  mergeDelegatedWorkAuthorityProjection,
   mergeNewerPersistedSessionByIdentity,
   mergePersistedRuntimeIdentityProjection
 } from './session-store-persistence-merge'
@@ -54,6 +55,8 @@ export type ToolActivity = {
   activityGroupId?: string
   promptMessageId?: string
   status: ToolActivityStatus
+  toolDisposition?: 'declined' | 'permission-closed'
+  executionInvocationId?: string
   eventIds: string[]
   sortIndex: number
   providerToolName?: string
@@ -111,7 +114,12 @@ export type SessionHydrationSelection = {
 export type ApplyDurableSessionProjectionInput = {
   source: ChatSession
   session: PersistedChatSession
-  mode?: 'merge-upload-identities' | 'replace-persisted-if-current' | 'permission-authority'
+  mode?:
+    | 'merge-upload-identities'
+    | 'replace-persisted-if-current'
+    | 'permission-authority'
+    | 'enabled-compute-hosts-authority'
+    | 'delegated-authority'
 }
 
 export type SessionPersistenceActions = {
@@ -485,6 +493,22 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
 
+      if (mode === 'enabled-compute-hosts-authority') {
+        const projected: ChatSession = {
+          ...current,
+          enabledComputeHosts: session.enabledComputeHosts
+            ? [...session.enabledComputeHosts]
+            : undefined,
+          updatedAt: Math.max(current.updatedAt, session.updatedAt)
+        }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        } as Partial<State>
+      }
+
       if (mode === 'permission-authority') {
         const currentRevision = current.runtimeContext?.revision
         const incomingRevision = session.runtimeContext?.revision
@@ -512,6 +536,17 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           runtimeContext: session.runtimeContext,
           updatedAt: Math.max(current.updatedAt, session.updatedAt)
         }
+        externallyHydratedSessions.add(projected)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          )
+        } as Partial<State>
+      }
+
+      if (mode === 'delegated-authority') {
+        const authority = mergeDelegatedWorkAuthorityProjection(current, session)
+        const projected: ChatSession = { ...current, ...authority }
         externallyHydratedSessions.add(projected)
         return {
           sessions: state.sessions.map((candidate) =>

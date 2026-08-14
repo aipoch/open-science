@@ -26,7 +26,10 @@ import type { SpecialistListItem } from '../../../../shared/specialist'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // Capture all props WorkspacePage passes to ConversationPanel.
-let conversationProps: Record<string, unknown>
+let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
+const panelSpecialistId = (): string | undefined =>
+  conversationProps.view.activeSession?.specialistId ??
+  conversationProps.specialist.view.specialist.newConversationId
 
 const runtime = vi.hoisted(() => ({
   promptInFlightSessionIds: [] as string[],
@@ -67,7 +70,7 @@ vi.mock('./WorkspaceSidebar', () => ({
 }))
 
 vi.mock('./ConversationPanel', () => ({
-  ConversationPanel: (props: Record<string, unknown>): React.JSX.Element => {
+  ConversationPanel: (props: typeof conversationProps): React.JSX.Element => {
     conversationProps = props
     return <section data-testid="conversation" />
   }
@@ -203,12 +206,14 @@ describe('WorkspacePage fail-closed send gate', () => {
 
     await renderPage(root)
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('hello'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('hello')
+      )
     })
 
     // Catalog is loaded and the bound specialist is not in it — sendMessage must NOT be called.
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
     expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
@@ -229,10 +234,12 @@ describe('WorkspacePage fail-closed send gate', () => {
 
     await renderPage(root)
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('hello'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('hello')
+      )
     })
 
-    expect(conversationProps.canSendMessage).toBe(true)
+    expect(conversationProps.conversation.availability.submit).toBe(true)
   })
 
   it('blocks send and triggers load when the catalog has not yet loaded (hole B)', async () => {
@@ -253,13 +260,15 @@ describe('WorkspacePage fail-closed send gate', () => {
 
     await renderPage(root)
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('hello'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('hello')
+      )
     })
 
     // canSendMessage is based on rendered state; the gate fires inside sendCurrentMessage.
     // We call onSendMessage to exercise the path and verify load is triggered.
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     expect(runtime.sendMessage).not.toHaveBeenCalled()
@@ -284,7 +293,9 @@ describe('WorkspacePage fail-closed send gate', () => {
 
     // Pick a new specialist while running — sets the pending state.
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
 
     // Session finishes its run → idle. User types and sends.
@@ -292,10 +303,12 @@ describe('WorkspacePage fail-closed send gate', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('hello'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('hello')
+      )
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     // The barrier should have been invoked with the new specialist.
@@ -323,18 +336,22 @@ describe('WorkspacePage fail-closed send gate', () => {
     await renderPage(root)
 
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)(undefined)
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        undefined
+      )
     })
-    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+    expect(conversationProps.specialist.view.specialist.hasPendingSwitch).toBe(true)
 
     await act(async () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('continue'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('continue')
+      )
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     expect(setSessionSpecialist).toHaveBeenCalledWith({
@@ -362,20 +379,22 @@ describe('WorkspacePage fail-closed send gate', () => {
 
     await renderPage(root)
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
     await act(async () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
         textDoc('branch this work')
       )
     })
-    expect(conversationProps.canSendMessage).toBe(true)
-    expect(conversationProps.onBranchInNewSession).toBeTypeOf('function')
+    expect(conversationProps.conversation.availability.submit).toBe(true)
+    expect(conversationProps.conversation.actions.submit.draft).toBeTypeOf('function')
     await act(async () => {
-      ;(conversationProps.onBranchInNewSession as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [], mode: 'branch' })
     })
 
     expect(setSessionSpecialist).not.toHaveBeenCalled()
@@ -419,7 +438,9 @@ describe('WorkspacePage Retry recovery action', () => {
 
     // While the session is running, pick a new specialist — this sets the pending state.
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
 
     // Session finishes its run → idle. User types and sends.
@@ -427,24 +448,29 @@ describe('WorkspacePage Retry recovery action', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('retry test'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('retry test')
+      )
     })
 
     // First send: barrier fails → banner shown, send not dispatched.
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
     expect(runtime.sendMessage).not.toHaveBeenCalled()
-    expect(conversationProps.reconfigureError).toBeTruthy()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeTruthy()
 
     // Retry: barrier succeeds → send dispatched.
     await act(async () => {
-      ;(conversationProps.onReconfigureRetry as () => void)()
+      conversationProps.conversation.actions.submit.draft({
+        forcedSkillIds: [],
+        mode: 'retry-reconfigure'
+      })
     })
 
     expect(setSessionSpecialist).toHaveBeenCalledTimes(2)
     expect(runtime.sendMessage).toHaveBeenCalledOnce()
-    expect(conversationProps.reconfigureError).toBeNull()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeNull()
   })
 
   it('commits Main Agent to the session store only after Use None succeeds', async () => {
@@ -472,29 +498,35 @@ describe('WorkspacePage Retry recovery action', () => {
 
     await renderPage(root)
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
     await act(async () => {
       useSessionStore.getState().finishRun('sess-a')
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('keep me'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('keep me')
+      )
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
-    expect(conversationProps.reconfigureError).toBeTruthy()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeTruthy()
 
     act(() => {
-      ;(conversationProps.onReconfigureUseNone as () => void)()
+      ;(conversationProps.specialist.actions.useMainAgent as () => void)()
     })
     act(() => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
-      ;(conversationProps.onReconfigureUseNone as () => void)()
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+      ;(conversationProps.specialist.actions.useMainAgent as () => void)()
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
 
     expect(setSessionSpecialist).toHaveBeenCalledTimes(2)
     expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-a')
-    expect(conversationProps.reconfigureError).toBeTruthy()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeTruthy()
     expect(runtime.sendMessage).not.toHaveBeenCalled()
 
     await act(async () => {
@@ -506,7 +538,7 @@ describe('WorkspacePage Retry recovery action', () => {
       specialistId: undefined
     })
     expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
-    expect(conversationProps.reconfigureError).toBeNull()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeNull()
     expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
 })
@@ -540,21 +572,25 @@ describe('WorkspacePage double-send race prevention', () => {
 
     // Set pending while running, then finish the run.
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
     await act(async () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('first send'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('first send')
+      )
     })
 
     // Fire two sends before the barrier resolves.
     act(() => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
     act(() => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     // Resolve the barrier and let the async work settle.
@@ -595,13 +631,15 @@ describe('WorkspacePage specialist badge vs pending chip', () => {
 
     // Pick a different specialist while the session is running.
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
 
     // The badge (specialistId) shows the currently-effective specialist (spec-a).
-    expect(conversationProps.specialistId).toBe('spec-a')
+    expect(panelSpecialistId()).toBe('spec-a')
     // The pending-switch chip should be shown.
-    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+    expect(conversationProps.specialist.view.specialist.hasPendingSwitch).toBe(true)
   })
 
   it('badge shows effective and chip is hidden when there is no pending switch', async () => {
@@ -620,8 +658,8 @@ describe('WorkspacePage specialist badge vs pending chip', () => {
 
     await renderPage(root)
 
-    expect(conversationProps.specialistId).toBe('spec-a')
-    expect(conversationProps.specialistHasPendingSwitch).toBe(false)
+    expect(panelSpecialistId()).toBe('spec-a')
+    expect(conversationProps.specialist.view.specialist.hasPendingSwitch).toBe(false)
   })
 })
 
@@ -646,7 +684,7 @@ describe('WorkspacePage specialistUnavailable computation', () => {
 
     await renderPage(root)
 
-    expect(conversationProps.specialistUnavailable).toBe(true)
+    expect(conversationProps.specialist.view.specialist.unavailable).toBe(true)
   })
 
   it('marks NOT unavailable when catalog is not yet loaded', async () => {
@@ -663,7 +701,7 @@ describe('WorkspacePage specialistUnavailable computation', () => {
 
     // While catalog is loading we cannot tell if the specialist is unavailable —
     // the guard should not show the unavailable state to avoid false positives.
-    expect(conversationProps.specialistUnavailable).toBe(false)
+    expect(conversationProps.specialist.view.specialist.unavailable).toBe(false)
   })
 
   it('does not mark unavailable when a pending switch overrides the effective specialist', async () => {
@@ -684,10 +722,12 @@ describe('WorkspacePage specialistUnavailable computation', () => {
 
     // While running, pick an available specialist — sets pending, overrides unavailability.
     await act(async () => {
-      ;(conversationProps.onSpecialistChange as (id: string | undefined) => void)('spec-b')
+      ;(conversationProps.specialist.actions.selectSpecialist as (id: string | undefined) => void)(
+        'spec-b'
+      )
     })
 
     // The unavailable badge should not show because there is a pending switch.
-    expect(conversationProps.specialistUnavailable).toBe(false)
+    expect(conversationProps.specialist.view.specialist.unavailable).toBe(false)
   })
 })

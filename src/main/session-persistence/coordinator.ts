@@ -75,6 +75,11 @@ type SessionMutationRepository = {
     result: LoadAllSessionsResult
     isComplete: boolean
     warnings?: SessionLoadWarning[]
+    scanMetrics?: {
+      projectDirectoryCount: number
+      sessionFileCount: number
+      sessionBytes: number
+    }
     failure?: SessionLoadFailure
   }>
   loadProjectWithDiagnostics(projectId: string): Promise<{
@@ -170,7 +175,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     artifactStorage?: ArtifactStorageReconciler,
     permissionGrants?: SessionPermissionGrantReconciliation,
     private readonly log: Logger = createLogger('session-persistence'),
-    private readonly computeJobs?: ComputeJobDeletionParticipant
+    private readonly computeJobs?: ComputeJobDeletionParticipant,
+    private readonly onDelegatedWorkSessionUpdated?: (session: PersistedChatSession) => void
   ) {
     const assertMutable = (
       projectId: string,
@@ -230,6 +236,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       assertMutable: (projectId, sessionId) => assertMutable(projectId, sessionId, 'mutate'),
       markStartupRecoveryComplete: () => {
         this.delegatedStartupRecoveryComplete = true
+      },
+      notifySessionUpdated: (session) => {
+        try {
+          this.onDelegatedWorkSessionUpdated?.(session)
+        } catch (error) {
+          this.log.warn('delegated work Session publication failed', {
+            errorCategory: error instanceof Error ? error.name : typeof error
+          })
+        }
       }
     })
   }
@@ -289,6 +304,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw error
       }
       this.stateOwner.replaceMetadata(scan.result.sessions, false)
+      operation.phase('authority-loaded', {
+        sessionCount: scan.result.sessions.length,
+        warningCount: scan.warnings?.length ?? 0,
+        ...scan.scanMetrics
+      })
       operation.complete({
         status: 'degraded',
         sessionCount: scan.result.sessions.length,
@@ -334,6 +354,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         throw error
       }
       this.stateOwner.replaceMetadata(scan.result.sessions, scan.isComplete)
+      operation.phase('authority-loaded', {
+        sessionCount: scan.result.sessions.length,
+        warningCount: scan.warnings?.length ?? 0,
+        ...scan.scanMetrics
+      })
       scan.result.diagnostics = {
         isComplete: scan.isComplete,
         warnings: scan.warnings ?? [],
@@ -670,6 +695,44 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         { conflictRebaseFields: ['specialistId'] }
       )
     )
+  }
+
+  setSessionEnabledComputeHosts(
+    projectId: string,
+    sessionId: string,
+    providerIds: readonly string[]
+  ): Promise<PersistedChatSession> {
+    return this.enqueue(() =>
+      this.stateOwner.setEnabledComputeHosts(projectId, sessionId, providerIds)
+    )
+  }
+
+  pruneSessionEnabledComputeHosts(validProviderIds: readonly string[]): Promise<{
+    sessions: PersistedChatSession[]
+    previousSelections: Array<{
+      projectId: string
+      sessionId: string
+      providerIds: string[]
+    }>
+  }> {
+    return this.enqueue(async () => {
+      const scan = await this.repository.loadAllWithDiagnostics()
+      if (!scan.isComplete) {
+        throw new Error('Cannot prune Compute Hosts without a complete Session catalog.')
+      }
+      const validProviderIdSet = new Set(validProviderIds)
+      const previousSelections = scan.result.sessions.flatMap((session) => {
+        const providerIds = session.enabledComputeHosts ?? []
+        return providerIds.some((providerId) => !validProviderIdSet.has(providerId))
+          ? [{ projectId: session.projectId, sessionId: session.id, providerIds: [...providerIds] }]
+          : []
+      })
+      const sessions = await this.stateOwner.pruneEnabledComputeHosts(
+        scan.result.sessions,
+        validProviderIdSet
+      )
+      return { sessions, previousSelections }
+    })
   }
 
   // Joins late Session-owned side effects (for example Upload finalization) to the same ordering

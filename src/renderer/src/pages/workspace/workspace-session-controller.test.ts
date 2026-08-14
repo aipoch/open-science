@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SpecialistListItem } from '../../../../shared/specialist'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import {
   createInitialSessionState,
@@ -26,6 +27,64 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
   updatedAt: 1,
   ...overrides
 })
+
+const sessionWithRunningChild = (): ChatSession => {
+  const rootPrompt = {
+    id: 'root-prompt',
+    role: 'user' as const,
+    content: 'Delegate this work',
+    status: 'complete' as const,
+    eventIds: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const graph = createLinearConversationGraph({
+    sessionId: 'session-a',
+    messages: [rootPrompt],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  graph.frames.push({
+    id: 'child-frame',
+    parentFrameId: graph.rootFrameId,
+    originMessageId: rootPrompt.id,
+    originBindingState: 'validated',
+    kind: 'delegate',
+    status: 'running',
+    activeBranchId: 'child-branch',
+    createdAt: 2
+  })
+  graph.branches.push({
+    id: 'child-branch',
+    agentFrameId: 'child-frame',
+    createdAt: 2,
+    updatedAt: 2
+  })
+  return session({
+    messages: [rootPrompt],
+    conversationGraph: graph,
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'child-frame',
+            attempts: [
+              {
+                id: 'child-attempt',
+                status: 'running',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: [],
+                startedAt: 2
+              }
+            ]
+          }
+        ]
+      }
+    }
+  })
+}
 
 const specialist = (id: string, name: string): SpecialistListItem =>
   ({ kind: 'custom', id, name, enabled: true }) as SpecialistListItem
@@ -162,6 +221,24 @@ describe('workspace session controller', () => {
 
     expect(order).toEqual(['archive', 'undo', 'clear'])
     expect(hook.result.current.lifecycle.canArchive(active)).toBe(true)
+  })
+
+  it('does not archive an idle Session while a current child Attempt is running on any branch', () => {
+    const active = sessionWithRunningChild()
+    const graph = active.conversationGraph
+    if (!graph) throw new Error('expected conversation graph')
+    const rootFrame = graph.frames.find(({ id }) => id === graph.rootFrameId)
+    graph.branches.push({
+      id: 'alternate-root-branch',
+      agentFrameId: graph.rootFrameId,
+      createdAt: 3,
+      updatedAt: 3
+    })
+    if (rootFrame) rootFrame.activeBranchId = 'alternate-root-branch'
+    const hook = renderController({ activeSession: active })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canArchive(active)).toBe(false)
   })
 
   it('fails closed and retains pending identity when the send barrier rejects', async () => {

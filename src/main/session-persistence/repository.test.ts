@@ -607,6 +607,31 @@ describe('session persistence repository (per-session files)', () => {
     expect(nextScan.warnings).toEqual(scan.warnings)
   })
 
+  it('reports aggregate Session scan scale without exposing catalog identifiers', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectA = join(storageRoot!, 'sessions', 'project-a')
+    const projectB = join(storageRoot!, 'sessions', 'project-b')
+    const rawA = JSON.stringify({ version: 2, session: createSession() })
+    const rawB = JSON.stringify({
+      version: 2,
+      session: createSession({ id: 'session-2', projectId: 'project-b' })
+    })
+    await mkdir(projectA, { recursive: true })
+    await mkdir(projectB, { recursive: true })
+    await writeFile(join(projectA, 'private-session-a.json'), rawA, 'utf8')
+    await writeFile(join(projectB, 'private-session-b.json'), rawB, 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.scanMetrics).toEqual({
+      projectDirectoryCount: 2,
+      sessionFileCount: 2,
+      sessionBytes: Buffer.byteLength(rawA, 'utf8') + Buffer.byteLength(rawB, 'utf8')
+    })
+    expect(JSON.stringify(scan.scanMetrics)).not.toContain('private-session')
+    expect(JSON.stringify(scan.scanMetrics)).not.toContain('project-a')
+  })
+
   it('reports corrupt authority without moving files during a read-only scan', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const sessionsDir = join(storageRoot!, 'sessions')

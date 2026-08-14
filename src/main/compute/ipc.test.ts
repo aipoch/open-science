@@ -12,6 +12,7 @@ import type {
 } from '../../shared/compute'
 import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { decodeRemoteFsError } from '../../shared/remote-fs'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ComputeService } from './compute-service'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
 import {
@@ -24,6 +25,7 @@ import {
   installComputeIpcHandlers,
   toJobSummary
 } from './ipc'
+import type { ComputeIpcAdapter, ComputeIpcModule } from './ipc'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import { EnabledComputeHostsRegistry } from './enabled-hosts-registry'
@@ -460,6 +462,113 @@ describe('host delete guard', () => {
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
   })
 
+  it('keeps the host when enabled Session reference pruning fails', async () => {
+    const del = vi.fn().mockResolvedValue(undefined)
+    const pruneSessionEnabledHosts = vi.fn().mockRejectedValue(new Error('Session write failed'))
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { pruneSessionEnabledHosts }
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow('Session write failed')
+    expect(del).not.toHaveBeenCalled()
+  })
+
+  it('deletes the host inside the enabled Session lifecycle boundary', async () => {
+    const del = vi.fn().mockResolvedValue(undefined)
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, deleteProvider?: () => Promise<void>) => {
+        expect(del).not.toHaveBeenCalled()
+        expect(deleteProvider).toBeDefined()
+        await deleteProvider?.()
+        expect(del).toHaveBeenCalledOnce()
+      }
+    )
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { pruneSessionEnabledHosts }
+    )
+
+    await handlers.delete('ssh:biowulf')
+
+    expect(pruneSessionEnabledHosts).toHaveBeenCalledWith('ssh:biowulf', expect.any(Function))
+  })
+
+  it('preserves provider permission grants when host deletion fails', async () => {
+    const del = vi.fn().mockRejectedValue(new Error('Host delete failed'))
+    const prune = vi.fn().mockResolvedValue([])
+    const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, deleteProvider?: () => Promise<void>) => deleteProvider?.()
+    )
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      permissionGrantRegistry,
+      undefined,
+      { pruneSessionEnabledHosts }
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).rejects.toThrow('Host delete failed')
+
+    expect(prune).not.toHaveBeenCalled()
+  })
+
+  it('treats permission grant cleanup as repairable after host deletion', async () => {
+    const del = vi.fn().mockResolvedValue(undefined)
+    const prune = vi.fn().mockRejectedValue(new Error('Grant cleanup failed'))
+    const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const handlers = createComputeHandlers(
+      mockRepository({ delete: del }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      permissionGrantRegistry
+    )
+
+    await expect(handlers.delete('ssh:biowulf')).resolves.toBeUndefined()
+
+    expect(del).toHaveBeenCalledOnce()
+    expect(prune).toHaveBeenCalledOnce()
+    expect(del.mock.invocationCallOrder[0]).toBeLessThan(prune.mock.invocationCallOrder[0])
+  })
+
   it('does not expose a replacement provider id until deletion grant cleanup completes', async () => {
     let releaseDeletePrune: (() => void) | undefined
     let pruneCalls = 0
@@ -482,6 +591,9 @@ describe('host delete guard', () => {
       completeProviderInvalidation
     } as unknown as ComputeApprovalBroker
     const permissionGrantRegistry = { prune } as unknown as PermissionGrantRegistry
+    const pruneSessionEnabledHosts = vi.fn(
+      async (_providerId: string, afterPrune?: () => Promise<void>) => afterPrune?.()
+    )
     const handlers = createComputeHandlers(
       mockRepository({ delete: del, get, create }),
       undefined,
@@ -493,7 +605,9 @@ describe('host delete guard', () => {
       undefined,
       undefined,
       undefined,
-      permissionGrantRegistry
+      permissionGrantRegistry,
+      undefined,
+      { pruneSessionEnabledHosts }
     )
 
     const deleting = handlers.delete('ssh:biowulf')
@@ -513,6 +627,9 @@ describe('host delete guard', () => {
       kind: 'compute_provider',
       providerId: 'ssh:biowulf'
     })
+    expect(pruneSessionEnabledHosts).toHaveBeenCalledTimes(2)
+    expect(pruneSessionEnabledHosts).toHaveBeenNthCalledWith(1, 'ssh:biowulf', expect.any(Function))
+    expect(pruneSessionEnabledHosts).toHaveBeenNthCalledWith(2, 'ssh:biowulf')
     expect(create).toHaveBeenCalledOnce()
   })
 })
@@ -1286,7 +1403,19 @@ describe('compute handlers — jobsMarkConsumed', () => {
 const invokeHandler = async (channel: string, ...args: unknown[]): Promise<unknown> => {
   const handler = handlers.get(channel)
   if (!handler) throw new Error(`No handler registered for channel "${channel}"`)
-  return handler({} as never, ...args)
+  return handler({ sender: { id: 7 } } as never, ...args)
+}
+
+const installComputeModule = (
+  module: ComputeIpcModule,
+  enabledHosts: ComputeIpcAdapter['enabledHosts'] = {
+    get: (sessionId) => module.enabledComputeHostsRegistry.get(sessionId),
+    set: async () => {
+      throw new Error('Enabled Compute Hosts owner is not configured for this test.')
+    }
+  }
+): void => {
+  installComputeIpcHandlers({ handlers: module.handlers, enabledHosts })
 }
 
 // Calls a handler that is expected to reject and returns the thrown error. Use this when the test
@@ -1316,7 +1445,7 @@ describe('installComputeIpcHandlers', () => {
 
   it('registers every compute:* channel that the renderer can invoke', () => {
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
-    installComputeIpcHandlers(module)
+    installComputeModule(module)
 
     const expected = [
       'compute:list',
@@ -1401,41 +1530,56 @@ describe('installComputeIpcHandlers', () => {
 
     expect(handlers.size).toBe(0)
 
-    installComputeIpcHandlers(module)
+    installComputeModule(module)
 
     expect(handlers.has('compute:list')).toBe(true)
     expect(module.computeService).toBeDefined()
   })
 
-  it('round-trips the enabled-hosts registry through get/set IPC channels', async () => {
+  it('routes enabled-hosts IPC through the authoritative owner and publishes its result', async () => {
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
-    installComputeIpcHandlers(module)
+    const session: PersistedChatSession = {
+      id: 'sess-fresh',
+      projectId: 'project-1',
+      title: 'Session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      filesRevision: 1,
+      enabledComputeHosts: ['ssh:biowulf'],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const enabledHosts = {
+      get: vi.fn((sessionId: string) => module.enabledComputeHostsRegistry.get(sessionId)),
+      set: vi.fn(async () => {
+        module.enabledComputeHostsRegistry.set(session.id, session.enabledComputeHosts ?? [])
+        return session
+      })
+    }
+    const lifecycle = vi.fn()
+    const removeLifecycle = addRendererBroadcastSink(lifecycle)
+    installComputeModule(module, enabledHosts)
 
-    // Initially empty for an unseen session.
     const initial = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
     expect(initial).toEqual([])
 
-    // Setting must persist across subsequent get calls.
-    await invokeHandler('compute:enabled-hosts:set', 'sess-fresh', ['ssh:biowulf', 'ssh:lab-gpu'])
+    const result = await invokeHandler('compute:enabled-hosts:set', 'sess-fresh', ['ssh:biowulf'])
     const afterSet = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
-    expect(afterSet).toEqual(['ssh:biowulf', 'ssh:lab-gpu'])
 
-    // Setting again replaces (set semantics), preserving order.
-    await invokeHandler('compute:enabled-hosts:set', 'sess-fresh', ['ssh:biowulf'])
-    const afterReplace = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
-    expect(afterReplace).toEqual(['ssh:biowulf'])
-
-    // Different sessions are independent.
-    await invokeHandler('compute:enabled-hosts:set', 'sess-other', ['ssh:lab-gpu'])
-    const other = await invokeHandler('compute:enabled-hosts:get', 'sess-other')
-    expect(other).toEqual(['ssh:lab-gpu'])
-    const firstAgain = await invokeHandler('compute:enabled-hosts:get', 'sess-fresh')
-    expect(firstAgain).toEqual(['ssh:biowulf'])
+    expect(enabledHosts.set).toHaveBeenCalledWith('sess-fresh', ['ssh:biowulf'])
+    expect(result).toEqual(session)
+    expect(afterSet).toEqual(['ssh:biowulf'])
+    expect(lifecycle).toHaveBeenCalledWith('session:updated', {
+      session,
+      originClientId: 'electron:7'
+    })
+    removeLifecycle()
   })
 
   it('returns the production computeService and jobRepository so downstream wiring can use them', () => {
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
-    installComputeIpcHandlers(module)
+    installComputeModule(module)
 
     expect(module.computeService).toBeDefined()
     expect(module.jobRepository).toBeDefined()
@@ -1473,7 +1617,7 @@ describe('installComputeIpcHandlers — remoteFsError serialization', () => {
     const service = mockService({ listDir })
 
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}), undefined, service)
-    installComputeIpcHandlers(module)
+    installComputeModule(module)
 
     const err = await invokeExpectingError('compute:list-dir', 'ssh:biowulf', '/missing')
 
@@ -1496,7 +1640,7 @@ describe('installComputeIpcHandlers — remoteFsError serialization', () => {
     const service = mockService({ download })
 
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}), undefined, service)
-    installComputeIpcHandlers(module)
+    installComputeModule(module)
 
     const dest: DownloadDest = { kind: 'os-downloads' }
     const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/some/dir', dest)
@@ -1513,7 +1657,7 @@ describe('installComputeIpcHandlers — remoteFsError serialization', () => {
     const service = mockService({ download })
 
     const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}), undefined, service)
-    installComputeIpcHandlers(module)
+    installComputeModule(module)
 
     const dest: DownloadDest = { kind: 'os-downloads' }
     const err = await invokeExpectingError('compute:download', 'ssh:biowulf', '/x', dest)

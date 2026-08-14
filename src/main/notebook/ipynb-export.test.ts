@@ -26,7 +26,7 @@ const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord 
 
 const makeDocument = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   version: 1,
-  projectName: 'default-project',
+  projectId: 'default-project',
   sessionId: 'session-123',
   workspaceCwd: '/workspace',
   notebookSessionRoot: '/data/notebooks/default-project/session-123',

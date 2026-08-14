@@ -72,6 +72,63 @@ const createCatalog = async (includeInternal = false): Promise<SkillCatalogModul
 }
 
 describe('SkillCatalogModule', () => {
+  it('keeps only the newest visible Skill when manually placed packages share a name', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-catalog-'))
+    roots.push(storageRoot)
+    const shared = {
+      name: 'shared',
+      displayName: 'Shared',
+      description: '',
+      sourceDir: storageRoot
+    }
+    const skillRegistry = {
+      list: async () => [
+        {
+          ...shared,
+          id: 'shared',
+          source: 'featured' as const,
+          updatedAt: '2026-01-01T00:00:00.000Z'
+        }
+      ]
+    } as unknown as SkillRegistry
+    const userSkills = {
+      list: async () => [
+        {
+          ...shared,
+          id: 'personal-shared',
+          source: 'personal' as const,
+          updatedAt: '2026-02-01T00:00:00.000Z'
+        },
+        {
+          ...shared,
+          id: 'imported-shared',
+          source: 'imported' as const,
+          updatedAt: '2026-03-01T00:00:00.000Z'
+        }
+      ]
+    } as unknown as UserSkillRepository
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry,
+      userSkills
+    })
+
+    expect((await catalog.listHostSkills()).map((skill) => skill.id)).toEqual(['imported-shared'])
+  })
+
+  it('suffixes an import that collides with a Featured Skill name', async () => {
+    const catalog = await createCatalog()
+    const dataBase64 = Buffer.from(
+      zipSync({ 'SKILL.md': strToU8('---\nname: Demo\ndescription: Imported\n---\nbody') })
+    ).toString('base64')
+
+    const result = await catalog.importSkillZip({ dataBase64 })
+
+    expect(result.id).toBe('imported-demo-2')
+    expect(result.skills.map((skill) => skill.id)).toEqual(['demo', 'imported-demo-2'])
+  })
+
   it('keeps internal bundled Skills runtime-visible but out of Settings and Specialist catalogs', async () => {
     const catalog = await createCatalog(true)
     const runtimeRoot = await mkdtemp(join(tmpdir(), 'settings-skill-runtime-'))
@@ -366,6 +423,7 @@ describe('SkillCatalogModule', () => {
     const files = unzipSync(exported.archiveBytes)
 
     expect(Object.keys(files)).toEqual(['SKILL.md'])
+    expect(strFromU8(files['SKILL.md'])).toContain('name: imported-skill')
   })
 
   it('refuses to export built-in and unknown Skills', async () => {

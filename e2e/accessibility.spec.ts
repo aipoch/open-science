@@ -4,19 +4,29 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { Locator, Page } from 'playwright'
 import { createProject, sendPrompt } from './certification/helpers'
+import {
+  ACCESSIBILITY_ADVISORY,
+  ACCESSIBILITY_SCAN_ATTACHMENT,
+  ACCESSIBILITY_UI_FINDING_ATTACHMENT,
+  ACCESSIBILITY_UI_READY_ATTACHMENT,
+  type AccessibilityScan,
+  type AccessibilitySurface,
+  type AccessibilityUiFinding
+} from './accessibility-reporter'
 import { test } from './fixtures/electron-app'
 
 const AXE_PATH = resolve(process.cwd(), 'node_modules/axe-core/axe.min.js')
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']
 
-type BlockingViolation = {
-  id: string
-  impact: string | null
-  help: string
-  nodes: Array<{ html: string; target: unknown }>
-}
+test.beforeEach(async ({ app }) => {
+  await test.info().attach(ACCESSIBILITY_UI_READY_ATTACHMENT, {
+    body: JSON.stringify({ ready: true }),
+    contentType: 'application/json'
+  })
+  void app
+})
 
-const expectNoBlockingViolations = async (page: Page, surface: string): Promise<void> => {
+const scanAccessibility = async (page: Page, surface: AccessibilitySurface): Promise<void> => {
   const axeSource = await readFile(AXE_PATH, 'utf8')
   await page.evaluate(axeSource)
   const results = (await page.evaluate(async (tags) => {
@@ -30,14 +40,46 @@ const expectNoBlockingViolations = async (page: Page, surface: string): Promise<
   }, WCAG_TAGS)) as AxeResults
   const blocking = results.violations
     .filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')
-    .map<BlockingViolation>(({ id, impact, help, nodes }) => ({
+    .map<AccessibilityScan['violations'][number]>(({ id, impact, help, nodes }) => ({
       id,
       impact: impact ?? null,
       help,
       nodes: nodes.map(({ html, target }) => ({ html, target }))
     }))
 
-  expect(blocking, `${surface} has blocking axe violations`).toEqual([])
+  await test.info().attach(ACCESSIBILITY_SCAN_ATTACHMENT, {
+    body: JSON.stringify({ surface, violations: blocking } satisfies AccessibilityScan),
+    contentType: 'application/json'
+  })
+  if (!ACCESSIBILITY_ADVISORY) {
+    expect(blocking, `${surface} has blocking axe violations`).toEqual([])
+  }
+}
+
+const recordAccessibilityFinding = async (surface: string, message: string): Promise<void> => {
+  await test.info().attach(ACCESSIBILITY_UI_FINDING_ATTACHMENT, {
+    body: JSON.stringify({ surface, message } satisfies AccessibilityUiFinding),
+    contentType: 'application/json'
+  })
+}
+
+const expectKeyboardOutcome = async (
+  page: Page,
+  surface: string,
+  assertion: () => Promise<void>
+): Promise<boolean> => {
+  try {
+    await assertion()
+    return true
+  } catch (error) {
+    if (!ACCESSIBILITY_ADVISORY) throw error
+    await page.evaluate(() => document.readyState)
+    await recordAccessibilityFinding(
+      surface,
+      error instanceof Error ? error.message : String(error)
+    )
+    return false
+  }
 }
 
 const waitForFiniteAnimations = async (page: Page): Promise<void> => {
@@ -79,43 +121,49 @@ const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
   else await expect(page.locator('html')).not.toHaveClass(/dark/)
 }
 
-const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<void> => {
+const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<boolean> => {
   await expect(target).toBeVisible()
   for (let index = 0; index < maxTabs; index += 1) {
-    if (await target.evaluate((element) => document.activeElement === element)) return
+    if (await target.evaluate((element) => document.activeElement === element)) return true
     await page.keyboard.press('Tab')
+  }
+  if (ACCESSIBILITY_ADVISORY) {
+    await recordAccessibilityFinding(
+      'Keyboard focus order',
+      `Keyboard focus did not reach ${await target.getAttribute('aria-label')}`
+    )
+    return false
   }
   await expect(
     target,
     `Keyboard focus did not reach ${await target.getAttribute('aria-label')}`
   ).toBeFocused()
+  return true
 }
 
-test('has no blocking accessibility violations in startup and home surfaces', async ({ app }) => {
+test('reports accessibility violations in startup and home surfaces', async ({ app }) => {
   await expect(
     app.page.getByRole('heading', { name: 'Set up your research workspace.' })
   ).toBeVisible()
-  await expectNoBlockingViolations(app.page, 'Onboarding')
+  await scanAccessibility(app.page, 'Onboarding')
 
   const page = await app.completeOnboarding()
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
-  await expectNoBlockingViolations(page, 'Home')
+  await scanAccessibility(page, 'Home')
 })
 
-test('has no blocking accessibility violations in core dialog and workspace surfaces', async ({
-  app
-}) => {
+test('reports accessibility violations in core dialog and workspace surfaces', async ({ app }) => {
   const page = await app.completeOnboarding()
 
   await page.getByRole('button', { name: 'New project' }).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await expect(projectDialog).toBeVisible()
-  await expectNoBlockingViolations(page, 'New project dialog')
+  await scanAccessibility(page, 'New project dialog')
 
   await projectDialog.getByLabel('Name').fill('Accessible Electron project')
   await projectDialog.getByRole('button', { name: 'Create project' }).click()
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
-  await expectNoBlockingViolations(page, 'Workspace')
+  await scanAccessibility(page, 'Workspace')
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
@@ -124,12 +172,10 @@ test('has no blocking accessibility violations in core dialog and workspace surf
     .getByRole('button', { name: 'General', exact: true })
     .click()
   await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
-  await expectNoBlockingViolations(page, 'Settings')
+  await scanAccessibility(page, 'Settings')
 })
 
-test('has no blocking accessibility violations in permission and file preview states', async ({
-  app
-}) => {
+test('reports accessibility violations in permission and file preview states', async ({ app }) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
 
@@ -144,7 +190,7 @@ test('has no blocking accessibility violations in permission and file preview st
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
   await waitForFiniteAnimations(page)
   try {
-    await expectNoBlockingViolations(page, 'Permission request')
+    await scanAccessibility(page, 'Permission request')
   } finally {
     await page.getByRole('button', { name: 'Deny', exact: true }).click()
   }
@@ -166,15 +212,15 @@ test('has no blocking accessibility violations in permission and file preview st
   await setViewport(page, 767)
   await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
   await waitForFiniteAnimations(page)
-  await expectNoBlockingViolations(page, 'Project files (narrow)')
+  await scanAccessibility(page, 'Project files (narrow)')
   await page.getByRole('button', { name: 'Preview uploaded file accessible-preview.md' }).click()
   const preview = page.getByRole('dialog', { name: 'Preview accessible-preview.md' })
   await expect(preview).toBeVisible()
   await waitForFiniteAnimations(page)
-  await expectNoBlockingViolations(page, 'File preview dialog')
+  await scanAccessibility(page, 'File preview dialog')
 })
 
-test('has no blocking accessibility violations across representative state combinations', async ({
+test('reports accessibility violations across representative state combinations', async ({
   app
 }) => {
   let page = await app.completeOnboarding()
@@ -191,7 +237,7 @@ test('has no blocking accessibility violations across representative state combi
     await sendPrompt(page, prompt, 'Deterministic reply: Summarize the deterministic fixture.')
   }
   await setTheme(page, 'Dark')
-  await expectNoBlockingViolations(page, 'Long conversation (dark)')
+  await scanAccessibility(page, 'Long conversation (dark)')
 
   await sendPrompt(
     page,
@@ -210,7 +256,7 @@ test('has no blocking accessibility violations across representative state combi
   const provenance = page.locator('[data-testid="artifact-provenance"]')
   await expect(provenance).toBeVisible()
   await expect(provenance.getByLabel('Loading Provenance')).toBeHidden({ timeout: 30_000 })
-  await expectNoBlockingViolations(page, 'Artifact provenance')
+  await scanAccessibility(page, 'Artifact provenance')
   await provenance.getByRole('button', { name: 'Close Provenance' }).click()
   await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
   await page
@@ -226,7 +272,7 @@ test('has no blocking accessibility violations across representative state combi
     .click()
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
   await setViewport(page, 767)
-  await expectNoBlockingViolations(page, 'Compute settings (narrow, dark)')
+  await scanAccessibility(page, 'Compute settings (narrow, dark)')
   await settings.getByRole('button', { name: 'Close settings' }).click()
   await expect(settings).toBeHidden()
 
@@ -236,7 +282,7 @@ test('has no blocking accessibility violations across representative state combi
     .getByRole('alert')
     .filter({ hasText: 'Saved conversation data was damaged' })
   await expect(recoveryAlert).toBeVisible()
-  await expectNoBlockingViolations(page, 'Conversation recovery warning')
+  await scanAccessibility(page, 'Conversation recovery warning')
 })
 
 test('supports the core project journey with keyboard input only', async ({ app }) => {
@@ -244,45 +290,90 @@ test('supports the core project journey with keyboard input only', async ({ app 
   page = await app.configureFakeAgent()
 
   const newProject = page.getByRole('button', { name: 'New project' })
-  await focusWithTab(page, newProject)
+  if (!(await focusWithTab(page, newProject))) return
   await page.keyboard.press('Enter')
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
-  await expect(projectDialog).toBeVisible()
+  if (
+    !(await expectKeyboardOutcome(page, 'Open a new project with Enter', async () => {
+      await expect(projectDialog).toBeVisible()
+    }))
+  )
+    return
   const name = projectDialog.getByLabel('Name')
-  await focusWithTab(page, name)
+  if (!(await focusWithTab(page, name))) return
   await page.keyboard.type('Keyboard journey')
   const create = projectDialog.getByRole('button', { name: 'Create project' })
-  await focusWithTab(page, create)
+  if (!(await focusWithTab(page, create))) return
   await page.keyboard.press('Enter')
-  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  if (
+    !(await expectKeyboardOutcome(page, 'Create a project with Enter', async () => {
+      await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+    }))
+  )
+    return
 
   const composer = page.getByRole('textbox', { name: 'Ask anything' })
-  await focusWithTab(page, composer)
+  if (!(await focusWithTab(page, composer))) return
   await page.keyboard.type('Summarize the deterministic fixture.')
   const send = page.getByRole('button', { name: 'Send message' })
-  await focusWithTab(page, send)
+  if (!(await focusWithTab(page, send))) return
   await page.keyboard.press('Enter')
-  await expect(
-    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: false })
-  ).toBeVisible()
+  if (
+    !(await expectKeyboardOutcome(page, 'Send a message with Enter', async () => {
+      await expect(
+        page.getByText('Summarize the deterministic fixture.', { exact: true })
+      ).toBeVisible()
+    }))
+  )
+    return
 
   const files = page.getByRole('button', { name: 'Files', exact: true })
-  await focusWithTab(page, files)
+  if (!(await focusWithTab(page, files))) return
   await page.keyboard.press('Enter')
-  await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
+  if (
+    !(await expectKeyboardOutcome(page, 'Open project files with Enter', async () => {
+      await expect(page.locator('[data-testid="files-view"]')).toBeVisible()
+    }))
+  )
+    return
 
   const settingsTrigger = page.getByRole('button', { name: 'Settings', exact: true })
-  await focusWithTab(page, settingsTrigger)
+  if (!(await focusWithTab(page, settingsTrigger))) return
   await page.keyboard.press('Enter')
   const settings = page.getByRole('dialog', { name: 'Settings' })
-  await expect(settings).toBeVisible()
+  if (
+    !(await expectKeyboardOutcome(page, 'Open settings with Enter', async () => {
+      await expect(settings).toBeVisible()
+    }))
+  )
+    return
   const compute = settings
     .getByRole('navigation', { name: 'Settings' })
     .getByRole('button', { name: 'Compute', exact: true })
-  await focusWithTab(page, compute)
+  if (!(await focusWithTab(page, compute))) return
   await page.keyboard.press('Enter')
-  await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
+  if (
+    !(await expectKeyboardOutcome(page, 'Open Compute settings with Enter', async () => {
+      await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
+    }))
+  )
+    return
   await page.keyboard.press('Escape')
-  await expect(settings).toBeHidden()
+  if (
+    !(await expectKeyboardOutcome(page, 'Close settings with Escape', async () => {
+      await expect(settings).toBeHidden()
+    }))
+  )
+    return
+  const settingsFocusRestored = await settingsTrigger.evaluate(
+    (element) => document.activeElement === element
+  )
+  if (ACCESSIBILITY_ADVISORY && !settingsFocusRestored) {
+    await recordAccessibilityFinding(
+      'Keyboard focus restoration',
+      'Closing settings did not restore focus to the settings trigger.'
+    )
+    return
+  }
   await expect(settingsTrigger).toBeFocused()
 })

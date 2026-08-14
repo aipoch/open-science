@@ -497,6 +497,12 @@ export type AcpRuntimeEvent = {
   title?: string
   status?: string
   toolCallId?: string
+  // App-owned authorization outcome. It stays separate from provider tool status so a rejected or
+  // otherwise closed permission request cannot be presented as an execution failure.
+  toolDisposition?: 'declined' | 'permission-closed'
+  // App-owned one-shot identity for exact Notebook activity/Run correlation. Provider payloads
+  // cannot supply it; the permission and authenticated RPC owners issue and consume it.
+  executionInvocationId?: string
   providerToolName?: string
   toolKind?: ToolKind
   toolContent?: ToolCallContent[]

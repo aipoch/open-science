@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Logger } from '../logger'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
+import { createDelegatedSafeInstallGate } from './strategy'
 import {
   clearApplicationShutdownTrigger,
   currentApplicationShutdownTrigger
@@ -434,6 +435,26 @@ describe('ElectronUpdaterStrategy', () => {
 
     expect(gate).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks restart before backend teardown when delegated work is running', async () => {
+    const updater = new FakeUpdater()
+    const backendTeardownGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      installGate: createDelegatedSafeInstallGate(() => true, backendTeardownGate)
+    })
+
+    const status = await strategy.apply()
+
+    expect(status).toMatchObject({
+      state: 'error',
+      error: expect.stringMatching(/subagents are still running/i)
+    })
+    expect(backendTeardownGate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
   })
 
   it('reports preparation immediately and ignores a repeat apply while teardown is pending', async () => {

@@ -491,12 +491,16 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.setStatus({
           ...this.status,
           state: 'error',
-          error: 'Could not fully stop background processes before updating. Please try again.'
+          error:
+            readiness.blockedBy === 'delegated-work'
+              ? 'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+              : 'Could not fully stop background processes before updating. Please try again.'
         })
         operation.fail(new Error('Install gate refused'), {
           reason: 'install-gate-refused',
           gateCompleted: readiness.completed,
-          processTreesReaped: readiness.reaped
+          processTreesReaped: readiness.reaped,
+          ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy } : {})
         })
         return this.status
       }

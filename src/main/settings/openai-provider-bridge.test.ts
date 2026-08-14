@@ -151,4 +151,39 @@ describe('OpenAiProviderBridge', () => {
       }
     ])
   })
+
+  it('filters Fetch Metadata headers before invoking the upstream fetch', async () => {
+    let upstreamHeaders: Headers | undefined
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      upstreamHeaders = new Headers(init?.headers)
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { 'content-type': 'application/json' }
+      })
+    }
+    const target: OpenAiProviderBridgeTarget = {
+      id: 'provider/model-a',
+      wire: 'responses',
+      endpoint: 'https://provider.example.test/v1/responses',
+      key: 'key-a',
+      model: 'model-a'
+    }
+    const bridge = new OpenAiProviderBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+
+    const response = await fetch(`${connection.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json',
+        'sec-fetch-site': 'same-origin',
+        'x-request-id': 'request-1'
+      },
+      body: JSON.stringify({ model: 'ignored', input: [] })
+    })
+
+    expect(response.status).toBe(200)
+    expect(upstreamHeaders?.get('sec-fetch-site')).toBeNull()
+    expect(upstreamHeaders?.get('x-request-id')).toBe('request-1')
+  })
 })

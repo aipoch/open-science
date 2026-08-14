@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { NotebookSessionRequest } from '../../../../shared/notebook'
+import { resolveProjectId } from '../../../../shared/project-scope'
 import { isEnvEnabled } from '../../../../shared/notebook-runtime'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -252,7 +253,7 @@ const extractPermissionCode = (request: AcpPermissionRequest): PermissionCode | 
 
 // A friendly action title for the code card header, matching the transcript's activity phrasing.
 const getPermissionActionTitle = (request: AcpPermissionRequest, fallback: string): string => {
-  if (resolveNotebookToolName(request)) return 'Run notebook cell'
+  if (resolveNotebookToolName(request)) return 'Start Notebook run'
   if (isArtifactWriteRequest(request)) return 'Artifact file input'
   if (isMcpPermissionRequest(request)) return 'External service input'
   if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return 'Run command'
@@ -351,7 +352,9 @@ const useNotebookEnvironment = (
   kernelKind: 'python' | 'r' | undefined
 ): string | undefined => {
   const [environment, setEnvironment] = useState<{ key: string; name: string | undefined }>()
-  const lookupKey = lookup ? `${lookup.projectName ?? ''}:${lookup.sessionId}` : undefined
+  const lookupKey = lookup
+    ? `${resolveProjectId(lookup, 'default-project')}:${lookup.sessionId}`
+    : undefined
   const key = lookupKey && kernelKind ? `${lookupKey}:${kernelKind}` : undefined
   useEffect(() => {
     if (!lookup || !key || !kernelKind) return

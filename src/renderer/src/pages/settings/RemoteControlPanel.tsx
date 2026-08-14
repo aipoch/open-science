@@ -1,5 +1,7 @@
 import { QRCodeSVG } from '@rc-component/qrcode'
+import { Dialog } from 'radix-ui'
 import {
+  AlertTriangle,
   CheckCircle2,
   CircleOff,
   Copy,
@@ -12,8 +14,7 @@ import {
   Smartphone,
   Trash2
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useRef, useState } from 'react'
 
 import type {
   RemoteAccessMode,
@@ -23,9 +24,17 @@ import type {
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { SettingsSection } from './SettingsLayout'
+import {
+  dialogDescriptionClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
+import { SettingsIconAction, SettingsSection } from './SettingsLayout'
 
 const REMOTE_IT_DOWNLOAD_URL = 'https://www.remote.it/download/'
+type CopyStatus = 'idle' | 'copied' | 'error'
 
 const lifecycleLabel = (snapshot: RemoteAccessSnapshot): string => {
   if (snapshot.lifecycle === 'starting') return 'Starting…'
@@ -79,6 +88,16 @@ const providerStatus = (snapshot: RemoteAccessSnapshot): string => {
   return 'Ready'
 }
 
+const loadRemoteAccessSnapshot = async (
+  onInitial: (snapshot: RemoteAccessSnapshot) => void = () => undefined,
+  isActive: () => boolean = () => true
+): Promise<RemoteAccessSnapshot> => {
+  const initial = await window.api.remoteAccess.getSnapshot()
+  if (!isActive()) return initial
+  onInitial(initial)
+  return initial.canManage ? window.api.remoteAccess.detect() : initial
+}
+
 const BrowserAccessSteps = (): React.JSX.Element => (
   <div className="mt-4 flex items-start gap-3 border-t border-blue-600/15 pt-4">
     <Smartphone className="mt-0.5 size-5 shrink-0 text-blue-600" aria-hidden="true" />
@@ -103,8 +122,12 @@ export const RemoteControlPanel = (): React.JSX.Element => {
   const [snapshot, setSnapshot] = useState<RemoteAccessSnapshot | null>(null)
   const [busy, setBusy] = useState<string | null>('loading')
   const [actionError, setActionError] = useState<string | undefined>()
-  const [copied, setCopied] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle')
 
+  const operationTriggerRef = useRef<HTMLElement | null>(null)
+  const initialLoadRetryRef = useRef(false)
+  const mountedRef = useRef(false)
+  const copyResetTimerRef = useRef<number | undefined>(undefined)
   const refresh = async (detect = false, completesBusyOperation = true): Promise<void> => {
     try {
       const next = detect
@@ -121,15 +144,16 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
   useEffect(() => {
     let active = true
-    void window.api.remoteAccess
-      .getSnapshot()
-      .then(async (initial) => {
+    mountedRef.current = true
+    void loadRemoteAccessSnapshot(
+      (initial) => {
+        if (active) setSnapshot(initial)
+      },
+      () => active
+    )
+      .then((next) => {
         if (!active) return
-        setSnapshot(initial)
-        if (initial.canManage) {
-          const detected = await window.api.remoteAccess.detect()
-          if (active) setSnapshot(detected)
-        }
+        setSnapshot(next)
       })
       .catch((error: unknown) => {
         if (active) setActionError(error instanceof Error ? error.message : String(error))
@@ -144,9 +168,19 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     })
     return () => {
       active = false
+      mountedRef.current = false
+      if (copyResetTimerRef.current !== undefined) {
+        window.clearTimeout(copyResetTimerRef.current)
+      }
       unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    if (busy !== null || !operationTriggerRef.current) return
+    operationTriggerRef.current.focus()
+    operationTriggerRef.current = null
+  }, [busy])
 
   const run = async (name: string, action: () => Promise<RemoteAccessSnapshot>): Promise<void> => {
     setBusy(name)
@@ -161,18 +195,67 @@ export const RemoteControlPanel = (): React.JSX.Element => {
     }
   }
 
+  const retryInitialLoad = (): void => {
+    if (initialLoadRetryRef.current) return
+    initialLoadRetryRef.current = true
+    void run('loading', () =>
+      loadRemoteAccessSnapshot(setSnapshot, () => mountedRef.current)
+    ).finally(() => {
+      initialLoadRetryRef.current = false
+    })
+  }
+
   const approve = (requestId: string, decision: RemotePairingDecision): void => {
     void run(`approve:${requestId}`, () => window.api.remoteAccess.approve({ requestId, decision }))
   }
 
   const copyUrl = async (): Promise<void> => {
     if (!snapshot?.accessUrl) return
-    await navigator.clipboard.writeText(snapshot.accessUrl)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1_500)
+    if (copyResetTimerRef.current !== undefined) {
+      window.clearTimeout(copyResetTimerRef.current)
+    }
+    setCopyStatus('idle')
+
+    try {
+      await navigator.clipboard.writeText(snapshot.accessUrl)
+      if (!mountedRef.current) return
+      setCopyStatus('copied')
+      copyResetTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current) setCopyStatus('idle')
+      }, 1_500)
+    } catch {
+      if (mountedRef.current) setCopyStatus('error')
+    }
   }
 
   if (!snapshot) {
+    if (actionError) {
+      return (
+        <div className="p-5" data-testid="remote-control-load-error">
+          <div
+            className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">Remote access couldn&apos;t be loaded.</div>
+              <div className="mt-1 break-words text-xs">{actionError}</div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                disabled={busy !== null}
+                onClick={retryInitialLoad}
+              >
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                Try again
+              </Button>
+            </div>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground">
         <LoaderCircle className="mr-2 size-4 animate-spin" aria-hidden="true" />
@@ -199,7 +282,8 @@ export const RemoteControlPanel = (): React.JSX.Element => {
       variant="outline"
       size="sm"
       disabled={busy !== null}
-      onClick={() => {
+      onClick={(event) => {
+        operationTriggerRef.current = event.currentTarget
         setBusy('detect')
         void refresh(true)
       }}
@@ -215,32 +299,37 @@ export const RemoteControlPanel = (): React.JSX.Element => {
 
   return (
     <div className="space-y-5 p-5" data-testid="remote-control-panel">
-      {blockingRemoteOperation
-        ? createPortal(
-            <div
-              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-6"
-              data-testid="remote-access-operation-overlay"
-              role="status"
-              aria-busy="true"
-              aria-live="assertive"
-            >
-              <div className="flex max-w-sm items-center gap-3 rounded-xl border border-border bg-background px-5 py-4 text-foreground shadow-dialog">
-                <LoaderCircle className="size-5 shrink-0 animate-spin text-primary" aria-hidden />
-                <div>
-                  <div className="text-sm font-medium">
-                    {detectingAndRepairing
-                      ? 'Checking and setting up remote access…'
-                      : 'Applying remote access settings…'}
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    Waiting for the system command to finish.
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      <Dialog.Root open={blockingRemoteOperation}>
+        <Dialog.Portal>
+          <Dialog.Overlay
+            className={cn(dialogOverlayClassName, 'z-[100] bg-black/45')}
+            data-testid="remote-access-operation-scrim"
+          />
+          <Dialog.Content
+            className={dialogPanelClassName(
+              'z-[100] flex w-[min(384px,calc(100vw-3rem))] max-w-sm items-center gap-3 px-5 py-4'
+            )}
+            onEscapeKeyDown={(event) => event.preventDefault()}
+            onInteractOutside={(event) => event.preventDefault()}
+            aria-modal="true"
+            aria-busy="true"
+            aria-live="assertive"
+            data-testid="remote-access-operation-overlay"
+          >
+            <LoaderCircle className="size-5 shrink-0 animate-spin text-primary" aria-hidden />
+            <div>
+              <Dialog.Title className={dialogTitleClassName}>
+                {detectingAndRepairing
+                  ? 'Checking and setting up remote access…'
+                  : 'Applying remote access settings…'}
+              </Dialog.Title>
+              <Dialog.Description className={cn(dialogDescriptionClassName, 'mt-1 text-xs')}>
+                Waiting for the system command to finish.
+              </Dialog.Description>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <SettingsSection
         className="relative"
@@ -306,7 +395,10 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                   aria-label={option.title}
                   checked={selected}
                   disabled={disabled}
-                  onChange={selectMode}
+                  onChange={(event) => {
+                    operationTriggerRef.current = event.currentTarget
+                    selectMode()
+                  }}
                   className="peer sr-only"
                 />
                 <div className="flex min-w-0 items-center gap-2">
@@ -439,7 +531,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                             onClick={() => void copyUrl()}
                           >
                             <Copy className="size-3.5" aria-hidden="true" />
-                            {copied ? 'Copied' : 'Copy'}
+                            {copyStatus === 'copied' ? 'Copied' : 'Copy'}
                           </Button>
                           <Button type="button" variant="outline" size="sm" asChild>
                             <a href={snapshot.accessUrl} target="_blank" rel="noreferrer">
@@ -452,6 +544,24 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       <div className="mt-1 break-all font-mono text-xs text-muted-foreground">
                         {snapshot.accessUrl}
                       </div>
+                      {copyStatus === 'error' ? (
+                        <div
+                          role="alert"
+                          className="mt-2 text-xs text-destructive"
+                          data-testid="remote-link-copy-error"
+                        >
+                          Could not copy the browser link. Select it and copy it manually.
+                        </div>
+                      ) : null}
+                      <span
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="sr-only"
+                        data-testid="remote-link-copy-status"
+                      >
+                        {copyStatus === 'copied' ? 'Browser link copied.' : ''}
+                      </span>
                     </div>
                   </div>
                   <BrowserAccessSteps />
@@ -508,21 +618,17 @@ export const RemoteControlPanel = (): React.JSX.Element => {
                       Last used {timeLabel(browser.lastSeenAt)}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
+                  <SettingsIconAction
+                    label={`Revoke ${browser.browser}`}
+                    icon={Trash2}
+                    danger
                     disabled={busy !== null}
                     onClick={() =>
                       void run(`revoke:${browser.id}`, () =>
                         window.api.remoteAccess.revokeBrowser({ browserId: browser.id })
                       )
                     }
-                    aria-label={`Revoke ${browser.browser}`}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="size-4" aria-hidden="true" />
-                  </Button>
+                  />
                 </div>
               ))}
             </div>

@@ -1,11 +1,17 @@
 import type { ComputeApprovalDecision, DeleteComputeHostRequest } from '../../shared/compute'
+import {
+  LIFECYCLE_CHANNELS,
+  MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
+} from '../../shared/lifecycle-events'
 import { encodeRemoteFsError, type SerializableRemoteFsError } from '../../shared/remote-fs'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
+import type { ApplicationEventPublisher } from '../application-events'
 import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
 import type { ComputeHandlers } from './ipc'
 
@@ -38,7 +44,7 @@ type ComputeBookmarksOwner = Readonly<{
 
 type ComputeEnabledHostsOwner = Readonly<{
   get(sessionId: string): string[]
-  set(sessionId: string, providerIds: string[]): void
+  set(sessionId: string, providerIds: readonly string[]): Promise<PersistedChatSession>
 }>
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -195,6 +201,7 @@ type ComputeApplicationCommandDependencies = Readonly<{
   compute: ComputeCommandOwner
   bookmarks: ComputeBookmarksOwner
   enabledHosts: ComputeEnabledHostsOwner
+  events: ApplicationEventPublisher
 }>
 
 const withSerializedRemoteFsError = async <Result>(
@@ -266,7 +273,18 @@ const registerComputeApplicationCommands = (
       'compute:jobs:mark-consumed': ({ args }) =>
         dependencies.compute.jobsMarkConsumed(args[0], args[1]),
       'compute:enabled-hosts:get': ({ args }) => dependencies.enabledHosts.get(args[0]),
-      'compute:enabled-hosts:set': ({ args }) => dependencies.enabledHosts.set(args[0], args[1]),
+      'compute:enabled-hosts:set': async ({ args }) => {
+        const session = await dependencies.enabledHosts.set(args[0], args[1])
+        try {
+          dependencies.events.publish(LIFECYCLE_CHANNELS.sessionUpdated, {
+            session,
+            originClientId: MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
+          })
+        } catch {
+          // Lifecycle delivery cannot roll back committed Session authority.
+        }
+        return session
+      },
       'compute:bookmarks:get': ({ args }) => dependencies.bookmarks.get(args[0]),
       'compute:bookmarks:set': ({ args }) => dependencies.bookmarks.set(args[0], args[1])
     })

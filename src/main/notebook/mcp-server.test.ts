@@ -27,7 +27,9 @@ import {
   compactRuntimeBindingResult,
   compactShutdownResult,
   compactRestartResult,
+  createNotebookMcpEnvironmentFromProcess,
   createNotebookMcpServerConfig,
+  resolveNotebookRpcFetch,
   serializeNotebookToolResult
 } from './mcp-server'
 
@@ -53,11 +55,34 @@ describe('notebook MCP server config', () => {
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: 'http://127.0.0.1:4567' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
+        { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: 'session-1' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' }
       ]
     })
+  })
+
+  it('accepts legacy projectName but rejects conflicting project environment values', () => {
+    const base = {
+      OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://127.0.0.1:4567',
+      OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: 'secret-token',
+      OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-1',
+      OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: '/workspace'
+    }
+    expect(
+      createNotebookMcpEnvironmentFromProcess({
+        ...base,
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'legacy-project-id'
+      }).projectId
+    ).toBe('legacy-project-id')
+    expect(() =>
+      createNotebookMcpEnvironmentFromProcess({
+        ...base,
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'project-1',
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'renamed-project'
+      })
+    ).toThrow('Conflicting projectId and legacy projectName values.')
   })
 
   it('passes the Windows named-pipe path to the notebook MCP process', () => {
@@ -122,7 +147,7 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/do not prefetch.*topics/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Delegate agents should use the same catalog')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('unavailable root-only topics remain visible')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_frame_message(')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.sendFrameMessage(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_message(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('{task')
 
@@ -303,6 +328,14 @@ describe('notebook_execute tool', () => {
     })
   })
 
+  it('does not expose a hidden execution deadline to the agent', () => {
+    expect(tool).toBeDefined()
+    expect(Object.keys(tool?.inputSchema ?? {})).not.toContain('timeoutMs')
+
+    const schema = z.object(tool?.inputSchema ?? {})
+    expect(schema.parse({ code: 'print(1)', timeoutMs: 5 })).toEqual({ code: 'print(1)' })
+  })
+
   it('forwards the selected language straight through to the execute RPC call', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
@@ -314,28 +347,71 @@ describe('notebook_execute tool', () => {
     // The MCP tool handler passes schema-validated input straight to callNotebookRpc as the
     // RPC params, so asserting the call helper forwards `language` covers the handler wiring.
     const fetchCalls: Array<{ body: string }> = []
-    const originalFetch = globalThis.fetch
-    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const fetchRpc = async (_environment: unknown, init: RequestInit): Promise<Response> => {
       fetchCalls.push({ body: String(init?.body ?? '') })
       return {
         ok: true,
         json: async () => ({ result: { ok: true } })
       } as Response
-    }) as typeof fetch
-
-    try {
-      const result = await callNotebookRpc(environment, 'execute', {
-        code: '1 + 1',
-        language: 'r'
-      })
-
-      expect(result).toEqual({ ok: true })
-      expect(fetchCalls).toHaveLength(1)
-      const sentBody = JSON.parse(fetchCalls[0].body) as { params: { language?: string } }
-      expect(sentBody.params.language).toBe('r')
-    } finally {
-      globalThis.fetch = originalFetch
     }
+
+    const result = await callNotebookRpc(
+      environment,
+      'execute',
+      {
+        code: '1 + 1',
+        language: 'r',
+        projectId: 'forged-project',
+        sessionId: 'forged-session'
+      },
+      fetchRpc
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(fetchCalls).toHaveLength(1)
+    const sentBody = JSON.parse(fetchCalls[0].body) as {
+      params: { language?: string; projectId?: string; sessionId?: string }
+    }
+    expect(sentBody.params.language).toBe('r')
+    expect(sentBody.params.projectId).toBe('default-project')
+    expect(sentBody.params.sessionId).toBe('session-1')
+  })
+
+  it.each([
+    ['execute', true],
+    ['executeControl', false],
+    ['executeShell', false],
+    ['state', true]
+  ] as const)(
+    'forwards MCP cancellation for %s only when the RPC consumes it',
+    async (method, forwards) => {
+      const environment = {
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'secret-token',
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      }
+      const cancellation = new AbortController()
+      let forwardedSignal: AbortSignal | null | undefined
+      const fetchRpc = async (_environment: unknown, init: RequestInit): Promise<Response> => {
+        forwardedSignal = init.signal
+        return {
+          ok: true,
+          json: async () => ({ result: { ok: true } })
+        } as Response
+      }
+
+      await callNotebookRpc(environment, method, { code: '1 + 1' }, fetchRpc, cancellation.signal)
+
+      expect(forwardedSignal).toBe(forwards ? cancellation.signal : undefined)
+    }
+  )
+
+  it('uses the unbounded transport only for Python/R execution', () => {
+    expect(resolveNotebookRpcFetch('execute').name).toBe('fetchLongLivedLocalRpc')
+    expect(resolveNotebookRpcFetch('state').name).toBe('fetchLocalRpc')
+    expect(resolveNotebookRpcFetch('executeControl').name).toBe('fetchLocalRpc')
   })
 })
 
@@ -385,7 +461,7 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('field descriptions')
     expect(tool?.description).toMatch(/do not prefetch.*topics/i)
     expect(tool?.description).toContain('Delegate agents should use the same catalog')
-    expect(tool?.description).not.toContain('host.send_frame_message(')
+    expect(tool?.description).not.toContain('host.sendFrameMessage(')
     expect(tool?.description).not.toContain('host.send_message(')
   })
 

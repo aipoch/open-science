@@ -134,21 +134,25 @@ class NotebookExecutionOwner {
   }
   async executeDataCell(
     session: NotebookSessionAggregate,
-    request: RunNotebookCellRequest
+    request: RunNotebookCellRequest,
+    signal?: AbortSignal
   ): Promise<NotebookRunRecord> {
     const cell = session.cellView(request.cellId)
     if (session.isCellReceiving(cell.id)) {
       throw new Error(`Notebook cell is still receiving code: ${cell.id}`)
     }
     const route = this.options.dataExecutionAdmission.route(session, cell.language)
-    return session.enqueueExecution(route.processKey, () =>
-      this.executeDataCellExclusive(session, cell, request)
+    return session.enqueueExecution(
+      route.processKey,
+      () => this.executeDataCellExclusive(session, cell, request, signal),
+      signal
     )
   }
   private async executeDataCellExclusive(
     session: NotebookSessionAggregate,
     cell: Readonly<NotebookCell>,
-    request: RunNotebookCellRequest
+    request: RunNotebookCellRequest,
+    signal?: AbortSignal
   ): Promise<NotebookRunRecord> {
     this.options.notifyAvailable(session, request.source ?? 'agent')
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
@@ -161,6 +165,9 @@ class NotebookExecutionOwner {
     session.markCellRunning(cell.id, runId, executionCount)
     const runningRun: NotebookRunRecord = {
       runId,
+      ...(request.executionInvocationId
+        ? { executionInvocationId: request.executionInvocationId }
+        : {}),
       cellId: cell.id,
       source: request.source ?? 'agent',
       inputKind: request.inputKind ?? 'cell',
@@ -226,6 +233,7 @@ class NotebookExecutionOwner {
               runtimeRoot: session.runtimeRoot,
               protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
               timeoutMs: request.timeoutMs,
+              signal,
               resolvedInterpreter,
               inputRunLeaseId: request.inputRunLeaseId
             })
@@ -267,7 +275,7 @@ class NotebookExecutionOwner {
             }
           }
         }),
-      postCommit: (result) => {
+      settleLive: (result) => {
         session.completeCellRun(cell.id, result.status, result.cwdAfter ?? cwdBefore)
       }
     })
@@ -337,6 +345,9 @@ class NotebookExecutionOwner {
     this.options.notifyAvailable(session, 'agent')
     const runningRun: NotebookRunRecord = {
       runId,
+      ...(request.executionInvocationId
+        ? { executionInvocationId: request.executionInvocationId }
+        : {}),
       cellId: `repl-${runId}`,
       source: 'agent',
       inputKind: 'cell',
@@ -416,7 +427,7 @@ class NotebookExecutionOwner {
                   mcpRpcSocketPath: mcpRpc?.socketPath,
                   mcpRpcToken: mcpRpc?.token,
                   sessionId: session.sessionId,
-                  projectName: session.projectName,
+                  projectId: session.projectId,
                   inputRunLeaseId: request.inputRunLeaseId,
                   controlInvocationId: runId
                 })
@@ -449,6 +460,9 @@ class NotebookExecutionOwner {
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
     const runningRun: NotebookRunRecord = {
       runId,
+      ...(request.executionInvocationId
+        ? { executionInvocationId: request.executionInvocationId }
+        : {}),
       cellId: `bash-${runId}`,
       source: 'agent',
       inputKind: 'cell',
@@ -534,7 +548,7 @@ class NotebookExecutionOwner {
     session.setKernelStatus('repl', status)
     try {
       await this.options.repository.updateKernelStatus({
-        projectName: session.projectName,
+        projectName: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
         status

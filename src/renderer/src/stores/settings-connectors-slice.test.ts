@@ -27,6 +27,7 @@ const connector = (
   { enabled = true, autoAllow = false }: { enabled?: boolean; autoAllow?: boolean } = {}
 ): ConnectorView => ({
   id,
+  name: id,
   displayName: id,
   description: `${id} description`,
   sources: [],

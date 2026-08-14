@@ -43,7 +43,9 @@ const computePaths = {
   concurrencyManager: resolve(mainRoot, 'compute/concurrency-manager.ts'),
   jobDispatcher: resolve(mainRoot, 'compute/job-dispatcher.ts'),
   jobPoller: resolve(mainRoot, 'compute/job-poller.ts'),
+  sessionEnabledHostsOwner: resolve(mainRoot, 'compute/session-enabled-hosts-owner.ts'),
   ipc: resolve(mainRoot, 'compute/ipc.ts'),
+  electronIpcAdapter: resolve(mainRoot, 'compute/electron-ipc-adapter.ts'),
   mainIpc: resolve(mainRoot, 'ipc.ts'),
   applicationCommands: resolve(mainRoot, 'compute/application-commands.ts'),
   jobRuntime: resolve(mainRoot, 'compute/job-runtime.ts'),
@@ -213,6 +215,7 @@ describe('Compute service architecture', () => {
         portableProjectPath(ownerPath)
       ).toBeLessThanOrEqual(660)
     }
+    expect(rawLineCount(readSource(computePaths.sessionEnabledHostsOwner))).toBeLessThanOrEqual(660)
     for (const lifecyclePath of lifecyclePaths) {
       expect(
         rawLineCount(readSource(lifecyclePath)),
@@ -220,6 +223,7 @@ describe('Compute service architecture', () => {
       ).toBeLessThanOrEqual(660)
     }
     expect(rawLineCount(readSource(computePaths.ipc))).toBeLessThanOrEqual(660)
+    expect(rawLineCount(readSource(computePaths.electronIpcAdapter))).toBeLessThanOrEqual(660)
   })
 
   it('keeps lifecycle state ownership behind the narrow intent interface', () => {
@@ -491,18 +495,22 @@ describe('Compute service architecture', () => {
       'src/main/compute/job-dispatcher.ts',
       'src/main/compute/job-poller.ts',
       'src/main/compute/job-repository.ts',
+      'src/main/compute/enabled-hosts-registry.ts',
+      'src/main/compute/session-enabled-hosts-owner.ts',
       'src/main/compute/permission-grant-adapter.ts',
       'src/main/compute/compute-service.ts'
     ])
     expect(computeService.interfacePaths).toEqual([
       'src/main/compute/compute-service.ts',
-      'src/main/compute/ipc.ts'
+      'src/main/compute/ipc.ts',
+      'src/main/compute/electron-ipc-adapter.ts'
     ])
     expect(computeService.testFiles.owner).toEqual(
       expect.arrayContaining([
         architectureTestPath,
         'src/main/compute/compute-job-lifecycle.test.ts',
         'src/main/compute/job-deletion-owner.test.ts',
+        'src/main/compute/session-enabled-hosts-owner.test.ts',
         'src/main/compute/compute-host-profile-owner.test.ts',
         'src/main/compute/compute-job-workflow-owner.test.ts',
         'src/main/compute/compute-remote-operation-owner.test.ts',

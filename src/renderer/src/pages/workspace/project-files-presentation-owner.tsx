@@ -153,7 +153,7 @@ const FileActionButtons = ({
             <ArrowUpRight aria-hidden="true" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Open in split view beside the session</TooltipContent>
+        <TooltipContent>{`Open ${name} in split view beside the session`}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   </div>

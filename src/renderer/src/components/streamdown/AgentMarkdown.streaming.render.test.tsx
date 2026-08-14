@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { AgentMarkdown } from './AgentMarkdown'
+import { AgentMarkdown, PresentedAgentMarkdown } from './AgentMarkdown'
 
 describe('AgentMarkdown streaming presentation', () => {
   let container: HTMLDivElement
@@ -44,5 +44,40 @@ describe('AgentMarkdown streaming presentation', () => {
     const visible = container.querySelector('.agent-markdown')?.textContent ?? ''
     expect(visible.length).toBeGreaterThan(0)
     expect(visible.length).toBeLessThan(70)
+  })
+
+  it('keeps completed Markdown blocks mounted when streaming settles', async () => {
+    vi.useRealTimers()
+
+    const content = Array.from(
+      { length: 40 },
+      (_, index) => `Paragraph ${index + 1} with **formatted content**.`
+    ).join('\n\n')
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} isAnimating />)
+    })
+
+    const firstParagraph = container.querySelector('p')
+    expect(firstParagraph).not.toBeNull()
+
+    const createElement = document.createElement.bind(document) as typeof document.createElement
+    let createdParagraphs = 0
+    vi.spyOn(document, 'createElement').mockImplementation(((
+      tagName: string,
+      options?: ElementCreationOptions
+    ) => {
+      if (tagName === 'p') {
+        createdParagraphs += 1
+      }
+      return createElement(tagName, options)
+    }) as typeof document.createElement)
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} />)
+    })
+
+    expect(createdParagraphs).toBe(0)
+    expect(container.querySelector('p')).toBe(firstParagraph)
   })
 })

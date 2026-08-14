@@ -58,7 +58,7 @@ const warning = (
   })
 }
 
-const parseOptionalIdList = (
+const parseOptionalNameList = (
   value: Record<string, unknown>,
   field: 'skillIds' | 'connectorIds',
   diagnostics: PackageDiagnostic[]
@@ -68,25 +68,25 @@ const parseOptionalIdList = (
     warning(
       diagnostics,
       `specialist.${field}-invalid`,
-      `${field} must be an array of IDs; the invalid value was ignored.`,
+      `${field} must be an array of names; the invalid value was ignored.`,
       'specialist.json'
     )
     return []
   }
-  const ids: string[] = []
+  const names: string[] = []
   for (const item of value[field]) {
     if (typeof item !== 'string' || !item.trim()) {
       warning(
         diagnostics,
         `specialist.${field}-entry-invalid`,
-        `${field} may contain only non-empty string IDs; the invalid entry was ignored.`,
+        `${field} may contain only non-empty string names; the invalid entry was ignored.`,
         'specialist.json'
       )
       continue
     }
-    if (!ids.includes(item)) ids.push(item)
+    if (!names.includes(item)) names.push(item)
   }
-  return ids
+  return names
 }
 
 const parseJson = (
@@ -302,8 +302,8 @@ const parsePayload = (
       'specialist.json'
     )
   }
-  const skillIds = parseOptionalIdList(value, 'skillIds', diagnostics)
-  const connectorIds = parseOptionalIdList(value, 'connectorIds', diagnostics)
+  const skillIds = parseOptionalNameList(value, 'skillIds', diagnostics)
+  const connectorIds = parseOptionalNameList(value, 'connectorIds', diagnostics)
   if (
     !name ||
     description === undefined ||
@@ -418,7 +418,7 @@ const planBundledSkills = (
       warning(
         diagnostics,
         'skill.path-noncanonical',
-        'Bundled Skill files must use skills/<skill-id>/<file>.',
+        'Bundled Skill files must use skills/<skill-name>/<file>.',
         file.path
       )
       continue
@@ -433,7 +433,7 @@ const planBundledSkills = (
       warning(
         diagnostics,
         'skill.id-invalid',
-        'Bundled Skill directory names must be safe canonical Skill IDs.',
+        'Bundled Skill directory names must be safe canonical Skill names.',
         root,
         id
       )
@@ -476,7 +476,7 @@ const planBundledSkills = (
       warning(
         diagnostics,
         'skill.name-mismatch',
-        'SKILL.md frontmatter name must exactly match its directory Skill ID.',
+        'SKILL.md frontmatter name must exactly match its directory Skill name.',
         `${root}/SKILL.md`,
         id
       )
@@ -504,7 +504,7 @@ const planBundledSkills = (
     }
     const version = declaredVersion ?? DEFAULT_BUNDLED_SKILL_VERSION
     const contentHash = filesContentHash(files)
-    const existing = catalog.skills.find((skill) => skill.id === id)
+    const existing = catalog.skills.find((skill) => (skill.name ?? skill.id) === id)
     let disposition: SpecialistPackageSkillPlan['disposition'] = 'install'
     let reason: string | undefined
     if (existing) {
@@ -526,6 +526,7 @@ const planBundledSkills = (
     }
     plans.push({
       id,
+      localId: existing?.id ?? `personal-${id}`,
       version,
       disposition,
       files: files.map((file) => file.path),
@@ -672,36 +673,57 @@ export const validateSpecialistPackage = (
 
   const skillPlans = planBundledSkills(packageFiles, catalog, diagnostics)
   const bundledSkillIds = skillPlans.map((skill) => skill.id)
+  const bundledSkillLocalIdByName = new Map(
+    skillPlans.map((skill) => [skill.id, skill.localId ?? skill.id] as const)
+  )
+  const skillIdByName = new Map(
+    catalog.skills.map((skill) => [skill.name ?? skill.id, skill.id] as const)
+  )
   const catalogSkillIds = new Set(catalog.skills.map((skill) => skill.id))
   const declaredSkillIds = [...new Set(payload?.skillIds ?? [])]
   const skillIds = [
     ...new Set(
-      [...declaredSkillIds, ...bundledSkillIds].filter((id) => {
-        if (catalogSkillIds.has(id) || bundledSkillIds.includes(id)) return true
+      [...declaredSkillIds, ...bundledSkillIds].flatMap((name) => {
+        const localId = skillIdByName.get(name) ?? (catalogSkillIds.has(name) ? name : undefined)
+        const bundledLocalId = bundledSkillLocalIdByName.get(name)
+        if (localId || bundledLocalId) return [localId ?? bundledLocalId!]
         warning(
           diagnostics,
           'specialist.skill-unavailable',
           'The referenced Skill is not available on this installation and was ignored.',
           'specialist.json',
-          id
+          name
         )
-        return false
+        return []
       })
     )
   ]
+  const connectorIdByName = new Map<string, string>()
+  for (const id of catalog.connectorIds) {
+    // Accept legacy/local package references without changing the portable export contract. Custom
+    // Connector UUIDs remain local IDs after validation; current packages still export `name`.
+    connectorIdByName.set(id, id)
+    connectorIdByName.set(catalog.connectorAliases?.[id] ?? id, id)
+  }
+  for (const [legacyAlias, localId] of Object.entries(catalog.connectorAliases ?? {})) {
+    if (catalog.connectorIds.includes(localId)) connectorIdByName.set(legacyAlias, localId)
+  }
   const connectorIds = [
-    ...new Set((payload?.connectorIds ?? []).map((id) => catalog.connectorAliases?.[id] ?? id))
-  ].filter((id) => {
-    if (catalog.connectorIds.includes(id)) return true
-    warning(
-      diagnostics,
-      'specialist.connector-unavailable',
-      'The referenced Connector is not available on this installation and was ignored.',
-      'specialist.json',
-      id
+    ...new Set(
+      [...new Set(payload?.connectorIds ?? [])].flatMap((name) => {
+        const id = connectorIdByName.get(name)
+        if (id) return [id]
+        warning(
+          diagnostics,
+          'specialist.connector-unavailable',
+          'The referenced Connector is not available on this installation and was ignored.',
+          'specialist.json',
+          name
+        )
+        return []
+      })
     )
-    return false
-  })
+  ]
   const builtinSkillIds = skillIds.filter((id) =>
     catalog.skills.some((skill) => skill.id === id && skill.builtin)
   )

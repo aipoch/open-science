@@ -713,13 +713,13 @@ describe('ACP session capability owner', () => {
   })
 
   it.each([
-    ['claude-code', claudeCodeFramework, true, false],
-    ['opencode', opencodeFramework, true, false],
-    ['codex-response', codexFramework, true, false],
-    ['codex-bridge', codexFramework, false, true]
+    ['claude-code', claudeCodeFramework, true, false, 'open-science-notebook'],
+    ['opencode', opencodeFramework, true, false, 'open_science_notebook'],
+    ['codex-response', codexFramework, true, false, 'open-science-notebook'],
+    ['codex-bridge', codexFramework, false, true, 'open-science-notebook']
   ] as const)(
-    'publishes Host Lineage, Frames, and LLM through the %s primary control descriptor',
-    async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled) => {
+    'publishes the shared Host control plane through the %s primary descriptor',
+    async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled, notebookServerName) => {
       const owner = createOwner()
       const built = await owner.provision({
         stableAppSessionId: 'session-1',
@@ -732,11 +732,18 @@ describe('ACP session capability owner', () => {
       })
 
       expect(built.descriptor.controlRpcMethods).toEqual(
-        expect.arrayContaining(['capabilitiesCall', 'lineageCall', 'framesCall', 'llmCall'])
+        expect.arrayContaining([
+          'capabilitiesCall',
+          'lineageCall',
+          'skillsCall',
+          'framesCall',
+          'llmCall'
+        ])
       )
       expect(built.descriptor.capabilities).toEqual(
-        expect.arrayContaining(['host-frames', 'host-llm'])
+        expect.arrayContaining(['notebook', 'host-skills', 'host-frames', 'host-llm'])
       )
+      expect(built.descriptor.modelFacingMcpServerNames).toContain(notebookServerName)
     }
   )
 

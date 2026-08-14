@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ChatMessage, ToolActivity } from '@/stores/session-store'
+import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ConversationItem } from './workspace-conversation-items'
 import {
   formatActivityGroupElapsed,
+  formatActivityGroupPresentationTitle,
   formatActivityGroupTitle,
   formatStepCount,
   getActivityGroupElapsedMs,
@@ -255,9 +257,17 @@ describe('formatActivityGroupTitle', () => {
   it('categorizes representative tools through the header clause', () => {
     const cases: Array<[Partial<ToolActivity>, string]> = [
       [{ providerToolName: 'websearch' }, 'Ran a search'],
-      [{ providerToolName: 'mcp__open-science-notebook__notebook_execute' }, 'Ran a notebook cell'],
+      [
+        { providerToolName: 'mcp__open-science-notebook__notebook_execute' },
+        'Completed a Notebook run'
+      ],
       // Codex/gpt bridge underscore-sanitizes the server name; still categorized as a notebook cell.
-      [{ providerToolName: 'mcp__open_science_notebook__notebook_execute' }, 'Ran a notebook cell'],
+      [
+        { providerToolName: 'mcp__open_science_notebook__notebook_execute' },
+        'Completed a Notebook run'
+      ],
+      // OpenCode flattens the server/tool boundary to a single underscore.
+      [{ providerToolName: 'open-science-notebook_notebook_execute' }, 'Completed a Notebook run'],
       [{ providerToolName: 'skill' }, 'Loaded a skill'],
       [{ providerToolName: 'save_artifacts' }, 'Saved a file'],
       [{ providerToolName: 'manage_packages' }, 'Managed an environment'],
@@ -273,6 +283,90 @@ describe('formatActivityGroupTitle', () => {
     for (const [overrides, expected] of cases) {
       expect(formatActivityGroupTitle([createActivity(overrides)])).toBe(expected)
     }
+  })
+})
+
+describe('formatActivityGroupPresentationTitle', () => {
+  const notebook = (overrides: Partial<ToolActivity> = {}): ToolActivity =>
+    createActivity({
+      status: 'in_progress',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      promptMessageId: 'prompt-1',
+      ...overrides
+    })
+
+  it('separates prepared and waiting Notebook headers without inferring execution', () => {
+    expect(formatActivityGroupPresentationTitle([notebook()], undefined, undefined)).toBe(
+      'Notebook code shown'
+    )
+    expect(
+      formatActivityGroupPresentationTitle([notebook()], undefined, {
+        state: 'pending',
+        request: {
+          requestId: 'permission-1',
+          sessionId: 'session-1',
+          toolCallId: 'tool-1',
+          title: 'Run code',
+          options: []
+        },
+        originatingPromptMessageId: 'prompt-1',
+        fingerprint: 'fingerprint-1',
+        createdAt: 1
+      })
+    ).toBe('Waiting for your approval')
+  })
+
+  it.each([
+    ['timeout', 'Execution limit reached for Notebook run'],
+    ['cancelled', 'Cancelled Notebook run'],
+    ['interrupted', 'Interrupted Notebook run'],
+    ['failed', 'Failed Notebook run']
+  ] as const)('preserves the correlated Notebook %s group outcome', (status, expected) => {
+    const notebookActivity = notebook({ executionInvocationId: 'invocation-1' })
+    const notebookRun: NotebookRunRecord = {
+      runId: 'run-1',
+      executionInvocationId: 'invocation-1',
+      cellId: 'cell-1',
+      source: 'agent',
+      kernelKind: 'python',
+      script: 'print(1)',
+      status,
+      startedAt: 1,
+      endedAt: 2,
+      text: { stdout: '', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      artifacts: [],
+      workingFiles: []
+    }
+
+    expect(
+      formatActivityGroupPresentationTitle(
+        [notebookActivity],
+        undefined,
+        undefined,
+        new Map([['run-1', notebookRun]])
+      )
+    ).toBe(expected)
+  })
+
+  it('leaves non-Notebook group titles unchanged', () => {
+    expect(
+      formatActivityGroupPresentationTitle(
+        [createActivity({ toolKind: 'read' })],
+        undefined,
+        undefined
+      )
+    ).toBe('Read a file')
+  })
+
+  it('does not describe a closed ordinary tool request as executed', () => {
+    expect(
+      formatActivityGroupPresentationTitle(
+        [createActivity({ status: 'in_progress', toolDisposition: 'permission-closed' })],
+        undefined,
+        undefined
+      )
+    ).toBe('Tool request ended')
   })
 })
 
@@ -334,6 +428,18 @@ describe('formatStepCount', () => {
     expect(formatStepCount([createActivity({ id: 's1' }), createActivity({ id: 's2' })])).toBe(
       '2 steps'
     )
+  })
+
+  it('does not count a closed Notebook permission as an execution failure', () => {
+    expect(
+      formatStepCount([
+        createActivity({
+          status: 'failed',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute',
+          toolDisposition: 'permission-closed'
+        })
+      ])
+    ).toBe('1 step')
   })
 })
 

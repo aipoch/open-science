@@ -2,6 +2,7 @@
 /* Hallmark · component: context-window dialog · genre: modern-minimal · theme: product tokens · contrast: pass (40–41) · mobile: pass (34, 49, 50–57) */
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogHeaderClassName,
@@ -462,7 +463,7 @@ const ContextWindowDialog = ({
             contentRef.current?.focus()
           }}
           className={dialogPanelClassName(
-            'flex max-h-[min(760px,calc(100dvh-1.5rem))] w-[min(940px,calc(100vw-1.5rem))] flex-col overflow-hidden'
+            'flex max-h-[min(760px,calc(100dvh-1.5rem))] w-[min(940px,calc(100vw-1.5rem))] flex-col overflow-hidden p-0'
           )}
         >
           <div className={dialogHeaderClassName} data-slot="context-window-dialog-header">
@@ -489,7 +490,10 @@ const ContextWindowDialog = ({
             </Dialog.Close>
           </div>
 
-          <div className="mt-5 min-h-0 flex-1 overflow-y-auto">
+          <div
+            className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto`}
+            data-slot="context-window-dialog-body"
+          >
             {points.length === 0 ? (
               <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
                 <div className="max-w-sm">

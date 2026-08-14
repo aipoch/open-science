@@ -728,9 +728,10 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
 
   const status = summary && typeof summary.status === 'string' ? summary.status : undefined
 
-  // Derive display name from language: python/r are cells, javascript (repl) is Agent SDK, bash is shell.
+  // Derive display name from language: python/r are Notebook runs, javascript (repl) is Agent SDK,
+  // and bash is shell.
   const displayName =
-    language === 'javascript' ? 'Agent SDK' : language === 'bash' ? 'Shell' : 'Notebook cell'
+    language === 'javascript' ? 'Agent SDK' : language === 'bash' ? 'Shell' : 'Notebook run'
 
   return {
     displayName,

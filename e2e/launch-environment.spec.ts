@@ -13,6 +13,7 @@ test('normalizes a Windows-style Path before injecting the fake Agent directory'
   expect(environment.ELECTRON_RENDERER_URL).toBeUndefined()
   expect(environment.OPEN_SCIENCE_E2E_STORAGE_ROOT).toBeUndefined()
   expect(environment.OPEN_SCIENCE_STORAGE_ROOT).toBe('storage-root')
+  expect(environment.OPEN_SCIENCE_E2E_WINDOW_MODE).toBe('hidden')
 })
 
 test('isolates packaged certification storage without changing the process home', () => {
@@ -22,6 +23,12 @@ test('isolates packaged certification storage without changing the process home'
 
   expect(environment.OPEN_SCIENCE_E2E_STORAGE_ROOT).toBe('storage-root')
   expect(environment.OPEN_SCIENCE_STORAGE_ROOT).toBe('storage-root')
+})
+
+test('allows native window-system tests to opt into normal presentation', () => {
+  const environment = launchEnvironment('storage-root', undefined, {}, undefined, 'normal')
+
+  expect(environment.OPEN_SCIENCE_E2E_WINDOW_MODE).toBe('normal')
 })
 
 test('enables the basic password store only for Linux E2E profiles', () => {

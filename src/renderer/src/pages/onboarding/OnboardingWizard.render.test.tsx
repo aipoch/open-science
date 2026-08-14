@@ -10,6 +10,8 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { OnboardingWizard } from './OnboardingWizard'
 import {
   clickButton,
+  DEFAULT_DATA_ROOT,
+  storageInfo,
   fillRequiredProviderFields,
   readyClaudeState,
   resetOnboardingStores,
@@ -56,6 +58,16 @@ const goToLocationStep = async (): Promise<void> => {
 }
 
 describe('OnboardingWizard flow', () => {
+  it('uses a single-column layout before the desktop breakpoint', async () => {
+    readyClaudeState()
+
+    await renderWizard()
+
+    const layout = container.querySelector<HTMLElement>('[data-onboarding-layout="split"]')
+    expect(layout?.className).toContain('grid-cols-1')
+    expect(layout?.className).toContain('md:grid-cols-[240px_minmax(0,1fr)]')
+  })
+
   it('walks all five steps forward in order, tracking progress', async () => {
     readyClaudeState()
 
@@ -204,5 +216,37 @@ describe('OnboardingWizard flow', () => {
     expect(container.textContent).toContain('Disk is full.')
     expect(container.textContent).toContain('/mnt/data/OpenScience')
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+  })
+
+  it('keeps onboarding recoverable when loading storage information rejects', async () => {
+    window.api.storage.getInfo = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Storage is unavailable.'))
+      .mockResolvedValueOnce(storageInfo())
+    readyClaudeState()
+
+    await renderWizard()
+    await goToLocationStep()
+
+    expect(currentSection('Choose data location')).not.toBeNull()
+    expect(container.querySelector('[role="alert"]')).not.toBeNull()
+    expect(container.textContent).toContain('Storage is unavailable.')
+
+    await clickButton(/^retry$/i)
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.textContent).toContain(DEFAULT_DATA_ROOT)
+    expect(window.api.storage.getInfo).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the startup storage loader supplied by App', async () => {
+    const loadStorageInfo = vi.fn().mockResolvedValue(storageInfo())
+    readyClaudeState()
+
+    await act(async () => {
+      root.render(<OnboardingWizard loadStorageInfo={loadStorageInfo} />)
+    })
+
+    expect(loadStorageInfo).toHaveBeenCalledOnce()
+    expect(window.api.storage.getInfo).not.toHaveBeenCalled()
   })
 })

@@ -21,7 +21,7 @@ import { load as loadYaml } from 'js-yaml'
 import {
   UserSkillRepository,
   parseUserSkillId,
-  toSlug,
+  normalizeSkillName,
   frontmatterBlock
 } from './user-skill-repository'
 import { parseFrontmatter } from './frontmatter'
@@ -112,11 +112,17 @@ const buildZip = (inputs: { path: string; content: Buffer }[]): Buffer => {
   return Buffer.concat([localBuf, centralBuf, eocd])
 }
 
-describe('toSlug / parseUserSkillId', () => {
-  it('builds safe slugs and round-trips ids', () => {
-    expect(toSlug('My Skill!')).toBe('my-skill')
-    expect(parseUserSkillId('personal-my-skill')).toEqual({ source: 'personal', slug: 'my-skill' })
-    expect(parseUserSkillId('imported-foo')).toEqual({ source: 'imported', slug: 'foo' })
+describe('normalizeSkillName / parseUserSkillId', () => {
+  it('normalizes imported names and parses the neutral storage directory from user Skill ids', () => {
+    expect(normalizeSkillName('My Skill!')).toBe('my-skill')
+    expect(parseUserSkillId('personal-my-skill')).toEqual({
+      source: 'personal',
+      directoryName: 'my-skill'
+    })
+    expect(parseUserSkillId('imported-foo')).toEqual({
+      source: 'imported',
+      directoryName: 'foo'
+    })
     expect(parseUserSkillId('citation-formatter')).toBeNull()
   })
 })
@@ -412,7 +418,7 @@ describe('UserSkillRepository', () => {
     expect(listed).toHaveLength(1)
     expect(listed[0]).toMatchObject({
       id: 'imported-foo',
-      name: 'Foo',
+      name: 'foo',
       source: 'imported',
       license: 'MIT'
     })
@@ -461,7 +467,7 @@ describe('UserSkillRepository', () => {
 
     const listed = await repo.list()
     expect(listed.map((skill) => skill.id)).toEqual(['imported-bundled'])
-    expect(listed[0]).toMatchObject({ name: 'Bundled', source: 'imported' })
+    expect(listed[0]).toMatchObject({ name: 'bundled', source: 'imported' })
 
     // The wrapper prefix is stripped, so the script lands under references-free root path.
     const script = await readFile(
@@ -472,6 +478,30 @@ describe('UserSkillRepository', () => {
 
     // Same content re-imported is a no-op.
     expect((await repo.importFromZip(zip)).status).toBe('unchanged')
+  })
+
+  it('allocates an imported suffix when a Personal Skill already owns the name', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    await repo.createPersonal({ name: 'bundled', description: 'Personal', body: 'personal' })
+    const zip = buildZip([
+      { path: 'SKILL.md', content: Buffer.from('---\nname: Bundled\n---\nimported') }
+    ])
+
+    await expect(repo.importFromZip(zip)).resolves.toEqual({
+      status: 'imported',
+      id: 'imported-bundled-2'
+    })
+  })
+
+  it('rejects a Personal Skill name already owned by an Imported Skill', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    await repo.importFromZip(
+      buildZip([{ path: 'SKILL.md', content: Buffer.from('---\nname: Shared\n---\nimported') }])
+    )
+
+    await expect(
+      repo.createPersonal({ name: 'shared', description: 'Personal', body: 'personal' })
+    ).rejects.toThrow('A skill named "shared" already exists.')
   })
 
   it('rejects a zip bundle without a SKILL.md', async () => {
@@ -557,7 +587,7 @@ describe('UserSkillRepository', () => {
     // Only Beta was written; Alpha's file must not exist under the imported skill.
     expect((await repo.list()).map((s) => s.id)).toEqual(['imported-beta'])
     const body = await readFile(join(storage, 'skills', 'imported', 'beta', 'SKILL.md'), 'utf8')
-    expect(body).toContain('name: Beta')
+    expect(body).toContain('name: beta')
   })
 
   it('throws on a multi-root bundle when no subPath is given', async () => {
@@ -766,7 +796,7 @@ describe('UserSkillRepository', () => {
       previews.map((p) => ({ subPath: p.subPath }))
     )
     expect(results.map((r) => r.outcome?.status)).toEqual(['imported', 'imported'])
-    expect((await repo.list()).map((s) => s.name).sort()).toEqual(['Alpha', 'Beta'])
+    expect((await repo.list()).map((s) => s.name).sort()).toEqual(['alpha', 'beta'])
   })
 
   it('reports a per-item error in a batch without aborting the other items', async () => {
@@ -779,7 +809,7 @@ describe('UserSkillRepository', () => {
     ])
     expect(results[0].outcome?.status).toBe('imported')
     expect(results[1].error).toMatch(/no skill at/)
-    expect((await repo.list()).map((s) => s.name)).toEqual(['Alpha'])
+    expect((await repo.list()).map((s) => s.name)).toEqual(['alpha'])
   })
 
   it('skips a loose single-skill root that exceeds the per-skill file-count cap', async () => {
@@ -893,7 +923,7 @@ describe('UserSkillRepository', () => {
     expect(preview.name).toBe('Winreader')
     expect(preview.description).toBe('A CRLF bundle.')
 
-    // Import must derive the slug from the name, not fall back to 'imported-skill'.
+    // Import derives the canonical name from frontmatter instead of using a generic fallback.
     expect(await repo.importFromZip(zip)).toEqual({ status: 'imported', id: 'imported-winreader' })
   })
 
@@ -921,13 +951,28 @@ describe('UserSkillRepository', () => {
     expect(exact.replaceableId).toBeUndefined()
   })
 
-  it('does not offer a replace target when two imported skills share the name (ambiguous)', async () => {
+  it('offers the canonical-name match when another imported Skill has a conflict suffix', async () => {
     const repo = new UserSkillRepository(await makeStorage())
     await repo.importFromZip(sharedBundle('v1'))
     await repo.importFromZip(sharedBundle('v2')) // second "Shared" -> imported-shared-2
 
     const [preview] = (await repo.previewZip(sharedBundle('v3'))).previews
-    expect(preview.replaceableId).toBeUndefined()
+    expect(preview.replaceableId).toBe('imported-shared')
+  })
+
+  it('normalizes a multi-word preview name before finding its replace target', async () => {
+    const repo = new UserSkillRepository(await makeStorage())
+    const bundle = (body: string): Buffer =>
+      buildZip([
+        {
+          path: 'pack/SKILL.md',
+          content: Buffer.from(`---\nname: Paper Review\ndescription: d\n---\n${body}`)
+        }
+      ])
+    await repo.importFromZip(bundle('v1'))
+
+    const [preview] = (await repo.previewZip(bundle('v2'))).previews
+    expect(preview.replaceableId).toBe('imported-paper-review')
   })
 
   it('replaces an imported skill in place when given a replaceId', async () => {
@@ -967,7 +1012,7 @@ describe('UserSkillRepository', () => {
 
     const listed = await repo.list()
     expect(listed.map((skill) => skill.id)).toEqual(['imported-foo'])
-    expect(listed[0]).toMatchObject({ name: 'Foo', source: 'imported' })
+    expect(listed[0]).toMatchObject({ name: 'foo', source: 'imported' })
 
     // Re-importing the same URL with identical content is a no-op.
     const again = await repo.importFromGitHub(SKILL_URL, fakeFetch(skillMd))
@@ -1302,10 +1347,10 @@ describe('UserSkillRepository', () => {
     expect(await readdir(importedDir)).toEqual([])
   })
 
-  it('serializes concurrent fresh imports so they get distinct slugs (no clobber)', async () => {
+  it('serializes concurrent fresh imports so they get distinct names (no clobber)', async () => {
     const repo = new UserSkillRepository(await makeStorage())
-    // Two different source URLs whose folder name slugifies to the same base ("foo"). Run at once:
-    // slug allocation + swap share one critical section, so the second is suffixed rather than
+    // Two sources request the same normalized name ("foo"). Name allocation and swap share one
+    // critical section, so the second is suffixed rather than
     // overwriting the first (which would leave both reporting imported-foo).
     const [a, b] = await Promise.all([
       repo.importFromGitHub(
@@ -1325,7 +1370,7 @@ describe('UserSkillRepository', () => {
     ])
   })
 
-  it('restores the newest backup when several exist for one slug', async () => {
+  it('restores the newest backup when several exist for one directory name', async () => {
     const root = await makeStorage()
     const importedDir = join(root, 'skills', 'imported')
     // Two backups for "foo" with different (sortable) generations; the live dir is gone.
@@ -1380,11 +1425,14 @@ describe('UserSkillRepository', () => {
       { path: 'foo/SKILL.md', content: Buffer.from('---\nname: Foo\n---\nbody') }
     ])
     const { id } = await repo.importFromZip(zip)
-    const slug = id.replace(/^imported-/, '')
+    const directoryName = id.replace(/^imported-/, '')
 
     // Crash: the imported skill survives only as a hidden backup.
     const importedDir = join(root, 'skills', 'imported')
-    await rename(join(importedDir, slug), join(importedDir, `.${slug}.backup-crash`))
+    await rename(
+      join(importedDir, directoryName),
+      join(importedDir, `.${directoryName}.backup-crash`)
+    )
 
     // previewZip must recover first, so the same bundle is correctly seen as already imported.
     const restarted = new UserSkillRepository(root)
@@ -1651,11 +1699,11 @@ describe('UserSkillRepository: agent-home import', () => {
     expect(await repo.list()).toEqual([])
   })
 
-  it('throws when the basename is not a safe slug (the SAFE_SLUG guard)', async () => {
+  it('throws when the Agent Home directory name is not a safe external slug', async () => {
     const storage = await makeStorage()
     const repo = new UserSkillRepository(storage)
     const home = await mkdtemp(join(tmpdir(), 'os-import-agent-'))
-    // Create a directory whose name fails the SAFE_SLUG regex.
+    // Create a directory whose name fails the Agent Home slug guard.
     await mkdir(join(home, 'skills', 'has spaces'), { recursive: true })
 
     await expect(
@@ -1708,7 +1756,7 @@ describe('UserSkillRepository: agent-home import', () => {
     const outcome = await repo.importAgentHomeSkill(
       source,
       { source: 'agents', slug: 'alpha' },
-      { fallbackSlugs: ['alpha'] }
+      { fallbackDirectoryNames: ['alpha'] }
     )
 
     expect(outcome).toEqual({ status: 'imported', id: 'imported-alpha-2' })

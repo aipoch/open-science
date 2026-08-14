@@ -19,13 +19,13 @@ import {
 } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import {
-  SAFE_SLUG,
+  SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,
   UserSkillStore,
   assertUsableSkillName,
   frontmatterBlock,
   parseUserSkillId,
-  toSlug,
+  normalizeSkillName,
   type WriteSkillInput
 } from './user-skill-store'
 
@@ -69,8 +69,11 @@ class UserSkillRepository {
   }
 
   // Creates a personal skill whose immutable name is also its package directory name.
-  async createPersonal(input: WriteSkillInput): Promise<string> {
-    return this.store.createPersonal(input)
+  async createPersonal(
+    input: WriteSkillInput,
+    reservedNames: readonly string[] = []
+  ): Promise<string> {
+    return this.store.createPersonal(input, reservedNames)
   }
 
   // Publishes an app-authored draft as a complete Personal Skill package. Unlike the form editor,
@@ -80,10 +83,15 @@ class UserSkillRepository {
   async publishPersonalDirectory(
     name: string,
     sourcePath: string,
-    overwrite = false
+    overwrite = false,
+    reservedNames: readonly string[] = []
   ): Promise<string> {
-    return this.store.publishPersonalDirectory(name, sourcePath, overwrite, (staging) =>
-      this.agentHomeSkills.validatePublishedSkillPackage(staging)
+    return this.store.publishPersonalDirectory(
+      name,
+      sourcePath,
+      overwrite,
+      (staging) => this.agentHomeSkills.validatePublishedSkillPackage(staging),
+      reservedNames
     )
   }
 
@@ -97,8 +105,12 @@ class UserSkillRepository {
     return this.store.delete(id, guard)
   }
 
-  async importFromGitHub(url: string, fetchImpl?: FetchLike): Promise<ImportOutcome> {
-    return this.bundleImports.importFromGitHub(url, fetchImpl)
+  async importFromGitHub(
+    url: string,
+    fetchImpl?: FetchLike,
+    reservedNames: readonly string[] = []
+  ): Promise<ImportOutcome> {
+    return this.bundleImports.importFromGitHub(url, fetchImpl, reservedNames)
   }
 
   async previewGitHubSkill(url: string, fetchImpl?: FetchLike): Promise<ParsedSkillPreview> {
@@ -111,16 +123,17 @@ class UserSkillRepository {
 
   async importFromZip(
     zip: Buffer,
-    options: { subPath?: string; replaceId?: string } = {}
+    options: { subPath?: string; replaceId?: string; reservedNames?: readonly string[] } = {}
   ): Promise<ImportOutcome> {
     return this.bundleImports.importFromZip(zip, options)
   }
 
   async importFromZipBatch(
     zip: Buffer,
-    items: { subPath: string; replaceId?: string }[]
+    items: { subPath: string; replaceId?: string }[],
+    reservedNames: readonly string[] = []
   ): Promise<{ subPath: string; outcome?: ImportOutcome; error?: string }[]> {
-    return this.bundleImports.importFromZipBatch(zip, items)
+    return this.bundleImports.importFromZipBatch(zip, items, reservedNames)
   }
 
   async scanRepo(
@@ -157,11 +170,11 @@ class UserSkillRepository {
 }
 
 export {
-  SAFE_SLUG,
+  SAFE_SKILL_DIRECTORY_NAME,
   SAFE_SKILL_NAME,
   UserSkillRepository,
   assertUsableSkillName,
   frontmatterBlock,
-  parseUserSkillId,
-  toSlug
+  normalizeSkillName,
+  parseUserSkillId
 }

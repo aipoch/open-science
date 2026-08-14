@@ -57,12 +57,13 @@ export class BundledSkillSpecialistPackageAdapter {
         throw new Error(`Builtin Skill ${skill.id} changed during export.`)
       }
       result.push({
-        id: skill.id,
+        localId: skill.id,
+        name: skill.name,
         version: skill.updatedAt || 'builtin',
         contentHash: after.contentHash,
         files: after.files
       })
     }
-    return result.sort((left, right) => left.id.localeCompare(right.id))
+    return result.sort((left, right) => left.name.localeCompare(right.name))
   }
 }

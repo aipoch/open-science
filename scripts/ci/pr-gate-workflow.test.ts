@@ -410,7 +410,7 @@ describe('PR Gate workflow', () => {
       expect.arrayContaining([
         'npm run test:e2e:journey',
         'npm run test:e2e:workspace',
-        'npm run test:e2e:accessibility',
+        'npm run test:e2e:accessibility:signal',
         'npm run test:e2e:visual'
       ])
     )
@@ -447,6 +447,33 @@ describe('PR Gate workflow', () => {
       E2E_ACCESSIBILITY_OUTCOME: '${{ steps.e2e_accessibility_windows.outcome }}'
     })
     expect(enforce?.run).toContain('check e2e_accessibility_windows "$E2E_ACCESSIBILITY_OUTCOME"')
+  })
+
+  it('publishes accessibility diagnostics for both advisory and infrastructure outcomes', () => {
+    const upload = workflow.jobs.macos_e2e.steps?.find(
+      ({ name }) => name === 'Upload accessibility diagnostics'
+    )
+
+    expect(upload).toMatchObject({
+      if: "${{ steps.e2e_accessibility_macos.outcome != 'skipped' }}",
+      'continue-on-error': true,
+      with: {
+        name: 'accessibility-macos-diagnostics',
+        path: 'playwright-report/\ntest-results/\n'
+      }
+    })
+  })
+
+  it('enables advisory accessibility signaling only in the macOS PR lane', () => {
+    const macosStep = workflow.jobs.macos_e2e.steps?.find(
+      ({ id }) => id === 'e2e_accessibility_macos'
+    )
+    const windowsStep = workflow.jobs.windows_e2e.steps?.find(
+      ({ id }) => id === 'e2e_accessibility_windows'
+    )
+
+    expect(macosStep?.run).toBe('npm run test:e2e:accessibility:signal')
+    expect(windowsStep?.run).toBe('npm run test:e2e:accessibility')
   })
 
   it('collects independent bundle failures before failing the shared runner', () => {

@@ -11,6 +11,7 @@ import type {
   ReasoningEffortPresetSetting
 } from './reasoning-effort'
 import type { PackageMirror } from './mirror'
+import type { NetworkProxySettings } from './network-proxy'
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
@@ -406,6 +407,8 @@ export type SettingsSnapshot = {
   onboardingCompletedAt?: number
   // Non-secret package-mirror overrides (conda/pypi/cran). Absent means public hosts.
   packageMirror?: PackageMirror
+  // Application-wide proxy preference. Older documents without this field resolve to System.
+  networkProxy?: NetworkProxySettings
   // The user's reasoning-effort preference for agent requests. 'default' leaves the agent's own
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
@@ -435,6 +438,8 @@ export type ProjectFilesFilterPreference = {
 }
 
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
+export type SetNetworkProxyRequest = NetworkProxySettings
+
 export type SetPackageMirrorRequest = PackageMirror
 
 export type SetAgentFrameworkRequest = {
@@ -1136,6 +1141,8 @@ export type ConnectorGroup = 'featured' | 'directory'
 // Renderer-safe view of one bundled connector (no tool schemas).
 export type ConnectorView = {
   id: string
+  // Immutable invocation/export name. Bundled Connectors currently use the same value as id.
+  name: string
   displayName: string
   description: string
   sources: string[]

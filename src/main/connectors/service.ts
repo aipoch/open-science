@@ -220,7 +220,7 @@ export class ConnectorService {
     const access = await this.resolveAccess(
       connector,
       context,
-      custom ? [custom.name] : [connector]
+      custom ? [custom.id, custom.name] : [connector]
     )
     if (!custom) {
       throw new ConnectorGateError(

@@ -1,3 +1,4 @@
+import type { NetworkProxySettings } from '../../../shared/network-proxy'
 import type { PackageMirror } from '../../../shared/mirror'
 import type {
   AppIconVariant,
@@ -16,6 +17,7 @@ import type {
 
 type SettingsPreferencesState = {
   onboardingCompletedAt?: number
+  networkProxy?: NetworkProxySettings
   packageMirror?: PackageMirror
   reasoningEffort: ReasoningEffort
   subagentModel?: SubagentModelConfiguration
@@ -49,6 +51,7 @@ export type SettingsPreferencesActions = {
 
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
+  setNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
 }
 
 type SettingsPreferencesCommands = Pick<
@@ -63,7 +66,7 @@ type SettingsPreferencesCommands = Pick<
   | 'markOnboardingComplete'
   | 'setPackageMirror'
 > &
-  Partial<Pick<Window['api']['settings'], 'getSettings' | 'setSubagentModel'>>
+  Partial<Pick<Window['api']['settings'], 'getSettings' | 'setSubagentModel' | 'setNetworkProxy'>>
 
 type SettingsPreferencesSliceOptions = {
   getState: () => SettingsPreferencesState
@@ -213,6 +216,13 @@ export const createSettingsPreferencesSlice = ({
     setPackageMirror: async (mirror) => {
       const saved = await getCommands().setPackageMirror(mirror)
       setState({ packageMirror: isMirrorConfigured(saved) ? saved : undefined })
+    },
+
+    setNetworkProxy: async (networkProxy) => {
+      const setNetworkProxy = getCommands().setNetworkProxy
+      if (!setNetworkProxy) throw new Error('Network proxy settings are unavailable.')
+      const saved = await setNetworkProxy(networkProxy)
+      setState({ networkProxy: saved })
     }
   }
 }

@@ -4,6 +4,7 @@ import type { NotebookRunRecord } from '../../../../shared/notebook'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { formatNotebookRunFigureMeta } from './notebook-run-figures'
 import { NotebookRunFigureOutputs } from './NotebookRunOutputs'
+import { notebookRunStatusLabel } from './notebook-cell-utils'
 import { usePreviewFileContent } from './previews/usePreviewFileContent'
 
 // Byte cap for inline tool-output image previews. Co-located here (rather than in preview-support,
@@ -18,9 +19,11 @@ import type {
 import { WorkspaceToolActivityRowButton } from './WorkspaceToolActivityRowButton'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolDiffBlock } from './WorkspaceToolDiffBlock'
+import type { ToolExecutionPhase } from './tool-execution-phase'
 
 type WorkspaceToolDetailsRowProps = {
   activity: ToolActivity
+  phase?: ToolExecutionPhase
   details: ToolActivityDetails
   notebookRun?: NotebookRunRecord
   isExpanded: boolean
@@ -131,16 +134,19 @@ const renderSection = (section: ToolDetailSection, index: number): React.JSX.Ele
 // Renders a non-search tool call with an expandable panel showing input, output, or diffs.
 const WorkspaceToolDetailsRow = ({
   activity,
+  phase,
   details,
   notebookRun,
   isExpanded,
   onToggle
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
   const notebookFigureMeta = notebookRun ? formatNotebookRunFigureMeta(notebookRun) : undefined
+  const notebookRunMeta = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
 
   return (
     <WorkspaceToolActivityRowButton
       activity={activity}
+      phase={phase}
       label={details.displayName}
       subtitle={
         details.displayName === 'Write file' && details.subtitle ? (
@@ -149,7 +155,17 @@ const WorkspaceToolDetailsRow = ({
           details.subtitle
         )
       }
-      metaLabel={notebookFigureMeta ?? details.metaLabel}
+      metaLabel={
+        phase === 'prepared'
+          ? 'code shown'
+          : phase === 'awaiting-approval'
+            ? 'waiting for your approval'
+            : phase === 'declined'
+              ? 'declined by you'
+              : phase === 'closed'
+                ? 'request ended'
+                : (notebookRunMeta ?? notebookFigureMeta ?? details.metaLabel)
+      }
       isExpanded={isExpanded}
       panelClassName="mx-1 mb-1.5 space-y-2.5 md:ml-[30px]"
       panelTestId="tool-details"

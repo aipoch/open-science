@@ -909,7 +909,6 @@ describe('Session Store architecture', () => {
       'setAutoReviewEnabled',
       'setBranchSwitchBlocked',
       'setContextUsage',
-      'setEnabledComputeHosts',
       'setFixLoopActive',
       'setPermissionProfile',
       'setSessionSpecialistId',

@@ -11,15 +11,18 @@ import {
   MIN_AGENT_USER_CHOICE_OPTIONS
 } from '../../shared/elicitation'
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
-import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
+import {
+  fetchLocalRpc,
+  fetchLongLivedLocalRpc,
+  type LocalRpcTransport
+} from '../local-rpc-transport'
+import { resolveProjectId } from '../../shared/project-scope'
+import type { ProjectIdScope } from '../../shared/project-scope'
+import { NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 
 const NOTEBOOK_MCP_SERVER_NAME = 'open-science-notebook'
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
-// Host SDK bounded observations allow 30 minutes. Keep the outer control REPL alive slightly longer
-// so its default deadline cannot destroy the kernel while collect/message_receipt is still valid.
-const REPL_EXECUTE_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
-
 const HOST_SDK_DISCOVERY_GUIDANCE =
   "Host SDK discovery (use from `repl_execute`): `await host.help()` is the role-aware catalog. Query only the operation you plan to call; each topic returns concise parameter and result field descriptions. Main/root agents can use `await host.help('delegate')` when delegation guidance is needed; do not prefetch all Help topics. Delegate agents should use the same catalog for messaging and structured-output operations; unavailable root-only topics remain visible with a reason."
 
@@ -46,11 +49,11 @@ type NotebookRpcConnection = LocalRpcTransport & {
   release?: () => void
 }
 
-type NotebookMcpEnvironment = NotebookRpcConnection & {
-  projectName: string
-  sessionId: string
-  workspaceCwd: string
-}
+type NotebookMcpEnvironment = NotebookRpcConnection &
+  ProjectIdScope & {
+    sessionId: string
+    workspaceCwd: string
+  }
 
 type NotebookMcpServerConfigRequest = NotebookMcpEnvironment & {
   command: string
@@ -59,7 +62,6 @@ type NotebookMcpServerConfigRequest = NotebookMcpEnvironment & {
 
 const executeToolSchema = {
   code: z.string(),
-  timeoutMs: z.number().int().positive().optional(),
   cellId: z.string().min(1).optional(),
   language: z.enum(['python', 'r']).optional()
   // No `environment`: the env is the session's bound runtime (notebook_bind_runtime), not a per-call
@@ -68,7 +70,7 @@ const executeToolSchema = {
 
 const replExecuteToolSchema = {
   code: z.string(),
-  timeoutMs: z.number().int().positive().default(REPL_EXECUTE_DEFAULT_TIMEOUT_MS)
+  timeoutMs: z.number().int().positive().default(NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS)
 }
 
 const bashExecuteToolSchema = {
@@ -233,30 +235,34 @@ type NotebookRpcToolDefinition = {
   resultLimitChars?: number
 }
 
+const notebookRpcSignal = (
+  method: string,
+  signal: AbortSignal | undefined
+): AbortSignal | undefined =>
+  method === 'executeControl' || method === 'executeShell' ? undefined : signal
+
 // Creates the ACP MCP-server declaration that launches this app bundle in notebook stdio mode.
-const createNotebookMcpServerConfig = ({
-  command,
-  entryPath,
-  endpoint,
-  socketPath,
-  token,
-  projectName,
-  sessionId,
-  workspaceCwd
-}: NotebookMcpServerConfigRequest): McpServerStdio => ({
-  name: NOTEBOOK_MCP_SERVER_NAME,
-  command,
-  args: [entryPath, NOTEBOOK_MCP_SERVER_ARG],
-  env: [
-    { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: endpoint },
-    ...(socketPath ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: socketPath }] : []),
-    { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: token },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectName },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: sessionId },
-    { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: workspaceCwd }
-  ]
-})
+const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest): McpServerStdio => {
+  const projectId = resolveProjectId(request)
+  return {
+    name: NOTEBOOK_MCP_SERVER_NAME,
+    command: request.command,
+    args: [request.entryPath, NOTEBOOK_MCP_SERVER_ARG],
+    env: [
+      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: request.endpoint },
+      ...(request.socketPath
+        ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: request.socketPath }]
+        : []),
+      { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: request.token },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: projectId },
+      // Keep the old variable for rollback to a child entry point that predates the adapter.
+      { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectId },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: request.sessionId },
+      { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: request.workspaceCwd }
+    ]
+  }
+}
 
 // Reads one required environment value for the stdio MCP subprocess.
 const requireEnvironmentVariable = (
@@ -275,22 +281,31 @@ const requireEnvironmentVariable = (
 // Reconstructs the notebook RPC routing context passed through the MCP server environment.
 const createNotebookMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
-): NotebookMcpEnvironment => ({
-  endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
-  socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
-  token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'),
-  projectName: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME'),
-  sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
-  workspaceCwd: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD')
-})
+): NotebookMcpEnvironment => {
+  const projectId = resolveProjectId({
+    projectId: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID,
+    projectName: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
+  })
+  return {
+    endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
+    socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,
+    token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN'),
+    projectId,
+    sessionId: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID'),
+    workspaceCwd: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD')
+  }
+}
 
 // Sends a tool request to the app-local notebook RPC server and returns its raw result payload.
 const callNotebookRpc = async (
   environment: NotebookMcpEnvironment,
   method: string,
-  params: unknown = {}
+  params: unknown = {},
+  fetchRpc: typeof fetchLocalRpc = resolveNotebookRpcFetch(method),
+  signal?: AbortSignal
 ): Promise<unknown> => {
-  const response = await fetchLocalRpc(
+  const projectId = resolveProjectId(environment)
+  const response = await fetchRpc(
     environment,
     {
       method: 'POST',
@@ -301,12 +316,16 @@ const callNotebookRpc = async (
       body: JSON.stringify({
         method,
         params: {
+          ...((params ?? {}) as Record<string, unknown>),
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
-          projectName: environment.projectName,
-          ...((params ?? {}) as Record<string, unknown>)
+          projectId
         }
-      } satisfies RpcRequest)
+      } satisfies RpcRequest),
+      // Control REPL and shell execution do not yet consume cancellation below the RPC boundary.
+      // Keep their transport attached so Agent cancellation cannot report completion while they
+      // continue mutating state. Python/R execution owns its AbortSignal end to end.
+      signal: notebookRpcSignal(method, signal)
     },
     'Notebook RPC'
   )
@@ -319,6 +338,11 @@ const callNotebookRpc = async (
 
   return payload.result
 }
+
+// Python/R cells are intentionally unbounded. Only their local RPC hop needs the transport that
+// omits Undici's response-headers deadline; short control methods retain the ordinary transport.
+const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
+  method === 'execute' ? fetchLongLivedLocalRpc : fetchLocalRpc
 
 // These character caps apply only to serialized MCP replies; full values stay in run.json and the
 // notebook preview.
@@ -712,7 +736,13 @@ const registerNotebookRpcTool = (
         definition.method === 'requestUserInput'
           ? { ...input, _appToolRequestId: String(extra.requestId) }
           : input
-      const raw = await callNotebookRpc(environment, definition.method, rpcInput)
+      const raw = await callNotebookRpc(
+        environment,
+        definition.method,
+        rpcInput,
+        resolveNotebookRpcFetch(definition.method),
+        extra.signal
+      )
       const result = definition.mapResult ? definition.mapResult(raw, input) : raw
       return {
         content: [
@@ -1079,6 +1109,7 @@ export {
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  resolveNotebookRpcFetch,
   compactNotebookExecutionResult,
   compactNotebookStateResult,
   compactManagePackagesResult,

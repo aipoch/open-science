@@ -34,11 +34,7 @@ import {
   SpecialistPackageRollbackError,
   SpecialistPackageTransaction
 } from './transaction'
-import type {
-  SpecialistPackageBuiltinSkillPort,
-  SpecialistPackageSkillPort,
-  SpecialistPackageSkillSnapshot
-} from './skill-port'
+import type { SpecialistPackageSkillPort, SpecialistPackageSkillSnapshot } from './skill-port'
 
 const CANDIDATE_TTL_MS = 10 * 60 * 1000
 const log = createLogger('specialist.package.service')
@@ -65,7 +61,6 @@ type SpecialistPackageServiceOptions = {
   now?: () => Date
   onCommitted?: () => void
   skillPort?: SpecialistPackageSkillPort
-  builtinSkillPort?: SpecialistPackageBuiltinSkillPort
 }
 
 export const specialistExportFileName = (
@@ -73,7 +68,7 @@ export const specialistExportFileName = (
   version: string,
   fallbackId: string
 ): string => {
-  const slug = (displayName || fallbackId)
+  const fileStem = (displayName || fallbackId)
     .normalize('NFKC')
     .trim()
     .toLocaleLowerCase('en-US')
@@ -85,7 +80,7 @@ export const specialistExportFileName = (
     .replace(/^-+|-+$/g, '')
     .slice(0, 80)
     .replace(/-+$/g, '')
-  const identity = slug || fallbackId.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const identity = fileStem || fallbackId.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')
   return `open-science-specialist-${identity || 'export'}-v${version}.zip`
 }
 
@@ -137,7 +132,7 @@ const effectiveSpecialistConnectorIds = (
   }
 
   const excluded = new Set(specialist.fullAccess.excludedConnectorIds.map(canonical))
-  return [...new Set(catalog.connectorIds.filter((id) => !excluded.has(id)))]
+  return [...new Set(catalog.connectorIds.map(canonical).filter((name) => !excluded.has(name)))]
 }
 
 export class SpecialistSkillDeletionProtectedError extends Error {
@@ -448,7 +443,7 @@ export class SpecialistPackageService {
             id,
             version: builtin.appVersion,
             kind: 'builtin' as const,
-            selected: true,
+            selected: false,
             selectable: false
           }
         }
@@ -464,9 +459,7 @@ export class SpecialistPackageService {
         }
       })
       .sort((left, right) => left.id.localeCompare(right.id))
-    const selectedSkills = skills.map((skill) =>
-      skill.kind === 'builtin' ? { ...skill, selected: true, selectable: true } : skill
-    )
+    const selectedSkills = skills
     const connectorIds = effectiveSpecialistConnectorIds(specialist, catalog)
     const diagnostics: Array<{
       severity: 'error' | 'warning' | 'info'
@@ -564,38 +557,39 @@ export class SpecialistPackageService {
     if (request.includedSkillIds.some((id) => !requested.has(id))) {
       throw new Error('Export selection contains a Skill the Specialist does not reference.')
     }
-    const includedBuiltinIds = request.includedSkillIds.filter((id) => builtinIds.has(id))
-    const includedPortableIds = request.includedSkillIds.filter((id) => !builtinIds.has(id))
-    if (includedBuiltinIds.length > 0 && !this.options.builtinSkillPort?.exportSnapshot) {
-      throw new Error('Builtin Skill export snapshot is unavailable.')
+    if (request.includedSkillIds.some((id) => builtinIds.has(id))) {
+      throw new Error('Featured Skills are references and cannot be bundled.')
     }
-    if (includedPortableIds.length > 0 && !this.options.skillPort?.exportSnapshot) {
+    const includedUserSkillIds = request.includedSkillIds.filter((id) => !builtinIds.has(id))
+    if (includedUserSkillIds.length > 0 && !this.options.skillPort?.exportSnapshot) {
       throw new Error('Skill export snapshot is unavailable.')
     }
-    const builtinSnapshots = includedBuiltinIds.length
-      ? await this.options.builtinSkillPort!.exportSnapshot(includedBuiltinIds)
+    const userSkillSnapshots = includedUserSkillIds.length
+      ? await this.options.skillPort!.exportSnapshot!(includedUserSkillIds)
       : []
-    const portableSnapshots = includedPortableIds.length
-      ? await this.options.skillPort!.exportSnapshot!(includedPortableIds)
-      : []
-    const skillSnapshots: SpecialistPackageSkillSnapshot[] = [
-      ...builtinSnapshots,
-      ...portableSnapshots
-    ]
     if (
-      skillSnapshots.length !== request.includedSkillIds.length ||
-      request.includedSkillIds.some(
-        (id) => !skillSnapshots.some((skill) => (skill.sourceId ?? skill.id) === id)
-      )
+      userSkillSnapshots.length !== includedUserSkillIds.length ||
+      includedUserSkillIds.some((id) => !userSkillSnapshots.some((skill) => skill.localId === id))
     ) {
-      throw new Error('A selected Skill changed during export. Preview again and retry.')
+      throw new Error('A referenced Skill changed during export. Preview again and retry.')
     }
-    const packageSkillIds = skillSnapshots.map((skill) => skill.id)
-    if (new Set(packageSkillIds).size !== packageSkillIds.length) {
-      throw new Error('Selected Skills have duplicate portable IDs. Preview again and retry.')
+    const skillNameByLocalId = new Map(
+      catalog.skills.map((skill) => [skill.id, skill.name ?? skill.id])
+    )
+    for (const snapshot of userSkillSnapshots) {
+      const catalogName = skillNameByLocalId.get(snapshot.localId)
+      if (catalogName !== undefined && catalogName !== snapshot.name) {
+        throw new Error('A selected Skill changed during export. Preview again and retry.')
+      }
+      skillNameByLocalId.set(snapshot.localId, snapshot.name)
     }
-    const packageIdBySourceId = new Map(
-      skillSnapshots.map((skill) => [skill.sourceId ?? skill.id, skill.id])
+    const packageSkillNames = requestedSkillIds.map((id) => skillNameByLocalId.get(id) ?? id)
+    if (new Set(packageSkillNames).size !== packageSkillNames.length) {
+      throw new Error('Referenced Skills have duplicate names. Preview again and retry.')
+    }
+    const included = new Set(request.includedSkillIds)
+    const bundledSkillSnapshots: SpecialistPackageSkillSnapshot[] = userSkillSnapshots.filter(
+      (skill) => included.has(skill.localId)
     )
 
     const after = await this.options.repository.getAll()
@@ -619,22 +613,18 @@ export class SpecialistPackageService {
       ...(specialist.displayName ? { displayName: specialist.displayName } : {}),
       description: specialist.description,
       systemPrompt: specialist.systemPrompt,
-      skillIds: [...new Set(requestedSkillIds.map((id) => packageIdBySourceId.get(id) ?? id))],
+      skillIds: [...new Set(requestedSkillIds.map((id) => skillNameByLocalId.get(id) ?? id))],
       connectorIds
     }
     const files: Record<string, Uint8Array> = {
       'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
       'specialist.json': strToU8(`${JSON.stringify(payload, null, 2)}\n`)
     }
-    for (const skill of skillSnapshots) {
+    for (const skill of bundledSkillSnapshots) {
       for (const file of skill.files) {
-        files[`skills/${skill.id}/${file.path}`] =
+        files[`skills/${skill.name}/${file.path}`] =
           file.path === 'SKILL.md'
-            ? normalizeExportedSkillDocument(
-                file.bytes,
-                skill.id,
-                builtinIds.has(skill.id) ? undefined : skill.version
-              )
+            ? normalizeExportedSkillDocument(file.bytes, skill.name, skill.version)
             : file.bytes
       }
     }

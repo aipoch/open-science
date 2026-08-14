@@ -18,6 +18,7 @@ import {
   verifyLegacyProjectPreserved,
   writeDatabaseMigrationCertification
 } from './database-migration-ledger-smoke.mjs'
+import { authenticatePackagedAppEndpoint } from './packaged-web-service-auth.mjs'
 
 const APP_EXECUTABLE = 'open-science.exe'
 const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
@@ -109,16 +110,15 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
 
 const parsePackagedAppEndpoint = (output) => {
   const match = output.match(
-    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/
+    /Open Science Web:\s+(http:\/\/127\.0\.0\.1:\d+\/(?:\?token=[A-Za-z0-9_-]+)?)/
   )
   if (!match) return undefined
 
   const url = new URL(match[1])
   const token = url.searchParams.get('token')
-  if (!token) return undefined
   return {
     endpoint: url.origin,
-    auth: `token=${encodeURIComponent(token)}`
+    ...(token ? { auth: `token=${encodeURIComponent(token)}` } : {})
   }
 }
 
@@ -754,7 +754,10 @@ const launchAndProbe = async ({
   try {
     const { endpoint, auth } = await Promise.race([
       waitFor('the installed app web service', async () => {
-        return parsePackagedAppEndpoint(output())
+        return authenticatePackagedAppEndpoint(output(), [
+          env.OPEN_SCIENCE_E2E_STORAGE_ROOT,
+          ...(legacyConfigRoots ?? [])
+        ])
       }),
       exit.then((code) => {
         throw new Error(`Installed app exited before becoming healthy (${code}).\n${output()}`)
@@ -824,7 +827,12 @@ const launchAndExpectDatabaseBlocked = async ({ installDirectory, env }) => {
 
 // Leaves a healthy packaged process running so the next silent installer must handle the real
 // executable/process lock. The caller owns termination if installation fails.
-const launchForProcessLock = async ({ installDirectory, expectedVersion, env }) => {
+const launchForProcessLock = async ({
+  installDirectory,
+  expectedVersion,
+  env,
+  legacyConfigRoots
+}) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
   const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
     env,
@@ -840,7 +848,12 @@ const launchForProcessLock = async ({ installDirectory, expectedVersion, env }) 
   const exit = observeChildExit(child)
   try {
     const { endpoint, auth } = await Promise.race([
-      waitFor('the process-lock app web service', async () => parsePackagedAppEndpoint(output())),
+      waitFor('the process-lock app web service', async () =>
+        authenticatePackagedAppEndpoint(output(), [
+          env.OPEN_SCIENCE_E2E_STORAGE_ROOT,
+          ...(legacyConfigRoots ?? [])
+        ])
+      ),
       exit.then((code) => {
         throw new Error(`Process-lock app exited before becoming healthy (${code}).\n${output()}`)
       })
@@ -888,13 +901,15 @@ const installOverRunningApp = async ({
   installDirectory,
   phase,
   env,
+  legacyConfigRoots,
   launchInstalledApp = true,
   onSqliteVersion
 }) => {
   const running = await launchForProcessLock({
     installDirectory,
     expectedVersion: installerVersion(runningInstaller),
-    env
+    env,
+    legacyConfigRoots
   })
   try {
     await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
@@ -912,6 +927,7 @@ const installOverRunningApp = async ({
     installDirectory,
     expectedVersion: installerVersion(installer),
     env,
+    legacyConfigRoots,
     verifyLedger: true,
     onSqliteVersion
   })
@@ -1013,13 +1029,14 @@ const main = async () => {
               ...cycle,
               installDirectory,
               env,
+              legacyConfigRoots,
               onSqliteVersion: cycle.phase === 'rollback' ? undefined : onSqliteVersion
             })
           : await installAndProbe({
               ...cycle,
               installDirectory,
               env,
-              legacyConfigRoots: cycle.phase === 'previous' ? legacyConfigRoots : undefined,
+              legacyConfigRoots,
               onSqliteVersion: cycle.phase === 'previous' ? undefined : onSqliteVersion
             })
         if (cycle.phase === 'rollback' && upgradeProfileGuard.shouldExpectDowngradeBlock()) {
@@ -1084,6 +1101,7 @@ if (invokedAsScript) {
 }
 
 export {
+  authenticatePackagedAppEndpoint,
   assertPackagedResources,
   assertUpgradeProfilePreserved,
   buildSmokePlan,

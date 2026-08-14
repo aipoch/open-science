@@ -77,6 +77,246 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('rejects an invalid token before reading the request body', async () => {
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      token: 'secret-token'
+    })
+    const connection = await server.ensureStarted()
+    const underlying = (server as unknown as { server?: Server }).server
+    if (!underlying) throw new Error('Expected the local RPC server to be listening.')
+    const accepted = once(underlying, 'request')
+    let responseStatus: number | undefined
+    let responseConnection: string | undefined
+    const request = httpRequest(
+      connection.endpoint,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer invalid-token',
+          'content-type': 'application/json',
+          'content-length': 1024
+        }
+      },
+      (response) => {
+        responseStatus = response.statusCode
+        responseConnection = response.headers.connection
+        response.resume()
+      }
+    )
+    request.once('error', () => undefined)
+
+    try {
+      request.write('{')
+      await accepted
+      await vi.waitFor(() => expect(responseStatus).toBe(401), { timeout: 500 })
+      expect(responseConnection).toBe('close')
+    } finally {
+      request.destroy()
+      await server.close()
+    }
+  })
+
+  it('injects only a fresh unambiguous app-owned execution authorization', async () => {
+    const server = new NotebookLocalRpcServer({
+      execute: vi.fn(async (request: unknown) => request),
+      executeControl: vi.fn(async (request: unknown) => request),
+      executeShell: vi.fn(async (request: unknown) => request)
+    } as never)
+    const connections: Array<Awaited<ReturnType<typeof server.issueSessionConnection>>> = []
+    const dispatch = async (
+      sessionId: string,
+      code = 'print(1)'
+    ): Promise<Record<string, unknown>> => {
+      const connection = await server.issueSessionConnection(
+        sessionId,
+        'project-1',
+        `root-frame-${sessionId}`
+      )
+      connections.push(connection)
+      const response = await fetchLocalRpc(
+        connection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'execute',
+            params: {
+              sessionId: 'forged',
+              workspaceCwd: '/workspace',
+              code,
+              executionInvocationId: 'caller-controlled'
+            }
+          })
+        },
+        'Notebook execution authorization test'
+      )
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as { result: Record<string, unknown> }
+      return payload.result
+    }
+
+    const setTurn = (sessionId: string, promptMessageId = 'prompt-1'): void =>
+      server.setArtifactProvenanceContext(sessionId, {
+        rootFrameId: `root-frame-${sessionId}`,
+        agentFrameId: `root-frame-${sessionId}`,
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-1',
+        promptMessageId
+      })
+
+    try {
+      setTurn('fresh')
+      const freshId = server.authorizeExecution({
+        sessionId: 'fresh',
+        toolCallId: 'tool-fresh',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        rawInput: { code: 'print(1)' }
+      })
+      expect(freshId).toEqual(expect.any(String))
+      expect(await dispatch('fresh')).toMatchObject({ executionInvocationId: freshId })
+
+      setTurn('missing')
+      expect(await dispatch('missing')).not.toHaveProperty('executionInvocationId')
+
+      setTurn('stale', 'current-prompt')
+      expect(
+        server.authorizeExecution({
+          sessionId: 'stale',
+          toolCallId: 'tool-stale',
+          promptMessageId: 'old-prompt',
+          method: 'execute',
+          rawInput: { code: 'print(1)' }
+        })
+      ).toBeUndefined()
+      expect(await dispatch('stale')).not.toHaveProperty('executionInvocationId')
+
+      setTurn('duplicate')
+      const firstId = server.authorizeExecution({
+        sessionId: 'duplicate',
+        toolCallId: 'tool-1',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        rawInput: { code: 'print(1)' }
+      })
+      expect(
+        server.authorizeExecution({
+          sessionId: 'duplicate',
+          toolCallId: 'tool-1',
+          promptMessageId: 'prompt-1',
+          method: 'execute',
+          rawInput: { code: 'print(1)' }
+        })
+      ).toBe(firstId)
+      expect(
+        server.authorizeExecution({
+          sessionId: 'duplicate',
+          toolCallId: 'tool-2',
+          promptMessageId: 'prompt-1',
+          method: 'execute',
+          rawInput: { code: 'print(2)' }
+        })
+      ).toBeUndefined()
+      expect(await dispatch('duplicate')).not.toHaveProperty('executionInvocationId')
+
+      setTurn('mismatch')
+      server.authorizeExecution({
+        sessionId: 'mismatch',
+        toolCallId: 'tool-mismatch',
+        promptMessageId: 'prompt-1',
+        method: 'execute',
+        rawInput: { code: 'print(1)' }
+      })
+      expect(await dispatch('mismatch', 'print(2)')).not.toHaveProperty('executionInvocationId')
+      expect(await dispatch('mismatch')).not.toHaveProperty('executionInvocationId')
+
+      setTurn('repl-default')
+      const replId = server.authorizeExecution({
+        sessionId: 'repl-default',
+        toolCallId: 'tool-repl-default',
+        promptMessageId: 'prompt-1',
+        method: 'executeControl',
+        rawInput: { code: 'return 1' }
+      })
+      const replConnection = await server.issueSessionConnection(
+        'repl-default',
+        'project-1',
+        'root-frame-repl-default'
+      )
+      connections.push(replConnection)
+      const replResponse = await fetchLocalRpc(
+        replConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${replConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeControl',
+            params: {
+              sessionId: 'repl-default',
+              workspaceCwd: '/workspace',
+              code: 'return 1',
+              timeoutMs: 1_815_000
+            }
+          })
+        },
+        'Notebook execution RPC'
+      )
+      expect(replResponse.status).toBe(200)
+      expect(await replResponse.json()).toMatchObject({
+        result: { executionInvocationId: replId }
+      })
+
+      setTurn('shell-default')
+      const shellId = server.authorizeExecution({
+        sessionId: 'shell-default',
+        toolCallId: 'tool-shell-default',
+        promptMessageId: 'prompt-1',
+        method: 'executeShell',
+        rawInput: { command: 'echo hi' }
+      })
+      const shellConnection = await server.issueSessionConnection(
+        'shell-default',
+        'project-1',
+        'root-frame-shell-default'
+      )
+      connections.push(shellConnection)
+      const shellResponse = await fetchLocalRpc(
+        shellConnection,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${shellConnection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            method: 'executeShell',
+            params: {
+              sessionId: 'shell-default',
+              workspaceCwd: '/workspace',
+              command: 'echo hi',
+              timeoutMs: 120_000
+            }
+          })
+        },
+        'Notebook execution RPC'
+      )
+      expect(shellResponse.status).toBe(200)
+      expect(await shellResponse.json()).toMatchObject({
+        result: { executionInvocationId: shellId }
+      })
+    } finally {
+      for (const connection of connections) connection.release?.()
+      await server.close()
+    }
+  })
+
   it('fails closed when a Session capability omits its Frame owner', async () => {
     const server = new NotebookLocalRpcServer({} as never)
 
@@ -297,6 +537,53 @@ describe('notebook local RPC server', () => {
       } finally {
         pendingCall.resolve(undefined)
         connection.release?.()
+        await server.close()
+      }
+    }
+  )
+
+  it.each(['tcp', 'pipe'] as const)(
+    'aborts notebook data execution when its client disconnects over %s',
+    async (transport) => {
+      const callStarted = createDeferred<AbortSignal>()
+      const pendingCall = createDeferred<unknown>()
+      const server = new NotebookLocalRpcServer(
+        {
+          execute: async (_request: unknown, signal?: AbortSignal) => {
+            if (!signal) throw new Error('Expected a notebook execution signal.')
+            callStarted.resolve(signal)
+            return pendingCall.promise
+          }
+        } as never,
+        { transport }
+      )
+      const connection = await server.ensureStarted()
+      const disconnect = new AbortController()
+
+      try {
+        const request = fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'execute',
+              params: { sessionId: 'session-1', workspaceCwd: '/workspace', code: 'long()' }
+            }),
+            signal: disconnect.signal
+          },
+          'Notebook execution RPC'
+        )
+        const signal = await callStarted.promise
+        expect(signal.aborted).toBe(false)
+        disconnect.abort()
+        await expect(request).rejects.toMatchObject({ cause: expect.any(Error) })
+        await vi.waitFor(() => expect(signal.aborted).toBe(true))
+      } finally {
+        pendingCall.resolve(undefined)
         await server.close()
       }
     }
@@ -1750,7 +2037,7 @@ describe('notebook local RPC server', () => {
       server.revokeArtifactRunCapability(revokedToken)
       const revoked = await call(revokedToken)
       expect(revoked.status).toBe(401)
-      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid Artifact RPC capability.' })
+      await expect(revoked.json()).resolves.toEqual({ error: 'Invalid notebook RPC token.' })
       expect(createVersion).not.toHaveBeenCalled()
     } finally {
       await server.close()

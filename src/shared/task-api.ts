@@ -29,6 +29,7 @@ export type StartTaskRunRequest = {
   project: string
   prompt: string
   sessionId?: string
+  cwd?: string
   permissionProfile?: PermissionProfileId
   skillIds?: string[]
 }
@@ -37,6 +38,7 @@ export type TaskRun = {
   id: string
   sessionId: string
   projectId: string
+  cwd: string
   status: TaskRunStatus
   startedAt: number
   cancelRequestedAt?: number

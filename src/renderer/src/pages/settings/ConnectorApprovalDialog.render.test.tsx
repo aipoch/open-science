@@ -15,6 +15,7 @@ beforeEach(() => {
     connectors: [
       {
         id: 'biomart',
+        name: 'biomart',
         displayName: 'BioMart',
         description: '',
         sources: [],
@@ -47,6 +48,24 @@ describe('ConnectorApprovalDialog', () => {
   it('renders nothing when there are no pending approvals', () => {
     act(() => root.render(<ConnectorApprovalDialog />))
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('keeps a covered approval queued while suppressing its presentation', () => {
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'r1',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{}'
+        }
+      ]
+    })
+
+    act(() => root.render(<ConnectorApprovalDialog active={false} />))
+
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(useSettingsStore.getState().pendingApprovals).toHaveLength(1)
   })
 
   it('keeps approvals for the open Side chat parent queued without showing its dialog', () => {
@@ -96,6 +115,17 @@ describe('ConnectorApprovalDialog', () => {
     expect(document.body.textContent).toContain('BioMart')
     expect(document.body.textContent).toContain('get_data')
     expect(document.body.textContent).toContain('{"x":1}')
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-b border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(document.body.querySelectorAll<HTMLElement>('div')).some((element) =>
+        element.className.includes('border-t border-border-300/90 px-5 py-3.5')
+      )
+    ).toBe(true)
+    expect(document.body.querySelector('[role="dialog"]')?.className).toContain('overflow-hidden')
     expect(button('Deny')?.getAttribute('data-slot')).toBe('button')
     expect(button('Deny')?.getAttribute('data-variant')).toBe('destructive')
     expect(button('This session')?.getAttribute('data-variant')).toBe('outline')

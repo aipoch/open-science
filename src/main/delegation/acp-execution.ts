@@ -150,7 +150,7 @@ const buildInitialDelegatePrompt = (input: DelegateExecutionInput): string => {
   }
   if (input.outputSchema !== undefined) {
     sections.push(
-      `Return ordinary text and any Artifacts as usual. Before finishing, submit the structured result with host.submit_output(value) using this JSON Schema:\n${JSON.stringify(input.outputSchema)}`
+      `Return ordinary text and any Artifacts as usual. Before finishing, submit the structured result with host.submitOutput(value) using this JSON Schema:\n${JSON.stringify(input.outputSchema)}`
     )
   }
   return sections.join('\n\n')

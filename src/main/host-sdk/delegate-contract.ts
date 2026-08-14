@@ -89,16 +89,18 @@ const COLLECT_AGENT_CONTRACT = {
         { type: 'string', minLength: 1 },
         {
           type: 'object',
-          required: ['frame_id', 'attempt_id'],
-          properties: { frame_id: { type: 'string' }, attempt_id: { type: 'string' } }
+          additionalProperties: false,
+          required: ['frameId', 'attemptId'],
+          properties: { frameId: { type: 'string' }, attemptId: { type: 'string' } }
         }
       ]
     }
   },
   options: {
     type: 'object',
+    additionalProperties: false,
     properties: {
-      timeout_seconds: { type: 'number', minimum: 0, maximum: 1800, default: 30 }
+      timeoutSeconds: { type: 'number', minimum: 0, maximum: 1800, default: 30 }
     }
   },
   returns: { type: 'array', items: DELEGATE_OBSERVATION_SCHEMA },
@@ -111,6 +113,7 @@ const COLLECT_AGENT_CONTRACT = {
 
 const DELEGATE_REQUEST_OBJECT_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   required: ['task', 'name'],
   properties: {
     task: {
@@ -140,22 +143,22 @@ const DELEGATE_REQUEST_OBJECT_SCHEMA = {
       },
       description: 'Immutable Upload Version or Artifact Version identities only.'
     },
-    output_schema: {
-      description:
-        'Optional JSON Schema Draft 2020-12 contract for child host.submit_output(value).'
+    outputSchema: {
+      description: 'Optional JSON Schema Draft 2020-12 contract for child host.submitOutput(value).'
     }
   }
 } as const
 
 const DELEGATE_OPTIONS_SCHEMA = {
   type: 'object',
+  additionalProperties: false,
   properties: {
     wait: {
       type: 'boolean',
       default: true,
       description: 'Wait for all children to settle when true.'
     },
-    timeout_seconds: {
+    timeoutSeconds: {
       type: 'number',
       minimum: 0,
       maximum: 1800,
@@ -204,7 +207,7 @@ const DELEGATE_AGENT_CONTRACT = {
         }
       },
       {
-        description: 'Returned when options.timeout_seconds is explicit.',
+        description: 'Returned when options.timeoutSeconds is explicit.',
         type: 'object',
         required: ['kind', 'children'],
         optional: [],
@@ -254,6 +257,9 @@ type CollectRpcCall = Readonly<{
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key)
+
 const parseDelegateRpcCall = (params: Readonly<Record<string, unknown>>): DelegateRpcCall => {
   const request = params.request
   if (!isRecord(request) && !Array.isArray(request)) {
@@ -265,6 +271,11 @@ const parseDelegateRpcCall = (params: Readonly<Record<string, unknown>>): Delega
     throw new Error('host.delegate options must be an object; omit it when no options are needed.')
   }
   const requestedOptions = isRecord(params.options) ? params.options : {}
+  if (hasOwn(requestedOptions, 'timeoutSeconds')) {
+    throw new Error(
+      'host.delegate private RPC options use timeout_seconds; caller-facing timeoutSeconds must be remapped before transport.'
+    )
+  }
   if (requestedOptions.wait !== undefined && typeof requestedOptions.wait !== 'boolean') {
     throw new Error('host.delegate options.wait must be true or false.')
   }
@@ -286,6 +297,11 @@ const parseDelegateRpcCall = (params: Readonly<Record<string, unknown>>): Delega
     )
   }
   const mapRequest = (candidate: Record<string, unknown>): DurableDelegateRequest => {
+    if (hasOwn(candidate, 'outputSchema')) {
+      throw new Error(
+        'host.delegate private RPC requests use output_schema; caller-facing outputSchema must be remapped before transport.'
+      )
+    }
     const { output_schema, ...rest } = candidate
     return {
       ...(rest as DurableDelegateRequest),
@@ -315,6 +331,11 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
   }
   const selectors = params.selectors.map((selector) => {
     if (typeof selector === 'string' && selector.trim()) return selector
+    if (isRecord(selector) && (hasOwn(selector, 'frameId') || hasOwn(selector, 'attemptId'))) {
+      throw new Error(
+        'host.collect private RPC selectors use {frame_id, attempt_id}; caller-facing selectors must be remapped before transport.'
+      )
+    }
     if (
       isRecord(selector) &&
       typeof selector.frame_id === 'string' &&
@@ -332,6 +353,11 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
     throw new Error('host.collect options must be an object; omit it to use the 30-second default.')
   }
   const requestedOptions = isRecord(params.options) ? params.options : {}
+  if (hasOwn(requestedOptions, 'timeoutSeconds')) {
+    throw new Error(
+      'host.collect private RPC options use timeout_seconds; caller-facing timeoutSeconds must be remapped before transport.'
+    )
+  }
   const timeoutSeconds = requestedOptions.timeout_seconds
   if (
     timeoutSeconds !== undefined &&

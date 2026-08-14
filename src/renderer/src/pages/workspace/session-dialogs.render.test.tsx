@@ -1,5 +1,6 @@
 import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
 import type { ChatSession } from '@/stores/session-store'
+import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/utils', () => ({
@@ -80,11 +81,28 @@ describe('workspace session dialogs behavior wiring', () => {
     )
     const panel = findPanel(elements)
     const closeButton = elements.find((element) => element.props['aria-label'] === 'Close')
+    const header = elements.find((element) =>
+      String(element.props.className ?? '').includes('border-b border-border-300/90')
+    )
+    const footer = elements.find((element) =>
+      String(element.props.className ?? '').includes('border-t border-border-300/90')
+    )
+    const title = elements.find((element) =>
+      String(element.props.className ?? '').includes('text-lg font-semibold text-text-000')
+    )
+    const body = elements.find((element) => String(element.props.className ?? '').includes('p-5'))
 
     expect(overlay?.props.className).not.toContain('backdrop-blur')
     expect(panel?.props.className).toContain(expectedWidth)
+    expect(panel?.props.className).toContain('overflow-hidden')
     expect(panel?.props.className).toContain('text-foreground')
     expect(panel?.props.className).toContain('shadow-dialog')
+    expect(header?.props.className).toContain('px-5 py-3.5')
+    expect(footer?.props.className).toContain('px-5 py-3.5')
+    expect(footer?.props.className).toContain('gap-3')
+    expect(footer?.props.className).toContain('[&_button:enabled]:cursor-pointer')
+    expect(title).toBeDefined()
+    expect(body).toBeDefined()
 
     if (options.interceptsOutsideClick) {
       expect(panel?.props.onInteractOutside).toBeTypeOf('function')
@@ -121,12 +139,22 @@ describe('workspace session dialogs behavior wiring', () => {
     expect(onCancel).toHaveBeenCalledOnce()
 
     expect(input?.props.onChange).toBeTypeOf('function')
+    expect(input?.props.id).toBe('rename-session-name')
+    expectDialogFormFieldClassName(input?.props.className)
+    expect(
+      elements.find((element) => element.props.htmlFor === 'rename-session-name')?.props.className
+    ).toContain('block text-sm font-medium text-foreground mb-1')
     ;(input?.props.onChange as (event: { target: { value: string } }) => void)({
       target: { value: 'Updated title' }
     })
     expect(onRenameDraftChange).toHaveBeenCalledWith('Updated title')
 
     expect(cancelButton?.props.onClick).toBeTypeOf('function')
+    expect(cancelButton?.props.variant).toBe('ghost')
+    expect(cancelButton?.props.className).toContain('cursor-pointer')
+    expect(cancelButton?.props.className).toContain('border-0')
+    expect(cancelButton?.props.className).toContain('shadow-none')
+    expect(cancelButton?.props.className).toContain('hover:bg-bg-200')
     ;(cancelButton?.props.onClick as () => void)()
     expect(onCancel).toHaveBeenCalledTimes(2)
 

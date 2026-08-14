@@ -145,6 +145,7 @@ describe('ContextWindowDialog', () => {
 
     const dialog = document.body.querySelector('[role="dialog"]')
     const header = dialog?.querySelector('[data-slot="context-window-dialog-header"]')
+    const body = dialog?.querySelector('[data-slot="context-window-dialog-body"]')
     const description = dialog?.querySelector('#context-window-description')
     expect(dialog?.textContent).toContain('Context window')
     expect(dialog?.getAttribute('data-slot')).toBe('context-window-dialog')
@@ -153,7 +154,9 @@ describe('ContextWindowDialog', () => {
     expect(header).not.toBeNull()
     expect(header?.contains(description ?? null)).toBe(true)
     expect(header?.parentElement).toBe(dialog)
-    expect(dialog?.classList.contains('p-0')).toBe(false)
+    expect(dialog?.classList.contains('p-0')).toBe(true)
+    expect(header?.className).toContain('border-b border-border-300/90 px-5 py-3.5')
+    expect(body?.className).toContain('p-5')
     expect(dialog?.querySelectorAll('[data-slot="context-window-point"]')).toHaveLength(2)
     expect(dialog?.textContent).toContain('Window used (actual)')
     expect(

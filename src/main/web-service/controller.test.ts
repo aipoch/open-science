@@ -121,6 +121,21 @@ describe('createWebServiceController', () => {
     expect(h.controller.runningPort()).toBe(44100)
   })
 
+  it('keeps the bearer token out of daemon stdout when the service starts', async () => {
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const h = makeController()
+
+    try {
+      const result = await h.controller.ensureStarted(44100, { attached: false })
+
+      expect(result.url).toBe('http://127.0.0.1:44100/?token=tok-123')
+      expect(stdout).toHaveBeenCalledWith('Open Science Web: http://127.0.0.1:44100/')
+      expect(stdout.mock.calls.flat().join(' ')).not.toContain('tok-123')
+    } finally {
+      stdout.mockRestore()
+    }
+  })
+
   it('is idempotent: a second ensureStarted while running reuses the server (no second start)', async () => {
     const h = makeController()
     await h.controller.ensureStarted(44100, { attached: false })

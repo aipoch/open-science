@@ -4,8 +4,10 @@ import { Dialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -28,8 +30,10 @@ import { useComputeStore } from '@/stores/compute-store'
 //   This project      — approve for (provider, operation) for all future calls in this project
 //   Always            — approve for (provider, operation) across projects
 export function ComputeApprovalDialog({
+  active = true,
   blockedSessionIds
 }: {
+  active?: boolean
   blockedSessionIds?: ReadonlySet<string>
 }): React.JSX.Element | null {
   const request = useComputeStore((state) =>
@@ -58,17 +62,17 @@ export function ComputeApprovalDialog({
   const showFull = expandedRequestId === dialogRequest.id
 
   return (
-    <Dialog.Root open={Boolean(request)}>
+    <Dialog.Root open={active && Boolean(request)}>
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
-            'z-[60] w-[min(480px,calc(100vw-2rem))] overscroll-contain'
+            'z-[60] w-[min(480px,calc(100vw-2rem))] overscroll-contain p-0'
           )}
         >
-          <div className="flex items-start gap-3">
+          <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
             <div className="min-w-0">
               <Dialog.Title className={dialogTitleClassName}>Allow remote command?</Dialog.Title>
@@ -81,58 +85,60 @@ export function ComputeApprovalDialog({
             </div>
           </div>
 
-          <div className="mt-3 space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">Host</span>
-              <span className="min-w-0 truncate font-medium text-foreground">
-                {dialogRequest.provider_name}
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">Intent</span>
-              <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
-            </div>
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">Command</span>
-              <div className="min-w-0 flex-1">
-                <span className="break-all font-mono text-muted-foreground">
-                  {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
-                </span>
-                {isLongCommand && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedRequestId((id) =>
-                        id === dialogRequest.id ? null : dialogRequest.id
-                      )
-                    }
-                    className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
-                    aria-expanded={showFull}
-                  >
-                    {showFull ? (
-                      <>
-                        <ChevronUp className="size-3" aria-hidden="true" /> Show less
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="size-3" aria-hidden="true" /> Show full command
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-            {dialogRequest.inputs_summary && (
+          <div className={dialogBodyClassName}>
+            <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
               <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">Inputs</span>
-                <span className="min-w-0 break-words text-foreground">
-                  {dialogRequest.inputs_summary}
+                <span className="w-16 shrink-0 text-muted-foreground">Host</span>
+                <span className="min-w-0 truncate font-medium text-foreground">
+                  {dialogRequest.provider_name}
                 </span>
               </div>
-            )}
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">Intent</span>
+                <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">Command</span>
+                <div className="min-w-0 flex-1">
+                  <span className="break-all font-mono text-muted-foreground">
+                    {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
+                  </span>
+                  {isLongCommand && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedRequestId((id) =>
+                          id === dialogRequest.id ? null : dialogRequest.id
+                        )
+                      }
+                      className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
+                      aria-expanded={showFull}
+                    >
+                      {showFull ? (
+                        <>
+                          <ChevronUp className="size-3" aria-hidden="true" /> Show less
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="size-3" aria-hidden="true" /> Show full command
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {dialogRequest.inputs_summary && (
+                <div className="flex gap-2">
+                  <span className="w-16 shrink-0 text-muted-foreground">Inputs</span>
+                  <span className="min-w-0 break-words text-foreground">
+                    {dialogRequest.inputs_summary}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className={cn(dialogFooterClassName, 'mt-4 flex-wrap')}>
+          <div className={cn(dialogFooterClassName, 'flex-wrap')}>
             <Button type="button" variant="destructive" onClick={deny}>
               Deny
             </Button>
@@ -153,7 +159,7 @@ export function ComputeApprovalDialog({
       </Dialog.Portal>
       <PermissionScopeConfirmationDialog
         confirmation={
-          pendingBroadScope
+          active && pendingBroadScope
             ? {
                 scope: pendingBroadScope,
                 subject: `remote commands on ${dialogRequest.provider_name}`,

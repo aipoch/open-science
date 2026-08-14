@@ -262,6 +262,17 @@ describe('RuntimesPanel', () => {
     expect(dialog?.className).toContain('bg-card')
     expect(dialog?.className).toContain('shadow-dialog')
     expect(dialog?.className).toContain('data-[state=open]:zoom-in-95')
+    expect(dialog?.className).toContain('p-0')
+    expect(
+      Array.from(dialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-b border-border-300/90')
+      )
+    ).toBe(true)
+    expect(
+      Array.from(dialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-t border-border-300/90')
+      )
+    ).toBe(true)
     expect(setEnvironmentEnabled).not.toHaveBeenCalled()
 
     // Confirming applies the disable to the bound runtime.
@@ -578,6 +589,12 @@ describe('RuntimesPanel packages dialog', () => {
 
     const dialog = document.querySelector('[data-testid="runtime-packages-dialog"]')
     expect(dialog).not.toBeNull()
+    expect(dialog?.className).toContain('p-0')
+    expect(
+      Array.from(dialog?.querySelectorAll<HTMLElement>('div') ?? []).some((element) =>
+        element.className.includes('border-b border-border-300/90')
+      )
+    ).toBe(true)
     expect(dialog?.textContent).toContain('Packages in Python 3.12 (managed)')
     expect(dialog?.textContent).toContain('/data/runtime/envs/default-python-3.12/bin/python')
     expect(document.querySelectorAll('[data-testid="runtime-package-row"]').length).toBe(2)

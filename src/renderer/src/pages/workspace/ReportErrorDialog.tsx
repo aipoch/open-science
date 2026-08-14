@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -156,7 +157,7 @@ const ReportErrorDialog = ({
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
           className={dialogPanelClassName(
-            'flex max-h-[min(640px,calc(100vh-2rem))] w-[min(560px,calc(100vw-2rem))] flex-col'
+            'flex max-h-[min(640px,calc(100vh-2rem))] w-[min(560px,calc(100vw-2rem))] flex-col p-0'
           )}
         >
           <div className={dialogHeaderClassName}>
@@ -181,72 +182,74 @@ const ReportErrorDialog = ({
             </Dialog.Close>
           </div>
 
-          <label className="mt-4 text-[11px] font-medium uppercase tracking-wide text-text-300">
-            Error details
-          </label>
-          <textarea
-            className="mt-1 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
-            aria-label="Error details"
-            value={editedError}
-            onChange={(event) => {
-              // Editing changes issueUrl, so consent lapses automatically via consentedUrl !== issueUrl.
-              setEditedError(event.target.value)
-            }}
-          />
-
-          <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
-            Also included
-          </p>
-          <pre
-            className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
-            aria-label="Report environment"
-          >
-            {environmentBlock}
-          </pre>
-
-          {issuePrefill.truncatedFields.length > 0 ? (
-            <>
-              <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
-                GitHub issue prefill
-              </p>
-              <pre
-                className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
-                aria-label="GitHub issue prefill"
-              >
-                {issuePrefillPreview}
-              </pre>
-            </>
-          ) : null}
-
-          <label className="mt-4 flex items-start gap-2 text-[13px] leading-5 text-text-100">
-            <input
-              type="checkbox"
-              className="mt-0.5 size-4 shrink-0 accent-primary"
-              checked={consented}
-              // Consent is granted for the payload on screen now; bind it to that exact URL.
-              onChange={(event) => setConsentedUrl(event.target.checked ? issueUrl : null)}
+          <div className={cn(dialogBodyClassName, 'min-h-0 flex flex-1 flex-col')}>
+            <label className="text-[11px] font-medium uppercase tracking-wide text-text-300">
+              Error details
+            </label>
+            <textarea
+              className="mt-1 min-h-0 flex-1 resize-none overflow-auto rounded-lg border border-border-200 bg-bg-100 px-3 py-2.5 font-mono text-[12px] leading-5 text-text-100 focus:outline-none focus:ring-1 focus:ring-primary/50"
+              aria-label="Error details"
+              value={editedError}
+              onChange={(event) => {
+                // Editing changes issueUrl, so consent lapses automatically via consentedUrl !== issueUrl.
+                setEditedError(event.target.value)
+              }}
             />
-            <span>
-              I&apos;ve reviewed the details above and agree to share them in a public GitHub issue,
-              subject to GitHub&apos;s{' '}
-              <a
-                href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement"
-                target="_blank"
-                rel="noreferrer"
-                className="underline hover:text-text-000"
-                onClick={(event) => event.stopPropagation()}
-              >
-                Privacy Statement
-              </a>
-              .
-            </span>
-          </label>
 
-          {revealMessage ? (
-            <p className="mt-2 text-xs text-red-700 dark:text-red-400" role="alert">
-              {revealMessage}
+            <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
+              Also included
             </p>
-          ) : null}
+            <pre
+              className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
+              aria-label="Report environment"
+            >
+              {environmentBlock}
+            </pre>
+
+            {issuePrefill.truncatedFields.length > 0 ? (
+              <>
+                <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
+                  GitHub issue prefill
+                </p>
+                <pre
+                  className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
+                  aria-label="GitHub issue prefill"
+                >
+                  {issuePrefillPreview}
+                </pre>
+              </>
+            ) : null}
+
+            <label className="mt-4 flex items-start gap-2 text-[13px] leading-5 text-text-100">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 shrink-0 accent-primary"
+                checked={consented}
+                // Consent is granted for the payload on screen now; bind it to that exact URL.
+                onChange={(event) => setConsentedUrl(event.target.checked ? issueUrl : null)}
+              />
+              <span>
+                I&apos;ve reviewed the details above and agree to share them in a public GitHub
+                issue, subject to GitHub&apos;s{' '}
+                <a
+                  href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-text-000"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  Privacy Statement
+                </a>
+                .
+              </span>
+            </label>
+
+            {revealMessage ? (
+              <p className="mt-2 text-xs text-red-700 dark:text-red-400" role="alert">
+                {revealMessage}
+              </p>
+            ) : null}
+          </div>
 
           <div className={cn(dialogFooterClassName, 'flex-wrap items-center')}>
             <button

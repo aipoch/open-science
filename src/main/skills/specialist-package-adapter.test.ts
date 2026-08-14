@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { SpecialistPackageSkillPlan } from '../../shared/specialist-package'
 import { UserSkillRepository } from './user-skill-repository'
 import {
+  readSpecialistPackageSkillMetadata,
   SPECIALIST_PACKAGE_SKILL_METADATA,
   UserSkillSpecialistPackageAdapter
 } from './specialist-package-adapter'
@@ -69,7 +70,7 @@ describe('UserSkillSpecialistPackageAdapter', () => {
     roots.push(root)
     const adapter = new UserSkillSpecialistPackageAdapter(root)
     const repository = new UserSkillRepository(root)
-    const packagePlan = plan()
+    const packagePlan = { ...plan(), localId: 'personal-analysis-tools' }
 
     await adapter.prepare('tx-zip-race', 'research-synth', [packagePlan])
     await adapter.beginMutation('tx-zip-race', 'research-synth', [packagePlan])
@@ -96,10 +97,10 @@ describe('UserSkillSpecialistPackageAdapter', () => {
 
     await expect(ordinaryImport).resolves.toMatchObject({
       status: 'imported',
-      id: 'imported-analysis-tools'
+      id: 'imported-analysis-tools-2'
     })
-    await expect(repository.body('analysis-tools')).resolves.toContain('Use this Skill.')
-    await expect(repository.body('imported-analysis-tools')).resolves.toContain('Standalone.')
+    await expect(repository.body('personal-analysis-tools')).resolves.toContain('Use this Skill.')
+    await expect(repository.body('imported-analysis-tools-2')).resolves.toContain('Standalone.')
   })
 
   it('keeps prepared Skill trees invisible until commit and exposes their package identity afterward', async () => {
@@ -108,26 +109,157 @@ describe('UserSkillSpecialistPackageAdapter', () => {
     const adapter = new UserSkillSpecialistPackageAdapter(root)
     const repository = new UserSkillRepository(root)
 
-    await adapter.prepare('tx-1', 'research-synth', [plan()])
+    await adapter.prepare('tx-1', 'research-synth', [
+      { ...plan(), localId: 'personal-analysis-tools' }
+    ])
     await expect(repository.list()).resolves.toEqual([])
 
     await adapter.commit('tx-1')
     await adapter.recover('tx-1', 'commit')
 
     await expect(repository.list()).resolves.toEqual([
-      expect.objectContaining({ id: 'analysis-tools', source: 'personal' })
+      expect.objectContaining({
+        id: 'personal-analysis-tools',
+        name: 'analysis-tools',
+        source: 'personal'
+      })
     ])
-    await expect(repository.body('analysis-tools')).resolves.toContain('Use this Skill.')
-    await expect(repository.delete('analysis-tools')).rejects.toThrow(/Specialist-owned/)
+    await expect(repository.body('personal-analysis-tools')).resolves.toContain('Use this Skill.')
+    await expect(repository.delete('personal-analysis-tools')).rejects.toThrow(/Specialist-owned/)
     await expect(adapter.snapshot()).resolves.toEqual([
       {
-        id: 'analysis-tools',
+        id: 'personal-analysis-tools',
         version: '1.2.3',
         contentHash: 'a'.repeat(64),
         standalone: false,
         ownerIds: ['research-synth']
       }
     ])
+  })
+
+  it('preserves imported storage when reusing a Specialist-owned Skill', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
+    roots.push(root)
+    const directory = join(root, 'skills', 'imported', 'analysis-tools')
+    await mkdir(directory, { recursive: true })
+    await writeFile(
+      join(directory, 'SKILL.md'),
+      '---\nname: analysis-tools\ndescription: Analyze data\n---\nUse this Skill.'
+    )
+    await mkdir(join(directory, 'scripts'))
+    await writeFile(join(directory, 'scripts', 'run.sh'), 'exit 99')
+    await writeFile(
+      join(directory, SPECIALIST_PACKAGE_SKILL_METADATA),
+      JSON.stringify({
+        id: 'imported-analysis-tools',
+        version: '1.2.3',
+        contentHash: 'a'.repeat(64),
+        standalone: false,
+        ownerIds: ['first-specialist']
+      })
+    )
+    const adapter = new UserSkillSpecialistPackageAdapter(root)
+    const reused = {
+      ...plan(),
+      localId: 'imported-analysis-tools',
+      disposition: 'reuse-owned' as const
+    }
+
+    await adapter.prepare('reuse-imported', 'second-specialist', [reused])
+    await adapter.commit('reuse-imported')
+
+    await expect(readSpecialistPackageSkillMetadata(directory)).resolves.toMatchObject({
+      id: 'imported-analysis-tools',
+      ownerIds: ['first-specialist', 'second-specialist']
+    })
+    await expect(
+      readFile(join(root, 'skills', 'personal', 'analysis-tools', 'SKILL.md'), 'utf8')
+    ).rejects.toThrow()
+
+    await new UserSkillSpecialistPackageAdapter(root).rollback('reuse-imported')
+    await expect(readSpecialistPackageSkillMetadata(directory)).resolves.toMatchObject({
+      id: 'imported-analysis-tools',
+      ownerIds: ['first-specialist']
+    })
+
+    await adapter.prepareDeletion(
+      'delete-imported',
+      'first-specialist',
+      ['imported-analysis-tools'],
+      ['imported-analysis-tools']
+    )
+    await adapter.commit('delete-imported')
+    await expect(readFile(join(directory, 'SKILL.md'), 'utf8')).rejects.toThrow()
+
+    await new UserSkillSpecialistPackageAdapter(root).rollback('delete-imported')
+    await expect(readSpecialistPackageSkillMetadata(directory)).resolves.toMatchObject({
+      id: 'imported-analysis-tools',
+      ownerIds: ['first-specialist']
+    })
+  })
+
+  it('keeps a legacy package sidecar ID while exporting the directory name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
+    roots.push(root)
+    const directory = join(root, 'skills', 'personal', 'analysis-tools')
+    await mkdir(directory, { recursive: true })
+    await writeFile(
+      join(directory, 'SKILL.md'),
+      '---\nname: analysis-tools\ndescription: Analyze data\n---\nLegacy.'
+    )
+    await writeFile(
+      join(directory, SPECIALIST_PACKAGE_SKILL_METADATA),
+      JSON.stringify({
+        id: 'analysis-tools',
+        version: '1.2.3',
+        contentHash: 'legacy',
+        standalone: false,
+        ownerIds: ['research-synth']
+      })
+    )
+
+    const [snapshot] = await new UserSkillSpecialistPackageAdapter(root).exportSnapshot([
+      'analysis-tools'
+    ])
+
+    expect(snapshot).toMatchObject({ localId: 'analysis-tools', name: 'analysis-tools' })
+  })
+
+  it('does not reinterpret a legacy directory whose name starts with personal-', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
+    roots.push(root)
+    const directory = join(root, 'skills', 'personal', 'personal-analysis-tools')
+    await mkdir(directory, { recursive: true })
+    await writeFile(
+      join(directory, 'SKILL.md'),
+      '---\nname: personal-analysis-tools\ndescription: Legacy prefixed name\n---\nLegacy.'
+    )
+    await writeFile(
+      join(directory, SPECIALIST_PACKAGE_SKILL_METADATA),
+      JSON.stringify({
+        id: 'personal-analysis-tools',
+        version: '1.2.3',
+        contentHash: 'legacy',
+        standalone: false,
+        ownerIds: ['research-synth']
+      })
+    )
+    const adapter = new UserSkillSpecialistPackageAdapter(root)
+
+    await adapter.prepareDeletion(
+      'legacy-prefixed-delete',
+      'research-synth',
+      ['personal-analysis-tools'],
+      ['personal-analysis-tools']
+    )
+    await adapter.commit('legacy-prefixed-delete')
+    await expect(adapter.snapshot()).resolves.toEqual([])
+    await adapter.rollback('legacy-prefixed-delete')
+
+    await expect(adapter.snapshot()).resolves.toEqual([
+      expect.objectContaining({ id: 'personal-analysis-tools', ownerIds: ['research-synth'] })
+    ])
+    await expect(readFile(join(directory, 'SKILL.md'), 'utf8')).resolves.toContain('Legacy.')
   })
 
   it('removes a newly promoted Skill when the package coordinator rolls back', async () => {
@@ -207,7 +339,8 @@ describe('BundledSkillSpecialistPackageAdapter', () => {
 
     expect(snapshots).toEqual([
       expect.objectContaining({
-        id: 'literature-review',
+        localId: 'literature-review',
+        name: 'literature-review',
         files: expect.arrayContaining([
           expect.objectContaining({ path: 'SKILL.md' }),
           expect.objectContaining({ path: 'kernel.py' }),

@@ -397,6 +397,7 @@ export type PersistedPendingHistoryReplay =
   { kind: 'all' } | { kind: 'before-message'; messageId: string }
 
 export type PersistedToolActivityStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
+export type PersistedToolActivityDisposition = 'declined' | 'permission-closed'
 
 // A file location a tool touched; kept small so it can always be persisted.
 export type PersistedToolCallLocation = {
@@ -413,6 +414,8 @@ export type PersistedToolActivity = {
   activityGroupId?: string
   promptMessageId?: string
   status: PersistedToolActivityStatus
+  toolDisposition?: PersistedToolActivityDisposition
+  executionInvocationId?: string
   sortIndex: number
   eventIds: string[]
   providerToolName?: string
@@ -537,6 +540,10 @@ const TOOL_ACTIVITY_STATUSES = new Set<PersistedToolActivityStatus>([
   'in_progress',
   'completed',
   'failed'
+])
+const TOOL_ACTIVITY_DISPOSITIONS = new Set<PersistedToolActivityDisposition>([
+  'declined',
+  'permission-closed'
 ])
 const SESSION_STATUSES = new Set<PersistedSessionStatus>([
   'idle',
@@ -2407,6 +2414,41 @@ const asToolActivityStatus = (value: unknown): PersistedToolActivityStatus => {
   return status && TOOL_ACTIVITY_STATUSES.has(status) ? status : 'completed'
 }
 
+const asToolActivityDisposition = (
+  value: unknown
+): PersistedToolActivityDisposition | undefined => {
+  const disposition = asString(value) as PersistedToolActivityDisposition | undefined
+  return disposition && TOOL_ACTIVITY_DISPOSITIONS.has(disposition) ? disposition : undefined
+}
+
+const NOTEBOOK_RUN_TOOL_SUFFIXES = new Set(['notebook_execute', 'repl_execute', 'bash_execute'])
+
+// Matches only the app-owned Notebook server identities emitted by supported ACP adapters.
+// Restoration must fail closed: a lookalike provider tool is never reclassified as static code.
+const isPersistedNotebookRunActivity = (activity: PersistedToolActivity): boolean => {
+  const names = [activity.providerToolName, activity.title]
+  return names.some((candidate) => {
+    const name = candidate?.trim().toLowerCase()
+    if (!name) return false
+
+    const segments = name.split(/__|\.|\//u)
+    if (segments.length >= 2) {
+      const tool = segments.at(-1)
+      const server = segments.at(-2)?.replace(/_/gu, '-')
+      if (server === 'open-science-notebook' && tool && NOTEBOOK_RUN_TOOL_SUFFIXES.has(tool)) {
+        return true
+      }
+    }
+
+    for (const tool of NOTEBOOK_RUN_TOOL_SUFFIXES) {
+      if (name === `open-science-notebook_${tool}` || name === `open_science_notebook_${tool}`) {
+        return true
+      }
+    }
+    return false
+  })
+}
+
 // Rebuilds a persisted tool activity from durable fields, bounding every large payload.
 export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity | undefined => {
   if (!isRecord(activity)) return undefined
@@ -2436,6 +2478,8 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   const terminalOutput = asCappedString(activity.terminalOutput, MAX_PERSISTED_TEXT_CHARS)
   const terminalExitCode = asNumber(activity.terminalExitCode)
   const elicitation = sanitizeElicitationProjection(activity.elicitation)
+  const toolDisposition = asToolActivityDisposition(activity.toolDisposition)
+  const executionInvocationId = asString(activity.executionInvocationId)
 
   if (providerToolName) sanitized.providerToolName = providerToolName
   if (activityGroupId) sanitized.activityGroupId = activityGroupId
@@ -2448,27 +2492,43 @@ export const sanitizeToolActivity = (activity: unknown): PersistedToolActivity |
   if (terminalOutput !== undefined) sanitized.terminalOutput = terminalOutput
   if (terminalExitCode !== undefined) sanitized.terminalExitCode = terminalExitCode
   if (elicitation) sanitized.elicitation = elicitation
+  if (toolDisposition) sanitized.toolDisposition = toolDisposition
+  if (executionInvocationId) sanitized.executionInvocationId = executionInvocationId
 
   return sanitized
 }
 
 // Runtime activity state cannot resume after restart unless the exact active-Branch tool call is
-// parked behind durable permission authority. Restore every other open activity as failed.
+// parked behind durable permission authority. An unowned Notebook call remains static: process loss
+// is not evidence that its displayed code failed. Its process-scoped Run correlation is discarded.
 const normalizeActivityAfterRestore = (
   activity: PersistedToolActivity,
   permissionAuthority?: RestorablePermissionToolAuthority
-): PersistedToolActivity => ({
-  ...activity,
-  ...((activity.status === 'pending' || activity.status === 'in_progress') &&
-  !activity.elicitation?.durable &&
-  (activity.id !== permissionAuthority?.activity.id ||
-    activity.promptMessageId !== permissionAuthority.permission.originatingPromptMessageId)
-    ? { status: 'failed' as const }
-    : {}),
-  ...(activity.elicitation?.state === 'pending' && !activity.elicitation.durable
-    ? { elicitation: { ...activity.elicitation, state: 'cancelled' as const } }
-    : {})
-})
+): PersistedToolActivity => {
+  const closesOpenActivity =
+    (activity.status === 'pending' || activity.status === 'in_progress') &&
+    !activity.elicitation?.durable &&
+    (activity.id !== permissionAuthority?.activity.id ||
+      activity.promptMessageId !== permissionAuthority.permission.originatingPromptMessageId)
+  const closesOpenNotebookActivity = closesOpenActivity && isPersistedNotebookRunActivity(activity)
+  const normalized: PersistedToolActivity = {
+    ...activity,
+    ...(closesOpenActivity
+      ? closesOpenNotebookActivity
+        ? { toolDisposition: 'permission-closed' as const }
+        : { status: 'failed' as const }
+      : {}),
+    ...(activity.elicitation?.state === 'pending' && !activity.elicitation.durable
+      ? { elicitation: { ...activity.elicitation, state: 'cancelled' as const } }
+      : {})
+  }
+
+  if (closesOpenNotebookActivity) {
+    delete normalized.executionInvocationId
+  }
+
+  return normalized
+}
 
 export const sanitizeActivityGroup = (group: unknown): PersistedActivityGroup | undefined => {
   if (!isRecord(group)) return undefined

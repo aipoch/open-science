@@ -171,7 +171,7 @@ const DownloadSessionArtifactsDialog = ({
             'flex max-h-[80svh] w-[min(640px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
           )}
         >
-          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border-300/90 px-5 py-3.5">
             <div className="flex min-w-0 items-center gap-2">
               <Archive className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0">
@@ -228,7 +228,7 @@ const DownloadSessionArtifactsDialog = ({
                 {artifacts.map((artifact) => (
                   <label
                     key={artifact.id}
-                    className="flex cursor-pointer items-center gap-3 px-4 py-2 transition-colors hover:bg-muted"
+                    className="flex cursor-pointer items-center gap-3 px-5 py-2 transition-colors hover:bg-muted"
                   >
                     <input
                       type="checkbox"
@@ -251,7 +251,7 @@ const DownloadSessionArtifactsDialog = ({
             )}
           </div>
 
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border-300/90 px-5 py-3.5">
             <Button
               type="button"
               variant="ghost"

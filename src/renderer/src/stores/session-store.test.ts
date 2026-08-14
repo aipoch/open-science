@@ -200,6 +200,34 @@ describe('session store', () => {
     })
   })
 
+  it('keeps artifact finalization idempotent across independent renderer projections', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Stream a response'
+    })
+    const initialSession = toPersistedSession(useSessionStore.getState().sessions[0])
+    const input = {
+      sessionId: 'transport-session-1',
+      streamId: 'assistant-message-1',
+      eventId: 'event-1',
+      content: 'Hello'
+    }
+
+    const firstProjection = useSessionStore.getState().appendAgentMessageChunk(input)
+    useSessionStore.getState().hydrateSessions([initialSession])
+    const secondProjection = useSessionStore.getState().appendAgentMessageChunk(input)
+    let finalizedMessageId: string | undefined
+    const finalize = (messageId: string | undefined): void => {
+      if (finalizedMessageId && finalizedMessageId !== messageId) {
+        throw new Error(`Artifact run claim already finalized for message: ${finalizedMessageId}`)
+      }
+      finalizedMessageId = messageId
+    }
+
+    finalize(firstProjection?.messageId)
+    expect(() => finalize(secondProjection?.messageId)).not.toThrow()
+  })
+
   it('keeps waiting through whitespace-only Agent chunks', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -1726,7 +1754,8 @@ describe('session store', () => {
   it('creates a pending first message before a runtime session id exists', () => {
     const result = useSessionStore.getState().appendPendingUserMessage({
       content: 'Help me inspect this notebook',
-      cwd: '/workspace/project'
+      cwd: '/workspace/project',
+      enabledComputeHosts: ['ssh:lab']
     })
 
     expect(result?.sessionId).toMatch(/^pending-session-/)
@@ -1736,6 +1765,7 @@ describe('session store', () => {
         id: result?.sessionId,
         isPending: true,
         cwd: '/workspace/project',
+        enabledComputeHosts: ['ssh:lab'],
         title: 'Help me inspect this notebook',
         status: 'running',
         activeRun: {
@@ -3514,6 +3544,28 @@ describe('session store', () => {
     })
   })
 
+  it('keeps file-only artifact ownership stable across independent renderer projections', () => {
+    const userMessage = useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create an image'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    const initialSession = toPersistedSession(useSessionStore.getState().sessions[0])
+    const input = {
+      sessionId: 'transport-session-1',
+      runId: 'run-1',
+      promptMessageId: userMessage?.messageId,
+      eventId: 'artifact-event-1',
+      artifacts: [createArtifactFile({ name: 'image.png', mimeType: 'image/png' })]
+    }
+
+    const firstProjection = useSessionStore.getState().attachRunArtifacts(input)
+    useSessionStore.getState().hydrateSessions([initialSession])
+    const secondProjection = useSessionStore.getState().attachRunArtifacts(input)
+
+    expect(secondProjection?.messageId).toBe(firstProjection?.messageId)
+  })
+
   it('replaces pending artifact metadata with finalized message files', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -4359,7 +4411,6 @@ describe('session store public contract', () => {
         'setElicitationDraftAnswers',
         'setElicitationHistoryReplayRequest',
         'setElicitationPending',
-        'setEnabledComputeHosts',
         'setFixLoopActive',
         'setPermissionPending',
         'setPermissionProfile',
@@ -4434,6 +4485,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
+      'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',
@@ -5626,6 +5678,27 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       title: 'Acknowledged title',
       elicitationHistoryReplayRequestId: 'choice-retry'
+    })
+  })
+
+  it('projects enabled Compute Host authority without replacing newer local state', () => {
+    seedSession()
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().renameSession('session-1', 'Newer local title')
+
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        enabledComputeHosts: ['ssh:lab'],
+        updatedAt: source.updatedAt + 1
+      },
+      mode: 'enabled-compute-hosts-authority'
+    })
+
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      title: 'Newer local title',
+      enabledComputeHosts: ['ssh:lab']
     })
   })
 })

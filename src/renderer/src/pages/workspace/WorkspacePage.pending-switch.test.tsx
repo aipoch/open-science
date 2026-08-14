@@ -32,7 +32,10 @@ import type {
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 // Capture all props WorkspacePage passes to ConversationPanel.
-let conversationProps: Record<string, unknown>
+let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
+const panelSpecialistId = (): string | undefined =>
+  conversationProps.view.activeSession?.specialistId ??
+  conversationProps.specialist.view.specialist.newConversationId
 
 const runtime = vi.hoisted(() => ({
   promptInFlightSessionIds: [] as string[],
@@ -73,7 +76,7 @@ vi.mock('./WorkspaceSidebar', () => ({
 }))
 
 vi.mock('./ConversationPanel', () => ({
-  ConversationPanel: (props: Record<string, unknown>): React.JSX.Element => {
+  ConversationPanel: (props: typeof conversationProps): React.JSX.Element => {
     conversationProps = props
     return <section data-testid="conversation" />
   }
@@ -251,7 +254,7 @@ describe('WorkspacePage pending-switch broadcast', () => {
 
     // The handoff transcript owns this error and its Retry action. The composer banner is reserved
     // for a user-initiated pre-send reconfiguration failure, otherwise one failure renders twice.
-    expect(conversationProps.reconfigureError).toBeNull()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeNull()
   })
 
   it('syncs the menu binding after a completed handoff, including a return to Main Agent', async () => {
@@ -289,7 +292,7 @@ describe('WorkspacePage pending-switch broadcast', () => {
 
     expect(resolveSessionSpecialist).toHaveBeenLastCalledWith({ sessionId: 'sess-a' })
     expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-b')
-    expect(conversationProps.specialistId).toBe('spec-b')
+    expect(panelSpecialistId()).toBe('spec-b')
 
     await act(async () => {
       handoffLifecycleListener?.({
@@ -306,7 +309,7 @@ describe('WorkspacePage pending-switch broadcast', () => {
 
     expect(resolveSessionSpecialist).toHaveBeenLastCalledWith({ sessionId: 'sess-a' })
     expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
-    expect(conversationProps.specialistId).toBeUndefined()
+    expect(panelSpecialistId()).toBeUndefined()
   })
 
   it('does not create a composer recovery banner when replaying failed handoffs', async () => {
@@ -345,7 +348,7 @@ describe('WorkspacePage pending-switch broadcast', () => {
     await renderPage(root)
     await act(async () => Promise.resolve())
 
-    expect(conversationProps.reconfigureError).toBeNull()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeNull()
   })
 
   it('mirrors the pending target WITHOUT calling setSessionSpecialist mid-reply', async () => {
@@ -371,9 +374,9 @@ describe('WorkspacePage pending-switch broadcast', () => {
     })
 
     // The pending-switch chip must show.
-    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+    expect(conversationProps.specialist.view.specialist.hasPendingSwitch).toBe(true)
     // The effective badge still shows the OLD specialist — the live agent was NOT switched.
-    expect(conversationProps.specialistId).toBe('spec-a')
+    expect(panelSpecialistId()).toBe('spec-a')
     // Critically: the runtime switch must NOT have happened during the broadcast.
     expect(window.api.specialist.setSessionSpecialist).not.toHaveBeenCalled()
   })
@@ -415,17 +418,17 @@ describe('WorkspacePage pending-switch broadcast', () => {
       pendingSwitchListener?.({ sessionId: 'sess-a', targetName: null })
     })
 
-    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+    expect(conversationProps.specialist.view.specialist.hasPendingSwitch).toBe(true)
 
     // Finish the run and send — the barrier must clear the binding via the same next-message path.
     await act(async () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('go'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(textDoc('go'))
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     expect(setSessionSpecialist).toHaveBeenCalledWith({
@@ -462,10 +465,12 @@ describe('WorkspacePage pending-switch broadcast', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('next turn'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('next turn')
+      )
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     // The barrier reconfigured the live runtime under the NEW specialist (spec-b).
@@ -510,10 +515,12 @@ describe('WorkspacePage pending-switch broadcast', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('final'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('final')
+      )
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     // The newest target (Researcher → spec-c) wins.
@@ -543,7 +550,9 @@ describe('WorkspacePage pending-switch broadcast', () => {
     await renderPage(root)
 
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('keep my draft'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('keep my draft')
+      )
     })
     await act(async () => {
       pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
@@ -553,14 +562,14 @@ describe('WorkspacePage pending-switch broadcast', () => {
       useSessionStore.getState().finishRun('sess-a')
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     // Reconfigure failed: never sent, draft preserved, recovery surface shown.
     expect(runtime.sendMessage).not.toHaveBeenCalled()
-    expect(conversationProps.reconfigureError).toBeTruthy()
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toBeTruthy()
     // The draft content must survive the failure.
-    expect((conversationProps.draftDoc as ComposerDoc).nodes[0]).toMatchObject({
+    expect((conversationProps.composer.view.doc as ComposerDoc).nodes[0]).toMatchObject({
       type: 'text',
       text: 'keep my draft'
     })
@@ -601,7 +610,7 @@ describe('WorkspacePage pending-switch broadcast', () => {
 
     // The renderer resolved the durable binding for the pending target.
     expect(resolveSessionSpecialist).toHaveBeenCalledWith({ sessionId: 'sess-a' })
-    expect(conversationProps.specialistHasPendingSwitch).toBe(true)
+    expect(conversationProps.specialist.view.specialist.hasPendingSwitch).toBe(true)
   })
 
   it('does not eagerly switch the live agent when a broadcast arrives while idle', async () => {
@@ -632,10 +641,10 @@ describe('WorkspacePage pending-switch broadcast', () => {
 
     // The pending target still applies at the next send via the reconfigure barrier.
     await act(async () => {
-      ;(conversationProps.onDraftDocChange as (doc: ComposerDoc) => void)(textDoc('next'))
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(textDoc('next'))
     })
     await act(async () => {
-      ;(conversationProps.onSendMessage as (ids: string[]) => void)([])
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
     })
 
     expect(setSessionSpecialist).toHaveBeenCalledWith({

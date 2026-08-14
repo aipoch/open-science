@@ -48,6 +48,7 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
       HOP_BY_HOP_HEADERS.has(normalized) ||
       normalized === 'authorization' ||
       normalized === 'x-api-key' ||
+      normalized.startsWith('sec-fetch-') ||
       value === undefined
     ) {
       continue
@@ -74,10 +75,16 @@ export class OpenAiProviderBridge {
   private readonly wire: OpenAiProviderBridgeTarget['wire']
   private readonly host: ProviderLoopbackHttpHost<OpenAiProviderBridgeConnection>
   private target: OpenAiProviderBridgeTarget
+  private readonly fetchImpl: typeof fetch
 
-  constructor(targets: readonly OpenAiProviderBridgeTarget[], initialTargetId: string) {
+  constructor(
+    targets: readonly OpenAiProviderBridgeTarget[],
+    initialTargetId: string,
+    fetchImpl: typeof fetch = fetch
+  ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
+    this.fetchImpl = fetchImpl
     if (!initial) throw new Error('The initial OpenAI bridge target is not registered.')
     this.target = initial
     this.wire = initial.wire
@@ -146,7 +153,7 @@ export class OpenAiProviderBridge {
     }
     const body = JSON.stringify({ ...parsed, model: target.model })
 
-    const upstream = await fetch(endpoint, {
+    const upstream = await this.fetchImpl(endpoint, {
       method: 'POST',
       headers: requestHeaders(request, target.key),
       body,

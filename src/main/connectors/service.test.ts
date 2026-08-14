@@ -1409,7 +1409,7 @@ describe('ConnectorService specialist capability gate', () => {
     expect(localHandler).toHaveBeenCalledTimes(3)
   })
 
-  it('accepts only the custom Connector name as a Specialist capability reference', async () => {
+  it('accepts a custom Connector local UUID or legacy public name as a capability reference', async () => {
     const call = vi.fn().mockResolvedValue({ ok: true })
     const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
     let current = specialist({
@@ -1445,10 +1445,7 @@ describe('ConnectorService specialist capability gate', () => {
       specialistId: current.id
     }
 
-    await expect(svc.call('public-route', 'do_thing', {}, context)).rejects.toThrow(
-      'specialist_capability_denied'
-    )
-    expect(call).not.toHaveBeenCalled()
+    await expect(svc.call('public-route', 'do_thing', {}, context)).resolves.toEqual({ ok: true })
 
     current = specialist({
       capabilityMode: 'selected',
@@ -1464,14 +1461,14 @@ describe('ConnectorService specialist capability gate', () => {
       capabilityMode: 'full',
       fullAccess: {
         excludedSkillIds: [],
-        excludedConnectorIds: ['public-route'],
+        excludedConnectorIds: ['custom-server-uuid'],
         connectorTools: []
       }
     })
     await expect(svc.call('public-route', 'do_thing', {}, context)).rejects.toThrow(
       'specialist_capability_denied'
     )
-    expect(call).toHaveBeenCalledOnce()
+    expect(call).toHaveBeenCalledTimes(2)
   })
 
   it('fails closed for missing agent session/profile/connector without exposing call data', async () => {

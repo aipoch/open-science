@@ -74,9 +74,9 @@ describe('resolveCanonicalMcpToolIdentity', () => {
   )
 
   it.each(['codex', 'claude-code', 'opencode'] as const)(
-    'does not reinterpret the Host SDK send_frame_message method as an MCP tool for %s',
+    'does not reinterpret the Host SDK sendFrameMessage method as an MCP tool for %s',
     (frameworkId) => {
-      const guidance = "Use await host.send_frame_message('parent', message)."
+      const guidance = "Use await host.sendFrameMessage('parent', message)."
 
       expect(renderAppMcpToolReferences(frameworkId, guidance)).toBe(guidance)
     }

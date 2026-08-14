@@ -7,7 +7,8 @@ import {
   Pencil,
   Plus,
   Terminal,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -20,7 +21,12 @@ import type {
 } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -64,7 +70,7 @@ const FILTER_LABELS: Record<GroupFilter, string> = {
 
 const specialistNamesUsingConnector = (
   items: SpecialistListItem[],
-  server: Pick<CustomServerView, 'name'>
+  server: Pick<CustomServerView, 'id' | 'name'>
 ): string[] => {
   return items
     .flatMap((item) => {
@@ -73,8 +79,8 @@ const specialistNamesUsingConnector = (
         item.capabilityMode === 'full'
           ? item.fullAccess.excludedConnectorIds
           : item.selectedCapabilities.connectorIds
-      const usesConnector =
-        item.capabilityMode === 'full' ? !ids.includes(server.name) : ids.includes(server.name)
+      const matches = (id: string): boolean => id === server.id || id === server.name
+      const usesConnector = item.capabilityMode === 'full' ? !ids.some(matches) : ids.some(matches)
       return usesConnector ? [item.displayName?.trim() || item.name] : []
     })
     .sort((a, b) => a.localeCompare(b))
@@ -368,9 +374,15 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         )}
       </SettingsSection>
 
-      <div className="mb-4 flex items-center gap-2">
+      <div
+        className="mb-4 grid grid-cols-[9rem_minmax(0,1fr)] gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_auto] sm:items-center"
+        data-testid="connectors-toolbar"
+      >
         <Select value={filter} onValueChange={(value) => setFilter(value as GroupFilter)}>
-          <SelectTrigger aria-label="Filter connectors by group" className="w-36">
+          <SelectTrigger
+            aria-label="Filter connectors by group"
+            className="w-full sm:col-start-1 sm:row-start-1"
+          >
             <span>{FILTER_LABELS[filter]}</span>
           </SelectTrigger>
           <SelectContent>
@@ -382,13 +394,17 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
         </Select>
         <SettingsSearchInput
           aria-label="Search connectors"
+          containerClassName="min-w-0 sm:col-start-2 sm:row-start-1"
           placeholder="Search connectors…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="shrink-0">
+            <Button
+              variant="outline"
+              className="col-span-2 row-start-2 w-full justify-center sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:w-auto sm:shrink-0"
+            >
               <Plus data-icon="inline-start" aria-hidden="true" />
               Add connector
               <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
@@ -621,43 +637,70 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       >
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
-            <AlertDialog.Title className={dialogTitleClassName}>
-              Remove “{removal?.server.displayName}”?
-            </AlertDialog.Title>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              This removes the Connector configuration and credentials from this app. Existing
-              conversation history is kept.
-            </AlertDialog.Description>
-            {removal?.specialistNames?.length ? (
-              <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
-                <p>
-                  This Connector is used by {removal.specialistNames.length}{' '}
-                  {removal.specialistNames.length === 1 ? 'Specialist' : 'Specialists'}.{' '}
-                  {removal.specialistNames.length === 1 ? 'Its' : 'Their'} saved references will
-                  become unavailable.
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {removal.specialistNames.join(', ')}
-                </p>
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  Remove “{removal?.server.displayName}”?
+                </AlertDialog.Title>
               </div>
-            ) : removal?.specialistNames === undefined ? (
-              <p className="mt-4 text-xs text-muted-foreground">
-                Specialist references could not be checked. You can still remove this Connector.
-              </p>
-            ) : null}
-            {removalError ? (
-              <div
-                role="alert"
-                className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-              >
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{removalError}</span>
-              </div>
-            ) : null}
-            <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline" disabled={removing}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Close"
+                  className={dialogCloseButtonClassName}
+                  disabled={removing}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                This removes the Connector configuration and credentials from this app. Existing
+                conversation history is kept.
+              </AlertDialog.Description>
+              {removal?.specialistNames?.length ? (
+                <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
+                  <p>
+                    This Connector is used by {removal.specialistNames.length}{' '}
+                    {removal.specialistNames.length === 1 ? 'Specialist' : 'Specialists'}.{' '}
+                    {removal.specialistNames.length === 1 ? 'Its' : 'Their'} saved references will
+                    become unavailable.
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {removal.specialistNames.join(', ')}
+                  </p>
+                </div>
+              ) : removal?.specialistNames === undefined ? (
+                <p className="mt-4 text-xs text-muted-foreground">
+                  Specialist references could not be checked. You can still remove this Connector.
+                </p>
+              ) : null}
+              {removalError ? (
+                <div
+                  role="alert"
+                  className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{removalError}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  disabled={removing}
+                >
                   Cancel
                 </Button>
               </AlertDialog.Cancel>

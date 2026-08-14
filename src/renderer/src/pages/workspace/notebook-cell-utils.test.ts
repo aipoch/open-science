@@ -4,8 +4,10 @@ import {
   deriveErrorLine,
   detectCellLanguage,
   environmentLabel,
+  isProblemRunStatus,
   kernelKindLabel,
   kernelOriginLabel,
+  notebookRunStatusLabel,
   resolveRunErrorLine,
   resolveRunEnvironment,
   resolveRunKernelKind
@@ -196,5 +198,21 @@ describe('environmentLabel', () => {
 
   it('returns named envs as-is', () => {
     expect(environmentLabel('my-analysis')).toBe('my-analysis')
+  })
+})
+
+describe('notebook run terminal presentation', () => {
+  it('reserves error treatment for failed runs', () => {
+    expect(isProblemRunStatus('failed')).toBe(true)
+    expect(isProblemRunStatus('timeout')).toBe(false)
+    expect(isProblemRunStatus('interrupted')).toBe(false)
+    expect(isProblemRunStatus('cancelled')).toBe(false)
+  })
+
+  it('uses neutral, distinct labels for non-failure terminal states', () => {
+    expect(notebookRunStatusLabel('timeout')).toBe('limit reached')
+    expect(notebookRunStatusLabel('interrupted')).toBe('interrupted')
+    expect(notebookRunStatusLabel('cancelled')).toBe('cancelled')
+    expect(notebookRunStatusLabel('failed')).toBe('error')
   })
 })

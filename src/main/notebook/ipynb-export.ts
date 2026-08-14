@@ -60,6 +60,7 @@ type IpynbNotebook = {
     }
     open_science: {
       sessionId: string
+      // Frozen export metadata key; its value is the immutable Project id.
       projectName: string
       artifactSessionId?: string
       appVersion?: string
@@ -267,6 +268,8 @@ const runDocumentToIpynb = (
   options: RunDocumentToIpynbOptions = {},
   kernel: 'python' | 'r' | undefined = undefined
 ): IpynbNotebook => {
+  const projectId = document.projectId ?? document.projectName
+  if (!projectId) throw new Error('A persisted projectId is required.')
   const resolvedKernel = kernel ?? dominantKernel(document.runs)
   const kernelspec = kernelspecFor(resolvedKernel)
   const environment = dominantEnvironment(document.runs, resolvedKernel)
@@ -279,7 +282,8 @@ const runDocumentToIpynb = (
       language_info: { name: kernelspec.language },
       open_science: {
         sessionId: document.sessionId,
-        projectName: document.projectName,
+        // Frozen nbformat metadata key; its value remains the immutable Project id.
+        projectName: projectId,
         ...(document.artifactSessionId ? { artifactSessionId: document.artifactSessionId } : {}),
         ...(options.appVersion ? { appVersion: options.appVersion } : {}),
         ...(environment ? { environment } : {})

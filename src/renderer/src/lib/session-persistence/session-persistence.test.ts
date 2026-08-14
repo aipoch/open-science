@@ -103,7 +103,7 @@ describe('reconcilePendingArtifacts', () => {
     await reconcilePendingArtifacts(api)
 
     expect(api.reconcilePendingArtifacts).toHaveBeenCalledWith({
-      projectName: 'proj-1',
+      projectId: 'proj-1',
       sessionId: 'session-1',
       messageId: 'message-1',
       pendingPaths: [pendingPath]

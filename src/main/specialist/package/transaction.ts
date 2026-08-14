@@ -166,7 +166,7 @@ export class SpecialistPackageTransaction {
               .filter(
                 (skill) => skill.disposition === 'install' || skill.disposition === 'reuse-owned'
               )
-              .map((skill) => skill.id)
+              .map((skill) => skill.localId ?? skill.id)
           ])
         ],
         importBaseline: {

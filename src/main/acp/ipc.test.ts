@@ -140,6 +140,7 @@ const registerWithFakes = (overrides?: {
   profileService?: { resolveRunnableById: (id: string) => Promise<unknown> }
   specialistSkillCatalog?: Array<{ id: string; frameworkName: string; displayName: string }>
   provisionedConnectorSkillNames?: string[]
+  customMcpServers?: Array<{ id: string; name: string }>
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
 }): AcpTestOptions => {
   const taskNotifications =
@@ -164,7 +165,10 @@ const registerWithFakes = (overrides?: {
         .mockResolvedValue(overrides?.specialistSkillCatalog ?? []),
       provisionedConnectorSkillNames: vi
         .fn()
-        .mockResolvedValue(overrides?.provisionedConnectorSkillNames ?? [])
+        .mockResolvedValue(overrides?.provisionedConnectorSkillNames ?? []),
+      getConnectors: vi.fn().mockResolvedValue({
+        customMcpServers: overrides?.customMcpServers ?? []
+      })
     } as never,
     taskNotifications: taskNotifications as never,
     onSessionCancellationRequested: overrides?.onSessionCancellationRequested,
@@ -378,6 +382,34 @@ describe('ACP runtime composition — Specialist identity resolver', () => {
     }
     // Selected mode: only connectorIds are allowed, so mcp-literature is filtered out.
     expect(result.frameworkNames).toEqual(['Skill A', 'mcp-chemistry'])
+  })
+
+  it('projects a custom Connector UUID to its public runtime skill name', async () => {
+    const profileService = {
+      resolveRunnableById: vi.fn().mockResolvedValue({
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: {
+          skillIds: [],
+          connectorIds: ['custom-server-uuid'],
+          connectorTools: []
+        }
+      })
+    }
+    registerWithFakes({
+      profileService,
+      provisionedConnectorSkillNames: ['mcp-public-route'],
+      customMcpServers: [{ id: 'custom-server-uuid', name: 'public-route' }]
+    })
+    const options = AcpRuntimeMock.mock.calls.at(-1)?.[0] as {
+      resolveSpecialistSkills?: (id: string) => Promise<unknown>
+    }
+    const result = (await options.resolveSpecialistSkills?.('uuid-1')) as {
+      frameworkNames: string[]
+    }
+
+    expect(result.frameworkNames).toEqual(['mcp-public-route'])
   })
 
   it('excludes full-access blocked connectors from the whitelist (full mode)', async () => {

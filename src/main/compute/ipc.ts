@@ -4,12 +4,6 @@ import { join } from 'node:path'
 
 import { BrowserWindow, shell } from 'electron'
 
-import {
-  createIpcHandlerInstallationScope,
-  ipcMainHandle,
-  type IpcHandlerInstallation
-} from '../ipc-handler-registry'
-
 import type {
   ComputeApprovalDecision,
   ComputeHost,
@@ -17,18 +11,11 @@ import type {
   ComputeJob,
   JobSummary,
   CreateComputeHostRequest,
-  DeleteComputeHostRequest,
   DetailsAuthor,
   ProbeResult
 } from '../../shared/compute'
 import { computeProviderId } from '../../shared/compute'
-import type {
-  DirListing,
-  DownloadDest,
-  LocalFile,
-  SerializableRemoteFsError
-} from '../../shared/remote-fs'
-import { encodeRemoteFsError } from '../../shared/remote-fs'
+import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createLogger, errorLogFields } from '../logger'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
@@ -58,9 +45,6 @@ import {
   type LegacyComputeGrantPort
 } from './permission-grant-adapter'
 import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from './skill-doc'
-
-// IPC channel names for the renderer job feed (Phase 3d, issue 05).
-export const COMPUTE_JOBS_LIST_CHANNEL = 'compute:jobs:list'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 const log = createLogger('compute')
@@ -196,6 +180,10 @@ type ComputeHandlers = {
   jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
 }
 
+type ComputeHostLifecycle = Readonly<{
+  pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
+}>
+
 // Adapts a repository into thin handlers.
 const createComputeHandlers = (
   repository: ComputeHostRepository,
@@ -212,7 +200,8 @@ const createComputeHandlers = (
     'handleComputeApproval' | 'settleAuthorization'
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
-  syncComputeSkillDocument?: () => Promise<void>
+  syncComputeSkillDocument?: () => Promise<void>,
+  hostLifecycle?: ComputeHostLifecycle
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -325,11 +314,12 @@ const createComputeHandlers = (
     get: (providerId) => repository.get(providerId),
     create: (request) =>
       runHostLifecycleMutation(async () => {
-        if (permissionGrantRegistry) {
+        if (permissionGrantRegistry || hostLifecycle) {
           const providerId = computeProviderId(request.sshAlias)
           const existing = await repository.get(providerId)
           if (!existing) {
-            await permissionGrantRegistry.prune({ kind: 'compute_provider', providerId })
+            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+            await hostLifecycle?.pruneSessionEnabledHosts(providerId)
           }
         }
         const host = await repository.create(request)
@@ -349,9 +339,25 @@ const createComputeHandlers = (
         }
         await broker.invalidateProvider(providerId)
         try {
-          await repository.delete(providerId)
-          await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
-          await syncComputeSkillDocument?.()
+          const deleteProvider = (): Promise<void> => repository.delete(providerId)
+          if (hostLifecycle) {
+            await hostLifecycle.pruneSessionEnabledHosts(providerId, deleteProvider)
+          } else {
+            await deleteProvider()
+          }
+          try {
+            await permissionGrantRegistry?.prune({ kind: 'compute_provider', providerId })
+          } catch (error) {
+            log.warn(
+              'compute permission grant cleanup after host deletion failed',
+              errorLogFields(error)
+            )
+          }
+          try {
+            await syncComputeSkillDocument?.()
+          } catch (error) {
+            log.warn('compute skill sync after host deletion failed', errorLogFields(error))
+          }
         } finally {
           broker.completeProviderInvalidation(providerId)
         }
@@ -489,7 +495,8 @@ const createComputeIpcModule = (
     'handleComputeApproval' | 'settleAuthorization'
   >,
   permissionGrantRegistry?: PermissionGrantRegistry,
-  legacyComputeGrants?: LegacyComputeGrantPort
+  legacyComputeGrants?: LegacyComputeGrantPort,
+  hostLifecycle?: ComputeHostLifecycle
 ): ComputeIpcModule => {
   const storageRoot = resolveStorageRoot()
   const dataRoot = resolveDataRoot()
@@ -510,7 +517,8 @@ const createComputeIpcModule = (
     dataRoot,
     taskNotifications,
     permissionGrantRegistry,
-    () => syncCurrentComputeSkillDocuments(storageRoot, repository)
+    () => syncCurrentComputeSkillDocuments(storageRoot, repository),
+    hostLifecycle
   )
   const jobDeletionOwner = createComputeJobDeletionOwner({
     jobRepository,
@@ -529,132 +537,13 @@ const createComputeIpcModule = (
   }
 }
 
-type ComputeIpcAdapter = Pick<ComputeIpcModule, 'handlers' | 'enabledComputeHostsRegistry'>
-
-const registerComputeIpcHandlerSet = ({
-  handlers,
-  enabledComputeHostsRegistry
-}: ComputeIpcAdapter): void => {
-  ipcMainHandle('compute:list', () => handlers.list())
-  ipcMainHandle('compute:get', (_event, providerId: string) => handlers.get(providerId))
-  ipcMainHandle('compute:create', (_event, request: CreateComputeHostRequest) =>
-    handlers.create(request)
-  )
-  ipcMainHandle('compute:delete', async (_event, request: DeleteComputeHostRequest) => {
-    await handlers.delete(request.providerId)
-  })
-  ipcMainHandle('compute:ssh-config-aliases', () => handlers.sshConfigAliases())
-  ipcMainHandle('compute:probe', (_event, providerId: string) => handlers.probe(providerId))
-  ipcMainHandle('compute:details:get', (_event, providerId: string) =>
-    handlers.detailsGet(providerId)
-  )
-  ipcMainHandle(
-    'compute:details:save',
-    (_event, providerId: string, text: string, oldText: string, author: DetailsAuthor) =>
-      handlers.detailsSave(providerId, text, oldText, author)
-  )
-  ipcMainHandle('compute:scratch:set', (_event, providerId: string, path: string) =>
-    handlers.scratchSet(providerId, path)
-  )
-  ipcMainHandle('compute:concurrency:set', (_event, providerId: string, limit: number) =>
-    handlers.concurrencySet(providerId, limit)
-  )
-  // Session-level concurrency control (Phase 3c, issue 04).
-  ipcMainHandle(
-    'compute:session:set-concurrency-limit',
-    (_event, sessionId: string, limit: number) =>
-      handlers.setSessionConcurrencyLimit(sessionId, limit)
-  )
-  ipcMainHandle('compute:session:status', (_event, sessionId: string) =>
-    handlers.getSessionConcurrencyStatus(sessionId)
-  )
-  // Lists a remote directory (browse experience, issue 05).
-  ipcMainHandle('compute:list-dir', async (_event, providerId: string, path: string) => {
-    try {
-      return await handlers.listDir(providerId, path)
-    } catch (err) {
-      const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
-      if (e.remoteFsError) {
-        throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
-      }
-      throw err
-    }
-  })
-  // Downloads a remote file to OS Downloads or project artifact. No approval gate (issue 03).
-  ipcMainHandle(
-    'compute:download',
-    async (_event, providerId: string, remotePath: string, dest: DownloadDest) => {
-      try {
-        return await handlers.download(providerId, remotePath, dest)
-      } catch (err) {
-        const e = err as Error & { remoteFsError?: SerializableRemoteFsError }
-        if (e.remoteFsError) {
-          throw new Error(encodeRemoteFsError(e.message, e.remoteFsError))
-        }
-        throw err
-      }
-    }
-  )
-  // Reveals a local file path in the OS file manager (Finder / Explorer).
-  ipcMainHandle('compute:reveal-in-folder', (_event, filePath: string) => {
-    handlers.revealInFolder(filePath)
-  })
-  // Renderer responds to an in-flight approval card (issue 04/05). Decision now carries the
-  // chosen scope: 'once' | 'conversation' | 'project' | 'deny'.
-  ipcMainHandle(
-    'compute:approval-respond',
-    (_event, request: { id: string; decision: ComputeApprovalDecision }) => {
-      handlers.approvalRespond(request.id, request.decision)
-    }
-  )
-  ipcMainHandle('compute:approval-replay', (_event, id: unknown) =>
-    typeof id === 'string' ? handlers.approvalReplay(id) : null
-  )
-  // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
-  ipcMainHandle(
-    COMPUTE_JOBS_LIST_CHANNEL,
-    (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
-  )
-  // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
-  ipcMainHandle('compute:jobs:pending-notification', (_event, sessionId: string) =>
-    handlers.jobsPendingNotification(sessionId)
-  )
-  // Marks job ids as notification-consumed (analysis turn done — issue 05).
-  ipcMainHandle('compute:jobs:mark-consumed', (_event, sessionId: string, jobIds: string[]) =>
-    handlers.jobsMarkConsumed(sessionId, jobIds)
-  )
-
-  // Per-session enabled compute hosts (issue 06). The renderer owns the durable state (session
-  // JSON); the main-process registry is the runtime cache consulted by list_compute RPC ops.
-  ipcMainHandle('compute:enabled-hosts:get', (_event, sessionId: string): string[] =>
-    enabledComputeHostsRegistry.get(sessionId)
-  )
-  ipcMainHandle(
-    'compute:enabled-hosts:set',
-    (_event, sessionId: string, providerIds: string[]): void => {
-      enabledComputeHostsRegistry.set(sessionId, providerIds)
-    }
-  )
-}
-
-// Installs only the renderer-callable Electron adapter over an already-constructed Compute module.
-const installComputeIpcHandlers = (module: ComputeIpcAdapter): IpcHandlerInstallation => {
-  const scope = createIpcHandlerInstallationScope()
-  try {
-    registerComputeIpcHandlerSet(module)
-    return scope.complete()
-  } catch (error) {
-    scope.rollback()
-    throw error
-  }
-}
-
 export {
   createComputeHandlers,
   createComputeIpcModule,
   createDefaultComputeHostRepository,
   createDefaultComputeJobRepository,
-  installComputeIpcHandlers,
   enabledComputeHostsRegistry
 }
-export type { ComputeHandlers, ComputeIpcModule }
+export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
+export type { ComputeIpcAdapter } from './electron-ipc-adapter'
+export type { ComputeHandlers, ComputeHostLifecycle, ComputeIpcModule }

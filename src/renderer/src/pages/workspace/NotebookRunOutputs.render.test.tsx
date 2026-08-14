@@ -219,6 +219,19 @@ describe('NotebookRunOutputs', () => {
     expect(outputs?.textContent?.match(/Traceback \(most recent call last\):/g)).toHaveLength(1)
   })
 
+  it('keeps timeout diagnostics neutral', () => {
+    render(
+      [{ type: 'error', message: 'execution limit reached', traceback: 'execution limit reached' }],
+      {
+        status: 'timeout'
+      }
+    )
+
+    const output = container.querySelector('[data-testid="notebook-text-output"] pre')
+    expect(output?.className).toContain('text-text-200')
+    expect(output?.className).not.toContain('text-danger-000')
+  })
+
   it('renders ANSI SGR color codes as styled text, stripping the escapes', () => {
     render([{ type: 'stream', name: 'stdout', text: '[31mred[0m normal' }])
 

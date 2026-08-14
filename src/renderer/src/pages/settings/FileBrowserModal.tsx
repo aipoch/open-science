@@ -121,8 +121,19 @@ const parentPath = (p: string): string => {
 
 type BrowserState =
   | { kind: 'loading' }
-  | { kind: 'ok'; listing: DirListing }
+  | { kind: 'ok'; listing: DirListing; providerId: string }
   | { kind: 'error'; detail: string; kind_hint?: string }
+
+type SelectedRemoteFile = {
+  entry: RemoteDirEntry
+  providerId: string
+  resolvedDir: string
+}
+
+type BookmarksState =
+  | { kind: 'loading'; items: string[] }
+  | { kind: 'ready'; items: string[] }
+  | { kind: 'error'; items: string[]; summary: string; detail: string }
 
 type GoToItem = { label: string; path: string; icon: React.ReactNode }
 
@@ -348,15 +359,20 @@ export function FileBrowserModal({
   const [cwd, setCwd] = useState<string>('~')
   const [history, setHistory] = useState<string[]>([])
   const [browserState, setBrowserState] = useState<BrowserState>({ kind: 'loading' })
-  const [selected, setSelected] = useState<RemoteDirEntry | null>(null)
+  const [selected, setSelected] = useState<SelectedRemoteFile | null>(null)
+  const navigationGeneration = useRef(0)
 
   // Address bar
   const [addressInput, setAddressInput] = useState('')
   const [addressEditing, setAddressEditing] = useState(false)
 
   // Bookmarks
-  const [bookmarks, setBookmarks] = useState<string[]>([])
-  const bookmarksLoaded = useRef(false)
+  const [bookmarksState, setBookmarksState] = useState<BookmarksState>({
+    kind: 'loading',
+    items: []
+  })
+  const bookmarksGeneration = useRef(0)
+  const bookmarks = bookmarksState.items
 
   // Go-to dropdown open state
   const [gotoOpen, setGotoOpen] = useState(false)
@@ -374,6 +390,10 @@ export function FileBrowserModal({
   const navigate = useCallback(
     async (path: string, pushHistory = true) => {
       if (!host) return
+      const providerId = host.providerId
+      // Renderer IPC cannot be cancelled. Only the latest navigation may commit its result.
+      const generation = ++navigationGeneration.current
+      const isCurrent = (): boolean => navigationGeneration.current === generation
       if (pushHistory && cwd !== path) {
         setHistory((h) => [...h, cwd])
       }
@@ -381,12 +401,14 @@ export function FileBrowserModal({
       setSelected(null)
       setBrowserState({ kind: 'loading' })
       try {
-        const listing = await window.api.compute.listDir(host.providerId, path)
-        setBrowserState({ kind: 'ok', listing })
+        const listing = await window.api.compute.listDir(providerId, path)
+        if (!isCurrent()) return
+        setBrowserState({ kind: 'ok', listing, providerId })
         // Update cwd to resolvedPath so the address bar reflects the real path.
         setCwd(listing.resolvedPath)
         setAddressInput(listing.resolvedPath)
       } catch (err) {
+        if (!isCurrent()) return
         const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
         const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
         const detail = fsErr?.detail ?? e.message ?? 'Unknown error'
@@ -394,12 +416,17 @@ export function FileBrowserModal({
         // Connection failure means the probe result is stale — re-probe in the background so
         // the host chip reflects the current unreachable state (green → grey).
         if (fsErr?.remoteKind === 'connection') {
-          void probeHost(host.providerId).catch(() => undefined)
+          void probeHost(providerId).catch(() => undefined)
         }
       }
     },
     [host, cwd, probeHost]
   )
+
+  const invalidatePendingRequests = useCallback((): void => {
+    navigationGeneration.current += 1
+    bookmarksGeneration.current += 1
+  }, [])
 
   // Adjust state during render on the open edge (React's "adjust state when a prop changes" pattern
   // — https://react.dev/learn/you-might-not-need-an-effect). The modal stays mounted across opens in
@@ -437,15 +464,40 @@ export function FileBrowserModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, host?.providerId])
 
+  const bookmarkProviderId = host?.providerId
+
   // Load bookmarks when host changes.
   useEffect(() => {
-    if (!open || !host) return
-    bookmarksLoaded.current = false
-    void window.api.compute.bookmarksGet(host.providerId).then((bms) => {
-      setBookmarks(bms)
-      bookmarksLoaded.current = true
-    })
-  }, [open, host?.providerId])
+    if (!open || !bookmarkProviderId) return
+    const providerId = bookmarkProviderId
+    // Host switches and bookmark writes invalidate older reads through the shared generation.
+    const generation = ++bookmarksGeneration.current
+    const isCurrent = (): boolean => bookmarksGeneration.current === generation
+    void (async () => {
+      await Promise.resolve()
+      if (!isCurrent()) return
+      setBookmarksState({ kind: 'loading', items: [] })
+      try {
+        const items = await window.api.compute.bookmarksGet(providerId)
+        if (!isCurrent()) return
+        setBookmarksState({ kind: 'ready', items })
+      } catch (error) {
+        if (!isCurrent()) return
+        const detail =
+          error instanceof Error && error.message ? error.message : 'Failed to load bookmarks.'
+        setBookmarksState({
+          kind: 'error',
+          items: [],
+          summary: "Couldn't load bookmarks.",
+          detail
+        })
+      }
+    })()
+  }, [bookmarkProviderId, open])
+
+  useEffect(() => {
+    if (!open) invalidatePendingRequests()
+  }, [invalidatePendingRequests, open])
 
   const handleBack = (): void => {
     const prev = history[history.length - 1]
@@ -486,21 +538,53 @@ export function FileBrowserModal({
     void navigate(next)
   }
 
+  const saveBookmarks = async (
+    providerId: string,
+    next: string[],
+    previous: string[]
+  ): Promise<void> => {
+    const generation = ++bookmarksGeneration.current
+    const isCurrent = (): boolean => bookmarksGeneration.current === generation
+    setBookmarksState({ kind: 'ready', items: next })
+    try {
+      await window.api.compute.bookmarksSet(providerId, next)
+    } catch (error) {
+      if (!isCurrent()) return
+      const detail =
+        error instanceof Error && error.message ? error.message : 'Failed to update bookmarks.'
+      setBookmarksState({
+        kind: 'error',
+        items: previous,
+        summary: "Couldn't update bookmarks.",
+        detail
+      })
+    }
+  }
+
   const handlePinCurrent = async (): Promise<void> => {
-    if (!host) return
+    if (!host || bookmarksState.kind === 'loading') return
     const path = browserState.kind === 'ok' ? browserState.listing.resolvedPath : cwd
     if (bookmarks.includes(path)) return
+    const providerId = browserState.kind === 'ok' ? browserState.providerId : host.providerId
     const next = [...bookmarks, path]
-    setBookmarks(next)
     setGotoOpen(false)
-    await window.api.compute.bookmarksSet(host.providerId, next)
+    await saveBookmarks(providerId, next, bookmarks)
   }
 
   const handleRemoveBookmark = async (path: string): Promise<void> => {
-    if (!host) return
+    if (!host || bookmarksState.kind === 'loading') return
     const next = bookmarks.filter((b) => b !== path)
-    setBookmarks(next)
-    await window.api.compute.bookmarksSet(host.providerId, next)
+    await saveBookmarks(host.providerId, next, bookmarks)
+  }
+
+  const handleHostSelect = (providerId: string): void => {
+    if (providerId === activeProviderId) return
+    invalidatePendingRequests()
+    setActiveProviderId(providerId)
+    setSelected(null)
+    setBrowserState({ kind: 'loading' })
+    setBookmarksState({ kind: 'loading', items: [] })
+    setGotoOpen(false)
   }
 
   const isAtRoot = (): boolean => {
@@ -524,7 +608,10 @@ export function FileBrowserModal({
     <Dialog.Root
       open={open}
       onOpenChange={(o) => {
-        if (!o) onClose()
+        if (!o) {
+          invalidatePendingRequests()
+          onClose()
+        }
       }}
     >
       <Dialog.Portal>
@@ -544,7 +631,7 @@ export function FileBrowserModal({
               <button
                 key={h.providerId}
                 type="button"
-                onClick={() => setActiveProviderId(h.providerId)}
+                onClick={() => handleHostSelect(h.providerId)}
                 disabled={!h.probeResult?.ok}
                 className={cn(
                   'flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
@@ -636,8 +723,14 @@ export function FileBrowserModal({
                     </button>
                   ))}
                   {goToItems.length > 0 && <div className="my-1 border-t border-border" />}
+                  {bookmarksState.kind === 'loading' && (
+                    <p className={'px-2 py-1.5 text-xs text-muted-foreground'}>
+                      Loading bookmarks...
+                    </p>
+                  )}
                   {/* Pin current folder */}
                   <button
+                    disabled={bookmarksState.kind === 'loading'}
                     type="button"
                     className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs hover:bg-accent"
                     onClick={() => void handlePinCurrent()}
@@ -714,6 +807,19 @@ export function FileBrowserModal({
           <div className="flex min-h-0 flex-1">
             {/* File listing */}
             <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+              {bookmarksState.kind === 'error' && (
+                <div
+                  role={'alert'}
+                  className={
+                    'm-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive'
+                  }
+                >
+                  <div className={'flex-1'}>
+                    <p className={'font-semibold'}>{bookmarksState.summary}</p>
+                    <p className={'mt-0.5 text-muted-foreground'}>{bookmarksState.detail}</p>
+                  </div>
+                </div>
+              )}
               {/* Error banner */}
               {browserState.kind === 'error' && (
                 <div
@@ -778,12 +884,19 @@ export function FileBrowserModal({
                       key={entry.name}
                       type="button"
                       role="option"
-                      aria-selected={selected?.name === entry.name}
+                      aria-selected={selected?.entry.name === entry.name}
                       className={cn(
                         'grid w-full grid-cols-[1fr_80px_80px] items-center px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent',
-                        selected?.name === entry.name ? 'bg-accent/80' : ''
+                        selected?.entry.name === entry.name ? 'bg-accent/80' : ''
                       )}
-                      onClick={() => setSelected(entry)}
+                      onClick={() => {
+                        if (browserState.kind !== 'ok') return
+                        setSelected({
+                          entry,
+                          providerId: browserState.providerId,
+                          resolvedDir: browserState.listing.resolvedPath
+                        })
+                      }}
                       onDoubleClick={() => handleEntryDoubleClick(entry)}
                     >
                       <span className="flex items-center gap-1.5 truncate">
@@ -815,11 +928,11 @@ export function FileBrowserModal({
             </div>
 
             {/* Detail panel (appears when a file is selected) */}
-            {selected && !selected.isDirectory && (
+            {selected && !selected.entry.isDirectory && (
               <DetailPanel
-                entry={selected}
-                resolvedDir={listing?.resolvedPath ?? cwd}
-                providerId={host?.providerId ?? ''}
+                entry={selected.entry}
+                resolvedDir={selected.resolvedDir}
+                providerId={selected.providerId}
                 activeProjectId={activeProject?.id}
                 onClose={() => setSelected(null)}
               />

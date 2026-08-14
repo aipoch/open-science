@@ -108,6 +108,11 @@ describe('ArtifactMentionPopup', () => {
     act(() => {
       root.render(<ArtifactMentionPopup query="seq" onSelect={vi.fn()} onClose={vi.fn()} />)
     })
+    const loadingStatus = document.body.querySelector('[role="status"]')
+    expect(document.body.querySelector('[role="listbox"]')).not.toBeNull()
+    expect(loadingStatus?.textContent).toContain('Loading project files')
+    expect(loadingStatus?.getAttribute('aria-live')).toBe('polite')
+    expect(loadingStatus?.getAttribute('aria-atomic')).toBe('true')
     const event = new KeyboardEvent('keydown', {
       key: 'Enter',
       bubbles: true,
@@ -187,6 +192,10 @@ describe('ArtifactMentionPopup', () => {
     await renderPopup()
 
     expect(options()).toHaveLength(0)
+    const alert = document.body.querySelector('[role="alert"]')
+    expect(alert?.textContent).toContain('Could not load project files')
+    expect(alert?.getAttribute('aria-live')).toBe('assertive')
+    expect(alert?.getAttribute('aria-atomic')).toBe('true')
     expect(document.body.textContent).toContain('Could not load project files')
     expect(document.body.textContent).not.toContain('No artifacts yet')
   })

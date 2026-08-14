@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 import type { ValidateProviderResult } from '../../../../shared/settings'
+import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -61,6 +62,23 @@ const findInput = (label: string): HTMLInputElement | undefined => {
   return (labelled as HTMLInputElement) ?? undefined
 }
 
+const expectUnifiedDialogChrome = (): void => {
+  const classNames = Array.from(document.body.querySelectorAll<HTMLElement>('*')).map((element) =>
+    String(element.className)
+  )
+
+  expect(classNames.some((className) => className.includes('overflow-hidden'))).toBe(true)
+  expect(
+    classNames.some((className) => className.includes('border-b border-border-300/90 px-5 py-3.5'))
+  ).toBe(true)
+  expect(
+    classNames.some((className) => className.includes('border-t border-border-300/90 px-5 py-3.5'))
+  ).toBe(true)
+  expect(
+    classNames.some((className) => className.includes('text-lg font-semibold text-text-000'))
+  ).toBe(true)
+}
+
 const setInputValue = (input: HTMLInputElement, value: string): void => {
   // React's onChange reads value via the synthetic event. The native value setter is what bypasses
   // React's tracking so the controlled input actually updates.
@@ -74,6 +92,25 @@ const setInputValue = (input: HTMLInputElement, value: string): void => {
 }
 
 describe('ClaudeIsolatedSignInModal UI state', () => {
+  it('uses unified dialog chrome while preserving the manual sign-in flow', () => {
+    renderModal({})
+
+    expectUnifiedDialogChrome()
+    expect(document.body.textContent).toContain('Sign in with Anthropic')
+
+    expect(
+      document.body.querySelector<HTMLLabelElement>('label[for="claude-setup-token-input"]')
+        ?.className
+    ).toContain('block text-sm font-medium text-foreground mb-1')
+    expectDialogFormFieldClassName(findInput('Claude setup token')?.className)
+    expect(findButton('Cancel')?.dataset.variant).toBe('ghost')
+    expect(findButton('Cancel')?.className).toContain('cursor-pointer')
+    expect(findButton('Cancel')?.className).toContain('border-0')
+    expect(findButton('Cancel')?.className).toContain('shadow-none')
+    expect(findButton('Cancel')?.className).toContain('hover:bg-bg-200')
+    expect(findButton('Sign in')).toBeDefined()
+  })
+
   it('accurately describes where the encrypted setup token is stored', () => {
     renderModal({})
 

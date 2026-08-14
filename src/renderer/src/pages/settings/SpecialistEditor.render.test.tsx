@@ -140,6 +140,7 @@ describe('SpecialistEditor', () => {
       connectors: [
         {
           id: 'chemistry',
+          name: 'chemistry',
           displayName: 'Chemistry',
           description: '',
           sources: [],
@@ -150,6 +151,7 @@ describe('SpecialistEditor', () => {
         },
         {
           id: 'pubmed',
+          name: 'pubmed',
           displayName: 'PubMed',
           description: '',
           sources: [],
@@ -167,6 +169,13 @@ describe('SpecialistEditor', () => {
           transport: 'stdio',
           enabled: true,
           availability: 'unavailable'
+        },
+        {
+          id: 'custom-server-uuid',
+          name: 'public-route',
+          displayName: 'Public Route',
+          transport: 'stdio',
+          enabled: true
         }
       ],
       loadConnectors: vi.fn().mockResolvedValue(undefined)
@@ -218,7 +227,7 @@ describe('SpecialistEditor', () => {
     expect(document.body.textContent).toContain('Unavailable — unavailable')
     expect(document.body.textContent).not.toContain('broken-server-uuid')
 
-    // Remove the broken server, then add Chemistry from the add menu.
+    // Remove the legacy-name reference, then add a bundled Connector and a custom Connector.
     await act(async () => {
       fireEvent.click(
         document.body.querySelector<HTMLButtonElement>('[aria-label="Remove Broken Server"]')!
@@ -240,6 +249,20 @@ describe('SpecialistEditor', () => {
         )!
       )
     })
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === '＋ Add a connector'
+        )!
+      )
+    })
+    await act(async () => {
+      fireEvent.click(
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent === 'Public Route'
+        )!
+      )
+    })
 
     await act(async () => {
       Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
@@ -250,7 +273,9 @@ describe('SpecialistEditor', () => {
       expect.objectContaining({
         capabilityMode: 'selected',
         fullAccess: expect.objectContaining({ excludedConnectorIds: ['pubmed'] }),
-        selectedCapabilities: expect.objectContaining({ connectorIds: ['chemistry'] })
+        selectedCapabilities: expect.objectContaining({
+          connectorIds: ['chemistry', 'custom-server-uuid']
+        })
       })
     )
   })

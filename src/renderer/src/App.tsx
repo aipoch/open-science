@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { OpenSessionFromNotificationRequest } from '../../shared/notifications'
+import type { StorageInfo } from '../../shared/storage'
 
 import { useDeepLinkNavigation } from '@/lib/deep-link'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -14,8 +15,8 @@ import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
-import { STREAMDOWN_FULLSCREEN_SELECTOR } from '@/components/streamdown/dom-selectors'
 import { Button } from '@/components/ui/button'
+import { resolveAppShellPresentation } from '@/app-shell-presentation-owner'
 import { HomePage } from '@/pages/home/HomePage'
 import { OnboardingWizard } from '@/pages/onboarding/OnboardingWizard'
 import { resolveStartupView } from '@/pages/onboarding/startup-gate'
@@ -29,7 +30,10 @@ import {
   SideChatProvider,
   useOpenSideChatParentSessionIds
 } from '@/pages/workspace/use-side-chat-controller'
-import { useCloseActivePaneShortcut } from '@/hooks/useCloseActivePaneShortcut'
+import {
+  useCloseActivePaneShortcut,
+  type AppShellCloseRequest
+} from '@/hooks/useCloseActivePaneShortcut'
 import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
@@ -92,14 +96,25 @@ const AppContent = (): React.JSX.Element | null => {
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const openSettings = useSettingsStore((state) => state.openSettings)
-  const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
+  const hasConnectorApproval = useSettingsStore((state) =>
+    state.pendingApprovals.some(
+      (candidate) => !candidate.sessionId || !openSideChatParentSessionIds.has(candidate.sessionId)
+    )
+  )
   const closeSettings = useSettingsStore((state) => state.closeSettings)
   const enqueueApproval = useSettingsStore((state) => state.enqueueApproval)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
-  const hasComputeApproval = useComputeStore((state) => state.pendingApprovals.length > 0)
+  const hasComputeApproval = useComputeStore((state) =>
+    state.pendingApprovals.some(
+      (candidate) =>
+        !candidate.session_id || !openSideChatParentSessionIds.has(candidate.session_id)
+    )
+  )
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
   const dismissSkillImport = useSkillImportStore((state) => state.dismiss)
-  const hasSkillImportApproval = useSkillImportStore((state) => state.pending.length > 0)
+  const hasSkillImportApproval = useSkillImportStore((state) =>
+    state.pending.some((candidate) => !openSideChatParentSessionIds.has(candidate.sessionId))
+  )
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const initUpdates = useUpdateStore((state) => state.init)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
@@ -132,6 +147,31 @@ const AppContent = (): React.JSX.Element | null => {
   const [legacyMove, setLegacyMove] = useState<
     { currentDataRoot: string; defaultParent: string } | undefined
   >(undefined)
+  const storageInfoRequest = useRef<Promise<StorageInfo> | undefined>(undefined)
+  const loadStorageInfo = useCallback((): Promise<StorageInfo> => {
+    if (storageInfoRequest.current) return storageInfoRequest.current
+
+    const request = Promise.resolve()
+      .then(() => window.api.storage.getInfo())
+      .then(
+        (info) => {
+          if (info.dataRootMissing) setMissingDataRoot(info.dataRoot)
+          else if (info.legacyDataMovePrompt) {
+            setLegacyMove({
+              currentDataRoot: info.dataRoot,
+              defaultParent: info.defaultParent
+            })
+          }
+          return info
+        },
+        (error: unknown) => {
+          if (storageInfoRequest.current === request) storageInfoRequest.current = undefined
+          throw error
+        }
+      )
+    storageInfoRequest.current = request
+    return request
+  }, [])
   const deferredNotification = useRef<OpenSessionFromNotificationRequest | undefined>(undefined)
   const pendingNotificationOpenQueue = useRef<Promise<void>>(Promise.resolve())
   const notificationOpenIntent = useRef<NotificationOpenIntent>({
@@ -140,54 +180,82 @@ const AppContent = (): React.JSX.Element | null => {
   })
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false)
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
-  // Cmd+W / Ctrl+W closes transient modals before falling through to preview panes/window.
-  const closeActiveModal = useCallback((): boolean => {
-    const update = useUpdateStore.getState()
-    if (update.isDialogOpen) {
-      if (update.status.state !== 'applying') update.closeDialog()
-      return true
-    }
-    if (isGlobalSearchOpen) {
-      setIsGlobalSearchOpen(false)
-      return true
-    }
-    const contextWindowDialog = document.querySelector<HTMLElement>(
-      '[data-slot="context-window-dialog"][data-state="open"]'
-    )
-    if (contextWindowDialog) {
-      contextWindowDialog.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-      )
-      return true
-    }
-    return settingsPageRef.current?.closeActivePane() ?? false
-  }, [isGlobalSearchOpen])
-  useCloseActivePaneShortcut(closeActiveModal)
   const startupView = isSettingsLoaded
     ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
     : undefined
+  const appShellPresentation = useMemo(
+    () =>
+      resolveAppShellPresentation({
+        startupView,
+        isSessionPersistenceHydrated,
+        isSessionPersistenceLoading,
+        view,
+        presentations: {
+          closeConfirmation: isCloseConfirmOpen,
+          dataRootRecovery: missingDataRoot !== undefined,
+          legacyDataMove: legacyMove !== undefined,
+          update: isUpdateDialogOpen,
+          computeApproval: hasComputeApproval,
+          connectorApproval: hasConnectorApproval,
+          skillImportApproval: hasSkillImportApproval,
+          globalSearch: isGlobalSearchOpen,
+          settings: isSettingsOpen,
+          preview: isPreviewModalOpen
+        }
+      }),
+    [
+      hasComputeApproval,
+      hasConnectorApproval,
+      hasSkillImportApproval,
+      isCloseConfirmOpen,
+      isGlobalSearchOpen,
+      isPreviewModalOpen,
+      isSessionPersistenceHydrated,
+      isSessionPersistenceLoading,
+      isSettingsOpen,
+      isUpdateDialogOpen,
+      legacyMove,
+      missingDataRoot,
+      startupView,
+      view
+    ]
+  )
+
+  // Cmd+W / Ctrl+W executes the owner's topmost-presentation decision before the preview/window
+  // ladder in useCloseActivePaneShortcut handles the owner's close-preview/close-base fallthrough.
+  const resolveCloseRequest = useCallback((): AppShellCloseRequest => {
+    const action = appShellPresentation.resolveCloseAction()
+    if (action.kind === 'close-update') {
+      const update = useUpdateStore.getState()
+      if (update.status.state !== 'applying') update.closeDialog()
+      return 'handled'
+    }
+    if (action.kind === 'close-global-search') {
+      setIsGlobalSearchOpen(false)
+      return 'handled'
+    }
+    if (action.kind === 'close-settings') {
+      settingsPageRef.current?.closeActivePane()
+      return 'handled'
+    }
+    if (action.kind === 'dismiss-dom-presentation') {
+      action.target.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      )
+      return 'handled'
+    }
+    if (action.kind === 'close-preview' || action.kind === 'close-base') return action.kind
+    return 'handled'
+  }, [appShellPresentation])
+  useCloseActivePaneShortcut(resolveCloseRequest)
 
   const retrySettingsInitialization = useCallback(async (): Promise<void> => {
     if (await loadSettings({ force: true })) await checkEnvironment()
   }, [checkEnvironment, loadSettings])
 
-  // Only acknowledge a conversation when no app-level gate covers the workspace. The hook performs
-  // the remaining navigation/session/DOM checks before main is allowed to clear its unread marker.
-  const isSessionContentVisible =
-    isSessionPersistenceHydrated &&
-    !isSessionPersistenceLoading &&
-    startupView === 'app' &&
-    view === 'workspace' &&
-    !isSettingsOpen &&
-    !hasConnectorApproval &&
-    !hasComputeApproval &&
-    !hasSkillImportApproval &&
-    !isUpdateDialogOpen &&
-    !isCloseConfirmOpen &&
-    missingDataRoot === undefined &&
-    legacyMove === undefined
-
-  useUnreadTaskViewSync({ isSessionContentVisible })
+  useUnreadTaskViewSync({
+    isSessionContentVisible: appShellPresentation.isSessionContentVisible
+  })
 
   useEffect(() => {
     const openSettingsFromShortcut = (event: KeyboardEvent): void => {
@@ -196,21 +264,7 @@ const AppContent = (): React.JSX.Element | null => {
         event.isComposing ||
         event.key !== ',' ||
         !(event.metaKey || event.ctrlKey) ||
-        document.querySelector(
-          `[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"]), ${STREAMDOWN_FULLSCREEN_SELECTOR}`
-        ) !== null ||
-        startupView !== 'app' ||
-        !isSessionPersistenceHydrated ||
-        isSettingsOpen ||
-        isGlobalSearchOpen ||
-        hasConnectorApproval ||
-        hasComputeApproval ||
-        hasSkillImportApproval ||
-        isUpdateDialogOpen ||
-        isPreviewModalOpen ||
-        isCloseConfirmOpen ||
-        missingDataRoot !== undefined ||
-        legacyMove !== undefined
+        !appShellPresentation.allowsShortcut('settings')
       ) {
         return
       }
@@ -220,21 +274,7 @@ const AppContent = (): React.JSX.Element | null => {
 
     window.addEventListener('keydown', openSettingsFromShortcut)
     return () => window.removeEventListener('keydown', openSettingsFromShortcut)
-  }, [
-    hasComputeApproval,
-    hasConnectorApproval,
-    hasSkillImportApproval,
-    isCloseConfirmOpen,
-    isGlobalSearchOpen,
-    isPreviewModalOpen,
-    isSessionPersistenceHydrated,
-    isSettingsOpen,
-    isUpdateDialogOpen,
-    legacyMove,
-    missingDataRoot,
-    openSettings,
-    startupView
-  ])
+  }, [appShellPresentation, openSettings])
 
   useEffect(() => {
     const toggleGlobalSearch = (event: KeyboardEvent): void => {
@@ -243,18 +283,7 @@ const AppContent = (): React.JSX.Element | null => {
         event.isComposing ||
         event.key.toLowerCase() !== 'k' ||
         !(event.metaKey || event.ctrlKey) ||
-        !isSettingsLoaded ||
-        startupView !== 'app' ||
-        !isSessionPersistenceHydrated ||
-        isSettingsOpen ||
-        hasConnectorApproval ||
-        hasComputeApproval ||
-        hasSkillImportApproval ||
-        isUpdateDialogOpen ||
-        isPreviewModalOpen ||
-        isCloseConfirmOpen ||
-        missingDataRoot !== undefined ||
-        legacyMove !== undefined
+        !appShellPresentation.allowsShortcut('globalSearch')
       ) {
         return
       }
@@ -264,20 +293,7 @@ const AppContent = (): React.JSX.Element | null => {
 
     window.addEventListener('keydown', toggleGlobalSearch)
     return () => window.removeEventListener('keydown', toggleGlobalSearch)
-  }, [
-    hasComputeApproval,
-    hasConnectorApproval,
-    hasSkillImportApproval,
-    isCloseConfirmOpen,
-    isSessionPersistenceHydrated,
-    isPreviewModalOpen,
-    isSettingsLoaded,
-    isSettingsOpen,
-    isUpdateDialogOpen,
-    legacyMove,
-    missingDataRoot,
-    startupView
-  ])
+  }, [appShellPresentation])
 
   // Load app info and subscribe to update-status broadcasts once at startup.
   useEffect(() => {
@@ -295,18 +311,11 @@ const AppContent = (): React.JSX.Element | null => {
 
   // Checked once at startup, after the gate is settled: dataRootMissing only fires for an
   // explicitly-configured root, which implies onboarding already completed - never during the
-  // wizard itself.
+  // wizard itself. Onboarding shares this promise because usage calculation recursively scans the
+  // data root; a rejection clears the cache so its Retry action can start a fresh request.
   useEffect(() => {
-    void window.api.storage.getInfo().then((info) => {
-      if (info.dataRootMissing) setMissingDataRoot(info.dataRoot)
-      else if (info.legacyDataMovePrompt) {
-        setLegacyMove({
-          currentDataRoot: info.dataRoot,
-          defaultParent: info.defaultParent
-        })
-      }
-    })
-  }, [])
+    void loadStorageInfo().catch(() => undefined)
+  }, [loadStorageInfo])
 
   // Subscribe once to connector approval requests from the main-process gate; they surface as a
   // modal the user must answer before the held connector call proceeds.
@@ -518,7 +527,7 @@ const AppContent = (): React.JSX.Element | null => {
   }
 
   if (startupView === 'onboarding') {
-    return <OnboardingWizard />
+    return <OnboardingWizard loadStorageInfo={loadStorageInfo} />
   }
 
   if (!isSessionPersistenceHydrated && isSessionPersistenceLoading) {
@@ -554,62 +563,88 @@ const AppContent = (): React.JSX.Element | null => {
     )
   }
 
+  const activePresentation = appShellPresentation.active
+  const isBasePresentationActive = activePresentation === 'base' || activePresentation === 'preview'
+
   return (
     <>
-      <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
-      {sessionPersistence.loadError ? (
-        <SessionPersistenceAlert
-          title="Saved conversations could not be loaded"
-          message={sessionPersistence.loadError}
-          onRetry={sessionPersistence.retryLoad}
-        />
-      ) : sessionPersistence.writeError ? (
-        <SessionPersistenceAlert
-          title="Conversation storage needs attention"
-          message={sessionPersistence.writeError}
-          onRetry={sessionPersistence.retryWrites}
-        />
-      ) : sessionPersistence.loadWarning ? (
-        <SessionPersistenceAlert
-          title="Saved conversation data was damaged"
-          message={sessionPersistence.loadWarning}
-          variant="warning"
-          onDismiss={sessionPersistence.dismissLoadWarning}
-        />
-      ) : null}
-      <WorkspaceAgentRuntimeProvider>
-        {view === 'home' ? (
-          <HomePage
-            canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
-            hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
-            onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
+      <div
+        className="contents"
+        inert={!isBasePresentationActive}
+        aria-hidden={isBasePresentationActive ? undefined : true}
+      >
+        <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
+        {sessionPersistence.loadError ? (
+          <SessionPersistenceAlert
+            title="Saved conversations could not be loaded"
+            message={sessionPersistence.loadError}
+            onRetry={sessionPersistence.retryLoad}
           />
-        ) : (
-          <WorkspacePage
-            isSessionPersistenceHydrated={isSessionPersistenceHydrated}
-            isSessionPersistenceReady={isSessionPersistenceReady}
-            canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
+        ) : sessionPersistence.writeError ? (
+          <SessionPersistenceAlert
+            title="Conversation storage needs attention"
+            message={sessionPersistence.writeError}
+            onRetry={sessionPersistence.retryWrites}
           />
-        )}
-      </WorkspaceAgentRuntimeProvider>
+        ) : sessionPersistence.loadWarning ? (
+          <SessionPersistenceAlert
+            title="Saved conversation data was damaged"
+            message={sessionPersistence.loadWarning}
+            variant="warning"
+            onDismiss={sessionPersistence.dismissLoadWarning}
+          />
+        ) : null}
+        <WorkspaceAgentRuntimeProvider>
+          {view === 'home' ? (
+            <HomePage
+              canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
+              hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+              onOpenGlobalSearch={() => {
+                if (appShellPresentation.allowsShortcut('globalSearch')) {
+                  setIsGlobalSearchOpen(true)
+                }
+              }}
+            />
+          ) : (
+            <WorkspacePage
+              isSessionPersistenceHydrated={isSessionPersistenceHydrated}
+              isSessionPersistenceReady={isSessionPersistenceReady}
+              canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
+              isPreviewPresentationActive={isBasePresentationActive}
+            />
+          )}
+        </WorkspaceAgentRuntimeProvider>
+        <LifecycleToast
+          notice={lifecycleSync.notice}
+          onDismiss={lifecycleSync.dismissNotice}
+          onView={lifecycleSync.viewNotice}
+        />
+        <PermissionUndoSnackbar />
+      </div>
       <SettingsPage
         ref={settingsPageRef}
-        open={isSettingsOpen}
+        open={activePresentation === 'settings'}
         onClose={closeSettings}
         onOpenSession={openPermissionSession}
       />
-      <ConnectorApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
-      <SkillImportApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
-      <LifecycleToast
-        notice={lifecycleSync.notice}
-        onDismiss={lifecycleSync.dismissNotice}
-        onView={lifecycleSync.viewNotice}
+      <ConnectorApprovalDialog
+        active={activePresentation === 'connectorApproval'}
+        blockedSessionIds={openSideChatParentSessionIds}
       />
-      <PermissionUndoSnackbar />
-      <ComputeApprovalDialog blockedSessionIds={openSideChatParentSessionIds} />
-      <UpdateDialog />
-      <CloseConfirmModal onOpenChange={setIsCloseConfirmOpen} />
-      {isGlobalSearchOpen ? (
+      <SkillImportApprovalDialog
+        active={activePresentation === 'skillImportApproval'}
+        blockedSessionIds={openSideChatParentSessionIds}
+      />
+      <ComputeApprovalDialog
+        active={activePresentation === 'computeApproval'}
+        blockedSessionIds={openSideChatParentSessionIds}
+      />
+      <UpdateDialog active={activePresentation === 'update'} />
+      <CloseConfirmModal
+        active={activePresentation === 'closeConfirmation'}
+        onOpenChange={setIsCloseConfirmOpen}
+      />
+      {activePresentation === 'globalSearch' ? (
         <GlobalSearchDialog
           open
           onOpenChange={setIsGlobalSearchOpen}
@@ -617,12 +652,13 @@ const AppContent = (): React.JSX.Element | null => {
         />
       ) : null}
       <DataRootMissingDialog
-        open={missingDataRoot !== undefined}
+        open={activePresentation === 'dataRootRecovery'}
         dataRoot={missingDataRoot ?? ''}
         onResolved={() => setMissingDataRoot(undefined)}
       />
       {legacyMove !== undefined ? (
         <LegacyDataMoveDialog
+          active={activePresentation === 'legacyDataMove'}
           currentDataRoot={legacyMove.currentDataRoot}
           defaultParent={legacyMove.defaultParent}
           onDismiss={() => setLegacyMove(undefined)}

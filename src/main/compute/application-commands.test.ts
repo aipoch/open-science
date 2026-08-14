@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ComputeHost } from '../../shared/compute'
 import { decodeRemoteFsError } from '../../shared/remote-fs'
 import { RENDERER_CONTRACT_GROUPS } from '../../shared/renderer-contract-catalog'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   createApplicationCommandRouter,
   type ApplicationCallerLease,
@@ -24,6 +25,18 @@ import {
 } from './application-commands'
 
 const host = { providerId: 'ssh:cluster', displayName: 'Cluster' } as ComputeHost
+const session: PersistedChatSession = {
+  id: 'session-1',
+  projectId: 'project-1',
+  title: 'Session',
+  cwd: '/workspace',
+  status: 'idle',
+  messages: [],
+  filesRevision: 1,
+  enabledComputeHosts: ['ssh:cluster'],
+  createdAt: 1,
+  updatedAt: 2
+}
 
 const createDependencies = (): ComputeApplicationCommandDependencies => ({
   compute: {
@@ -52,8 +65,9 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
   },
   enabledHosts: {
     get: vi.fn(() => ['ssh:cluster']),
-    set: vi.fn(() => undefined)
-  }
+    set: vi.fn(async () => session)
+  },
+  events: { publish: vi.fn() }
 })
 
 const invocation = <Args extends readonly unknown[]>(
@@ -154,7 +168,7 @@ describe('Compute application commands', () => {
       computeApplicationCommands.enabledHostsGet,
       invocation(['session-1'])
     )
-    await router.dispatcher.invoke(
+    const enabledHostsResult = await router.dispatcher.invoke(
       computeApplicationCommands.enabledHostsSet,
       invocation(['session-1', ['ssh:cluster']])
     )
@@ -185,6 +199,11 @@ describe('Compute application commands', () => {
     expect(dependencies.compute.jobsList).toHaveBeenCalledWith(filter)
     expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
     expect(dependencies.enabledHosts.set).toHaveBeenCalledWith('session-1', ['ssh:cluster'])
+    expect(enabledHostsResult).toEqual(session)
+    expect(dependencies.events.publish).toHaveBeenCalledWith('session:updated', {
+      session,
+      originClientId: 'main:enabled-compute-hosts'
+    })
     expect(dependencies.bookmarks.set).toHaveBeenCalledWith('ssh:cluster', ['/work'])
   })
 

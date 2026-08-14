@@ -3,6 +3,8 @@ import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -55,23 +57,14 @@ const DeleteProjectDialog = ({
     >
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
+        <AlertDialog.Content
+          className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+        >
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
                 Delete project?
               </AlertDialog.Title>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                This will permanently delete &quot;{dialogProject?.name}&quot;
-                {dialogHasCompleteSessionCatalog
-                  ? dialogSessionCount > 0
-                    ? ` and its ${dialogSessionCount} ${dialogSessionCount === 1 ? 'session' : 'sessions'}`
-                    : ''
-                  : ' and all of its saved conversations, including any that could not be loaded during recovery'}
-                . Generated artifacts and uploaded files stored by Open Science will also be
-                deleted. Files in the project&apos;s working folder are not deleted. This action
-                cannot be undone.
-              </AlertDialog.Description>
             </div>
             <Button
               type="button"
@@ -85,14 +78,32 @@ const DeleteProjectDialog = ({
               <X className="size-4" aria-hidden="true" />
             </Button>
           </div>
-          {error ? (
-            <p className="mt-4 text-sm text-danger-000" role="alert">
-              {error}
-            </p>
-          ) : null}
+          <div className={dialogBodyClassName}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              This will permanently delete &quot;{dialogProject?.name}&quot;
+              {dialogHasCompleteSessionCatalog
+                ? dialogSessionCount > 0
+                  ? ` and its ${dialogSessionCount} ${dialogSessionCount === 1 ? 'session' : 'sessions'}`
+                  : ''
+                : ' and all of its saved conversations, including any that could not be loaded during recovery'}
+              . Generated artifacts and uploaded files stored by Open Science will also be deleted.
+              Files in the project&apos;s working folder are not deleted. This action cannot be
+              undone.
+            </AlertDialog.Description>
+            {error ? (
+              <p className="mt-4 text-sm text-danger-000" role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="outline" disabled={isDeleting}>
+              <Button
+                type="button"
+                variant="ghost"
+                className={dialogCancelButtonClassName}
+                disabled={isDeleting}
+              >
                 Cancel
               </Button>
             </AlertDialog.Cancel>

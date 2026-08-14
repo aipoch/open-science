@@ -72,7 +72,11 @@ describe('Specialist contribution release certification', () => {
     const catalog = async (): Promise<SpecialistPackageCatalogSnapshot> => ({
       appVersion: '0.9.2',
       builtinSkills: [],
-      skills: (await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false })),
+      skills: (await skillPort.snapshot()).map((skill) => ({
+        ...skill,
+        name: skill.id.startsWith('personal-') ? skill.id.slice('personal-'.length) : skill.id,
+        builtin: false
+      })),
       connectorIds: [],
       protectedSpecialistIds: ['reviewer']
     })
@@ -103,11 +107,11 @@ describe('Specialist contribution release certification', () => {
         expect.objectContaining({ id: 'template-no-skills', ownedSkillIds: [] }),
         expect.objectContaining({
           id: 'template-with-skills',
-          ownedSkillIds: ['certified-analysis']
+          ownedSkillIds: ['personal-certified-analysis']
         })
       ])
     )
-    const installedSkills = await skillPort.exportSnapshot?.(['certified-analysis'])
+    const installedSkills = await skillPort.exportSnapshot?.(['personal-certified-analysis'])
     expect(installedSkills).toHaveLength(1)
     expect(decoder.decode(installedSkills?.[0].files[0].bytes)).toContain('Certified bundled Skill')
   })
@@ -125,7 +129,11 @@ describe('Specialist contribution release certification', () => {
       builtinSkills: [builtinSkill],
       skills: [
         { id: builtinSkill.id, builtin: true },
-        ...(await skillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        ...(await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.startsWith('personal-') ? skill.id.slice('personal-'.length) : skill.id,
+          builtin: false
+        }))
       ],
       connectorIds: [],
       protectedSpecialistIds: ['reviewer']
@@ -161,7 +169,7 @@ describe('Specialist contribution release certification', () => {
     const backup = await packages.export({
       specialistId: imported.id,
       expectedRevision: beforeOverwrite.expectedRevision,
-      includedSkillIds: ['portable-analysis']
+      includedSkillIds: ['personal-portable-analysis']
     })
     expect(decoder.decode(unzipSync(backup.archiveBytes)['specialist.json'])).toContain(
       'Locally edited before overwrite.'
@@ -190,14 +198,14 @@ describe('Specialist contribution release certification', () => {
     expect(replaced).toMatchObject({
       description: 'Portable overwrite-roundtrip',
       modifiedSinceImport: false,
-      ownedSkillIds: ['portable-analysis']
+      ownedSkillIds: ['personal-portable-analysis']
     })
 
     const exportPreview = await packages.previewExport(replaced.id)
     const exported = await packages.export({
       specialistId: replaced.id,
       expectedRevision: exportPreview.expectedRevision,
-      includedSkillIds: ['portable-analysis']
+      includedSkillIds: ['personal-portable-analysis']
     })
     const targetRoot = join(storageRoot, 'clean-target')
     await mkdir(targetRoot)
@@ -208,7 +216,11 @@ describe('Specialist contribution release certification', () => {
       builtinSkills: [builtinSkill],
       skills: [
         { id: builtinSkill.id, builtin: true },
-        ...(await targetSkillPort.snapshot()).map((skill) => ({ ...skill, builtin: false }))
+        ...(await targetSkillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.startsWith('personal-') ? skill.id.slice('personal-'.length) : skill.id,
+          builtin: false
+        }))
       ],
       connectorIds: [],
       protectedSpecialistIds: ['reviewer']
@@ -242,7 +254,7 @@ describe('Specialist contribution release certification', () => {
     const restoredSkills = await targetSkillPort.snapshot()
     expect(restoredSkills).toEqual([
       expect.objectContaining({
-        id: 'portable-analysis',
+        id: 'personal-portable-analysis',
         version: '1.0.0',
         standalone: false,
         ownerIds: ['overwrite-roundtrip']

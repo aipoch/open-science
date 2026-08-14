@@ -74,6 +74,29 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(provider).toEqual(before)
   })
 
+  it('routes DeepSeek V4 Pro through native Responses for Codex', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'deepseek',
+      type: 'official',
+      vendorId: 'deepseek',
+      name: 'DeepSeek'
+    }
+
+    expect(
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'required', model: 'deepseek-v4-pro' },
+        getAgentFramework('codex')
+      )
+    ).toMatchObject({
+      apiEndpoints: ['anthropic', 'openai', 'responses'],
+      frameworkCompatible: true,
+      needsChatResponsesBridge: false,
+      needsNativeResponsesCompatibility: true
+    })
+  })
+
   it('keeps an exact required model when a subscription catalog is unknown', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {

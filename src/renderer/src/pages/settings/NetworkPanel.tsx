@@ -12,6 +12,7 @@ import { useNetworkStore } from '@/stores/network-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { isMirrorConfigured, mirrorStatusText, MIRROR_HELP_URL } from './mirror-view'
+import { MODE_LABELS, NetworkProxyForm } from './NetworkProxyForm'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 const actionButtonClassName =
@@ -19,7 +20,7 @@ const actionButtonClassName =
 
 // Package-mirror list vs. configure form. The configure form is a settings-nav sub-view (not local
 // state) so the shared header shows a "Network / Package mirror" breadcrumb with back/forward.
-type NetworkView = { kind: 'list' | 'configure' }
+type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
 type NetworkPanelProps = { view: NetworkView; onNavigate: (view: NetworkView) => void }
 
 // Shared identity of the single check row this panel renders (and its pending placeholder).
@@ -42,6 +43,7 @@ const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
 // phase-3 (spec §14, §9) and is intentionally not built here.
 const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Element => {
   const packageMirror = useSettingsStore((state) => state.packageMirror)
+  const networkProxy = useSettingsStore((state) => state.networkProxy)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery, a
@@ -50,7 +52,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const connectivity = useNetworkStore((state) => state.connectivity)
   const probeConnectivity = useNetworkStore((state) => state.probeConnectivity)
 
-  const isConfiguring = view.kind === 'configure'
+  const isConfiguring = view.kind === 'mirror'
   const [draft, setDraft] = useState<PackageMirror>({})
   const [isSaving, setIsSaving] = useState(false)
   const [message, setMessage] = useState<string | undefined>(undefined)
@@ -85,7 +87,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   // history / a remount), without clobbering in-progress edits on a background store refresh.
   const seededRef = useRef(false)
   useEffect(() => {
-    if (view.kind === 'configure') {
+    if (view.kind === 'mirror') {
       if (!seededRef.current) {
         setDraft(packageMirror ?? {})
         setMessage(undefined)
@@ -96,7 +98,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
     }
   }, [view.kind, packageMirror])
 
-  const handleConfigure = (): void => onNavigate({ kind: 'configure' })
+  const handleConfigure = (): void => onNavigate({ kind: 'mirror' })
 
   const handleCancel = (): void => {
     setMessage(undefined)
@@ -158,6 +160,8 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
       ? EthernetPort
       : Wifi
 
+  if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
+
   return (
     <div className="space-y-6 p-5">
       {!isConfiguring ? (
@@ -196,6 +200,36 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
                 </Button>
               </div>
             ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {!isConfiguring ? (
+        <section aria-label="Proxy">
+          <h3 className="mb-1 text-sm font-semibold text-foreground">Proxy</h3>
+          <p className="mb-3 text-xs text-muted-foreground">
+            How Open Science, ACP agents, notebook runtimes, and installers reach the internet.
+          </p>
+          <div className="rounded-xl border border-border p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-foreground">{MODE_LABELS[networkProxy.mode]}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {networkProxy.mode === 'manual'
+                    ? networkProxy.server
+                    : networkProxy.mode === 'system'
+                      ? 'Follows this device'
+                      : 'Connects without a proxy'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigate({ kind: 'proxy' })}
+                className={actionButtonClassName}
+              >
+                Configure proxy
+              </button>
+            </div>
           </div>
         </section>
       ) : null}

@@ -310,8 +310,44 @@ describe('customize Skill: live read + complete draft', () => {
     expect(profile.name).toBe('Bio Expert')
     expect(skillCatalog.map((entry) => entry.id)).toContain('skill-a')
     expect(connectorCatalog.map((entry) => entry.id)).toContain('conn-a')
-    const target = buildReviewedTarget(profile)
+    const target = buildReviewedTarget(profile, connectorCatalog)
     expect(target.capabilityMode).toBe('selected')
+  })
+
+  it('uses immutable Connector names instead of local UUIDs in ordinary review prose', () => {
+    const customConnector: ConnectorReadModel = {
+      id: '550e8400-e29b-41d4-a716-446655440000',
+      name: 'pubmed-private',
+      displayName: 'Private PubMed',
+      description: 'private PubMed connector',
+      mainEnabled: true,
+      availability: 'available',
+      source: 'custom',
+      tools: []
+    }
+    const target = buildReviewedTarget(
+      {
+        id: 'sp-1',
+        name: 'Bio Expert',
+        displayName: 'Bio Expert',
+        description: 'a specialist',
+        systemPrompt: 'FULL INSTRUCTIONS',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: {
+          skillIds: [],
+          connectorIds: [customConnector.id],
+          connectorTools: []
+        },
+        revision: 1
+      },
+      [customConnector]
+    )
+
+    const review = renderOrdinaryReview(target)
+    expect(review).toContain('Connectors: pubmed-private')
+    expect(review).not.toContain(customConnector.id)
   })
 
   it('ordinary review shows every required field and tool-scope absence', () => {

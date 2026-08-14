@@ -145,6 +145,28 @@ const keyOn = async (input: HTMLInputElement, key: string): Promise<void> => {
 }
 
 describe('GrantFolderAccessDialog', () => {
+  it('uses the shared dialog header, close action, and divider treatment', async () => {
+    const onOpenChange = vi.fn()
+    act(() => {
+      root.render(<GrantFolderAccessDialog open onOpenChange={onOpenChange} />)
+    })
+    await flush()
+
+    const title = document.body.querySelector('[role="dialog"] h2')
+    expect(title?.className).toContain('text-lg font-semibold text-text-000')
+    expect(title?.parentElement?.className).toContain('border-b border-border-300/90 px-5 py-3.5')
+
+    const closeButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="grant-access-close"]'
+    )
+    expect(closeButton?.className).toContain('cursor-pointer')
+    await click(closeButton)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+
+    const footer = document.body.querySelector('[data-testid="grant-access-footer"]')
+    expect(footer?.className).toContain('border-t border-border-300/90 px-5 py-3.5')
+  })
+
   it('lists the home subfolders on open', async () => {
     renderDialog()
     await flush()
@@ -464,6 +486,9 @@ describe('GrantFolderAccessDialog', () => {
       '[data-testid="grant-access-grant"]'
     )
     expect(grantButton?.disabled).toBe(true)
+    expect(grantButton?.className).toContain('bg-primary')
+    expect(grantButton?.className).toContain('text-primary-foreground')
+    expect(grantButton?.className).toContain('disabled:opacity-40')
   })
 
   it('shows "Directory could not be accessed." when the grant is rejected', async () => {
@@ -491,6 +516,12 @@ describe('GrantFolderAccessDialog', () => {
     await flush()
 
     await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    const grantButton = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="grant-access-grant"]'
+    )
+    expect(grantButton?.disabled).toBe(false)
+    expect(grantButton?.className).toContain('bg-primary')
+    expect(grantButton?.className).toContain('hover:bg-primary/80')
     // Switch to read & write before granting.
     await click(document.body.querySelector('[role="radio"][aria-checked="false"]'))
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))

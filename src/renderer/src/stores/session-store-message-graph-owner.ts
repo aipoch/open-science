@@ -174,7 +174,8 @@ export const createSessionMessageGraphOwner = <
     agentBackendId,
     agentModel,
     isPending,
-    specialistId
+    specialistId,
+    enabledComputeHosts
   }) => {
     const trimmedContent = content.trim()
     const normalizedAgentBackendId = agentBackendId?.trim() || undefined
@@ -265,6 +266,7 @@ export const createSessionMessageGraphOwner = <
         agentBackendId: normalizedAgentBackendId,
         agentModel: normalizedAgentModel,
         ...(specialistId ? { specialistId } : {}),
+        ...(enabledComputeHosts?.length ? { enabledComputeHosts: [...enabledComputeHosts] } : {}),
         messages: [userMessage],
         activeRun,
         createdAt: now,
@@ -287,32 +289,10 @@ export const createSessionMessageGraphOwner = <
 
     return { sessionId, messageId: userMessage.id }
   },
-  appendPendingUserMessage: ({
-    content,
-    attachments = [],
-    parts,
-    turnIntent,
-    cwd,
-    projectId,
-    permissionProfile,
-    agentFrameworkId,
-    agentBackendId,
-    agentModel,
-    specialistId
-  }) =>
+  appendPendingUserMessage: (input) =>
     get().appendUserMessage({
+      ...input,
       sessionId: createPendingSessionId(),
-      content,
-      attachments,
-      parts,
-      turnIntent,
-      cwd,
-      projectId,
-      permissionProfile,
-      agentFrameworkId,
-      agentBackendId,
-      agentModel,
-      specialistId,
       isPending: true
     }),
   branchInNewSession: ({

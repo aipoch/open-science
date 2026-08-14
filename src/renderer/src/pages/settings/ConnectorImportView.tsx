@@ -146,7 +146,7 @@ export function ConnectorImportView({
                 <dd className="min-w-0 break-words text-foreground">{definition.displayName}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
-                <dt className="text-muted-foreground">Connector ID</dt>
+                <dt className="text-muted-foreground">Connector name</dt>
                 <dd className="min-w-0 break-words text-foreground">{definition.name}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createLogger } from '../logger'
 import { COMPUTE_SKILL_ID, preserveComputeHostProjection } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
+import { hasCanonicalSkillDocumentName, normalizeSkillDocumentName } from './skill-document-name'
 
 const log = createLogger('skills')
 
@@ -15,6 +16,19 @@ const OS_SKILL_PREFIX = 'os-'
 // unchanged skills are skipped instead of recopied on every spawn. Not a skill dir, so the Claude
 // Skill loader ignores it.
 const VERSION_MANIFEST = '.os-versions.json'
+
+// A matching content fingerprint is not enough for projections created before canonical Skill
+// names were enforced. Validate the generated copy before taking the fast path so only an obsolete
+// `os-*` projection is refreshed; authoritative Skill content, directories, and local IDs are never
+// migrated here.
+const hasCanonicalProjectedName = async (path: string, name: string): Promise<boolean> => {
+  try {
+    const raw = await readFile(path, 'utf8')
+    return hasCanonicalSkillDocumentName(raw, name)
+  } catch {
+    return false
+  }
+}
 
 // Marker line in an injected notice, used to keep injection idempotent.
 const COMPUTE_NOTICE_MARKER = 'Compute environment unavailable in this app'
@@ -150,7 +164,11 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
     // metadata was not bumped; non-registry callers retain the existing updatedAt fallback.
     for (const [name, skill] of wanted) {
       const version = skill.compatibility || skill.updatedAt || ''
-      const unchanged = version !== '' && existingDirs.has(name) && versions[name] === version
+      const unchanged =
+        version !== '' &&
+        existingDirs.has(name) &&
+        versions[name] === version &&
+        (await hasCanonicalProjectedName(join(skillsDir, name, 'SKILL.md'), skill.name))
       if (unchanged) continue
 
       const target = join(skillsDir, name)
@@ -172,6 +190,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
             return true
           }
         })
+        await normalizeSkillDocumentName(join(target, 'SKILL.md'), skill.name)
         if (priorComputeDocument !== undefined) {
           const current = await readFile(join(target, 'SKILL.md'), 'utf8')
           await writeFile(

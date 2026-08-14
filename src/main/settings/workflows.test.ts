@@ -29,7 +29,10 @@ const testEffects = (effects: TestSettingsWorkflowEffects = {}): SettingsWorkflo
     applyReasoningEffort: effects.applyReasoningEffort ?? (async () => false),
     applyModelChange: effects.applyModelChange ?? (async () => false)
   },
-  skills: { requestSkillsReload: effects.requestSkillsReload ?? (() => undefined) },
+  skills: {
+    requestSkillsReload: effects.requestSkillsReload ?? (() => undefined),
+    notifySkillCatalogChanged: effects.notifySkillCatalogChanged ?? (() => undefined)
+  },
   connectors: {
     invalidatePermissionProjection: effects.invalidatePermissionProjection ?? (() => undefined),
     refreshConnectorSkillDocs: effects.refreshConnectorSkillDocs ?? (async () => undefined),
@@ -475,9 +478,10 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
   it('reloads once after successful Skill mutations and not after a failure', async () => {
     const { store, capability } = fakeStore()
     const requestSkillsReload = vi.fn()
+    const notifySkillCatalogChanged = vi.fn()
     const workflows = createSettingsWorkflows(
       capability,
-      testEffects({ requestSkillsReload })
+      testEffects({ requestSkillsReload, notifySkillCatalogChanged })
     ).skills
 
     await workflows.setSkillEnabled({ id: 'skill', enabled: true })
@@ -486,15 +490,16 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     store.deleteSkill.mockRejectedValue(new Error('delete failed'))
     await expect(workflows.deleteSkill({ id: 'skill' })).rejects.toThrow('delete failed')
 
-    expect(requestSkillsReload).toHaveBeenCalledTimes(3)
+    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(2)
+    expect(requestSkillsReload).toHaveBeenCalledOnce()
   })
 
   it('reloads installed Skill batches only when an item changed', async () => {
     const { store, capability } = fakeStore()
-    const requestSkillsReload = vi.fn()
+    const notifySkillCatalogChanged = vi.fn()
     const workflows = createSettingsWorkflows(
       capability,
-      testEffects({ requestSkillsReload })
+      testEffects({ notifySkillCatalogChanged })
     ).skills
     const request = { skills: [] }
 
@@ -509,7 +514,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     })
     await workflows.importAgentHomeSkills(request)
 
-    expect(requestSkillsReload).toHaveBeenCalledOnce()
+    expect(notifySkillCatalogChanged).toHaveBeenCalledOnce()
   })
 
   it('invalidates permissions before a fire-and-forget Connector refresh and reloads on settle', async () => {

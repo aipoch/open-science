@@ -1,4 +1,5 @@
 import type { ToolDescriptor } from '../types'
+import { netFetchStandard } from '../../skills/net-fetch'
 
 // CartBlanche22 (ZINC22 purchasable-compound search) — every search endpoint is ASYNC and
 // POST-only (form-encoded): submit returns a task receipt {"task": "<uuid>"}, and the result is
@@ -183,7 +184,7 @@ async function fetchWithTimeout(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs))
   try {
-    return await fetch(url, {
+    return await netFetchStandard(url, {
       ...init,
       headers: { 'user-agent': USER_AGENT, ...init.headers },
       signal: controller.signal

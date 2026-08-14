@@ -94,6 +94,7 @@ type WorkspaceMessageItemProps = {
   staticParts?: ProvenanceMessagePart[]
   onPresentationChange?: (messageId: string, presenting: boolean) => void
   presentationSourceOpen?: boolean
+  presentationAnimateOnMount?: boolean
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -793,7 +794,8 @@ const WorkspaceMessageItem = ({
   artifacts = [],
   staticParts,
   onPresentationChange,
-  presentationSourceOpen
+  presentationSourceOpen,
+  presentationAnimateOnMount = true
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
   const isSideChatAdvisory =
@@ -804,7 +806,7 @@ const WorkspaceMessageItem = ({
   const assistantPresentation = useSmoothStreamingContent(
     presentsAssistantMessage ? message.content : '',
     assistantSourceOpen,
-    shouldAnimateAssistant
+    shouldAnimateAssistant && assistantSourceOpen && presentationAnimateOnMount
   )
   const isAssistantPresenting = presentsAssistantMessage && assistantPresentation.isPresenting
 

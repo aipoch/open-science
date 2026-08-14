@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -12,17 +13,19 @@ import {
 } from '@/stores/preview-workbench-store'
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
 import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ComponentProps,
   type ReactNode
 } from 'react'
+import { ArrowDownIcon } from 'lucide-react'
 
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
@@ -33,6 +36,7 @@ import {
 } from './preview-file-item'
 import { createPreviewRequestScope } from './previews/preview-file-reader'
 import { resolveLocalPath } from '../../../../shared/local-fs'
+import { resolveProjectId } from '../../../../shared/project-scope'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import type { JobSummary } from '../../../../shared/compute'
 import { CompletedJobCard } from '@/components/CompletedJobCard'
@@ -82,6 +86,16 @@ type WorkspaceMessageScrollerProps = {
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
 }
 
+type TerminalAnnouncement = {
+  messageId: string
+  status: 'complete' | 'error'
+}
+
+type TerminalMessageSnapshot = {
+  scopeId: string | undefined
+  statuses: Map<string, ChatMessage['status']>
+}
+
 type SessionScopedActivityGroupState = {
   sessionId: string | undefined
   groupIds: Set<string>
@@ -93,12 +107,37 @@ type SessionScopedActivityExpansionState = {
 }
 
 type SessionScopedMessagePresentationState = {
-  sessionId: string | undefined
+  scopeId: string | undefined
   messageIds: Set<string>
+}
+
+type VisibleMessageSnapshot = {
+  scopeId: string | undefined
+  messageIds: Set<string>
+}
+
+const VisibleMessageSnapshotCommit = ({
+  scopeId,
+  messageIdsKey,
+  onCommit
+}: {
+  scopeId: string | undefined
+  messageIdsKey: string
+  onCommit: (scopeId: string | undefined, messageIds: Set<string>) => void
+}): null => {
+  useLayoutEffect(() => {
+    onCommit(scopeId, new Set(JSON.parse(messageIdsKey)))
+  }, [messageIdsKey, onCommit, scopeId])
+  return null
 }
 
 type MessageUploadAttachment = NonNullable<ChatSession['messages'][number]['uploads']>[number]
 const conversationContentClassName = 'relative mx-auto w-full max-w-4xl pb-[56px]'
+const SCROLL_TO_FIRST_MESSAGE_MIN_USER_TURNS = 2
+const SCROLL_TO_FIRST_MESSAGE_MIN_HEIGHT_VIEWPORTS = 2
+const SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS = 0.1
+const SCROLL_TO_FIRST_MESSAGE_MIN_DISTANCE_VIEWPORTS = 1
+const SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS = 3000
 // How long a "no longer available" mention notice stays visible before auto-dismissing.
 const MENTION_NOTICE_TIMEOUT_MS = 3000
 
@@ -255,6 +294,24 @@ const WorkspaceMessageScrollerImpl = ({
 }: WorkspaceMessageScrollerProps): React.JSX.Element => {
   const currentSessionId = activeSession?.id
   const currentProjectId = activeSession?.projectId
+  const statusAllowsScrollToFirstMessage = Boolean(
+    activeSession &&
+    activeSession.status !== 'running' &&
+    !activeSession.status.startsWith('waiting-') &&
+    !activeSession.compacting
+  )
+  const messageScrollerViewportRef = useRef<HTMLDivElement | null>(null)
+  const messageScrollerContentRef = useRef<HTMLDivElement | null>(null)
+  const scrollToFirstMessageButtonRef = useRef<HTMLButtonElement | null>(null)
+  const previousMessageScrollerScrollTopRef = useRef(0)
+  const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
+  const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
+  const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
+    (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
+  )
+  const currentPresentationScopeId = currentSessionId
+    ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
+    : undefined
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
   const notebookRunsById = useNotebookRunsById(notebookReference)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
@@ -326,7 +383,7 @@ const WorkspaceMessageScrollerImpl = ({
     }))
   const [messagePresentationState, setMessagePresentationState] =
     useState<SessionScopedMessagePresentationState>(() => ({
-      sessionId: undefined,
+      scopeId: undefined,
       messageIds: new Set()
     }))
   const collapsedActivityGroups =
@@ -345,27 +402,125 @@ const WorkspaceMessageScrollerImpl = ({
     () => groupConversationItems(rawConversationItems, activeSession?.activityGroups),
     [activeSession?.activityGroups, rawConversationItems]
   )
+  const [visibleMessageSnapshot, setVisibleMessageSnapshot] = useState<VisibleMessageSnapshot>(
+    () => ({ scopeId: undefined, messageIds: new Set() })
+  )
+  const presentationScopeRemainedVisible =
+    visibleMessageSnapshot.scopeId === currentPresentationScopeId
   const presentingMessageIds =
-    messagePresentationState.sessionId === currentSessionId
+    messagePresentationState.scopeId === currentPresentationScopeId
       ? messagePresentationState.messageIds
       : new Set<string>()
   const presentationBarrierIndex = conversationItems.findIndex(
     (item) => item.type === 'message' && presentingMessageIds.has(item.message.id)
   )
+  const presentedConversationItems =
+    presentationBarrierIndex >= 0
+      ? conversationItems.slice(0, presentationBarrierIndex + 1)
+      : conversationItems
+  const visibleMessageIds = presentedConversationItems.flatMap((item) =>
+    item.type === 'message' ? [item.message.id] : []
+  )
+  const visibleMessageIdsKey = JSON.stringify(visibleMessageIds)
+  const userTurnCount = presentedConversationItems.filter(
+    (item) => item.type === 'message' && item.message.role === 'user'
+  ).length
+  const updateScrollToFirstMessageEligibility = useCallback((): boolean => {
+    const viewport = messageScrollerViewportRef.current
+    if (!viewport || viewport.clientHeight <= 0) {
+      setScrollThresholdAllowsFirstMessage(false)
+      return false
+    }
+
+    const maximumScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    const hasEnoughConversation =
+      userTurnCount >= SCROLL_TO_FIRST_MESSAGE_MIN_USER_TURNS ||
+      viewport.scrollHeight >= viewport.clientHeight * SCROLL_TO_FIRST_MESSAGE_MIN_HEIGHT_VIEWPORTS
+    const hasScrolledFarEnough =
+      maximumScrollTop > 0 &&
+      (viewport.scrollTop >= maximumScrollTop * SCROLL_TO_FIRST_MESSAGE_MIN_PROGRESS ||
+        viewport.scrollTop >=
+          viewport.clientHeight * SCROLL_TO_FIRST_MESSAGE_MIN_DISTANCE_VIEWPORTS)
+    const eligible = hasEnoughConversation && hasScrolledFarEnough
+    setScrollThresholdAllowsFirstMessage(eligible)
+    return eligible
+  }, [userTurnCount])
+  const clearScrollToFirstMessageHideTimeout = useCallback((): void => {
+    if (scrollToFirstMessageHideTimeoutRef.current !== undefined) {
+      window.clearTimeout(scrollToFirstMessageHideTimeoutRef.current)
+      scrollToFirstMessageHideTimeoutRef.current = undefined
+    }
+  }, [])
+  const setScrollToFirstMessageRevealed = useCallback((revealed: boolean): void => {
+    const button = scrollToFirstMessageButtonRef.current
+    if (!button) return
+    button.dataset.revealed = String(revealed)
+    button.setAttribute('aria-hidden', String(!revealed))
+    button.tabIndex = revealed ? 0 : -1
+  }, [])
+  const hideScrollToFirstMessage = useCallback((): void => {
+    clearScrollToFirstMessageHideTimeout()
+    setScrollToFirstMessageRevealed(false)
+  }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
+  const revealScrollToFirstMessage = useCallback((): void => {
+    clearScrollToFirstMessageHideTimeout()
+    setScrollToFirstMessageRevealed(true)
+    scrollToFirstMessageHideTimeoutRef.current = window.setTimeout(() => {
+      scrollToFirstMessageHideTimeoutRef.current = undefined
+      setScrollToFirstMessageRevealed(false)
+    }, SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS)
+  }, [clearScrollToFirstMessageHideTimeout, setScrollToFirstMessageRevealed])
+  const handleMessageScrollerScroll = useCallback((): void => {
+    const viewport = messageScrollerViewportRef.current
+    if (!viewport) return
+
+    const previousScrollTop = previousMessageScrollerScrollTopRef.current
+    previousMessageScrollerScrollTopRef.current = viewport.scrollTop
+    const eligible = updateScrollToFirstMessageEligibility()
+    if (viewport.scrollTop < previousScrollTop && eligible) revealScrollToFirstMessage()
+    else if (viewport.scrollTop > previousScrollTop) hideScrollToFirstMessage()
+  }, [hideScrollToFirstMessage, revealScrollToFirstMessage, updateScrollToFirstMessageEligibility])
+  useLayoutEffect(() => {
+    updateScrollToFirstMessageEligibility()
+  }, [currentSessionId, updateScrollToFirstMessageEligibility, visibleMessageIdsKey])
+  useLayoutEffect(() => {
+    previousMessageScrollerScrollTopRef.current = messageScrollerViewportRef.current?.scrollTop ?? 0
+    hideScrollToFirstMessage()
+  }, [currentSessionId, hideScrollToFirstMessage])
+  useEffect(() => clearScrollToFirstMessageHideTimeout, [clearScrollToFirstMessageHideTimeout])
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updateScrollToFirstMessageEligibility)
+    const viewport = messageScrollerViewportRef.current
+    const content = messageScrollerContentRef.current
+    if (viewport) observer.observe(viewport)
+    if (content) observer.observe(content)
+    return () => observer.disconnect()
+  }, [currentSessionId, updateScrollToFirstMessageEligibility])
+  const showScrollToFirstMessage =
+    statusAllowsScrollToFirstMessage && scrollThresholdAllowsFirstMessage
+  const handleVisibleMessageSnapshotCommit = useCallback(
+    (scopeId: string | undefined, messageIds: Set<string>): void => {
+      setVisibleMessageSnapshot({ scopeId, messageIds })
+    },
+    []
+  )
   const handleMessagePresentationChange = useCallback(
     (messageId: string, presenting: boolean): void => {
       setMessagePresentationState((currentState) => {
         const currentMessageIds =
-          currentState.sessionId === currentSessionId ? currentState.messageIds : new Set<string>()
+          currentState.scopeId === currentPresentationScopeId
+            ? currentState.messageIds
+            : new Set<string>()
         if (currentMessageIds.has(messageId) === presenting) return currentState
 
         const nextMessageIds = new Set(currentMessageIds)
         if (presenting) nextMessageIds.add(messageId)
         else nextMessageIds.delete(messageId)
-        return { sessionId: currentSessionId, messageIds: nextMessageIds }
+        return { scopeId: currentPresentationScopeId, messageIds: nextMessageIds }
       })
     },
-    [currentSessionId]
+    [currentPresentationScopeId]
   )
   const durablePlanOwnerActivityId = useMemo(
     () => findDurablePlanOwnerActivityId(activeSession, rawConversationItems),
@@ -379,6 +534,48 @@ const WorkspaceMessageScrollerImpl = ({
     [activeSession?.messages]
   )
   const agentLoadingPhase = getAgentLoadingPhase(activeSession)
+  const [terminalAnnouncement, setTerminalAnnouncement] = useState<
+    TerminalAnnouncement | undefined
+  >()
+  const terminalMessageSnapshotRef = useRef<TerminalMessageSnapshot>({
+    scopeId: undefined,
+    statuses: new Map()
+  })
+
+  // Persisted terminal messages are history, not live events. Establish a fresh snapshot whenever
+  // the visible session/branch changes, then announce only terminal states observed afterwards.
+  useEffect(() => {
+    const terminalMessages = (activeSession?.messages ?? []).filter(
+      (message) => message.role === 'agent' && assistantFooterMessageIds.has(message.id)
+    )
+    const nextStatuses = new Map(
+      terminalMessages.map((message) => [message.id, message.status] as const)
+    )
+    const previousSnapshot = terminalMessageSnapshotRef.current
+    let nextAnnouncement: TerminalAnnouncement | undefined
+
+    if (currentPresentationScopeId && previousSnapshot.scopeId === currentPresentationScopeId) {
+      for (const message of terminalMessages) {
+        if (
+          (message.status === 'complete' || message.status === 'error') &&
+          previousSnapshot.statuses.get(message.id) !== message.status
+        ) {
+          nextAnnouncement = { messageId: message.id, status: message.status }
+        }
+      }
+    }
+
+    terminalMessageSnapshotRef.current = {
+      scopeId: currentPresentationScopeId,
+      statuses: nextStatuses
+    }
+    if (previousSnapshot.scopeId !== currentPresentationScopeId) {
+      setTerminalAnnouncement(undefined)
+    } else if (nextAnnouncement) {
+      setTerminalAnnouncement(nextAnnouncement)
+    }
+  }, [activeSession?.messages, assistantFooterMessageIds, currentPresentationScopeId])
+
   const messageCreatedAtById = new Map(
     activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
   )
@@ -644,9 +841,18 @@ const WorkspaceMessageScrollerImpl = ({
             aria-hidden="true"
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
           />
-          <MessageScrollerViewport aria-label="Conversation">
-            <MessageScrollerContent className="gap-0 px-4">
+          <MessageScrollerViewport
+            ref={messageScrollerViewportRef}
+            aria-label="Conversation"
+            onScroll={handleMessageScrollerScroll}
+          >
+            <MessageScrollerContent ref={messageScrollerContentRef} className="gap-0 px-4">
               <div className={conversationContentClassName}>
+                <VisibleMessageSnapshotCommit
+                  scopeId={currentPresentationScopeId}
+                  messageIdsKey={visibleMessageIdsKey}
+                  onCommit={handleVisibleMessageSnapshotCommit}
+                />
                 {/* Messages and tool activities share one sorted transcript timeline. */}
                 {conversationItems.map((item, itemIndex) => {
                   if (presentationBarrierIndex >= 0 && itemIndex > presentationBarrierIndex) {
@@ -737,10 +943,13 @@ const WorkspaceMessageScrollerImpl = ({
                       messageItemProps.onPresentationChange = handleMessagePresentationChange
                       messageItemProps.presentationSourceOpen =
                         itemIndex === conversationItems.length - 1
+                      messageItemProps.presentationAnimateOnMount =
+                        presentationScopeRemainedVisible &&
+                        !visibleMessageSnapshot.messageIds.has(item.message.id)
                     }
 
                     return (
-                      <div key={item.id}>
+                      <div key={JSON.stringify([currentPresentationScopeId, item.id])}>
                         {/* Unbound completed jobs that belong chronologically before this message */}
                         {jobsBeforeMessage.map((job) => (
                           <MessageScrollerItem
@@ -888,6 +1097,7 @@ const WorkspaceMessageScrollerImpl = ({
                       expansionOverrides={activityExpansionOverrides}
                       onToggleRow={toggleActivityRow}
                       notebookRunsById={notebookRunsById}
+                      permission={activeSession?.runtimeContext?.permission}
                       jobsByActivityId={jobsByActivityId}
                       onOpenJobDetail={handleOpenJobDetail}
                     />
@@ -928,19 +1138,57 @@ const WorkspaceMessageScrollerImpl = ({
             </MessageScrollerContent>
           </MessageScrollerViewport>
 
-          <MessageScrollerButton className="z-10 border-border-200 bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+          {showScrollToFirstMessage ? (
+            <MessageScrollerButton
+              ref={scrollToFirstMessageButtonRef}
+              direction="start"
+              aria-label="Scroll to first message"
+              aria-hidden="true"
+              data-revealed="false"
+              tabIndex={-1}
+              size="default"
+              className="z-20 min-h-11 gap-1 rounded-full border-transparent bg-bg-000 px-4 text-sm shadow-card transition-[translate,scale,opacity] hover:bg-bg-200 data-[direction=start]:top-3 data-[revealed=false]:pointer-events-none data-[revealed=false]:-translate-y-2 data-[revealed=false]:opacity-0 motion-reduce:transition-none"
+            >
+              <ArrowDownIcon aria-hidden="true" />
+              <span>First message</span>
+            </MessageScrollerButton>
+          ) : null}
+
+          <MessageScrollerButton className="z-10 border-transparent bg-bg-000 shadow-card hover:bg-bg-200 data-[direction=end]:bottom-3" />
+          <div
+            data-testid="message-completion-live-region"
+            aria-live="polite"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {terminalAnnouncement?.status === 'complete' ? (
+              <span key={`${terminalAnnouncement.messageId}:complete`}>Response completed.</span>
+            ) : null}
+          </div>
+          <div
+            data-testid="message-failure-live-region"
+            aria-live="assertive"
+            aria-atomic="true"
+            className="sr-only"
+          >
+            {terminalAnnouncement?.status === 'error' ? (
+              <span key={`${terminalAnnouncement.messageId}:error`}>Response failed.</span>
+            ) : null}
+          </div>
 
           {/* Transient warning shown when a mention target no longer resolves to a file or skill. */}
-          {mentionNotice ? (
-            <div
-              role="status"
-              className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"
-            >
+          <div
+            data-testid="mention-notice-live-region"
+            aria-live="assertive"
+            aria-atomic="true"
+            className="pointer-events-none absolute inset-x-0 bottom-14 z-10 flex justify-center px-4"
+          >
+            {mentionNotice ? (
               <span className="rounded-full border border-border-200 bg-bg-000 px-3 py-1 text-[13px] text-text-100 shadow-card">
                 {mentionNotice}
               </span>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
         </MessageScroller>
       </MessageScrollerProvider>
 
@@ -989,7 +1237,8 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&
-  previous.notebookReference?.projectName === next.notebookReference?.projectName &&
+  (previous.notebookReference ? resolveProjectId(previous.notebookReference) : undefined) ===
+    (next.notebookReference ? resolveProjectId(next.notebookReference) : undefined) &&
   previous.notebookReference?.workspaceCwd === next.notebookReference?.workspaceCwd &&
   areSessionsEqualForTranscript(previous.activeSession, next.activeSession)
 

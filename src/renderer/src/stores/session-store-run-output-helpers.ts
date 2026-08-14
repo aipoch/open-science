@@ -16,8 +16,25 @@ import {
   synchronizeSessionGraph
 } from './session-store-message-graph-helpers'
 import type { AppendMessageResult } from './session-store-message-graph-helpers'
-import { createMessageId, createSortIndex } from './session-store-message-graph-owner'
+import { createSortIndex } from './session-store-message-graph-owner'
 import type { ChatMessage, ChatSession } from './session-store-persistence-owner'
+
+// A Session can be projected by more than one renderer. Derive Agent identity from runtime-owned
+// stream identity so both projections choose the same Artifact owner instead of local sequence ids.
+const createRuntimeAgentMessageId = (
+  sessionId: string,
+  streamId: string,
+  responseToMessageId?: string
+): string => {
+  let hash = 0xcbf29ce484222325n
+  for (const byte of new TextEncoder().encode(
+    `${sessionId}\0${responseToMessageId ?? ''}\0${streamId}`
+  )) {
+    hash ^= BigInt(byte)
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
+  }
+  return `message-stream-${hash.toString(16).padStart(16, '0')}`
+}
 
 export type AppendAgentMessageChunkInput = {
   sessionId: string
@@ -179,7 +196,9 @@ export const projectAgentMessageChunk = (
     const text = `${current}${content}`
     return session.agentFrameworkId === 'claude-code' ? normalizeClaudeCodeRefusalText(text) : text
   }
-  const messageId = existingMessage?.id ?? createMessageId()
+  const messageId =
+    existingMessage?.id ??
+    createRuntimeAgentMessageId(input.sessionId, input.streamId, responseToMessageId)
   const result = { sessionId: input.sessionId, messageId }
   const now = Date.now()
 
@@ -320,7 +339,9 @@ export const projectRunArtifacts = (
     return { session }
   }
 
-  const messageId = existingMessage?.id ?? createMessageId()
+  const messageId =
+    existingMessage?.id ??
+    createRuntimeAgentMessageId(input.sessionId, input.runId, responseToMessageId)
   const result = { sessionId: input.sessionId, messageId }
   if (existingMessage) {
     const messages = session.messages.map((message) =>

@@ -3,6 +3,8 @@ import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -42,16 +44,14 @@ const DeleteSessionDialog = ({
     >
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
+        <AlertDialog.Content
+          className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}
+        >
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
               <AlertDialog.Title className={dialogTitleClassName}>
                 Delete Session?
               </AlertDialog.Title>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                This will permanently delete &quot;{dialogSession?.title}&quot;. Artifacts created
-                in this session will remain in the project. This action cannot be undone.
-              </AlertDialog.Description>
             </div>
             <Button
               type="button"
@@ -64,9 +64,15 @@ const DeleteSessionDialog = ({
               <X className="size-4" aria-hidden="true" />
             </Button>
           </div>
+          <div className={dialogBodyClassName}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              This will permanently delete &quot;{dialogSession?.title}&quot;. Artifacts created in
+              this session will remain in the project. This action cannot be undone.
+            </AlertDialog.Description>
+          </div>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="outline">
+              <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
                 Cancel
               </Button>
             </AlertDialog.Cancel>

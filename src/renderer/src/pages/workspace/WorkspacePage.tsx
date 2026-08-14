@@ -31,7 +31,6 @@ import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import {
   appendArtifactMention,
   docArtifactCount,
-  docToSkillIds,
   MAX_COMPOSER_ARTIFACT_MENTIONS
 } from './composer/composer-doc'
 import {
@@ -64,6 +63,7 @@ type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
   canDeleteConversations: boolean
+  isPreviewPresentationActive?: boolean
 }
 
 // New-conversation drafts are project-scoped so switching projects never leaks unsent intent.
@@ -75,7 +75,8 @@ const OPEN_DIALOG_SELECTOR =
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
-  canDeleteConversations
+  canDeleteConversations,
+  isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
   // The active project scopes which sessions are visible and stamps newly created ones. The workspace
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
@@ -116,7 +117,6 @@ const WorkspacePage = ({
   const currentDraftKey = selectedSessionId ?? newConversationDraftKey
   const clearSelection = useSessionStore((state) => state.clearSelection)
   const setAutoReviewEnabled = useSessionStore((state) => state.setAutoReviewEnabled)
-  const setEnabledComputeHosts = useSessionStore((state) => state.setEnabledComputeHosts)
   const setFixLoopActive = useSessionStore((state) => state.setFixLoopActive)
   const setActivePlanProjection = useSessionStore((state) => state.setActivePlanProjection)
   // Only sessions belonging to the active project are shown in this workspace.
@@ -270,7 +270,6 @@ const WorkspacePage = ({
     deleteRuntimeSession: runtime.deleteRuntimeSession
   })
   const historySpecialistId = sessionController.view.specialist.historyId
-  const newConversationSpecialistId = sessionController.view.specialist.newConversationId
   const catalogSkillIds = useMemo(
     () => new Set(catalogSkills.map((skill) => skill.id)),
     [catalogSkills]
@@ -335,23 +334,8 @@ const WorkspacePage = ({
     supportsImageInput,
     uploads: window.api.uploads
   })
-  const {
-    doc: draftDoc,
-    attachments,
-    transfers: attachmentTransfers,
-    error: attachmentError,
-    historyStatus,
-    isHistoryBrowsing,
-    isUploading: isUploadingAttachments
-  } = composer.view
-  const {
-    changeDoc: changeComposerDraftDoc,
-    navigateHistory: navigateComposerHistory,
-    stageFiles: stageAttachmentFiles,
-    cancelTransfer: cancelAttachmentTransfer,
-    removeAttachment: removeComposerAttachment,
-    setError: setAttachmentError
-  } = composer.actions
+  const { doc: draftDoc, error: attachmentError } = composer.view
+  const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
   const sideChat = useSideChatController(
     activeSession ? { sessionId: activeSession.id, projectId: activeSession.projectId } : undefined
   )
@@ -463,13 +447,10 @@ const WorkspacePage = ({
     sideChat: canEditDraft && !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
     setAutoReviewEnabled,
-    setEnabledComputeHosts,
     resetNewConversationSettings: () => {
       setNewConversationAutoReviewEnabled(false)
       setNewConversationEnabledComputeHosts([])
     },
-    syncComputeHosts: (sessionId, providerIds) =>
-      window.api.compute.enabledHostsSet(sessionId, providerIds),
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
       useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
@@ -501,8 +482,6 @@ const WorkspacePage = ({
     return false
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
-  const canSendMessage = conversation.availability.submit
-
   // Make the composer-owned mention capability available to Global Search without exposing its draft.
   // The value is transient and Project-scoped; cleanup prevents a stale Project from accepting an
   // Artifact after navigation.
@@ -688,7 +667,7 @@ const WorkspacePage = ({
       .getReference({
         sessionId: activeSessionId,
         workspaceCwd: activeSessionCwd ?? '',
-        projectName: activeSessionProjectId
+        projectId: activeSessionProjectId
       })
       .then((reference) => {
         if (cancelled || !reference) return
@@ -706,21 +685,6 @@ const WorkspacePage = ({
       cancelled = true
     }
   }, [activeSessionId, activeSessionCwd, activeSessionProjectId])
-
-  // Sync the active session's enabled compute hosts to the main-process registry when switching
-  // sessions. The registry is the runtime source for list_compute RPC ops; the session JSON is the
-  // durable source. Toggle updates also sync directly in handleComputeHostToggle.
-  useEffect(() => {
-    if (!activeSessionId) return
-    // Read from store snapshot to avoid stale closure on activeEnabledComputeHosts.
-    const session = useSessionStore.getState().sessions.find((s) => s.id === activeSessionId)
-    void window.api.compute
-      .enabledHostsSet(activeSessionId, session?.enabledComputeHosts ?? [])
-      .catch((err: unknown) => {
-        console.warn('Failed to sync enabled compute hosts to registry', err)
-      })
-    // Only re-run when the active session changes (session switch). Toggle handler syncs directly.
-  }, [activeSessionId])
 
   // Keeps New as a local draft reset after persistence hydration has selected restored sessions.
   const openNewConversation = useCallback((): void => {
@@ -811,7 +775,7 @@ const WorkspacePage = ({
   // Enables or disables a compute host for the active session (single-select semantics).
   // Enabling one host replaces any existing selection; disabling clears the set.
   // For a not-yet-created conversation, the Conversation submit transaction stamps this draft state
-  // onto the new session. Existing sessions update the store and main-process registry immediately.
+  // onto the new session. Existing sessions update only from the durable command result.
   const handleComputeHostToggle = (providerId: string, enabled: boolean): void => {
     // Single-select: enable one host ↔ clear all others; disabling clears the selection entirely.
     const newEnabledHosts = enabled ? [providerId] : []
@@ -819,13 +783,20 @@ const WorkspacePage = ({
       setNewConversationEnabledComputeHosts(newEnabledHosts)
       return
     }
-    const sessionId = activeSession.id
-    setEnabledComputeHosts(sessionId, newEnabledHosts)
-    // Keep the main-process registry in sync immediately so list_compute() reflects the change
-    // without waiting for the next session-switch effect.
-    void window.api.compute.enabledHostsSet(sessionId, newEnabledHosts).catch((err: unknown) => {
-      console.warn('Failed to sync enabled compute hosts to registry', err)
-    })
+    const source = activeSession
+    setAttachmentError(null)
+    void window.api.compute
+      .enabledHostsSet(source.id, newEnabledHosts)
+      .then((session) => {
+        useSessionStore.getState().applyDurableSessionProjection({
+          source,
+          session,
+          mode: 'enabled-compute-hosts-authority'
+        })
+      })
+      .catch((error: unknown) => {
+        setAttachmentError(error instanceof Error ? error.message : String(error))
+      })
   }
 
   // Manually triggers a review of the last completed turn, bypassing autoReviewEnabled and the
@@ -879,6 +850,7 @@ const WorkspacePage = ({
     <main className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]">
       <WorkspacePanelLayout
         hasPreviewItems={previewItems.length > 0}
+        isPreviewPresentationActive={isPreviewPresentationActive}
         restoredPlanResponder={
           activeSession
             ? {
@@ -1027,100 +999,71 @@ const WorkspacePage = ({
           openMobileSidebar
         }) => (
           <ConversationPanel
-            activeSession={activeSession}
-            draftDoc={draftDoc}
-            canSendMessage={canSendMessage}
-            canEditDraft={canEditDraft}
-            canResumeSession={conversation.availability.resume}
-            actionError={visibleActionError}
-            isPreviewPanelCollapsed={isPreviewPanelCollapsed}
-            attachments={attachments}
-            attachmentTransfers={attachmentTransfers}
-            isUploadingAttachments={isUploadingAttachments}
-            notebookReference={activeNotebookReference}
-            pendingPermissions={visiblePermissionRequests}
-            subagentUnavailableReason={
-              activeSession ? delegatedWorkUnavailableBySession[activeSession.id] : undefined
-            }
-            pendingElicitations={visibleElicitationRequests}
-            permissionProfile={activePermissionProfile}
-            permissionProfileState={activePermissionProfileState}
-            permissionGrants={activePermissionGrants}
-            contextUsage={activeContextUsage}
-            canCompactContext={canCompactContext}
-            compactContextDisabledReason={compactContextDisabledReason}
-            onCompactContext={compactActiveContext}
-            canChangeAgentControls={canChangeAgentControls}
-            canChangePermissionProfile={canChangePermissionProfile}
-            autoReviewEnabled={activeAutoReviewEnabled}
-            onDraftDocChange={changeComposerDraftDoc}
-            isHistoryBrowsing={isHistoryBrowsing}
-            historyStatus={historyStatus}
-            onNavigateHistory={navigateComposerHistory}
-            onSendMessage={(forcedSkillIds) =>
-              conversation.actions.submit.draft({ forcedSkillIds })
-            }
-            onPlanFirst={(forcedSkillIds) =>
-              conversation.actions.submit.draft({ forcedSkillIds, mode: 'plan-first' })
-            }
-            sideChat={sideChat.view}
-            onStartSideChat={conversation.actions.sideChat.start}
-            sideChatDisabledReason={sideChatDisabledReason}
-            onSendSideChat={sideChat.send}
-            onSideChatDraftChange={sideChat.setDraft}
-            onCancelSideChat={sideChat.cancel}
-            onCloseSideChat={sideChat.close}
-            onRespondToRestoredPlan={conversation.actions.submit.restoredPlan}
-            onBranchInNewSession={
-              activeSession
-                ? (forcedSkillIds) =>
-                    conversation.actions.submit.draft({ forcedSkillIds, mode: 'branch' })
-                : undefined
-            }
-            onStageAttachmentFiles={stageAttachmentFiles}
-            onRemoveAttachment={removeComposerAttachment}
-            onCancelAttachmentTransfer={cancelAttachmentTransfer}
-            onCancelRun={conversation.actions.cancel}
-            onStopSubagents={() => {
-              if (!activeSession) return
-              return window.api.acp
-                .cancel({ sessionId: activeSession.id, scope: 'subagents' })
-                .then(() => undefined)
+            view={{
+              activeSession,
+              composerFocusKey: currentDraftKey,
+              canEditDraft,
+              actionError: visibleActionError,
+              sideChatDisabledReason
             }}
-            onResumeSession={conversation.actions.resume}
-            onOpenNotebook={openNotebookPreview}
-            onTogglePreviewPanel={togglePreviewPanelFromLayout}
-            onOpenSidebar={openMobileSidebar}
-            onRespondToPermission={respondToVisiblePermission}
-            onRespondToElicitation={respondToElicitation}
-            onPermissionProfileChange={changePermissionProfile}
-            onRevokePermissionGrant={revokeActivePermissionGrant}
-            onClearPermissionGrants={clearActivePermissionGrants}
-            onAutoReviewToggle={changeAutoReviewEnabled}
-            enabledComputeHosts={activeEnabledComputeHosts}
-            onComputeHostToggle={handleComputeHostToggle}
-            onRequestReview={requestManualReview}
-            isRequestReviewDisabled={isRequestReviewDisabled}
-            canEditMessage={canEditMessage}
-            onSendEditedMessage={conversation.actions.revise}
-            onOpenJobList={sessionController.actions.openJobList}
-            specialistId={
-              // For existing sessions: badge shows the currently-effective specialist (session
-              // binding). A pending switch is signalled by the chip, not by overriding the badge.
-              activeSession ? activeSession.specialistId : newConversationSpecialistId
-            }
-            specialistUnavailable={sessionController.view.specialist.unavailable}
-            specialistHasPendingSwitch={sessionController.view.specialist.hasPendingSwitch}
-            reconfigureError={sessionController.view.specialist.reconfigureError}
-            onReconfigureRetry={() =>
-              conversation.actions.submit.draft({
-                forcedSkillIds: docToSkillIds(draftDoc),
-                mode: 'retry-reconfigure'
-              })
-            }
-            onReconfigureChooseOther={sessionController.actions.chooseOtherSpecialist}
-            onReconfigureUseNone={sessionController.actions.useMainAgent}
-            onSpecialistChange={sessionController.actions.selectSpecialist}
+            composer={composer}
+            conversation={conversation}
+            sideChat={sideChat}
+            specialist={sessionController}
+            layout={{
+              isPreviewPanelCollapsed,
+              togglePreviewPanel: togglePreviewPanelFromLayout,
+              openSidebar: openMobileSidebar
+            }}
+            permissions={{
+              requests: visiblePermissionRequests,
+              permissionProfile: activePermissionProfile,
+              permissionProfileState: activePermissionProfileState,
+              permissionGrants: activePermissionGrants,
+              canChangePermissionProfile,
+              respond: respondToVisiblePermission,
+              changeProfile: changePermissionProfile,
+              revokeGrant: revokeActivePermissionGrant,
+              clearGrants: clearActivePermissionGrants
+            }}
+            elicitation={{
+              requests: visibleElicitationRequests,
+              respond: respondToElicitation
+            }}
+            agentControls={{
+              canChange: canChangeAgentControls,
+              autoReviewEnabled: activeAutoReviewEnabled,
+              enabledComputeHosts: activeEnabledComputeHosts,
+              toggleAutoReview: changeAutoReviewEnabled,
+              toggleComputeHost: handleComputeHostToggle
+            }}
+            contextWindow={{
+              usage: activeContextUsage,
+              canCompact: canCompactContext,
+              compactDisabledReason: compactContextDisabledReason,
+              compact: compactActiveContext
+            }}
+            review={{
+              disabled: isRequestReviewDisabled,
+              running: isReviewing,
+              request: requestManualReview
+            }}
+            sessionTools={{
+              notebookReference: activeNotebookReference,
+              openNotebook: openNotebookPreview,
+              openJobs: sessionController.actions.openJobList
+            }}
+            subagents={{
+              unavailableReason: activeSession
+                ? delegatedWorkUnavailableBySession[activeSession.id]
+                : undefined,
+              stop: () => {
+                if (!activeSession) return
+                return window.api.acp
+                  .cancel({ sessionId: activeSession.id, scope: 'subagents' })
+                  .then(() => undefined)
+              }
+            }}
           />
         )}
       />
@@ -1152,7 +1095,11 @@ const WorkspacePage = ({
       />
 
       <FilePreviewDialog
-        item={fileDialogItem?.projectId === activeProjectId ? fileDialogItem : undefined}
+        item={
+          isPreviewPresentationActive && fileDialogItem?.projectId === activeProjectId
+            ? fileDialogItem
+            : undefined
+        }
         onClose={closeFileDialog}
       />
 

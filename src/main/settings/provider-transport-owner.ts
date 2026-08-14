@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import { netFetchStandard } from '../skills/net-fetch'
 import type { AgentModelCatalogEntry, ResolvedAgentBackend } from '../agent-framework'
 import { normalizeResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
@@ -131,16 +132,18 @@ class ProviderTransportOwner {
 
   constructor(options: ProviderTransportOwnerOptions = {}) {
     this.createResponsesBridge =
-      options.createResponsesBridge ?? ((target) => new ResponsesBridge(target))
+      options.createResponsesBridge ?? ((target) => new ResponsesBridge(target, netFetchStandard))
     this.createNativeResponsesProxy =
       options.createNativeResponsesProxy ??
-      ((target) => new NativeResponsesCompatibilityProxy(target))
+      ((target) => new NativeResponsesCompatibilityProxy(target, netFetchStandard))
     this.createAnthropicProviderBridge =
       options.createAnthropicProviderBridge ??
-      ((targets, initialTargetId) => new AnthropicProviderBridge(targets, initialTargetId))
+      ((targets, initialTargetId) =>
+        new AnthropicProviderBridge(targets, initialTargetId, netFetchStandard))
     this.createOpenAiProviderBridge =
       options.createOpenAiProviderBridge ??
-      ((targets, initialTargetId) => new OpenAiProviderBridge(targets, initialTargetId))
+      ((targets, initialTargetId) =>
+        new OpenAiProviderBridge(targets, initialTargetId, netFetchStandard))
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
   }
 

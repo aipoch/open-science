@@ -1,5 +1,4 @@
 import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
-import { isActivityActive } from './workspace-conversation-items'
 
 type TimelinePosition = {
   updatedAt: number
@@ -19,6 +18,12 @@ const findLatest = <T extends TimelinePosition>(items: T[]): T | undefined =>
     (latest, item) => (!latest || isLaterThan(item, latest) ? item : latest),
     undefined
   )
+
+// The transcript row projection keeps a prepared Notebook call static, but the Activity Stream still
+// reports the provider-owned tool interaction. Settled permission dispositions are no longer active.
+const isCurrentToolActive = (activity: ToolActivity): boolean =>
+  (activity.status === 'pending' || activity.status === 'in_progress') &&
+  activity.toolDisposition === undefined
 
 const getCurrentRunTimeline = (
   session: ChatSession
@@ -68,7 +73,9 @@ const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPha
   const promptMessageId = session.activeRun?.promptMessageId ?? prompt?.id
 
   // Any live tool in the current request takes precedence over the surrounding thinking gaps.
-  if (currentRunTools.some(isActivityActive)) return 'interacting-with-tools'
+  if (currentRunTools.some(isCurrentToolActive)) {
+    return 'interacting-with-tools'
+  }
   if (session.awaitingFirstAgentOutput) return 'thinking'
   if (!session.activeRun) return 'hidden'
 

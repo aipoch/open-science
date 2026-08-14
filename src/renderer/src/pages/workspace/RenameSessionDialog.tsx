@@ -3,9 +3,13 @@ import { Dialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogFormInputClassName,
+  dialogFormLabelClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
@@ -22,9 +26,6 @@ type RenameSessionDialogProps = {
   onCancel: () => void
   onConfirmRename: (event: React.FormEvent<HTMLFormElement>) => void
 }
-
-const renameDialogInputClassName =
-  'h-9 rounded-lg border-border bg-card px-3 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25'
 
 // Rename dialog updates only the session title; messages and run status stay untouched.
 const RenameSessionDialog = ({
@@ -49,15 +50,12 @@ const RenameSessionDialog = ({
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           onInteractOutside={(event) => event.preventDefault()}
-          className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}
+          className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}
         >
           <form onSubmit={onConfirmRename}>
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <Dialog.Title className={dialogTitleClassName}>Rename session</Dialog.Title>
-                <Dialog.Description className={dialogDescriptionClassName}>
-                  Update the name shown in the session list.
-                </Dialog.Description>
               </div>
               <Button
                 type="button"
@@ -70,17 +68,32 @@ const RenameSessionDialog = ({
                 <X className="size-4" aria-hidden="true" />
               </Button>
             </div>
-            <div className="mt-4">
+            <div className={`${dialogBodyClassName} space-y-3`}>
+              <Dialog.Description className={dialogDescriptionClassName}>
+                Update the name shown in the session list.
+              </Dialog.Description>
+              <label
+                className={`${dialogFormLabelClassName} sr-only`}
+                htmlFor="rename-session-name"
+              >
+                Session name
+              </label>
               <Input
+                id="rename-session-name"
                 value={dialogRenameDraft}
                 onChange={(event) => onRenameDraftChange(event.target.value)}
                 aria-label="Session name"
                 autoFocus
-                className={renameDialogInputClassName}
+                className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
               />
             </div>
             <div className={dialogFooterClassName}>
-              <Button type="button" variant="outline" onClick={onCancel}>
+              <Button
+                type="button"
+                variant="ghost"
+                className={dialogCancelButtonClassName}
+                onClick={onCancel}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={dialogRenameDraft.trim().length === 0}>

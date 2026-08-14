@@ -4,6 +4,7 @@ import type {
   NotebookRunDocument
 } from '../../shared/notebook'
 import { resolveDataKernelForTab } from '../../shared/notebook'
+import { resolveProjectId } from '../../shared/project-scope'
 import { runDocumentToIpynbByKernel, runDocumentToIpynbForKernel } from './ipynb-export'
 import type { NotebookRunRepository } from './repository'
 
@@ -16,7 +17,7 @@ type NotebookExportFile = {
 type NotebookExportReaderOptions = {
   repository: Pick<NotebookRunRepository, 'findExisting'> &
     Partial<Pick<NotebookRunRepository, 'readSessionRuns'>>
-  defaultProjectName: string
+  defaultProjectId: string
   appVersion?: string
 }
 
@@ -70,13 +71,13 @@ class NotebookExportReader {
   private async loadDocument(
     request: ExportNotebookAllRequest | ExportNotebookKernelRequest
   ): Promise<NotebookRunDocument> {
-    const projectName = request.projectName ?? this.options.defaultProjectName
-    const document = await this.options.repository.findExisting(projectName, request.sessionId)
+    const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    const document = await this.options.repository.findExisting(projectId, request.sessionId)
     if (!document) {
       throw new Error(`Notebook session not found: ${request.sessionId}`)
     }
     const sessionRuns = this.options.repository.readSessionRuns
-      ? await this.options.repository.readSessionRuns(projectName, request.sessionId)
+      ? await this.options.repository.readSessionRuns(projectId, request.sessionId)
       : document.runs
     const runs =
       request.agentFrameFilter === undefined

@@ -40,6 +40,7 @@ export type AppendUserMessageInput = {
   agentModel?: string
   isPending?: boolean
   specialistId?: string
+  enabledComputeHosts?: string[]
 }
 
 export type AppendPendingUserMessageInput = Omit<AppendUserMessageInput, 'sessionId' | 'isPending'>

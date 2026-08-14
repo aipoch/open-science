@@ -20,8 +20,13 @@ project for everyone.
 ### Setup
 
 ```bash
-git clone https://github.com/aipoch/open-science.git
+# Fork the repo at https://github.com/aipoch/open-science/fork, then:
+git clone https://github.com/<your-username>/open-science.git
 cd open-science
+
+# Add the original repo as upstream (to stay in sync)
+git remote add upstream https://github.com/aipoch/open-science.git
+
 npm install
 ```
 

@@ -74,6 +74,10 @@ describe('EnvProvisionOverlay', () => {
     act(() => root.render(<EnvProvisionOverlay ui={ui} />))
     const gate = container.querySelector('[data-testid="notebook-env-gate"]')
     expect(gate?.textContent).toContain('Preparing Python environment')
+    const progressBar = gate?.querySelector<HTMLElement>('[style*="scaleX"]')
+    expect(progressBar?.className).toContain('transition-transform')
+    expect(progressBar?.className).toContain('motion-reduce:transition-none')
+    expect(progressBar?.className).not.toContain('transition-all')
   })
 
   it('renders a retry affordance in the error state', () => {
@@ -326,6 +330,29 @@ describe('NotebookPreview per-kernel tabs', () => {
       })
     }
   }
+
+  it('uses one notebook scroll owner and an accessible real resize handle', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const split = container.querySelector<HTMLElement>('[data-group]')
+    const cellsPanel = container.querySelector<HTMLElement>('[data-panel]')
+    const cellsPanelContent = cellsPanel?.firstElementChild as HTMLElement | undefined
+    const cells = container.querySelector<HTMLElement>('[data-testid="notebook-cells"]')
+    const divider = container.querySelector<HTMLElement>('[data-separator]')
+
+    expect(split?.hasAttribute('data-group')).toBe(true)
+    expect(split?.className).toContain('flex-col')
+    expect(cellsPanel?.hasAttribute('data-panel')).toBe(true)
+    expect(cellsPanelContent?.className).toContain('overflow-hidden')
+    expect(cells?.className).toContain('overflow-y-auto')
+    expect(cells?.parentElement).toBe(cellsPanelContent)
+    expect(divider?.getAttribute('role')).toBe('separator')
+    expect(divider?.getAttribute('aria-label')).toBe('Resize notebook and terminal')
+    expect(divider?.getAttribute('aria-orientation')).toBe('horizontal')
+    expect(
+      container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent
+    ).toContain('Python kernel')
+  })
 
   it('shows a tab only for kernel kinds present in the runs (no default python/r tab)', async () => {
     await mountWithRuns([

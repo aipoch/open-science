@@ -308,7 +308,7 @@ describe('ConversationSkillImporter', () => {
       status: 'imported',
       skills: [{ id: 'imported-paper-finder', name: 'Paper Finder', status: 'imported' }]
     })
-    expect((await skills.list()).map((skill) => skill.name)).toEqual(['Paper Finder'])
+    expect((await skills.list()).map((skill) => skill.name)).toEqual(['paper-finder'])
     expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
 

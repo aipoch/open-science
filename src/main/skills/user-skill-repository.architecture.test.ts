@@ -203,13 +203,13 @@ describe('User Skill repository architecture', () => {
   it('locks the compatibility export and operation inventories', () => {
     expect(exportInventory()).toEqual([
       'type:ImportOutcome',
+      'value:SAFE_SKILL_DIRECTORY_NAME',
       'value:SAFE_SKILL_NAME',
-      'value:SAFE_SLUG',
       'value:UserSkillRepository',
       'value:assertUsableSkillName',
       'value:frontmatterBlock',
-      'value:parseUserSkillId',
-      'value:toSlug'
+      'value:normalizeSkillName',
+      'value:parseUserSkillId'
     ])
     expect(publicOperations()).toEqual([
       'body',

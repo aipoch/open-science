@@ -4,6 +4,7 @@ import { useNavigationStore, type NavigationView } from '@/stores/navigation-sto
 import { usePreviewWorkbenchStore, type PreviewPanelState } from '@/stores/preview-workbench-store'
 
 export type CloseActivePaneAction = 'close-active-tab' | 'collapse-pane' | 'close-window'
+export type AppShellCloseRequest = 'handled' | 'close-preview' | 'close-base'
 
 // Cmd+W / Ctrl+W walks a three-level ladder inside the workspace: close the active preview tab, then
 // collapse the (now empty) third-column panel, then fall through to closing the window. Gating on the
@@ -21,23 +22,27 @@ export const decideCloseActivePaneAction = (input: {
   return 'close-window'
 }
 
-// Wires the main-process close chord to the tab-vs-pane-vs-window decision. Store state is read
-// imperatively so the subscription is installed once yet always sees the current view and panel state.
-export const useCloseActivePaneShortcut = (closeActiveModal?: () => boolean): void => {
-  const closeActiveModalRef = useRef(closeActiveModal)
+// Executes the App Shell owner's presentation-tier decision, then applies the preview-internal
+// tab-vs-pane-vs-window ladder only for the requested tier. Store state is read imperatively so the
+// subscription is installed once yet always sees the current view and panel state.
+export const useCloseActivePaneShortcut = (
+  resolveCloseRequest?: () => AppShellCloseRequest
+): void => {
+  const resolveCloseRequestRef = useRef(resolveCloseRequest)
   useEffect(() => {
-    closeActiveModalRef.current = closeActiveModal
-  }, [closeActiveModal])
+    resolveCloseRequestRef.current = resolveCloseRequest
+  }, [resolveCloseRequest])
 
   useEffect(
     () =>
       window.api.window.onCloseActivePane(() => {
-        if (closeActiveModalRef.current?.()) return
+        const request = resolveCloseRequestRef.current?.() ?? 'close-base'
+        if (request === 'handled') return
 
         const preview = usePreviewWorkbenchStore.getState()
         const view = useNavigationStore.getState().view
         const activeItem = preview.items.find((item) => item.id === preview.activeItemId)
-        if (view === 'workspace') {
+        if (request === 'close-preview' && view === 'workspace') {
           if (preview.fileDialogItem) {
             preview.closeFileDialog()
             return
@@ -47,6 +52,7 @@ export const useCloseActivePaneShortcut = (closeActiveModal?: () => boolean): vo
             return
           }
         }
+        if (request === 'close-preview') return
 
         const action = decideCloseActivePaneAction({
           view,
