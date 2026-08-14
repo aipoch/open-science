@@ -2534,5 +2534,18 @@
   "Web Fetch": "网页获取",
   "Subagent workspaces": "子 Agent 工作区",
   "Waiting for your answer": "正在等待你的回答",
-  "archived": "已归档"
+  "archived": "已归档",
+  "Assessment details unavailable for this legacy review": "此旧版审查的评估详情不可用",
+  "Disposition: {{disposition}}": "处置结果：{{disposition}}",
+  "Issues found": "发现问题",
+  "Issues found (outdated)": "发现问题（已过期）",
+  "Tracked": "已跟踪",
+  "correction failed": "纠正失败",
+  "resolved": "已解决",
+  "still open": "仍未解决",
+  "unaddressed": "未处理",
+  "Agent is addressing the feedback": "Agent 正在处理反馈",
+  "Corrections requested": "已请求更正",
+  "Handed off to the Agent · response started": "已交给 Agent · 已开始响应",
+  "Reviewer requested corrections": "审查员已请求更正"
 }

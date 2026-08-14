@@ -7,8 +7,10 @@ import {
   createSessionFile,
   ConversationGraphMaterializationError,
   materializeSessionConversationGraph,
+  isReviewerCorrectionAttribution,
   sanitizeActivityGroup,
   normalizeSessionFile,
+  sanitizeMessageAttribution,
   sanitizeMessageImages,
   sanitizeSessionRuntimeContext,
   sanitizeToolActivity,
@@ -229,6 +231,102 @@ describe('branch Plan history persistence', () => {
       'version-4',
       'version-5'
     ])
+  })
+})
+
+describe('message attribution persistence', () => {
+  it('recognizes only the closed Reviewer Correction attribution variant', () => {
+    expect(
+      isReviewerCorrectionAttribution({
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1'
+      })
+    ).toBe(true)
+    expect(
+      isReviewerCorrectionAttribution({
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1',
+        rendererClaim: true
+      })
+    ).toBe(false)
+    expect(isReviewerCorrectionAttribution(undefined)).toBe(false)
+  })
+
+  it('preserves a Reviewer Correction attribution through Session JSON and Conversation Graph projection', () => {
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'correction-1',
+          role: 'user',
+          content: '[Auditor] Correct the unsupported claim.',
+          status: 'complete',
+          eventIds: ['event-1'],
+          attribution: {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review-1'
+          },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]?.attribution).toEqual({
+      kind: 'application',
+      feature: 'reviewer',
+      purpose: 'correction',
+      causeReviewId: 'review-1'
+    })
+    expect(
+      session &&
+        materializeSessionConversationGraph(session).conversationGraph?.messages[0]?.attribution
+    ).toEqual({
+      kind: 'application',
+      feature: 'reviewer',
+      purpose: 'correction',
+      causeReviewId: 'review-1'
+    })
+  })
+
+  it('drops malformed or extended attribution without dropping the Message', () => {
+    expect(
+      sanitizeMessageAttribution({
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1',
+        rendererClaim: true
+      })
+    ).toBeUndefined()
+    const session = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      messages: [
+        {
+          id: 'legacy-message',
+          role: 'user',
+          content: '[Auditor] remains visible as human text',
+          status: 'complete',
+          eventIds: [],
+          attribution: { kind: 'unknown', feature: 'reviewer' },
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+
+    expect(session?.messages[0]).toMatchObject({
+      id: 'legacy-message',
+      role: 'user',
+      content: '[Auditor] remains visible as human text'
+    })
+    expect(session?.messages[0]).not.toHaveProperty('attribution')
   })
 })
 

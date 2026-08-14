@@ -161,7 +161,7 @@ import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
-  createSessionPersistenceHandlers,
+  createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers
@@ -191,6 +191,7 @@ import { createMainPromptSideChatRelay } from './side-chat/main-prompt-relay'
 import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
+import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
 import { registerLocalFsIpcHandlers } from './local-fs/ipc'
@@ -564,6 +565,7 @@ const createApplicationModules = async (
   const reviewerCommandOwnerRef: { current: ReviewerCommandOwner | undefined } = {
     current: undefined
   }
+  const messageAttributionAuthority = new MainMessageAttributionAuthority()
   const notebookActivityRef: {
     current: { getActiveNotebookSessions(): { projectId: string; sessionId: string }[] } | undefined
   } = { current: undefined }
@@ -1804,6 +1806,8 @@ const createApplicationModules = async (
         skillImportApprovalBroker.endSessionTurn(sessionId, turnToken),
       onSkillImportAttachmentEligible: (sessionId, turnToken, attachmentUri) =>
         skillImportApprovalBroker.allowSessionTurnAttachment(sessionId, turnToken, attachmentUri),
+      onTrustedMessageAttribution: (projectId, event) =>
+        messageAttributionAuthority.recordRuntimeEvent(projectId, event),
       onSessionCancellationRequested: (sessionId) =>
         skillImportApprovalBroker.cancelSession(sessionId),
       onSessionUnavailable: (sessionId) => skillImportApprovalBroker.cancelSession(sessionId),
@@ -2234,9 +2238,10 @@ const createApplicationModules = async (
     await originalDeleteSession(projectId, sessionId)
     sessionBindingService.clearSession(sessionId)
   }
-  const sessionPersistenceHandlers = createSessionPersistenceHandlers(
+  const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
-    reviewRepository
+    reviewRepository,
+    messageAttributionAuthority
   )
   const specialistPersistLog = createLogger('specialist:persist')
   declareElectronAdapter('specialist', () =>

@@ -132,6 +132,26 @@ const trackedCheck: ReviewCheck = {
   artifactBindingState: 'legacy_unverified'
 }
 
+const committedAssessmentReview = (): ReviewWithChecks => ({
+  ...review('assessment-review', 'complete'),
+  checks: [],
+  submittedChecks: [
+    {
+      kind: 'tracked',
+      submissionIndex: 0,
+      sourceFindingId: trackedCheck.id,
+      dispositionOutcome: 'resolved',
+      assessment: {
+        status: 'pass',
+        claim: 'Fixed',
+        evidence: 'Verified',
+        sortIndex: 0
+      },
+      sourceCheck: trackedCheck
+    }
+  ]
+})
+
 const makeRepository = (): ReviewRepository =>
   ({
     createReview: vi.fn(async () => {
@@ -144,11 +164,14 @@ const makeRepository = (): ReviewRepository =>
     }),
     commitScopedSubmission: vi.fn(async () => {
       insideMutation('write:commit')
-      return { ...review('assessment-review', 'complete'), checks: [] }
+      return committedAssessmentReview()
     }),
     getReviewsForProjectSession: vi.fn(async () => {
       outsideMutation('query:reviews')
-      return [{ ...review('source-review', 'complete'), checks: [trackedCheck] }]
+      return [
+        { ...review('source-review', 'complete'), checks: [trackedCheck], submittedChecks: [] },
+        committedAssessmentReview()
+      ]
     })
   }) as unknown as ReviewRepository
 
@@ -356,11 +379,15 @@ describe('review assessment owner', () => {
       }
     ]
     const reviewRepository = makeRepository()
+    const published: ReviewWithChecks[] = []
     const result = await runReviewAssessment({
       ...commonOptions(reviewRepository),
       mode: 'tracked',
       trackedChecks: [trackedCheck],
-      onReviewUpdate: (value: ReviewWithChecks) => outsideMutation(`publish:${value.id}`)
+      onReviewUpdate: (value: ReviewWithChecks) => {
+        published.push(value)
+        outsideMutation(`publish:${value.id}`)
+      }
     })
 
     expect(result.submittedChecks).toEqual(harness.submission)
@@ -378,6 +405,10 @@ describe('review assessment owner', () => {
     )
     expect(harness.events.indexOf('publish:source-review')).toBeLessThan(
       harness.events.lastIndexOf('publish:assessment-review')
+    )
+    const commandRead = await reviewRepository.getReviewsForProjectSession('project-1', 'session-1')
+    expect(published.findLast((candidate) => candidate.id === 'assessment-review')).toEqual(
+      commandRead.find((candidate) => candidate.id === 'assessment-review')
     )
   })
 })

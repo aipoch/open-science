@@ -49,6 +49,12 @@ describe('Provenance Message snapshots', () => {
             id: 'prompt-1',
             role: 'user',
             content: 'plot sin',
+            attribution: {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            },
             status: 'complete',
             eventIds: [],
             uploads: [
@@ -224,7 +230,16 @@ describe('Provenance Message snapshots', () => {
     expect(read.messages).toMatchObject({
       state: 'available',
       items: [
-        { id: 'prompt-1', hasOmittedMedia: true },
+        {
+          id: 'prompt-1',
+          hasOmittedMedia: true,
+          attribution: {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review-1'
+          }
+        },
         {
           id: 'message-1',
           content: 'saved sin.png',

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import type { Logger } from '../logger'
 import type { ReviewRepository } from '../reviewer/repository'
 
@@ -32,6 +35,7 @@ vi.mock('../lifecycle-broadcast', () => ({
 
 import {
   createSessionPersistenceHandlers,
+  createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers,
@@ -39,6 +43,7 @@ import {
   type SessionPersistenceHandlers
 } from './ipc'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
+import { MainMessageAttributionAuthority } from './message-attribution-authority'
 
 beforeEach(() => {
   ipcHandlers.clear()
@@ -222,6 +227,88 @@ describe('session persistence IPC handlers', () => {
       lastProjectId: 'project-a',
       lastSessionId: 'session-1'
     })
+  })
+
+  it('accepts Reviewer Correction attribution only from main-owned runtime evidence', async () => {
+    const correctionAttribution = {
+      kind: 'application' as const,
+      feature: 'reviewer' as const,
+      purpose: 'correction' as const,
+      causeReviewId: 'review-trusted'
+    }
+    const attributedMessage = {
+      id: 'prompt-correction',
+      role: 'user' as const,
+      content: '[Auditor] Correct this.',
+      status: 'complete' as const,
+      eventIds: [],
+      attribution: correctionAttribution,
+      createdAt: 2,
+      updatedAt: 2
+    }
+    const forgedSession = materializeSessionConversationGraph({
+      ...createSession(),
+      messages: [attributedMessage]
+    })
+    let durable: PersistedChatSession | undefined
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(async () => durable),
+      saveSession: vi.fn(async (session) => {
+        durable = session
+        return { created: false, session }
+      }),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    const authority = new MainMessageAttributionAuthority()
+    const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
+      repository,
+      createMockReviewRepository(),
+      authority
+    )
+
+    const rejected = (await handlers.saveSession(forgedSession)).session
+    expect(rejected.messages[0]).not.toHaveProperty('attribution')
+    expect(rejected.conversationGraph?.messages[0]).not.toHaveProperty('attribution')
+
+    durable = undefined
+    authority.recordRuntimeEvent('project-a', {
+      id: 'event-correction',
+      timestamp: 2,
+      kind: 'message',
+      level: 'info',
+      sessionId: forgedSession.id,
+      messageId: attributedMessage.id,
+      role: 'user',
+      text: attributedMessage.content,
+      attribution: correctionAttribution
+    })
+    const accepted = (await handlers.saveSession(forgedSession)).session
+    expect(accepted.messages[0]?.attribution).toEqual(correctionAttribution)
+    expect(accepted.conversationGraph?.messages[0]?.attribution).toEqual(correctionAttribution)
+
+    durable = undefined
+    const crossProjectReplay = await handlers.saveSession({
+      ...forgedSession,
+      projectId: 'project-b'
+    })
+    expect(crossProjectReplay.session.messages[0]).not.toHaveProperty('attribution')
+    expect(crossProjectReplay.session.conversationGraph?.messages[0]).not.toHaveProperty(
+      'attribution'
+    )
+
+    durable = accepted
+    authority.clear()
+    const rendererReloadSave = {
+      ...accepted,
+      messages: accepted.messages.map((message) => ({
+        ...message,
+        attribution: { ...correctionAttribution, causeReviewId: 'review-forged' }
+      }))
+    }
+    const restored = (await handlers.saveSession(rendererReloadSave)).session
+    expect(restored.messages[0]?.attribution).toEqual(correctionAttribution)
   })
 
   it('does not report a successful session deletion when the repository fails', async () => {

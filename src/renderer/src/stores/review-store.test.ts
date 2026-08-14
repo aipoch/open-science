@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewCheck, ReviewWithChecks, TurnScope } from '../../../shared/reviewer'
-import { createInitialReviewState, useReviewStore } from './review-store'
+import {
+  createInitialReviewState,
+  selectReviewRunsForMessage,
+  useReviewStore
+} from './review-store'
 
 const emptyScope = (turnMessageId: string): TurnScope => ({
   turnMessageId,
@@ -45,6 +49,56 @@ describe('review store', () => {
   // Reset the store so each assertion starts from an empty reviewsBySession map.
   beforeEach(() => {
     useReviewStore.setState(createInitialReviewState())
+  })
+
+  it('selects every Review Run by audited anchor with root fallback and deterministic history order', () => {
+    const reviews = [
+      makeReview({
+        id: 'review-z',
+        turnMessageId: 'chain-root',
+        scope: emptyScope('audited-answer'),
+        createdAt: 2_000
+      }),
+      makeReview({
+        id: 'review-b',
+        turnMessageId: 'audited-answer',
+        scope: { ...emptyScope(''), turnMessageId: '' },
+        createdAt: 1_000
+      }),
+      makeReview({
+        id: 'review-a',
+        turnMessageId: 'other-root',
+        scope: emptyScope('audited-answer'),
+        createdAt: 1_000
+      }),
+      makeReview({ id: 'unrelated', turnMessageId: 'other', createdAt: 500 })
+    ]
+    const reviewsBySession = { 'project-1\0session-1': reviews }
+
+    expect(
+      selectReviewRunsForMessage(reviewsBySession, 'project-1', 'session-1', 'audited-answer').map(
+        (review) => review.id
+      )
+    ).toEqual(['review-a', 'review-b', 'review-z'])
+  })
+
+  it('falls back to the chain root when a non-empty scope anchor is absent from the visible graph', () => {
+    const orphanedScope = makeReview({
+      id: 'review-orphaned-scope',
+      turnMessageId: 'visible-chain-root',
+      scope: emptyScope('deleted-scope-anchor')
+    })
+    const reviewsBySession = { 'project-1\0session-1': [orphanedScope] }
+
+    expect(
+      selectReviewRunsForMessage(
+        reviewsBySession,
+        'project-1',
+        'session-1',
+        'visible-chain-root',
+        new Set(['prompt-1', 'visible-chain-root'])
+      ).map((review) => review.id)
+    ).toEqual(['review-orphaned-scope'])
   })
 
   it('starts empty and returns [] for an unknown session', () => {
@@ -180,6 +234,58 @@ describe('review store', () => {
     // Finding data is NOT reverted (still resolved), but the freshly-computed stale flag is applied.
     expect(stored[0]?.checks[0]?.resolution).toBe('resolved')
     expect(stored[0]?.stale).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the pushed submitted assessment when an equal-timestamp reload is older', async () => {
+    const sourceCheck = makeCheck({ id: 'source-finding', reviewId: 'source-review' })
+    const submittedChecks = [
+      {
+        kind: 'tracked' as const,
+        submissionIndex: 0,
+        sourceFindingId: sourceCheck.id,
+        dispositionOutcome: 'resolved' as const,
+        assessment: {
+          status: 'pass' as const,
+          claim: 'Round 3 corrected the row count',
+          evidence: 'Round 3 observed 33 rows.',
+          sortIndex: 0
+        },
+        sourceCheck
+      }
+    ]
+    useReviewStore.getState().handleReviewUpdate({
+      review: makeReview({ id: 'assessment-review', updatedAt: 2_000, submittedChecks })
+    })
+    const getForSession = vi.fn().mockResolvedValue([
+      makeReview({
+        id: 'assessment-review',
+        updatedAt: 2_000,
+        stale: true,
+        submittedChecks: [
+          {
+            ...submittedChecks[0]!,
+            dispositionOutcome: 'still_open',
+            assessment: {
+              status: 'fail',
+              claim: 'Round 2 still had the mismatch',
+              evidence: 'Round 2 observed 12 rows.',
+              sortIndex: 0
+            }
+          }
+        ]
+      })
+    ])
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+
+    expect(
+      useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]?.submittedChecks
+    ).toEqual(submittedChecks)
+    expect(useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]?.stale).toBe(
+      true
+    )
     vi.unstubAllGlobals()
   })
 

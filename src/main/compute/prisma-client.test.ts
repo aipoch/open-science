@@ -121,7 +121,8 @@ describe('compute host prisma client (integration)', () => {
       applied: [
         '0001_runtime_schema_baseline',
         '0002_project_agent_context',
-        '0003_granted_local_roots'
+        '0003_granted_local_roots',
+        '0004_review_assessment_snapshots'
       ]
     })
     // Idempotent second run.

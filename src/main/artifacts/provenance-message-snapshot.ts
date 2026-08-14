@@ -103,6 +103,7 @@ const projectMessage = (
     id: node.id,
     role: node.role,
     content: node.content,
+    ...(node.attribution ? { attribution: node.attribution } : {}),
     createdAt: node.createdAt,
     ...(node.parentMessageId ? { parentMessageId: node.parentMessageId } : {}),
     ...(node.supersedesMessageId ? { supersedesMessageId: node.supersedesMessageId } : {}),

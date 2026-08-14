@@ -69,6 +69,26 @@ describe('agent-aware history replay', () => {
     expect(preamble).toContain('does not authorize work')
   })
 
+  it('labels a Reviewer Correction by application attribution while keeping it user-led', () => {
+    const preamble = buildHistoryPreamble([
+      message({
+        role: 'user',
+        content: '[Auditor] Correct the unsupported claim.',
+        attribution: {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        }
+      }),
+      message({ role: 'agent', content: 'I corrected the claim.' })
+    ])
+
+    expect(preamble).toContain('**Reviewer correction:** [Auditor] Correct the unsupported claim.')
+    expect(preamble).not.toContain('**User:** [Auditor] Correct the unsupported claim.')
+    expect(preamble).toContain('**Assistant:** I corrected the claim.')
+  })
+
   it('keeps a side chat advisory inside the user turn that received it', () => {
     const relayed = message({
       role: 'user',

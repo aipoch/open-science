@@ -109,6 +109,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     turnToken: string,
     attachmentUri: string
   ) => void
+  onTrustedMessageAttribution?: (projectId: string, event: AcpRuntimeEvent) => void
   onSessionCancellationRequested?: (sessionId: string) => void
   onSessionUnavailable?: (sessionId: string) => void
   onAllSessionsCancellationRequested?: () => void
@@ -153,6 +154,7 @@ const createAcpRuntime = ({
   onSessionTurnStarted,
   onSessionTurnEnded,
   onSkillImportAttachmentEligible,
+  onTrustedMessageAttribution,
   onSessionCancellationRequested,
   onSessionUnavailable,
   onAllSessionsCancellationRequested,
@@ -171,11 +173,16 @@ const createAcpRuntime = ({
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
   const defaultCwd = homedir()
+  const runtimeCoordinatorRef: { current?: AcpRuntimeCoordinator } = {}
   // One lazily-shared repository for Agent Context lookups; getProjectDbClient caches the client.
   const projectRepository = new ProjectRepository(() => getProjectDbClient(resolveStorageRoot()))
   const callbacks: AcpRuntimeCallbacks = runtimeCallbacks ?? {
     onStateChanged: (state: AcpStateSnapshot) => broadcastToRenderers('acp:state', state),
     onEvent: (event: AcpRuntimeEvent) => {
+      const projectId = event.sessionId
+        ? runtimeCoordinatorRef.current?.liveSessionProjectId(event.sessionId)
+        : undefined
+      if (event.attribution && projectId) onTrustedMessageAttribution?.(projectId, event)
       broadcastToRenderers('acp:event', event)
       // Fire-and-forget: a notification hiccup must never stall the renderer event stream.
       if (taskNotifications) {
@@ -204,7 +211,7 @@ const createAcpRuntime = ({
     }
   }
 
-  return new AcpRuntimeCoordinator(
+  const runtimeCoordinator = new AcpRuntimeCoordinator(
     (runtimeCallbacks, permissionGrantStore) => {
       const selection = fixedBackend
         ? undefined
@@ -476,6 +483,8 @@ const createAcpRuntime = ({
       : undefined,
     delegatedWork
   )
+  runtimeCoordinatorRef.current = runtimeCoordinator
+  return runtimeCoordinator
 }
 
 export { createAcpRuntime, createProjectAgentContextResolver }

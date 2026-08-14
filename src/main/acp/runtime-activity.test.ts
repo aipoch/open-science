@@ -14,7 +14,7 @@ import type {
 // typecheck here, which is exactly the contract the Pick<AcpRuntime, …> type exists to enforce.
 const createActivityMock = (): Pick<
   AcpRuntime,
-  'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt'
+  'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt' | 'sendApplicationPrompt'
 > => ({
   buildReviewerSession: vi.fn(async (req: Parameters<AcpRuntime['buildReviewerSession']>[0]) => {
     // The parameter is required by the Pick<AcpRuntime, …> signature; the test body does not
@@ -36,6 +36,12 @@ const createActivityMock = (): Pick<
   sendPrompt: vi.fn(async (req: Parameters<AcpRuntime['sendPrompt']>[0]) => {
     void req
     return { stopReason: 'end_turn' as const } as Awaited<ReturnType<AcpRuntime['sendPrompt']>>
+  }),
+  sendApplicationPrompt: vi.fn(async (...args: Parameters<AcpRuntime['sendApplicationPrompt']>) => {
+    void args
+    return { stopReason: 'end_turn' as const } as Awaited<
+      ReturnType<AcpRuntime['sendApplicationPrompt']>
+    >
   })
 })
 
@@ -50,6 +56,7 @@ describe('AcpRuntimeActivity', () => {
     expect(typeof mock.buildReviewerSession).toBe('function')
     expect(typeof mock.disposeReviewerSession).toBe('function')
     expect(typeof mock.sendPrompt).toBe('function')
+    expect(typeof mock.sendApplicationPrompt).toBe('function')
   })
 
   it('accepts AcpRuntimeActivityOptions with no session at all', () => {

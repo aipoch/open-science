@@ -275,7 +275,7 @@ describe('single-round auditor correction', () => {
       createdAt: session.createdAt,
       updatedAt: session.updatedAt
     })
-    const correctionSendPrompt = vi.spyOn(runtime, 'sendPrompt')
+    const correctionSendPrompt = vi.spyOn(runtime, 'sendApplicationPrompt')
 
     // Capture prompts sent to the main session via sendCorrectionPrompt.
     const correctionPrompts: string[] = []
@@ -319,15 +319,22 @@ describe('single-round auditor correction', () => {
     expect(correctionSendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'main-session-1',
-        suppressUserMessage: true,
         provenanceContext: expect.objectContaining({
           rootFrameId: 'root-frame-pending-session-1',
           agentFrameId: 'root-frame-pending-session-1',
           messageBranchId: 'message-branch-pending-session-1',
           runtimeSegmentId: 'runtime-segment-pending-session-1',
-          promptMessageId: 'msg-1'
+          promptMessageId: expect.stringMatching(/^prompt-/u)
         })
+      }),
+      expect.objectContaining({
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction'
       })
+    )
+    expect(correctionSendPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId).not.toBe(
+      'msg-1'
     )
 
     await client.$disconnect()

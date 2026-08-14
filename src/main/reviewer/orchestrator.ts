@@ -261,7 +261,11 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
         model
       })
     )
-    const withFindings: ReviewWithChecks = { ...errorReview, checks: [] }
+    const withFindings: ReviewWithChecks = {
+      ...errorReview,
+      checks: [],
+      submittedChecks: []
+    }
     onReviewUpdate?.(withFindings)
     return withFindings
   }

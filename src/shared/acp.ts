@@ -9,7 +9,7 @@ import type { ArtifactFile, FileReference } from './artifacts'
 import type { UploadedAttachment } from './uploads'
 import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
 import type { AgentFrameworkId } from './settings'
-import type { DelegatedQuestionAnswer } from './session-persistence'
+import type { DelegatedQuestionAnswer, MessageAttribution } from './session-persistence'
 import type {
   AgentTurnProvenanceContext,
   ElicitationProjection,
@@ -492,6 +492,7 @@ export type AcpRuntimeEvent = {
   sessionId?: string
   messageId?: string
   role?: 'assistant' | 'user'
+  attribution?: MessageAttribution
   text?: string
   image?: AcpMessageImage
   title?: string

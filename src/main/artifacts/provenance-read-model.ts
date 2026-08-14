@@ -17,7 +17,11 @@ import type {
 } from '../../shared/artifact-provenance'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { sanitizeActivityGroup, sanitizeToolActivity } from '../../shared/session-persistence'
+import {
+  sanitizeActivityGroup,
+  sanitizeMessageAttribution,
+  sanitizeToolActivity
+} from '../../shared/session-persistence'
 import type {
   ReviewFindingDispositionOutcome,
   ReviewFindingDispositionTrigger,
@@ -26,7 +30,8 @@ import type {
 } from '../../shared/reviewer'
 import { flagStaleReviews } from '../reviewer/stale-reviews'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
-import { toCheck, toReview } from '../reviewer/repository'
+import { toReview } from '../reviewer/repository'
+import { loadReviewSubmissionProjection } from '../reviewer/review-submission-read-model'
 import type { ArtifactDurability } from './durability'
 import {
   parseArtifactExecutionSnapshot,
@@ -370,7 +375,13 @@ class ArtifactProvenanceReadModel {
         ) {
           throw new Error('Message snapshot activity metadata mismatch.')
         }
-        messages = { state: 'available', items: snapshot.messages, activities, activityGroups }
+        const items = snapshot.messages.map((message) => {
+          const attribution = sanitizeMessageAttribution(message.attribution)
+          const { attribution: _untrustedAttribution, ...rest } = message
+          void _untrustedAttribution
+          return attribution ? { ...rest, attribution } : rest
+        })
+        messages = { state: 'available', items, activities, activityGroups }
       } catch {
         messages = { state: 'unavailable', reason: 'message-snapshot-corrupt' }
       }
@@ -387,11 +398,8 @@ class ArtifactProvenanceReadModel {
       })
       const provenanceReviews: ReviewWithProvenanceEvidence[] = await Promise.all(
         reviewRows.map(async (reviewRow) => {
-          const [checkRows, snapshot] = await Promise.all([
-            client.finding.findMany({
-              where: { reviewId: reviewRow.id },
-              orderBy: [{ sortIndex: 'asc' }, { id: 'asc' }]
-            }),
+          const [submission, snapshot] = await Promise.all([
+            loadReviewSubmissionProjection(client, reviewRow.id),
             client.reviewScopeSnapshot.findUnique({ where: { reviewId: reviewRow.id } })
           ])
           let scopeSnapshot: ReviewWithProvenanceEvidence['scopeSnapshot'] = {
@@ -421,7 +429,7 @@ class ArtifactProvenanceReadModel {
           }
           return {
             ...toReview(reviewRow),
-            checks: checkRows.map(toCheck),
+            ...submission,
             scopeSnapshot
           }
         })

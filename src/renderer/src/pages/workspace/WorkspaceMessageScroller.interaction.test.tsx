@@ -1285,6 +1285,453 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(agentMarkdownRenderMock).not.toHaveBeenCalled()
   })
 
+  it('renders every Review Run under its audited answer in deterministic history order', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const reviews: ReviewWithChecks[] = [
+      {
+        id: 'review-later',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'chain-root',
+        scope: {
+          turnMessageId: 'reply-1',
+          messageBranchId: 'message-branch-1',
+          blocks: [],
+          artifactVersionIds: []
+        },
+        lifecycle: 'complete',
+        outcome: 'pass',
+        model: 'test-model',
+        reviewerLog: [],
+        createdAt: 2_000,
+        updatedAt: 2_000,
+        checks: []
+      },
+      {
+        id: 'review-earlier',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'chain-root',
+        scope: {
+          turnMessageId: 'reply-1',
+          messageBranchId: 'message-branch-1',
+          blocks: [],
+          artifactVersionIds: []
+        },
+        lifecycle: 'complete',
+        outcome: 'flagged',
+        model: 'test-model',
+        reviewerLog: [],
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        checks: []
+      }
+    ]
+    for (const review of reviews) useReviewStore.getState().handleReviewUpdate({ review })
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-1' }),
+        createMessage({
+          id: 'reply-1',
+          role: 'agent',
+          content: 'Corrected answer',
+          responseToMessageId: 'prompt-1'
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    const earlierCard = container.querySelector<HTMLElement>(
+      '[data-testid="reviewer-card"][data-review-id="review-earlier"]'
+    )
+    const laterCard = container.querySelector<HTMLElement>(
+      '[data-testid="reviewer-card"][data-review-id="review-later"]'
+    )
+    expect(earlierCard).not.toBeNull()
+    expect(laterCard).not.toBeNull()
+    expect(earlierCard?.textContent).toContain('Issues found')
+    expect(laterCard?.textContent).toContain('No issues found')
+    expect(
+      earlierCard!.compareDocumentPosition(laterCard!) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.toBe(0)
+  })
+
+  it('renders one initial and three fix-loop Review Runs at their four distinct scope anchors', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const answerIds = ['answer-initial', 'answer-fix-1', 'answer-fix-2', 'answer-fix-3']
+    answerIds.forEach((scopeTurnMessageId, index) => {
+      useReviewStore.getState().handleReviewUpdate({
+        review: {
+          id: `review-round-${index}`,
+          projectId: 'default',
+          sessionId: 'session-1',
+          turnMessageId: 'answer-initial',
+          scope: { turnMessageId: scopeTurnMessageId, blocks: [], artifactVersionIds: [] },
+          lifecycle: 'complete',
+          outcome: index === 3 ? 'pass' : 'flagged',
+          model: 'test-model',
+          reviewerLog: [],
+          createdAt: 1_000 + index,
+          updatedAt: 1_000 + index,
+          checks:
+            index === 2
+              ? [
+                  {
+                    id: 'review-round-2-pass-check',
+                    reviewId: 'review-round-2',
+                    status: 'pass',
+                    claim: 'A newly assessed claim passed',
+                    evidence: 'The tracked failures remain represented by the review verdict.',
+                    resolution: 'open',
+                    sortIndex: 0,
+                    reflagCount: 0
+                  }
+                ]
+              : []
+        }
+      })
+    })
+    const messages = answerIds.flatMap((answerId, index) => {
+      const promptId = `prompt-round-${index}`
+      return [
+        createMessage({ id: promptId, sortIndex: index * 2 + 1 }),
+        createMessage({
+          id: answerId,
+          role: 'agent',
+          content: `Answer round ${index}`,
+          responseToMessageId: promptId,
+          sortIndex: index * 2 + 2
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.querySelectorAll('[data-testid="reviewer-card"]')).toHaveLength(4)
+    for (const answerId of answerIds) {
+      expect(
+        container.querySelector(
+          `[data-review-anchor-message-id="${answerId}"] [data-testid="reviewer-card"]`
+        )
+      ).not.toBeNull()
+    }
+
+    const secondReviewCard = container.querySelector<HTMLElement>(
+      '[data-review-anchor-message-id="answer-fix-1"] [data-testid="reviewer-card"]'
+    )
+    const thirdReviewCard = container.querySelector<HTMLElement>(
+      '[data-review-anchor-message-id="answer-fix-2"] [data-testid="reviewer-card"]'
+    )
+    expect(secondReviewCard?.textContent).toContain('Issues found')
+    expect(secondReviewCard?.textContent).not.toContain('No issues found')
+    expect(secondReviewCard?.dataset.reviewId).toBe('review-round-1')
+    expect(thirdReviewCard?.textContent).toContain('Issues found')
+    expect(thirdReviewCard?.textContent).not.toContain('No issues found')
+    expect(thirdReviewCard?.dataset.reviewId).toBe('review-round-2')
+  })
+
+  it('keeps a stale Review and its newer re-run visible in chronological order', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const baseReview: ReviewWithChecks = {
+      id: 'review-stale',
+      projectId: 'default',
+      sessionId: 'session-1',
+      turnMessageId: 'answer-rerun',
+      scope: { turnMessageId: 'answer-rerun', blocks: [], artifactVersionIds: [] },
+      lifecycle: 'complete',
+      outcome: 'flagged',
+      model: 'old-model',
+      reviewerLog: [],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      stale: true,
+      checks: [
+        {
+          id: 'stale-check',
+          reviewId: 'review-stale',
+          status: 'warn',
+          claim: 'Old issue',
+          evidence: 'Old evidence',
+          resolution: 'open',
+          sortIndex: 0,
+          reflagCount: 0
+        }
+      ]
+    }
+    useReviewStore.getState().handleReviewUpdate({ review: baseReview })
+    useReviewStore.getState().handleReviewUpdate({
+      review: {
+        ...baseReview,
+        id: 'review-rerun',
+        outcome: 'pass',
+        model: 'new-model',
+        stale: false,
+        checks: [],
+        createdAt: 2_000,
+        updatedAt: 2_000
+      }
+    })
+    const prompt = createMessage({ id: 'prompt-rerun' })
+    const answer = createMessage({
+      id: 'answer-rerun',
+      role: 'agent',
+      content: 'Revised answer',
+      responseToMessageId: prompt.id
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({ status: 'idle', messages: [prompt, answer] })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+
+    const cards = container.querySelectorAll<HTMLElement>('[data-testid="reviewer-card"]')
+    expect(cards).toHaveLength(2)
+    expect(cards[0]?.querySelector('[data-testid="reviewer-stale-notice"]')).not.toBeNull()
+    expect(cards[0]?.textContent).toContain('1 finding (outdated)')
+    expect(cards[1]?.querySelector('[data-testid="reviewer-stale-notice"]')).toBeNull()
+    expect(cards[1]?.textContent).toContain('No issues found')
+  })
+
+  it('does not treat a valid scope behind the presentation barrier as dangling', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      (callback: FrameRequestCallback) =>
+        setTimeout(() => callback(performance.now()), 16) as unknown as number
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => clearTimeout(frameId))
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    useReviewStore.getState().handleReviewUpdate({
+      review: {
+        id: 'review-behind-barrier',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'answer-chain-root',
+        scope: { turnMessageId: 'answer-actual', blocks: [], artifactVersionIds: [] },
+        lifecycle: 'complete',
+        outcome: 'pass',
+        model: 'test-model',
+        reviewerLog: [],
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        checks: []
+      }
+    })
+    const rootPrompt = createMessage({ id: 'prompt-chain-root', sortIndex: 1, createdAt: 100 })
+    const rootAnswer = createMessage({
+      id: 'answer-chain-root',
+      role: 'agent',
+      content: 'Earlier chain answer',
+      responseToMessageId: rootPrompt.id,
+      sortIndex: 2,
+      createdAt: 101
+    })
+    const barrierPrompt = createMessage({ id: 'prompt-barrier', sortIndex: 3, createdAt: 102 })
+    const barrierAnswer = createMessage({
+      id: 'answer-barrier',
+      role: 'agent',
+      content: 'Hold this streaming presentation open until the buffered answer is revealed.',
+      status: 'streaming',
+      streamId: 'stream-barrier',
+      responseToMessageId: barrierPrompt.id,
+      sortIndex: 4,
+      createdAt: 103
+    })
+    const actualPrompt = createMessage({ id: 'prompt-actual', sortIndex: 5, createdAt: 104 })
+    const actualAnswer = createMessage({
+      id: 'answer-actual',
+      role: 'agent',
+      content: 'Actually reviewed answer',
+      responseToMessageId: actualPrompt.id,
+      sortIndex: 6,
+      createdAt: 105
+    })
+    const render = async (messages: ChatMessage[]): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({
+              messages,
+              activeRun: { promptMessageId: barrierPrompt.id, startedAt: 102 }
+            })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+    }
+
+    root = createRoot(container)
+    await render([rootPrompt, rootAnswer, barrierPrompt])
+    await render([rootPrompt, rootAnswer, barrierPrompt, barrierAnswer])
+    await render([rootPrompt, rootAnswer, barrierPrompt, barrierAnswer, actualPrompt, actualAnswer])
+
+    expect(
+      container.querySelector(
+        '[data-review-anchor-message-id="answer-chain-root"] [data-testid="reviewer-card"]'
+      )
+    ).toBeNull()
+    expect(container.querySelector('[data-message-id="answer-actual"]')).toBeNull()
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000))
+
+    expect(
+      container.querySelector(
+        '[data-review-anchor-message-id="answer-actual"] [data-testid="reviewer-card"]'
+      )
+    ).not.toBeNull()
+    expect(
+      container.querySelector(
+        '[data-review-anchor-message-id="answer-chain-root"] [data-testid="reviewer-card"]'
+      )
+    ).toBeNull()
+  })
+
+  it('renders a Review under its visible chain root when its persisted scope anchor is dangling', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    useReviewStore.getState().handleReviewUpdate({
+      review: {
+        id: 'review-dangling-scope',
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: 'reply-visible',
+        scope: {
+          turnMessageId: 'reply-deleted',
+          blocks: [],
+          artifactVersionIds: []
+        },
+        lifecycle: 'complete',
+        outcome: 'pass',
+        model: 'test-model',
+        reviewerLog: [],
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        checks: []
+      }
+    })
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({ id: 'prompt-visible' }),
+        createMessage({
+          id: 'reply-visible',
+          role: 'agent',
+          content: 'Visible answer',
+          responseToMessageId: 'prompt-visible'
+        })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    expect(container.querySelectorAll('[data-testid="reviewer-card"]')).toHaveLength(1)
+    expect(container.textContent).toContain('No issues found')
+  })
+
+  it('projects Review cards only for Messages on the active visible branch', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const reviewFor = (
+      id: string,
+      messageId: string,
+      outcome: 'pass' | 'flagged'
+    ): ReviewWithChecks =>
+      ({
+        id,
+        projectId: 'default',
+        sessionId: 'session-1',
+        turnMessageId: messageId,
+        scope: { turnMessageId: messageId, blocks: [], artifactVersionIds: [] },
+        lifecycle: 'complete',
+        outcome,
+        model: 'test-model',
+        reviewerLog: [],
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        checks:
+          outcome === 'flagged'
+            ? [
+                {
+                  id: `${id}-check`,
+                  reviewId: id,
+                  status: 'warn',
+                  claim: 'Branch B finding',
+                  evidence: 'Visible only on Branch B.',
+                  resolution: 'open',
+                  sortIndex: 0,
+                  reflagCount: 0
+                }
+              ]
+            : []
+      }) satisfies ReviewWithChecks
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: reviewFor('review-a', 'reply-a', 'pass') })
+    useReviewStore
+      .getState()
+      .handleReviewUpdate({ review: reviewFor('review-b', 'reply-b', 'flagged') })
+    const branchSession = (promptId: string, replyId: string, content: string): ChatSession =>
+      createSession({
+        status: 'idle',
+        messages: [
+          createMessage({ id: promptId }),
+          createMessage({
+            id: replyId,
+            role: 'agent',
+            content,
+            responseToMessageId: promptId
+          })
+        ]
+      })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={branchSession('prompt-a', 'reply-a', 'Branch A')}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.querySelectorAll('[data-testid="reviewer-card"]')).toHaveLength(1)
+    expect(container.textContent).toContain('No issues found')
+
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={branchSession('prompt-b', 'reply-b', 'Branch B')}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    expect(container.querySelectorAll('[data-testid="reviewer-card"]')).toHaveLength(1)
+    expect(container.textContent).toContain('1 finding')
+    expect(container.textContent).not.toContain('No issues found')
+  })
+
   it('keeps streamed output and continuation in one real transcript turn across session updates', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const handoffSource = new FakeHandoffLifecycleSource()

@@ -1,3 +1,5 @@
+import { isReviewerCorrectionAttribution } from './session-persistence'
+
 export type HistoryReplayTarget = 'claude-code' | 'opencode' | 'codex-response' | 'codex-bridge'
 
 export type HistoryReplayDescriptor = {
@@ -40,6 +42,7 @@ export type HistoryMessage = {
   status?: string
   hasReplayMedia?: boolean
   relayedFrom?: { kind: 'side-chat'; direction: 'to-main' }
+  attribution?: import('./session-persistence').MessageAttribution
 }
 
 export type HistoryReplaySelection = {
@@ -56,8 +59,16 @@ type ProjectedTurn = { index: number; text: string; selectedMessageIndexes: numb
 const isUserMessage = (message: HistoryMessage): boolean => message.role === 'user'
 const isSideChatAdvisory = (message: HistoryMessage): boolean =>
   message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
-const speakerFor = (message: HistoryMessage): 'User' | 'Assistant' | 'Side chat advisory' =>
-  isSideChatAdvisory(message) ? 'Side chat advisory' : isUserMessage(message) ? 'User' : 'Assistant'
+const speakerFor = (
+  message: HistoryMessage
+): 'User' | 'Assistant' | 'Side chat advisory' | 'Reviewer correction' =>
+  isSideChatAdvisory(message)
+    ? 'Side chat advisory'
+    : isReviewerCorrectionAttribution(message.attribution)
+      ? 'Reviewer correction'
+      : isUserMessage(message)
+        ? 'User'
+        : 'Assistant'
 const speakerPrefixFor = (message: HistoryMessage): string => `**${speakerFor(message)}:** `
 const formatMessage = (message: HistoryMessage): string =>
   `${speakerPrefixFor(message)}${message.content.trim() || MEDIA_PLACEHOLDER}`

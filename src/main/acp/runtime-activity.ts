@@ -11,7 +11,7 @@ export type AcpRuntimeActivityOptions = {
 
 export type AcpRuntimeActivity = Pick<
   AcpRuntime,
-  'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt'
+  'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt' | 'sendApplicationPrompt'
 > &
   Partial<Pick<AcpRuntime, 'captureBackend'>>
 

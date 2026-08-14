@@ -18,6 +18,7 @@ import { ReviewRepository } from '../reviewer/repository'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { SessionMetadataSnapshot } from './coordinator'
+import { MainMessageAttributionAuthority } from './message-attribution-authority'
 
 type SessionPersistenceBackend = {
   loadAll: () => Promise<LoadAllSessionsResult>
@@ -107,9 +108,10 @@ const loadSessionsAfterProjectRecovery = async (
 }
 
 // Adapts the coordinator into small handlers that are easy to unit test.
-const createSessionPersistenceHandlers = (
+const createSessionPersistenceHandlersWithAttributionAuthority = (
   repository: SessionPersistenceBackend,
-  reviewRepository: ReviewRepository
+  reviewRepository: ReviewRepository,
+  messageAttributionAuthority: MainMessageAttributionAuthority
 ): SessionPersistenceHandlers => {
   // Kept as an injected boundary for project-level cleanup compatibility; session deletion must not
   // call it because Reviews belong to retained provenance.
@@ -117,8 +119,16 @@ const createSessionPersistenceHandlers = (
   return {
     loadAll: () => repository.loadAll(),
     loadOne: (request) => repository.loadOne(request),
-    saveSession: (session, options) =>
-      options ? repository.saveSession(session, options) : repository.saveSession(session),
+    saveSession: async (session, options) => {
+      const durable = await repository.loadOne({
+        projectId: session.projectId,
+        sessionId: session.id
+      })
+      const authorized = messageAttributionAuthority.authorizeSessionProjection(session, durable)
+      return options
+        ? repository.saveSession(authorized, options)
+        : repository.saveSession(authorized)
+    },
     updateArchive: (request) => {
       if (!repository.updateArchive) throw new Error('Session archive is unavailable.')
       return repository.updateArchive(request)
@@ -129,6 +139,16 @@ const createSessionPersistenceHandlers = (
     saveManifest: (request) => repository.saveManifest(request)
   }
 }
+
+const createSessionPersistenceHandlers = (
+  repository: SessionPersistenceBackend,
+  reviewRepository: ReviewRepository
+): SessionPersistenceHandlers =>
+  createSessionPersistenceHandlersWithAttributionAuthority(
+    repository,
+    reviewRepository,
+    new MainMessageAttributionAuthority()
+  )
 
 // Creates the production repository rooted at the (dev-aware) storage root.
 const createDefaultSessionRepository = (
@@ -197,6 +217,7 @@ export {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
   createSessionPersistenceHandlers,
+  createSessionPersistenceHandlersWithAttributionAuthority,
   loadSessionMetadataAfterProjectRecovery,
   loadSessionsAfterProjectRecovery,
   registerSessionPersistenceIpcHandlers

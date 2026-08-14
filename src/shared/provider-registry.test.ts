@@ -100,9 +100,10 @@ describe('provider registry', () => {
     )
     // Quota-based plan: fixed catalog, no live model-list refresh.
     expect(resolveVendorModelsUrl('glmcodingplan')).toBeUndefined()
-    expect(defaultVendorModel('glmcodingplan')).toBe('glm-5.2')
+    expect(defaultVendorModel('glmcodingplan')).toBe('glm-5.3')
     // The coding plan drops GLM's vision variant, so it serves no multimodal model.
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5v-turbo')).toBe(false)
+    expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3')).toBe(false)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.2')).toBe(false)
     // Each region points at its own subscription console.
     expect(resolveVendorApiKeyUrl('glmcodingplan', 'global')).toBe('https://z.ai/subscribe')
@@ -123,6 +124,10 @@ describe('provider registry', () => {
     expect(resolveVendorModelReasoningEffort('deepseek', 'deepseek-v4-pro')).toEqual({
       supported: true,
       slots: ['none', 'high', 'max', 'max', 'max']
+    })
+    expect(resolveVendorModelReasoningEffort('glmcodingplan', 'glm-5.3')).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
     })
     expect(resolveVendorModelReasoningEffort('stepfun', 'step-3.7-flash')).toEqual({
       supported: true,
@@ -665,6 +670,7 @@ describe('provider registry', () => {
       expect(resolveModelContextWindow('xai', 'grok-4.3')).toBe(1_000_000)
       expect(resolveModelContextWindow('xai', 'grok-build-0.1')).toBe(256_000)
       expect(resolveModelContextWindow('deepseek', 'deepseek-v4-flash')).toBe(1_000_000)
+      expect(resolveModelContextWindow('glmcodingplan', 'glm-5.3')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.2')).toBe(1_000_000)
       expect(resolveModelContextWindow('zhipu', 'glm-5.1')).toBe(200_000)
       expect(resolveModelContextWindow('kimi', 'kimi-k3')).toBe(1_000_000)

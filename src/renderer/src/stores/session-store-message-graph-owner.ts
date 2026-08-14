@@ -128,6 +128,7 @@ export const createSessionMessageGraphOwner = <
     eventId,
     content,
     createdAt,
+    attribution,
     responseToMessageId,
     relayedFrom
   }) => {
@@ -164,6 +165,7 @@ export const createSessionMessageGraphOwner = <
       sortIndex: createSortIndex(),
       createdAt,
       updatedAt: createdAt,
+      ...(attribution ? { attribution } : {}),
       ...(relayedFrom ? { relayedFrom } : {}),
       ...(responseToMessageId ? { responseToMessageId } : {})
     }

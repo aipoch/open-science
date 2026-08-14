@@ -9,7 +9,7 @@ import type {
 // small stubs while production pins the whole review/fix-loop workflow to one runtime generation.
 export type ReviewerAcpRuntime = Pick<
   AcpRuntime,
-  'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt'
+  'buildReviewerSession' | 'disposeReviewerSession' | 'sendPrompt' | 'sendApplicationPrompt'
 > &
   Partial<Pick<AcpRuntime, 'captureBackend'>> &
   Partial<AcpRuntimeActivityOwner>

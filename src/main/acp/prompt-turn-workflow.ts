@@ -1,6 +1,7 @@
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import type { MessageAttribution } from '../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import {
@@ -34,6 +35,11 @@ const log = createLogger('acp-prompt-turn-workflow')
 
 type AcpPromptTurnMode =
   | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+  | Readonly<{
+      kind: 'application'
+      attribution: MessageAttribution
+      promptAttemptId?: string
+    }>
   | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
 
 type AcpPromptTurnPlanContext = Readonly<{
@@ -77,7 +83,12 @@ type AcpPromptTurnEnvironment = Readonly<{
   }>
   routeNotification: (notification: SessionNotification, sessionId: string) => void
   diagnosticContext: () => Record<string, unknown>
-  pushUserMessage: (input: { sessionId: string; promptMessageId?: string; text: string }) => void
+  pushUserMessage: (input: {
+    sessionId: string
+    promptMessageId?: string
+    text: string
+    attribution?: MessageAttribution
+  }) => void
 }>
 
 type AcpPromptTurnArtifacts = Readonly<{
@@ -290,7 +301,7 @@ class AcpPromptTurnWorkflow {
     let sideChatRelaySettled = false
     const emitUserMessage = (): void => {
       if (
-        turn.mode.kind !== 'user' ||
+        (turn.mode.kind !== 'user' && turn.mode.kind !== 'application') ||
         request.continuation ||
         request.suppressUserMessage ||
         userMessageEmitted
@@ -300,7 +311,8 @@ class AcpPromptTurnWorkflow {
       env.pushUserMessage({
         sessionId,
         ...eventIdentity,
-        text: request.text
+        text: request.text,
+        ...(turn.mode.kind === 'application' ? { attribution: turn.mode.attribution } : {})
       })
     }
     const execute = async (): Promise<ProviderPromptOutcome> => {
@@ -402,7 +414,9 @@ class AcpPromptTurnWorkflow {
             skillFinalized = true
           }
         },
-        routeNotification: (notification) => env.routeNotification(notification, sessionId),
+        routeNotification: (notification) => {
+          if (turn.mode.kind !== 'application') env.routeNotification(notification, sessionId)
+        },
         reportBestEffortFailure: (stage, error) =>
           log.warn('provider prompt observation failed', {
             sessionId,

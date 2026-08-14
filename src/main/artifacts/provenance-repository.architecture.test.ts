@@ -339,6 +339,40 @@ describe('Artifact Provenance repository architecture', () => {
     expect(readModel).not.toContain("lastIndexOf('/')")
   })
 
+  it('shares the Reviewer-owned submission projection with command history', () => {
+    const readModel = sources.get('provenance-read-model.ts')!
+    const reviewerRepository = readFileSync(resolve(__dirname, '../reviewer/repository.ts'), 'utf8')
+    const submissionOwner = readFileSync(
+      resolve(__dirname, '../reviewer/review-submission-read-model.ts'),
+      'utf8'
+    )
+
+    for (const consumer of [readModel, reviewerRepository]) {
+      expect(consumer).toContain('loadReviewSubmissionProjection')
+      expect(consumer).not.toContain('include: { sourceFinding: true }')
+    }
+    expect(submissionOwner).toContain('client.finding.findMany')
+    expect(submissionOwner).toContain('client.reviewFindingDisposition.findMany')
+    expect(submissionOwner).toContain('include: { sourceFinding: true }')
+  })
+
+  it('keeps submitted-check Artifact Version ownership in the Reviewer projection', () => {
+    const reviewerProjection = readFileSync(
+      resolve(__dirname, '../reviewer/artifact-version-review.ts'),
+      'utf8'
+    )
+    const artifactPanel = readFileSync(
+      resolve(__dirname, '../../renderer/src/pages/workspace/ArtifactProvenancePanel.tsx'),
+      'utf8'
+    )
+
+    expect(reviewerProjection).toContain('item.assessedArtifactVersionId ??')
+    expect(reviewerProjection).toContain('selectedVersionAssessment')
+    expect(artifactPanel).toContain('reviewProjection?.selectedVersionAssessment')
+    expect(artifactPanel).not.toContain('assessedArtifactVersionId')
+    expect(artifactPanel).not.toContain('submittedCheckMatchesArtifactVersion')
+  })
+
   it('keeps owner, interface, consumer and Windows-sensitive impact coverage complete', () => {
     const repositoryRoot = resolve(__dirname, '..', '..', '..')
     const manifest = JSON.parse(

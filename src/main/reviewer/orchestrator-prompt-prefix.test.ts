@@ -20,7 +20,7 @@ import { ReviewRepository } from './repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { runReview } from './orchestrator'
 import { callSubmitFindingsAfterReadingEvidence as callSubmitFindings } from './reviewer-mcp-test-client'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { MessageAttribution, PersistedChatSession } from '../../shared/session-persistence'
 
 // The reviewer prompt built by buildReviewerPrompt always starts with this line (see orchestrator.ts).
 // It is the stable marker used to locate the reviewer prompt inside the text sent to the agent.
@@ -374,7 +374,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
     const runtime = {
       // The [Auditor] correction turn: append the auditor user turn + the agent's correction turn so
       // the fix loop resolves a new correctionTurnMessageId (msg-4-correction) for the scoped review.
-      sendPrompt: async () => {
+      sendApplicationPrompt: async (_request: unknown, attribution: MessageAttribution) => {
         currentSession = {
           ...currentSession,
           messages: [
@@ -383,6 +383,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
               id: 'msg-3-auditor',
               role: 'user',
               content: '[Auditor] please fix.',
+              attribution,
               status: 'complete',
               eventIds: [],
               createdAt: 3000,
@@ -489,7 +490,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
         if (disposeCall === 2) throw new Error('scoped reviewer dispose failed')
         return { rejectedToolCalls: 0, reviewerBridgeScoped: undefined }
       },
-      sendPrompt: async () => {
+      sendApplicationPrompt: async (_request: unknown, attribution: MessageAttribution) => {
         currentSession = {
           ...currentSession,
           messages: [
@@ -498,6 +499,7 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
               id: 'msg-3-auditor',
               role: 'user',
               content: '[Auditor] verify the result count.',
+              attribution,
               status: 'complete',
               eventIds: [],
               createdAt: 3000,
