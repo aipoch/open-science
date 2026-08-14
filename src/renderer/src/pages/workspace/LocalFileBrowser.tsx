@@ -27,6 +27,7 @@ import type {
   LocalRoots
 } from '../../../../shared/local-fs'
 import {
+  describeInvalidLocalPath,
   describeLocalListingError,
   isLocalPathRoot,
   isSensitiveLocalPath,
@@ -97,20 +98,29 @@ const Hint = ({
 
 // Body of one Go-to row: the label plus the absolute path it resolves to. Without the path, "Home"
 // says nothing about where it lands and two folders pinned from different trees look identical when
-// they share a basename (…/2024/data vs …/2025/data).
+// they share a basename (…/2024/data vs …/2025/data). Labels truncate by default (title carries the
+// full text); rows whose label is itself the identifying name — drive/volume names — pass wrapLabel
+// to show it in full, wrapping instead of clipping.
 const GoToRow = ({
   icon,
   label,
-  path
+  path,
+  wrapLabel = false
 }: {
   icon: React.ReactNode
   label: string
   path: string
+  wrapLabel?: boolean
 }): React.JSX.Element => (
   <>
     <span className="mt-0.5 shrink-0">{icon}</span>
     <span className="flex min-w-0 flex-1 flex-col">
-      <span className="truncate">{label}</span>
+      <span
+        title={wrapLabel ? undefined : label}
+        className={wrapLabel ? 'break-words' : 'truncate'}
+      >
+        {label}
+      </span>
       {/* title carries the untruncated path: CSS clips the tail, which is the part that identifies
           a deeply nested folder. */}
       <span
@@ -123,10 +133,10 @@ const GoToRow = ({
   </>
 )
 
-// Go-to dropdown: mounted drives/volumes lead the menu, Home is fixed next (never removable);
-// pinned folders follow with Unpin. Built on the shared shadcn DropdownMenu, so click-outside,
-// Escape, focus trapping and the trigger's aria-expanded all come from Radix instead of
-// hand-rolled open state.
+// Go-to dropdown: Home stands alone at the top (no category); mounted drives/volumes form their
+// own group; the Pinned group lists bookmarked folders and always closes with the Pin-current
+// action. Built on the shared shadcn DropdownMenu, so click-outside, Escape, focus trapping and
+// the trigger's aria-expanded all come from Radix instead of hand-rolled open state.
 const GoToMenu = ({
   drives,
   home,
@@ -147,7 +157,7 @@ const GoToMenu = ({
   onRemoveBookmark: (path: string) => void
 }): React.JSX.Element => (
   <DropdownMenu>
-    <Hint label="Jump to a drive, Home, or a pinned folder">
+    <Hint label="Jump to Home, a drive, or a pinned folder">
       {/* Label at the default 13px: at text-xs it was the smallest type in the row despite being
           the only worded control there. */}
       <DropdownMenuTrigger asChild>
@@ -163,6 +173,16 @@ const GoToMenu = ({
       </DropdownMenuTrigger>
     </Hint>
     <DropdownMenuContent align="start" className="w-[300px] max-w-[70vw]">
+      {/* Home stands alone at the top: a fixed shortcut that belongs to no category. */}
+      {home ? (
+        <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={() => onNavigate(home)}>
+          <GoToRow
+            icon={<Home className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+            label="Home"
+            path={home}
+          />
+        </DropdownMenuItem>
+      ) : null}
       {drives.length > 0 ? (
         <>
           <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
@@ -176,6 +196,7 @@ const GoToMenu = ({
               onSelect={() => onNavigate(drive.path)}
             >
               <GoToRow
+                wrapLabel
                 icon={<HardDrive className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
                 label={drive.label}
                 path={drive.path}
@@ -184,25 +205,7 @@ const GoToMenu = ({
           ))}
         </>
       ) : null}
-      {home ? (
-        <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={() => onNavigate(home)}>
-          <GoToRow
-            icon={<Home className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-            label="Home"
-            path={home}
-          />
-        </DropdownMenuItem>
-      ) : null}
-      {!isBookmarked && currentPath ? (
-        <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={onPinCurrent}>
-          <GoToRow
-            icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
-            label="Pin current folder"
-            path={currentPath}
-          />
-        </DropdownMenuItem>
-      ) : null}
-      {bookmarks.length > 0 ? (
+      {bookmarks.length > 0 || (!isBookmarked && currentPath) ? (
         <>
           <DropdownMenuLabel className="text-[10px] font-semibold uppercase tracking-wide">
             Pinned
@@ -238,6 +241,16 @@ const GoToMenu = ({
               </Hint>
             </DropdownMenuItem>
           ))}
+          {/* The pin action belongs to the Pinned category and always closes it. */}
+          {!isBookmarked && currentPath ? (
+            <DropdownMenuItem className="items-start gap-2 text-xs" onSelect={onPinCurrent}>
+              <GoToRow
+                icon={<Pin className="size-3.5 text-muted-foreground" strokeWidth={1.5} />}
+                label="Pin current folder"
+                path={currentPath}
+              />
+            </DropdownMenuItem>
+          ) : null}
         </>
       ) : null}
     </DropdownMenuContent>
@@ -427,14 +440,7 @@ export const LocalFileBrowser = ({
     if (invalid) {
       setState({
         kind: 'error',
-        problem: {
-          summary:
-            invalid === 'not_absolute'
-              ? window.api.platform === 'win32'
-                ? 'Enter an absolute path, like C:\\folder.'
-                : 'Enter an absolute path, starting at /.'
-              : 'That path contains invalid characters.'
-        }
+        problem: { summary: describeInvalidLocalPath(invalid, window.api.platform) }
       })
       return
     }

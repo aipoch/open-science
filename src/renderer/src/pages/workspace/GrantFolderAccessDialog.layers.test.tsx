@@ -137,6 +137,49 @@ describe('GrantFolderAccessDialog drive menu layering (real Radix)', () => {
     expect(listDir).toHaveBeenCalledWith('/Volumes/External')
   })
 
+  it('absorbs the first outside click after an Escape close and a keyboard reopen', async () => {
+    // Regression coverage for the stale-disarm-listener hole: an Escape close leaves the
+    // one-shot pointerdown disarm listener unconsumed, and a keyboard reopen involves no
+    // pointerdown to consume it. Without withdrawing the listener on reopen, the next outside
+    // pointerdown flips the guard off while the menu is open and the deferred click then
+    // dismisses the dialog too. jsdom caveat (verified by instrumented runs): after a keyboard
+    // reopen the dialog's layer bails before guard evaluation, so this test cannot fail without
+    // the fix here — the negative verification was done by logging the stale disarm firing at
+    // the overlay pointerdown in the unfixed build. The test still pins the end-to-end contract.
+    renderDialog()
+    await flush()
+    await openDriveMenu()
+
+    // Escape closes the menu without any pointerdown, leaving the one-shot disarm listener
+    // unconsumed.
+    const menu = document.body.querySelector('[data-slot="dropdown-menu-content"]')
+    await act(async () => {
+      menu?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await Promise.resolve()
+    })
+    await flush()
+    expect(menuOpen()).toBe(false)
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    // Reopen via keyboard (Enter on the trigger): no pointerdown is involved, so a stale disarm
+    // listener would survive into the next outside click.
+    const trigger = document.body.querySelector('[data-testid="grant-access-drive-root"]')
+    await act(async () => {
+      trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+    await flush()
+    expect(menuOpen()).toBe(true)
+
+    // The overlay click must close only the menu, not the dialog.
+    const overlay = document.body.querySelector('.fixed.inset-0')
+    await fire(overlay as Element, 'pointerdown')
+    await fire(overlay as Element, 'click')
+    await flush()
+    expect(menuOpen()).toBe(false)
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
   it('still dismisses the dialog on an outside click once the menu is closed', async () => {
     renderDialog()
     await flush()

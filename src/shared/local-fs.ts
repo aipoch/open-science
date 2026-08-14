@@ -92,6 +92,19 @@ export const validateLocalPath = (
   return undefined
 }
 
+// The quiet inline sentence both local browsers show when an address-bar/path-field submit fails
+// validateLocalPath. The not_absolute hint is platform-aware: a POSIX-style example would
+// mislead on Windows, where absolute paths lead with a drive letter.
+export const describeInvalidLocalPath = (
+  kind: 'not_absolute' | 'control_chars',
+  platform: string
+): string => {
+  if (kind === 'control_chars') return 'That path contains invalid characters.'
+  return platform === 'win32'
+    ? 'Enter an absolute path, like C:\\folder.'
+    : 'Enter an absolute path, starting at /.'
+}
+
 // Basenames that are always considered "sensitive" — reading them (or, for directories, entering
 // them) is allowed per the chosen security model, but the UI surfaces a gentle warning first.
 // Matched case-insensitively against the final path component. Covers credential directories

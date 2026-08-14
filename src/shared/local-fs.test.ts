@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  describeInvalidLocalPath,
   describeLocalListingError,
   isLocalPathRoot,
   isPathWithin,
@@ -41,6 +42,29 @@ describe('validateLocalPath', () => {
   it('rejects paths with control characters', () => {
     expect(validateLocalPath('/Users/roxi/\x00evil', 'linux')).toBe('control_chars')
     expect(validateLocalPath('/Users/roxi/\x1ffile', 'linux')).toBe('control_chars')
+  })
+})
+
+describe('describeInvalidLocalPath', () => {
+  it('explains not_absolute with a platform-appropriate example', () => {
+    expect(describeInvalidLocalPath('not_absolute', 'darwin')).toBe(
+      'Enter an absolute path, starting at /.'
+    )
+    expect(describeInvalidLocalPath('not_absolute', 'linux')).toBe(
+      'Enter an absolute path, starting at /.'
+    )
+    expect(describeInvalidLocalPath('not_absolute', 'win32')).toBe(
+      'Enter an absolute path, like C:\\folder.'
+    )
+  })
+
+  it('explains control_chars the same everywhere', () => {
+    expect(describeInvalidLocalPath('control_chars', 'darwin')).toBe(
+      'That path contains invalid characters.'
+    )
+    expect(describeInvalidLocalPath('control_chars', 'win32')).toBe(
+      'That path contains invalid characters.'
+    )
   })
 })
 

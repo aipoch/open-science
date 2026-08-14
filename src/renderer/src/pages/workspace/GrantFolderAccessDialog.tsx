@@ -13,6 +13,7 @@ import type {
   LocalDrive
 } from '../../../../shared/local-fs'
 import {
+  describeInvalidLocalPath,
   describeLocalListingError,
   isLocalPathRoot,
   localDriveRootFor,
@@ -181,6 +182,11 @@ const GrantFolderAccessDialogContent = ({
   )
   const handleDriveMenuOpenChange = (open: boolean): void => {
     if (open) {
+      // Cancel a pending disarm first: an Escape/select close leaves the one-shot listener
+      // unconsumed, and reopening must not let the next pointerdown flip the ref back to false
+      // while the menu is open. Reopening can even skip pointerdown entirely (keyboard), so
+      // the listener itself must be withdrawn, not just the state reset.
+      document.removeEventListener('pointerdown', disarmDriveMenu, { capture: true })
       driveMenuOpenRef.current = true
     } else {
       document.addEventListener('pointerdown', disarmDriveMenu, { capture: true, once: true })
@@ -191,7 +197,7 @@ const GrantFolderAccessDialogContent = ({
 
   // On mount: resolve home (the initial location), enumerate the mounted drives for the drive
   // dropdown, and refresh the granted roots so handleGrant's fallback can tell which root the
-  // grant just added. A drive-enumeration failure must not take the whole dialog down with it.
+  // grant just added.
   useEffect(() => {
     if (!window.api?.localFs) return
     let cancelled = false
@@ -265,12 +271,7 @@ const GrantFolderAccessDialogContent = ({
       setResult({
         kind: 'error',
         path: cwd,
-        summary:
-          invalid === 'not_absolute'
-            ? platform === 'win32'
-              ? 'Enter an absolute path, like C:\\folder.'
-              : 'Enter an absolute path, starting at /.'
-            : 'That path contains invalid characters.'
+        summary: describeInvalidLocalPath(invalid, platform)
       })
       return
     }

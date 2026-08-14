@@ -138,23 +138,69 @@ describe('LocalFileBrowser requestedPath', () => {
 })
 
 describe('LocalFileBrowser Go to menu', () => {
-  it('lists the mounted drives above Home and navigates on select', async () => {
+  // Finds the menu button whose text contains the given label.
+  const menuButton = (label: string): HTMLElement | undefined =>
+    Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes(label))
+  const menuLabel = (text: string): HTMLElement | undefined =>
+    Array.from(document.body.querySelectorAll('div')).find((d) => d.textContent === text)
+  // True when `later` comes after `earlier` in document order.
+  const follows = (earlier: HTMLElement, later: HTMLElement): boolean =>
+    Boolean(earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+  it('lists Home first and uncategorized, then the drives group; drives navigate on select', async () => {
     await act(async () => {
       root.render(<LocalFileBrowser />)
     })
     await flush()
 
-    expect(document.body.textContent).toContain('Volumes')
-    const drive = document.body.querySelector('[data-testid="go-to-drive-/Volumes/External"]')
+    const homeItem = menuButton('Home') as HTMLElement
+    const volumesLabel = menuLabel('Volumes') as HTMLElement
+    const drive = document.body.querySelector(
+      '[data-testid="go-to-drive-/Volumes/External"]'
+    ) as HTMLElement
+    expect(homeItem).not.toBeNull()
+    expect(volumesLabel).not.toBeNull()
     expect(drive).not.toBeNull()
-    expect(drive?.textContent).toContain('External')
+    // Home precedes the Volumes group and sits above its label — no category of its own.
+    expect(follows(homeItem, volumesLabel)).toBe(true)
+    expect(follows(volumesLabel, drive)).toBe(true)
+    // Drive rows show the full volume name (wrap, no clipping); other rows keep truncate + title.
+    const driveLabel = Array.from(drive.querySelectorAll('span')).find(
+      (el) => el.textContent === 'External'
+    )
+    expect(driveLabel?.className).toContain('break-words')
+    expect(driveLabel?.className).not.toContain('truncate')
+    const homeLabel = Array.from(homeItem.querySelectorAll('span')).find(
+      (el) => el.textContent === 'Home'
+    )
+    expect(homeLabel?.className).toContain('truncate')
+    expect(homeLabel?.getAttribute('title')).toBe('Home')
 
     await act(async () => {
-      ;(drive as HTMLElement | null)?.click()
+      drive.click()
       await Promise.resolve()
     })
 
     expect(listDir).toHaveBeenCalledWith('/Volumes/External')
     expect(addressInput()?.value).toBe('/Volumes/External')
+  })
+
+  it('closes the Pinned group with the pin action, after every bookmark', async () => {
+    ;(window.api.compute.bookmarksGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      `${HOME}/.cache`
+    ])
+    await act(async () => {
+      root.render(<LocalFileBrowser />)
+    })
+    await flush()
+
+    const pinnedLabel = menuLabel('Pinned') as HTMLElement
+    const bookmarkItem = menuButton('.cache') as HTMLElement
+    const pinAction = menuButton('Pin current folder') as HTMLElement
+    expect(pinnedLabel).not.toBeNull()
+    expect(bookmarkItem).not.toBeNull()
+    expect(pinAction).not.toBeNull()
+    expect(follows(pinnedLabel, bookmarkItem)).toBe(true)
+    expect(follows(bookmarkItem, pinAction)).toBe(true)
   })
 })
