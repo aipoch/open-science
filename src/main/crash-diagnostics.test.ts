@@ -3,32 +3,35 @@ import { describe, expect, it, vi } from 'vitest'
 import { installChildProcessGoneLogging, startLocalCrashReporting } from './crash-diagnostics'
 
 describe('startLocalCrashReporting', () => {
-  it('starts Windows Crashpad with uploads and compression disabled', () => {
+  it.each<NodeJS.Platform>(['win32', 'darwin', 'linux'])(
+    'starts local Crashpad on %s with uploads and compression disabled',
+    (platform) => {
+      const start = vi.fn()
+
+      const status = startLocalCrashReporting({
+        platform,
+        productName: 'Open Science',
+        companyName: 'aipoch',
+        appVersion: '0.9.1',
+        start
+      })
+
+      expect(status).toEqual({ enabled: true, uploadsEnabled: false })
+      expect(start).toHaveBeenCalledWith({
+        productName: 'Open Science',
+        companyName: 'aipoch',
+        uploadToServer: false,
+        compress: false,
+        extra: { appVersion: '0.9.1' }
+      })
+    }
+  )
+
+  it('does not start Crashpad on unsupported Electron platforms', () => {
     const start = vi.fn()
 
     const status = startLocalCrashReporting({
-      platform: 'win32',
-      productName: 'Open Science',
-      companyName: 'aipoch',
-      appVersion: '0.9.1',
-      start
-    })
-
-    expect(status).toEqual({ enabled: true, uploadsEnabled: false })
-    expect(start).toHaveBeenCalledWith({
-      productName: 'Open Science',
-      companyName: 'aipoch',
-      uploadToServer: false,
-      compress: false,
-      extra: { appVersion: '0.9.1' }
-    })
-  })
-
-  it('does not start Crashpad outside Windows', () => {
-    const start = vi.fn()
-
-    const status = startLocalCrashReporting({
-      platform: 'darwin',
+      platform: 'freebsd',
       productName: 'Open Science',
       companyName: 'aipoch',
       appVersion: '0.9.1',

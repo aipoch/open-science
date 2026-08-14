@@ -24,8 +24,8 @@ type DiagnosticLogger = {
   error: (message: string, metadata: Record<string, unknown>) => void
 }
 
-// Starts local-only Crashpad before a Windows renderer can be created. Other platforms keep their
-// existing crash-reporting behavior and never call Electron's crashReporter.start().
+// Starts local-only Crashpad before any renderer can be created on Electron's supported desktop
+// platforms. Unsupported Node platforms keep their existing crash-reporting behavior.
 const startLocalCrashReporting = ({
   platform,
   productName,
@@ -33,7 +33,8 @@ const startLocalCrashReporting = ({
   appVersion,
   start
 }: StartLocalCrashReportingOptions): LocalCrashReportingStatus => {
-  if (platform !== 'win32') return { enabled: false }
+  if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux')
+    return { enabled: false }
 
   start({
     productName,
