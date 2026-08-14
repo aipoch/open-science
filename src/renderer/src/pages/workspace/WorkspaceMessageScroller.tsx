@@ -875,7 +875,7 @@ const WorkspaceMessageScrollerImpl = ({
             {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
             <MessageScrollerContent
               ref={messageScrollerContentRef}
-              className="gap-0 px-4 pb-[56px]"
+              className="mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]"
             >
               <VisibleMessageSnapshotCommit
                 scopeId={currentPresentationScopeId}
