@@ -1,9 +1,9 @@
+import { FENCE_LINE, createCodeFenceTracker } from './code-fence'
+
 type TrailingCodeFence = {
   language: string
   code: string
 }
-
-const FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})/
 
 const stripTrailingNewlines = (text: string): string => text.replace(/[\r\n]+$/, '')
 
@@ -11,18 +11,15 @@ const stripTrailingNewlines = (text: string): string => text.replace(/[\r\n]+$/,
 // tracking Streamdown uses to set `isIncomplete` on the last block.
 const getUnclosedTrailingFence = (content: string): TrailingCodeFence | null => {
   const lines = content.split('\n')
+  const tracker = createCodeFenceTracker()
   let openerIndex = -1
-  let fenceChar = ''
-  let fenceLength = 0
 
   lines.forEach((line, index) => {
-    const fence = FENCE_LINE.exec(line)
-    if (!fence) return
-    if (openerIndex === -1) {
+    const wasOpen = tracker.isOpen()
+    const isOpen = tracker.feed(line)
+    if (!wasOpen && isOpen) {
       openerIndex = index
-      fenceChar = fence[1][0]
-      fenceLength = fence[1].length
-    } else if (fence[1][0] === fenceChar && fence[1].length >= fenceLength) {
+    } else if (wasOpen && !isOpen) {
       openerIndex = -1
     }
   })

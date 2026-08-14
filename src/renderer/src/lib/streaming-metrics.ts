@@ -60,16 +60,6 @@ export const recordAgentMessageChunkCommit = (chunkCount: number): void => {
   streamingMetrics.agentMessageChunksCommitted += chunkCount
 }
 
-export const getStreamingMetrics = (): Readonly<typeof streamingMetrics> => ({
-  ...streamingMetrics
-})
-
-export const resetStreamingMetrics = (): void => {
-  streamingMetrics.acpChunkEventsReceived = 0
-  streamingMetrics.agentMessageChunkCommits = 0
-  streamingMetrics.agentMessageChunksCommitted = 0
-}
-
 if (import.meta.env.DEV && typeof window !== 'undefined') {
   // Live reference: reading window.__streamingMetrics in the console always shows current values.
   ;(window as unknown as { __streamingMetrics: typeof streamingMetrics }).__streamingMetrics =

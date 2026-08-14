@@ -140,7 +140,7 @@ describe('AgentMarkdown renderer recovery', () => {
     expect(streamdownHarness.blockComponent).toBe(StreamingBlock)
   })
 
-  it('reveals a buffered segment across frames while keeping a caret at the visible tail', async () => {
+  it('reveals a buffered segment across frames without any caret at the visible tail', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
       'requestAnimationFrame',

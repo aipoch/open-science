@@ -1,3 +1,5 @@
+import { createCodeFenceTracker } from './code-fence'
+
 const quoteAxisListItems = (raw: string): string =>
   raw
     .split(',')
@@ -64,7 +66,6 @@ const normalizeGfmAlerts = (markdown: string): string =>
 const normalizeAgentMarkdown = (markdown: string): string =>
   normalizeMermaidBlocks(normalizeGfmAlerts(markdown))
 
-const FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})/
 const ALERT_HEADER_LINE = /^>\s*\[![A-Z]+\]\s*\r?$/i
 const BARE_QUOTE_LINE = /^>\r?$/
 
@@ -141,9 +142,8 @@ const widenPastMermaidOpener = (markdown: string, boundary: number): number => {
 // fixpoint for the two constructs that reach further: mermaid blocks and GFM alerts.
 const findNormalizationBoundary = (markdown: string): number => {
   let boundary = 0
+  const fenceTracker = createCodeFenceTracker()
   let fenceOpenerStart = -1
-  let fenceChar = ''
-  let fenceLength = 0
 
   let lineStart = 0
   while (lineStart <= markdown.length) {
@@ -151,15 +151,12 @@ const findNormalizationBoundary = (markdown: string): number => {
     const lineEnd = newlineIndex === -1 ? markdown.length : newlineIndex
     const line = markdown.slice(lineStart, lineEnd)
 
-    const fence = FENCE_LINE.exec(line)
-    if (fence) {
-      if (fenceOpenerStart === -1) {
-        fenceOpenerStart = lineStart
-        fenceChar = fence[1][0]
-        fenceLength = fence[1].length
-      } else if (fence[1][0] === fenceChar && fence[1].length >= fenceLength) {
-        fenceOpenerStart = -1
-      }
+    const fenceWasOpen = fenceTracker.isOpen()
+    const fenceIsOpen = fenceTracker.feed(line)
+    if (!fenceWasOpen && fenceIsOpen) {
+      fenceOpenerStart = lineStart
+    } else if (fenceWasOpen && !fenceIsOpen) {
+      fenceOpenerStart = -1
     }
 
     if (line.trim() === '') {

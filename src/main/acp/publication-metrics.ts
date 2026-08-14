@@ -23,13 +23,3 @@ export const recordAcpStateBroadcastSent = (): void => {
     })
   }
 }
-
-export const getAcpStateBroadcastMetrics = (): Readonly<{
-  sent: number
-  suppressed: number
-}> => ({ sent: acpStateBroadcastsSent, suppressed: acpStateBroadcastsSuppressed })
-
-export const resetAcpStateBroadcastMetrics = (): void => {
-  acpStateBroadcastsSent = 0
-  acpStateBroadcastsSuppressed = 0
-}
