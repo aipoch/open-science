@@ -5405,6 +5405,38 @@ describe('truncateSessionFromMessage', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
   })
 
+  it('does not activate another Message Branch while a Plan awaits approval', () => {
+    seedSession()
+    useSessionStore.getState().truncateSessionFromMessage('session-1', 'user-2')
+    const edited = useSessionStore.getState().appendUserMessage({
+      sessionId: 'session-1',
+      content: 'edited user-2'
+    })
+    useSessionStore.getState().finishRun('session-1')
+
+    const editedSession = useSessionStore.getState().sessions[0]
+    const originalBranchId = editedSession.conversationGraph?.branches[0].id
+    useSessionStore.getState().setActivePlanProjection('session-1', {
+      ...createPlanProjection('version-1'),
+      originatingPromptMessageId: edited?.messageId
+    })
+    const waitingSession = useSessionStore.getState().sessions[0]
+    const activeFrame = waitingSession.conversationGraph?.frames.find(
+      (frame) => frame.id === waitingSession.conversationGraph?.activeFrameId
+    )
+    expect(waitingSession.status).toBe('waiting-plan-approval')
+
+    useSessionStore.getState().activateMessageBranch('session-1', originalBranchId ?? '')
+
+    const unchanged = useSessionStore.getState().sessions[0]
+    expect(unchanged).toBe(waitingSession)
+    expect(
+      unchanged.conversationGraph?.frames.find(
+        (frame) => frame.id === unchanged.conversationGraph?.activeFrameId
+      )?.activeBranchId
+    ).toBe(activeFrame?.activeBranchId)
+  })
+
   it('materializes only the selected Message Branch Plan activities', () => {
     // Transcript projection receives this already-selected compatibility view. Exercise the public
     // Branch switch here, where the Graph is resolved into Session messages and activities.
