@@ -9,7 +9,6 @@ import {
   materializeSessionConversationGraph,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { HistoryReplayTarget } from '../../shared/history-preamble'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentModelRoute } from '../agent-framework'
 import { createAcpHandlerWorkflows } from './handler-workflows'
@@ -91,7 +90,6 @@ const createHarness = (
     agentFrameId: string
     messageBranchId: string
     promptMessageId: string
-    historyReplay: { target: HistoryReplayTarget }
   }
 } => {
   const session = createSession()
@@ -109,7 +107,8 @@ const createHarness = (
             ? 'codex-responses'
             : session.agentFrameworkId === 'opencode'
               ? 'opencode-openai'
-              : 'claude-anthropic'
+              : 'claude-anthropic',
+        context: { window: 100_000, supportsImageInput: true }
       }) as never
   )
   const snapshot = { status: 'connected' } as never
@@ -148,8 +147,7 @@ const createHarness = (
       sessionId: session.id,
       agentFrameId: frame.id,
       messageBranchId: frame.activeBranchId,
-      promptMessageId: 'save-as-skill-control',
-      historyReplay: { target: 'claude-code' as const }
+      promptMessageId: 'save-as-skill-control'
     }
   }
 }
@@ -287,43 +285,38 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget, AgentModelRoute]>([
-    ['Claude Code', 'claude-code', 'claude-code', 'claude-anthropic'],
-    ['OpenCode', 'opencode', 'opencode', 'opencode-openai'],
-    ['Codex Responses', 'codex', 'codex-response', 'codex-responses'],
-    ['Codex Bridge', 'codex', 'codex-bridge', 'codex-bridge']
-  ])(
-    'binds context-reset hidden-turn provenance on %s',
-    async (_name, frameworkId, target, modelRoute) => {
-      const harness = createHarness((session) => {
-        session.agentFrameworkId = frameworkId
-        session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
-          id: 'runtime-segment-after-context-reset',
-          frameworkId,
-          startedAt: 3,
-          forceNew: true
+  it.each<readonly [string, AgentFrameworkId, AgentModelRoute]>([
+    ['Claude Code', 'claude-code', 'claude-anthropic'],
+    ['OpenCode', 'opencode', 'opencode-openai'],
+    ['Codex Responses', 'codex', 'codex-responses'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ])('binds context-reset hidden-turn provenance on %s', async (_name, frameworkId, modelRoute) => {
+    const harness = createHarness((session) => {
+      session.agentFrameworkId = frameworkId
+      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+        id: 'runtime-segment-after-context-reset',
+        frameworkId,
+        startedAt: 3,
+        forceNew: true
+      })
+    })
+    harness.captureSessionBackend.mockReturnValue({
+      framework: { id: frameworkId },
+      modelRoute,
+      context: { window: 100_000, supportsImageInput: true }
+    } as never)
+
+    await harness.workflows.saveAsSkill(harness.request)
+
+    expect(harness.startContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextReset: true,
+        provenanceContext: expect.objectContaining({
+          runtimeSegmentId: 'runtime-segment-after-context-reset'
         })
       })
-      harness.captureSessionBackend.mockReturnValue({
-        framework: { id: frameworkId },
-        modelRoute
-      } as never)
-
-      await harness.workflows.saveAsSkill({
-        ...harness.request,
-        historyReplay: { target, contextReset: true }
-      })
-
-      expect(harness.startContinuation).toHaveBeenCalledWith(
-        expect.objectContaining({
-          contextReset: true,
-          provenanceContext: expect.objectContaining({
-            runtimeSegmentId: 'runtime-segment-after-context-reset'
-          })
-        })
-      )
-    }
-  )
+    )
+  })
 
   it('rejects when the prepared control changes before runtime admission', async () => {
     const harness = createHarness()
@@ -340,32 +333,14 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it('rejects forged context reset without a fresh durable Runtime Segment', async () => {
+  it('does not infer context reset without a fresh durable Runtime Segment', async () => {
     const harness = createHarness()
 
-    await expect(
-      harness.workflows.saveAsSkill({
-        ...harness.request,
-        historyReplay: { target: 'claude-code', contextReset: true }
-      })
-    ).rejects.toThrow('context reset does not match the durable Runtime Segment')
-    expect(harness.startContinuation).not.toHaveBeenCalled()
-  })
+    await harness.workflows.saveAsSkill(harness.request)
 
-  it('rejects a fresh durable Runtime Segment without context reset authority', async () => {
-    const harness = createHarness((session) => {
-      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
-        id: 'runtime-segment-after-context-reset',
-        frameworkId: 'claude-code',
-        startedAt: 3,
-        forceNew: true
-      })
-    })
-
-    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
-      'context reset does not match the durable Runtime Segment'
+    expect(harness.startContinuation).toHaveBeenCalledWith(
+      expect.not.objectContaining({ contextReset: true })
     )
-    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('filters earlier hidden Save as skill controls from replay', async () => {
@@ -410,42 +385,35 @@ describe('ACP Save as skill workflow', () => {
   })
 
   it('fails closed when conversation history cannot fit the replay budget', async () => {
-    const harness = createHarness((session) => {
-      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
-        id: 'runtime-segment-after-context-reset',
-        frameworkId: 'claude-code',
-        startedAt: 3,
-        forceNew: true
-      })
-    })
+    const harness = createHarness()
+    harness.captureSessionBackend.mockReturnValue({
+      framework: { id: 'claude-code' },
+      modelRoute: 'claude-anthropic',
+      context: { window: 1, supportsImageInput: true }
+    } as never)
 
-    await expect(
-      harness.workflows.saveAsSkill({
-        ...harness.request,
-        historyReplay: { target: 'claude-code', contextWindow: 1, contextReset: true }
-      })
-    ).rejects.toThrow('conversation history could not be replayed')
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
+      'conversation history could not be replayed'
+    )
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget, AgentModelRoute]>([
-    ['Claude Code', 'claude-code', 'claude-code', 'claude-anthropic'],
-    ['OpenCode', 'opencode', 'opencode', 'opencode-openai'],
-    ['Codex Responses', 'codex', 'codex-response', 'codex-responses'],
-    ['Codex Bridge', 'codex', 'codex-bridge', 'codex-bridge']
-  ])('keeps shared hidden-turn semantics on %s', async (_name, frameworkId, target, modelRoute) => {
+  it.each<readonly [string, AgentFrameworkId, AgentModelRoute]>([
+    ['Claude Code', 'claude-code', 'claude-anthropic'],
+    ['OpenCode', 'opencode', 'opencode-openai'],
+    ['Codex Responses', 'codex', 'codex-responses'],
+    ['Codex Bridge', 'codex', 'codex-bridge']
+  ])('keeps shared hidden-turn semantics on %s', async (_name, frameworkId, modelRoute) => {
     const harness = createHarness((session) => {
       session.agentFrameworkId = frameworkId
     })
     harness.captureSessionBackend.mockReturnValue({
       framework: { id: frameworkId },
-      modelRoute
+      modelRoute,
+      context: { window: 100_000, supportsImageInput: true }
     } as never)
 
-    await harness.workflows.saveAsSkill({
-      ...harness.request,
-      historyReplay: { target }
-    })
+    await harness.workflows.saveAsSkill(harness.request)
 
     expect(harness.startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -457,32 +425,6 @@ describe('ACP Save as skill workflow', () => {
       })
     )
   })
-
-  it.each<readonly [string, AgentFrameworkId, AgentModelRoute, HistoryReplayTarget]>([
-    ['Claude Code', 'claude-code', 'claude-anthropic', 'opencode'],
-    ['OpenCode', 'opencode', 'opencode-openai', 'claude-code'],
-    ['Codex Responses', 'codex', 'codex-responses', 'codex-bridge'],
-    ['Codex Bridge', 'codex', 'codex-bridge', 'codex-response']
-  ])(
-    'rejects a replay target that differs from the %s Session backend',
-    async (_name, frameworkId, modelRoute, target) => {
-      const harness = createHarness((session) => {
-        session.agentFrameworkId = frameworkId
-      })
-      harness.captureSessionBackend.mockReturnValue({
-        framework: { id: frameworkId },
-        modelRoute
-      } as never)
-
-      await expect(
-        harness.workflows.saveAsSkill({
-          ...harness.request,
-          historyReplay: { target }
-        })
-      ).rejects.toThrow('history replay target does not match the Session backend')
-      expect(harness.startContinuation).not.toHaveBeenCalled()
-    }
-  )
 
   it('validates and replays the active Branch instead of the flat compatibility projection', async () => {
     const harness = createHarness((session) => {
@@ -530,35 +472,6 @@ describe('ACP Save as skill workflow', () => {
     await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
       'requires a prepared Session'
     )
-    expect(harness.startContinuation).not.toHaveBeenCalled()
-  })
-
-  it('ignores renderer-only replay budget overrides', async () => {
-    const harness = createHarness()
-
-    await harness.workflows.saveAsSkill({
-      ...harness.request,
-      historyReplay: { target: 'claude-code', budget: 1 } as never
-    })
-
-    expect(harness.startContinuation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resumeFallback: expect.objectContaining({
-          historyPreamble: expect.stringContaining('Build a reusable analysis workflow.')
-        })
-      })
-    )
-  })
-
-  it('rejects an unknown renderer replay target', async () => {
-    const harness = createHarness()
-
-    await expect(
-      harness.workflows.saveAsSkill({
-        ...harness.request,
-        historyReplay: { target: 'renderer-owned-policy' } as never
-      })
-    ).rejects.toThrow('history replay target is invalid')
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 

@@ -6,6 +6,8 @@ type SaveAsSkillSession = PersistedChatSession & {
   fixLoopActive?: boolean
   compacting?: boolean
   conversationGraphSyncBlocked?: boolean
+  branchContextResetRequired?: boolean
+  specialistSwitchResetRequired?: boolean
 }
 
 type SaveAsSkillAvailabilityInput = {
@@ -57,6 +59,8 @@ export const resolveSaveAsSkillAvailability = ({
               : session.interrupted ||
                   session.resumeRecovery ||
                   session.pendingHistoryReplay ||
+                  session.branchContextResetRequired ||
+                  session.specialistSwitchResetRequired ||
                   session.fixLoopActive ||
                   session.compacting
                 ? 'Resolve the current Session operation first.'

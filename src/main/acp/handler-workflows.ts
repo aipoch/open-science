@@ -38,13 +38,6 @@ const SAFE_RESUME_ERROR_KINDS = new Set([
   'conversation_restore_failed'
 ])
 const SAFE_RESUME_SERVICES = new Set(['session', 'provider', 'mcp', 'transport'])
-const SAVE_AS_SKILL_REPLAY_TARGETS = new Set<HistoryReplayTarget>([
-  'claude-code',
-  'opencode',
-  'codex-response',
-  'codex-bridge'
-])
-
 type AcpHandlerWorkflowRuntime = {
   getSnapshot(): AcpStateSnapshot
   hasLiveSession(projectId: string, sessionId: string): boolean
@@ -92,59 +85,6 @@ const safeRead = (value: object, key: string): unknown => {
   }
 }
 
-const resolveSaveAsSkillReplay = (
-  value: unknown
-): {
-  descriptor: HistoryReplayDescriptor
-  supportsImageInput?: boolean
-  contextReset: boolean
-} => {
-  if (typeof value !== 'object' || value === null) {
-    throw new Error('Save as skill history replay policy is invalid.')
-  }
-  const target = safeRead(value, 'target')
-  if (
-    typeof target !== 'string' ||
-    !SAVE_AS_SKILL_REPLAY_TARGETS.has(target as HistoryReplayTarget)
-  ) {
-    throw new Error('Save as skill history replay target is invalid.')
-  }
-  const contextWindow = safeRead(value, 'contextWindow')
-  if (
-    contextWindow !== undefined &&
-    (typeof contextWindow !== 'number' || !Number.isFinite(contextWindow) || contextWindow <= 0)
-  ) {
-    throw new Error('Save as skill history replay context window is invalid.')
-  }
-  const supportsImageInput = safeRead(value, 'supportsImageInput')
-  if (supportsImageInput !== undefined && typeof supportsImageInput !== 'boolean') {
-    throw new Error('Save as skill image replay policy is invalid.')
-  }
-  const contextReset = safeRead(value, 'contextReset')
-  if (contextReset !== undefined && contextReset !== true) {
-    throw new Error('Save as skill context reset policy is invalid.')
-  }
-
-  return {
-    descriptor: {
-      target: target as HistoryReplayTarget,
-      ...(typeof contextWindow === 'number' ? { contextWindow } : {})
-    },
-    ...(typeof supportsImageInput === 'boolean' ? { supportsImageInput } : {}),
-    contextReset: contextReset === true
-  }
-}
-
-type SaveAsSkillReplayPolicy = ReturnType<typeof resolveSaveAsSkillReplay>
-
-const frameworkForSaveAsSkillReplayTarget = (
-  target: HistoryReplayTarget
-): NonNullable<PersistedChatSession['agentFrameworkId']> => {
-  if (target === 'opencode') return 'opencode'
-  if (target === 'codex-response' || target === 'codex-bridge') return 'codex'
-  return 'claude-code'
-}
-
 const saveAsSkillReplayTargetForBackend = (
   backend: AcpBackendGenerationView
 ): HistoryReplayTarget => {
@@ -158,8 +98,7 @@ const saveAsSkillReplayTargetForBackend = (
 const prepareSaveAsSkillContinuation = (
   runtime: Pick<AcpHandlerWorkflowRuntime, 'captureSessionBackend' | 'hasLiveSession'>,
   session: PersistedChatSession | undefined,
-  request: AcpSaveAsSkillRequest,
-  replayPolicy: SaveAsSkillReplayPolicy
+  request: AcpSaveAsSkillRequest
 ): { session: PersistedChatSession; continuation: AcpPromptRequest } => {
   if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
     throw new Error('Save as skill Session is unavailable.')
@@ -168,10 +107,13 @@ const prepareSaveAsSkillContinuation = (
   if (
     !sessionBackend ||
     (session.agentFrameworkId && session.agentFrameworkId !== sessionBackend.framework.id) ||
-    (session.agentBackendId && session.agentBackendId !== sessionBackend.backendId) ||
-    replayPolicy.descriptor.target !== saveAsSkillReplayTargetForBackend(sessionBackend)
+    (session.agentBackendId && session.agentBackendId !== sessionBackend.backendId)
   ) {
-    throw new Error('Save as skill history replay target does not match the Session backend.')
+    throw new Error('Save as skill Session backend is unavailable or changed.')
+  }
+  const replayDescriptor: HistoryReplayDescriptor = {
+    target: saveAsSkillReplayTargetForBackend(sessionBackend),
+    ...(sessionBackend.context.window ? { contextWindow: sessionBackend.context.window } : {})
   }
   const preparedControlRun =
     session.status === 'running' && session.activeRun?.promptMessageId === request.promptMessageId
@@ -216,25 +158,21 @@ const prepareSaveAsSkillContinuation = (
   const latestFrameRuntimeSegment = graph.runtimeSegments
     .filter(({ agentFrameId }) => agentFrameId === frame.id)
     .at(-1)
-  const expectedFramework = frameworkForSaveAsSkillReplayTarget(replayPolicy.descriptor.target)
   const verifiedContextReset = Boolean(
     controlMessage.runtimeSegmentId &&
     previousMessage.runtimeSegmentId &&
     controlMessage.runtimeSegmentId !== previousMessage.runtimeSegmentId &&
     controlRuntimeSegment?.id === latestFrameRuntimeSegment?.id &&
     controlRuntimeSegment?.agentFrameId === frame.id &&
-    controlRuntimeSegment?.frameworkId === expectedFramework &&
-    (!session.agentFrameworkId || session.agentFrameworkId === expectedFramework)
+    controlRuntimeSegment?.frameworkId === sessionBackend.framework.id &&
+    (!session.agentFrameworkId || session.agentFrameworkId === sessionBackend.framework.id)
   )
-  if (replayPolicy.contextReset !== verifiedContextReset) {
-    throw new Error('Save as skill context reset does not match the durable Runtime Segment.')
-  }
 
   const historyReplay = buildSessionHistoryReplay(
     activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),
-    replayPolicy.descriptor,
+    replayDescriptor,
     session.projectId,
-    replayPolicy.supportsImageInput
+    sessionBackend.context.supportsImageInput
   )
   if (!historyReplay) {
     throw new Error('Save as skill conversation history could not be replayed.')
@@ -390,12 +328,10 @@ const createAcpHandlerWorkflows = (
   async saveAsSkill(request): Promise<AcpStateSnapshot> {
     const save = async (): Promise<AcpStateSnapshot> => {
       if (!interruptedTurnSessions) throw new Error('Save as skill is not available.')
-      const replayPolicy = resolveSaveAsSkillReplay(request.historyReplay)
       const prepared = prepareSaveAsSkillContinuation(
         runtime,
         await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
-        request,
-        replayPolicy
+        request
       )
       const tracked = taskNotifications?.trackPrompt({
         sessionId: prepared.session.id,
@@ -407,8 +343,7 @@ const createAcpHandlerWorkflows = (
           const admitted = prepareSaveAsSkillContinuation(
             runtime,
             await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
-            request,
-            replayPolicy
+            request
           )
           if (!isDeepStrictEqual(admitted.continuation, prepared.continuation)) {
             throw new Error('Save as skill Session changed before provider admission.')

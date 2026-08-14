@@ -70,7 +70,8 @@ const {
       disconnect,
       captureBackend: vi.fn().mockReturnValue({
         framework: { id: 'claude-code' },
-        modelRoute: 'claude-anthropic'
+        modelRoute: 'claude-anthropic',
+        context: { window: 100_000, supportsImageInput: true }
       }),
       resetSessionContext,
       resumeSession,
@@ -349,8 +350,7 @@ describe('ACP module transport seam', () => {
         sessionId: session.id,
         agentFrameId: frame.id,
         messageBranchId: frame.activeBranchId,
-        promptMessageId: 'save-as-skill-control',
-        historyReplay: { target: 'claude-code' }
+        promptMessageId: 'save-as-skill-control'
       }
     )
 

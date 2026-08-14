@@ -16,9 +16,7 @@ type WorkspaceSaveAsSkillOwnerOptions = {
 
 type WorkspaceSaveAsSkillOwner = {
   saveAsSkillInFlightSessionIds: string[]
-  saveAsSkill: (
-    request: Omit<AcpSaveAsSkillRequest, 'historyReplay' | 'promptMessageId'>
-  ) => Promise<void>
+  saveAsSkill: (request: Omit<AcpSaveAsSkillRequest, 'promptMessageId'>) => Promise<void>
 }
 
 // Owns local admission from the click through provider acceptance. Every consumer observes the
@@ -32,9 +30,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
   const [saveAsSkillInFlightSessionIds, setSaveAsSkillInFlightSessionIds] = useState<string[]>([])
 
   const saveAsSkill = useCallback(
-    async (
-      request: Omit<AcpSaveAsSkillRequest, 'historyReplay' | 'promptMessageId'>
-    ): Promise<void> => {
+    async (request: Omit<AcpSaveAsSkillRequest, 'promptMessageId'>): Promise<void> => {
       if (inFlightRef.current.has(request.sessionId)) return
       inFlightRef.current.add(request.sessionId)
       setSaveAsSkillInFlightSessionIds((current) => [...current, request.sessionId])
@@ -107,11 +103,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
         await flushSessionPersistence()
         await window.api.acp.saveAsSkill({
           ...request,
-          promptMessageId: controlMessage.messageId,
-          historyReplay: {
-            ...replayPolicy,
-            ...(contextReset ? { contextReset: true as const } : {})
-          }
+          promptMessageId: controlMessage.messageId
         })
         prepared.acceptPrompt(controlMessage.messageId)
         if (contextReset) {

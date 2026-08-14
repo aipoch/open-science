@@ -97,4 +97,14 @@ describe('Save as skill availability', () => {
   it('requires Side chat to be closed', () => {
     expect(availability({ sideChatOpen: true }).disabledReason).toContain('Close Side chat')
   })
+
+  it('waits for pending Branch and Specialist replay state', () => {
+    expect(
+      availability({ session: { ...session(), branchContextResetRequired: true } }).disabledReason
+    ).toContain('Session operation')
+    expect(
+      availability({ session: { ...session(), specialistSwitchResetRequired: true } })
+        .disabledReason
+    ).toContain('Session operation')
+  })
 })

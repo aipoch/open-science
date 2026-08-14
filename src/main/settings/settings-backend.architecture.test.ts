@@ -501,7 +501,7 @@ describe('Settings backend ownership architecture', () => {
         getPreflight getRuntimeEnablement getRuntimeSelection getSettingsView getSkillDetail
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
         importSkillZipBatch installClaude installCodex installOpencode isEncryptionAvailable
-        isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog
+        isNpmAvailable listAgentHomeSkills listConnectors listHostSkills listSkills listSpecialistSkillCatalog listUserSkills
         loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex markOnboardingComplete
         markPathsNormalized previewAgentHomeSkill previewCustomServerTemplateExport

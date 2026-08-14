@@ -735,15 +735,6 @@ export type AcpSaveAsSkillRequest = {
   messageBranchId: string
   // Durable hidden control Message created on the active Branch before dispatch.
   promptMessageId: string
-  // A detached provider needs the durable active Branch replayed after fresh adoption. Main builds
-  // the replay from persisted messages; renderer supplies only the framework-specific budget policy.
-  historyReplay: Pick<
-    import('./history-preamble').HistoryReplayDescriptor,
-    'target' | 'contextWindow'
-  > & {
-    supportsImageInput?: boolean
-    contextReset?: true
-  }
 }
 
 export type AcpSetPermissionProfileRequest = {

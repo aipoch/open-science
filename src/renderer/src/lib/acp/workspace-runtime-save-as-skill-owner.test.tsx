@@ -126,12 +126,7 @@ describe('workspace Save as skill owner', () => {
     expect(flushSessionPersistence).toHaveBeenCalledOnce()
     expect(saveAsSkill).toHaveBeenCalledWith({
       ...request,
-      promptMessageId: expect.any(String),
-      historyReplay: {
-        target: 'claude-code',
-        contextWindow: 100_000,
-        supportsImageInput: true
-      }
+      promptMessageId: expect.any(String)
     })
 
     await act(async () => {
@@ -196,12 +191,9 @@ describe('workspace Save as skill owner', () => {
     expect(rejected?.pendingHistoryReplay).toEqual({ kind: 'all' })
   })
 
-  it.each([
-    { contextReset: false, expectedContextReset: undefined },
-    { contextReset: true, expectedContextReset: true }
-  ])(
+  it.each([{ contextReset: false }, { contextReset: true }])(
     'replays history after resume only when contextReset is $contextReset',
-    async ({ contextReset, expectedContextReset }) => {
+    async ({ contextReset }) => {
       useSessionStore.setState({ sessions: [session] })
       const originalRuntimeSegmentId = session.conversationGraph?.runtimeSegments.at(-1)?.id
       const originalRuntimeSegmentCount = session.conversationGraph?.runtimeSegments.length ?? 0
@@ -264,13 +256,7 @@ describe('workspace Save as skill owner', () => {
         sessionId: session.id,
         agentFrameId: frame.id,
         messageBranchId: frame.activeBranchId,
-        promptMessageId: controlMessage?.id,
-        historyReplay: {
-          target: 'claude-code',
-          contextWindow: 100_000,
-          supportsImageInput: true,
-          ...(expectedContextReset ? { contextReset: expectedContextReset } : {})
-        }
+        promptMessageId: controlMessage?.id
       })
     }
   )
@@ -359,12 +345,9 @@ describe('workspace Save as skill owner', () => {
       })
       expect(saveAsSkill).toHaveBeenCalledWith(
         expect.objectContaining({
-          historyReplay: {
-            target: 'opencode',
-            contextWindow: 200_000,
-            supportsImageInput: false,
-            contextReset: true
-          }
+          projectId: original.projectId,
+          sessionId: original.id,
+          promptMessageId: expect.any(String)
         })
       )
     }
@@ -422,7 +405,7 @@ describe('workspace Save as skill owner', () => {
       saveAsSkill.mock.invocationCallOrder[0]
     )
     expect(saveAsSkill).toHaveBeenCalledWith(
-      expect.objectContaining({ historyReplay: expect.objectContaining({ contextReset: true }) })
+      expect.objectContaining({ promptMessageId: expect.any(String) })
     )
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBeUndefined()
   })
@@ -464,7 +447,7 @@ describe('workspace Save as skill owner', () => {
     )
 
     expect(saveAsSkill).toHaveBeenCalledWith(
-      expect.objectContaining({ historyReplay: expect.objectContaining({ contextReset: true }) })
+      expect.objectContaining({ promptMessageId: expect.any(String) })
     )
     expect(useSessionStore.getState().sessions[0].specialistSwitchResetRequired).toBeUndefined()
   })

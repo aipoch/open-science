@@ -3130,8 +3130,10 @@ describe('ConversationPanel + menu', () => {
     const disabledItem = container.querySelector<HTMLButtonElement>(
       '[data-testid="menu-save-as-skill"]'
     )
-    expect(disabledItem?.disabled).toBe(true)
-    expect(disabledItem?.title).toContain('Wait for')
+    expect(disabledItem?.disabled).toBe(false)
+    expect(disabledItem?.getAttribute('aria-disabled')).toBe('true')
+    act(() => disabledItem?.click())
+    expect(request).toHaveBeenCalledOnce()
   })
 
   it('Request review is disabled when isRequestReviewDisabled is true', () => {

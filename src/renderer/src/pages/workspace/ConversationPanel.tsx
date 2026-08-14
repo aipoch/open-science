@@ -1311,24 +1311,44 @@ const ConversationPanel = ({
                               </span>
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              data-testid="menu-save-as-skill"
-                              disabled={isSaveAsSkillDisabled}
-                              title={saveAsSkillDisabledReason}
-                              onSelect={() => {
-                                if (!isSaveAsSkillDisabled) onSaveAsSkill()
-                              }}
-                              className="items-center gap-2"
-                            >
-                              <BookMarked
-                                className="size-4 shrink-0 text-text-200"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                              <span className="text-[13px] font-medium leading-5">
-                                Save as skill
-                              </span>
-                            </DropdownMenuItem>
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <DropdownMenuItem
+                                    data-testid="menu-save-as-skill"
+                                    aria-disabled={isSaveAsSkillDisabled}
+                                    onSelect={(event) => {
+                                      if (isSaveAsSkillDisabled) {
+                                        event.preventDefault()
+                                        return
+                                      }
+                                      onSaveAsSkill()
+                                    }}
+                                    className={cn(
+                                      'items-center gap-2',
+                                      isSaveAsSkillDisabled && 'cursor-not-allowed opacity-50'
+                                    )}
+                                  >
+                                    <BookMarked
+                                      className="size-4 shrink-0 text-text-200"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                    <span className="text-[13px] font-medium leading-5">
+                                      Save as skill
+                                    </span>
+                                  </DropdownMenuItem>
+                                </TooltipTrigger>
+                                {saveAsSkillDisabledReason ? (
+                                  <TooltipContent
+                                    side="right"
+                                    className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
+                                  >
+                                    {saveAsSkillDisabledReason}
+                                  </TooltipContent>
+                                ) : null}
+                              </Tooltip>
+                            </TooltipProvider>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               data-testid="menu-context-window"
