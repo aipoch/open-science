@@ -266,6 +266,7 @@ const WorkspacePage = ({
     loadSpecialists,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
+    saveAsSkillInFlightSessionIds,
     hasUnfinishedTransfers: (sessionId) => composer.lifecycle.hasUnfinishedTransfers(sessionId),
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
