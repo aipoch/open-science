@@ -118,6 +118,7 @@ type AttemptAgentEvent =
   | Readonly<{
       kind: 'activity-group'
       activityGroup: PersistedActivityGroup
+      runtimeSegmentId?: string
       promptMessageId: string
     }>
 
@@ -126,6 +127,7 @@ type AttemptAgentEventInput = Readonly<{
   frameId: string
   attemptId: string
   event: AttemptAgentEvent
+  allowTerminalEvidence?: true
 }>
 
 type TransitionAttemptInput = Readonly<{
@@ -136,6 +138,7 @@ type TransitionAttemptInput = Readonly<{
   endedAt: number
   terminalMessageId?: string
   cancellationReason?: DelegatedWorkCancellationReason
+  questionReason?: string
   error?: Readonly<{ code: string; message: string }>
 }>
 
@@ -216,7 +219,10 @@ type DelegatedWorkRecordCommands = Readonly<{
   ): Promise<void>
   startAttemptRuntime(key: SessionKey, input: StartAttemptRuntimeInput): Promise<void>
   applyAgentEvent(key: SessionKey, input: AttemptAgentEventInput): Promise<void>
-  transitionAttempt(key: SessionKey, input: TransitionAttemptInput): Promise<void>
+  transitionAttempt(
+    key: SessionKey,
+    input: TransitionAttemptInput
+  ): Promise<'transitioned' | 'already_terminal'>
   admitMessageCommand(
     key: SessionKey,
     input: AdmitMessageCommandInput

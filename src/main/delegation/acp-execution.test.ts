@@ -13,7 +13,7 @@ import {
   type DelegatedWorkCertificationDriver
 } from './certification-contract.test'
 import { delegateExecutionContract } from './execution-contract.test'
-import type { DelegateExecutionInput } from './execution-port'
+import type { DelegateExecutionEvent, DelegateExecutionInput } from './execution-port'
 
 type Deferred<Value> = Readonly<{
   promise: Promise<Value>
@@ -628,6 +628,230 @@ describe('ACP delegate execution production adapter', () => {
     })
     await expect(running.completion).resolves.toEqual({ status: 'cancelled' })
     expect(createRuntime).not.toHaveBeenCalled()
+    await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
+  })
+
+  it('settles cancellation when the terminated provider prompt never returns', async () => {
+    const prompt = deferred<PromptResponse>()
+    const cleanup: string[] = []
+    let callbacks!: AcpDelegateExecutionCallbacks
+    const execution = createAcpDelegateExecution({
+      capacity: 1,
+      prepare: async (input) => ({
+        executionId: input.attemptId,
+        provenance: {
+          projectId: input.session.projectId,
+          sessionId: input.session.sessionId,
+          agentFrameId: input.frameId,
+          runtimeSegmentId: input.runtimeSegmentId
+        },
+        workspace: { cwd: '/workspace/terminated-provider' },
+        runtimeHome: '/runtime/terminated-provider',
+        frameworkId: 'certified-test',
+        capability: {
+          revoke: async () => {
+            cleanup.push('revoke')
+          }
+        },
+        disposeResources: async () => {
+          cleanup.push('resources')
+        }
+      }),
+      assertFrameworkNativeDelegationDisabled: async () => undefined,
+      createRuntime: (_scope, runtimeCallbacks) => {
+        callbacks = runtimeCallbacks
+        return {
+          createSession: async () => ({ sessionId: 'provider-terminated' }),
+          sendAppContinuation: () => {
+            callbacks.onProviderPromptAccepted('provider-terminated')
+            return prompt.promise
+          },
+          cancelPrompt: async () => undefined,
+          respondToPermission: async () => undefined,
+          setPermissionProfile: async () => undefined,
+          deleteSession: async () => {
+            cleanup.push('delete')
+          },
+          shutdownForQuit: async () => {
+            cleanup.push('shutdown')
+            return { reaped: true }
+          }
+        }
+      }
+    })
+    const reservation = await execution.reserve(1)
+    const running = execution.run(makeInput('terminated-provider'), reservation.slotIds[0])
+    await running.accepted
+
+    await expect(running.cancel()).resolves.toBeUndefined()
+    await expect(running.completion).resolves.toEqual({ status: 'cancelled' })
+    await vi.waitFor(() => expect(cleanup).toEqual(['revoke', 'delete', 'shutdown', 'resources']))
+    await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
+  })
+
+  it('keeps same-Attempt observations open after cancellation until transport shutdown', async () => {
+    const prompt = deferred<PromptResponse>()
+    const shutdown = deferred<{ reaped: boolean }>()
+    let callbacks!: AcpDelegateExecutionCallbacks
+    const execution = createAcpDelegateExecution({
+      capacity: 1,
+      prepare: async (input) => ({
+        executionId: input.attemptId,
+        provenance: {
+          projectId: input.session.projectId,
+          sessionId: input.session.sessionId,
+          agentFrameId: input.frameId,
+          runtimeSegmentId: input.runtimeSegmentId,
+          promptMessageId: `prompt-${input.attemptId}`
+        },
+        workspace: { cwd: '/workspace/late-observation' },
+        runtimeHome: '/runtime/late-observation',
+        frameworkId: 'certified-test',
+        capability: { revoke: async () => undefined }
+      }),
+      assertFrameworkNativeDelegationDisabled: async () => undefined,
+      createRuntime: (_scope, runtimeCallbacks) => {
+        callbacks = runtimeCallbacks
+        return {
+          createSession: async () => ({ sessionId: 'provider-late-observation' }),
+          sendAppContinuation: () => {
+            callbacks.onProviderPromptAccepted('provider-late-observation')
+            return prompt.promise
+          },
+          cancelPrompt: async () => undefined,
+          respondToPermission: async () => undefined,
+          setPermissionProfile: async () => undefined,
+          deleteSession: async () => undefined,
+          shutdownForQuit: () => shutdown.promise
+        }
+      }
+    })
+    const reservation = await execution.reserve(1)
+    const running = execution.run(makeInput('late-observation'), reservation.slotIds[0])
+    const events: DelegateExecutionEvent[] = []
+    running.subscribe((event) => events.push(event))
+    await running.accepted
+
+    const cancelling = running.cancel()
+    await expect(running.completion).resolves.toEqual({ status: 'cancelled' })
+    callbacks.onEvent({
+      sessionId: 'provider-late-observation',
+      id: 'late-message',
+      timestamp: 20,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      text: 'Preserve this tail.'
+    })
+    callbacks.onEvent({
+      sessionId: 'provider-late-observation',
+      id: 'late-message',
+      timestamp: 20,
+      kind: 'message',
+      level: 'info',
+      role: 'assistant',
+      text: 'Preserve this tail.'
+    })
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'runtime',
+        update: expect.objectContaining({
+          event: expect.objectContaining({ id: 'late-message', text: 'Preserve this tail.' })
+        })
+      })
+    ])
+    shutdown.resolve({ reaped: true })
+    await cancelling
+  })
+
+  it('does not start a provider prompt when cancellation lands during deferred Turn begin', async () => {
+    const { execution, controls } = makeHarness(1)
+    const begin = deferred<void>()
+    const reservation = await execution.reserve(1)
+    const running = execution.run(
+      {
+        ...makeInput('deferred-begin'),
+        turn: {
+          promptMessageId: 'prompt-deferred-begin',
+          messageBranchId: 'branch-deferred-begin',
+          runtimeSegmentId: 'segment-deferred-begin',
+          begin: () => begin.promise
+        }
+      },
+      reservation.slotIds[0]
+    )
+    await vi.waitFor(() => expect(controls.has('deferred-begin')).toBe(true))
+
+    await running.cancel()
+    begin.resolve()
+
+    await expect(running.accepted).rejects.toMatchObject({
+      name: 'DelegateMessagePreAcceptanceError'
+    })
+    await expect(running.completion).resolves.toEqual({ status: 'cancelled' })
+    await vi.waitFor(() => expect(controls.get('deferred-begin')?.prompts).toEqual([]))
+  })
+
+  it('reports cleanup failure and retries only the unfinished cleanup step', async () => {
+    let revokeAttempts = 0
+    const cleanup: string[] = []
+    let callbacks!: AcpDelegateExecutionCallbacks
+    const execution = createAcpDelegateExecution({
+      capacity: 1,
+      prepare: async (input) => ({
+        executionId: input.attemptId,
+        provenance: {
+          projectId: input.session.projectId,
+          sessionId: input.session.sessionId,
+          agentFrameId: input.frameId,
+          runtimeSegmentId: input.runtimeSegmentId
+        },
+        workspace: { cwd: '/workspace/retry-cleanup' },
+        runtimeHome: '/runtime/retry-cleanup',
+        frameworkId: 'certified-test',
+        capability: {
+          async revoke() {
+            revokeAttempts += 1
+            if (revokeAttempts === 1) throw new Error('revoke failed once')
+            cleanup.push('revoke')
+          }
+        },
+        disposeResources: async () => {
+          cleanup.push('resources')
+        }
+      }),
+      assertFrameworkNativeDelegationDisabled: async () => undefined,
+      createRuntime: (_scope, runtimeCallbacks) => {
+        callbacks = runtimeCallbacks
+        return {
+          createSession: async () => ({ sessionId: 'provider-retry-cleanup' }),
+          sendAppContinuation: () => {
+            callbacks.onProviderPromptAccepted('provider-retry-cleanup')
+            return new Promise<PromptResponse>(() => undefined)
+          },
+          cancelPrompt: async () => undefined,
+          respondToPermission: async () => undefined,
+          setPermissionProfile: async () => undefined,
+          deleteSession: async () => {
+            cleanup.push('delete')
+          },
+          shutdownForQuit: async () => {
+            cleanup.push('shutdown')
+            return { reaped: true }
+          }
+        }
+      }
+    })
+    const reservation = await execution.reserve(1)
+    const running = execution.run(makeInput('retry-cleanup'), reservation.slotIds[0])
+    await running.accepted
+
+    await expect(running.cancel()).rejects.toThrow('revoke failed once')
+    await expect(running.cancel()).resolves.toBeUndefined()
+
+    expect(revokeAttempts).toBe(2)
+    expect(cleanup).toEqual(['revoke', 'delete', 'shutdown', 'resources'])
     await expect(execution.reserve(1)).resolves.toHaveProperty('slotIds')
   })
 

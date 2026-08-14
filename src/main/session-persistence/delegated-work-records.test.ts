@@ -596,7 +596,7 @@ describe('delegated-work Session records', () => {
   })
 
   it('fences terminal Attempts and admits only one same-Frame continuation', async () => {
-    const { coordinator } = createHarness()
+    const { coordinator, durable } = createHarness()
     const rootFrameId = createRootSession().conversationGraph!.rootFrameId
     await coordinator.createChildren(key, {
       expectedRevision: 0,
@@ -638,6 +638,50 @@ describe('delegated-work Session records', () => {
       endedAt: 22,
       terminalMessageId: 'terminal-1'
     })
+    const lateEvidenceEvent = {
+      kind: 'message' as const,
+      runtimeSegmentId: 'segment-1',
+      message: {
+        id: 'late-evidence',
+        role: 'agent' as const,
+        content: 'Captured before transport closed.',
+        responseToMessageId: 'child-prompt-1',
+        status: 'complete' as const,
+        eventIds: ['late-event-1'],
+        createdAt: 24,
+        updatedAt: 24
+      }
+    }
+    await expect(
+      coordinator.applyAgentEvent(key, {
+        expectedRevision: 4,
+        frameId: 'child-frame-1',
+        attemptId: 'attempt-1',
+        allowTerminalEvidence: true,
+        event: {
+          ...lateEvidenceEvent,
+          message: { ...lateEvidenceEvent.message, responseToMessageId: rootPrompt.id }
+        }
+      })
+    ).rejects.toThrow('prompt provenance')
+    await expect(
+      coordinator.applyAgentEvent(key, {
+        expectedRevision: 4,
+        frameId: 'child-frame-1',
+        attemptId: 'attempt-1',
+        allowTerminalEvidence: true,
+        event: lateEvidenceEvent
+      })
+    ).resolves.toBeUndefined()
+    await expect(
+      coordinator.applyAgentEvent(key, {
+        expectedRevision: 5,
+        frameId: 'child-frame-1',
+        attemptId: 'attempt-1',
+        allowTerminalEvidence: true,
+        event: lateEvidenceEvent
+      })
+    ).resolves.toBeUndefined()
     const continuationCommand = (
       suffix: string,
       attemptId: string
@@ -664,7 +708,7 @@ describe('delegated-work Session records', () => {
 
     const attempts = await Promise.allSettled([
       coordinator.startContinuationAttempt(key, {
-        expectedRevision: 4,
+        expectedRevision: 6,
         frameId: 'child-frame-1',
         previousAttemptId: 'attempt-1',
         attemptId: 'attempt-2',
@@ -677,7 +721,7 @@ describe('delegated-work Session records', () => {
         messageCommand: continuationCommand('2', 'attempt-2')
       }),
       coordinator.startContinuationAttempt(key, {
-        expectedRevision: 4,
+        expectedRevision: 6,
         frameId: 'child-frame-1',
         previousAttemptId: 'attempt-1',
         attemptId: 'attempt-3',
@@ -694,7 +738,7 @@ describe('delegated-work Session records', () => {
     expect(attempts.map(({ status }) => status).sort()).toEqual(['fulfilled', 'rejected'])
     await expect(
       coordinator.applyAgentEvent(key, {
-        expectedRevision: 5,
+        expectedRevision: 7,
         frameId: 'child-frame-1',
         attemptId: 'attempt-1',
         event: {
@@ -712,6 +756,40 @@ describe('delegated-work Session records', () => {
         }
       })
     ).rejects.toMatchObject({ code: 'attempt-conflict' })
+    await expect(
+      coordinator.applyAgentEvent(key, {
+        expectedRevision: 7,
+        frameId: 'child-frame-1',
+        attemptId: 'attempt-1',
+        allowTerminalEvidence: true,
+        event: lateEvidenceEvent
+      })
+    ).rejects.toMatchObject({ code: 'attempt-conflict' })
+    expect(durable().conversationGraph?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'late-evidence',
+          content: 'Captured before transport closed.',
+          eventIds: ['late-event-1']
+        })
+      ])
+    )
+    expect(durable().runtimeContext?.delegatedWork?.records[0].attempts[0]).toMatchObject({
+      id: 'attempt-1',
+      status: 'completed'
+    })
+    const reopened = createHarness(durable())
+    await expect(reopened.coordinator.readChildren(key, rootFrameId)).resolves.toMatchObject([
+      {
+        frameId: 'child-frame-1',
+        record: { attempts: [{ id: 'attempt-1', status: 'completed' }, { status: 'running' }] }
+      }
+    ])
+    expect(reopened.durable().conversationGraph?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'late-evidence', eventIds: ['late-event-1'] })
+      ])
+    )
     await expect(coordinator.readChildren(key, rootFrameId)).resolves.toMatchObject([
       {
         frameId: 'child-frame-1',
@@ -719,6 +797,82 @@ describe('delegated-work Session records', () => {
         record: { attempts: [{ id: 'attempt-1', status: 'completed' }, { status: 'running' }] }
       }
     ])
+  })
+
+  it('atomically cancels a pending question without rewriting its completed Attempt', async () => {
+    const { coordinator, durable } = createHarness()
+    const rootFrameId = durable().conversationGraph!.rootFrameId
+    await coordinator.createChildren(key, {
+      expectedRevision: 0,
+      parentFrameId: rootFrameId,
+      originMessageId: rootPrompt.id,
+      children: [child(1)]
+    })
+    await coordinator.startAttemptRuntime(key, {
+      expectedRevision: 1,
+      frameId: 'child-frame-1',
+      attemptId: 'attempt-1',
+      runtimeSegmentId: 'segment-1',
+      frameworkId: 'codex',
+      startedAt: 20
+    })
+    const startedGraph = durable().conversationGraph!
+    const sourceBranchId = startedGraph.frames.find(
+      ({ id }) => id === 'child-frame-1'
+    )!.activeBranchId
+    const rootBranchId = startedGraph.frames.find(({ id }) => id === rootFrameId)!.activeBranchId
+    await coordinator.admitQuestion(key, {
+      expectedRevision: 2,
+      request: {
+        requestId: 'pending-question',
+        canonicalDigest: 'a'.repeat(64),
+        sourceFrameId: 'child-frame-1',
+        sourceAttemptId: 'attempt-1',
+        sourceRuntimeSegmentId: 'segment-1',
+        sourceMessageBranchId: sourceBranchId,
+        rootOriginMessageId: rootPrompt.id,
+        rootBranchId,
+        sourceName: 'Child 1',
+        questions: [
+          {
+            header: 'Continue',
+            question: 'Continue?',
+            options: [
+              { label: 'Yes', description: 'Continue the work.' },
+              { label: 'No', description: 'Stop the work.' }
+            ]
+          }
+        ],
+        askedAt: 21,
+        status: 'pending',
+        draftAnswers: [],
+        draftQuestionIndex: 0
+      }
+    })
+    await coordinator.transitionAttempt(key, {
+      expectedRevision: 3,
+      frameId: 'child-frame-1',
+      attemptId: 'attempt-1',
+      status: 'error',
+      endedAt: 22,
+      error: { code: 'execution_failure', message: 'Waiting for user input.' }
+    })
+
+    await expect(
+      coordinator.transitionAttempt(key, {
+        expectedRevision: 4,
+        frameId: 'child-frame-1',
+        attemptId: 'attempt-1',
+        status: 'cancelled',
+        endedAt: 23,
+        cancellationReason: 'main_agent_stop',
+        questionReason: 'Subagent was stopped.'
+      })
+    ).resolves.toBe('transitioned')
+    expect(durable().runtimeContext?.delegatedWork).toMatchObject({
+      records: [{ attempts: [{ id: 'attempt-1', status: 'error' }] }],
+      questionRequests: [{ requestId: 'pending-question', status: 'cancelled' }]
+    })
   })
 
   it('does not publish partial child state when the atomic Session save fails', async () => {

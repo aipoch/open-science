@@ -303,6 +303,28 @@ const createInMemoryDelegatedWorkRecords = (input: {
           : request
       )
     },
+    async cancelAttempt(input) {
+      const child = state.records.find((candidate) => candidate.frameId === input.frameId)
+      const attempt = child && currentAttempt(child)
+      let cancelledQuestion = false
+      state.questionRequests = state.questionRequests.map((request) => {
+        if (request.sourceFrameId !== input.frameId || request.status !== 'pending') return request
+        cancelledQuestion = true
+        return {
+          ...request,
+          status: 'cancelled' as const,
+          respondedAt: input.endedAt,
+          failure: { code: 'cancelled', message: input.questionReason }
+        }
+      })
+      if (!attempt || attempt.id !== input.attemptId || attempt.status !== 'running') {
+        return cancelledQuestion ? 'cancelled' : 'already_terminal'
+      }
+      attempt.status = 'cancelled'
+      attempt.endedAt = input.endedAt
+      attempt.cancellationReason = input.cancellationReason
+      return 'cancelled'
+    },
     async startRuntime(frameId, attemptId, runtimeSegmentId) {
       findRunning(frameId, attemptId).runtimeSegmentIds.push(runtimeSegmentId)
       const child = state.records.find((candidate) => candidate.frameId === frameId)!
@@ -319,15 +341,22 @@ const createInMemoryDelegatedWorkRecords = (input: {
       }
     },
     async stageTerminalMessage(frameId, attemptId, message) {
-      findRunning(frameId, attemptId)
+      const child = state.records.find((candidate) => candidate.frameId === frameId)
+      const attempt = child?.attempts.find((candidate) => candidate.id === attemptId)
+      if (!attempt) {
+        throw new Error('Terminal Message provenance is outside the delegated Attempt.')
+      }
       if (message.frameId !== frameId || message.role !== 'assistant') {
         throw new Error('Terminal Message does not belong to the delegated Attempt.')
       }
-      const existing = state.messages.find((candidate) => candidate.id === message.id)
-      if (existing && JSON.stringify(existing) !== JSON.stringify(message)) {
-        throw new Error('Terminal Message identity is already in use.')
-      }
-      if (!existing) state.messages.push({ ...message })
+      const existingIndex = state.messages.findIndex((candidate) => candidate.id === message.id)
+      if (existingIndex >= 0) {
+        const existing = state.messages[existingIndex]
+        if (existing.frameId !== frameId || existing.role !== 'assistant') {
+          throw new Error('Terminal Message identity is already in use.')
+        }
+        state.messages[existingIndex] = structuredClone(message)
+      } else state.messages.push(structuredClone(message))
     },
     async terminalize(terminal) {
       const attempt = findRunning(terminal.frameId, terminal.attemptId)

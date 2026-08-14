@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
 import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
+import type { DelegateExecution } from '../delegation/execution-port'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
 let server: NotebookLocalRpcServer | undefined
@@ -505,6 +506,92 @@ describe('authenticated delegatedWorkCall route', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       result: [{ frameId: receipt.children[0].frameId, status: 'cancelled' }]
+    })
+    endInvocation()
+    connection.release()
+  })
+
+  it('returns a successful child stop response while provider and lease cleanup remain hung', async () => {
+    const session = { projectId: 'trusted-project', sessionId: 'trusted-session' }
+    const neverSettles = new Promise<void>(() => undefined)
+    const cancel = vi.fn(() => neverSettles)
+    const release = vi.fn(() => neverSettles)
+    const execution: DelegateExecution = {
+      async reserve() {
+        return { slotIds: ['hung-rpc-slot'], release, releaseAll: release }
+      },
+      run() {
+        return {
+          accepted: Promise.resolve('provider_prompt_accepted'),
+          completion: new Promise(() => undefined),
+          subscribe: () => () => undefined,
+          sendMessage: async () => 'provider_prompt_accepted',
+          setPermissionProfile: async () => undefined,
+          respondToPermission: async () => undefined,
+          cancel
+        }
+      }
+    }
+    const records = createInMemoryDelegatedWorkRecords({
+      session,
+      rootFrameId: 'trusted-root-frame',
+      originMessageId: 'trusted-origin-message'
+    })
+    const work = createDurableDelegatedWork({ execution, records })
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      delegatedWorkService: work
+    })
+    const connection = await server.issueControlConnection(
+      session.sessionId,
+      session.projectId,
+      'trusted-root-frame'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'trusted-tool-call',
+      originatingUserMessageId: 'trusted-origin-message'
+    })
+    const receipt = await work.delegate(
+      {
+        session,
+        frameId: 'trusted-root-frame',
+        role: 'main',
+        originMessageId: 'trusted-origin-message',
+        toolInvocationId: 'direct-admission'
+      },
+      { task: 'Stop hung runtime through host', name: 'Stop hung runtime through host' },
+      { wait: false }
+    )
+    await expect
+      .poll(async () => (await records.snapshot()).records[0]?.attempts[0]?.runtimeSegmentIds)
+      .toHaveLength(1)
+
+    const response = await fetch(connection.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        method: 'delegatedWorkCall',
+        params: {
+          operation: 'stop_children',
+          frame_ids: [receipt.children[0].frameId]
+        }
+      })
+    })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({
+      result: [{ frameId: receipt.children[0].frameId, status: 'cancelled' }]
+    })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+    await expect(work.sessionSummary(session)).resolves.toMatchObject({
+      runningCount: 0,
+      children: [{ status: 'cancelled' }]
     })
     endInvocation()
     connection.release()

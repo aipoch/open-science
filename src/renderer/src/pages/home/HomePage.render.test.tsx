@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectFilesChangedEvent } from '../../../../shared/project-files'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
+import { validateConversationGraph } from '../../../../shared/conversation-graph'
+import { sanitizeSessionRuntimeContext } from '../../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -109,7 +111,8 @@ const sessionWithPendingDelegatedQuestion = (
         delegateName: 'Researcher',
         status: 'completed',
         activeBranchId: 'child-branch',
-        createdAt: 2
+        createdAt: 2,
+        completedAt: 2
       }
     ],
     branches: [
@@ -148,19 +151,44 @@ const sessionWithPendingDelegatedQuestion = (
         eventIds: [],
         agentFrameId: 'child',
         introducedOnBranchId: 'child-branch',
+        runtimeSegmentId: 'runtime-1',
         createdAt: 2,
-        updatedAt: 2
+        updatedAt: 2,
+        completedAt: 2
       }
     ],
     activities: [],
     activityGroups: [],
-    runtimeSegments: []
+    runtimeSegments: [
+      {
+        id: 'runtime-1',
+        agentFrameId: 'child',
+        frameworkId: 'claude-code',
+        startedAt: 1,
+        endedAt: 2
+      }
+    ]
   },
   runtimeContext: {
     version: 1,
     revision: 1,
     delegatedWork: {
-      records: [],
+      records: [
+        {
+          agentFrameId: 'child',
+          attempts: [
+            {
+              id: 'attempt-1',
+              status: 'completed',
+              resolvedAgent: { kind: 'main' },
+              runtimeSegmentIds: ['runtime-1'],
+              startedAt: 1,
+              endedAt: 2,
+              terminalMessageId: 'child-message'
+            }
+          ]
+        }
+      ],
       questionRequests: [
         {
           requestId: 'question-1',
@@ -545,6 +573,15 @@ describe('HomePage environment repair notice', () => {
 })
 
 describe('HomePage activity overview', () => {
+  it('uses a persistence-valid completed Attempt for the pending delegated-question fixture', () => {
+    const candidate = sessionWithPendingDelegatedQuestion('idle', 600_000)
+
+    expect(sanitizeSessionRuntimeContext(candidate.runtimeContext)).toEqual(
+      candidate.runtimeContext
+    )
+    expect(() => validateConversationGraph(candidate.conversationGraph!)).not.toThrow()
+  })
+
   it('matches the shared session menu and opens Project Settings', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),

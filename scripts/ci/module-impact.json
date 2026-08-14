@@ -36,7 +36,8 @@
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts",
-        "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts"
+        "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts",
+        "src/renderer/src/lib/acp/workspace-subagent-runtime-transcript.ts"
       ],
       "interfacePaths": ["src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts"],
       "consumerModules": ["workspace_page"],

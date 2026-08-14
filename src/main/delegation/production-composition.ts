@@ -64,6 +64,10 @@ type ProductionDelegatedWorkOptions = Readonly<{
     deliver(delivery: ParentMessageDelivery): Promise<DelegateMessageAcceptanceEvidence>
   }>
   onAgentRuntimeUpdate?(update: AcpAgentRuntimeUpdate): void
+  onCleanupError?(
+    scope: Readonly<{ session: SessionKey; frameId: string; attemptId: string }>,
+    error: unknown
+  ): void
   resolveExecutionModel(session: PersistedChatSession): Promise<DelegatedExecutionModelAdmission>
 }>
 
@@ -220,6 +224,7 @@ const createProductionDelegatedWorkComposition = (
       deliverToParent: options.parentMessages?.deliver,
       onRootPermissionEvent: (event) => observePermission(key, event),
       onAgentRuntimeUpdate: options.onAgentRuntimeUpdate,
+      onCleanupError: options.onCleanupError,
       assertTurnOpen: (session, messageId) => {
         if (
           cancelledTurns.has(cancelledTurnKey(session, messageId)) ||

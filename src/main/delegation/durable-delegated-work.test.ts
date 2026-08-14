@@ -7,14 +7,17 @@ import type { ArtifactFile } from '../../shared/artifacts'
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import { createProfileService } from '../specialist/service'
 import { createDeterministicDelegateExecution } from './deterministic-execution'
-import { DelegateMessagePreAcceptanceError } from './execution-port'
+import { DelegateMessagePreAcceptanceError, type DelegateExecution } from './execution-port'
 import {
   createInMemoryDelegatedWorkRecords,
   type AuthenticatedDelegateCaller,
   type DelegatedArtifactEvidence,
   type DelegatedReviewEvidence
 } from './durable-delegated-work'
-import { createTestDurableDelegatedWork as createDurableDelegatedWork } from './durable-delegated-work-test-fixture'
+import {
+  createTestDurableDelegatedWork as createDurableDelegatedWork,
+  TEST_EXECUTION_MODEL
+} from './durable-delegated-work-test-fixture'
 
 const caller: AuthenticatedDelegateCaller = {
   session: { projectId: 'project-1', sessionId: 'session-1' },
@@ -199,7 +202,32 @@ describe('durable delegated work', () => {
       'question-stop'
     )
 
-    await work.stopSession(caller.session)
+    execution.controls()[0].complete('Waiting for the pending answer.')
+    await expect
+      .poll(async () => (await records.snapshot()).records[0].attempts[0].status)
+      .toBe('completed')
+
+    await expect(work.stopSession(caller.session)).resolves.toEqual([
+      { frameId: 'child-stop', status: 'cancelled' }
+    ])
+
+    await expect(
+      work.requestUserInput(
+        {
+          session: caller.session,
+          frameId: 'child-stop',
+          role: 'delegate',
+          attemptId: 'attempt-stop',
+          originMessageId: 'message-stop',
+          toolInvocationId: 'ask-after-stop'
+        },
+        {
+          sessionId: caller.session.sessionId,
+          questions: [{ question: 'Too late?', options: [{ label: 'Yes' }, { label: 'No' }] }]
+        },
+        'question-after-stop'
+      )
+    ).rejects.toMatchObject({ code: 'authorization' })
 
     await expect(
       work.confirmQuestion(caller.session, {
@@ -208,7 +236,71 @@ describe('durable delegated work', () => {
       })
     ).rejects.toMatchObject({ code: 'conflict' })
     expect((await records.snapshot()).questionRequests[0]).toMatchObject({ status: 'cancelled' })
+    expect((await records.snapshot()).records[0].attempts[0]).toMatchObject({
+      status: 'completed'
+    })
+    expect((await records.snapshot()).questionRequests).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: 'pending' })])
+    )
     expect(execution.controls()).toHaveLength(1)
+  })
+
+  it('does not commit Stop when captured runtime evidence cannot be flushed', async () => {
+    const execution = createDeterministicDelegateExecution()
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const evidenceFailure = new Error('runtime evidence persistence failed')
+    const stageTerminalMessage = vi.fn(async () => {
+      throw evidenceFailure
+    })
+    const cleanupErrors: unknown[] = []
+    const work = createDurableDelegatedWork({
+      execution,
+      records: { ...records, stageTerminalMessage },
+      onCleanupError: (_scope, error) => cleanupErrors.push(error)
+    })
+    const delegated = await work.delegate(
+      caller,
+      { task: 'Preserve evidence before Stop', name: 'Evidence flush' },
+      { wait: false }
+    )
+    await expect.poll(() => execution.controls()).toHaveLength(1)
+    const control = execution.controls()[0]
+    control.emit({
+      kind: 'runtime',
+      update: {
+        scope: {
+          projectId: caller.session.projectId,
+          sessionId: caller.session.sessionId,
+          agentFrameId: control.input.frameId,
+          attemptId: control.input.attemptId,
+          runtimeSegmentId: control.input.runtimeSegmentId,
+          promptMessageId: control.input.turn!.promptMessageId
+        },
+        event: {
+          id: 'captured-before-stop',
+          timestamp: 20,
+          kind: 'message',
+          level: 'info',
+          messageId: 'provider-message',
+          role: 'assistant',
+          text: 'Evidence that must be durable.'
+        }
+      }
+    })
+    await expect.poll(() => stageTerminalMessage).toHaveBeenCalled()
+
+    const stopping = await work.stopChildren(caller, [delegated.children[0].frameId]).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(stopping).toBeInstanceOf(AggregateError)
+    expect((stopping as AggregateError).errors).toContain(evidenceFailure)
+    expect((await records.snapshot()).records[0].attempts[0]).toMatchObject({ status: 'running' })
+    expect(cleanupErrors).not.toHaveLength(0)
   })
 
   it('returns awaiting_user instead of a final result from blocking delegate', async () => {
@@ -686,7 +778,7 @@ describe('durable delegated work', () => {
     expect(execution.controls()[0].input.attemptId).toBe(childA.children[0].attemptId)
   })
 
-  it('durably terminalizes every fenced-Turn Attempt when cleanup partially fails', async () => {
+  it('durably terminalizes every fenced-Turn Attempt and reports detached cleanup failures', async () => {
     const execution = createDeterministicDelegateExecution()
     const records = createInMemoryDelegatedWorkRecords({
       session: caller.session,
@@ -694,9 +786,11 @@ describe('durable delegated work', () => {
       originMessageId: caller.originMessageId
     })
     let failedOnce = false
+    const onCleanupError = vi.fn()
     const work = createDurableDelegatedWork({
       execution,
       records,
+      onCleanupError,
       async revokeAttemptWrites() {
         if (!failedOnce) {
           failedOnce = true
@@ -713,13 +807,17 @@ describe('durable delegated work', () => {
       { wait: false }
     )
 
-    await expect(work.cancelTurn(caller.session, caller.originMessageId)).rejects.toThrow(
-      'could not be stopped'
-    )
+    await expect(work.cancelTurn(caller.session, caller.originMessageId)).resolves.toHaveLength(2)
     expect(
       (await records.snapshot()).records.map((child) => child.attempts.at(-1)!.status)
     ).toEqual(['cancelled', 'cancelled'])
-    await expect.poll(() => execution.releasedFrames()).toHaveLength(2)
+    await expect.poll(() => onCleanupError).toHaveBeenCalledOnce()
+    expect(onCleanupError).toHaveBeenCalledWith(
+      expect.objectContaining({ session: caller.session }),
+      expect.objectContaining({
+        message: 'Detached Subagent cleanup failed during attempt write revocation.'
+      })
+    )
   })
 
   it('linearizes a Turn fence before an initial admission waiting to commit', async () => {
@@ -1035,16 +1133,18 @@ describe('durable delegated work', () => {
     })
   })
 
-  it('restores unresolved permission cards when Stop submission fails', async () => {
+  it('clears unresolved permission cards while reporting detached Stop cleanup failure', async () => {
     const execution = createDeterministicDelegateExecution()
     const records = createInMemoryDelegatedWorkRecords({
       session: caller.session,
       rootFrameId: caller.frameId,
       originMessageId: caller.originMessageId
     })
+    const onCleanupError = vi.fn()
     const work = createDurableDelegatedWork({
       execution,
       records,
+      onCleanupError,
       revokeAttemptWrites: async () => {
         throw new Error('stop transport unavailable')
       }
@@ -1063,12 +1163,11 @@ describe('durable delegated work', () => {
       options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
     })
 
-    await expect(work.stopSession(caller.session)).rejects.toThrow('stop transport unavailable')
-    await expect(work.rootPermissionRequests(caller.session)).resolves.toMatchObject([
-      { requestId: 'permission-retry' }
-    ])
+    await expect(work.stopSession(caller.session)).resolves.toHaveLength(1)
+    await expect.poll(() => onCleanupError).toHaveBeenCalledOnce()
+    await expect(work.rootPermissionRequests(caller.session)).resolves.toEqual([])
     await expect(work.sessionSummary(caller.session)).resolves.toMatchObject({
-      children: [{ status: 'running', awaitingPermission: true }]
+      children: [{ status: 'cancelled' }]
     })
   })
 
@@ -2093,8 +2192,22 @@ describe('durable delegated work', () => {
     )
   })
 
-  it('disposes a capability that finishes opening after its Attempt was cancelled', async () => {
-    const execution = createDeterministicDelegateExecution()
+  it('reports and retries disposal of a capability that finishes opening after cancellation', async () => {
+    const deterministicExecution = createDeterministicDelegateExecution()
+    const reservationRelease = vi.fn()
+    const execution: DelegateExecution = {
+      async reserve(count) {
+        const reservation = await deterministicExecution.reserve(count)
+        return {
+          ...reservation,
+          async release(slotId) {
+            reservationRelease(slotId)
+            await reservation.release(slotId)
+          }
+        }
+      },
+      run: deterministicExecution.run
+    }
     const records = createInMemoryDelegatedWorkRecords({
       session: caller.session,
       rootFrameId: caller.frameId,
@@ -2110,10 +2223,23 @@ describe('durable delegated work', () => {
     }>((resolve) => {
       resolveOpen = resolve
     })
-    const dispose = vi.fn(async () => undefined)
+    const dispose = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('late artifact disposal failed'))
+      .mockResolvedValue(undefined)
+    const backendClaimRelease = vi.fn(async () => undefined)
+    const onCleanupError = vi.fn()
     const work = createDurableDelegatedWork({
       execution,
       records,
+      onCleanupError,
+      resolveExecutionModel: () => ({
+        snapshot: TEST_EXECUTION_MODEL,
+        backendLease: {
+          claim: () => ({ backend: {} as never, release: backendClaimRelease }),
+          release: async () => undefined
+        }
+      }),
       artifactEvidence: {
         open: async () => opening,
         project: async () => []
@@ -2134,8 +2260,17 @@ describe('durable delegated work', () => {
     resolveOpen({ finalize: async () => undefined, dispose })
 
     await expect(stopping).resolves.toMatchObject([{ status: 'cancelled' }])
-    await expect.poll(() => dispose).toHaveBeenCalled()
-    expect(execution.controls()).toEqual([])
+    await expect.poll(() => onCleanupError).toHaveBeenCalledOnce()
+    expect(onCleanupError).toHaveBeenCalledWith(
+      expect.objectContaining({ frameId: dispatched.children[0].frameId }),
+      expect.objectContaining({
+        message: 'Detached Subagent cleanup failed during turn artifact disposal.'
+      })
+    )
+    await expect.poll(() => dispose).toHaveBeenCalledTimes(2)
+    expect(backendClaimRelease).toHaveBeenCalledOnce()
+    expect(reservationRelease).toHaveBeenCalledOnce()
+    expect(deterministicExecution.controls()).toEqual([])
   })
   it('defaults an omitted profile to Main Agent without consulting a Specialist resolver', async () => {
     const execution = createDeterministicDelegateExecution()
@@ -3572,6 +3707,248 @@ describe('durable delegated work', () => {
       },
       messages: [{ role: 'user', content: 'Stop me' }]
     })
+  })
+
+  it('terminalizes Stop when execution cancellation returns but completion never settles', async () => {
+    let resolveCompletion!: (value: { status: 'completed'; response: string }) => void
+    const completion = new Promise<{ status: 'completed'; response: string }>((resolve) => {
+      resolveCompletion = resolve
+    })
+    const cancel = vi.fn(async () => undefined)
+    const release = vi.fn(async () => undefined)
+    const execution: DelegateExecution = {
+      async reserve() {
+        return { slotIds: ['stalled-slot'], release, releaseAll: release }
+      },
+      run() {
+        return {
+          accepted: Promise.resolve('provider_prompt_accepted'),
+          completion,
+          subscribe: () => () => undefined,
+          sendMessage: async () => 'provider_prompt_accepted',
+          setPermissionProfile: async () => undefined,
+          respondToPermission: async () => undefined,
+          cancel
+        }
+      }
+    }
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const work = createDurableDelegatedWork({ execution, records })
+    const dispatched = await work.delegate(
+      caller,
+      { task: 'Stalled execution', name: 'Stalled execution' },
+      { wait: false }
+    )
+    await expect
+      .poll(async () => (await records.snapshot()).records[0]?.attempts[0]?.runtimeSegmentIds)
+      .toHaveLength(1)
+
+    await expect(work.stopChildren(caller, [dispatched.children[0].frameId])).resolves.toEqual([
+      { frameId: dispatched.children[0].frameId, status: 'cancelled' }
+    ])
+    expect(cancel).toHaveBeenCalledOnce()
+    await expect(work.sessionSummary(caller.session)).resolves.toMatchObject({
+      runningCount: 0,
+      children: [{ status: 'cancelled' }]
+    })
+    expect(release).toHaveBeenCalledOnce()
+
+    // A provider completion arriving after Stop must not overwrite or duplicate the durable terminal
+    // transition.
+    resolveCompletion({ status: 'completed', response: 'too late' })
+    await expect
+      .poll(async () => (await records.snapshot()).records[0]?.attempts[0]?.status)
+      .toBe('cancelled')
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('returns Stop after terminalizing when cancellation and reservation cleanup never settle', async () => {
+    const neverSettles = new Promise<void>(() => undefined)
+    const cancel = vi.fn(() => neverSettles)
+    const release = vi.fn(() => neverSettles)
+    const execution: DelegateExecution = {
+      async reserve() {
+        return { slotIds: ['hung-cleanup-slot'], release, releaseAll: release }
+      },
+      run() {
+        return {
+          accepted: Promise.resolve('provider_prompt_accepted'),
+          completion: new Promise(() => undefined),
+          subscribe: () => () => undefined,
+          sendMessage: async () => 'provider_prompt_accepted',
+          setPermissionProfile: async () => undefined,
+          respondToPermission: async () => undefined,
+          cancel
+        }
+      }
+    }
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const work = createDurableDelegatedWork({ execution, records })
+    const dispatched = await work.delegate(
+      caller,
+      { task: 'Hung cleanup', name: 'Hung cleanup' },
+      { wait: false }
+    )
+    await expect
+      .poll(async () => (await records.snapshot()).records[0]?.attempts[0]?.runtimeSegmentIds)
+      .toHaveLength(1)
+
+    const stopped = work.stopChildren(caller, [dispatched.children[0].frameId])
+
+    await expect.poll(() => cancel).toHaveBeenCalledOnce()
+    await expect.poll(() => release).toHaveBeenCalledOnce()
+    await expect(stopped).resolves.toEqual([
+      { frameId: dispatched.children[0].frameId, status: 'cancelled' }
+    ])
+    await expect(work.sessionSummary(caller.session)).resolves.toMatchObject({
+      runningCount: 0,
+      children: [{ status: 'cancelled' }]
+    })
+  })
+
+  it('releases backend and capacity ownership once while artifact and provider drains remain hung', async () => {
+    const neverSettles = new Promise<void>(() => undefined)
+    const cancel = vi.fn(() => neverSettles)
+    const reservationRelease = vi.fn(async () => undefined)
+    const backendClaimRelease = vi.fn(async () => undefined)
+    const disposeArtifact = vi.fn(() => neverSettles)
+    const revokeArtifact = vi.fn(() => neverSettles)
+    const run = vi.fn(() => ({
+      accepted: Promise.resolve('provider_prompt_accepted' as const),
+      completion: new Promise<never>(() => undefined),
+      subscribe: () => () => undefined,
+      sendMessage: async () => 'provider_prompt_accepted' as const,
+      setPermissionProfile: async () => undefined,
+      respondToPermission: async () => undefined,
+      cancel
+    }))
+    const execution: DelegateExecution = {
+      async reserve() {
+        return {
+          slotIds: ['independent-cleanup-slot'],
+          release: reservationRelease,
+          releaseAll: reservationRelease
+        }
+      },
+      run
+    }
+    const artifactEvidence: DelegatedArtifactEvidence = {
+      async open() {
+        return {
+          finalize: async () => undefined,
+          dispose: disposeArtifact
+        }
+      },
+      revoke: revokeArtifact,
+      project: async () => []
+    }
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const work = createDurableDelegatedWork({
+      execution,
+      records,
+      artifactEvidence,
+      resolveExecutionModel: () => ({
+        snapshot: TEST_EXECUTION_MODEL,
+        backendLease: {
+          claim: () => ({ backend: {} as never, release: backendClaimRelease }),
+          release: async () => undefined
+        }
+      })
+    })
+    const dispatched = await work.delegate(
+      caller,
+      { task: 'Independent cleanup', name: 'Independent cleanup' },
+      { wait: false }
+    )
+    await expect.poll(() => run).toHaveBeenCalledOnce()
+
+    await expect(work.stopChildren(caller, [dispatched.children[0].frameId])).resolves.toEqual([
+      { frameId: dispatched.children[0].frameId, status: 'cancelled' }
+    ])
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(revokeArtifact).toHaveBeenCalledOnce()
+    expect(disposeArtifact).toHaveBeenCalledOnce()
+    expect(backendClaimRelease).toHaveBeenCalledOnce()
+    expect(reservationRelease).toHaveBeenCalledOnce()
+
+    await expect(work.stopChildren(caller, [dispatched.children[0].frameId])).resolves.toEqual([
+      { frameId: dispatched.children[0].frameId, status: 'already_terminal' }
+    ])
+    expect(backendClaimRelease).toHaveBeenCalledOnce()
+    expect(reservationRelease).toHaveBeenCalledOnce()
+  })
+
+  it('reports a failed detached ownership release and retries it after late provider completion', async () => {
+    let resolveCompletion!: (value: { status: 'completed'; response: string }) => void
+    const completion = new Promise<{ status: 'completed'; response: string }>((resolve) => {
+      resolveCompletion = resolve
+    })
+    const release = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('capacity release unavailable'))
+      .mockResolvedValue(undefined)
+    const onCleanupError = vi.fn()
+    const execution: DelegateExecution = {
+      async reserve() {
+        return { slotIds: ['retry-cleanup-slot'], release, releaseAll: release }
+      },
+      run() {
+        return {
+          accepted: Promise.resolve('provider_prompt_accepted'),
+          completion,
+          subscribe: () => () => undefined,
+          sendMessage: async () => 'provider_prompt_accepted',
+          setPermissionProfile: async () => undefined,
+          respondToPermission: async () => undefined,
+          cancel: async () => undefined
+        }
+      }
+    }
+    const records = createInMemoryDelegatedWorkRecords({
+      session: caller.session,
+      rootFrameId: caller.frameId,
+      originMessageId: caller.originMessageId
+    })
+    const work = createDurableDelegatedWork({ execution, records, onCleanupError })
+    const dispatched = await work.delegate(
+      caller,
+      { task: 'Retry failed cleanup', name: 'Retry failed cleanup' },
+      { wait: false }
+    )
+    await expect
+      .poll(async () => (await records.snapshot()).records[0]?.attempts[0]?.runtimeSegmentIds)
+      .toHaveLength(1)
+
+    await expect(work.stopChildren(caller, [dispatched.children[0].frameId])).resolves.toEqual([
+      { frameId: dispatched.children[0].frameId, status: 'cancelled' }
+    ])
+    await expect.poll(() => onCleanupError).toHaveBeenCalledOnce()
+    expect(onCleanupError).toHaveBeenCalledWith(
+      expect.objectContaining({ frameId: dispatched.children[0].frameId }),
+      expect.objectContaining({
+        message: 'Detached Subagent cleanup failed during capacity reservation release.'
+      })
+    )
+    expect(release).toHaveBeenCalledOnce()
+
+    resolveCompletion({ status: 'completed', response: 'late completion' })
+    await expect.poll(() => release).toHaveBeenCalledTimes(2)
+    await expect(work.stopChildren(caller, [dispatched.children[0].frameId])).resolves.toEqual([
+      { frameId: dispatched.children[0].frameId, status: 'already_terminal' }
+    ])
+    expect(release).toHaveBeenCalledTimes(2)
   })
 
   it('stops the running Session snapshot while preserving terminal history and rejecting new dispatch', async () => {

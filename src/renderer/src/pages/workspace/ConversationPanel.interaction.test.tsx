@@ -300,7 +300,21 @@ const delegatedQuestionSession = (): ChatSession => ({
     version: 1,
     revision: 1,
     delegatedWork: {
-      records: [],
+      records: [
+        {
+          agentFrameId: 'child',
+          attempts: [
+            {
+              id: 'attempt-1',
+              status: 'completed',
+              resolvedAgent: { kind: 'main' },
+              runtimeSegmentIds: ['runtime-1'],
+              startedAt: 1,
+              endedAt: 2
+            }
+          ]
+        }
+      ],
       questionRequests: [
         {
           requestId: 'question-1',
@@ -656,22 +670,48 @@ describe('ConversationPanel composer intake', () => {
     expect(document.activeElement).toBe(navigationButton)
   })
 
-  it('keeps the Main composer available while a delegated question is pending', () => {
+  it('keeps the Main composer available and confirms a completed Subagent question', async () => {
+    const terminalSession = delegatedQuestionSession()
+    const onRespondToElicitation = vi.fn().mockResolvedValue(undefined)
+
     renderPanel({
       view: {
-        activeSession: delegatedQuestionSession()
+        activeSession: terminalSession
       },
       conversation: {
         availability: {
           submit: true
         }
+      },
+      elicitation: {
+        respond: onRespondToElicitation
       }
     })
 
     expect(container.textContent).toContain('Asked by Researcher')
     expect(container.textContent).toContain('Which scope?')
+    expect(container.querySelector('[data-testid="delegated-question-card"]')).not.toBeNull()
     expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
     expect(getComposerForm().contains(getComposerEditor())).toBe(true)
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Narrow"]')?.click()
+    )
+    const finish = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Finish'
+    )
+    await act(async () => finish?.click())
+    expect(onRespondToElicitation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requestId: 'question-1',
+        delegatedQuestion: {
+          projectId: 'project-a',
+          sessionId: 'session-delegated-question',
+          action: 'confirm',
+          answers: [{ questionIndex: 0, value: 'Narrow' }]
+        }
+      })
+    )
   })
 
   it('advances to the next Subagent request after Finish and removes an empty queue', async () => {
@@ -730,6 +770,22 @@ describe('ConversationPanel composer intake', () => {
         ...firstSession.runtimeContext!,
         delegatedWork: {
           ...firstSession.runtimeContext!.delegatedWork!,
+          records: [
+            ...firstSession.runtimeContext!.delegatedWork!.records,
+            {
+              agentFrameId: 'child-two',
+              attempts: [
+                {
+                  id: 'attempt-2',
+                  status: 'completed' as const,
+                  resolvedAgent: { kind: 'main' as const },
+                  runtimeSegmentIds: ['runtime-2'],
+                  startedAt: 2,
+                  endedAt: 3
+                }
+              ]
+            }
+          ],
           questionRequests: [
             ...firstSession.runtimeContext!.delegatedWork!.questionRequests!,
             secondRequest

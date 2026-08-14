@@ -194,7 +194,7 @@ type DurableMessage = {
   content: string
   responseToMessageId?: string
   runtimeSegmentId?: string
-  status?: 'complete' | 'error'
+  status?: 'complete' | 'streaming' | 'error'
   eventIds?: string[]
   images?: PersistedMessageImage[]
   turnUsage?: AcpTurnTokenUsage
@@ -302,6 +302,15 @@ type DelegatedWorkDurableRecords = Readonly<{
   ): Promise<void>
   confirmQuestion(input: ConfirmQuestionInput): Promise<void>
   cancelQuestions(frameId: string, endedAt: number, reason: string): Promise<void>
+  cancelAttempt(
+    input: Readonly<{
+      frameId: string
+      attemptId: string
+      endedAt: number
+      cancellationReason: 'main_agent_stop' | 'session_stop' | 'runtime_interrupted'
+      questionReason: string
+    }>
+  ): Promise<'cancelled' | 'already_terminal'>
   startRuntime(
     frameId: string,
     attemptId: string,

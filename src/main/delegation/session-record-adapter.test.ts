@@ -816,7 +816,7 @@ describe('Session delegated-work adapter', () => {
     ).not.toHaveProperty('delegatedContext')
   })
 
-  it('persists rich terminal transcript evidence without writing each runtime chunk', async () => {
+  it('uses one durable Message identity from live chunks through normal completion', async () => {
     const { coordinator, readSession, repository } = createHarness()
     const execution = createDeterministicDelegateExecution()
     const rootFrameId = createSession().conversationGraph!.rootFrameId
@@ -891,6 +891,24 @@ describe('Session delegated-work adapter', () => {
         }
       }
     })
+    await expect
+      .poll(async () => {
+        const session = await readSession()
+        return session.conversationGraph?.messages.find((message) => message.id === 'agent-message')
+          ?.content
+      })
+      .toBe('Evidence confirmed.')
+    const live = await readSession()
+    const liveMessages = live.conversationGraph!.messages.filter(
+      (message) => message.agentFrameId === 'child-frame' && message.role === 'agent'
+    )
+    expect(liveMessages).toHaveLength(1)
+    expect(liveMessages[0]).toMatchObject({
+      id: 'agent-message',
+      status: 'streaming',
+      eventIds: ['message:1', 'message:2']
+    })
+    expect(liveMessages[0]).not.toHaveProperty('completedAt')
     control.emit({
       kind: 'runtime',
       update: {
@@ -931,6 +949,11 @@ describe('Session delegated-work adapter', () => {
     await pending
 
     const durable = await readSession()
+    expect(
+      durable.conversationGraph?.messages.filter(
+        (message) => message.agentFrameId === 'child-frame' && message.role === 'agent'
+      )
+    ).toHaveLength(1)
     expect(
       durable.conversationGraph?.messages.find(
         (message) => message.id === 'agent-message' && message.role === 'agent'

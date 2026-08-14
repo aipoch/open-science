@@ -144,6 +144,12 @@ const createSession = (count = 3): PersistedChatSession => {
 describe('release-gate Subagent projection', () => {
   it('projects only active direct-child questions in durable admission order', () => {
     const session = createSession(2)
+    const secondFrame = session.conversationGraph!.frames.find(({ id }) => id === 'child-1')!
+    const secondAttempt = session.runtimeContext!.delegatedWork!.records.find(
+      ({ agentFrameId }) => agentFrameId === 'child-1'
+    )!.attempts[0]
+    Object.assign(secondFrame, { status: 'running' })
+    Object.assign(secondAttempt, { status: 'running' })
     Object.assign(session.runtimeContext!.delegatedWork!, {
       questionRequests: [
         {
@@ -249,6 +255,12 @@ describe('release-gate Subagent projection', () => {
 
   it('uses one stable fallback order for every permutation of a mixed-sequence queue', () => {
     const session = createSession(3)
+    for (const frame of session.conversationGraph!.frames) {
+      if (frame.kind === 'delegate') Object.assign(frame, { status: 'running' })
+    }
+    for (const record of session.runtimeContext!.delegatedWork!.records) {
+      Object.assign(record.attempts[0], { status: 'running' })
+    }
     const request = (
       id: 'a' | 'b' | 'c',
       childIndex: number,
@@ -319,6 +331,182 @@ describe('release-gate Subagent projection', () => {
     expect(projection.runningCount).toBe(1)
     expect(projection.children[0]).toMatchObject({ awaitingPermission: true })
     expect(projection.children.map(({ status }) => status)).not.toContain('waiting')
+  })
+
+  it('keeps a completed source question answerable and projects awaiting-user', () => {
+    const session = createSession(1)
+    const frame = session.conversationGraph!.frames.find(({ id }) => id === 'child-0')!
+    const attempt = session.runtimeContext!.delegatedWork!.records[0].attempts[0]
+    Object.assign(frame, { status: 'completed' })
+    Object.assign(attempt, { status: 'completed' })
+    Object.assign(session.runtimeContext!.delegatedWork!, {
+      questionRequests: [
+        {
+          requestId: 'stale-question',
+          canonicalDigest: 'a'.repeat(64),
+          sourceFrameId: 'child-0',
+          sourceAttemptId: 'attempt-0',
+          sourceRuntimeSegmentId: 'runtime-0',
+          sourceMessageBranchId: 'branch-0',
+          rootOriginMessageId: 'root-prompt',
+          rootBranchId: 'root-branch',
+          sourceName: 'Child 01',
+          questions: [{ question: 'Still there?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+          askedAt: 10,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0
+        }
+      ]
+    })
+
+    const projection = projectSessionSubagents(session, [])
+
+    expect(projection.children[0]?.status).toBe('awaiting_user')
+    expect(projection.runningCount).toBe(1)
+    expect(selectSubagentFrame(session, 'child-0')?.status).toBe('awaiting_user')
+    expect(projectDelegatedQuestionQueue(session).map(({ requestId }) => requestId)).toEqual([
+      'stale-question'
+    ])
+  })
+
+  it.each(['cancelled', 'error'] as const)(
+    'hides a pending question owned by a %s Frame and Attempt',
+    (terminalStatus) => {
+      const session = createSession(1)
+      const frame = session.conversationGraph!.frames.find(({ id }) => id === 'child-0')!
+      const attempt = session.runtimeContext!.delegatedWork!.records[0].attempts[0]
+      Object.assign(frame, { status: terminalStatus })
+      Object.assign(attempt, { status: terminalStatus })
+      Object.assign(session.runtimeContext!.delegatedWork!, {
+        questionRequests: [
+          {
+            requestId: 'stale-question',
+            canonicalDigest: 'a'.repeat(64),
+            sourceFrameId: 'child-0',
+            sourceAttemptId: 'attempt-0',
+            sourceRuntimeSegmentId: 'runtime-0',
+            sourceMessageBranchId: 'branch-0',
+            rootOriginMessageId: 'root-prompt',
+            rootBranchId: 'root-branch',
+            sourceName: 'Child 01',
+            questions: [{ question: 'Still there?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+            askedAt: 10,
+            status: 'pending',
+            draftAnswers: [],
+            draftQuestionIndex: 0
+          }
+        ]
+      })
+
+      expect(projectSessionSubagents(session, []).children[0]?.status).toBe(terminalStatus)
+      expect(selectSubagentFrame(session, 'child-0')?.status).toBe(terminalStatus)
+      expect(projectDelegatedQuestionQueue(session)).toEqual([])
+    }
+  )
+
+  it('does not revive a running Frame when its matching Attempt is terminal', () => {
+    const session = createSession(1)
+    Object.assign(session.runtimeContext!.delegatedWork!.records[0].attempts[0], {
+      status: 'cancelled'
+    })
+    Object.assign(session.runtimeContext!.delegatedWork!, {
+      questionRequests: [
+        {
+          requestId: 'stale-question',
+          canonicalDigest: 'a'.repeat(64),
+          sourceFrameId: 'child-0',
+          sourceAttemptId: 'attempt-0',
+          sourceRuntimeSegmentId: 'runtime-0',
+          sourceMessageBranchId: 'branch-0',
+          rootOriginMessageId: 'root-prompt',
+          rootBranchId: 'root-branch',
+          sourceName: 'Child 01',
+          questions: [{ question: 'Still there?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+          askedAt: 10,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0
+        }
+      ]
+    })
+
+    expect(projectSessionSubagents(session, []).children[0]?.status).toBe('running')
+    expect(selectSubagentFrame(session, 'child-0')?.status).toBe('running')
+    expect(projectDelegatedQuestionQueue(session)).toEqual([])
+  })
+
+  it('hides a question from an older completed Attempt after a continuation starts', () => {
+    const session = createSession(1)
+    const record = session.runtimeContext!.delegatedWork!.records[0]
+    Object.assign(record.attempts[0], { status: 'completed', endedAt: 20 })
+    Object.assign(record, {
+      attempts: [
+        ...record.attempts,
+        {
+          id: 'attempt-continuation',
+          status: 'running' as const,
+          resolvedAgent: { kind: 'main' as const },
+          runtimeSegmentIds: ['runtime-continuation'],
+          startedAt: 21
+        }
+      ]
+    })
+    Object.assign(session.runtimeContext!.delegatedWork!, {
+      questionRequests: [
+        {
+          requestId: 'old-attempt-question',
+          canonicalDigest: 'a'.repeat(64),
+          sourceFrameId: 'child-0',
+          sourceAttemptId: 'attempt-0',
+          sourceRuntimeSegmentId: 'runtime-0',
+          sourceMessageBranchId: 'branch-0',
+          rootOriginMessageId: 'root-prompt',
+          rootBranchId: 'root-branch',
+          sourceName: 'Child 01',
+          questions: [{ question: 'Obsolete?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+          askedAt: 10,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0
+        }
+      ]
+    })
+
+    expect(projectSessionSubagents(session, []).children[0]?.status).toBe('running')
+    expect(projectDelegatedQuestionQueue(session)).toEqual([])
+  })
+
+  it.each([
+    ['source Message Branch', { sourceMessageBranchId: 'stale-child-branch' }],
+    ['source Runtime Segment', { sourceRuntimeSegmentId: 'stale-runtime-segment' }]
+  ] as const)('does not project awaiting-user from a stale %s', (_label, staleIdentity) => {
+    const session = createSession(1)
+    Object.assign(session.runtimeContext!.delegatedWork!, {
+      questionRequests: [
+        {
+          requestId: 'stale-route-question',
+          canonicalDigest: 'a'.repeat(64),
+          sourceFrameId: 'child-0',
+          sourceAttemptId: 'attempt-0',
+          sourceRuntimeSegmentId: 'runtime-0',
+          sourceMessageBranchId: 'branch-0',
+          rootOriginMessageId: 'root-prompt',
+          rootBranchId: 'root-branch',
+          sourceName: 'Child 01',
+          questions: [{ question: 'Still active?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+          askedAt: 10,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0,
+          ...staleIdentity
+        }
+      ]
+    })
+
+    expect(projectSessionSubagents(session, []).children[0]?.status).toBe('running')
+    expect(selectSubagentFrame(session, 'child-0')?.status).toBe('running')
+    expect(projectDelegatedQuestionQueue(session)).toEqual([])
   })
 
   it('preserves dispatch order and stable titles for 24 children across status changes and reopen', () => {

@@ -97,65 +97,67 @@ class DelegatedUserQuestionOwner {
         'delegated user question requires a trusted direct-child capability'
       )
     }
-    const snapshot = await this.options.records.snapshot()
-    if (!sameSession(snapshot.session, caller.session)) {
-      throw new DurableDelegatedWorkError('authorization', 'delegated question Session mismatch')
-    }
-    const requestId = explicitRequestId?.trim() || this.options.createId('question')
-    const canonicalDigest = createHash('sha256')
-      .update(JSON.stringify(request.questions))
-      .digest('hex')
-    const existing = snapshot.questionRequests.find(
-      (candidate) => candidate.requestId === requestId
-    )
-    if (existing) {
+    return this.options.admission(async () => {
+      const snapshot = await this.options.records.snapshot()
+      if (!sameSession(snapshot.session, caller.session)) {
+        throw new DurableDelegatedWorkError('authorization', 'delegated question Session mismatch')
+      }
+      const requestId = explicitRequestId?.trim() || this.options.createId('question')
+      const canonicalDigest = createHash('sha256')
+        .update(JSON.stringify(request.questions))
+        .digest('hex')
+      const existing = snapshot.questionRequests.find(
+        (candidate) => candidate.requestId === requestId
+      )
+      if (existing) {
+        if (
+          existing.canonicalDigest !== canonicalDigest ||
+          existing.sourceFrameId !== caller.frameId ||
+          existing.sourceAttemptId !== caller.attemptId
+        ) {
+          throw new DurableDelegatedWorkError(
+            'conflict',
+            'delegated user question request identity was reused with different content or source'
+          )
+        }
+        return { action: 'pending' }
+      }
+      const child = snapshot.records.find((candidate) => candidate.frameId === caller.frameId)
+      const attempt = child && currentAttempt(child as DurableChild)
+      const runtimeSegmentId = attempt?.runtimeSegmentIds.at(-1)
       if (
-        existing.canonicalDigest !== canonicalDigest ||
-        existing.sourceFrameId !== caller.frameId ||
-        existing.sourceAttemptId !== caller.attemptId
+        !child ||
+        child.parentFrameId !== snapshot.rootFrameId ||
+        child.originBindingState !== 'validated' ||
+        !snapshot.originMessageIds.includes(child.originMessageId) ||
+        !attempt ||
+        attempt.id !== caller.attemptId ||
+        attempt.status !== 'running' ||
+        !runtimeSegmentId
       ) {
         throw new DurableDelegatedWorkError(
-          'conflict',
-          'delegated user question request identity was reused with different content or source'
+          'authorization',
+          'delegated user question source is not the active direct-child Attempt'
         )
       }
+      await this.options.records.admitQuestion({
+        requestId,
+        canonicalDigest,
+        sourceFrameId: child.frameId,
+        sourceAttemptId: attempt.id,
+        sourceRuntimeSegmentId: runtimeSegmentId,
+        sourceMessageBranchId: child.messageBranchId,
+        rootOriginMessageId: child.originMessageId,
+        rootBranchId: snapshot.rootBranchId,
+        sourceName: child.title,
+        questions: structuredClone(request.questions),
+        askedAt: this.options.now(),
+        status: 'pending',
+        draftAnswers: [],
+        draftQuestionIndex: 0
+      })
       return { action: 'pending' }
-    }
-    const child = snapshot.records.find((candidate) => candidate.frameId === caller.frameId)
-    const attempt = child && currentAttempt(child as DurableChild)
-    const runtimeSegmentId = attempt?.runtimeSegmentIds.at(-1)
-    if (
-      !child ||
-      child.parentFrameId !== snapshot.rootFrameId ||
-      child.originBindingState !== 'validated' ||
-      !snapshot.originMessageIds.includes(child.originMessageId) ||
-      !attempt ||
-      attempt.id !== caller.attemptId ||
-      attempt.status !== 'running' ||
-      !runtimeSegmentId
-    ) {
-      throw new DurableDelegatedWorkError(
-        'authorization',
-        'delegated user question source is not the active direct-child Attempt'
-      )
-    }
-    await this.options.records.admitQuestion({
-      requestId,
-      canonicalDigest,
-      sourceFrameId: child.frameId,
-      sourceAttemptId: attempt.id,
-      sourceRuntimeSegmentId: runtimeSegmentId,
-      sourceMessageBranchId: child.messageBranchId,
-      rootOriginMessageId: child.originMessageId,
-      rootBranchId: snapshot.rootBranchId,
-      sourceName: child.title,
-      questions: structuredClone(request.questions),
-      askedAt: this.options.now(),
-      status: 'pending',
-      draftAnswers: [],
-      draftQuestionIndex: 0
     })
-    return { action: 'pending' }
   }
 
   async updateDraft(session: SessionKey, input: UpdateQuestionDraftInput): Promise<void> {
