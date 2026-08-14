@@ -29,6 +29,8 @@ describe('OpenScienceClient', () => {
         'createProject',
         'listSessions',
         'getSession',
+        'getSessionPlan',
+        'respondSessionPlan',
         'startRun',
         'getRun',
         'cancelRun',
@@ -123,6 +125,39 @@ describe('OpenScienceClient', () => {
       })
     )
     expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('returns a running run only when actionable waiting is explicitly enabled', async () => {
+    const attention = {
+      kind: 'plan-approval',
+      plan: { artifactVersionId: 'plan-version', revision: 2 }
+    }
+    const fetch = vi.fn().mockResolvedValue(
+      response(200, {
+        data: {
+          id: 'run-1',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          status: 'running',
+          startedAt: 1,
+          artifacts: [],
+          attention
+        }
+      })
+    )
+    const sleep = vi.fn().mockResolvedValue(undefined)
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'secret-token',
+      fetch,
+      sleep
+    })
+
+    await expect(client.waitForRun('run-1', { returnOnAttention: true })).resolves.toMatchObject({
+      status: 'running',
+      attention
+    })
+    expect(sleep).not.toHaveBeenCalled()
   })
 
   it('stops waiting after the requested timeout without cancelling the run', async () => {
@@ -254,6 +289,14 @@ describe('OpenScienceClient', () => {
       if (path === '/api/v1/sessions/session%2F1') {
         return response(200, { data: { id: 'session-1', status: 'idle' } })
       }
+      if (path === '/api/v1/sessions/session%2F1/plan' && init?.method !== 'POST') {
+        return response(200, {
+          data: { artifactVersionId: 'plan-version', revision: 2 }
+        })
+      }
+      if (path === '/api/v1/sessions/session%2F1/plan/respond') {
+        return response(200, { data: { changed: true } })
+      }
       if (path === '/api/v1/sessions/session%2F1/artifacts') {
         return response(200, { data: [{ id: 'artifact-1' }] })
       }
@@ -270,6 +313,12 @@ describe('OpenScienceClient', () => {
     await client.createProject({ name: 'Created' })
     await client.listSessions('Research / Lab')
     await client.getSession('session/1')
+    await client.getSessionPlan('session/1')
+    await client.respondSessionPlan('session/1', {
+      decision: 'approved',
+      artifactVersionId: 'plan-version',
+      expectedRevision: 2
+    })
     await client.listArtifacts('session/1')
     expect(await (await client.downloadArtifact('artifact/1')).text()).toBe('file bytes')
 
@@ -283,6 +332,8 @@ describe('OpenScienceClient', () => {
       '/api/v1/projects',
       '/api/v1/sessions?project=Research%20%2F%20Lab',
       '/api/v1/sessions/session%2F1',
+      '/api/v1/sessions/session%2F1/plan',
+      '/api/v1/sessions/session%2F1/plan/respond',
       '/api/v1/sessions/session%2F1/artifacts',
       '/api/v1/artifacts/artifact%2F1/content'
     ])

@@ -412,6 +412,8 @@ export type PersistedSessionResumeRecovery = {
 export type PersistedPendingHistoryReplay =
   { kind: 'all' } | { kind: 'before-message'; messageId: string }
 
+export type DelegationPolicy = 'allow' | 'deny'
+
 export type PersistedToolActivityStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 export type PersistedToolActivityDisposition = 'declined' | 'permission-closed'
 
@@ -493,6 +495,9 @@ export type PersistedChatSession = {
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
   // only an explicit true enables it.
   autoReviewEnabled?: boolean
+  // Controls admission of new delegated children for this Session. Older files omit it and restore
+  // to allow. Switching to deny never cancels or hides children that were already admitted.
+  delegationPolicy?: DelegationPolicy
   // Per-session enabled compute hosts (providerIds like "ssh:alias"). Stored as an array for JSON
   // compatibility; semantically a set (single-select for now, multi-select-ready internally).
   // Absent on older sessions — treated as empty (no host enabled).
@@ -547,6 +552,7 @@ export type SessionConflictRebaseField =
   | 'permissionProfile'
   | 'autoReviewEnabled'
   | 'enabledComputeHosts'
+  | 'delegationPolicy'
   | 'pinned'
   | 'specialistId'
 
@@ -3365,6 +3371,8 @@ const sanitizeSession = (
     // Auto-review defaults off: a missing or non-boolean value restores as disabled, and only an
     // explicit true turns it on.
     autoReviewEnabled: session.autoReviewEnabled === true ? true : false,
+    // Only deny changes behavior; missing/malformed historical values preserve delegation.
+    delegationPolicy: session.delegationPolicy === 'deny' ? 'deny' : 'allow',
     messages: Array.isArray(session.messages)
       ? session.messages
           .map((message) => sanitizeMessage(message, options))

@@ -2777,6 +2777,19 @@ describe('normalizeSessionFile with activities', () => {
     expect(corrupt?.autoReviewEnabled).toBe(false)
   })
 
+  it('round-trips delegation policy and defaults historical or malformed values to allow', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+    const denied = normalizeSessionFile({ ...base, delegationPolicy: 'deny' })
+    const allowed = normalizeSessionFile({ ...base, delegationPolicy: 'allow' })
+    const legacy = normalizeSessionFile({ ...base })
+    const malformed = normalizeSessionFile({ ...base, delegationPolicy: 'sometimes' })
+
+    expect(denied?.delegationPolicy).toBe('deny')
+    expect(allowed?.delegationPolicy).toBe('allow')
+    expect(legacy?.delegationPolicy).toBe('allow')
+    expect(malformed?.delegationPolicy).toBe('allow')
+  })
+
   it('round-trips enabledComputeHosts and filters out invalid values', () => {
     const base = { ...createSessionWithActivity(undefined), activities: undefined }
 

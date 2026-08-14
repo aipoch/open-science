@@ -376,6 +376,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           notificationInbox,
           settingsService,
           taskAgent,
+          taskControls,
           detectActiveSessions,
           prepareForQuit,
           dispose: disposeApplicationRuntime
@@ -446,7 +447,8 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
           requestQuit: () => app.quit(),
           externalAccess: remoteAccess.webAccess,
           applicationEvents,
-          taskAgent
+          taskAgent,
+          taskControls
         })
         remoteAccess.attachWebController(webController)
         registerRemoteAccessIpcHandlers(remoteAccess)

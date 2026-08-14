@@ -102,15 +102,42 @@ describe('task CLI', () => {
         '--skill',
         'literature-review',
         '--skill',
-        'citation-check'
+        'citation-check',
+        '--plan-first',
+        '--auto-review',
+        '--specialist',
+        'literature-specialist',
+        '--delegation',
+        'deny',
+        '--wait',
+        '--return-on-attention'
       ])
     ).toMatchObject({
       command: 'run',
       options: {
         session: 'session-1',
         approvalProfile: 'full',
-        skills: ['literature-review', 'citation-check']
+        skills: ['literature-review', 'citation-check'],
+        planFirst: true,
+        autoReviewEnabled: true,
+        specialist: 'literature-specialist',
+        delegation: 'deny',
+        returnOnAttention: true
       }
+    })
+    expect(() => parseCliArgs(['run', '--delegation', 'sometimes'])).toThrow(
+      'Invalid delegation policy: sometimes'
+    )
+    expect(() => parseCliArgs(['run', '--return-on-attention'])).toThrow(
+      '--return-on-attention requires run --wait.'
+    )
+    expect(() => parseCliArgs(['run', '--auto-review', '--no-auto-review'])).toThrow(
+      'Use only one of --auto-review or --no-auto-review.'
+    )
+    expect(parseCliArgs(['plan', 'show', 'session-1', '--json'])).toMatchObject({
+      command: 'plan',
+      subcommand: 'show',
+      positionals: ['session-1']
     })
     expect(() => parseCliArgs(['run', '--approval-profile', 'unsafe'])).toThrow(
       'Invalid approval profile: unsafe'
@@ -183,6 +210,68 @@ describe('task CLI', () => {
     expect(client.waitForRun).toHaveBeenCalledWith('run-1')
     expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({ status: 'completed', output: 'Done' })
     expect(log).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards execution controls and can return on actionable Plan attention', async () => {
+    const attention = {
+      kind: 'plan-approval',
+      plan: { artifactVersionId: 'plan-version', revision: 4 }
+    }
+    const client = {
+      startRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        status: 'running'
+      }),
+      waitForRun: vi.fn().mockResolvedValue({
+        id: 'run-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        status: 'running',
+        startedAt: 1,
+        artifacts: [],
+        attention
+      })
+    }
+    const log = vi.fn()
+
+    await runTaskCommand(
+      {
+        command: 'run',
+        options: {
+          project: 'project-1',
+          prompt: 'Plan this.',
+          wait: true,
+          returnOnAttention: true,
+          planFirst: true,
+          autoReviewEnabled: true,
+          specialist: 'literature-specialist',
+          delegation: 'deny',
+          json: false,
+          jsonl: false
+        }
+      },
+      {
+        connect: vi.fn().mockResolvedValue(client),
+        log,
+        stdinIsTTY: true
+      }
+    )
+
+    expect(client.startRun).toHaveBeenCalledWith({
+      project: 'project-1',
+      prompt: 'Plan this.',
+      turnIntent: 'plan-first',
+      autoReviewEnabled: true,
+      specialist: 'literature-specialist',
+      delegationPolicy: 'deny'
+    })
+    expect(client.waitForRun).toHaveBeenCalledWith('run-1', {
+      returnOnAttention: true
+    })
+    expect(log).toHaveBeenCalledWith(
+      'Run is waiting for Plan approval: open-science plan approve session-1 --artifact-version plan-version --revision 4'
+    )
   })
 
   it('parses and runs the explicit offline rollback command', async () => {
@@ -312,6 +401,63 @@ describe('task CLI', () => {
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
     expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
+  })
+
+  it('dispatches Plan show, decision, and revision feedback through the SDK', async () => {
+    const client = {
+      getSessionPlan: vi.fn().mockResolvedValue({
+        artifactVersionId: 'plan-version',
+        revision: 2
+      }),
+      respondSessionPlan: vi.fn().mockResolvedValue({ changed: true })
+    }
+    const deps = {
+      connect: vi.fn().mockResolvedValue(client),
+      log: vi.fn()
+    }
+    const outputOptions = { json: true, jsonl: false }
+
+    await runTaskCommand(
+      {
+        command: 'plan',
+        subcommand: 'show',
+        positionals: ['session-1'],
+        options: outputOptions
+      },
+      deps
+    )
+    await runTaskCommand(
+      {
+        command: 'plan',
+        subcommand: 'approve',
+        positionals: ['session-1'],
+        options: {
+          ...outputOptions,
+          artifactVersion: 'plan-version',
+          revision: 2
+        }
+      },
+      deps
+    )
+    await runTaskCommand(
+      {
+        command: 'plan',
+        subcommand: 'revise',
+        positionals: ['session-1'],
+        options: { ...outputOptions, feedback: 'Split the validation step.' }
+      },
+      deps
+    )
+
+    expect(client.getSessionPlan).toHaveBeenCalledWith('session-1')
+    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(1, 'session-1', {
+      decision: 'approved',
+      artifactVersionId: 'plan-version',
+      expectedRevision: 2
+    })
+    expect(client.respondSessionPlan).toHaveBeenNthCalledWith(2, 'session-1', {
+      feedback: 'Split the validation step.'
+    })
   })
 
   it('reads stdin, emits JSONL events, and sets a failed-run exit code', async () => {

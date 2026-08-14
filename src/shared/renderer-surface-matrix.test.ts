@@ -33,7 +33,11 @@ const TASK_RUN_REQUEST_FIELDS = {
   cwd: true,
   sessionId: true,
   permissionProfile: true,
-  skillIds: true
+  skillIds: true,
+  turnIntent: true,
+  autoReviewEnabled: true,
+  specialist: true,
+  delegationPolicy: true
 } as const satisfies Record<keyof StartTaskRunRequest, true>
 
 const permissionPaths = [
@@ -215,12 +219,16 @@ describe('renderer surface compatibility matrix', () => {
       )
     ).toBe(false)
     expect(Object.keys(TASK_RUN_REQUEST_FIELDS).sort()).toEqual([
+      'autoReviewEnabled',
       'cwd',
+      'delegationPolicy',
       'permissionProfile',
       'project',
       'prompt',
       'sessionId',
-      'skillIds'
+      'skillIds',
+      'specialist',
+      'turnIntent'
     ])
   })
 

@@ -11,6 +11,7 @@ import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
 import { toApplicationCommandErrorEnvelope } from '../../shared/application-command-contract'
+import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
 import {
   ClientLeaseRegistry,
@@ -35,7 +36,7 @@ import {
 } from './application-event-projections'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { authenticateRequest, persistAuthCookie } from './auth'
-import type { StartTaskRunRequest } from '../../shared/task-api'
+import type { StartTaskRunRequest, TaskPlanResponseRequest } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
@@ -90,7 +91,8 @@ type WebServerOptions = {
     | 'acquireArtifact'
     | 'releaseArtifact'
     | 'runWithCallerContext'
-  >
+  > &
+    Partial<Pick<HeadlessTaskApi, 'getSessionPlan' | 'respondSessionPlan'>>
   onShutdownRequest?: () => void
   bootstrap: {
     appName: string
@@ -225,6 +227,12 @@ const taskError = (response: ServerResponse, error: unknown): void => {
     })
     return
   }
+  if (error instanceof PlanCommandError) {
+    json(response, error.code === 'invalid-plan' ? 400 : 409, {
+      error: { code: error.code, message: error.message }
+    })
+    return
+  }
   if (error instanceof TaskApiError) {
     json(response, taskErrorStatus(error), {
       error: { code: error.code, message: error.message }
@@ -353,6 +361,28 @@ const handleTaskApiRequest = async (
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
           data: await tasks.cancelRun(decodeURIComponent(cancelRunMatch[1]))
+        })
+        return true
+      }
+      const sessionPlanMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/plan$/)
+      if (sessionPlanMatch && request.method === 'GET' && tasks.getSessionPlan) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.getSessionPlan(decodeURIComponent(sessionPlanMatch[1]))
+        })
+        return true
+      }
+      const sessionPlanResponseMatch = url.pathname.match(
+        /^\/api\/v1\/sessions\/([^/]+)\/plan\/respond$/
+      )
+      if (sessionPlanResponseMatch && request.method === 'POST' && tasks.respondSessionPlan) {
+        const body = (await readJsonBody(request)) as TaskPlanResponseRequest
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        json(response, 200, {
+          data: await tasks.respondSessionPlan(
+            decodeURIComponent(sessionPlanResponseMatch[1]),
+            body
+          )
         })
         return true
       }

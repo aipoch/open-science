@@ -1,7 +1,9 @@
 import type { ArtifactFile } from './artifacts'
 import type { PermissionProfileId } from './permission-profiles'
 import type { Project } from './projects'
-import type { PersistedSessionStatus } from './session-persistence'
+import type { ReviewLifecycle, ReviewOutcome, ReviewRunNotStartedReason } from './reviewer'
+import type { DelegationPolicy, PersistedSessionStatus } from './session-persistence'
+import type { ActivePlanProjection } from './session-plan/contract'
 
 export type TaskRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -32,7 +34,35 @@ export type StartTaskRunRequest = {
   cwd?: string
   permissionProfile?: PermissionProfileId
   skillIds?: string[]
+  turnIntent?: 'plan-first'
+  autoReviewEnabled?: boolean
+  // Accepts an immutable Specialist UUID or its stable Profile name. displayName is presentation-only.
+  specialist?: string
+  delegationPolicy?: DelegationPolicy
 }
+
+export type TaskRunAttention =
+  | { kind: 'plan-approval'; plan: ActivePlanProjection }
+  | { kind: 'permission' }
+  | { kind: 'delegated-question' }
+
+export type TaskRunReview = {
+  started: boolean
+  reason?: ReviewRunNotStartedReason
+  id?: string
+  lifecycle?: ReviewLifecycle
+  outcome?: ReviewOutcome | null
+  errorMessage?: string
+}
+
+export type TaskPlanResponseRequest =
+  | {
+      decision: 'approved' | 'rejected'
+      artifactVersionId: string
+      expectedRevision: number
+      feedback?: never
+    }
+  | { feedback: string; decision?: never; artifactVersionId?: never; expectedRevision?: never }
 
 export type TaskRun = {
   id: string
@@ -47,6 +77,8 @@ export type TaskRun = {
   output?: string
   error?: string
   artifacts: ArtifactFile[]
+  attention?: TaskRunAttention
+  review?: TaskRunReview
 }
 
 export type TaskSessionSummary = {
@@ -55,6 +87,9 @@ export type TaskSessionSummary = {
   title: string
   status: PersistedSessionStatus
   permissionProfile?: PermissionProfileId
+  autoReviewEnabled: boolean
+  specialistId?: string
+  delegationPolicy: DelegationPolicy
   createdAt: number
   updatedAt: number
   output?: string
@@ -80,3 +115,4 @@ export type TaskApiErrorCode =
   | 'session_busy'
   | 'run_not_found'
   | 'artifact_not_found'
+  | 'specialist_not_found'

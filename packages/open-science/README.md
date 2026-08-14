@@ -57,6 +57,13 @@ await progress
 console.log(observedResult.output)
 ```
 
+Plan First runs can opt into actionable waiting with returnOnAttention. When the returned Run has
+attention.kind equal to plan-approval, use getSessionPlan and respondSessionPlan. Calling waitForRun
+without returnOnAttention keeps the original terminal-only behavior.
+
+Automatic review and Specialist binding reuse existing Session JSON fields. Delegation adds
+delegationPolicy with values allow or deny; an omitted historical value restores as allow.
+
 To stop a still-running task instead of waiting for it, cancel it explicitly. Cancellation waits for
 provider work and application finalization to drain before returning the terminal Run:
 

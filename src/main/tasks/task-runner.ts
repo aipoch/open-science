@@ -19,6 +19,7 @@ import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { Project } from '../../shared/projects'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type {
+  DelegationPolicy,
   PersistedArtifact,
   PersistedChatMessage,
   PersistedChatSession,
@@ -32,6 +33,7 @@ import type {
   TaskRun,
   TaskRunProgressEvent,
   TaskRunProgressPhase,
+  TaskRunReview,
   TaskSessionSummary
 } from '../../shared/task-api'
 
@@ -73,6 +75,7 @@ type TaskAgentCreateSessionRequest = {
   projectId: string
   permissionProfile: PermissionProfileId
   cwd?: string
+  specialistId?: string
 }
 
 type TaskAgentResumeSessionRequest = {
@@ -84,12 +87,14 @@ type TaskAgentResumeSessionRequest = {
   permissionProfile: PermissionProfileId
   previousFrameworkId?: AgentFrameworkId
   previousBackendId?: string
+  specialistId?: string
 }
 
 type TaskAgentPromptRequest = {
   sessionId: string
   promptMessageId: string
   text: string
+  turnIntent?: 'plan-first'
   skillIds?: string[]
   historyPreamble?: string
   contextReset?: boolean
@@ -122,6 +127,14 @@ type TaskRuntimeEventPort = {
   subscribe(listener: (event: AcpRuntimeEvent) => void): () => void
 }
 
+type TaskSpecialistPort = {
+  resolve(reference: string): Promise<{ id: string }>
+}
+
+type TaskReviewerPort = {
+  review(session: PersistedChatSession, turnMessageId: string): Promise<TaskRunReview>
+}
+
 type TaskRunnerDependencies = {
   projects: TaskProjectPort
   sessions: TaskSessionPort
@@ -129,6 +142,8 @@ type TaskRunnerDependencies = {
   agent: TaskAgentPort
   artifacts: TaskArtifactPort
   runtimeEvents: TaskRuntimeEventPort
+  specialists: TaskSpecialistPort
+  reviewer: TaskReviewerPort
   createId: () => string
   now: () => number
 }
@@ -190,7 +205,9 @@ const cloneRun = (run: MutableTaskRun): TaskRun => ({
   completedAt: run.completedAt,
   output: run.output,
   error: run.error,
-  artifacts: [...run.artifacts]
+  artifacts: [...run.artifacts],
+  attention: run.attention,
+  review: run.review
 })
 
 const createTitle = (prompt: string): string => {
@@ -198,12 +215,18 @@ const createTitle = (prompt: string): string => {
   return normalized.length <= 60 ? normalized : `${normalized.slice(0, 57)}...`
 }
 
-const createUserMessage = (id: string, content: string, now: number): PersistedChatMessage => ({
+const createUserMessage = (
+  id: string,
+  content: string,
+  now: number,
+  turnIntent?: 'plan-first'
+): PersistedChatMessage => ({
   id,
   role: 'user',
   content,
   status: 'complete',
   eventIds: [],
+  ...(turnIntent ? { turnIntent } : {}),
   createdAt: now,
   updatedAt: now
 })
@@ -271,6 +294,9 @@ const summarizeSession = (session: PersistedChatSession): TaskSessionSummary => 
   title: session.title,
   status: session.status,
   permissionProfile: session.permissionProfile,
+  autoReviewEnabled: session.autoReviewEnabled === true,
+  specialistId: session.specialistId,
+  delegationPolicy: session.delegationPolicy === 'deny' ? 'deny' : 'allow',
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
   output: [...session.messages].reverse().find((message) => message.role === 'agent')?.content,
@@ -438,6 +464,25 @@ class TaskRunner {
     ) {
       throw new TaskRunnerError('invalid_request', 'Skill ids must be non-empty strings.')
     }
+    if (request.turnIntent !== undefined && request.turnIntent !== 'plan-first') {
+      throw new TaskRunnerError('invalid_request', 'Turn intent must be plan-first.')
+    }
+    if (request.autoReviewEnabled !== undefined && typeof request.autoReviewEnabled !== 'boolean') {
+      throw new TaskRunnerError('invalid_request', 'Auto review must be a boolean.')
+    }
+    if (
+      request.specialist !== undefined &&
+      (typeof request.specialist !== 'string' || !request.specialist.trim())
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Specialist must be a non-empty id or name.')
+    }
+    if (
+      request.delegationPolicy !== undefined &&
+      request.delegationPolicy !== 'allow' &&
+      request.delegationPolicy !== 'deny'
+    ) {
+      throw new TaskRunnerError('invalid_request', 'Delegation policy must be allow or deny.')
+    }
     const prompt = typeof request.prompt === 'string' ? request.prompt.trim() : ''
     if (!prompt) throw new TaskRunnerError('invalid_request', 'Prompt is required.')
     const cwd =
@@ -594,6 +639,29 @@ class TaskRunner {
     const now = this.dependencies.now()
     const permissionProfile =
       request.permissionProfile ?? existing?.permissionProfile ?? DEFAULT_PERMISSION_PROFILE
+    const requestedSpecialist = request.specialist?.trim()
+    let specialistId = existing?.specialistId
+    if (requestedSpecialist) {
+      let resolved: { id: string }
+      try {
+        resolved = await this.dependencies.specialists.resolve(requestedSpecialist)
+      } catch (error) {
+        throw new TaskRunnerError(
+          'specialist_not_found',
+          error instanceof Error ? error.message : String(error)
+        )
+      }
+      if (existing && existing.specialistId !== resolved.id) {
+        throw new TaskRunnerError(
+          'invalid_request',
+          `Session ${existing.id} is bound to a different Specialist.`
+        )
+      }
+      specialistId = resolved.id
+    }
+    const autoReviewEnabled = request.autoReviewEnabled ?? existing?.autoReviewEnabled ?? false
+    const delegationPolicy: DelegationPolicy =
+      request.delegationPolicy ?? existing?.delegationPolicy ?? 'allow'
     let sessionInfo: TaskAgentSession
 
     if (existing) {
@@ -619,24 +687,29 @@ class TaskRunner {
           previousFrameworkId: existing.agentFrameworkId,
           previousBackendId: existing.agentBackendId,
           providerSessionId: existing.providerSessionId,
-          providerContinuityToken: existing.providerContinuityToken
+          providerContinuityToken: existing.providerContinuityToken,
+          ...(specialistId ? { specialistId } : {})
         })
       }
     } else {
       sessionInfo = await this.dependencies.agent.createSession({
         projectId: project.id,
         permissionProfile,
-        ...(request.cwd ? { cwd: request.cwd } : {})
+        ...(request.cwd ? { cwd: request.cwd } : {}),
+        ...(specialistId ? { specialistId } : {})
       })
     }
 
-    const userMessage = createUserMessage(userMessageId, prompt, now)
+    const userMessage = createUserMessage(userMessageId, prompt, now, request.turnIntent)
     const session: PersistedChatSession = existing
       ? {
           ...existing,
           cwd: sessionInfo.cwd ?? existing.cwd,
           status: 'running',
           permissionProfile,
+          autoReviewEnabled,
+          delegationPolicy,
+          specialistId,
           agentFrameworkId: sessionInfo.frameworkId ?? existing.agentFrameworkId,
           agentBackendId: sessionInfo.backendId ?? existing.agentBackendId,
           providerSessionId: sessionInfo.providerSessionId ?? existing.providerSessionId,
@@ -653,6 +726,9 @@ class TaskRunner {
           cwd: request.cwd ?? sessionInfo.cwd ?? '',
           status: 'running',
           permissionProfile,
+          autoReviewEnabled,
+          delegationPolicy,
+          specialistId,
           agentFrameworkId: sessionInfo.frameworkId,
           agentBackendId: sessionInfo.backendId,
           providerSessionId: sessionInfo.providerSessionId,
@@ -703,6 +779,7 @@ class TaskRunner {
           sessionId: session.id,
           promptMessageId: session.activeRun!.promptMessageId,
           text: prompt,
+          ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
           ...(request.skillIds?.length ? { skillIds: request.skillIds } : {}),
           ...(historyPreamble ? { historyPreamble } : {}),
           ...(contextReset ? { contextReset: true } : {}),
@@ -751,6 +828,25 @@ class TaskRunner {
     } catch (error) {
       await this.failRun(run, acceptedSession, completed, error)
       return
+    }
+    if (!run.cancellation && completed!.session.autoReviewEnabled === true) {
+      const reviewedMessage = [...completed!.session.messages]
+        .reverse()
+        .find((message) => message.role === 'agent')
+      if (reviewedMessage) {
+        try {
+          run.review = await this.dependencies.reviewer.review(
+            completed!.session,
+            reviewedMessage.id
+          )
+        } catch (error) {
+          run.review = {
+            started: false,
+            reason: 'run-failed',
+            errorMessage: error instanceof Error ? error.message : String(error)
+          }
+        }
+      }
     }
     const terminalCancellation = run.cancellation
     if (terminalCancellation) await terminalCancellation.dispatch.catch(() => undefined)
@@ -945,6 +1041,12 @@ class TaskRunner {
         continue
       }
       run.events.push(event)
+      if (event.kind === 'plan' && event.planProjection) {
+        run.attention =
+          event.planProjection.lifecycle === 'awaiting_approval'
+            ? { kind: 'plan-approval', plan: event.planProjection }
+            : undefined
+      }
       if (
         run.providerAccepted &&
         !run.firstVisibleOutput &&

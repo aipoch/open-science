@@ -58,7 +58,8 @@ describe('ACP Task Agent port', () => {
       port.createSession({
         projectId: 'project-1',
         permissionProfile: 'auto',
-        cwd: '/workspace/external'
+        cwd: '/workspace/external',
+        specialistId: 'specialist-1'
       })
     ).resolves.toMatchObject({
       sessionId: 'session-created',
@@ -72,7 +73,8 @@ describe('ACP Task Agent port', () => {
         projectId: 'project-1',
         permissionProfile: 'ask',
         previousFrameworkId: 'codex',
-        previousBackendId: 'codex:shared'
+        previousBackendId: 'codex:shared',
+        specialistId: 'specialist-1'
       })
     ).resolves.toMatchObject({
       sessionId: 'session-resumed',
@@ -83,6 +85,7 @@ describe('ACP Task Agent port', () => {
       sessionId: 'session-stable',
       promptMessageId: 'persisted-prompt',
       text: 'Continue the research.',
+      turnIntent: 'plan-first',
       skillIds: ['literature-review'],
       historyPreamble: 'Previous conversation.',
       contextReset: true,
@@ -93,7 +96,8 @@ describe('ACP Task Agent port', () => {
     expect(create).toHaveBeenCalledWith({
       projectName: 'project-1',
       permissionProfile: 'auto',
-      cwd: '/workspace/external'
+      cwd: '/workspace/external',
+      specialistId: 'specialist-1'
     })
     expect(withSessionAvailable).toHaveBeenCalledWith('project-1', 'session-stable', admitted)
     expect(runtime.resumeSession).toHaveBeenCalledWith({
@@ -102,7 +106,8 @@ describe('ACP Task Agent port', () => {
       projectName: 'project-1',
       permissionProfile: 'ask',
       previousFrameworkId: 'codex',
-      previousBackendId: 'codex:shared'
+      previousBackendId: 'codex:shared',
+      specialistId: 'specialist-1'
     })
     expect(runtime.setPermissionProfile).toHaveBeenCalledWith({
       sessionId: 'session-stable',
@@ -113,6 +118,7 @@ describe('ACP Task Agent port', () => {
       text: 'Continue the research.',
       provenanceContext: { promptMessageId: 'persisted-prompt' },
       forcedSkillIds: ['literature-review'],
+      turnIntent: 'plan-first',
       historyPreamble: 'Previous conversation.',
       contextReset: true,
       resumeFallback: { historyPreamble: 'Fallback conversation.' }

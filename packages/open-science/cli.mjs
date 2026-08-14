@@ -34,6 +34,10 @@ Commands:
   run status <run-id>
   run cancel <run-id>
   session status <session-id>
+  plan show <session-id>
+  plan approve <session-id> --artifact-version <id> --revision <number>
+  plan reject <session-id> --artifact-version <id> --revision <number>
+  plan revise <session-id> --feedback <text>
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
   rollback-to-0.7.3 --yes [--output <path>]
@@ -50,7 +54,13 @@ Options:
   --prompt-file <path>   Read the prompt from a UTF-8 file
   --approval-profile <profile>  ask, auto, or full (default: ask)
   --skill <id>           Force-load a skill for this run (repeatable)
+  --plan-first           Require an approved Plan before execution
+  --auto-review          Enable automatic review for this Session
+  --no-auto-review       Disable automatic review for this Session
+  --specialist <id-or-name>  Bind a new Session to a Specialist
+  --delegation <policy>  allow or deny new delegated children
   --wait                 Wait for the run to finish
+  --return-on-attention  With --wait, return when the run needs an external response
   --timeout-ms <ms>      Stop waiting after this many milliseconds
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line
@@ -75,13 +85,18 @@ const VALUE_OPTIONS = {
   '--prompt': 'prompt',
   '--prompt-file': 'promptFile',
   '--approval-profile': 'approvalProfile',
+  '--specialist': 'specialist',
+  '--delegation': 'delegation',
+  '--artifact-version': 'artifactVersion',
+  '--revision': 'revision',
+  '--feedback': 'feedback',
   '--timeout-ms': 'timeoutMs',
   '--description': 'description',
   '--output': 'output'
 }
 
-const TASK_COMMANDS = new Set(['project', 'run', 'session', 'artifacts'])
-const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'artifacts'])
+const TASK_COMMANDS = new Set(['project', 'run', 'session', 'plan', 'artifacts'])
+const GROUP_COMMANDS = new Set(['codex', 'project', 'session', 'plan', 'artifacts'])
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -116,7 +131,19 @@ export const parseCliArgs = (argv) => {
     else if (arg === '--force') options.force = true
     else if (arg === '--jsonl') options.jsonl = true
     else if (arg === '--wait') options.wait = true
-    else if (arg === '--cancel-on-timeout') options.cancelOnTimeout = true
+    else if (arg === '--return-on-attention') options.returnOnAttention = true
+    else if (arg === '--plan-first') options.planFirst = true
+    else if (arg === '--auto-review') {
+      if (options.autoReviewEnabled === false) {
+        throw new CliUsageError('Use only one of --auto-review or --no-auto-review.')
+      }
+      options.autoReviewEnabled = true
+    } else if (arg === '--no-auto-review') {
+      if (options.autoReviewEnabled === true) {
+        throw new CliUsageError('Use only one of --auto-review or --no-auto-review.')
+      }
+      options.autoReviewEnabled = false
+    } else if (arg === '--cancel-on-timeout') options.cancelOnTimeout = true
     else if (arg === '--skill') {
       const value = args.shift()
       if (!value) throw new CliUsageError('--skill requires a value.')
@@ -149,6 +176,16 @@ export const parseCliArgs = (argv) => {
     }
     options.timeoutMs = timeoutMs
   }
+  if (options.revision !== undefined) {
+    const revision = Number(options.revision)
+    if (!Number.isInteger(revision) || revision < 0) {
+      throw new CliUsageError(`Invalid Plan revision: ${options.revision}`)
+    }
+    options.revision = revision
+  }
+  if (options.delegation && !['allow', 'deny'].includes(options.delegation)) {
+    throw new CliUsageError(`Invalid delegation policy: ${options.delegation}`)
+  }
   if (options.json && options.jsonl) {
     throw new CliUsageError('Use only one of --json or --jsonl.')
   }
@@ -163,6 +200,9 @@ export const parseCliArgs = (argv) => {
   }
   if (options.timeoutMs !== undefined && (command !== 'run' || subcommand || !options.wait)) {
     throw new CliUsageError('--timeout-ms requires run --wait.')
+  }
+  if (options.returnOnAttention && (command !== 'run' || subcommand || !options.wait)) {
+    throw new CliUsageError('--return-on-attention requires run --wait.')
   }
   if (options.cancelOnTimeout && options.timeoutMs === undefined) {
     throw new CliUsageError('--cancel-on-timeout requires --timeout-ms.')
@@ -184,6 +224,25 @@ export const parseCliArgs = (argv) => {
       throw new CliUsageError('codex login does not support machine-readable output.')
     }
     if (positionals.length > 0) throw new CliUsageError('codex login accepts no arguments.')
+  }
+  const runOnlyOptions = [
+    ['--plan-first', options.planFirst],
+    ['--auto-review/--no-auto-review', options.autoReviewEnabled !== undefined],
+    ['--specialist', options.specialist !== undefined],
+    ['--delegation', options.delegation !== undefined]
+  ]
+  for (const [label, present] of runOnlyOptions) {
+    if (present && (command !== 'run' || subcommand)) {
+      throw new CliUsageError(`${label} requires run.`)
+    }
+  }
+  if (
+    command !== 'plan' &&
+    (options.artifactVersion !== undefined ||
+      options.revision !== undefined ||
+      options.feedback !== undefined)
+  ) {
+    throw new CliUsageError('Plan response options require a plan command.')
   }
   return {
     command,
@@ -657,6 +716,11 @@ const emitRunEvent = (event, options, deps) => {
     )
   } else if (
     event.type === 'run.event' &&
+    event.data?.planProjection?.lifecycle === 'awaiting_approval'
+  ) {
+    deps.warn('Run is waiting for Plan approval.')
+  } else if (
+    event.type === 'run.event' &&
     event.data?.kind !== 'message' &&
     (event.data?.title || event.data?.text)
   ) {
@@ -704,6 +768,41 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     if (!sessionId) throw new CliUsageError('Session id is required.')
     outputValue(await client.getSession(sessionId), options, deps)
     return
+  }
+  if (command === 'plan') {
+    const sessionId = positionals[0]
+    if (!sessionId) throw new CliUsageError('Session id is required.')
+    if (subcommand === 'show') {
+      outputValue(await client.getSessionPlan(sessionId), options, deps)
+      return
+    }
+    if (subcommand === 'approve' || subcommand === 'reject') {
+      if (!options.artifactVersion) {
+        throw new CliUsageError('--artifact-version is required.')
+      }
+      if (options.revision === undefined) {
+        throw new CliUsageError('--revision is required.')
+      }
+      outputValue(
+        await client.respondSessionPlan(sessionId, {
+          decision: subcommand === 'approve' ? 'approved' : 'rejected',
+          artifactVersionId: options.artifactVersion,
+          expectedRevision: options.revision
+        }),
+        options,
+        deps
+      )
+      return
+    }
+    if (subcommand === 'revise') {
+      if (!options.feedback?.trim()) throw new CliUsageError('--feedback is required.')
+      outputValue(
+        await client.respondSessionPlan(sessionId, { feedback: options.feedback.trim() }),
+        options,
+        deps
+      )
+      return
+    }
   }
   if (command === 'artifacts' && subcommand === 'list') {
     const sessionId = positionals[0]
@@ -754,7 +853,13 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
         ...(options.session ? { sessionId: options.session } : {}),
         ...(options.approvalProfile ? { permissionProfile: options.approvalProfile } : {}),
-        ...(options.skills?.length ? { skillIds: options.skills } : {})
+        ...(options.skills?.length ? { skillIds: options.skills } : {}),
+        ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
+        ...(options.autoReviewEnabled !== undefined
+          ? { autoReviewEnabled: options.autoReviewEnabled }
+          : {}),
+        ...(options.specialist ? { specialist: options.specialist } : {}),
+        ...(options.delegation ? { delegationPolicy: options.delegation } : {})
       })
       sessionIdRef.current = started.sessionId
       for (const event of sessionIdRef.pending.splice(0)) {
@@ -764,10 +869,14 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
         }
       }
       try {
+        const waitOptions = {
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+          ...(options.returnOnAttention ? { returnOnAttention: true } : {})
+        }
         result = options.wait
-          ? options.timeoutMs === undefined
+          ? Object.keys(waitOptions).length === 0
             ? await client.waitForRun(started.id)
-            : await client.waitForRun(started.id, { timeoutMs: options.timeoutMs })
+            : await client.waitForRun(started.id, waitOptions)
           : started
       } catch (error) {
         if (options.cancelOnTimeout && error?.code === 'timeout') {
@@ -792,7 +901,12 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     else if (result.status === 'completed') deps.log(result.output || `Run completed: ${result.id}`)
     else if (result.status === 'failed') deps.log(`Run failed: ${result.error ?? result.id}`)
     else if (result.status === 'cancelled') deps.log(`Run cancelled: ${result.id}`)
-    else deps.log(`Run started: ${result.id} (session ${result.sessionId})`)
+    else if (result.attention?.kind === 'plan-approval') {
+      const plan = result.attention.plan
+      deps.log(
+        `Run is waiting for Plan approval: open-science plan approve ${result.sessionId} --artifact-version ${plan.artifactVersionId} --revision ${plan.revision}`
+      )
+    } else deps.log(`Run started: ${result.id} (session ${result.sessionId})`)
     if (result.status === 'failed') deps.setExitCode(1)
     return
   }
@@ -816,7 +930,7 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
       ? 3
       : ['project_not_found', 'session_not_found', 'run_not_found', 'artifact_not_found'].includes(
             code
-          )
+          ) || code === 'specialist_not_found'
         ? 4
         : 1)
   if (argv.includes('--json') || argv.includes('--jsonl')) {

@@ -264,6 +264,14 @@ const createProductionDelegatedWorkComposition = (
   const host: ProductionDelegatedWorkComposition['host'] = Object.freeze({
     async delegate(caller, request, delegateOptions) {
       try {
+        const policySession = await options.sessions.readSession(caller.session)
+        if (policySession?.delegationPolicy === 'deny') {
+          throw new DurableDelegatedWorkError(
+            'admission_rejection',
+            'delegation is disabled for this Session',
+            'Delegation is disabled for this Session. Enable delegation before creating a Subagent.'
+          )
+        }
         const result = await (
           await workFor(caller.session)
         ).work.delegate(caller, request, delegateOptions)

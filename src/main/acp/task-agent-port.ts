@@ -34,6 +34,7 @@ const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest =
   sessionId: request.sessionId,
   text: request.text,
   provenanceContext: { promptMessageId: request.promptMessageId },
+  ...(request.turnIntent ? { turnIntent: request.turnIntent } : {}),
   ...(request.skillIds?.length ? { forcedSkillIds: request.skillIds } : {}),
   ...(request.historyPreamble ? { historyPreamble: request.historyPreamble } : {}),
   ...(request.contextReset ? { contextReset: true } : {}),
@@ -57,7 +58,8 @@ const createAcpTaskAgentPort = (
     createSessionWorkflow.create({
       projectName: request.projectId,
       permissionProfile: request.permissionProfile,
-      ...(request.cwd ? { cwd: request.cwd } : {})
+      ...(request.cwd ? { cwd: request.cwd } : {}),
+      ...(request.specialistId ? { specialistId: request.specialistId } : {})
     }),
   resumeSession: (request) =>
     runtime.resumeSession({
@@ -68,7 +70,8 @@ const createAcpTaskAgentPort = (
       previousFrameworkId: request.previousFrameworkId,
       previousBackendId: request.previousBackendId,
       providerSessionId: request.providerSessionId,
-      providerContinuityToken: request.providerContinuityToken
+      providerContinuityToken: request.providerContinuityToken,
+      ...(request.specialistId ? { specialistId: request.specialistId } : {})
     }),
   setPermissionProfile: (sessionId, profile) =>
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),

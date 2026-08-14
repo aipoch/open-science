@@ -68,6 +68,8 @@ const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunn
       finalizeRun: async () => ({ ok: true, artifacts: [] })
     },
     runtimeEvents: { subscribe: () => () => undefined },
+    specialists: { resolve: async (reference) => ({ id: reference }) },
+    reviewer: { review: async () => ({ started: true }) },
     createId: () => 'generated-id',
     now: () => 1,
     ...overrides
@@ -264,6 +266,26 @@ describe('TaskRunner', () => {
     expect(createSession).not.toHaveBeenCalled()
   })
 
+  it('rejects rebinding an existing Session to a different Specialist', async () => {
+    const bound = { ...session, specialistId: 'specialist-existing' }
+    const runner = createRunner({
+      sessions: { list: async () => [bound], save: async () => undefined },
+      specialists: { resolve: async () => ({ id: 'specialist-other' }) }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: bound.id,
+        prompt: 'Continue with another Specialist.',
+        specialist: 'other-name'
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: `Session ${bound.id} is bound to a different Specialist.`
+    })
+  })
+
   it('rejects a cwd that conflicts with an existing Session workspace', async () => {
     const existingRoot = await mkdtemp(join(tmpdir(), 'open-science-task-existing-cwd-'))
     const requestedRoot = await mkdtemp(join(tmpdir(), 'open-science-task-requested-cwd-'))
@@ -433,6 +455,123 @@ describe('TaskRunner', () => {
           turnUsage: { inputTokens: 31, cacheTokens: 15, outputTokens: 14 }
         }
       ]
+    })
+  })
+
+  it('applies Plan, review, Specialist, and delegation controls to a new Session', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const savedSessions: PersistedChatSession[] = []
+    const createSession = vi.fn(async () => ({
+      sessionId: 'session-controlled',
+      frameworkId: 'codex' as const
+    }))
+    const prompt = vi.fn(async () => {
+      emitEvent?.({
+        id: 'plan-event',
+        timestamp: 9,
+        kind: 'plan',
+        level: 'info',
+        sessionId: 'session-controlled',
+        text: 'Plan awaiting approval.',
+        planProjection: {
+          artifactId: 'plan-artifact',
+          artifactVersionId: 'plan-version',
+          artifactChecksum: 'plan-checksum',
+          revision: 2,
+          approval: 'pending',
+          lifecycle: 'awaiting_approval'
+        } as never
+      })
+      emitEvent?.({
+        id: 'message-event',
+        timestamp: 10,
+        kind: 'message',
+        level: 'info',
+        sessionId: 'session-controlled',
+        role: 'assistant',
+        text: 'Controlled output.'
+      })
+    })
+    const resolveSpecialist = vi.fn(async () => ({ id: 'specialist-uuid' }))
+    const review = vi.fn(async () => ({
+      started: true,
+      id: 'review-1',
+      lifecycle: 'complete' as const,
+      outcome: 'pass' as const
+    }))
+    const ids = ['user-controlled', 'run-controlled', 'assistant-controlled']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async (saved) => {
+          savedSessions.push(structuredClone(saved))
+        }
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession,
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt
+      },
+      specialists: { resolve: resolveSpecialist },
+      reviewer: { review },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Plan and execute.',
+      turnIntent: 'plan-first',
+      autoReviewEnabled: true,
+      specialist: 'stable-specialist-name',
+      delegationPolicy: 'deny'
+    })
+    const completed = await runner.waitForRun(started.id)
+
+    expect(resolveSpecialist).toHaveBeenCalledWith('stable-specialist-name')
+    expect(createSession).toHaveBeenCalledWith({
+      projectId: project.id,
+      permissionProfile: 'ask',
+      specialistId: 'specialist-uuid'
+    })
+    expect(prompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turnIntent: 'plan-first',
+        promptMessageId: 'user-controlled'
+      }),
+      expect.any(Object)
+    )
+    expect(savedSessions.at(-1)).toMatchObject({
+      autoReviewEnabled: true,
+      specialistId: 'specialist-uuid',
+      delegationPolicy: 'deny',
+      messages: [
+        expect.objectContaining({ id: 'user-controlled', turnIntent: 'plan-first' }),
+        expect.objectContaining({ id: 'assistant-controlled', content: 'Controlled output.' })
+      ]
+    })
+    expect(review).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'session-controlled' }),
+      'assistant-controlled'
+    )
+    expect(completed.review).toEqual({
+      started: true,
+      id: 'review-1',
+      lifecycle: 'complete',
+      outcome: 'pass'
+    })
+    expect(completed.attention).toMatchObject({
+      kind: 'plan-approval',
+      plan: { artifactVersionId: 'plan-version', revision: 2 }
     })
   })
 

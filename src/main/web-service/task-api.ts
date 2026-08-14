@@ -7,17 +7,22 @@ import type {
   FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
 import type { Project } from '../../shared/projects'
+import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
   StartTaskRunRequest,
+  TaskPlanResponseRequest,
   TaskRun,
   TaskRunProgressEvent,
+  TaskRunReview,
   TaskSessionSummary
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import type { PlanResponseResult } from '../session-plan/plan-service'
+import type { TaskControlPorts } from '../tasks/task-control-ports'
 import {
   TaskRunner,
   TaskRunnerError,
@@ -32,6 +37,7 @@ const TASK_CALLER_CONTEXT = createTaskCallerContext()
 type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
+  controls?: TaskControlPorts
 }
 
 type TaskApiDependencies = {
@@ -110,6 +116,10 @@ class HeadlessTaskApi {
         }
       },
       runtimeEvents: { subscribe: subscribeEvents },
+      specialists: {
+        resolve: (reference) => this.resolveSpecialist(reference)
+      },
+      reviewer: { review: (session, turnMessageId) => this.review(session, turnMessageId) },
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
     } satisfies TaskRunnerDependencies)
@@ -141,6 +151,33 @@ class HeadlessTaskApi {
 
   getSession(sessionId: string): Promise<TaskSessionSummary> {
     return this.runner.getSession(sessionId)
+  }
+
+  async getSessionPlan(sessionId: string): Promise<ActivePlanProjection | null> {
+    const session = await this.runner.getSession(sessionId)
+    const plans = this.ports.controls?.plans
+    if (!plans) throw new Error('Task Plan controls are unavailable.')
+    return plans.getProjection(session.projectId, session.id)
+  }
+
+  async respondSessionPlan(
+    sessionId: string,
+    request: TaskPlanResponseRequest
+  ): Promise<PlanResponseResult> {
+    const session = await this.runner.getSession(sessionId)
+    const plans = this.ports.controls?.plans
+    if (!plans) throw new Error('Task Plan controls are unavailable.')
+    const command: PlanResponseCommand =
+      'feedback' in request && typeof request.feedback === 'string'
+        ? { projectId: session.projectId, sessionId: session.id, feedback: request.feedback }
+        : {
+            projectId: session.projectId,
+            sessionId: session.id,
+            decision: request.decision,
+            artifactVersionId: request.artifactVersionId,
+            expectedRevision: request.expectedRevision
+          }
+    return plans.respond(command)
   }
 
   startRun(request: StartTaskRunRequest): Promise<TaskRun> {
@@ -193,6 +230,55 @@ class HeadlessTaskApi {
       return Promise.reject(new Error('Caller authorization is no longer current.'))
     }
     return operation()
+  }
+
+  private resolveSpecialist(reference: string): Promise<{ id: string }> {
+    const specialists = this.ports.controls?.specialists
+    if (!specialists) return Promise.reject(new Error('Task Specialist controls are unavailable.'))
+    return specialists.resolve(reference)
+  }
+
+  private async review(
+    session: PersistedChatSession,
+    turnMessageId: string
+  ): Promise<TaskRunReview> {
+    const reviewer = this.ports.controls?.reviewer
+    if (!reviewer) {
+      return {
+        started: false,
+        reason: 'run-failed',
+        errorMessage: 'Task Reviewer controls are unavailable.'
+      }
+    }
+    const started = await reviewer.triggerReview({
+      sessionId: session.id,
+      turnMessageId,
+      projectId: session.projectId,
+      mainSessionId: session.id,
+      model: session.agentModel,
+      origin: 'auto'
+    })
+    if (!started.started) return started
+
+    for (;;) {
+      const reviews = await reviewer.getForSession({
+        projectId: session.projectId,
+        appSessionId: session.id
+      })
+      const review = [...reviews]
+        .reverse()
+        .find((candidate) => candidate.turnMessageId === turnMessageId)
+      if (review && review.lifecycle !== 'running') {
+        return {
+          started: true,
+          id: review.id,
+          lifecycle: review.lifecycle,
+          outcome: review.outcome,
+          errorMessage: review.errorMessage
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
   }
 }
 
