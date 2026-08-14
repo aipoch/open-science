@@ -30,6 +30,7 @@ import {
 const expectedSkillChannels = [
   'settings:set-conversation-skill-import-enabled',
   'settings:set-skill-enabled',
+  'settings:set-skills-enabled',
   'settings:create-skill',
   'settings:update-skill',
   'settings:delete-skill',
@@ -127,7 +128,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings integration application commands', () => {
-  it('defines the exact 23-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 24-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -161,7 +162,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(23)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(24)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -170,7 +171,7 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(23)
+    expect(integrationContracts).toHaveLength(24)
     expect(
       integrationContracts
         ?.filter(
@@ -210,7 +211,7 @@ describe('Settings integration application commands', () => {
     }
   })
 
-  it('delegates all eight remote Skill mutations through the Skill workflow owner', async () => {
+  it('delegates all nine remote Skill mutations through the Skill workflow owner', async () => {
     const { dependencies, skillMethod } = createDependencies()
     const router = createApplicationCommandRouter()
     registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
@@ -222,6 +223,10 @@ describe('Settings integration application commands', () => {
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.setSkillEnabled,
       invocation([{ id: 'skill-1', enabled: false }] as const)
+    )
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.setSkillsEnabled,
+      invocation([{ ids: ['skill-1', 'skill-2'], enabled: false }] as const)
     )
     await router.dispatcher.invoke(
       settingsIntegrationApplicationCommands.createSkill,
@@ -253,6 +258,10 @@ describe('Settings integration application commands', () => {
     expect(skillMethod('setConversationSkillImportEnabled')).toHaveBeenCalledWith({ enabled: true })
     expect(skillMethod('setSkillEnabled')).toHaveBeenCalledWith({
       id: 'skill-1',
+      enabled: false
+    })
+    expect(skillMethod('setSkillsEnabled')).toHaveBeenCalledWith({
+      ids: ['skill-1', 'skill-2'],
       enabled: false
     })
     expect(skillMethod('createSkill')).toHaveBeenCalledWith({

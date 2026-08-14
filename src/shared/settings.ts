@@ -871,6 +871,11 @@ export type SetSkillEnabledRequest = {
   enabled: boolean
 }
 
+export type SetSkillsEnabledRequest = {
+  ids: string[]
+  enabled: boolean
+}
+
 // A supporting file bundled under the skill's `references/` directory. `dataBase64` carries new file
 // content; when omitted (on edit), it means "keep the existing file with this path unchanged".
 export type SkillReference = {

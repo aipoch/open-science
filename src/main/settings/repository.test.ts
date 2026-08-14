@@ -1098,6 +1098,16 @@ describe('settings repository: v2 official providers & activeModel migration', (
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
   })
 
+  it('persists a Skill enablement batch in the existing disabledSkillIds field', async () => {
+    const repository = new SettingsRepository(await createStorageRoot())
+
+    await repository.setSkillsEnabled(['imported-a', 'personal-b', 'imported-a'], false)
+    expect((await repository.getSettings()).disabledSkillIds).toEqual(['imported-a', 'personal-b'])
+
+    await repository.setSkillsEnabled(['imported-a', 'personal-b'], true)
+    expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
+  })
+
   it('persists and clears only the encrypted GitHub token reference and display mask', async () => {
     const repository = new SettingsRepository(await createStorageRoot())
 

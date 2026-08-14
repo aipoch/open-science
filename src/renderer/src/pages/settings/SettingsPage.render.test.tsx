@@ -1995,6 +1995,31 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
   })
 
+  it('opens bulk Skill management as a breadcrumb sub-page without Featured Skills', async () => {
+    await act(async () => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    await act(async () => navButton('Skills')?.click())
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Manage'
+    )
+    await act(async () => manage?.click())
+
+    const crumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to skills"]')
+    expect(crumb).not.toBeNull()
+    expect(document.body.textContent).toContain('Manage skills')
+    expect(document.body.textContent).toContain('Featured Skills are not changed.')
+    expect(document.body.textContent).not.toContain('Alpha')
+
+    await act(async () => crumb?.click())
+    expect(document.body.querySelector('[aria-label="Back to skills"]')).toBeNull()
+    expect(document.body.textContent).toContain('Alpha')
+  })
+
   it('opens directly on a skill detail when the store has a pending skill', async () => {
     // A skill mention sets the pending id before the dialog opens.
     useSettingsStore.setState({ pendingSkillId: 'alpha' })

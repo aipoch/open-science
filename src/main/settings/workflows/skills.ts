@@ -7,6 +7,7 @@ import type {
   ImportSkillZipRequest,
   SetConversationSkillImportEnabledRequest,
   SetSkillEnabledRequest,
+  SetSkillsEnabledRequest,
   UpdateSkillRequest
 } from '../../../shared/settings'
 import type { SettingsService } from '../service'
@@ -15,6 +16,7 @@ type SkillSettingsWorkflowStore = Pick<
   SettingsService,
   | 'setConversationSkillImportEnabled'
   | 'setSkillEnabled'
+  | 'setSkillsEnabled'
   | 'createSkill'
   | 'updateSkill'
   | 'deleteSkill'
@@ -50,6 +52,10 @@ class SkillSettingsWorkflows {
 
   async setSkillEnabled(request: SetSkillEnabledRequest): WorkflowResult<'setSkillEnabled'> {
     return this.afterSkillsChanged(() => this.settings.setSkillEnabled(request))
+  }
+
+  async setSkillsEnabled(request: SetSkillsEnabledRequest): WorkflowResult<'setSkillsEnabled'> {
+    return this.afterSkillsChanged(() => this.settings.setSkillsEnabled(request))
   }
 
   async createSkill(request: CreateSkillRequest): WorkflowResult<'createSkill'> {

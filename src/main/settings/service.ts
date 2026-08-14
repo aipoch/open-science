@@ -34,6 +34,7 @@ import type {
   SetPackageMirrorRequest,
   SetNetworkProxyRequest,
   SetSkillEnabledRequest,
+  SetSkillsEnabledRequest,
   SetToolPermissionRequest,
   SettingsSnapshot,
   AppIconVariant,
@@ -566,6 +567,10 @@ class SettingsService {
 
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {
     return this.skills.setSkillEnabled(request)
+  }
+
+  async setSkillsEnabled(request: SetSkillsEnabledRequest): Promise<SkillView[]> {
+    return this.skills.setSkillsEnabled(request)
   }
 
   async createSkill(request: CreateSkillRequest): Promise<SkillView[]> {

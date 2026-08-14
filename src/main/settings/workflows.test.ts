@@ -88,6 +88,7 @@ const fakeStore = () => {
     loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     setSkillEnabled: vi.fn().mockResolvedValue([]),
+    setSkillsEnabled: vi.fn().mockResolvedValue([]),
     createSkill: vi.fn().mockResolvedValue([]),
     updateSkill: vi.fn().mockResolvedValue([]),
     deleteSkill: vi.fn().mockResolvedValue([]),
@@ -485,12 +486,13 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ).skills
 
     await workflows.setSkillEnabled({ id: 'skill', enabled: true })
+    await workflows.setSkillsEnabled({ ids: ['imported-skill'], enabled: false })
     await workflows.createSkill({ name: 'Skill', description: '', body: 'Body' })
     await workflows.setConversationSkillImportEnabled({ enabled: false })
     store.deleteSkill.mockRejectedValue(new Error('delete failed'))
     await expect(workflows.deleteSkill({ id: 'skill' })).rejects.toThrow('delete failed')
 
-    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(2)
+    expect(notifySkillCatalogChanged).toHaveBeenCalledTimes(3)
     expect(requestSkillsReload).toHaveBeenCalledOnce()
   })
 

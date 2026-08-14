@@ -481,19 +481,18 @@ class SettingsRepository {
     })
   }
 
-  // Adds or removes a skill id from the disabled set (default-on model), returning the new document.
   async setSkillEnabled(id: string, enabled: boolean): Promise<StoredSettings> {
+    return this.setSkillsEnabled([id], enabled)
+  }
+
+  async setSkillsEnabled(ids: string[], enabled: boolean): Promise<StoredSettings> {
     return this.mutate((settings) => {
-      const current = new Set(settings.disabledSkillIds ?? [])
-
-      if (enabled) current.delete(id)
-      else current.add(id)
-
-      const disabledSkillIds = [...current]
-
-      return disabledSkillIds.length > 0
-        ? { ...settings, disabledSkillIds }
-        : { ...settings, disabledSkillIds: undefined }
+      const disabled = new Set(settings.disabledSkillIds ?? [])
+      for (const id of ids) {
+        if (enabled) disabled.delete(id)
+        else disabled.add(id)
+      }
+      return { ...settings, disabledSkillIds: disabled.size ? [...disabled] : undefined }
     })
   }
 

@@ -640,6 +640,41 @@ describe('SkillCatalogModule', () => {
     }
   )
 
+  it('changes Imported and Personal Skill enablement as one batch', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'personal', description: 'Personal.', body: '# Personal' })
+    await catalog.importSkillZip({
+      dataBase64: Buffer.from(
+        zipSync({
+          'SKILL.md': strToU8('---\nname: imported\ndescription: Imported.\n---\n# Imported')
+        })
+      ).toString('base64')
+    })
+
+    const skills = await catalog.setSkillsEnabled({
+      ids: ['personal-personal', 'imported-imported'],
+      enabled: false
+    })
+
+    expect(Object.fromEntries(skills.map((skill) => [skill.id, skill.enabled]))).toEqual({
+      demo: true,
+      'imported-imported': false,
+      'personal-personal': false
+    })
+  })
+
+  it('rejects a bulk change containing a Featured Skill without changing eligible Skills', async () => {
+    const catalog = await createCatalog()
+    await catalog.createSkill({ name: 'personal', description: 'Personal.', body: '# Personal' })
+
+    await expect(
+      catalog.setSkillsEnabled({ ids: ['personal-personal', 'demo'], enabled: false })
+    ).rejects.toThrow('Skill cannot be managed in bulk: demo')
+    expect(
+      Object.fromEntries((await catalog.listSkills()).map((skill) => [skill.id, skill.enabled]))
+    ).toEqual({ demo: true, 'personal-personal': true })
+  })
+
   it('reads authorized Connector descriptions from generated frontmatter and rejects invalid docs', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'settings-connector-catalog-'))
     const bundleRoot = await mkdtemp(join(tmpdir(), 'settings-connector-bundle-'))

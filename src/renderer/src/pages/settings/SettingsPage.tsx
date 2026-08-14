@@ -176,7 +176,7 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 )
 
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
-// (skills: list / detail / create / edit / import; model: list / create / edit; connectors: list /
+// (skills: list / manage / detail / create / edit / import; model: list / create / edit; connectors: list /
 // detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
 // Network panel sub-view: the package-mirror list vs. the configure form (a breadcrumb drill-in).
 type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
@@ -403,7 +403,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // entry point, so Back returns to the recovery panel the user just completed.
   const navigatePanel = (panel: SettingsPanelId): void => navigate({ ...INITIAL_LOCATION, panel })
 
-  // Navigates within the skills panel (list/detail/create/edit/import) as a history entry.
+  // Navigates within the skills panel (list/manage/detail/create/edit/import) as a history entry.
   const navigateSkills = (skills: SkillsView): void =>
     navigate({ panel: 'skills', skills, model: modelView, connectors: connectorsView })
 
@@ -456,16 +456,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         skillsView.kind === 'create'
           ? 'New skill'
-          : skillsView.kind === 'upload'
-            ? 'Upload skills'
-            : skillsView.kind === 'import'
-              ? 'Import from GitHub'
-              : skillsView.kind === 'import-agent-home'
-                ? 'Import installed skills'
-                : (() => {
-                    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                    return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
-                  })()
+          : skillsView.kind === 'manage'
+            ? 'Manage skills'
+            : skillsView.kind === 'upload'
+              ? 'Upload skills'
+              : skillsView.kind === 'import'
+                ? 'Import from GitHub'
+                : skillsView.kind === 'import-agent-home'
+                  ? 'Import installed skills'
+                  : (() => {
+                      const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+                      return skillsView.kind === 'edit' ? `Edit ${name}`.trim() : name
+                    })()
       return {
         rootLabel: 'Skills',
         rootTo: { panel: 'skills', skills: { kind: 'list' }, model: currentLocation.model },

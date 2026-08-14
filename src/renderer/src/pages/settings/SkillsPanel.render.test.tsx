@@ -64,6 +64,7 @@ beforeEach(() => {
     skills: seedSkills,
     loadSkills: vi.fn().mockResolvedValue(undefined),
     setSkillEnabled: vi.fn().mockResolvedValue(undefined),
+    setSkillsEnabled: vi.fn().mockResolvedValue(undefined),
     setConversationSkillImportEnabled: vi.fn().mockResolvedValue(undefined),
     createSkill: vi.fn().mockResolvedValue(undefined),
     updateSkill: vi.fn().mockResolvedValue(undefined),
@@ -266,6 +267,21 @@ describe('SkillsPanel (list view)', () => {
     )
     act(() => alphaRow?.click())
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'detail', id: 'a' })
+  })
+
+  it('opens bulk management as a dedicated Skills sub-view', () => {
+    const onNavigate = vi.fn()
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
+    })
+
+    const manage = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Manage'
+    )
+    act(() => manage?.click())
+
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'manage' })
+    expect(document.body.querySelector('[aria-label="Select Mine"]')).toBeNull()
   })
 
   it('filters the list by the search query', () => {

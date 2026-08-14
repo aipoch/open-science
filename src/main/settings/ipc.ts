@@ -47,6 +47,7 @@ import {
   type SetReasoningEffortRequest,
   type SetSubagentModelRequest,
   type SetSkillEnabledRequest,
+  type SetSkillsEnabledRequest,
   type SetToolPermissionRequest,
   type UpdateSkillRequest,
   type UpsertProviderRequest,
@@ -263,6 +264,9 @@ const registerSettingsIpcHandlers = ({
   })
   ipcMainHandle('settings:set-skill-enabled', (_event, request: SetSkillEnabledRequest) =>
     workflows.skills.setSkillEnabled(request)
+  )
+  ipcMainHandle('settings:set-skills-enabled', (_event, request: SetSkillsEnabledRequest) =>
+    workflows.skills.setSkillsEnabled(request)
   )
   ipcMainHandle('settings:create-skill', (_event, request: CreateSkillRequest) =>
     workflows.skills.createSkill(request)

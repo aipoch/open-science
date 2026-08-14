@@ -17,6 +17,7 @@ export type SettingsSkillsState = { skills: SkillView[] }
 export type SettingsSkillsActions = {
   loadSkills: () => Promise<void>
   setSkillEnabled: (id: string, enabled: boolean) => Promise<void>
+  setSkillsEnabled: (ids: string[], enabled: boolean) => Promise<void>
   createSkill: (request: CreateSkillRequest) => Promise<void>
   updateSkill: (request: UpdateSkillRequest) => Promise<void>
   deleteSkill: (id: string) => Promise<void>
@@ -41,6 +42,7 @@ type SettingsSkillsCommands = Pick<
   Window['api']['settings'],
   | 'listSkills'
   | 'setSkillEnabled'
+  | 'setSkillsEnabled'
   | 'createSkill'
   | 'updateSkill'
   | 'deleteSkill'
@@ -108,6 +110,8 @@ export const createSettingsSkillsSlice = ({
       })
       await reconcileCatalog(() => getCommands().setSkillEnabled({ id, enabled }))
     },
+    setSkillsEnabled: (ids, enabled) =>
+      reconcileCatalog(() => getCommands().setSkillsEnabled({ ids, enabled })),
     createSkill: (request) => reconcileCatalog(() => getCommands().createSkill(request)),
     updateSkill: (request) => reconcileCatalog(() => getCommands().updateSkill(request)),
     deleteSkill: (id) => reconcileCatalog(() => getCommands().deleteSkill({ id })),

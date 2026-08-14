@@ -229,6 +229,7 @@ import type {
   SetReasoningEffortRequest,
   SetSubagentModelRequest,
   SetSkillEnabledRequest,
+  SetSkillsEnabledRequest,
   SettingsSnapshot,
   AppIconPreview,
   SkillDetailView,
@@ -496,6 +497,7 @@ export interface OpenScienceAPI {
     getSkillDetail(id: string): Promise<SkillDetailView>
     exportSkill(request: ExportSkillRequest): Promise<ExportSkillResult>
     setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]>
+    setSkillsEnabled(request: SetSkillsEnabledRequest): Promise<SkillView[]>
     createSkill(request: CreateSkillRequest): Promise<SkillView[]>
     updateSkill(request: UpdateSkillRequest): Promise<SkillView[]>
     deleteSkill(request: DeleteSkillRequest): Promise<SkillView[]>

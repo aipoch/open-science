@@ -419,6 +419,7 @@ describe('Settings backend ownership architecture', () => {
       'setRuntimeEnablement',
       'setRuntimeSelection',
       'setSkillEnabled',
+      'setSkillsEnabled',
       'setSubagentModel',
       'setToolBlocked',
       'setToolPolicy',
@@ -514,7 +515,7 @@ describe('Settings backend ownership architecture', () => {
         setConversationSkillImportEnabled setCustomServerAuthenticator setCustomServerEnabled
         setDataRoot setDefaultPermissionProfile setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotificationsEnabled
-        setPackageMirror setProjectFilesFilter setReasoningEffort setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSubagentModel
+        setPackageMirror setProjectFilesFilter setReasoningEffort setRuntimeSelection setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel
         setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad uninstallClaude uninstallCodex
         uninstallOpencode updateCustomServer updateSkill upsertProvider validateProvider withHostSkillRead
       `

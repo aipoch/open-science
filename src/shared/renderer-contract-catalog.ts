@@ -347,7 +347,7 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['setPackageMirror', 'settings:set-package-mirror', LOCAL], ['setProjectFilesFilter', 'settings:set-project-files-filter', LOCAL],
     ['setNetworkProxy', 'settings:set-network-proxy', LOCAL],
     ['setReasoningEffort', 'settings:set-reasoning-effort'], ['setSubagentModel', 'settings:set-subagent-model'],
-    ['setSkillEnabled', 'settings:set-skill-enabled'], ['setToolPermission', 'settings:set-tool-permission'],
+    ['setSkillEnabled', 'settings:set-skill-enabled'], ['setSkillsEnabled', 'settings:set-skills-enabled'], ['setToolPermission', 'settings:set-tool-permission'],
     ['uninstallClaude', 'settings:uninstall-claude', LOCAL], ['uninstallCodex', 'settings:uninstall-codex', LOCAL],
     ['uninstallOpencode', 'settings:uninstall-opencode', LOCAL], ['updateCustomServer', 'settings:update-custom-server'],
     ['updateSkill', 'settings:update-skill'], ['upsertProvider', 'settings:upsert-provider'], ['validateProvider', 'settings:validate-provider'],

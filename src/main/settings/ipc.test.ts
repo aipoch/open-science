@@ -70,6 +70,7 @@ type FakeSettingsService = Record<
   | 'getSkillDetail'
   | 'buildSkillExport'
   | 'setSkillEnabled'
+  | 'setSkillsEnabled'
   | 'createSkill'
   | 'updateSkill'
   | 'deleteSkill'
@@ -177,6 +178,7 @@ const createFakeService = (): FakeSettingsService => ({
     archiveBytes: new Uint8Array([1, 2, 3])
   }),
   setSkillEnabled: vi.fn().mockResolvedValue([]),
+  setSkillsEnabled: vi.fn().mockResolvedValue([]),
   createSkill: vi.fn().mockResolvedValue([]),
   updateSkill: vi.fn().mockResolvedValue([]),
   deleteSkill: vi.fn().mockResolvedValue([]),
@@ -777,7 +779,13 @@ describe('settings IPC handlers', () => {
 
     await invoke('settings:set-skill-enabled', { id: 'demo', enabled: false })
     expect(service.setSkillEnabled).toHaveBeenCalledWith({ id: 'demo', enabled: false })
-    expect(onSkillsChanged).toHaveBeenCalledTimes(1)
+
+    await invoke('settings:set-skills-enabled', { ids: ['imported-demo'], enabled: false })
+    expect(service.setSkillsEnabled).toHaveBeenCalledWith({
+      ids: ['imported-demo'],
+      enabled: false
+    })
+    expect(onSkillsChanged).toHaveBeenCalledTimes(2)
   })
 
   it('builds and saves an eligible Skill export through the desktop adapter', async () => {

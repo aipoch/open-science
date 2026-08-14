@@ -22,6 +22,7 @@ import type {
   ScanRepoRequest,
   ScanRepoResult,
   SetSkillEnabledRequest,
+  SetSkillsEnabledRequest,
   SkillBundlePreviewResult,
   SkillDetailView,
   SkillImportPreviewContent,
@@ -398,6 +399,20 @@ class SkillCatalogModule {
 
   async setSkillEnabled(request: SetSkillEnabledRequest): Promise<SkillView[]> {
     await this.options.repository.setSkillEnabled(request.id, request.enabled)
+    return this.listSkills()
+  }
+
+  async setSkillsEnabled(request: SetSkillsEnabledRequest): Promise<SkillView[]> {
+    const ids = [...new Set(request.ids)]
+    const selectableIds = new Set(
+      (await this.managedCatalog())
+        .filter((skill) => skill.source === 'imported' || skill.source === 'personal')
+        .map((skill) => skill.id)
+    )
+    const unsupported = ids.find((id) => !selectableIds.has(id))
+    if (unsupported) throw new Error(`Skill cannot be managed in bulk: ${unsupported}`)
+
+    await this.options.repository.setSkillsEnabled(ids, request.enabled)
     return this.listSkills()
   }
 

@@ -216,6 +216,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setProjectFilesFilter': 'settings:set-project-files-filter',
   'settings.setReasoningEffort': 'settings:set-reasoning-effort',
   'settings.setSkillEnabled': 'settings:set-skill-enabled',
+  'settings.setSkillsEnabled': 'settings:set-skills-enabled',
   'settings.setSubagentModel': 'settings:set-subagent-model',
   'settings.setToolPermission': 'settings:set-tool-permission',
   'settings.uninstallClaude': 'settings:uninstall-claude',

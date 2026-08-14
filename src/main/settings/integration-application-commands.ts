@@ -19,6 +19,7 @@ type SkillIntegrationWorkflows = Pick<
   SkillSettingsWorkflows,
   | 'setConversationSkillImportEnabled'
   | 'setSkillEnabled'
+  | 'setSkillsEnabled'
   | 'createSkill'
   | 'updateSkill'
   | 'deleteSkill'
@@ -71,6 +72,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     OwnerArgs<SkillIntegrationWorkflows, 'setSkillEnabled'>,
     OwnerResult<SkillIntegrationWorkflows, 'setSkillEnabled'>
   >('settings:set-skill-enabled'),
+  setSkillsEnabled: defineApplicationCommand<
+    'settings:set-skills-enabled',
+    OwnerArgs<SkillIntegrationWorkflows, 'setSkillsEnabled'>,
+    OwnerResult<SkillIntegrationWorkflows, 'setSkillsEnabled'>
+  >('settings:set-skills-enabled'),
   createSkill: defineApplicationCommand<
     'settings:create-skill',
     OwnerArgs<SkillIntegrationWorkflows, 'createSkill'>,
@@ -181,6 +187,7 @@ const settingsIntegrationApplicationCommands = Object.freeze({
 const settingsSkillApplicationCommandGroup = defineApplicationCommandGroup('settings-skills', [
   settingsIntegrationApplicationCommands.setConversationSkillImportEnabled,
   settingsIntegrationApplicationCommands.setSkillEnabled,
+  settingsIntegrationApplicationCommands.setSkillsEnabled,
   settingsIntegrationApplicationCommands.createSkill,
   settingsIntegrationApplicationCommands.updateSkill,
   settingsIntegrationApplicationCommands.deleteSkill,
@@ -236,6 +243,7 @@ const registerIntegrationSettingsApplicationCommands = (
           enabled: readConversationSkillImportEnabled(args[0])
         }),
       'settings:set-skill-enabled': ({ args }) => dependencies.skills.setSkillEnabled(args[0]),
+      'settings:set-skills-enabled': ({ args }) => dependencies.skills.setSkillsEnabled(args[0]),
       'settings:create-skill': ({ args }) => dependencies.skills.createSkill(args[0]),
       'settings:update-skill': ({ args }) => dependencies.skills.updateSkill(args[0]),
       'settings:delete-skill': ({ args }) => dependencies.skills.deleteSkill(args[0]),

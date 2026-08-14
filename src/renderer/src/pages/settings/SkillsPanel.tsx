@@ -3,6 +3,7 @@ import {
   Download,
   FileUp,
   FolderInput,
+  ListChecks,
   MessagesSquare,
   Pencil,
   Plus,
@@ -28,12 +29,14 @@ import { SkillEditor, SkillEditLoader } from './SkillEditor'
 import { SkillImportView } from './SkillImportView'
 import { SkillUploadView } from './SkillUploadView'
 import { AgentHomeImportView } from './AgentHomeImportView'
+import { SkillBulkManageView } from './SkillBulkManageView'
 import { SettingsIconAction, SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { SettingsSearchInput } from './SettingsSearchInput'
 
 // The skills panel sub-view, driven by the settings navigation history so each is a breadcrumb page.
 export type SkillsView =
   | { kind: 'list' }
+  | { kind: 'manage' }
   | { kind: 'detail'; id: string }
   | { kind: 'create' }
   | { kind: 'edit'; id: string }
@@ -135,7 +138,6 @@ const SkillsPanel = ({
       )
     })
   }, [skills, filter, query])
-
   if (view.kind === 'detail') {
     return <SkillDetailView skillId={view.id} />
   }
@@ -179,6 +181,9 @@ const SkillsPanel = ({
         onWriteInstead={() => onNavigate({ kind: 'create' })}
       />
     )
+  }
+  if (view.kind === 'manage') {
+    return <SkillBulkManageView />
   }
 
   const groups = SOURCE_GROUPS.filter((group) => filter === 'all' || filter === group.source)
@@ -231,6 +236,10 @@ const SkillsPanel = ({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
+        <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
+          <ListChecks data-icon="inline-start" aria-hidden="true" />
+          Manage
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" className="shrink-0">

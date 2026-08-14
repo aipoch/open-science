@@ -49,6 +49,7 @@ const createCommands = (): SkillCommands => ({
   listSkills: vi.fn(async () => []),
   onSkillCatalogChanged: vi.fn(() => () => undefined),
   setSkillEnabled: vi.fn(async () => []),
+  setSkillsEnabled: vi.fn(async () => []),
   createSkill: vi.fn(async () => []),
   updateSkill: vi.fn(async () => []),
   deleteSkill: vi.fn(async () => []),
@@ -155,6 +156,16 @@ describe('settings Skills slice', () => {
     await expect(store.getState().setSkillEnabled('target', false)).rejects.toThrow('toggle failed')
 
     expect(store.getState().skills).toEqual([skill('target', false)])
+  })
+
+  it('reconciles the authoritative catalog after changing Skill enablement in bulk', async () => {
+    vi.mocked(commands.setSkillsEnabled).mockResolvedValue([skill('authoritative', false)])
+    store.setState({ skills: [skill('target')] })
+
+    await store.getState().setSkillsEnabled(['target'], false)
+
+    expect(commands.setSkillsEnabled).toHaveBeenCalledWith({ ids: ['target'], enabled: false })
+    expect(store.getState().skills).toEqual([skill('authoritative', false)])
   })
 
   it.each([
