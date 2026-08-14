@@ -899,6 +899,9 @@ const WorkspaceMessageItemImpl = ({
       key={message.id}
       messageId={message.id}
       disableContainment={message.status === 'streaming' || isAssistantPresenting}
+      containmentEstimate={
+        isUserMessage ? '[contain-intrinsic-size:auto_3rem]' : '[contain-intrinsic-size:auto_21rem]'
+      }
       scrollAnchor={message.role === 'user'}
       className="min-w-0"
     >
