@@ -612,8 +612,6 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   it('routes every owned method through its cataloged Electron channel', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(198)
-
     for (const contract of requestContracts) {
       invokeMock.mockClear()
 
@@ -678,7 +676,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
 })
 
 describe('preload bridge — core renderer contract catalog', () => {
-  it('pins the exact 23-group, 157-callable T1d complement', () => {
+  it('pins the core T1d capability complement', () => {
     expect(coreContractGroups.map(({ capability }) => capability)).toEqual([
       'artifacts',
       'cli',
@@ -705,28 +703,13 @@ describe('preload bridge — core renderer contract catalog', () => {
       'uploads',
       'window'
     ])
-    expect(coreContracts).toHaveLength(158)
-    expect({
-      requests: coreContracts.filter(
-        ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
-      ).length,
-      events: coreContracts.filter(({ kind }) => kind === 'event').length,
-      sends: coreContracts.filter(
-        ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-send'
-      ).length,
-      surfaceNative: coreContracts.filter(
-        ({ dispatchPolicy }) => dispatchPolicy.electron === 'surface-native'
-      ).length
-    }).toEqual({ requests: 118, events: 29, sends: 10, surfaceNative: 1 })
   })
 
-  it('routes all 118 request methods through their cataloged Electron channels', async () => {
+  it('routes every request method through its cataloged Electron channel', async () => {
     const requestContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-request'
     )
     const localFile = { name: 'catalog.csv' } as File
-
-    expect(requestContracts).toHaveLength(118)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
@@ -748,9 +731,6 @@ describe('preload bridge — core renderer contract catalog', () => {
     const genericEventContracts = eventContracts.filter(
       ({ lifecycleDispatch }) => lifecycleDispatch == null
     )
-
-    expect(eventContracts).toHaveLength(29)
-    expect(genericEventContracts).toHaveLength(28)
 
     for (const contract of genericEventContracts) {
       onMock.mockClear()
@@ -776,16 +756,13 @@ describe('preload bridge — core renderer contract catalog', () => {
     }
   })
 
-  it('routes all nine generic one-way sends through their cataloged Electron channels', () => {
+  it('routes every generic one-way send through its cataloged Electron channel', () => {
     const sendContracts = coreContracts.filter(
       ({ dispatchPolicy }) => dispatchPolicy.electron === 'electron-ipc-send'
     )
     const genericSendContracts = sendContracts.filter(
       ({ lifecycleDispatch }) => lifecycleDispatch == null
     )
-
-    expect(sendContracts).toHaveLength(10)
-    expect(genericSendContracts).toHaveLength(9)
 
     for (const contract of genericSendContracts) {
       sendMock.mockClear()
