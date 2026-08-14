@@ -2,7 +2,7 @@
 // browses subfolders of home (or of already-granted roots) via a breadcrumb + folder-only listing,
 // picks an access level, and grants the current folder. The main process is authoritative on what
 // may be granted; the dialog mirrors its scope check only to avoid listing out-of-scope folders.
-import { CircleAlert, Folder, Home, Info, X } from 'lucide-react'
+import { CircleAlert, Folder, Home, Info } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useEffect, useState } from 'react'
 
@@ -20,15 +20,7 @@ import {
   sameLocalDirectory
 } from '../../../../shared/local-fs'
 import { Button } from '@/components/ui/button'
-import {
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { useTranslation } from 'react-i18next'

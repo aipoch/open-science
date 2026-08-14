@@ -1,4 +1,3 @@
-import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -12,11 +11,7 @@ import {
   CardTitle
 } from '@/components/ui/card'
 import {
-  dialogBodyClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -292,15 +287,9 @@ const LocationStep = ({
             </AlertDialog.Description>
             <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Close"
-                  className={dialogCloseButtonClassName}
-                >
+                <Button type="button" variant="outline">
                   {t('Keep default')}
-                </button>
+                </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
                 <button

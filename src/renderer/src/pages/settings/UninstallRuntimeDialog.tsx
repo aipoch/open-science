@@ -1,15 +1,9 @@
-import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -69,12 +63,7 @@ const UninstallRuntimeDialog = ({
           </AlertDialog.Description>
           <div className="mt-6 flex justify-end gap-2">
             <AlertDialog.Cancel asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                className={dialogCancelButtonClassName}
-                disabled={dialogIsUninstalling}
-              >
+              <Button type="button" variant="outline" disabled={dialogIsUninstalling}>
                 {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>

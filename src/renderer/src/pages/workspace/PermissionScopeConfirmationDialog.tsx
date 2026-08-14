@@ -3,12 +3,7 @@ import { AlertDialog } from 'radix-ui'
 
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

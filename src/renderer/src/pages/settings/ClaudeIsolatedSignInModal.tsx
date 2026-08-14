@@ -5,14 +5,8 @@ import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
-  dialogFormInputClassName,
-  dialogFormLabelClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

@@ -3,16 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'

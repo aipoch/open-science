@@ -5,13 +5,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
+  dialogPanelClassName
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import {

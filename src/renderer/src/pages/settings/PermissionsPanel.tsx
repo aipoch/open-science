@@ -12,7 +12,6 @@ import type {
 } from '../../../../shared/permission-grants'
 import { Button } from '@/components/ui/button'
 import {
-  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,

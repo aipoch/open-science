@@ -1,4 +1,4 @@
-import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
+import { CheckCircle2, FolderInput, Package, RefreshCw, Search } from 'lucide-react'
 import { AlertDialog, Dialog } from 'radix-ui'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -6,12 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

@@ -1,20 +1,7 @@
-import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
-  dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
-import { cn } from '@/lib/utils'
 import type { ClaudeInstallSource } from '../../../../shared/settings'
 import { AgentInstallSourceMenu, type AgentInstallSourceMenuProps } from './AgentInstallSourceMenu'
 

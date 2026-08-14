@@ -11,8 +11,6 @@ import type {
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
@@ -221,7 +219,6 @@ const SkillImportApprovalRequestDialog = ({
               <Button
                 type="button"
                 variant="ghost"
-                className={dialogCancelButtonClassName}
                 onClick={() => void respond({ id: request.id, cancelled: true })}
               >
                 {tCommon('Cancel')}

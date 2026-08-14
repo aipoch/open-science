@@ -8,7 +8,6 @@ import {
   dialogBodyClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -92,15 +91,12 @@ const DataRootMissingDialog = ({
             />
           </AlertDialog.Description>
 
-          {stillMissing ? (
-            <p className="mt-3 text-xs text-destructive" role="alert">
-              {t('Still not found. Reconnect the drive and try again, or choose another location.')}
-            </p>
-          ) : null}
-
+          <div className={dialogBodyClassName}>
             {stillMissing ? (
               <p className="mt-3 text-xs text-destructive" role="alert">
-                Still not found. Reconnect the drive and try again, or choose another location.
+                {t(
+                  'Still not found. Reconnect the drive and try again, or choose another location.'
+                )}
               </p>
             ) : null}
 

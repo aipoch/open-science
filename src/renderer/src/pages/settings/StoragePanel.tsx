@@ -5,20 +5,14 @@ import {
   FolderInput,
   FolderOpen,
   RefreshCw,
-  TriangleAlert,
-  X
+  TriangleAlert
 } from 'lucide-react'
 import { useRef, useEffect, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

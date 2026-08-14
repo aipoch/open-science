@@ -13,19 +13,13 @@ import {
   Pencil,
   Plus,
   Trash2,
-  Upload,
-  X
+  Upload
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

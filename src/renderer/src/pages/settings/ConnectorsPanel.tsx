@@ -7,8 +7,7 @@ import {
   Pencil,
   Plus,
   Terminal,
-  Trash2,
-  X
+  Trash2
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -22,12 +21,7 @@ import type {
 } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
   dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

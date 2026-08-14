@@ -6,17 +6,7 @@ import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { Button } from '@/components/ui/button'
-import {
-  dialogBodyClassName,
-  dialogCancelButtonClassName,
-  dialogCloseButtonClassName,
-  dialogDescriptionClassName,
-  dialogFooterClassName,
-  dialogHeaderClassName,
-  dialogOverlayClassName,
-  dialogPanelClassName,
-  dialogTitleClassName
-} from '@/components/ui/dialog-chrome'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { cn } from '@/lib/utils'
 import { useUpdateStore } from '@/stores/update-store'
@@ -55,7 +45,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
             onInteractOutside={(event) => event.preventDefault()}
             className={dialogPanelClassName('z-[60] w-[min(560px,calc(100vw-2rem))] p-0')}
           >
-            <div className={dialogHeaderClassName}>
+            <div className="flex items-start justify-between border-b border-border px-5 py-4">
               <div>
                 <Dialog.Title className="text-base font-semibold">
                   {t('Update available')}
@@ -74,7 +64,7 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
                   size="icon-sm"
                   aria-label={t('Close')}
                   disabled={isApplying}
-                  className={dialogCloseButtonClassName}
+                  className="-mr-2 -mt-1 shrink-0 text-muted-foreground hover:text-foreground"
                 >
                   <X className="size-4" aria-hidden="true" />
                 </Button>
@@ -100,22 +90,22 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
               </div>
             )}
 
-              {isDownloading ? (
-                <div className="mt-4">
-                  <DownloadProgressLine
-                    progress={
-                      dialogStatus.downloadProgress ?? {
-                        phase: 'downloading',
-                        transferred: dialogStatus.downloadedBytes ?? 0,
-                        total: dialogStatus.totalBytes,
-                        percent: dialogStatus.progress ?? 0,
-                        bytesPerSecond: 0,
-                        attempt: 0
-                      }
+            {isDownloading ? (
+              <div className="mt-4">
+                <DownloadProgressLine
+                  progress={
+                    dialogStatus.downloadProgress ?? {
+                      phase: 'downloading',
+                      transferred: dialogStatus.downloadedBytes ?? 0,
+                      total: dialogStatus.totalBytes,
+                      percent: dialogStatus.progress ?? 0,
+                      bytesPerSecond: 0,
+                      attempt: 0
                     }
-                  />
-                </div>
-              ) : null}
+                  }
+                />
+              </div>
+            ) : null}
 
             {isApplying ? (
               <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
@@ -138,15 +128,12 @@ const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Elemen
               </div>
             ) : null}
 
-            <div className={dialogFooterClassName}>
+            <div className="mt-6 flex justify-end gap-2 border-t border-border px-5 py-4">
               <button
                 type="button"
                 onClick={() => closeDialog()}
                 disabled={isApplying}
-                className={cn(
-                  dialogCancelButtonClassName,
-                  'rounded-lg px-3 py-1.5 text-sm font-medium text-foreground transition-colors'
-                )}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
               >
                 {isReady ? t('Close') : t('Cancel')}
               </button>

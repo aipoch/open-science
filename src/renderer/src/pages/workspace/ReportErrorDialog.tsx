@@ -1,11 +1,10 @@
-import { Dialog } from 'radix-ui'
+import * as Dialog from '@radix-ui/react-dialog'
 import { Check, Copy, ExternalLink, FolderOpen, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
-  dialogBodyClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -249,60 +248,11 @@ const ReportErrorDialog = ({
             </span>
           </label>
 
-            <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
-              Also included
+          {revealMessage ? (
+            <p className="mt-2 text-xs text-red-700 dark:text-red-400" role="alert">
+              {revealMessage}
             </p>
-            <pre
-              className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
-              aria-label="Report environment"
-            >
-              {environmentBlock}
-            </pre>
-
-            {issuePrefill.truncatedFields.length > 0 ? (
-              <>
-                <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-text-300">
-                  GitHub issue prefill
-                </p>
-                <pre
-                  className="mt-1 max-h-28 shrink-0 overflow-auto whitespace-pre-wrap rounded-lg border border-border-200 bg-bg-100 px-3 py-2 font-mono text-[11px] leading-5 text-text-200"
-                  aria-label="GitHub issue prefill"
-                >
-                  {issuePrefillPreview}
-                </pre>
-              </>
-            ) : null}
-
-            <label className="mt-4 flex items-start gap-2 text-[13px] leading-5 text-text-100">
-              <input
-                type="checkbox"
-                className="mt-0.5 size-4 shrink-0 accent-primary"
-                checked={consented}
-                // Consent is granted for the payload on screen now; bind it to that exact URL.
-                onChange={(event) => setConsentedUrl(event.target.checked ? issueUrl : null)}
-              />
-              <span>
-                I&apos;ve reviewed the details above and agree to share them in a public GitHub
-                issue, subject to GitHub&apos;s{' '}
-                <a
-                  href="https://docs.github.com/site-policy/privacy-policies/github-privacy-statement"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline hover:text-text-000"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  Privacy Statement
-                </a>
-                .
-              </span>
-            </label>
-
-            {revealMessage ? (
-              <p className="mt-2 text-xs text-red-700 dark:text-red-400" role="alert">
-                {revealMessage}
-              </p>
-            ) : null}
-          </div>
+          ) : null}
 
           <div className={cn(dialogFooterClassName, 'flex-wrap items-center')}>
             <button
