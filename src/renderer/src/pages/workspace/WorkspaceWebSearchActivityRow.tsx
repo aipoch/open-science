@@ -15,8 +15,10 @@ type WorkspaceWebSearchActivityRowProps = {
 }
 
 // Formats the compact right-side count label while preserving zero-result visibility.
-const formatResultCountLabel = (resultCount: number, t: (key: string) => string): string =>
-  resultCount === 1 ? t('1 result') : t('{{count}} results', { count: resultCount })
+const formatResultCountLabel = (
+  resultCount: number,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string => (resultCount === 1 ? t('1 result') : t('{{count}} results', { count: resultCount }))
 
 // Renders the expanded payload: the query followed by compact title/url result pairs.
 const renderSearchDetailsBody = (details: WebSearchDetails): React.JSX.Element => (
