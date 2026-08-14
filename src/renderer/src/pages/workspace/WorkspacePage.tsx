@@ -1047,6 +1047,7 @@ const WorkspacePage = ({
             }}
             review={{
               disabled: isRequestReviewDisabled,
+              running: isReviewing,
               request: requestManualReview
             }}
             sessionTools={{
