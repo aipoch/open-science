@@ -80,4 +80,10 @@ describe('session data-path round-trip', () => {
       decoded.messages[0].uploads?.[0]
     )
   })
+
+  it('rejects an escaping $DATA path during Session hydration', () => {
+    expect(() => decodeSessionDataPaths({ ...session, cwd: '$DATA/../../outside' }, ROOT)).toThrow(
+      /portable relative path within the data root/
+    )
+  })
 })
