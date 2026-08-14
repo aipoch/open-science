@@ -12,8 +12,10 @@ import {
   createApplicationCommandRouter,
   type ApplicationCommand,
   type ApplicationCommandDiagnostic,
+  type ApplicationCommandGroup,
   type ApplicationCommandInstallation,
-  type ApplicationInvocation
+  type ApplicationInvocation,
+  type ApplicationCommandRegistrar
 } from './application-command-router'
 import {
   computeApplicationCommandGroup,
@@ -67,6 +69,7 @@ import {
 } from './settings/runtime-application-commands'
 
 type AnyApplicationCommand = ApplicationCommand<string, readonly unknown[], unknown>
+type AnyApplicationCommandGroup = ApplicationCommandGroup<string, readonly AnyApplicationCommand[]>
 type NotebookEnvironmentDependencies = Parameters<
   typeof installNotebookEnvironmentApplicationCommands
 >[1]
@@ -83,6 +86,11 @@ type ApplicationCommandByNameDispatcher = Readonly<{
 
 type RemoteWebApplicationCommandDispatcher = ApplicationCommandByNameDispatcher &
   Readonly<{ rejectedCommandNames: () => readonly string[] }>
+
+type ApplicationCommandModuleDescriptor = Readonly<{
+  groups: readonly AnyApplicationCommandGroup[]
+  install: (registrar: ApplicationCommandRegistrar) => ApplicationCommandInstallation
+}>
 
 type ApplicationCommandCompositionDependencies = Readonly<{
   acp: AcpApplicationCommandDependencies
@@ -107,14 +115,6 @@ type ApplicationCommandComposition = Readonly<{
   dispose: () => void
 }>
 
-const GROUP_COUNT = 28
-const INTERNAL_COMMAND_COUNT = 249
-const LOCAL_WEB_COMMAND_COUNT = 247
-const REMOTE_WEB_COMMAND_COUNT = 177
-const REMOTE_REJECTED_COMMAND_COUNT = 70
-const TASK_COMMAND_COUNT = 7
-const VALIDATED_ELECTRON_COMMAND_COUNT = 6
-
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'sessions:export-conversation',
   'uploads:stage-local-file'
@@ -128,22 +128,6 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'artifacts:finalize-run',
   'preview-resources:acquire',
   'preview-resources:release'
-])
-
-const APPLICATION_COMMAND_GROUPS = Object.freeze([
-  acpApplicationCommands,
-  notebookApplicationCommands,
-  notebookEnvironmentApplicationCommands,
-  runtimeApplicationCommandGroup,
-  settingsCoreApplicationCommandGroup,
-  settingsSkillApplicationCommandGroup,
-  settingsConnectorApplicationCommandGroup,
-  settingsApprovalApplicationCommandGroup,
-  settingsRuntimeApplicationCommandGroup,
-  computeApplicationCommandGroup,
-  permissionGrantApplicationCommandGroup,
-  ...dataContentApplicationCommandGroups,
-  ...hostApplicationCommandGroups
 ])
 
 const failInventory = (detail: string): never => {
@@ -160,6 +144,58 @@ const collectCatalogCommands = (
       channel !== null && kind === 'method' && installed(surfaceInstallation) ? [channel] : []
     ).sort()
   )
+
+const defineApplicationCommandModule = (
+  groups: readonly AnyApplicationCommandGroup[],
+  install: ApplicationCommandModuleDescriptor['install']
+): ApplicationCommandModuleDescriptor =>
+  Object.freeze({ groups: Object.freeze([...groups]), install })
+
+const createApplicationCommandModules = (
+  dependencies: ApplicationCommandCompositionDependencies,
+  remoteAccess: RemoteAccessOwner
+): readonly ApplicationCommandModuleDescriptor[] =>
+  Object.freeze([
+    defineApplicationCommandModule([acpApplicationCommands], (registrar) =>
+      registerAcpCommands(registrar, dependencies.acp)
+    ),
+    defineApplicationCommandModule([notebookApplicationCommands], (registrar) =>
+      installNotebookApplicationCommands(registrar, dependencies.notebook)
+    ),
+    defineApplicationCommandModule([notebookEnvironmentApplicationCommands], (registrar) =>
+      installNotebookEnvironmentApplicationCommands(registrar, dependencies.notebookEnvironment)
+    ),
+    defineApplicationCommandModule([runtimeApplicationCommandGroup], (registrar) =>
+      registerRuntimeApplicationCommands(registrar, dependencies.notebookRuntime)
+    ),
+    defineApplicationCommandModule([settingsCoreApplicationCommandGroup], (registrar) =>
+      registerCoreSettingsApplicationCommands(registrar, dependencies.settingsCore)
+    ),
+    defineApplicationCommandModule(
+      [
+        settingsSkillApplicationCommandGroup,
+        settingsConnectorApplicationCommandGroup,
+        settingsApprovalApplicationCommandGroup
+      ],
+      (registrar) =>
+        registerIntegrationSettingsApplicationCommands(registrar, dependencies.settingsIntegration)
+    ),
+    defineApplicationCommandModule([settingsRuntimeApplicationCommandGroup], (registrar) =>
+      registerRuntimeSettingsApplicationCommands(registrar, dependencies.settingsRuntime)
+    ),
+    defineApplicationCommandModule([computeApplicationCommandGroup], (registrar) =>
+      registerComputeApplicationCommands(registrar, dependencies.compute)
+    ),
+    defineApplicationCommandModule([permissionGrantApplicationCommandGroup], (registrar) =>
+      registerPermissionGrantApplicationCommands(registrar, dependencies.permissionGrants)
+    ),
+    defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
+      registerDataContentApplicationCommands(registrar, dependencies.dataContent)
+    ),
+    defineApplicationCommandModule(hostApplicationCommandGroups, (registrar) =>
+      registerHostApplicationCommands(registrar, { ...dependencies.host, remoteAccess })
+    )
+  ])
 
 const createRemoteAccessSlot = (): Readonly<{
   owner: RemoteAccessOwner
@@ -197,20 +233,18 @@ const createRemoteAccessSlot = (): Readonly<{
   })
 }
 
-const certifyInventory = (): Readonly<{
+const certifyInventory = (
+  groups: readonly AnyApplicationCommandGroup[]
+): Readonly<{
   commands: ReadonlyMap<string, AnyApplicationCommand>
   electronNames: readonly string[]
   localWebNames: readonly string[]
   remoteWebNames: readonly string[]
   remoteRejectedNames: readonly string[]
 }> => {
-  if (APPLICATION_COMMAND_GROUPS.length !== GROUP_COUNT) {
-    failInventory(`expected ${GROUP_COUNT} groups, received ${APPLICATION_COMMAND_GROUPS.length}`)
-  }
-
   const groupNames = new Set<string>()
   const commands = new Map<string, AnyApplicationCommand>()
-  for (const group of APPLICATION_COMMAND_GROUPS) {
+  for (const group of groups) {
     if (groupNames.has(group.name)) failInventory(`duplicate group ${group.name}`)
     groupNames.add(group.name)
     for (const command of group.commands) {
@@ -218,26 +252,20 @@ const certifyInventory = (): Readonly<{
       commands.set(command.name, command as AnyApplicationCommand)
     }
   }
-  if (commands.size !== INTERNAL_COMMAND_COUNT) {
-    failInventory(`expected ${INTERNAL_COMMAND_COUNT} commands, received ${commands.size}`)
-  }
-
   const localWebNames = collectCatalogCommands(({ localWeb }) => localWeb === 'web-rpc')
   const electronNames = ELECTRON_APPLICATION_COMMAND_CHANNELS
   const remoteWebNames = collectCatalogCommands(({ remoteWeb }) => remoteWeb === 'web-rpc')
   const remoteRejectedNames = collectCatalogCommands(
     ({ localWeb, remoteWeb }) => localWeb === 'web-rpc' && remoteWeb === 'rejecting-stub'
   )
-  const expectedCounts = [
-    [electronNames, VALIDATED_ELECTRON_COMMAND_COUNT, 'validated Electron commands'],
-    [localWebNames, LOCAL_WEB_COMMAND_COUNT, 'local Web commands'],
-    [remoteWebNames, REMOTE_WEB_COMMAND_COUNT, 'remote Web commands'],
-    [remoteRejectedNames, REMOTE_REJECTED_COMMAND_COUNT, 'remote Web rejections'],
-    [TASK_COMMAND_NAMES, TASK_COMMAND_COUNT, 'Task commands']
+  const surfaceInventories = [
+    [electronNames, 'validated Electron commands'],
+    [localWebNames, 'local Web commands'],
+    [remoteWebNames, 'remote Web commands'],
+    [remoteRejectedNames, 'remote Web rejections'],
+    [TASK_COMMAND_NAMES, 'Task commands']
   ] as const
-  for (const [names, count, label] of expectedCounts) {
-    if (names.length !== count)
-      failInventory(`expected ${count} ${label}, received ${names.length}`)
+  for (const [names, label] of surfaceInventories) {
     if (new Set(names).size !== names.length) failInventory(`${label} contains duplicate names`)
     for (const name of names) {
       if (!commands.has(name)) failInventory(`${label} contains unknown command ${name}`)
@@ -270,46 +298,37 @@ const certifyInventory = (): Readonly<{
   })
 }
 
+const certifyInstalledInventory = (
+  declaredCommands: ReadonlyMap<string, AnyApplicationCommand>,
+  installedNames: readonly string[]
+): void => {
+  const declared = new Set(declaredCommands.keys())
+  const installed = new Set(installedNames)
+  const missing = [...declaredCommands.keys()].filter((name) => !installed.has(name)).sort()
+  const unexpected = [...installed].filter((name) => !declared.has(name)).sort()
+  const differences = [
+    ...(missing.length > 0 ? [`declared commands are not installed: ${missing.join(', ')}`] : []),
+    ...(unexpected.length > 0
+      ? [`installed commands are not declared: ${unexpected.join(', ')}`]
+      : [])
+  ]
+  if (differences.length > 0) failInventory(differences.join('; '))
+}
+
 const createApplicationCommandComposition = (
   dependencies: ApplicationCommandCompositionDependencies,
   onDiagnostic?: (diagnostic: ApplicationCommandDiagnostic) => void
 ): ApplicationCommandComposition => {
-  const certified = certifyInventory()
-  const router = createApplicationCommandRouter(onDiagnostic)
   const remoteAccess = createRemoteAccessSlot()
+  const modules = createApplicationCommandModules(dependencies, remoteAccess.owner)
+  const certified = certifyInventory(modules.flatMap(({ groups }) => groups))
+  const router = createApplicationCommandRouter(onDiagnostic)
   const installations: ApplicationCommandInstallation[] = []
   let disposed = false
 
-  const installers = [
-    () => registerAcpCommands(router.registrar, dependencies.acp),
-    () => installNotebookApplicationCommands(router.registrar, dependencies.notebook),
-    () =>
-      installNotebookEnvironmentApplicationCommands(
-        router.registrar,
-        dependencies.notebookEnvironment
-      ),
-    () => registerRuntimeApplicationCommands(router.registrar, dependencies.notebookRuntime),
-    () => registerCoreSettingsApplicationCommands(router.registrar, dependencies.settingsCore),
-    () =>
-      registerIntegrationSettingsApplicationCommands(
-        router.registrar,
-        dependencies.settingsIntegration
-      ),
-    () =>
-      registerRuntimeSettingsApplicationCommands(router.registrar, dependencies.settingsRuntime),
-    () => registerComputeApplicationCommands(router.registrar, dependencies.compute),
-    () =>
-      registerPermissionGrantApplicationCommands(router.registrar, dependencies.permissionGrants),
-    () => registerDataContentApplicationCommands(router.registrar, dependencies.dataContent),
-    () =>
-      registerHostApplicationCommands(router.registrar, {
-        ...dependencies.host,
-        remoteAccess: remoteAccess.owner
-      })
-  ] as const
-
   try {
-    for (const install of installers) installations.push(install())
+    for (const module of modules) installations.push(module.install(router.registrar))
+    certifyInstalledInventory(certified.commands, router.dispatcher.commandNames())
   } catch (error) {
     const failures: unknown[] = [error]
     for (const installation of [...installations].reverse()) {
