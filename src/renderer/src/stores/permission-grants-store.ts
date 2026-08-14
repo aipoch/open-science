@@ -321,12 +321,18 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
           ? {
               ...applyAuthoritativeSnapshot(state, mutationState(result)),
               ...(() => {
+                const t = i18next.t.bind(i18next)
                 const items = undoItems(state).map((item) =>
                   item.token === undo.token
                     ? {
                         token: undo.token,
                         expiresAt: Date.now() + 5_000,
-                        message: `Couldn't restore ${targetUnavailable === 1 ? 'permission' : `${targetUnavailable} permissions`}: owner no longer exists`,
+                        message: t(
+                          targetUnavailable === 1
+                            ? "Couldn't restore permission: owner no longer exists"
+                            : "Couldn't restore {{count}} permissions: owner no longer exists",
+                          { count: targetUnavailable }
+                        ),
                         canRestore: false
                       }
                     : item
@@ -345,9 +351,10 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
       )
     } catch (error) {
       set((state) => {
+        const t = i18next.t.bind(i18next)
         const items = undoItems(state).map((item) =>
           item.token === undo.token
-            ? { ...undo, message: "Couldn't restore permission. Retry.", retry: true }
+            ? { ...undo, message: t("Couldn't restore permission. Retry."), retry: true }
             : item
         )
         return {
