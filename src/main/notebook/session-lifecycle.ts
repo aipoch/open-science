@@ -115,6 +115,7 @@ class NotebookSessionLifecycleOwner {
         sessionId: request.sessionId,
         projectId,
         cwd: document.dataRoot,
+        workspaceCwd: request.workspaceCwd,
         notebookSessionRoot: document.notebookSessionRoot,
         dataRoot: document.dataRoot,
         runtimeRoot: document.kernel.runtimeRoot,

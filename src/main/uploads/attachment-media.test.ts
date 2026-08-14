@@ -1,4 +1,4 @@
-import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,6 +15,7 @@ import {
   MAX_IMAGE_PAYLOAD_BYTES,
   MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES,
   MAX_SESSION_INLINE_IMAGE_BYTES,
+  prepareImageContentData,
   type ImageContentData
 } from './attachment-media'
 
@@ -22,6 +23,7 @@ import {
 type FakeImage = {
   isEmpty: () => boolean
   getSize: () => { width: number; height: number }
+  crop: ReturnType<typeof vi.fn>
   resize: ReturnType<typeof vi.fn>
   toJPEG: (quality: number) => Buffer
   toPNG: () => Buffer
@@ -30,10 +32,12 @@ type FakeImage = {
 let fakeImage: FakeImage
 // The wrapper ignores the path arg at runtime; the spy just records that a decode was attempted.
 const createFromPath = vi.fn(() => fakeImage)
+const createFromBuffer = vi.fn(() => fakeImage)
 
 vi.mock('electron', () => ({
   nativeImage: {
-    createFromPath: () => createFromPath()
+    createFromPath: () => createFromPath(),
+    createFromBuffer: () => createFromBuffer()
   }
 }))
 
@@ -59,10 +63,14 @@ let root: string
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'attachment-media-'))
   createFromPath.mockClear()
+  createFromBuffer.mockClear()
   getDocument.mockClear()
   fakeImage = {
     isEmpty: () => false,
     getSize: () => ({ width: 4000, height: 2000 }),
+    crop: vi.fn(function (this: FakeImage) {
+      return this
+    }),
     resize: vi.fn(function (this: FakeImage) {
       return this
     }),
@@ -76,6 +84,177 @@ beforeEach(async () => {
       ['Second', ' page']
     ]
   }
+})
+
+describe('prepareImageContentData', () => {
+  const writePng = (path: string): Promise<void> =>
+    writeFile(
+      path,
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from('fixture')
+      ])
+    )
+
+  it('resolves fraction crops outward before resizing the cropped image', async () => {
+    fakeImage.getSize = () => ({ width: 101, height: 51 })
+    const filePath = join(root, 'fraction.png')
+    await writeFile(
+      filePath,
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from('fixture')
+      ])
+    )
+
+    const result = await prepareImageContentData(filePath, {
+      crop: { unit: 'fraction', left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 },
+      maxSize: 40
+    })
+
+    expect(fakeImage.crop).toHaveBeenCalledWith({ x: 10, y: 10, width: 71, height: 36 })
+    expect(fakeImage.resize).toHaveBeenCalledWith({ width: 40, height: 20, quality: 'better' })
+    expect(result).toEqual({
+      data: Buffer.from('png-bytes').toString('base64'),
+      mimeType: 'image/png',
+      originalSize: { width: 101, height: 51 },
+      crop: { left: 10, top: 10, right: 81, bottom: 46 },
+      outputSize: { width: 40, height: 20 }
+    })
+  })
+
+  it('accepts JPEG by signature and never upscales a smaller oriented image', async () => {
+    fakeImage.getSize = () => ({ width: 100, height: 50 })
+    const filePath = join(root, 'small.jpg')
+    await writeFile(filePath, Buffer.from([0xff, 0xd8, 0xff, 0x00]))
+
+    await expect(prepareImageContentData(filePath)).resolves.toMatchObject({
+      mimeType: 'image/jpeg',
+      originalSize: { width: 100, height: 50 },
+      outputSize: { width: 100, height: 50 }
+    })
+    expect(fakeImage.resize).not.toHaveBeenCalled()
+  })
+
+  it('rejects SVG and optional formats before invoking the native decoder', async () => {
+    for (const [name, bytes] of [
+      ['image.svg', Buffer.from('<svg/>')],
+      ['image.webp', Buffer.from('RIFFxxxxWEBP')],
+      ['image.gif', Buffer.from('GIF89a')]
+    ] as const) {
+      await writeFile(join(root, name), bytes)
+      await expect(prepareImageContentData(join(root, name))).rejects.toMatchObject({
+        code: 'IMAGE_DECODE_FAILED'
+      })
+    }
+    expect(createFromBuffer).not.toHaveBeenCalled()
+  })
+
+  it('rejects source bytes and decoded pixels before crop/resize allocations', async () => {
+    const oversized = join(root, 'oversized.png')
+    await writePng(oversized)
+    await truncate(oversized, MAX_AUTO_PROCESS_IMAGE_BYTES + 1)
+    await expect(prepareImageContentData(oversized)).rejects.toMatchObject({
+      code: 'IMAGE_SOURCE_TOO_LARGE'
+    })
+
+    const bomb = join(root, 'bomb.png')
+    await writePng(bomb)
+    fakeImage.getSize = () => ({ width: 5000, height: 4000 })
+    await expect(prepareImageContentData(bomb)).rejects.toThrow(/pixel processing limit/u)
+    expect(fakeImage.crop).not.toHaveBeenCalled()
+    expect(fakeImage.resize).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the bytes returned by readFile when a source grows after stat', async () => {
+    const filePath = join(root, 'growing.png')
+    await writePng(filePath)
+    const probe = await open(filePath, 'r')
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as {
+      readFile: typeof probe.readFile
+    }
+    await probe.close()
+    const readFile = vi
+      .spyOn(fileHandlePrototype, 'readFile')
+      .mockResolvedValueOnce(Buffer.alloc(MAX_AUTO_PROCESS_IMAGE_BYTES + 1))
+
+    try {
+      await expect(prepareImageContentData(filePath)).rejects.toMatchObject({
+        code: 'IMAGE_SOURCE_TOO_LARGE',
+        sourceBytes: MAX_AUTO_PROCESS_IMAGE_BYTES + 1
+      })
+      expect(createFromBuffer).not.toHaveBeenCalled()
+    } finally {
+      readFile.mockRestore()
+    }
+  })
+
+  it('validates pixel crop bounds and preserves PNG output for cropped PNG input', async () => {
+    const filePath = join(root, 'crop.png')
+    await writePng(filePath)
+    fakeImage.getSize = () => ({ width: 100, height: 60 })
+
+    await expect(
+      prepareImageContentData(filePath, {
+        crop: { unit: 'pixels', left: 10, top: 5, right: 90, bottom: 55 }
+      })
+    ).resolves.toMatchObject({
+      mimeType: 'image/png',
+      crop: { left: 10, top: 5, right: 90, bottom: 55 }
+    })
+    expect(fakeImage.crop).toHaveBeenCalledWith({ x: 10, y: 5, width: 80, height: 50 })
+
+    await expect(
+      prepareImageContentData(filePath, {
+        crop: { unit: 'pixels', left: 0, top: 0, right: 101, bottom: 60 }
+      })
+    ).rejects.toThrow(/outside the image bounds/u)
+  })
+
+  it('downscales oversized PNG output without converting away transparency', async () => {
+    const filePath = join(root, 'transparent.png')
+    await writePng(filePath)
+    fakeImage.getSize = () => ({ width: 1568, height: 784 })
+    fakeImage.toPNG = vi
+      .fn()
+      .mockReturnValueOnce(Buffer.alloc(MAX_IMAGE_PAYLOAD_BYTES + 1))
+      .mockReturnValueOnce(Buffer.from('transparent-png'))
+    fakeImage.toJPEG = vi.fn(() => Buffer.from('jpeg'))
+
+    await expect(prepareImageContentData(filePath)).resolves.toMatchObject({
+      mimeType: 'image/png',
+      outputSize: { width: 768, height: 384 }
+    })
+    expect(fakeImage.resize).toHaveBeenCalledWith({ width: 768, height: 384, quality: 'better' })
+    expect(fakeImage.toJPEG).not.toHaveBeenCalled()
+  })
+
+  it('honors an already-aborted processing signal without decoding', async () => {
+    const filePath = join(root, 'aborted.png')
+    await writePng(filePath)
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(prepareImageContentData(filePath, {}, controller.signal)).rejects.toThrow(
+      /aborted/u
+    )
+    expect(createFromBuffer).not.toHaveBeenCalled()
+  })
+
+  it('rejects a workspace file replaced by an outside symlink after authorization', async () => {
+    const authorized = join(root, 'authorized.png')
+    const outside = join(root, 'outside.png')
+    await writePng(authorized)
+    await writePng(outside)
+    const expectedCanonicalPath = await realpath(authorized)
+    await rm(authorized)
+    await symlink(outside, authorized)
+
+    await expect(
+      prepareImageContentData(authorized, {}, undefined, expectedCanonicalPath)
+    ).rejects.toThrow(/changed while it was being opened/u)
+    expect(createFromBuffer).not.toHaveBeenCalled()
+  })
 })
 
 afterEach(async () => {

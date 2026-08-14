@@ -64,6 +64,7 @@ describe('repl_loop local RPC transport', () => {
         "const c = host.compute.create('ssh:x'); " +
           'return JSON.stringify({' +
           "artifactPath: 'artifactPath' in host, artifact_path: 'artifact_path' in host, " +
+          "viewImage: 'viewImage' in host, view_image: 'view_image' in host, " +
           "listSkills: 'listSkills' in host.agents, list_skills: 'list_skills' in host.agents, " +
           "listConnectors: 'listConnectors' in host.agents, list_connectors: 'list_connectors' in host.agents, " +
           "attachSkill: 'attachSkill' in host.agents, attach_skill: 'attach_skill' in host.agents, " +
@@ -86,6 +87,8 @@ describe('repl_loop local RPC transport', () => {
       expect(JSON.parse(result.result ?? '{}')).toEqual({
         artifactPath: true,
         artifact_path: false,
+        viewImage: true,
+        view_image: false,
         listSkills: true,
         list_skills: false,
         listConnectors: true,
@@ -1028,7 +1031,8 @@ describe('repl_loop local RPC transport', () => {
                 artifacts: true,
                 lineage: true,
                 frames: true,
-                llm: true
+                llm: true,
+                viewImage: true
               }
             : {
                 mcp: true,
@@ -1038,7 +1042,8 @@ describe('repl_loop local RPC transport', () => {
                 artifacts: true,
                 lineage: true,
                 frames: true,
-                llm: true
+                llm: true,
+                viewImage: true
               }
         response
           .writeHead(200, { 'content-type': 'application/json' })
@@ -1071,7 +1076,8 @@ describe('repl_loop local RPC transport', () => {
           artifacts: true,
           lineage: true,
           frames: true,
-          llm: true
+          llm: true,
+          viewImage: true
         },
         second: {
           mcp: true,
@@ -1081,7 +1087,8 @@ describe('repl_loop local RPC transport', () => {
           artifacts: true,
           lineage: true,
           frames: true,
-          llm: true
+          llm: true,
+          viewImage: true
         },
         frozen: true,
         same: false
@@ -1106,6 +1113,84 @@ describe('repl_loop local RPC transport', () => {
         'host.capabilities returned an invalid capability projection'
       )
       expect(requests).toHaveLength(3)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('forwards the exact host.viewImage camel-case contract and freezes validated metadata', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        requests.push(JSON.parse(body))
+        response.writeHead(200, { 'content-type': 'application/json' }).end(
+          JSON.stringify({
+            result: {
+              attached: true,
+              sourceKind: 'workspacePath',
+              originalSize: { width: 101, height: 51 },
+              crop: { left: 10, top: 10, right: 81, bottom: 46 },
+              outputSize: { width: 40, height: 20 },
+              mimeType: 'image/png'
+            }
+          })
+        )
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-view-image-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const response = await send(
+        "const result = await host.viewImage({ path: 'results/image.png' }, { " +
+          "crop: { unit: 'fraction', left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 }, maxSize: 40 }); " +
+          'return JSON.stringify({ result, frozen: Object.isFrozen(result), sizes: Object.isFrozen(result.originalSize) && Object.isFrozen(result.crop) && Object.isFrozen(result.outputSize) })'
+      )
+      expect(response.error).toBeNull()
+      expect(JSON.parse(response.result ?? '{}')).toMatchObject({
+        result: {
+          attached: true,
+          sourceKind: 'workspacePath',
+          mimeType: 'image/png'
+        },
+        frozen: true,
+        sizes: true
+      })
+      expect(requests).toEqual([
+        {
+          method: 'viewImageCall',
+          params: {
+            source: { path: 'results/image.png' },
+            options: {
+              crop: { unit: 'fraction', left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 },
+              maxSize: 40
+            }
+          }
+        }
+      ])
+
+      for (const code of [
+        "await host.viewImage({ version_id: 'v1' })",
+        "await host.viewImage({ path: 'image.png' }, { max_size: 10 })"
+      ]) {
+        const invalid = await send(
+          `try { ${code}; return 'no error' } catch (error) { return error.message }`
+        )
+        expect(invalid.result).toMatch(/unknown option/u)
+      }
+      expect(requests).toHaveLength(1)
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

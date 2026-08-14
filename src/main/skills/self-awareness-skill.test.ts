@@ -23,13 +23,13 @@ describe('self-awareness bundled Skill', () => {
     expect(skill?.description).toMatch(/JavaScript control REPL/i)
   })
 
-  it('documents the shipped eight-key JavaScript contract and read limits', async () => {
+  it('documents the shipped nine-key JavaScript contract and read limits', async () => {
     const body = await new SkillRegistry(skillsRoot).body('self-awareness')
 
     for (const phrase of [
       'repl_execute',
       'await host.capabilities()',
-      'exactly eight boolean keys',
+      'exactly nine boolean keys',
       '`mcp`',
       '`compute`',
       '`agents`',
@@ -38,6 +38,7 @@ describe('self-awareness bundled Skill', () => {
       '`lineage`',
       '`frames`',
       '`llm`',
+      '`viewImage`',
       'caps.compute === true',
       'caps.artifacts === true',
       'caps.frames === true',
@@ -55,6 +56,8 @@ describe('self-awareness bundled Skill', () => {
       'fresh frozen projection',
       'caps.lineage === true',
       'caps.llm === true',
+      'caps.viewImage === true',
+      'await host.viewImage',
       'await host.llm',
       'await host.lineage.graph(versionId)',
       'await host.lineage.get(versionId)',

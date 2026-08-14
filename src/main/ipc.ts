@@ -137,6 +137,7 @@ import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
 import { HostFramesService } from './notebook/host-frames-service'
 import { HostLlmService } from './notebook/host-llm-service'
+import { HostViewImageService } from './notebook/host-view-image-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
 import { parseUploadVersionReference } from '../shared/uploads'
@@ -1605,6 +1606,26 @@ const createApplicationModules = async (
         settingsService.resolveExplicitAgentBackend(target, context)
     })
   })
+  const hostViewImageService = new HostViewImageService({
+    catalog: projectFilesRepository,
+    resolvers: {
+      artifact: artifactProvenanceRepository,
+      upload: uploadRepository
+    },
+    captureBackend: (sessionId) => {
+      const backend = runtimeRef.current?.captureSessionBackend(sessionId)
+      return backend
+        ? {
+            frameworkId: backend.framework.id,
+            backendId: backend.backendId,
+            modelRoute: backend.modelRoute,
+            model: backend.context.model ?? backend.session.model,
+            supportsImageInput: backend.context.supportsImageInput,
+            generationToken: backend
+          }
+        : undefined
+    }
+  })
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
       onSessionReleased: (sessionId) => completionGateCoordinator.releaseSession(sessionId),
@@ -1657,7 +1678,8 @@ const createApplicationModules = async (
       agentsService,
       delegatedWorkService: delegatedWork.host,
       skillsService: hostSkillsService,
-      hostLlm: hostLlmService
+      hostLlm: hostLlmService,
+      hostViewImage: hostViewImageService
     }),
     createNotebookLocalRpcModule
   )
@@ -1679,13 +1701,15 @@ const createApplicationModules = async (
   // The RPC server needs the runtime service to dispatch to, and the runtime service needs the RPC
   // server's (lazily-started) connection for host.mcp() env injection — wire the second half here to
   // avoid a construction cycle.
-  notebookService.setMcpRpcConnectionResolver(({ sessionId, projectId, agentFrameId, attemptId }) =>
-    notebookRpcServer.issueControlConnection(
-      sessionId,
-      projectId,
-      agentFrameId,
-      attemptId ? { role: 'delegate', attemptId } : { role: 'main' }
-    )
+  notebookService.setMcpRpcConnectionResolver(
+    ({ sessionId, projectId, agentFrameId, attemptId, workspaceCwd }) =>
+      notebookRpcServer.issueControlConnection(
+        sessionId,
+        projectId,
+        agentFrameId,
+        attemptId ? { role: 'delegate', attemptId } : { role: 'main' },
+        workspaceCwd
+      )
   )
   // The renderer's approval card responds here; the broker resolves the held connector call.
   declareElectronAdapter('connector-approvals', () => {

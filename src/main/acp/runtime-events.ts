@@ -249,15 +249,37 @@ const projectToolTitle = (update: ToolCallUpdate): string | undefined => {
     : (update.title ?? undefined)
 }
 
+const projectToolContent = (
+  content: ToolCallContent[] | null | undefined
+): ToolCallContent[] | undefined =>
+  content?.map((item) =>
+    item.type === 'content' && item.content.type === 'image'
+      ? {
+          type: 'content' as const,
+          content: {
+            type: 'text' as const,
+            text: `[image: ${item.content.mimeType}]`
+          }
+        }
+      : item
+  )
+
+const hasToolImageContent = (content: ToolCallContent[] | null | undefined): boolean =>
+  content?.some((item) => item.type === 'content' && item.content.type === 'image') === true
+
 // Projects activity detail fields only for tools whose payload is safe and useful to show.
 const projectToolDetailPayload = (update: ToolCallUpdate): Partial<AcpRuntimeEvent> => {
   if (isNativeSkillToolUpdate(update)) return {}
 
+  const containsImage = hasToolImageContent(update.content)
+
   return {
-    toolContent: update.content ?? undefined,
+    toolContent: projectToolContent(update.content),
     toolLocations: update.locations ?? undefined,
     rawInput: sanitizeRawToolPayload(update.rawInput),
-    rawOutput: sanitizeRawToolPayload(update.rawOutput),
+    // ACP adapters may echo the complete MCP tool result in rawOutput. If the structured result
+    // contains an image, omit that echo so transient bytes never enter runtime IPC or Session JSON.
+    rawOutput: containsImage ? undefined : sanitizeRawToolPayload(update.rawOutput),
     ...extractTerminalMeta(update)
   }
 }

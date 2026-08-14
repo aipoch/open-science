@@ -18,6 +18,7 @@ import {
   NOTEBOOK_RPC_TOOLS,
   NOTEBOOK_SYSTEM_PROMPT_APPEND,
   callNotebookRpc,
+  buildNotebookToolContent,
   compactNotebookExecutionResult,
   compactNotebookStateResult,
   compactManagePackagesResult,
@@ -434,6 +435,52 @@ describe('repl_execute tool', () => {
     expect(() => schema.parse({})).toThrow()
     // The control-plane repl takes no language/cellId — it is distinct from notebook_execute.
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['code', 'timeoutMs'])
+  })
+
+  it('returns compact text followed by ordered transient MCP image blocks without embedding Base64', () => {
+    const first = Buffer.from('first-image').toString('base64')
+    const second = Buffer.from('second-image').toString('base64')
+    const content = buildNotebookToolContent(
+      {
+        status: 'completed',
+        stdout: 'done',
+        viewImages: [
+          { data: first, mimeType: 'image/png' },
+          { data: second, mimeType: 'image/jpeg' }
+        ]
+      },
+      { includeViewImages: true, mapResult: compactNotebookExecutionResult }
+    )
+
+    expect(content).toEqual([
+      { type: 'text', text: expect.stringContaining('"status": "completed"') },
+      { type: 'image', data: first, mimeType: 'image/png' },
+      { type: 'image', data: second, mimeType: 'image/jpeg' }
+    ])
+    expect((content[0] as { text: string }).text).not.toContain(first)
+    expect(
+      buildNotebookToolContent(
+        { status: 'completed', viewImages: [{ data: first, mimeType: 'image/png' }] },
+        { includeViewImages: false, mapResult: compactNotebookExecutionResult }
+      )
+    ).toEqual([{ type: 'text', text: expect.any(String) }])
+  })
+
+  it('fails the entire transient image attachment when any image block is malformed', () => {
+    const valid = Buffer.from('valid-image').toString('base64')
+
+    expect(() =>
+      buildNotebookToolContent(
+        {
+          status: 'completed',
+          viewImages: [
+            { data: valid, mimeType: 'image/png' },
+            { data: 'not base64!', mimeType: 'image/jpeg' }
+          ]
+        },
+        { includeViewImages: true, mapResult: compactNotebookExecutionResult }
+      )
+    ).toThrow(/invalid transient image content/u)
   })
 
   it('describes the control-plane repl (host.mcp + handoff) distinctly from notebook_execute', () => {

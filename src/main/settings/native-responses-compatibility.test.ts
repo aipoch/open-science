@@ -17,6 +17,7 @@ import {
   flattenNativeResponsesRequest,
   restoreNativeResponsesPayload
 } from './native-responses-compatibility'
+import { CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
 
 afterEach(() => {
   for (const spy of Object.values(logSpies)) spy.mockClear()
@@ -156,6 +157,20 @@ describe('native Responses compatibility', () => {
       namespace: 'mcp__open_science_notebook',
       name: 'repl_execute'
     })
+  })
+
+  it('preserves the captured Codex MCP image fixture through the final native Responses request', () => {
+    const { request } = flattenNativeResponsesRequest(CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE)
+
+    expect(request.input).toEqual([
+      {
+        type: 'function_call',
+        name: 'mcp__fixture__show_image',
+        arguments: '{}',
+        call_id: 'call_fixture_1'
+      },
+      CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE.input[1]
+    ])
   })
 
   it('rejects an alias collision instead of routing a tool ambiguously', () => {
