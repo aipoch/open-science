@@ -124,4 +124,27 @@ describe('sharp image-processing adapter', () => {
       buildImageContentData(transparent, 'image/png', 3 * 1024 * 1024)
     ).resolves.toMatchObject({ mimeType: 'image/png' })
   })
+
+  it.each([
+    ['GIF', 'gif', 'image/gif'],
+    ['WebP', 'webp', 'image/webp'],
+    ['AVIF', 'avif', 'image/avif'],
+    ['TIFF', 'tiff', 'image/tiff']
+  ] as const)('preserves oversized %s attachment processing', async (_label, format, mimeType) => {
+    root = await mkdtemp(join(tmpdir(), 'attachment-media-sharp-format-'))
+    const filePath = join(root, `source.${format}`)
+    const source = sharp({
+      create: {
+        width: 2,
+        height: 2,
+        channels: 3,
+        background: { r: 255, g: 0, b: 0 }
+      }
+    })
+    await writeFile(filePath, await source.toFormat(format).toBuffer())
+
+    await expect(
+      buildImageContentData(filePath, mimeType, 3 * 1024 * 1024)
+    ).resolves.toMatchObject({ mimeType: 'image/jpeg' })
+  })
 })
