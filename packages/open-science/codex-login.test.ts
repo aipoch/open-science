@@ -4,8 +4,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   CodexLoginError,
+  applyCodexLoginProxyPolicy,
   codexLoginCommand,
   createCodexLoginEnvironment,
+  resolveCodexLoginConfiguration,
   resolveConfiguredCodexNativePath
 } from './codex-login.mjs'
 
@@ -17,7 +19,7 @@ const codexPath = resolve('managed-codex', process.platform === 'win32' ? 'codex
 const commandDeps = (runCodex = vi.fn()) => ({
   locateApp: vi.fn().mockResolvedValue({ packaged: false }),
   resolveConfigRoot: vi.fn().mockReturnValue(configRoot),
-  resolveNativePath: vi.fn().mockResolvedValue(codexPath),
+  resolveConfiguration: vi.fn().mockResolvedValue({ codexPath }),
   mkdir: vi.fn().mockResolvedValue(undefined),
   runCodex,
   log: vi.fn()
@@ -59,12 +61,73 @@ describe('Codex CLI login', () => {
     expect(env).not.toHaveProperty('NO_BROWSER')
   })
 
+  it('applies the configured manual proxy without inheriting stale proxy values', () => {
+    const env = applyCodexLoginProxyPolicy(
+      {
+        HTTP_PROXY: 'http://stale.example.test:8080',
+        NO_PROXY: 'stale.internal'
+      },
+      {
+        mode: 'manual',
+        server: 'socks5://127.0.0.1:1086',
+        bypassRules: 'example.internal'
+      }
+    )
+
+    expect(env.HTTP_PROXY).toBe('socks5://127.0.0.1:1086')
+    expect(env.HTTPS_PROXY).toBe('socks5://127.0.0.1:1086')
+    expect(env.ALL_PROXY).toBe('socks5://127.0.0.1:1086')
+    expect(env.NO_PROXY).toContain('example.internal')
+    expect(env.NO_PROXY).toContain('127.0.0.1')
+    expect(env.NO_PROXY).not.toContain('stale.internal')
+    expect(env.no_proxy).toBe(env.NO_PROXY)
+  })
+
+  it('clears inherited proxy values in Direct mode', () => {
+    const env = applyCodexLoginProxyPolicy(
+      {
+        HTTP_PROXY: 'http://stale.example.test:8080',
+        HTTPS_PROXY: 'http://stale.example.test:8080',
+        NO_PROXY: 'stale.internal'
+      },
+      { mode: 'direct' }
+    )
+
+    expect(env).not.toHaveProperty('HTTP_PROXY')
+    expect(env).not.toHaveProperty('HTTPS_PROXY')
+    expect(env).not.toHaveProperty('NO_PROXY')
+  })
+
+  it('preserves inherited proxy values in System mode and adds loopback bypasses', () => {
+    const env = applyCodexLoginProxyPolicy(
+      {
+        HTTPS_PROXY: 'http://system.example.test:8080',
+        NO_PROXY: 'existing.internal'
+      },
+      undefined
+    )
+
+    expect(env.HTTPS_PROXY).toBe('http://system.example.test:8080')
+    expect(env.NO_PROXY).toContain('existing.internal')
+    expect(env.NO_PROXY).toContain('localhost')
+    expect(env.no_proxy).toBe(env.NO_PROXY)
+  })
+
   it('uses the absolute native Codex path recorded in settings', async () => {
-    const readFile = vi.fn().mockResolvedValue(JSON.stringify({ codex: { nativePath: codexPath } }))
+    const networkProxy = { mode: 'direct' }
+    const readFile = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ codex: { nativePath: codexPath }, networkProxy }))
     const access = vi.fn().mockResolvedValue(undefined)
 
     await expect(resolveConfiguredCodexNativePath(configRoot, { readFile, access })).resolves.toBe(
       codexPath
+    )
+    await expect(resolveCodexLoginConfiguration(configRoot, { readFile, access })).resolves.toEqual(
+      {
+        codexPath,
+        networkProxy
+      }
     )
     expect(readFile).toHaveBeenCalledWith(resolve(configRoot, 'settings.json'))
     expect(access).toHaveBeenCalledWith(codexPath)
@@ -104,6 +167,10 @@ describe('Codex CLI login', () => {
       .mockResolvedValueOnce({ code: 1, signal: null, stdout: '', stderr: 'Not logged in' })
       .mockResolvedValueOnce({ code: 0, signal: null, stdout: '', stderr: '' })
     const deps = commandDeps(runCodex)
+    deps.resolveConfiguration.mockResolvedValue({
+      codexPath,
+      networkProxy: { mode: 'manual', server: 'http://proxy.example.test:3128' }
+    })
 
     await codexLoginCommand({ force: false }, deps)
 
@@ -115,7 +182,8 @@ describe('Codex CLI login', () => {
         inherit: true,
         env: expect.objectContaining({
           CODEX_HOME: resolve(configRoot, 'codex-subscription'),
-          HOME: resolve(configRoot, 'codex-subscription')
+          HOME: resolve(configRoot, 'codex-subscription'),
+          HTTPS_PROXY: 'http://proxy.example.test:3128'
         })
       })
     )

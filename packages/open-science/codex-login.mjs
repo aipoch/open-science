@@ -20,6 +20,26 @@ const CODEX_ENV_KEYS = [
   'NO_BROWSER',
   'USERPROFILE'
 ]
+const PROXY_ENV_KEYS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+  'NO_PROXY',
+  'no_proxy'
+]
+const PROXY_SERVER_ENV_KEYS = PROXY_ENV_KEYS.slice(0, 6)
+const LOOPBACK_PROXY_BYPASS = [
+  'localhost',
+  '.localhost',
+  '127.0.0.1',
+  '127.0.0.0/8',
+  '::1',
+  '[::1]'
+]
+const SUPPORTED_PROXY_PROTOCOLS = new Set(['http:', 'https:', 'socks:', 'socks4:', 'socks5:'])
 
 export class CodexLoginError extends Error {
   constructor(message, code = 'codex_login_failed', exitCode = 1) {
@@ -30,20 +50,83 @@ export class CodexLoginError extends Error {
   }
 }
 
+const normalizedProxySettings = (value) => {
+  if (!value || typeof value !== 'object') return { mode: 'system' }
+  if (value.mode === 'direct') return { mode: 'direct' }
+  if (value.mode !== 'manual' || typeof value.server !== 'string') return { mode: 'system' }
+
+  try {
+    const url = new URL(value.server.trim())
+    if (
+      !SUPPORTED_PROXY_PROTOCOLS.has(url.protocol) ||
+      !url.hostname ||
+      url.username ||
+      url.password ||
+      (url.pathname !== '' && url.pathname !== '/') ||
+      url.search ||
+      url.hash
+    ) {
+      return { mode: 'system' }
+    }
+    const bypassRules =
+      typeof value.bypassRules === 'string'
+        ? value.bypassRules
+            .split(/[,;\n]/)
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+        : []
+    return {
+      mode: 'manual',
+      server: `${url.protocol}//${url.host}`,
+      bypassRules
+    }
+  } catch {
+    return { mode: 'system' }
+  }
+}
+
+const withLoopbackProxyBypass = (env, configuredRules = []) => {
+  const inheritedRules = [env.NO_PROXY, env.no_proxy]
+    .flatMap((value) => value?.split(',') ?? [])
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  const bypass = [
+    ...new Set([...configuredRules, ...inheritedRules, ...LOOPBACK_PROXY_BYPASS])
+  ].join(',')
+  env.NO_PROXY = bypass
+  env.no_proxy = bypass
+}
+
+export const applyCodexLoginProxyPolicy = (env, value) => {
+  const settings = normalizedProxySettings(value)
+  if (settings.mode === 'system') {
+    if (PROXY_SERVER_ENV_KEYS.some((key) => Boolean(env[key]))) withLoopbackProxyBypass(env)
+    return env
+  }
+
+  for (const key of PROXY_ENV_KEYS) delete env[key]
+  if (settings.mode === 'direct') return env
+
+  for (const key of PROXY_SERVER_ENV_KEYS) env[key] = settings.server
+  withLoopbackProxyBypass(env, settings.bypassRules)
+  return env
+}
+
 export const createCodexLoginEnvironment = (
   codexHome,
   sourceEnv = process.env,
-  platform = process.platform
+  platform = process.platform,
+  networkProxy
 ) => {
   const env = { ...sourceEnv }
   for (const key of CODEX_ENV_KEYS) delete env[key]
   env.CODEX_HOME = codexHome
   env.HOME = codexHome
   if (platform === 'win32') env.USERPROFILE = codexHome
-  return env
+  return applyCodexLoginProxyPolicy(env, networkProxy)
 }
 
-export const resolveConfiguredCodexNativePath = async (configRoot, dependencies = {}) => {
+export const resolveCodexLoginConfiguration = async (configRoot, dependencies = {}) => {
   const deps = {
     readFile: (path) => readFile(path, 'utf8'),
     access: (path) => access(path),
@@ -83,8 +166,11 @@ export const resolveConfiguredCodexNativePath = async (configRoot, dependencies 
       'codex_not_found'
     )
   }
-  return resolvedPath
+  return { codexPath: resolvedPath, networkProxy: settings.networkProxy }
 }
+
+export const resolveConfiguredCodexNativePath = async (configRoot, dependencies = {}) =>
+  (await resolveCodexLoginConfiguration(configRoot, dependencies)).codexPath
 
 export const runCodexProcess = (codexPath, args, options = {}) =>
   new Promise((resolveRun, rejectRun) => {
@@ -114,7 +200,7 @@ export const runCodexProcess = (codexPath, args, options = {}) =>
 const DEFAULT_DEPS = {
   locateApp: (options) => locateApp(options),
   resolveConfigRoot: (options) => resolveConfigRoot(options),
-  resolveNativePath: (configRoot) => resolveConfiguredCodexNativePath(configRoot),
+  resolveConfiguration: (configRoot) => resolveCodexLoginConfiguration(configRoot),
   mkdir: (path) => mkdir(path, { recursive: true }),
   runCodex: runCodexProcess,
   log: (...args) => console.log(...args)
@@ -135,10 +221,10 @@ export const codexLoginCommand = async (options, dependencies = {}) => {
     override: options.configRoot,
     env: app.packaged ? {} : process.env
   })
-  const codexPath = await deps.resolveNativePath(configRoot)
+  const { codexPath, networkProxy } = await deps.resolveConfiguration(configRoot)
   const codexHome = join(configRoot, 'codex-subscription')
   await deps.mkdir(codexHome)
-  const env = createCodexLoginEnvironment(codexHome)
+  const env = createCodexLoginEnvironment(codexHome, process.env, process.platform, networkProxy)
   const baseArgs = ['-c', CODEX_CONFIG_OVERRIDE, 'login']
 
   if (!options.force) {

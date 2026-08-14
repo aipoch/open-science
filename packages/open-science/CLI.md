@@ -70,6 +70,9 @@ on any browser-capable device, enter the code, and keep the terminal open until 
 success. Credentials are written only to the app-owned
 <code>codex-subscription/auth.json</code> profile.
 
+The native login follows the profile's saved Network proxy mode. Manual uses the configured proxy,
+Direct clears inherited proxy variables, and System uses the environment that launched the CLI.
+
 When that profile already contains credentials, the command exits without replacing them. Start a
 new device-code flow explicitly with:
 
