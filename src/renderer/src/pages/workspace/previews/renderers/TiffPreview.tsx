@@ -25,7 +25,7 @@ type CachedTiffSession = {
   session: TiffDecodeSession
 }
 
-const getTiffPreviewErrorMessage = (error: Error): string => {
+const getTiffPreviewErrorMessage = (error: Error, t: (key: string) => string): string => {
   if (
     error.message === 'TIFF file is too large to preview safely' ||
     error.message === 'TIFF page dimensions are too large to preview safely' ||
@@ -39,14 +39,14 @@ const getTiffPreviewErrorMessage = (error: Error): string => {
     error.message.startsWith('TIFF preview read failed') ||
     error.message === 'TIFF file changed during the preview read'
   ) {
-    return "TIFF couldn't be loaded for preview"
+    return t("TIFF couldn't be loaded for preview")
   }
 
   if (error.message.startsWith('Unsupported ')) {
-    return "This TIFF encoding isn't supported for preview"
+    return t("This TIFF encoding isn't supported for preview")
   }
 
-  return "TIFF couldn't be decoded for preview"
+  return t("TIFF couldn't be decoded for preview")
 }
 
 const TiffPageControls = ({
@@ -275,7 +275,7 @@ const TiffPreviewContent = ({
       <PreviewErrorCard
         name={name}
         error={result.error}
-        fallbackMessage={getTiffPreviewErrorMessage(result.error)}
+        fallbackMessage={getTiffPreviewErrorMessage(result.error, t)}
       />
     )
   }
@@ -286,7 +286,7 @@ const TiffPreviewContent = ({
         <PreviewErrorCard
           name={name}
           error={result.error}
-          fallbackMessage={getTiffPreviewErrorMessage(result.error)}
+          fallbackMessage={getTiffPreviewErrorMessage(result.error, t)}
         />
         {result.pageCount > 1 ? (
           <TiffPageControls
