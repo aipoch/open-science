@@ -1,12 +1,13 @@
 import type { ReviewerModelConfiguration } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, getAgentFramework } from '../agent-framework'
-import type { ExplicitAgentBackendTarget } from './backend-resolver'
+import type { AgentBackendResolver, ExplicitAgentBackendTarget } from './backend-resolver'
 import type { ProviderAccountsModule } from './provider-accounts'
 import type { SettingsRepository } from './repository'
 
 type ReviewerModelOwnerOptions = {
   repository: SettingsRepository
   providers: ProviderAccountsModule
+  backendResolver: Pick<AgentBackendResolver, 'captureConfiguredSelection'>
 }
 
 type ReviewerModelAdmission = Readonly<{
@@ -18,6 +19,10 @@ class ReviewerModelOwner {
   constructor(private readonly options: ReviewerModelOwnerOptions) {}
 
   async set(configuration: ReviewerModelConfiguration): Promise<void> {
+    const frameworkId =
+      configuration.mode === 'fixed'
+        ? (await this.options.backendResolver.captureConfiguredSelection()).frameworkId
+        : undefined
     await this.options.repository.setReviewerModel(configuration, (settings, candidate) => {
       if (candidate.mode === 'inherit') return
       const provider = settings.providers.find((entry) => entry.id === candidate.providerId)
@@ -30,7 +35,9 @@ class ReviewerModelOwner {
           'The selected Reviewer model is no longer available. Refresh the model catalog.'
         )
       }
-      const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
+      const framework = getAgentFramework(
+        frameworkId ?? settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+      )
       const target = this.options.providers.resolveRuntimeTarget(
         provider,
         { kind: 'required', model: candidate.model },
@@ -61,10 +68,11 @@ class ReviewerModelOwner {
         model: settings.activeModel ?? activeProvider?.model ?? ''
       })
     }
+    const { frameworkId } = await this.options.backendResolver.captureConfiguredSelection()
     return Object.freeze({
       model: configuration.model,
       fixedTarget: Object.freeze({
-        frameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
+        frameworkId,
         providerId: configuration.providerId,
         model: Object.freeze({ kind: 'required' as const, id: configuration.model }),
         reasoningEffort: configuration.reasoningEffort
@@ -75,8 +83,9 @@ class ReviewerModelOwner {
 
 const createReviewerModels = (
   repository: SettingsRepository,
-  providers: ProviderAccountsModule
-): ReviewerModelOwner => new ReviewerModelOwner({ repository, providers })
+  providers: ProviderAccountsModule,
+  backendResolver: AgentBackendResolver
+): ReviewerModelOwner => new ReviewerModelOwner({ repository, providers, backendResolver })
 
 export { createReviewerModels, ReviewerModelOwner }
 export type { ReviewerModelAdmission, ReviewerModelOwnerOptions }

@@ -263,7 +263,11 @@ class SettingsService {
       this.providers,
       this.backendResolver
     )
-    this.reviewerModels = createReviewerModels(this.repository, this.providers)
+    this.reviewerModels = createReviewerModels(
+      this.repository,
+      this.providers,
+      this.backendResolver
+    )
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming

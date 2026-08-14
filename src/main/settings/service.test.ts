@@ -5353,6 +5353,41 @@ describe('SettingsService: Reviewer model', () => {
     })
   })
 
+  it('uses the effective Agent Framework override for a fixed Reviewer target', async () => {
+    vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'opencode')
+    await repository.setAgentFramework('claude-code')
+    const service = createService(undefined, {
+      opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' }
+    })
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Overridden Reviewer gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://reviewer.example/v1',
+      model: 'reviewer-model',
+      key: 'secret'
+    })
+    const provider = created.providers.find(
+      (candidate) => candidate.name === 'Overridden Reviewer gateway'
+    )!
+    await service.setReviewerModel({
+      mode: 'fixed',
+      providerId: provider.id,
+      model: 'reviewer-model',
+      reasoningEffort: 'high'
+    })
+
+    await expect(service.admitReviewerExecutionModel()).resolves.toMatchObject({
+      model: 'reviewer-model',
+      fixedTarget: {
+        frameworkId: 'opencode',
+        providerId: provider.id,
+        model: { kind: 'required', id: 'reviewer-model' },
+        reasoningEffort: 'high'
+      }
+    })
+  })
+
   it('preserves a fixed Reviewer selection when its provider is deleted', async () => {
     const service = createService()
     const created = await service.upsertProvider({
