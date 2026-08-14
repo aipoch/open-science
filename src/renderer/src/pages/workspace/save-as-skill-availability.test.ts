@@ -47,6 +47,7 @@ const availability = (
     pending: false,
     customizeAvailable: true,
     hasRunningSubagents: false,
+    sideChatOpen: false,
     ...overrides
   })
 
@@ -91,5 +92,9 @@ describe('Save as skill availability', () => {
   it('explains Customize and subagent capability gates', () => {
     expect(availability({ customizeAvailable: false }).disabledReason).toContain('Customize')
     expect(availability({ hasRunningSubagents: true }).disabledReason).toContain('subagents')
+  })
+
+  it('requires Side chat to be closed', () => {
+    expect(availability({ sideChatOpen: true }).disabledReason).toContain('Close Side chat')
   })
 })

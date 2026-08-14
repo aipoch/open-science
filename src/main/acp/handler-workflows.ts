@@ -82,6 +82,8 @@ type InterruptedTurnSessionSource = {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
 }
 
+type SaveAsSkillAdmission = (sessionId: string) => void | Promise<void>
+
 const safeRead = (value: object, key: string): unknown => {
   try {
     return (value as Record<string, unknown>)[key]
@@ -313,7 +315,8 @@ const createAcpHandlerWorkflows = (
   createSessionWorkflow: AcpCreateSessionWorkflow,
   taskNotifications?: PromptNotifications,
   archiveAvailability?: SessionArchiveAvailability,
-  interruptedTurnSessions?: InterruptedTurnSessionSource
+  interruptedTurnSessions?: InterruptedTurnSessionSource,
+  saveAsSkillAdmission?: SaveAsSkillAdmission
 ): AcpHandlerWorkflows => ({
   async createSession(request): Promise<AcpCreateSessionResponse> {
     try {
@@ -400,6 +403,7 @@ const createAcpHandlerWorkflows = (
       })
       try {
         await runtime.startContinuationWhen(prepared.continuation, async () => {
+          await saveAsSkillAdmission?.(request.sessionId)
           const admitted = prepareSaveAsSkillContinuation(
             runtime,
             await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),

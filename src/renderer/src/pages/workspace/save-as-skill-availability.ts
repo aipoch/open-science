@@ -15,6 +15,7 @@ type SaveAsSkillAvailabilityInput = {
   pending: boolean
   customizeAvailable: boolean
   hasRunningSubagents: boolean
+  sideChatOpen: boolean
 }
 
 export type SaveAsSkillAvailability =
@@ -26,7 +27,8 @@ export const resolveSaveAsSkillAvailability = ({
   runtimeInteraction,
   pending,
   customizeAvailable,
-  hasRunningSubagents
+  hasRunningSubagents,
+  sideChatOpen
 }: SaveAsSkillAvailabilityInput): SaveAsSkillAvailability => {
   const activeFrame = session?.conversationGraph?.frames.find(
     ({ id }) => id === session.conversationGraph?.activeFrameId
@@ -46,24 +48,26 @@ export const resolveSaveAsSkillAvailability = ({
       ? 'The Customize Skill is unavailable to the active Specialist.'
       : !persistenceReady
         ? 'Wait for conversation history to finish loading.'
-        : hasRunningSubagents
-          ? 'Wait for all subagents to finish.'
-          : pending || runtimeInteraction || session.status !== 'idle' || session.activeRun
-            ? 'Wait for the current agent activity to finish.'
-            : session.interrupted ||
-                session.resumeRecovery ||
-                session.pendingHistoryReplay ||
-                session.fixLoopActive ||
-                session.compacting
-              ? 'Resolve the current Session operation first.'
-              : session.conversationGraphSyncBlocked
-                ? 'Resolve the conversation branch synchronization error first.'
-                : !session.conversationGraph || !activeBranchMessages
-                  ? 'Conversation branch history is unavailable.'
-                  : activeBranchMessages?.at(-1)?.role !== 'agent' ||
-                      activeBranchMessages.at(-1)?.status !== 'complete'
-                    ? 'Wait for a completed Agent response.'
-                    : undefined
+        : sideChatOpen
+          ? 'Close Side chat before saving this conversation as a Skill.'
+          : hasRunningSubagents
+            ? 'Wait for all subagents to finish.'
+            : pending || runtimeInteraction || session.status !== 'idle' || session.activeRun
+              ? 'Wait for the current agent activity to finish.'
+              : session.interrupted ||
+                  session.resumeRecovery ||
+                  session.pendingHistoryReplay ||
+                  session.fixLoopActive ||
+                  session.compacting
+                ? 'Resolve the current Session operation first.'
+                : session.conversationGraphSyncBlocked
+                  ? 'Resolve the conversation branch synchronization error first.'
+                  : !session.conversationGraph || !activeBranchMessages
+                    ? 'Conversation branch history is unavailable.'
+                    : activeBranchMessages?.at(-1)?.role !== 'agent' ||
+                        activeBranchMessages.at(-1)?.status !== 'complete'
+                      ? 'Wait for a completed Agent response.'
+                      : undefined
 
   return disabledReason
     ? { enabled: false, disabledReason }

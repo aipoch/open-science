@@ -1939,7 +1939,12 @@ const createApplicationModules = async (
     createSessionWorkflow,
     taskNotifications,
     archiveCoordinator,
-    sessionRepository
+    sessionRepository,
+    (sessionId) => {
+      if (sideChatRuntime.hasForParent(sessionId)) {
+        throw new Error('Close Side chat before saving this conversation as a Skill.')
+      }
+    }
   )
   const taskAgent = createAcpTaskAgentPort(
     runtime,

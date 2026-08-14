@@ -76,7 +76,8 @@ const prepareControlTurn = (session: PersistedChatSession): void => {
 const createHarness = (
   mutate?: (session: ReturnType<typeof createSession>) => void,
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3],
-  taskNotifications?: Parameters<typeof createAcpHandlerWorkflows>[2]
+  taskNotifications?: Parameters<typeof createAcpHandlerWorkflows>[2],
+  saveAsSkillAdmission?: Parameters<typeof createAcpHandlerWorkflows>[5]
 ): {
   workflows: ReturnType<typeof createAcpHandlerWorkflows>
   startContinuation: ReturnType<typeof vi.fn>
@@ -130,7 +131,8 @@ const createHarness = (
     { create: vi.fn() } as never,
     taskNotifications,
     archiveAvailability,
-    { loadSession: vi.fn(async () => session) }
+    { loadSession: vi.fn(async () => session) },
+    saveAsSkillAdmission
   )
   const graph = session.conversationGraph!
   const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
@@ -207,6 +209,18 @@ describe('ACP Save as skill workflow', () => {
       })
     )
     expect(request).not.toHaveProperty('forcedSkillIds')
+  })
+
+  it('rejects at provider admission while Side chat owns the parent Session', async () => {
+    const admission = vi.fn(() => {
+      throw new Error('Close Side chat before saving this conversation as a Skill.')
+    })
+    const harness = createHarness(undefined, undefined, undefined, admission)
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow('Close Side chat')
+
+    expect(admission).toHaveBeenCalledWith('session-1')
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('tracks the accepted hidden turn with a safe task notification label', async () => {

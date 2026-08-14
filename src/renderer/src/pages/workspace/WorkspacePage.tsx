@@ -585,7 +585,8 @@ const WorkspacePage = ({
     runtimeInteraction: activeSessionHasRuntimeInteraction,
     pending: activeSessionSaveAsSkillPending,
     customizeAvailable,
-    hasRunningSubagents: hasCurrentRunningDelegatedAttempt(activeSession)
+    hasRunningSubagents: hasCurrentRunningDelegatedAttempt(activeSession),
+    sideChatOpen: sideChat.view !== undefined
   })
   const compactContextDisabledReason = !activeSessionSupportsNativeCompaction
     ? 'Send a message to reconnect this session before compacting.'
