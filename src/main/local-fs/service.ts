@@ -1,7 +1,7 @@
 import { hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { readdir, realpath, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, join, posix } from 'node:path'
 
 import { app, shell } from 'electron'
 
@@ -119,7 +119,7 @@ export class LocalFsService {
       const dirents = await readdir(parent, { withFileTypes: true })
       return dirents
         .filter((dirent) => dirent.isDirectory() || dirent.isSymbolicLink())
-        .map((dirent) => ({ path: join(parent, dirent.name), label: dirent.name }))
+        .map((dirent) => ({ path: posix.join(parent, dirent.name), label: dirent.name }))
     } catch {
       return []
     }

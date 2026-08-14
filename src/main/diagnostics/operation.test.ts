@@ -62,7 +62,8 @@ describe('diagnostic operation', () => {
     const operation = startDiagnosticOperation(logger, {
       operation: 'data-root-migration',
       operationId: 'migration-1',
-      fields: { source: 'legacy' }
+      fields: { source: 'legacy' },
+      now: () => 0
     })
 
     operation.phase('copy', { filesCopied: 3 })
