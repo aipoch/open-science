@@ -132,40 +132,49 @@ const attachmentLimitsText = (t: TFunction): string =>
     size: formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)
   })
 
-const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-  <ResizableBottomPanel
-    ariaLabel="Resize question panel"
-    testId="elicitation-composer"
-    scrollTestId="elicitation-composer-scroll"
-    constrainGrowthToOverflow
-    minimumContentSelector='[data-elicitation-option-row="true"]'
-    minimumContentIndex={1}
-  >
-    {children}
-  </ResizableBottomPanel>
-)
+const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ResizableBottomPanel
+      ariaLabel={t('Resize question panel')}
+      testId="elicitation-composer"
+      scrollTestId="elicitation-composer-scroll"
+      constrainGrowthToOverflow
+      minimumContentSelector='[data-elicitation-option-row="true"]'
+      minimumContentIndex={1}
+    >
+      {children}
+    </ResizableBottomPanel>
+  )
+}
 
-const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-  <ResizableBottomPanel
-    ariaLabel="Resize permission panel"
-    testId="permission-composer"
-    scrollTestId="permission-composer-scroll"
-    constrainGrowthToOverflow
-  >
-    {children}
-  </ResizableBottomPanel>
-)
+const ResizablePermissionComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ResizableBottomPanel
+      ariaLabel={t('Resize permission panel')}
+      testId="permission-composer"
+      scrollTestId="permission-composer-scroll"
+      constrainGrowthToOverflow
+    >
+      {children}
+    </ResizableBottomPanel>
+  )
+}
 
-const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => (
-  <ResizableBottomPanel
-    ariaLabel="Resize Plan panel"
-    testId="plan-composer"
-    scrollTestId="plan-composer-scroll"
-    constrainGrowthToOverflow
-  >
-    {children}
-  </ResizableBottomPanel>
-)
+const ResizablePlanComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ResizableBottomPanel
+      ariaLabel={t('Resize Plan panel')}
+      testId="plan-composer"
+      scrollTestId="plan-composer-scroll"
+      constrainGrowthToOverflow
+    >
+      {children}
+    </ResizableBottomPanel>
+  )
+}
 
 // Formats the compact size label shown under each composer attachment chip.
 const formatAttachmentSize = (size: number): string => {
