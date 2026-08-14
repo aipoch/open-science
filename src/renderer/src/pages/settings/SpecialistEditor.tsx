@@ -96,6 +96,7 @@ const COLOR_OPTIONS = [
   { key: 'slate', label: 'Slate' }
 ] as const
 
+
 const SpecialistEditor = ({
   onCancel,
   onSave,
@@ -455,8 +456,8 @@ const SpecialistEditor = ({
         error instanceof Error
           ? error.message
           : isEdit
-            ? 'Could not save changes.'
-            : 'Could not create specialist.'
+            ? t('Could not save changes.')
+            : t('Could not create specialist.')
       // Detect optimistic concurrency conflict — preserve local edits and show the
       // conflict banner instead of a generic error so the user can choose to reload.
       if (/revision conflict/i.test(message)) {

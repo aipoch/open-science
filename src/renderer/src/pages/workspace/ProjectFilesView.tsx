@@ -115,18 +115,21 @@ const PageLoadError = ({
 }: {
   message: string
   onRetry: () => void
-}): React.JSX.Element => (
-  <div
-    role="alert"
-    aria-atomic="true"
-    className="flex items-start justify-between gap-3 px-4 py-3 text-[11px] text-danger-000"
-  >
-    <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
-    <Button type="button" variant="outline" className="h-7 shrink-0 px-2.5" onClick={onRetry}>
-      {t('Retry')}
-    </Button>
-  </div>
-)
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="alert"
+      aria-atomic="true"
+      className="flex items-start justify-between gap-3 px-4 py-3 text-[11px] text-danger-000"
+    >
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{message}</span>
+      <Button type="button" variant="outline" className="h-7 shrink-0 px-2.5" onClick={onRetry}>
+        {t('Retry')}
+      </Button>
+    </div>
+  )
+}
 
 // All mode uses a compact per-section button; category mode normally scroll-loads. Both modes share
 // the same terminal state so each upload/session section says No more independently.
