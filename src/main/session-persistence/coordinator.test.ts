@@ -922,6 +922,41 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
   })
 
+  it('keeps branch source immutable and does not backfill historical Sessions', async () => {
+    const originalBranchSource = {
+      sessionId: 'source-session',
+      agentFrameId: 'source-frame',
+      messageBranchId: 'source-branch',
+      headMessageId: 'source-head'
+    }
+    let durable = createSession({ branchSource: originalBranchSource })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.saveSession(
+        createSession({
+          branchSource: { sessionId: 'replacement-source' }
+        })
+      )
+    ).resolves.toMatchObject({ branchSource: originalBranchSource })
+
+    durable = createSession()
+    const historical = await coordinator.saveSession(
+      createSession({ branchSource: { sessionId: 'retroactive-source' } })
+    )
+    expect(historical.branchSource).toBeUndefined()
+    expect(durable.branchSource).toBeUndefined()
+  })
+
   it('preserves authoritative permission context and waiting status on a stale renderer save', async () => {
     let durable = createSession({
       status: 'waiting-permission',

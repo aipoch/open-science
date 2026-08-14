@@ -153,7 +153,14 @@ describe('session persistence repository (per-session files)', () => {
 
   it('saves each session to sessions/<projectId>/<id>.json and loads it back', async () => {
     const repository = new SessionRepository(await createStorageRoot())
-    const session = createSession()
+    const session = createSession({
+      branchSource: {
+        sessionId: 'source-session',
+        agentFrameId: 'source-frame',
+        messageBranchId: 'source-branch',
+        headMessageId: 'source-message'
+      }
+    })
 
     await repository.saveSession(session)
 
@@ -167,6 +174,7 @@ describe('session persistence repository (per-session files)', () => {
       schemaVersion: 1,
       rootFrameId: 'root-frame-session-1'
     })
+    expect(raw.session.branchSource).toEqual(session.branchSource)
 
     const { sessions } = await repository.loadAll()
     expect(sessions).toHaveLength(1)
@@ -174,6 +182,7 @@ describe('session persistence repository (per-session files)', () => {
       id: 'session-1',
       projectId: 'project-a',
       title: 'Saved conversation',
+      branchSource: session.branchSource,
       messages: [{ content: 'Summarize this file' }]
     })
   })

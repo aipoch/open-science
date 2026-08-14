@@ -4753,6 +4753,12 @@ describe('branchInNewSession', () => {
     expect(useSessionStore.getState().sessions[1]).toEqual(sourceBefore)
 
     const branched = useSessionStore.getState().sessions[0]
+    const sourceFrame = sourceBefore.conversationGraph?.frames.find(
+      (frame) => frame.id === sourceBefore.conversationGraph?.activeFrameId
+    )
+    const sourceBranch = sourceBefore.conversationGraph?.branches.find(
+      (branch) => branch.id === sourceFrame?.activeBranchId
+    )
     expect(branched).toMatchObject({
       id: result?.sessionId,
       isPending: true,
@@ -4766,6 +4772,12 @@ describe('branchInNewSession', () => {
       agentModel: 'gpt-5.4',
       autoReviewEnabled: true,
       enabledComputeHosts: ['ssh:build'],
+      branchSource: {
+        sessionId: 'source-session',
+        agentFrameId: sourceFrame?.id,
+        messageBranchId: sourceBranch?.id,
+        headMessageId: sourceBranch?.headMessageId
+      },
       activeRun: { promptMessageId: result?.messageId, startedAt: Date.now() }
     })
     expect(branched.messages.map((message) => message.content)).toEqual([

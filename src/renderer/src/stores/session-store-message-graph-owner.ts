@@ -54,6 +54,21 @@ const createPendingSessionId = (): string => {
   return `pending-session-${Date.now()}-${pendingSessionSequence}`
 }
 
+const createSessionBranchSource = (
+  source: ChatSession
+): NonNullable<ChatSession['branchSource']> => {
+  const graph = source.conversationGraph
+  const frame = graph?.frames.find((candidate) => candidate.id === graph.activeFrameId)
+  const branch = graph?.branches.find((candidate) => candidate.id === frame?.activeBranchId)
+
+  return {
+    sessionId: source.id,
+    ...(frame ? { agentFrameId: frame.id } : {}),
+    ...(branch ? { messageBranchId: branch.id } : {}),
+    ...(branch?.headMessageId ? { headMessageId: branch.headMessageId } : {})
+  }
+}
+
 export const createSortIndex = (): number => {
   timelineSequence += 1
   return timelineSequence
@@ -378,6 +393,7 @@ export const createSessionMessageGraphOwner = <
     const newSession: ChatSession = {
       id: sessionId,
       projectId: source.projectId,
+      branchSource: createSessionBranchSource(source),
       isPending: true,
       title: trimmedContent
         ? createBranchTitleFromMessage(trimmedContent)

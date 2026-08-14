@@ -547,6 +547,7 @@ class SessionPersistenceStateOwner {
       messages: mergeMainOwnedRelayMessages(rendererOwnedSession.messages, authority?.messages),
       ...(authority?.runtimeContext ? { runtimeContext: authority.runtimeContext } : {}),
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
+      ...(authority ? { branchSource: authority.branchSource } : {}),
       ...(authority
         ? {
             enabledComputeHosts: authority.enabledComputeHosts

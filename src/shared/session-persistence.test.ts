@@ -168,6 +168,44 @@ describe('conversation graph materialization diagnostics', () => {
   })
 })
 
+describe('session branch source persistence', () => {
+  it('restores a complete source snapshot without inferring one for historical sessions', () => {
+    const historical = createSessionWithActivity(undefined)
+    const restored = normalizeSessionFile({
+      ...historical,
+      activities: undefined,
+      branchSource: {
+        sessionId: 'source-session',
+        agentFrameId: 'source-frame',
+        messageBranchId: 'source-branch',
+        headMessageId: 'source-head'
+      }
+    })
+
+    expect(restored?.branchSource).toEqual({
+      sessionId: 'source-session',
+      agentFrameId: 'source-frame',
+      messageBranchId: 'source-branch',
+      headMessageId: 'source-head'
+    })
+    expect(normalizeSessionFile(historical)?.branchSource).toBeUndefined()
+  })
+
+  it('discards malformed or empty source snapshots', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+
+    expect(
+      normalizeSessionFile({ ...base, branchSource: { sessionId: '' } })?.branchSource
+    ).toBeUndefined()
+    expect(
+      normalizeSessionFile({
+        ...base,
+        branchSource: { sessionId: 'source-session', messageBranchId: 42 }
+      })?.branchSource
+    ).toBeUndefined()
+  })
+})
+
 describe('branch Plan history persistence', () => {
   it('restores only branch-bound projections and recomputes their display state', () => {
     const valid = createHistoricalPlan()

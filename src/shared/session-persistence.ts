@@ -447,10 +447,20 @@ export type PersistedActivityGroup = {
   completedAt?: number
 }
 
+export type PersistedSessionBranchSource = {
+  sessionId: string
+  agentFrameId?: string
+  messageBranchId?: string
+  headMessageId?: string
+}
+
 export type PersistedChatSession = {
   id: string
   // Owning project. On load this is authoritative from the file's directory (sessions/<projectId>/).
   projectId: string
+  // Immutable snapshot of the direct Session and active conversation path copied by
+  // Branch in new session. Historical Sessions omit it and remain unrelated.
+  branchSource?: PersistedSessionBranchSource
   title: string
   cwd: string
   status: PersistedSessionStatus
@@ -3243,6 +3253,35 @@ const sanitizePendingHistoryReplay = (
   return messageId ? { kind: 'before-message', messageId } : undefined
 }
 
+const sanitizeSessionBranchSource = (value: unknown): PersistedSessionBranchSource | undefined => {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, ['sessionId', 'agentFrameId', 'messageBranchId', 'headMessageId'])
+  ) {
+    return undefined
+  }
+
+  const sessionId = asString(value.sessionId)
+  const agentFrameId = asString(value.agentFrameId)
+  const messageBranchId = asString(value.messageBranchId)
+  const headMessageId = asString(value.headMessageId)
+  if (
+    !sessionId ||
+    (value.agentFrameId !== undefined && !agentFrameId) ||
+    (value.messageBranchId !== undefined && !messageBranchId) ||
+    (value.headMessageId !== undefined && !headMessageId)
+  ) {
+    return undefined
+  }
+
+  return {
+    sessionId,
+    ...(agentFrameId ? { agentFrameId } : {}),
+    ...(messageBranchId ? { messageBranchId } : {}),
+    ...(headMessageId ? { headMessageId } : {})
+  }
+}
+
 // Rebuilds a persisted chat session and normalizes any runtime-only interrupted state.
 const sanitizeSession = (
   session: unknown,
@@ -3294,6 +3333,7 @@ const sanitizeSession = (
   }
   const activeRun = sanitizeActiveRun(session.activeRun)
   const resumeRecovery = sanitizeSessionResumeRecovery(session.resumeRecovery)
+  const branchSource = sanitizeSessionBranchSource(session.branchSource)
   const pendingHistoryReplay =
     sanitizePendingHistoryReplay(session.pendingHistoryReplay) ??
     // Migrate feature-preview files that used the cutoff id as a top-level scalar.
@@ -3315,6 +3355,7 @@ const sanitizeSession = (
 
   if (activeRun) sanitized.activeRun = activeRun
   if (resumeRecovery) sanitized.resumeRecovery = resumeRecovery
+  if (branchSource) sanitized.branchSource = branchSource
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
   if (error) sanitized.error = error
   // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
