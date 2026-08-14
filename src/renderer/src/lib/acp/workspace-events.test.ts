@@ -184,6 +184,76 @@ describe('workspace runtime events', () => {
     })
   })
 
+  it('projects trusted Reviewer Correction attribution onto the routed Message', async () => {
+    const originalSession = useSessionStore.getState().sessions[0]
+    const originalPromptMessageId = originalSession.messages[0]!.id
+    useSessionStore.setState({
+      sessions: [{ ...originalSession, status: 'idle', activeRun: undefined }]
+    })
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-event-1',
+        role: 'user',
+        messageId: 'reviewer-correction-1',
+        promptMessageId: 'reviewer-correction-1',
+        text: '[Auditor] Correct the unsupported claim.',
+        attribution: {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        }
+      })
+    )
+
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-response-event-1',
+        role: 'assistant',
+        messageId: 'reviewer-correction-response-1',
+        promptMessageId: 'reviewer-correction-1',
+        text: 'Corrected the unsupported claim.'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'reviewer-correction-stop-1',
+        kind: 'stop',
+        promptMessageId: 'reviewer-correction-1',
+        text: 'end_turn'
+      })
+    )
+
+    const storedSession = useSessionStore.getState().sessions[0]
+    expect(
+      storedSession.messages.find((message) => message.id === 'reviewer-correction-1')
+    ).toMatchObject({
+      id: 'reviewer-correction-1',
+      role: 'user',
+      attribution: {
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1'
+      }
+    })
+    expect(originalPromptMessageId).not.toBe('reviewer-correction-1')
+    const correctionResponse = storedSession.messages.find(
+      (message) =>
+        message.role === 'agent' && message.responseToMessageId === 'reviewer-correction-1'
+    )
+    expect(correctionResponse).toMatchObject({
+      role: 'agent',
+      status: 'complete',
+      responseToMessageId: 'reviewer-correction-1'
+    })
+    expect(
+      storedSession.conversationGraph?.messages.find(
+        (message) => message.id === correctionResponse?.id
+      )
+    ).toMatchObject({ status: 'complete', responseToMessageId: 'reviewer-correction-1' })
+  })
+
   it('consumes activity-group declarations without creating a visible tool step', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({

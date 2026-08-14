@@ -16,6 +16,7 @@ import { migrationSqlExecutor } from './migration-sql-executor'
 import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema-baseline'
 import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
+import { reviewAssessmentSnapshotsMigration } from './migrations/0004-review-assessment-snapshots'
 
 type MigrationVerifierDescriptor =
   | {
@@ -95,6 +96,11 @@ const GRANTED_LOCAL_ROOTS_CHECKSUM = checksumMigrationPayload(
   grantedLocalRootsMigration.statements,
   grantedLocalRootsMigration.verifiers
 )
+const REVIEW_ASSESSMENT_SNAPSHOTS_CHECKSUM = checksumMigrationPayload(
+  reviewAssessmentSnapshotsMigration.id,
+  reviewAssessmentSnapshotsMigration.statements,
+  reviewAssessmentSnapshotsMigration.verifiers
+)
 const MIGRATION_MANIFEST = [
   {
     ...runtimeSchemaBaselineMigration,
@@ -111,6 +117,12 @@ const MIGRATION_MANIFEST = [
   {
     ...grantedLocalRootsMigration,
     checksum: GRANTED_LOCAL_ROOTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...reviewAssessmentSnapshotsMigration,
+    checksum: REVIEW_ASSESSMENT_SNAPSHOTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -651,8 +663,20 @@ const applyManifestMigration = async (
   try {
     await client.$transaction(async (transaction) => {
       const transactionClient = transaction as unknown as PrismaClient
-      for (const statement of migration.statements) {
-        await migrationSqlExecutor.execute(transaction, statement)
+      // A pre-ledger build may already have emitted the current generated schema. When this
+      // migration's complete verifier contract is already satisfied, adopt its immutable ledger
+      // identity without replaying non-idempotent SQLite ALTER TABLE statements.
+      let contractAlreadySatisfied = false
+      try {
+        await runMigrationVerifiers(transactionClient, migration.verifiers)
+        contractAlreadySatisfied = true
+      } catch {
+        // The migration statements below own bringing this schema suffix into compliance.
+      }
+      if (!contractAlreadySatisfied) {
+        for (const statement of migration.statements) {
+          await migrationSqlExecutor.execute(transaction, statement)
+        }
       }
       try {
         await runMigrationVerifiers(transactionClient, migration.verifiers)

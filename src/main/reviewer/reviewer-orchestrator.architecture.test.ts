@@ -358,6 +358,7 @@ describe('Reviewer orchestrator architecture', () => {
       'outcome String',
       'note String?',
       'assessedArtifactVersionId String?',
+      'assessmentSnapshot String?',
       'createdAt DateTime @default(now())',
       'sourceFinding Finding @relation(fields: [sourceFindingId], references: [id], onDelete: Cascade)',
       'causeReview Review? @relation(fields: [causeReviewId], references: [id], onDelete: Restrict)'

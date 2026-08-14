@@ -8,12 +8,18 @@
 // v3 (issue 13): replaced the old "Full reasoning" prose block with a "Reviewer log" section that
 // renders the captured reviewer action stream (thinking / tool calls / results / messages), collapsed
 // by default and visually de-emphasized (muted colors, left-rule indent, no colored severity badges).
+// Current Reviews render submittedChecks so tracked assessments remain visible beside new Findings;
+// legacy in-memory snapshots fall back to their Review-owned checks.
 //
 // The activeFindingId prop scrolls/highlights the check the user navigated from.
 
 import { useEffect, useRef, useState } from 'react'
 import { CheckCircle, AlertTriangle, XCircle, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import {
+  presentReviewSubmission,
+  type PresentedReviewCheck
+} from '@/lib/reviewer-submission-presentation'
 
 import type { ReviewWithChecks, ReviewCheck, ReviewerLogEntry } from '../../../../shared/reviewer'
 
@@ -24,7 +30,7 @@ type SessionReviewerPanelProps = {
 }
 
 // Formats the blockRef into a human-readable reference like "msg-2[1]" or "act-3[0]".
-const formatBlockRef = (check: ReviewCheck): string | null => {
+const formatBlockRef = (check: PresentedReviewCheck): string | null => {
   if (!check.locator) return null
   const { blockRef } = check.locator
   const ref = blockRef.messageId ?? blockRef.activityId ?? 'block'
@@ -52,7 +58,7 @@ const CheckRow = ({
   check,
   isActive
 }: {
-  check: ReviewCheck
+  check: PresentedReviewCheck
   isActive: boolean
 }): React.JSX.Element => {
   const rowRef = useRef<HTMLDivElement | null>(null)
@@ -71,8 +77,6 @@ const CheckRow = ({
   }
 
   const locatorRef = formatBlockRef(check)
-  const isWarnOrFail = check.status === 'warn' || check.status === 'fail'
-
   return (
     <div
       ref={rowRef}
@@ -80,9 +84,13 @@ const CheckRow = ({
         'rounded-lg border p-3 transition-colors',
         isActive ? 'border-primary/40 bg-primary/5' : 'border-border-200 bg-bg-000'
       )}
-      data-finding-id={check.id}
+      data-finding-id={check.findingId}
       data-active={isActive ? 'true' : 'false'}
+      data-submission-kind={check.kind}
     >
+      <div className="mb-2 text-[10px] font-medium uppercase tracking-wide text-text-300">
+        {check.kindLabel}
+      </div>
       {/* Status badge + claim */}
       <div className="flex items-start gap-2">
         <StatusIcon status={check.status} />
@@ -100,8 +108,15 @@ const CheckRow = ({
       {/* Evidence */}
       <p className="mt-2 text-xs leading-relaxed text-text-300">{check.evidence}</p>
 
+      {check.legacyAssessmentNote && (
+        <p className="mt-2 text-[11px] text-text-300">{check.legacyAssessmentNote}</p>
+      )}
+      {check.dispositionLabel && (
+        <p className="mt-1 text-[11px] text-text-300">Disposition: {check.dispositionLabel}</p>
+      )}
+
       {/* Locator reference — only shown for warn/fail checks that have a locator */}
-      {isWarnOrFail && locatorRef && (
+      {check.isWarnOrFail && locatorRef && (
         <div className="mt-2 text-[10px] text-text-400">
           <span className="font-medium">Ref:</span> {locatorRef}{' '}
           <span className="text-text-500/60">· hash {check.locator!.contentHash.slice(0, 8)}</span>
@@ -270,8 +285,7 @@ const SessionReviewerPanel = ({
   review,
   activeFindingId
 }: SessionReviewerPanelProps): React.JSX.Element => {
-  // Sort checks by sortIndex for stable display order.
-  const sortedChecks = [...review.checks].sort((a, b) => a.sortIndex - b.sortIndex)
+  const presentedChecks = presentReviewSubmission(review)
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -298,16 +312,20 @@ const SessionReviewerPanel = ({
         <section data-testid="reviewer-checks">
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-300">
             Checks
-            {sortedChecks.length > 0 && (
-              <span className="font-normal text-text-400"> &middot; {sortedChecks.length}</span>
+            {presentedChecks.length > 0 && (
+              <span className="font-normal text-text-400"> &middot; {presentedChecks.length}</span>
             )}
           </h3>
-          {sortedChecks.length === 0 ? (
+          {presentedChecks.length === 0 ? (
             <p className="text-xs text-text-400">No checks recorded.</p>
           ) : (
             <div className="space-y-2">
-              {sortedChecks.map((check) => (
-                <CheckRow key={check.id} check={check} isActive={check.id === activeFindingId} />
+              {presentedChecks.map((presented) => (
+                <CheckRow
+                  key={presented.key}
+                  check={presented}
+                  isActive={presented.findingId === activeFindingId}
+                />
               ))}
             </div>
           )}

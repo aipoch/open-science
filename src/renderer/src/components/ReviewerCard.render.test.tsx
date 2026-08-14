@@ -222,6 +222,29 @@ describe('ReviewerCard — pass card', () => {
 })
 
 describe('ReviewerCard — findings expansion (warn/fail checks)', () => {
+  it('treats a flagged outcome with no local checks as authoritative', async () => {
+    const review = makeReview({ outcome: 'flagged', checks: [] })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).toContain('Issues found')
+    expect(container.textContent).not.toContain('No issues found')
+  })
+
+  it('does not let a new pass check override a flagged outcome', async () => {
+    const review = makeReview({
+      outcome: 'flagged',
+      checks: [makeCheck({ status: 'pass', locator: undefined })]
+    })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).toContain('Issues found')
+    expect(container.textContent).not.toContain('No issues found')
+  })
+
   it('renders "N findings" summary when the review has warn/fail checks', async () => {
     const review = makeReview({
       outcome: 'flagged',
@@ -287,6 +310,107 @@ describe('ReviewerCard — findings expansion (warn/fail checks)', () => {
     })
 
     expect(container.textContent).toContain(evidence)
+  })
+
+  it('renders each tracked review from its immutable submitted assessment', async () => {
+    const sourceCheck = makeCheck({
+      id: 'source-finding',
+      reviewId: 'review-source',
+      claim: 'Original row-count issue',
+      evidence: 'Original evidence observed 0 rows.'
+    })
+    const roundTwo = makeReview({
+      id: 'round-2',
+      outcome: 'flagged',
+      checks: [],
+      submittedChecks: [
+        {
+          kind: 'tracked',
+          submissionIndex: 0,
+          sourceFindingId: sourceCheck.id,
+          dispositionOutcome: 'still_open',
+          assessment: {
+            status: 'fail',
+            claim: 'Round 2 still has the mismatch',
+            evidence: 'Round 2 observed 12 rows.',
+            sortIndex: 0
+          },
+          sourceCheck
+        }
+      ]
+    })
+    await act(async () => {
+      root.render(<ReviewerCard review={roundTwo} defaultExpanded />)
+    })
+
+    expect(container.textContent).toContain('Round 2 still has the mismatch')
+    expect(container.textContent).toContain('Round 2 observed 12 rows.')
+    expect(container.textContent).toContain('Tracked')
+
+    await act(async () => {
+      root.render(
+        <ReviewerCard
+          review={{
+            ...roundTwo,
+            id: 'round-3',
+            outcome: 'pass',
+            updatedAt: roundTwo.updatedAt + 1,
+            submittedChecks: [
+              {
+                kind: 'tracked',
+                submissionIndex: 0,
+                sourceFindingId: sourceCheck.id,
+                dispositionOutcome: 'resolved',
+                assessment: {
+                  status: 'pass',
+                  claim: 'Round 3 row count is corrected',
+                  evidence: 'Round 3 observed 33 rows.',
+                  sortIndex: 0
+                },
+                sourceCheck
+              }
+            ]
+          }}
+          defaultExpanded
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Round 3 row count is corrected')
+    expect(container.textContent).toContain('Round 3 observed 33 rows.')
+    expect(container.textContent).not.toContain('Round 2 still has the mismatch')
+  })
+
+  it('labels a legacy tracked assessment and shows the original Finding content', async () => {
+    const sourceCheck = makeCheck({
+      id: 'legacy-source',
+      reviewId: 'review-source',
+      claim: 'Original issue retained for legacy history',
+      evidence: 'Original evidence retained for legacy history'
+    })
+    const review = makeReview({
+      outcome: 'flagged',
+      checks: [],
+      submittedChecks: [
+        {
+          kind: 'tracked',
+          submissionIndex: 0,
+          sourceFindingId: sourceCheck.id,
+          dispositionOutcome: 'still_open',
+          assessment: null,
+          sourceCheck
+        }
+      ]
+    })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} defaultExpanded />)
+    })
+
+    expect(container.textContent).toContain('Assessment details unavailable for this legacy review')
+    expect(container.textContent).toContain(sourceCheck.claim)
+    expect(container.textContent).toContain(sourceCheck.evidence)
+    expect(container.textContent).toContain('still open')
+    expect(container.textContent).not.toContain('Unresolved issues remain from an earlier review.')
   })
 })
 
@@ -848,8 +972,19 @@ describe('ReviewerCard — fix limit reached hint', () => {
     const review = makeReview({
       outcome: 'flagged',
       checks: [
-        makeCheck({ id: 'c1', status: 'fail', resolution: 'unaddressed' }),
-        makeCheck({ id: 'c2', status: 'warn', resolution: 'unaddressed', sortIndex: 1 })
+        makeCheck({
+          id: 'c1',
+          status: 'fail',
+          resolution: 'unaddressed',
+          unaddressedTrigger: 'loop_terminated'
+        }),
+        makeCheck({
+          id: 'c2',
+          status: 'warn',
+          resolution: 'unaddressed',
+          unaddressedTrigger: 'loop_terminated',
+          sortIndex: 1
+        })
       ]
     })
     await act(async () => {
@@ -857,6 +992,26 @@ describe('ReviewerCard — fix limit reached hint', () => {
     })
 
     expect(container.textContent).toContain('fix limit reached')
+  })
+
+  it('shows correction failure without misreporting the fix limit', async () => {
+    const review = makeReview({
+      outcome: 'flagged',
+      checks: [
+        makeCheck({
+          id: 'c1',
+          status: 'fail',
+          resolution: 'unaddressed',
+          unaddressedTrigger: 'correction_failed'
+        })
+      ]
+    })
+    await act(async () => {
+      root.render(<ReviewerCard review={review} />)
+    })
+
+    expect(container.textContent).toContain('correction failed')
+    expect(container.textContent).not.toContain('fix limit reached')
   })
 
   it('does NOT show "fix limit reached" for a normal (non-capped) flagged card', async () => {

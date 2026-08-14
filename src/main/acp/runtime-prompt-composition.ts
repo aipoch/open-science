@@ -201,7 +201,7 @@ const composeAcpRuntimePromptOwners = (
       routeNotification: (notification, sessionId) =>
         session.sessionUpdateProjector.route(notification, { appSessionId: sessionId }),
       diagnosticContext,
-      pushUserMessage: ({ sessionId, promptMessageId, text }) =>
+      pushUserMessage: ({ sessionId, promptMessageId, text, attribution }) =>
         session.publication.pushEvent({
           kind: 'message',
           level: 'info',
@@ -211,6 +211,7 @@ const composeAcpRuntimePromptOwners = (
           // one Prompt owner instead of inventing two identities for the same turn.
           ...(promptMessageId ? { promptMessageId, messageId: promptMessageId } : {}),
           role: 'user',
+          ...(attribution ? { attribution } : {}),
           text
         })
     },

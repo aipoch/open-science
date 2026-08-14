@@ -78,6 +78,7 @@ export type AppendRoutedUserMessageInput = {
   messageId: string
   eventId: string
   content: string
+  attribution?: PersistedChatMessage['attribution']
   createdAt: number
   responseToMessageId?: string
   relayedFrom?: PersistedChatMessage['relayedFrom']

@@ -268,6 +268,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "outcome" TEXT NOT NULL,
     "note" TEXT,
     "assessedArtifactVersionId" TEXT,
+    "assessmentSnapshot" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ReviewFindingDisposition_sourceFindingId_fkey" FOREIGN KEY ("sourceFindingId") REFERENCES "Finding" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "ReviewFindingDisposition_causeReviewId_fkey" FOREIGN KEY ("causeReviewId") REFERENCES "Review" ("id") ON DELETE RESTRICT ON UPDATE CASCADE

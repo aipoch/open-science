@@ -193,6 +193,14 @@ const createFakeRuntime = (options: {
     }
   }
   const sendPrompt = vi.fn(runPrompt)
+  const sendApplicationPrompt = vi.fn(
+    (
+      ...[request, _attribution, promptAttemptId]: Parameters<AcpRuntime['sendApplicationPrompt']>
+    ) => {
+      void _attribution
+      return runPrompt(request, promptAttemptId)
+    }
+  )
   const sendAppContinuation = vi.fn(runPrompt)
   const runtime = {
     getSnapshot: () => snapshot,
@@ -218,6 +226,7 @@ const createFakeRuntime = (options: {
       }
     ),
     sendPrompt,
+    sendApplicationPrompt,
     sendAppContinuation,
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
@@ -2819,7 +2828,15 @@ describe('AcpRuntimeCoordinator', () => {
       async (runtime) => {
         await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
         expect(vi.mocked(created[1].runtime.resumeSession)).not.toHaveBeenCalled()
-        await runtime.sendPrompt({ sessionId: 'old-session', text: '[Auditor] fix this' })
+        await runtime.sendApplicationPrompt(
+          { sessionId: 'old-session', text: '[Auditor] fix this' },
+          {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review-1'
+          }
+        )
       }
     )
 
@@ -2829,13 +2846,19 @@ describe('AcpRuntimeCoordinator', () => {
       projectName: 'project-1',
       previousFrameworkId: 'claude-code'
     })
-    expect(vi.mocked(created[1].runtime.sendPrompt)).toHaveBeenCalledWith(
+    expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledWith(
       {
         sessionId: 'old-session',
         text: '[Auditor] fix this',
         historyPreamble: 'prior transcript',
         contextReset: true,
         provenanceContext: { promptMessageId: expect.stringMatching(/^prompt-/u) }
+      },
+      {
+        kind: 'application',
+        feature: 'reviewer',
+        purpose: 'correction',
+        causeReviewId: 'review-1'
       },
       'prompt-attempt-1'
     )

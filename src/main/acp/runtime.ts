@@ -32,6 +32,7 @@ import {
   type AcpStateSnapshot
 } from '../../shared/acp'
 import { type AgentFrameworkId } from '../../shared/settings'
+import type { MessageAttribution } from '../../shared/session-persistence'
 import {
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
@@ -1056,6 +1057,20 @@ class AcpRuntime {
     )
   }
 
+  async sendApplicationPrompt(
+    request: AcpPromptRequest,
+    attribution: MessageAttribution,
+    promptAttemptId?: string
+  ): Promise<PromptResponse> {
+    return this.withOperationLease(() =>
+      this.runPromptTurn(request, {
+        kind: 'application',
+        attribution,
+        ...(promptAttemptId === undefined ? {} : { promptAttemptId })
+      })
+    )
+  }
+
   // App-owned continuations participate in the same prompt ownership, cancellation, provenance, and
   // accounting lifecycle as user turns. Their synthesized control text is provider input, however,
   // and must never be projected into the transcript as a second user-authored message.
@@ -1077,6 +1092,11 @@ class AcpRuntime {
     request: AcpPromptRequest,
     intent:
       | Readonly<{ kind: 'user'; promptAttemptId?: string }>
+      | Readonly<{
+          kind: 'application'
+          attribution: MessageAttribution
+          promptAttemptId?: string
+        }>
       | Readonly<{ kind: 'app-continuation'; promptAttemptId?: string }>
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {

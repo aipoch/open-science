@@ -95,6 +95,34 @@ export const selectProjectSessionReviews = (
   return reviewsBySession[reviewSessionKey(projectId ?? '', sessionId)] ?? EMPTY_REVIEWS
 }
 
+export const selectReviewRunsForMessage = (
+  reviewsBySession: Record<string, ReviewWithChecks[]>,
+  projectId: string | undefined,
+  sessionId: string | undefined,
+  messageId: string,
+  availableMessageIds?: ReadonlySet<string>
+): readonly ReviewWithChecks[] =>
+  selectProjectSessionReviews(reviewsBySession, projectId, sessionId)
+    .filter((review) => {
+      const scopeAnchor = review.scope.turnMessageId
+      const auditedAnchor =
+        typeof scopeAnchor === 'string' &&
+        scopeAnchor.trim().length > 0 &&
+        (!availableMessageIds || availableMessageIds.has(scopeAnchor))
+          ? scopeAnchor
+          : review.turnMessageId
+      return auditedAnchor === messageId
+    })
+    .sort((left, right) =>
+      left.createdAt !== right.createdAt
+        ? left.createdAt - right.createdAt
+        : left.id < right.id
+          ? -1
+          : left.id > right.id
+            ? 1
+            : 0
+    )
+
 export const useReviewStore = create<ReviewStore>((set, get) => ({
   ...createInitialReviewState(),
 

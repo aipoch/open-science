@@ -299,6 +299,7 @@ const toChatMessage = (message: ProvenanceMessage, sortIndex: number): ChatMessa
   id: message.id,
   role: message.role,
   content: message.content,
+  ...(message.attribution ? { attribution: message.attribution } : {}),
   status: 'complete',
   eventIds: [],
   createdAt: message.createdAt,
@@ -772,16 +773,7 @@ const ArtifactProvenancePanel = ({
     provenance?.review.state === 'available' ? provenance.review.value : undefined
   const reviewUnavailableReason =
     provenance?.review.state === 'unavailable' ? provenance.review.reason : undefined
-  const reviewAssessment = reviewProjection
-    ? (reviewProjection.currentDirectAssessment ?? reviewProjection.latestChainReview)
-    : undefined
-  const reviewForCard =
-    reviewAssessment && reviewProjection
-      ? {
-          ...reviewAssessment,
-          checks: [...reviewProjection.selectedVersionChecks, ...reviewProjection.turnLevelChecks]
-        }
-      : undefined
+  const reviewForCard = reviewProjection?.selectedVersionAssessment
   const executionKernels = [
     ...new Set(
       rawExecutionRuns
@@ -812,7 +804,7 @@ const ArtifactProvenancePanel = ({
       createSessionReviewerPreviewItem({
         sessionId: item.sessionId,
         reviewId: intent.reviewId,
-        findingId: intent.findingId,
+        findingId: intent.checkId ?? intent.findingId,
         locator: intent.locator
       })
     )

@@ -54,7 +54,8 @@ const unavailableRuntime = (error: unknown): ReviewerAcpRuntime => {
       rejectedToolCalls: 0,
       reviewerBridgeScoped: undefined
     }),
-    sendPrompt: fail
+    sendPrompt: fail,
+    sendApplicationPrompt: fail
   })
 }
 

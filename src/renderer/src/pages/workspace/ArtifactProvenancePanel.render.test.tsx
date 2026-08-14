@@ -16,13 +16,23 @@ const workspaceActivityGroupSpy = vi.hoisted(() => vi.fn())
 
 vi.mock('@/components/ReviewerCard', () => ({
   ReviewerCard: (props: {
-    review: { checks: Array<{ claim: string }> }
+    review: {
+      checks: Array<{ claim: string }>
+      submittedChecks?: unknown[]
+    }
     defaultExpanded?: boolean
+    onGoToTranscript?: (intent: { reviewId: string; findingId?: string; checkId?: string }) => void
   }) => {
     reviewerCardSpy(props)
     return (
       <div data-testid="reviewer-card">
         {props.review.checks.map((check) => check.claim).join(', ')}
+        <button
+          type="button"
+          onClick={() => props.onGoToTranscript?.({ reviewId: 'review-1', checkId: 'check-only' })}
+        >
+          Open check-only transcript
+        </button>
       </div>
     )
   }
@@ -347,6 +357,7 @@ const provenance = (): ArtifactVersionProvenance => ({
     value: {
       binding: 'version',
       selectedVersionId: 'version-1',
+      selectedVersionAssessment: { ...review, checks: [check] },
       currentDirectAssessment: { ...review, checks: [check] },
       latestChainReview: { ...review, checks: [check] },
       selectedVersionChecks: [check],
@@ -853,6 +864,47 @@ describe('ArtifactProvenancePanel', () => {
     expect(container.textContent).not.toContain('GENERATED')
   })
 
+  it('restores immutable Reviewer Correction attribution into the shared Message presentation', async () => {
+    getVersionMessages.mockResolvedValue({
+      messages: {
+        state: 'available',
+        items: [
+          {
+            id: 'correction-1',
+            role: 'user',
+            content: '[Auditor] Correct the unsupported claim.',
+            attribution: {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            },
+            createdAt: 1
+          }
+        ],
+        activities: [],
+        activityGroups: []
+      }
+    })
+
+    await clickTab('Messages')
+
+    expect(workspaceMessageItemSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          id: 'correction-1',
+          attribution: {
+            kind: 'application',
+            feature: 'reviewer',
+            purpose: 'correction',
+            causeReviewId: 'review-1'
+          }
+        }),
+        showUserActions: false
+      })
+    )
+  })
+
   it('reuses the existing ReviewerCard presentation for the selected Version assessment', async () => {
     await clickTab('Review')
 
@@ -860,6 +912,119 @@ describe('ArtifactProvenancePanel', () => {
       'The curve matches the executed code'
     )
     expect(reviewerCardSpy).toHaveBeenCalledWith(expect.objectContaining({ defaultExpanded: true }))
+  })
+
+  it('renders the Reviewer-owned selected Version projection without mutating frozen history', async () => {
+    const selectedTrackedSource = {
+      ...check,
+      id: 'tracked-selected',
+      status: 'fail' as const,
+      claim: 'Selected source issue'
+    }
+    const otherTrackedSource = {
+      ...selectedTrackedSource,
+      id: 'tracked-other',
+      claim: 'Other source issue'
+    }
+    const selectedNew = { ...check, id: 'new-selected', claim: 'Selected new check' }
+    const otherNew = {
+      ...check,
+      id: 'new-other',
+      claim: 'Other new check',
+      artifactVersionId: 'version-2'
+    }
+    const turnNew = {
+      ...check,
+      id: 'new-turn',
+      claim: 'Turn-level check',
+      artifactVersionId: undefined
+    }
+    const submittedChecks = [
+      {
+        kind: 'tracked' as const,
+        submissionIndex: 0,
+        sourceFindingId: selectedTrackedSource.id,
+        dispositionOutcome: 'still_open' as const,
+        assessedArtifactVersionId: 'version-1',
+        assessment: {
+          status: 'fail' as const,
+          claim: 'Selected tracked assessment',
+          evidence: 'Selected tracked evidence',
+          artifactVersionId: 'version-1',
+          sortIndex: 0
+        },
+        sourceCheck: selectedTrackedSource
+      },
+      {
+        kind: 'tracked' as const,
+        submissionIndex: 1,
+        sourceFindingId: otherTrackedSource.id,
+        dispositionOutcome: 'still_open' as const,
+        assessedArtifactVersionId: 'version-2',
+        assessment: {
+          status: 'fail' as const,
+          claim: 'Other tracked assessment',
+          evidence: 'Other tracked evidence',
+          artifactVersionId: 'version-2',
+          sortIndex: 1
+        },
+        sourceCheck: otherTrackedSource
+      },
+      { kind: 'new' as const, submissionIndex: 2, check: selectedNew },
+      { kind: 'new' as const, submissionIndex: 3, check: otherNew },
+      { kind: 'new' as const, submissionIndex: 4, check: turnNew }
+    ]
+    const assessment = { ...review, checks: [selectedNew, otherNew, turnNew], submittedChecks }
+    const selectedVersionAssessment = {
+      ...assessment,
+      checks: [selectedNew, turnNew],
+      submittedChecks: [submittedChecks[0]!, submittedChecks[2]!, submittedChecks[4]!]
+    }
+    const baseProjection = provenance().review
+    if (baseProjection.state !== 'available') throw new Error('Expected available review fixture.')
+    getVersionReview.mockResolvedValue({
+      review: {
+        state: 'available',
+        value: {
+          ...baseProjection.value,
+          selectedVersionAssessment,
+          currentDirectAssessment: assessment,
+          latestChainReview: assessment,
+          selectedVersionChecks: [selectedNew],
+          turnLevelChecks: [turnNew]
+        }
+      }
+    })
+
+    await clickTab('Review')
+    await flush()
+
+    const renderedReview = reviewerCardSpy.mock.lastCall?.[0].review as {
+      submittedChecks: typeof submittedChecks
+    }
+    expect(
+      renderedReview.submittedChecks.map((item) =>
+        item.kind === 'new' ? item.check.id : item.sourceFindingId
+      )
+    ).toEqual(['tracked-selected', 'new-selected', 'new-turn'])
+    expect(submittedChecks).toHaveLength(5)
+  })
+
+  it('uses checkId as the active Session Reviewer identity when findingId is absent', async () => {
+    await clickTab('Review')
+    const open = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Open check-only transcript'
+    )
+    await act(async () => open?.click())
+
+    const reviewerItem = usePreviewWorkbenchStore
+      .getState()
+      .items.find((candidate) => candidate.type === 'tool' && candidate.toolKind === 'reviewer')
+    expect(reviewerItem).toBeDefined()
+    if (!reviewerItem || reviewerItem.type !== 'tool') {
+      throw new Error('Expected the Reviewer action to open a tool preview item.')
+    }
+    expect(reviewerItem.reviewerActiveFindingId).toBe('check-only')
   })
 
   it('does not present a saved Review as current when its active source Session is unavailable', async () => {

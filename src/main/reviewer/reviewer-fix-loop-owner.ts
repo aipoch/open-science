@@ -11,7 +11,7 @@ import {
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
 import type { ReviewerAcpRuntime } from './acp-runtime'
-import { injectAuditorMessage } from './correction'
+import { ReviewerCorrectionOwner } from './correction'
 import type { ArtifactVersionContentResolver } from './host-sdk'
 import { runReviewAssessment } from './review-assessment-owner'
 import type { ReviewRepository } from './repository'
@@ -64,6 +64,7 @@ type ReviewerFixLoopOptions = {
 
 const waitForCorrectionAgentMessage = async (options: {
   sessionId: string
+  correctionPromptMessageId: string
   messageIdsBefore: ReadonlySet<string>
   getSession: SessionProvider
   timeoutMs: number
@@ -85,7 +86,8 @@ const waitForCorrectionAgentMessage = async (options: {
       (message) =>
         !options.messageIdsBefore.has(message.id) &&
         message.role === 'agent' &&
-        message.status === 'complete'
+        message.status === 'complete' &&
+        message.responseToMessageId === options.correctionPromptMessageId
     )
     if (latest && correction) return { session: latest, message: correction }
 
@@ -130,6 +132,8 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
   } = options
 
   let openChecks = [...options.openChecks]
+  let causeReviewId = openChecks[0]?.reviewId
+  const correctionOwner = new ReviewerCorrectionOwner({ acpRuntime, onCorrectionPrompt })
   const commitDispositionBatch = async (
     inputs: Parameters<ReviewRepository['commitFindingDispositions']>[0]
   ): Promise<void> => {
@@ -196,6 +200,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
 
     // Step B: inject [Auditor] with the currently-open warn/fail checks.
     let correctionFailed = false
+    let correctionPromptMessageId: string | undefined
     try {
       const conversationGraph =
         materializeSessionConversationGraph(sessionBefore).conversationGraph!
@@ -211,18 +216,19 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
         conversationGraph,
         originatingPrompt.id
       )
-      await injectAuditorMessage({
-        sessionId,
-        mainSessionId,
-        findings: openChecks,
-        acpRuntime,
-        provenanceContext,
-        onCorrectionPrompt,
-        onCorrectionFailed: () => {
-          correctionFailed = true
-          onCorrectionFailed?.()
-        }
+      const correctionResult = await correctionOwner.request({
+        projectId,
+        sessionId: mainSessionId,
+        causeReviewId: causeReviewId ?? openChecks[0].reviewId,
+        checks: openChecks,
+        provenanceContext
       })
+      if (correctionResult.status === 'failed') {
+        correctionFailed = true
+        onCorrectionFailed?.()
+      } else if (correctionResult.status === 'completed') {
+        correctionPromptMessageId = correctionResult.promptMessageId
+      }
     } catch (error) {
       correctionFailed = true
       log.warn('fix loop: failed to derive correction provenance', {
@@ -234,7 +240,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
 
     // Error handling: a failed correction counts as a round (prevents infinite loop) but we
     // cannot re-review (there's no correction turn). Mark remaining as unaddressed and stop.
-    if (correctionFailed) {
+    if (correctionFailed || !correctionPromptMessageId) {
       log.warn('correction failed in fix loop — marking remaining checks unaddressed', {
         sessionId,
         round,
@@ -252,6 +258,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     try {
       correctionState = await waitForCorrectionAgentMessage({
         sessionId,
+        correctionPromptMessageId,
         messageIdsBefore,
         getSession,
         timeoutMs: sessionRefreshTimeoutMs,
@@ -332,6 +339,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       await markOpenChecksUnaddressed('correction_failed', 'The scoped re-review failed.')
       return
     }
+    causeReviewId = reReviewResult.id
 
     const dispositionsByFindingId = new Map(
       scopedResult.submittedChecks.flatMap((check) =>

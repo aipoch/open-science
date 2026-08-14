@@ -11,7 +11,11 @@ import {
   createSessionReviewerPreviewItem,
   createSessionSubagentsPreviewItem
 } from '@/stores/preview-workbench-store'
-import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
+import {
+  selectProjectSessionReviews,
+  selectReviewRunsForMessage,
+  useReviewStore
+} from '@/stores/review-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
 import {
@@ -27,6 +31,7 @@ import {
   type ReactNode
 } from 'react'
 import { ArrowDownIcon } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
@@ -68,6 +73,7 @@ import type {
   HandoffRetryRequest
 } from '../../../../shared/handoff-lifecycle'
 import type { PendingElicitationRequest } from '../../../../shared/acp'
+import { isHumanUserMessage } from '../../../../shared/session-persistence'
 import { HandoffLifecycleStatus } from './HandoffLifecycleStatus'
 import { useHandoffLifecycleEvents } from './useHandoffLifecycleEvents'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
@@ -227,7 +233,7 @@ const openSessionReviewer = (sessionId: string, intent: GoToTranscriptIntent): v
     createSessionReviewerPreviewItem({
       sessionId,
       reviewId: intent.reviewId,
-      findingId: intent.findingId,
+      findingId: intent.checkId ?? intent.findingId,
       locator: intent.locator
     })
   )
@@ -237,6 +243,7 @@ type WorkspaceMessageReviewProps = {
   projectId: string | undefined
   sessionId: string
   turnMessageId: string
+  activeBranchMessageIds: ReadonlySet<string>
   onGoToTranscript: (intent: GoToTranscriptIntent) => void
   onRerun: (review: ReviewWithChecks) => Promise<boolean>
 }
@@ -247,26 +254,59 @@ const WorkspaceMessageReview = ({
   projectId,
   sessionId,
   turnMessageId,
+  activeBranchMessageIds,
   onGoToTranscript,
   onRerun
 }: WorkspaceMessageReviewProps): React.JSX.Element | null => {
-  const review = useReviewStore((state) =>
-    selectProjectSessionReviews(state.reviewsBySession, projectId, sessionId).find(
-      (candidate) => candidate.turnMessageId === turnMessageId
+  const reviewIds = useReviewStore(
+    useShallow((state) =>
+      selectReviewRunsForMessage(
+        state.reviewsBySession,
+        projectId,
+        sessionId,
+        turnMessageId,
+        activeBranchMessageIds
+      ).map((review) => review.id)
     )
   )
 
-  if (!review) return null
+  if (reviewIds.length === 0) return null
   return (
     <MessageScrollerItem messageId={`review-${turnMessageId}`} className="min-w-0">
-      <div className="px-4 pb-1 md:px-6">
-        <div className="mx-auto w-full max-w-[56rem]">
-          {/* Only "Go to transcript" navigates to the reviewer page; the card itself does not. */}
-          <ReviewerCard review={review} onGoToTranscript={onGoToTranscript} onRerun={onRerun} />
+      <div className="px-4 pb-1 md:px-6" data-review-anchor-message-id={turnMessageId}>
+        <div className="mx-auto flex w-full max-w-[56rem] flex-col gap-2">
+          {reviewIds.map((reviewId) => (
+            <WorkspaceReviewCard
+              key={reviewId}
+              projectId={projectId}
+              sessionId={sessionId}
+              reviewId={reviewId}
+              onGoToTranscript={onGoToTranscript}
+              onRerun={onRerun}
+            />
+          ))}
         </div>
       </div>
     </MessageScrollerItem>
   )
+}
+
+const WorkspaceReviewCard = ({
+  projectId,
+  sessionId,
+  reviewId,
+  onGoToTranscript,
+  onRerun
+}: Omit<WorkspaceMessageReviewProps, 'turnMessageId' | 'activeBranchMessageIds'> & {
+  reviewId: string
+}): React.JSX.Element | null => {
+  const review = useReviewStore((state) =>
+    selectProjectSessionReviews(state.reviewsBySession, projectId, sessionId).find(
+      (candidate) => candidate.id === reviewId
+    )
+  )
+  if (!review) return null
+  return <ReviewerCard review={review} onGoToTranscript={onGoToTranscript} onRerun={onRerun} />
 }
 
 type EditableWorkspaceMessageItemProps = Omit<
@@ -424,6 +464,26 @@ const WorkspaceMessageScrollerImpl = ({
     item.type === 'message' ? [item.message.id] : []
   )
   const visibleMessageIdsKey = JSON.stringify(visibleMessageIds)
+  const activeBranchMessageIds = useMemo(
+    () =>
+      new Set(
+        conversationItems.flatMap((item) => (item.type === 'message' ? [item.message.id] : []))
+      ),
+    [conversationItems]
+  )
+  const respondedPromptMessageIds = useMemo(
+    () =>
+      new Set(
+        conversationItems.flatMap((item) =>
+          item.type === 'message' &&
+          item.message.role === 'agent' &&
+          item.message.responseToMessageId
+            ? [item.message.responseToMessageId]
+            : []
+        )
+      ),
+    [conversationItems]
+  )
   const userTurnCount = presentedConversationItems.filter(
     (item) => item.type === 'message' && item.message.role === 'user'
   ).length
@@ -931,7 +991,10 @@ const WorkspaceMessageScrollerImpl = ({
                   const runtimeIdentity = synthesizedLegacyRuntime
                     ? legacyRuntimeIdentity
                     : runtimeSegment
-                  const revisionRootMessageId = messageNode?.revisionRootMessageId
+                  const isHumanUser = isHumanUserMessage(item.message)
+                  const revisionRootMessageId = isHumanUser
+                    ? messageNode?.revisionRootMessageId
+                    : undefined
                   const revisions = revisionRootMessageId
                     ? (graph?.messages
                         .filter(
@@ -980,7 +1043,12 @@ const WorkspaceMessageScrollerImpl = ({
                             onNext: activateRevision(revisionIndex + 1)
                           }
                         : undefined,
-                    artifacts
+                    artifacts,
+                    reviewerCorrectionActive:
+                      activeSession?.activeRun?.promptMessageId === item.message.id &&
+                      activeSession.status !== 'idle' &&
+                      activeSession.status !== 'error' &&
+                      !respondedPromptMessageIds.has(item.message.id)
                   }
                   if (item.message.role === 'agent') {
                     messageItemProps.onPresentationChange = handleMessagePresentationChange
@@ -1009,7 +1077,7 @@ const WorkspaceMessageScrollerImpl = ({
                       ))}
                       {/* #1124: the composite key remounts the message row when the presentation
                           scope changes; the surrounding fragment keeps sibling rows stable. */}
-                      {item.message.role === 'user' ? (
+                      {isHumanUser ? (
                         <EditableWorkspaceMessageItem
                           key={JSON.stringify([currentPresentationScopeId, item.id])}
                           {...messageItemProps}
@@ -1028,6 +1096,7 @@ const WorkspaceMessageScrollerImpl = ({
                           projectId={currentProjectId}
                           sessionId={currentSessionId}
                           turnMessageId={item.message.id}
+                          activeBranchMessageIds={activeBranchMessageIds}
                           onGoToTranscript={handleGoToTranscript}
                           onRerun={handleRerunReview}
                         />

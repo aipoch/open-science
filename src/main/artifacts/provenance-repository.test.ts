@@ -1641,15 +1641,45 @@ describe('artifact provenance repository', () => {
         }
       ]
     })
-    await client.finding.create({
+    await client.finding.createMany({
+      data: [
+        {
+          id: 'finding-direct-flagged',
+          reviewId: 'review-direct-flagged',
+          status: 'fail',
+          claim: 'Artifact row count does not match.',
+          evidence: 'The first assessment observed 12 rows.',
+          artifactVersionId: version.versionId,
+          artifactBindingState: 'scope_validated'
+        },
+        {
+          id: 'finding-direct-pass',
+          reviewId: 'review-direct-pass',
+          status: 'pass',
+          claim: 'Artifact values match the execution output.',
+          evidence: 'Recomputed from the immutable Artifact Version.',
+          artifactVersionId: version.versionId,
+          artifactBindingState: 'scope_validated'
+        }
+      ]
+    })
+    await client.reviewFindingDisposition.create({
       data: {
-        id: 'finding-direct-pass',
-        reviewId: 'review-direct-pass',
-        status: 'pass',
-        claim: 'Artifact values match the execution output.',
-        evidence: 'Recomputed from the immutable Artifact Version.',
-        artifactVersionId: version.versionId,
-        artifactBindingState: 'scope_validated'
+        id: 'disposition-direct-pass',
+        sourceFindingId: 'finding-direct-flagged',
+        causeReviewId: 'review-direct-pass',
+        sequence: 0,
+        trigger: 'review_submission',
+        outcome: 'resolved',
+        assessedArtifactVersionId: version.versionId,
+        assessmentSnapshot: JSON.stringify({
+          schemaVersion: 1,
+          status: 'pass',
+          claim: 'Round 2 row count is corrected.',
+          evidence: 'Round 2 observed all 33 rows.',
+          artifactVersionId: version.versionId,
+          sortIndex: 1
+        })
       }
     })
     await expect(
@@ -1667,9 +1697,68 @@ describe('artifact provenance repository', () => {
         state: 'available',
         value: {
           binding: 'version',
-          currentDirectAssessment: { id: 'review-direct-pass', outcome: 'pass' },
+          selectedVersionAssessment: {
+            id: 'review-direct-pass',
+            submittedChecks: [
+              { kind: 'new', check: { id: 'finding-direct-pass' } },
+              {
+                kind: 'tracked',
+                sourceFindingId: 'finding-direct-flagged',
+                assessedArtifactVersionId: version.versionId
+              }
+            ]
+          },
+          currentDirectAssessment: {
+            id: 'review-direct-pass',
+            outcome: 'pass',
+            submittedChecks: [
+              { kind: 'new', check: { id: 'finding-direct-pass' } },
+              {
+                kind: 'tracked',
+                sourceFindingId: 'finding-direct-flagged',
+                dispositionOutcome: 'resolved',
+                assessment: {
+                  status: 'pass',
+                  claim: 'Round 2 row count is corrected.',
+                  evidence: 'Round 2 observed all 33 rows.',
+                  artifactVersionId: version.versionId,
+                  sortIndex: 1
+                }
+              }
+            ]
+          },
           latestChainReview: { id: 'review-direct-pass', outcome: 'pass' },
-          selectedVersionChecks: [{ artifactBindingState: 'scope_validated' }]
+          selectedVersionChecks: [{ artifactBindingState: 'scope_validated' }],
+          history: expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'review',
+              review: expect.objectContaining({
+                id: 'review-direct-flagged',
+                submittedChecks: expect.arrayContaining([
+                  expect.objectContaining({
+                    kind: 'new',
+                    check: expect.objectContaining({
+                      claim: 'Artifact row count does not match.'
+                    })
+                  })
+                ])
+              })
+            }),
+            expect.objectContaining({
+              kind: 'review',
+              review: expect.objectContaining({
+                id: 'review-direct-pass',
+                submittedChecks: expect.arrayContaining([
+                  expect.objectContaining({
+                    kind: 'tracked',
+                    assessment: expect.objectContaining({
+                      claim: 'Round 2 row count is corrected.'
+                    })
+                  })
+                ])
+              })
+            })
+          ])
         }
       }
     })

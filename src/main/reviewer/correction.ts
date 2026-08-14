@@ -4,10 +4,12 @@
 // Phase 3: correction.ts no longer hardcodes unaddressed resolutions.
 // The fix loop in orchestrator.ts drives re-review and sets resolutions from those results.
 
+import { randomUUID } from 'node:crypto'
+
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { createLogger } from '../logger'
-import type { AcpPromptRequest } from '../../shared/acp'
 import type { ReviewCheck } from '../../shared/reviewer'
+import type { AgentTurnProvenanceContext } from '../../shared/elicitation'
 
 const log = createLogger('reviewer:correction')
 
@@ -33,69 +35,75 @@ export const buildAuditorMessage = (checks: ReviewCheck[]): string => {
   return [header, ...lines, footer].join('\n')
 }
 
-// Injects the [Auditor] message into the main session and waits for the correction turn to complete.
-// Resolution updates are NOT performed here — Phase 3 orchestrator drives re-review and sets
-// resolutions from the re-review outcome.
-//
-// Errors are isolated: a failed correction is logged but does NOT crash the review lifecycle.
-export const injectAuditorMessage = async (options: {
+export type ReviewerCorrectionRequest = Readonly<{
+  projectId: string
   sessionId: string
-  mainSessionId: string
-  findings: ReviewCheck[] // the full checks list; only warn/fail are injected
-  acpRuntime: ReviewerAcpRuntime
-  provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
-  // Optional hook for tests to capture the injected message text.
-  onCorrectionPrompt?: (text: string) => void
-  // Called if the correction sendPrompt fails, so the caller can undo pre-emptive suppression.
-  onCorrectionFailed?: () => void
-}): Promise<void> => {
-  const {
-    sessionId,
-    mainSessionId,
-    findings,
-    acpRuntime,
-    provenanceContext,
-    onCorrectionPrompt,
-    onCorrectionFailed
-  } = options
+  causeReviewId: string
+  checks: readonly ReviewCheck[]
+  provenanceContext: AgentTurnProvenanceContext
+}>
 
-  // Only inject for warn/fail checks.
-  const warnFailChecks = findings.filter((c) => c.status === 'warn' || c.status === 'fail')
-  if (warnFailChecks.length === 0) {
-    log.info('no warn/fail checks; skipping auditor injection', { sessionId })
-    return
-  }
+export type ReviewerCorrectionResult =
+  | Readonly<{ status: 'skipped'; reason: 'no-open-checks' }>
+  | Readonly<{ status: 'completed'; promptMessageId: string }>
+  | Readonly<{ status: 'failed'; error: string }>
 
-  const message = buildAuditorMessage(warnFailChecks)
+export class ReviewerCorrectionOwner {
+  constructor(
+    private readonly options: {
+      acpRuntime: Pick<ReviewerAcpRuntime, 'sendApplicationPrompt'>
+      onCorrectionPrompt?: (text: string) => void
+      createPromptMessageId?: () => string
+    }
+  ) {}
 
-  log.info('injecting [Auditor] message into main session', {
-    sessionId,
-    mainSessionId,
-    findingCount: warnFailChecks.length
-  })
+  async request(input: ReviewerCorrectionRequest): Promise<ReviewerCorrectionResult> {
+    const openChecks = input.checks.filter(
+      (check) => check.status === 'warn' || check.status === 'fail'
+    )
+    if (openChecks.length === 0) {
+      log.info('no warn/fail checks; skipping reviewer correction', {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        causeReviewId: input.causeReviewId
+      })
+      return { status: 'skipped', reason: 'no-open-checks' }
+    }
 
-  // Notify test hooks (if any).
-  onCorrectionPrompt?.(message)
-
-  try {
-    // Inject through the main-session sendPrompt path (design.md cross-cutting requirement).
-    // The provider retains the ordinary save-as-user prompt semantics, while Open Science keeps
-    // the application-owned Auditor instruction out of the visible and durable local transcript.
-    await acpRuntime.sendPrompt({
-      sessionId: mainSessionId,
-      text: message,
-      provenanceContext,
-      suppressUserMessage: true
+    const promptMessageId = this.options.createPromptMessageId?.() ?? `prompt-${randomUUID()}`
+    const provenanceContext = { ...input.provenanceContext, promptMessageId }
+    const text = buildAuditorMessage(openChecks)
+    this.options.onCorrectionPrompt?.(text)
+    log.info('sending Reviewer Correction application turn', {
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+      causeReviewId: input.causeReviewId,
+      findingCount: openChecks.length
     })
-    log.info('[Auditor] correction turn complete', { mainSessionId })
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error)
-    log.error('[Auditor] correction sendPrompt failed', {
-      mainSessionId,
-      error: errorMsg
-    })
-    // Error handling: a failed correction does NOT spin into a re-review loop.
-    // The correction turn never produced a stop, so undo the pre-emptive auto-review suppression.
-    onCorrectionFailed?.()
+
+    try {
+      await this.options.acpRuntime.sendApplicationPrompt(
+        { sessionId: input.sessionId, text, provenanceContext },
+        {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: input.causeReviewId
+        }
+      )
+      log.info('Reviewer Correction turn complete', {
+        sessionId: input.sessionId,
+        causeReviewId: input.causeReviewId
+      })
+      return { status: 'completed', promptMessageId }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      log.error('Reviewer Correction application turn failed', {
+        sessionId: input.sessionId,
+        causeReviewId: input.causeReviewId,
+        error: errorMessage
+      })
+      return { status: 'failed', error: errorMessage }
+    }
   }
 }

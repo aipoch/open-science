@@ -92,6 +92,7 @@ vi.mock('@/stores/preview-workbench-store', () => ({
 
 vi.mock('@/stores/review-store', () => ({
   selectProjectSessionReviews: () => [],
+  selectReviewRunsForMessage: () => [],
   useReviewStore: (
     selector: (state: {
       reviewsBySession: Record<string, never[]>
@@ -189,6 +190,65 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
     <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
   )
 }
+
+describe('WorkspaceMessageScroller Reviewer Correction lifecycle', () => {
+  const correction = createMessage({
+    id: 'correction-1',
+    content: '[Auditor] Durable correction instructions',
+    attribution: {
+      kind: 'application',
+      feature: 'reviewer',
+      purpose: 'correction',
+      causeReviewId: 'review-1'
+    }
+  })
+
+  it('animates only the active correction before an Agent response exists', async () => {
+    const active = await renderScroller(
+      createSession({
+        activeRun: { promptMessageId: correction.id, startedAt: correction.createdAt },
+        messages: [correction]
+      })
+    )
+    expect(active).toContain('data-active="true"')
+    expect(active).toContain('Agent is addressing the feedback')
+    expect(active).toContain('motion-reduce:animate-none')
+    expect(active).not.toContain(correction.content)
+
+    const responded = await renderScroller(
+      createSession({
+        activeRun: { promptMessageId: correction.id, startedAt: correction.createdAt },
+        messages: [
+          correction,
+          createMessage({
+            id: 'correction-response',
+            role: 'agent',
+            content: 'Correction complete.',
+            status: 'streaming',
+            responseToMessageId: correction.id,
+            createdAt: correction.createdAt + 1,
+            updatedAt: correction.updatedAt + 1
+          })
+        ]
+      })
+    )
+    expect(responded).toContain('Corrections requested')
+    expect(responded).toContain('Handed off to the Agent · response started')
+    expect(responded).not.toContain('data-active="true"')
+    expect(responded).not.toContain('Agent is addressing the feedback')
+    expect(responded).not.toContain(correction.content)
+  })
+
+  it('keeps a reloaded historical correction settled', async () => {
+    const html = await renderScroller(
+      createSession({ status: 'idle', activeRun: undefined, messages: [correction] })
+    )
+    expect(html).toContain('Corrections requested')
+    expect(html).toContain('Handed off to the Agent · response started')
+    expect(html).not.toContain('animate-spin')
+    expect(html).not.toContain(correction.content)
+  })
+})
 
 const planDocument: ActivePlanProjection['document'] = {
   schema_version: 1,

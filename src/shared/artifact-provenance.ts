@@ -9,6 +9,7 @@ import type {
 } from './notebook'
 import type { AgentFrameworkId } from './settings'
 import type {
+  MessageAttribution,
   PersistedActivityGroup,
   PersistedMessageRole,
   PersistedToolActivity
@@ -449,6 +450,7 @@ export type ProvenanceMessage = {
   supersedesMessageId?: string
   role: PersistedMessageRole
   content: string
+  attribution?: MessageAttribution
   parts?: ProvenanceMessagePart[]
   artifacts?: Array<{ versionId: string; name: string }>
   createdAt: number

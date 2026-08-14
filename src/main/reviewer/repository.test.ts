@@ -278,6 +278,38 @@ describe('review repository (integration)', () => {
     ])
   })
 
+  it('projects the terminal reason for an unaddressed finding', async () => {
+    const repository = await createRepository()
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-terminal-reason',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(review.id, [checks()[0]!])
+    const sourceFinding = (
+      await repository.getReviewsForProjectSession('project-1', 'session-terminal-reason')
+    )[0]!.checks[0]!
+
+    await repository.commitFindingDispositions([
+      {
+        reviewId: review.id,
+        sourceFindingId: sourceFinding.id,
+        trigger: 'correction_failed',
+        outcome: 'unaddressed',
+        note: 'The correction turn did not reach durable storage.'
+      }
+    ])
+
+    const stored = (
+      await repository.getReviewsForProjectSession('project-1', 'session-terminal-reason')
+    )[0]!.checks[0]
+    expect(stored).toMatchObject({
+      resolution: 'unaddressed',
+      unaddressedTrigger: 'correction_failed'
+    })
+  })
+
   it('rolls back every finding disposition when one item in the submission is invalid', async () => {
     const repository = await createRepository()
     const review = await repository.createReview({
@@ -356,6 +388,42 @@ describe('review repository (integration)', () => {
     expect(committed).toMatchObject({ lifecycle: 'complete', outcome: 'flagged' })
     expect(committed.checks).toHaveLength(1)
     expect(committed.checks[0]).toMatchObject({ claim: 'new issue', status: 'warn' })
+    expect(committed.submittedChecks).toEqual([
+      {
+        kind: 'tracked',
+        submissionIndex: 0,
+        sourceFindingId: sourceFinding.id,
+        dispositionOutcome: 'resolved',
+        assessedArtifactVersionId: 'art-1',
+        assessment: {
+          status: 'pass',
+          claim: 'original issue fixed',
+          evidence: 'the corrected output matches',
+          artifactVersionId: 'art-1',
+          sortIndex: 0
+        },
+        sourceCheck: expect.objectContaining({
+          id: sourceFinding.id,
+          claim: 'ran 33 rows',
+          evidence: 'tool_result shows 0 rows'
+        })
+      },
+      {
+        kind: 'new',
+        submissionIndex: 1,
+        check: expect.objectContaining({
+          reviewId: assessmentReview.id,
+          status: 'warn',
+          claim: 'new issue',
+          evidence: 'new evidence',
+          sortIndex: 1
+        })
+      }
+    ])
+    const reloadedAssessment = (
+      await repository.getReviewsForProjectSession('project-1', 'session-1')
+    ).find((review) => review.id === assessmentReview.id)
+    expect(reloadedAssessment?.submittedChecks).toEqual(committed.submittedChecks)
     const reviews = await repository.getReviewsForProjectSession('project-1', 'session-1')
     expect(reviews.find((review) => review.id === sourceReview.id)?.checks[0]).toMatchObject({
       resolution: 'resolved',
@@ -426,6 +494,197 @@ describe('review repository (integration)', () => {
 
     const [afterFailure] = await repository.getReviewsForProjectSession('project-1', 'session-1')
     expect(afterFailure).toMatchObject({ lifecycle: 'running', outcome: null, checks: [] })
+  })
+
+  it('keeps each tracked Review Check assessment immutable after a later Review resolves it', async () => {
+    const repository = await createRepository()
+    const sourceReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-history',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(sourceReview.id, [checks()[0]!])
+    const sourceFinding = (
+      await repository.getReviewsForProjectSession('project-1', 'session-history')
+    )[0]!.checks[0]!
+
+    const roundTwo = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-history',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.commitScopedSubmission({
+      reviewId: roundTwo.id,
+      checks: [
+        {
+          status: 'fail',
+          claim: 'Round 2 still has the row-count mismatch',
+          evidence: 'Round 2 observed 0 rows.',
+          locator: { blockRef: { activityId: 'act-2', blockIndex: 1 }, contentHash: 'round-2' },
+          sourceFindingId: sourceFinding.id
+        }
+      ],
+      expectedSourceFindingIds: [sourceFinding.id],
+      outcome: 'flagged'
+    })
+
+    const roundThree = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-history',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.commitScopedSubmission({
+      reviewId: roundThree.id,
+      checks: [
+        {
+          status: 'pass',
+          claim: 'Round 3 row count is corrected',
+          evidence: 'Round 3 observed 33 rows.',
+          sourceFindingId: sourceFinding.id
+        }
+      ],
+      expectedSourceFindingIds: [sourceFinding.id],
+      outcome: 'pass'
+    })
+
+    const history = await repository.getReviewsForProjectSession('project-1', 'session-history')
+    expect(history.find((review) => review.id === roundTwo.id)?.submittedChecks?.[0]).toMatchObject(
+      {
+        kind: 'tracked',
+        assessment: {
+          status: 'fail',
+          claim: 'Round 2 still has the row-count mismatch',
+          evidence: 'Round 2 observed 0 rows.'
+        }
+      }
+    )
+    expect(
+      history.find((review) => review.id === roundThree.id)?.submittedChecks?.[0]
+    ).toMatchObject({
+      kind: 'tracked',
+      assessment: {
+        status: 'pass',
+        claim: 'Round 3 row count is corrected',
+        evidence: 'Round 3 observed 33 rows.'
+      }
+    })
+  })
+
+  it('projects a legacy tracked disposition with the original issue and unavailable assessment', async () => {
+    const repository = await createRepository()
+    const sourceReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-legacy-assessment',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(sourceReview.id, [checks()[0]!])
+    const sourceFinding = (
+      await repository.getReviewsForProjectSession('project-1', 'session-legacy-assessment')
+    )[0]!.checks[0]!
+    const legacyAssessment = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-legacy-assessment',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.appendFindingDisposition({
+      eventId: 'legacy-disposition-without-assessment',
+      sourceFindingId: sourceFinding.id,
+      causeReviewId: legacyAssessment.id,
+      trigger: 'review_submission',
+      outcome: 'still_open'
+    })
+
+    const stored = (
+      await repository.getReviewsForProjectSession('project-1', 'session-legacy-assessment')
+    ).find((review) => review.id === legacyAssessment.id)
+    expect(stored?.submittedChecks).toEqual([
+      {
+        kind: 'tracked',
+        submissionIndex: null,
+        sourceFindingId: sourceFinding.id,
+        dispositionOutcome: 'still_open',
+        assessment: null,
+        sourceCheck: expect.objectContaining({
+          id: sourceFinding.id,
+          claim: 'ran 33 rows',
+          evidence: 'tool_result shows 0 rows'
+        })
+      }
+    ])
+  })
+
+  it('reuses only an identical tracked assessment snapshot and rolls back a mismatch', async () => {
+    const repository = await createRepository()
+    const sourceReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-assessment-idempotency',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await repository.addChecks(sourceReview.id, [checks()[0]!])
+    const sourceFinding = (
+      await repository.getReviewsForProjectSession('project-1', 'session-assessment-idempotency')
+    )[0]!.checks[0]!
+    const assessmentReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-assessment-idempotency',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    const submission = {
+      reviewId: assessmentReview.id,
+      checks: [
+        {
+          status: 'fail' as const,
+          claim: 'Tracked assessment claim',
+          evidence: 'Tracked assessment evidence',
+          sourceFindingId: sourceFinding.id
+        }
+      ],
+      expectedSourceFindingIds: [sourceFinding.id],
+      outcome: 'flagged' as const
+    }
+    await repository.commitScopedSubmission(submission)
+
+    await client!.review.update({
+      where: { id: assessmentReview.id },
+      data: { lifecycle: 'running', outcome: null }
+    })
+    await client!.finding.update({
+      where: { id: sourceFinding.id },
+      data: { resolution: 'open' }
+    })
+    await expect(repository.commitScopedSubmission(submission)).resolves.toMatchObject({
+      lifecycle: 'complete',
+      outcome: 'flagged'
+    })
+
+    await client!.review.update({
+      where: { id: assessmentReview.id },
+      data: { lifecycle: 'running', outcome: null }
+    })
+    await client!.finding.update({
+      where: { id: sourceFinding.id },
+      data: { resolution: 'open' }
+    })
+    await expect(
+      repository.commitScopedSubmission({
+        ...submission,
+        checks: [{ ...submission.checks[0]!, evidence: 'Different evidence must not reuse event.' }]
+      })
+    ).rejects.toThrow(/reused with different data/u)
+    const afterMismatch = (
+      await repository.getReviewsForProjectSession('project-1', 'session-assessment-idempotency')
+    ).find((review) => review.id === assessmentReview.id)
+    expect(afterMismatch).toMatchObject({ lifecycle: 'running', outcome: null })
+    expect(afterMismatch?.submittedChecks?.[0]).toMatchObject({
+      assessment: { evidence: 'Tracked assessment evidence' }
+    })
   })
 
   it('rejects incomplete tracked sets and Findings from another Review turn chain', async () => {
@@ -938,6 +1197,7 @@ describe('review repository (integration)', () => {
     const failingClient = {
       review: realClient.review,
       finding: realClient.finding,
+      reviewFindingDisposition: realClient.reviewFindingDisposition,
       $executeRaw: realClient.$executeRaw.bind(realClient),
       $transaction: ((callback: (tx: Record<string, unknown>) => Promise<unknown>) =>
         realClient.$transaction((tx) => {

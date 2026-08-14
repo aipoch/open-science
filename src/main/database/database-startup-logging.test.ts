@@ -100,7 +100,8 @@ describe('database startup logging', () => {
             applied: [
               '0001_runtime_schema_baseline',
               '0002_project_agent_context',
-              '0003_granted_local_roots'
+              '0003_granted_local_roots',
+              '0004_review_assessment_snapshots'
             ],
             adoptedLegacy: true
           })
@@ -116,8 +117,8 @@ describe('database startup logging', () => {
     options.onProgress?.({ phase: 'checking' })
     options.onCompatibilityVerified?.({ sqliteVersion: '3.49.1' })
     options.onCompleted?.({
-      from: '0003_granted_local_roots',
-      to: '0003_granted_local_roots',
+      from: '0004_review_assessment_snapshots',
+      to: '0004_review_assessment_snapshots',
       applied: [],
       adoptedLegacy: false
     })

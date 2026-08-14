@@ -9,9 +9,11 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ReviewRepository } from './repository'
 
 const mocks = vi.hoisted(() => ({
-  injectAuditorMessage: vi.fn(),
+  sendApplicationPrompt: vi.fn(),
   runReviewAssessment: vi.fn(),
-  getActiveConversationContext: vi.fn(() => ({})),
+  getActiveConversationContext: vi.fn((_graph: unknown, promptMessageId: string) => ({
+    promptMessageId
+  })),
   resolveActiveConversationMessages: vi.fn(() => [
     {
       id: 'originating-user',
@@ -21,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   ])
 }))
 
-vi.mock('./correction', () => ({ injectAuditorMessage: mocks.injectAuditorMessage }))
 vi.mock('./review-assessment-owner', () => ({
   runReviewAssessment: mocks.runReviewAssessment
 }))
@@ -94,7 +95,11 @@ const review = (id: string, checks: ReviewCheck[] = []): ReviewWithChecks => ({
 const makeOptions = (
   getSession: () => PersistedChatSession | Promise<PersistedChatSession>,
   reviewRepository: ReviewRepository,
-  overrides: { abortSignal?: AbortSignal; onReviewUpdate?: (value: ReviewWithChecks) => void } = {}
+  overrides: {
+    abortSignal?: AbortSignal
+    onReviewUpdate?: (value: ReviewWithChecks) => void
+    maxRounds?: number
+  } = {}
 ): Parameters<typeof runReviewerFixLoop>[0] => ({
   sessionId: 'session-1',
   originalTurnMessageId: 'original-turn',
@@ -104,7 +109,7 @@ const makeOptions = (
   getSession,
   reviewRepository,
   runSessionMutation: async (mutation) => mutation(),
-  acpRuntime: {} as AcpRuntime,
+  acpRuntime: { sendApplicationPrompt: mocks.sendApplicationPrompt } as unknown as AcpRuntime,
   artifactStorageRoot: join(tmpdir(), 'reviewer-fix-loop-artifacts'),
   model: 'reviewer-model',
   reviewerTimeoutMs: 1000,
@@ -116,9 +121,11 @@ const makeOptions = (
 
 describe('reviewer fix-loop owner', () => {
   beforeEach(() => {
-    mocks.injectAuditorMessage.mockReset().mockResolvedValue(undefined)
+    mocks.sendApplicationPrompt.mockReset().mockResolvedValue({ stopReason: 'end_turn' })
     mocks.runReviewAssessment.mockReset()
-    mocks.getActiveConversationContext.mockReset().mockReturnValue({})
+    mocks.getActiveConversationContext
+      .mockReset()
+      .mockImplementation((_graph: unknown, promptMessageId: string) => ({ promptMessageId }))
     mocks.resolveActiveConversationMessages.mockReset().mockReturnValue([
       {
         id: 'originating-user',
@@ -130,8 +137,20 @@ describe('reviewer fix-loop owner', () => {
 
   it('reviews the exact durable snapshot that proves the correction completed', async () => {
     const before = session([initialMessage])
-    const correctionSnapshot = session([initialMessage, correctionMessage])
-    const getSession = vi.fn().mockResolvedValueOnce(before).mockResolvedValue(correctionSnapshot)
+    let correctionSnapshot: PersistedChatSession | undefined
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce(before)
+      .mockImplementation(async () => {
+        const promptMessageId =
+          mocks.sendApplicationPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId
+        if (!promptMessageId) throw new Error('expected correction prompt identity')
+        correctionSnapshot = session([
+          initialMessage,
+          { ...correctionMessage, responseToMessageId: promptMessageId }
+        ])
+        return correctionSnapshot
+      })
     const submittedChecks: NewCheck[] = [
       {
         status: 'pass',
@@ -146,7 +165,7 @@ describe('reviewer fix-loop owner', () => {
     })
     const repository = {
       commitFindingDispositions: vi.fn(),
-      getReviewsForProjectSession: vi.fn()
+      getReviewsForProjectSession: vi.fn().mockResolvedValue([])
     } as unknown as ReviewRepository
 
     await runReviewerFixLoop(makeOptions(getSession, repository))
@@ -163,6 +182,125 @@ describe('reviewer fix-loop owner', () => {
     expect(getSession).toHaveBeenCalledTimes(2)
     expect(mocks.getActiveConversationContext).toHaveBeenCalledWith({}, 'originating-user')
     expect(repository.commitFindingDispositions).not.toHaveBeenCalled()
+  })
+
+  it('waits through stale and unrelated durable messages for the exact correction response', async () => {
+    const before = session([initialMessage])
+    const unrelatedMessage = {
+      ...correctionMessage,
+      id: 'unrelated-agent',
+      responseToMessageId: 'originating-user'
+    }
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(session([initialMessage, unrelatedMessage]))
+      .mockImplementationOnce(async () => {
+        const correctionPromptMessageId =
+          mocks.sendApplicationPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId
+        if (!correctionPromptMessageId) throw new Error('expected correction prompt identity')
+        const exactCorrectionMessage = {
+          ...correctionMessage,
+          responseToMessageId: correctionPromptMessageId
+        }
+        return session([initialMessage, unrelatedMessage, exactCorrectionMessage])
+      })
+    mocks.runReviewAssessment.mockResolvedValue({
+      review: review('assessment-review'),
+      submittedChecks: [
+        {
+          status: 'pass',
+          claim: 'Fixed',
+          evidence: 'Verified',
+          sourceFindingId: openCheck.id
+        }
+      ]
+    })
+    const repository = {
+      commitFindingDispositions: vi.fn(),
+      getReviewsForProjectSession: vi.fn()
+    } as unknown as ReviewRepository
+
+    await runReviewerFixLoop(makeOptions(getSession, repository))
+
+    expect(mocks.runReviewAssessment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopeTurnMessageId: correctionMessage.id,
+        session: expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              id: correctionMessage.id,
+              responseToMessageId:
+                mocks.sendApplicationPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId
+            })
+          ])
+        })
+      })
+    )
+    expect(getSession).toHaveBeenCalledTimes(4)
+  })
+
+  it('attributes each correction to the Review Run that requested that round', async () => {
+    const secondCorrectionMessage = {
+      ...correctionMessage,
+      id: 'correction-agent-2',
+      createdAt: 3,
+      updatedAt: 3
+    }
+    let firstSnapshot: PersistedChatSession | undefined
+    const getSession = vi.fn().mockImplementation(async () => {
+      const callIndex = getSession.mock.calls.length
+      if (callIndex === 1) return session([initialMessage])
+      const firstPromptMessageId =
+        mocks.sendApplicationPrompt.mock.calls[0]?.[0].provenanceContext?.promptMessageId
+      if (!firstPromptMessageId) throw new Error('expected first correction prompt identity')
+      firstSnapshot ??= session([
+        initialMessage,
+        { ...correctionMessage, responseToMessageId: firstPromptMessageId }
+      ])
+      if (callIndex === 2 || callIndex === 3) return firstSnapshot
+      const secondPromptMessageId =
+        mocks.sendApplicationPrompt.mock.calls[1]?.[0].provenanceContext?.promptMessageId
+      if (!secondPromptMessageId) throw new Error('expected second correction prompt identity')
+      return session([
+        ...firstSnapshot.messages,
+        { ...secondCorrectionMessage, responseToMessageId: secondPromptMessageId }
+      ])
+    })
+    mocks.runReviewAssessment
+      .mockResolvedValueOnce({
+        review: review('re-review-1'),
+        submittedChecks: [
+          {
+            status: 'warn',
+            claim: 'Still open',
+            evidence: 'Still unsupported',
+            sourceFindingId: openCheck.id
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        review: review('re-review-2'),
+        submittedChecks: [
+          {
+            status: 'pass',
+            claim: 'Fixed',
+            evidence: 'Now supported',
+            sourceFindingId: openCheck.id
+          }
+        ]
+      })
+    const repository = {
+      commitFindingDispositions: vi.fn(),
+      getReviewsForProjectSession: vi.fn().mockResolvedValue([])
+    } as unknown as ReviewRepository
+
+    await runReviewerFixLoop(makeOptions(getSession, repository, { maxRounds: 2 }))
+
+    expect(
+      mocks.sendApplicationPrompt.mock.calls.map(([, attribution]) => attribution.causeReviewId)
+    ).toEqual(['source-review', 're-review-1'])
   })
 
   it('late-aborts while waiting, terminalizes inside mutation, then reloads and publishes outside', async () => {
@@ -227,4 +365,32 @@ describe('reviewer fix-loop owner', () => {
       'publish:source-review'
     ])
   })
+
+  it.each([
+    { name: 'an abort before the first round', aborted: true, maxRounds: 1, trigger: 'aborted' },
+    { name: 'a zero-round cap', aborted: false, maxRounds: 0, trigger: 'loop_terminated' }
+  ])(
+    'creates no ghost correction or re-review after $name',
+    async ({ aborted, maxRounds, trigger }) => {
+      const abortController = new AbortController()
+      if (aborted) abortController.abort()
+      const repository = {
+        commitFindingDispositions: vi.fn(),
+        getReviewsForProjectSession: vi.fn().mockResolvedValue([])
+      } as unknown as ReviewRepository
+
+      await runReviewerFixLoop(
+        makeOptions(vi.fn().mockResolvedValue(session([initialMessage])), repository, {
+          abortSignal: abortController.signal,
+          maxRounds
+        })
+      )
+
+      expect(mocks.sendApplicationPrompt).not.toHaveBeenCalled()
+      expect(mocks.runReviewAssessment).not.toHaveBeenCalled()
+      expect(repository.commitFindingDispositions).toHaveBeenCalledWith([
+        expect.objectContaining({ trigger })
+      ])
+    }
+  )
 })

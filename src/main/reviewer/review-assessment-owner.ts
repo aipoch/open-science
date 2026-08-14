@@ -170,7 +170,7 @@ export const runReviewAssessment = async (
     })
   )
 
-  const runningReview: ReviewWithChecks = { ...review, checks: [] }
+  const runningReview: ReviewWithChecks = { ...review, checks: [], submittedChecks: [] }
   onReviewUpdate?.(runningReview)
   if (options.mode === 'initial') options.onStarted?.()
 
@@ -282,7 +282,7 @@ export const runReviewAssessment = async (
         ...(includeReviewerLog ? { reviewerLog: capturedLog } : {})
       })
     )
-    const errorReview: ReviewWithChecks = { ...review, checks: [] }
+    const errorReview: ReviewWithChecks = { ...review, checks: [], submittedChecks: [] }
     onReviewUpdate?.(errorReview)
     return { review: errorReview, submittedChecks: [] }
   }

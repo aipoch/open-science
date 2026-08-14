@@ -27,6 +27,10 @@ import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenan
 import type { AcpTurnTokenUsage } from '../../../../shared/acp'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { MessagePart } from '../../../../shared/session-persistence'
+import {
+  isHumanUserMessage,
+  isReviewerCorrectionAttribution
+} from '../../../../shared/session-persistence'
 import { getUploadedAttachmentName } from '../../../../shared/uploads'
 
 import { ArtifactPreview } from './artifact-preview'
@@ -95,6 +99,9 @@ type WorkspaceMessageItemProps = {
   onPresentationChange?: (messageId: string, presenting: boolean) => void
   presentationSourceOpen?: boolean
   presentationAnimateOnMount?: boolean
+  // True only while this application-authored correction is the current live Agent prompt and no
+  // Agent response has appeared. Historical/reloaded rows stay settled and motionless.
+  reviewerCorrectionActive?: boolean
 }
 
 const ARTIFACT_GALLERY_VISIBLE_COUNT = 5
@@ -795,9 +802,12 @@ const WorkspaceMessageItemImpl = ({
   staticParts,
   onPresentationChange,
   presentationSourceOpen,
-  presentationAnimateOnMount = true
+  presentationAnimateOnMount = true,
+  reviewerCorrectionActive = false
 }: WorkspaceMessageItemProps): React.JSX.Element => {
   const isUserMessage = message.role === 'user'
+  const isHumanUser = isHumanUserMessage(message)
+  const isReviewerCorrection = isReviewerCorrectionAttribution(message.attribution)
   const isSideChatAdvisory =
     message.relayedFrom?.kind === 'side-chat' && message.relayedFrom.direction === 'to-main'
   const presentsAssistantMessage = !isUserMessage && !isSideChatAdvisory
@@ -832,7 +842,7 @@ const WorkspaceMessageItemImpl = ({
   const turnStartedDate = toMessageDate(turnStartedAt)
   const terminalLabel = message.status === 'error' ? 'Failed' : 'Completed'
   const showRevisionNavigation =
-    showUserActions && revisionNavigation && revisionNavigation.total > 1
+    showUserActions && isHumanUser && revisionNavigation && revisionNavigation.total > 1
   const [copied, setCopied] = useState(false)
   // Inline editing swaps the bubble for a multi-line editor; the doc starts from the message's
   // structured parts so mention chips survive the round-trip.
@@ -904,7 +914,42 @@ const WorkspaceMessageItemImpl = ({
     >
       <div className={cn('px-4 pb-1 pt-5 md:px-6', contentPaddingClassName)}>
         {/* User prompts stay compact; assistant responses remain a readable transcript surface. */}
-        {isSideChatAdvisory ? (
+        {isReviewerCorrection ? (
+          <div
+            data-testid="reviewer-correction-message"
+            data-active={reviewerCorrectionActive || undefined}
+            className="flex max-w-[56rem] items-start gap-2 rounded-lg bg-bg-200 px-3 py-2 text-xs text-text-300"
+            role="status"
+            aria-live={reviewerCorrectionActive ? 'polite' : undefined}
+          >
+            {reviewerCorrectionActive ? (
+              <CircleGauge
+                data-testid="reviewer-correction-active-icon"
+                className="mt-0.5 size-3.5 shrink-0 animate-spin text-text-300 motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <Check
+                data-testid="reviewer-correction-settled-icon"
+                className="mt-0.5 size-3.5 shrink-0 text-text-300"
+                aria-hidden="true"
+              />
+            )}
+            <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+              <span className="font-medium text-text-200">
+                {reviewerCorrectionActive
+                  ? 'Reviewer requested corrections'
+                  : 'Corrections requested'}
+              </span>
+              {reviewerCorrectionActive && (
+                <span className="text-text-300">Agent is addressing the feedback</span>
+              )}
+              {!reviewerCorrectionActive && (
+                <span className="text-text-300">Handed off to the Agent · response started</span>
+              )}
+            </div>
+          </div>
+        ) : isSideChatAdvisory ? (
           <div
             data-testid="side-chat-advisory"
             className="flex min-w-0 items-center gap-2 rounded-xl bg-bg-200 px-3 py-2 text-[13px] text-text-100"
@@ -952,7 +997,7 @@ const WorkspaceMessageItemImpl = ({
                 className="flex w-full max-w-full items-center justify-end gap-1"
               >
                 {/* Copy/edit controls stay left of the bubble; Branch navigation lives below it. */}
-                {showUserActions ? (
+                {showUserActions && isHumanUser ? (
                   <TooltipProvider delayDuration={200}>
                     <div data-slot="user-message-actions" className={userMessageActionsClassName}>
                       <UserMessageActionTooltip label={copied ? 'Copied' : 'Copy message'}>

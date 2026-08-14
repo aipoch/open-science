@@ -20,6 +20,7 @@ import type {
 import type { AcpHandoffFailure } from '../../shared/acp'
 import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { MessageAttribution } from '../../shared/session-persistence'
 import { AcpRuntime, type AcpRuntimeCallbacks } from './runtime'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import { ConversationPermissionGrantStore } from './permission-broker'
@@ -636,6 +637,22 @@ class AcpRuntimeCoordinator {
     return this.sendObservedPrompt(request)
   }
 
+  sendApplicationPrompt(
+    request: AcpPromptRequest,
+    attribution: MessageAttribution
+  ): ReturnType<AcpRuntime['sendApplicationPrompt']> {
+    return this.linearizeRootAdmission(request.sessionId, () =>
+      this.dispatchPrompt(
+        request,
+        undefined,
+        'sendApplicationPrompt',
+        undefined,
+        false,
+        attribution
+      )
+    )
+  }
+
   sendPromptObserved(
     request: AcpPromptRequest,
     onProviderPromptAccepted: () => void
@@ -765,9 +782,10 @@ class AcpRuntimeCoordinator {
   private dispatchPrompt(
     request: AcpPromptRequest,
     acceptance: PromptAcceptance | undefined,
-    operation: 'sendPrompt' | 'sendAppContinuation',
+    operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
     pinnedRuntime?: AcpRuntime,
-    retainAsLatestUserPrompt = operation === 'sendPrompt'
+    retainAsLatestUserPrompt = operation === 'sendPrompt',
+    attribution?: MessageAttribution
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.promptAdmissionClosedForQuit) return this.rejectPromptForQuit()
     const owner = pinnedRuntime ?? this.findRuntimeForSession(request.sessionId)
@@ -803,7 +821,11 @@ class AcpRuntimeCoordinator {
     }
     this.activePromptRequests.set(request.sessionId, activePrompt)
     if (retainAsLatestUserPrompt) this.latestPromptRequests.set(request.sessionId, taskRequest)
-    return runtime[operation](taskRequest, attempt.id)
+    const prompt =
+      operation === 'sendApplicationPrompt'
+        ? runtime.sendApplicationPrompt(taskRequest, attribution!, attempt.id)
+        : runtime[operation](taskRequest, attempt.id)
+    return prompt
       .catch((error: unknown) => {
         if (
           operation === 'sendPrompt' &&
@@ -1092,6 +1114,25 @@ class AcpRuntimeCoordinator {
           'sendPrompt',
           runtime,
           false
+        )
+      },
+      sendApplicationPrompt: async (request, attribution) => {
+        this.assertPromptAdmissionOpen()
+        const contextReset = await ensureActivitySession(request.sessionId)
+        const historyPreamble = options.session?.historyPreamble
+        return this.dispatchPrompt(
+          contextReset
+            ? {
+                ...request,
+                contextReset: true,
+                ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
+              }
+            : request,
+          undefined,
+          'sendApplicationPrompt',
+          runtime,
+          false,
+          attribution
         )
       }
     }
