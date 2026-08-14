@@ -4,6 +4,7 @@ import { AlertDialog } from 'radix-ui'
 import { Button } from '@/components/ui/button'
 import {
   dialogDescriptionClassName,
+  dialogFooterClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

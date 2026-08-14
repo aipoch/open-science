@@ -4,7 +4,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
   dialogCloseButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
   dialogFormInputClassName,
   dialogFormLabelClassName,
   dialogHeaderClassName,
@@ -90,7 +93,12 @@ const RenameSessionDialog = ({
               />
             </div>
             <div className={dialogFooterClassName}>
-              <Button type="button" variant="outline" onClick={onCancel}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={onCancel}
+                className="cursor-pointer border-0 shadow-none hover:bg-bg-200 hover:text-foreground"
+              >
                 {tCommon('Cancel')}
               </Button>
               <Button type="submit" disabled={dialogRenameDraft.trim().length === 0}>

@@ -37,7 +37,11 @@ import { SpecialistSubmenu } from './SpecialistSubmenu'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName

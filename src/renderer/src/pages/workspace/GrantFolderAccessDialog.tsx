@@ -20,7 +20,12 @@ import {
   sameLocalDirectory
 } from '../../../../shared/local-fs'
 import { Button } from '@/components/ui/button'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogCancelButtonClassName,
+  dialogFooterClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName
+} from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { useTranslation } from 'react-i18next'

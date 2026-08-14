@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogCancelButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -54,7 +56,7 @@ const EditMessageConfirmDialog = ({
           </AlertDialog.Description>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="outline" className={cancelButtonClassName}>
+              <Button type="button" variant="outline" className={dialogCancelButtonClassName}>
                 {tCommon('Cancel')}
               </Button>
             </AlertDialog.Cancel>

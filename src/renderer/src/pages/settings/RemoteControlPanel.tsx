@@ -51,28 +51,30 @@ const lifecycleLabel = (snapshot: RemoteAccessSnapshot, t: TFunction): string =>
   return t('Remote access is off')
 }
 
-const ACCESS_MODES: {
+const getAccessModes = (
+  t: TFunction
+): {
   mode: RemoteAccessMode
   title: string
   description: string
   icon: typeof CircleOff
-}[] = [
+}[] => [
   {
     mode: 'off',
-    title: 'Off',
-    description: 'Only this computer can open the workspace.',
+    title: t('Off'),
+    description: t('Only this computer can open the workspace.'),
     icon: CircleOff
   },
   {
     mode: 'remoteit',
-    title: 'App access',
-    description: 'Open Open Science from the signed-in mobile app with two-step verification.',
+    title: t('App access'),
+    description: t('Open Open Science from the signed-in mobile app with two-step verification.'),
     icon: RadioTower
   },
   {
     mode: 'remoteit-public',
-    title: 'Browser access',
-    description: 'Open a persistent link in any browser with two-step verification.',
+    title: t('Browser access'),
+    description: t('Open a persistent link in any browser with two-step verification.'),
     icon: Globe2
   }
 ]
@@ -326,11 +328,11 @@ export const RemoteControlPanel = (): React.JSX.Element => {
             <div>
               <Dialog.Title className={dialogTitleClassName}>
                 {detectingAndRepairing
-                  ? 'Checking and setting up remote access…'
-                  : 'Applying remote access settings…'}
+                  ? t('Checking and setting up remote access…')
+                  : t('Applying remote access settings…')}
               </Dialog.Title>
               <Dialog.Description className={cn(dialogDescriptionClassName, 'mt-1 text-xs')}>
-                Waiting for the system command to finish.
+                {t('Waiting for the system command to finish.')}
               </Dialog.Description>
             </div>
           </Dialog.Content>
@@ -381,7 +383,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
           role="radiogroup"
           aria-label={t('Remote access mode')}
         >
-          {ACCESS_MODES.map((option) => {
+          {getAccessModes(t).map((option) => {
             const selected = snapshot.mode === option.mode
             const disabled = !snapshot.canManage || busy !== null
             const Icon = option.icon
