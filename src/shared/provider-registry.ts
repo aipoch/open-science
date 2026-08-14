@@ -384,6 +384,7 @@ export const OFFICIAL_VENDORS: OfficialVendor[] = [
     // The coding plan does not serve GLM's vision variant, so glm-5v-turbo is omitted and there is no
     // `multimodal` rule (image input stays disabled for this endpoint).
     models: [
+      { id: 'glm-5.3', contextWindow: 1_000_000, reasoningEffort: 'low-high-max' },
       { id: 'glm-5.2', contextWindow: 1_000_000, reasoningEffort: 'none-high-max' },
       { id: 'glm-5.1', contextWindow: 200_000 },
       { id: 'glm-5', contextWindow: 200_000 },
