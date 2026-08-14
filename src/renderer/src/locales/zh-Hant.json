@@ -218,6 +218,7 @@
   "CONTEXT PER RUN": "每次執行的上下文",
   "CPUs": "CPU",
   "CSV couldn't be read for preview": "無法讀取 CSV 以進行預覽",
+  "Code couldn't be read for preview": "無法讀取程式碼以進行預覽",
   "Cache": "快取",
   "Cache read": "快取讀取",
   "Cache write": "快取寫入",
