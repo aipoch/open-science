@@ -143,9 +143,6 @@ Use one of these standard type prefixes:
   changes before committing because it rewrites files across the repository.
 - Linting is enforced by ESLint; run `npm run lint`.
 - Wrap user-facing strings with the `t()` translation function from `react-i18next`. Add corresponding translations to `src/renderer/src/locales/zh-Hans.json` (Simplified Chinese) and `src/renderer/src/locales/zh-Hant.json` (Traditional Chinese). Use the English text as the translation key. Keep code comments and documentation in English.
-  reference, and the catalog-parity tests fail on a missing or inconsistent
-  translation. Keys are semantic paths (`general.appearance.title`), never the
-  English source text.
 
 ## Verification Policy
 
