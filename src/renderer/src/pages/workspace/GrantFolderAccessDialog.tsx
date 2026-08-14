@@ -4,7 +4,7 @@
 // empty area to type a path), and its leading drive crumb opens a drive/volume switcher.
 import { ChevronDown, CircleAlert, Folder, Home, Info } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type {
   GrantedLocalRoot,
@@ -80,13 +80,19 @@ const PathEditInput = ({
   onCancel: () => void
 }): React.JSX.Element => {
   const [value, setValue] = useState(initialPath)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Focus on mount with the caret at the end of the prefilled cwd — no select-all, so clicking
+  // into the bar never destroys the path being edited. This must run once, not in an inline ref
+  // callback: the callback's identity changes every render, so React re-invokes it after every
+  // keystroke and would reset the caret while typing.
+  useEffect(() => {
+    const element = inputRef.current
+    element?.focus()
+    element?.setSelectionRange(element.value.length, element.value.length)
+  }, [])
   return (
     <input
-      ref={(element) => {
-        // Prefilled with cwd and fully selected, so typing replaces the whole path.
-        element?.focus()
-        element?.select()
-      }}
+      ref={inputRef}
       value={value}
       onChange={(event) => setValue(event.target.value)}
       onKeyDown={(event) => {
@@ -152,6 +158,26 @@ const GrantFolderAccessDialogContent = ({
   >(null)
   // Bumped to force a re-list of the unchanged cwd (a no-op path submit clearing an error).
   const [relistNonce, setRelistNonce] = useState(0)
+  // True while the drive dropdown is open — and until the next pointerdown after it closes: the
+  // menu's dismissal is dispatched before the dialog layer evaluates the same deferred outside
+  // click, so plain open state would already read false when the guard below runs. The menu is
+  // modal, so that click only dismisses the menu; the guard absorbs it for the dialog. The next
+  // pointerdown anywhere belongs to a new interaction and re-arms normal dialog dismissal.
+  const driveMenuOpenRef = useRef(false)
+  const disarmDriveMenu = useCallback((): void => {
+    driveMenuOpenRef.current = false
+  }, [])
+  useEffect(
+    () => () => document.removeEventListener('pointerdown', disarmDriveMenu, { capture: true }),
+    [disarmDriveMenu]
+  )
+  const handleDriveMenuOpenChange = (open: boolean): void => {
+    if (open) {
+      driveMenuOpenRef.current = true
+    } else {
+      document.addEventListener('pointerdown', disarmDriveMenu, { capture: true, once: true })
+    }
+  }
   const [access, setAccess] = useState<GrantedLocalRootAccess>('ro')
   const [grantFailed, setGrantFailed] = useState(false)
 
@@ -268,15 +294,20 @@ const GrantFolderAccessDialogContent = ({
     }
   }
 
-  // Absolute-path breadcrumb: a leading drive crumb (opening the drive/volume dropdown), a home
-  // shortcut, then every segment of cwd as a clickable crumb. Segmentation is platform-aware.
-  // The root itself is not a crumb — the drive dropdown trigger represents it. The drive root is
-  // the longest listDrives() entry containing cwd, so Linux mount points under /media, /run/media
-  // and /mnt highlight their own entry instead of /.
+  // Absolute-path breadcrumb: the Home shortcut leads the bar, then the drive crumb (opening the
+  // drive/volume dropdown) as the first path crumb, then every segment of cwd as a clickable
+  // crumb. Segmentation is platform-aware. The root itself is not a segment crumb — the drive
+  // dropdown trigger represents it. The drive root is the longest listDrives() entry containing
+  // cwd, so Linux mount points under /media, /run/media and /mnt highlight their own entry
+  // instead of /.
   const driveRoot = cwd === '' ? undefined : localDriveRootFor(cwd, drives, platform)
   const currentDrive = drives.find(
     (drive) => driveRoot !== undefined && sameLocalDirectory(drive.path, driveRoot, platform)
   )
+  const isCurrentDrive = (drive: LocalDrive): boolean =>
+    currentDrive !== undefined && sameLocalDirectory(drive.path, currentDrive.path, platform)
+  // Drives the user could switch to; the dropdown shows a placeholder when there are none.
+  const otherDrives = drives.filter((drive) => !isCurrentDrive(drive))
   const crumbs: { label: string; path: string }[] = []
   if (cwd !== '' && driveRoot !== undefined) {
     let cursor = cwd
@@ -295,6 +326,19 @@ const GrantFolderAccessDialogContent = ({
       <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
       <Dialog.Content
         data-testid="grant-folder-access-dialog"
+        onInteractOutside={(event) => {
+          // The drive dropdown portals its content to <body>, outside this dialog's DOM: while
+          // it is open, an outside click (a menu item, or the overlay the click falls through to
+          // while the modal menu disables pointer events elsewhere) reaches this layer as an
+          // outside interaction and would dismiss the dialog together with the menu. Absorb it;
+          // once the menu is gone the next outside click dismisses the dialog normally.
+          const target = event.detail.originalEvent.target
+          if (
+            driveMenuOpenRef.current ||
+            (target instanceof Element && target.closest('[data-slot="dropdown-menu-content"]'))
+          )
+            event.preventDefault()
+        }}
         className={dialogPanelClassName(
           'z-[60] flex w-[560px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0'
         )}
@@ -326,8 +370,22 @@ const GrantFolderAccessDialogContent = ({
             }}
             className="flex flex-wrap items-center gap-0.5 border-y border-border-200 px-5 py-2.5 text-[13px] text-text-100"
           >
+            <button
+              type="button"
+              aria-label="Go to home folder"
+              data-testid="grant-access-crumb-home"
+              onClick={() => home && navigateTo(home)}
+              className="flex items-center rounded p-1 hover:bg-bg-200 hover:text-text-000"
+            >
+              <Home className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            </button>
+            {/* Vertical divider between the Home shortcut and the path crumbs (same hairline
+                style as the settings toolbar divider). */}
             {driveRoot !== undefined ? (
-              <DropdownMenu>
+              <span aria-hidden="true" className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
+            ) : null}
+            {driveRoot !== undefined ? (
+              <DropdownMenu onOpenChange={handleDriveMenuOpenChange}>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
@@ -343,43 +401,47 @@ const GrantFolderAccessDialogContent = ({
                     />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-[280px] max-w-[70vw]">
-                  {drives.map((drive) => {
-                    const isCurrent =
-                      currentDrive !== undefined &&
-                      sameLocalDirectory(drive.path, currentDrive.path, platform)
-                    return (
-                      <DropdownMenuItem
-                        key={drive.path}
-                        data-testid={`grant-access-drive-${drive.path}`}
-                        aria-current={isCurrent ? 'true' : undefined}
-                        className={cn('items-start gap-2 text-xs', isCurrent && 'bg-muted')}
-                        onSelect={() => navigateTo(drive.path)}
-                      >
-                        <span className="flex min-w-0 flex-1 flex-col">
-                          <span className="truncate">{drive.label}</span>
-                          <span
-                            title={drive.path}
-                            className="truncate font-mono text-[10px] leading-tight text-muted-foreground"
-                          >
-                            {drive.path}
+                {/* z-[70]: the dialog overlay/panel sit at z-[60], and this content portals to
+                    body — at the shared component's default z-50 it opens *behind* the dialog. */}
+                <DropdownMenuContent align="start" className="z-[70] w-[280px] max-w-[70vw]">
+                  {otherDrives.length === 0 ? (
+                    // Nothing to switch to (no drives enumerated, or already on the only one).
+                    <DropdownMenuItem
+                      disabled
+                      data-testid="grant-access-no-drives"
+                      className="text-xs"
+                    >
+                      No other drives
+                    </DropdownMenuItem>
+                  ) : (
+                    drives.map((drive) => {
+                      const isCurrent = isCurrentDrive(drive)
+                      return (
+                        <DropdownMenuItem
+                          key={drive.path}
+                          data-testid={`grant-access-drive-${drive.path}`}
+                          aria-current={isCurrent ? 'true' : undefined}
+                          className={cn('items-start gap-2 text-xs', isCurrent && 'bg-muted')}
+                          onSelect={() => navigateTo(drive.path)}
+                        >
+                          <span className="flex min-w-0 flex-1 flex-col">
+                            {/* Full volume name + full path, no truncation: the name is the
+                                identifier ("Macintosh HD"), the path disambiguates mounts. */}
+                            <span className="break-words">{drive.label}</span>
+                            <span
+                              title={drive.path}
+                              className="break-all font-mono text-[10px] leading-tight text-muted-foreground"
+                            >
+                              {drive.path}
+                            </span>
                           </span>
-                        </span>
-                      </DropdownMenuItem>
-                    )
-                  })}
+                        </DropdownMenuItem>
+                      )
+                    })
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
-            <button
-              type="button"
-              aria-label="Go to home folder"
-              data-testid="grant-access-crumb-home"
-              onClick={() => home && navigateTo(home)}
-              className="flex items-center rounded p-1 hover:bg-bg-200 hover:text-text-000"
-            >
-              <Home className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-            </button>
             <span className="text-text-300" aria-hidden="true">
               ›
             </span>

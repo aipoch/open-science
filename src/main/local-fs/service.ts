@@ -94,7 +94,24 @@ export class LocalFsService {
       return drives
     }
     if (process.platform === 'darwin') {
-      return [{ path: '/', label: '/' }, ...(await this.listMountEntries('/Volumes'))]
+      const volumes = await this.listMountEntries('/Volumes')
+      // The boot volume appears in /Volumes as a symlink to /. Label the root entry with the
+      // boot volume's name ("/" alone tells the user nothing) and drop the duplicate, so the
+      // switcher shows one entry per volume.
+      let bootLabel = '/'
+      const rest: LocalDrive[] = []
+      for (const volume of volumes) {
+        try {
+          if ((await realpath(volume.path)) === '/') {
+            bootLabel = volume.label
+            continue
+          }
+        } catch {
+          // Unresolvable symlink: keep it as its own entry rather than dropping a volume.
+        }
+        rest.push(volume)
+      }
+      return [{ path: '/', label: bootLabel }, ...rest]
     }
     let username = ''
     try {

@@ -188,7 +188,8 @@ describe('GrantFolderAccessDialog', () => {
     const input = pathInput()
     expect(input).not.toBeNull()
     expect(input?.value).toBe(HOME)
-    expect(input?.selectionStart).toBe(0)
+    // Caret lands at the end of the prefilled path; no select-all.
+    expect(input?.selectionStart).toBe(HOME.length)
     expect(input?.selectionEnd).toBe(HOME.length)
 
     await typeInto(input as HTMLInputElement, `${HOME}/Projects`)
@@ -198,6 +199,34 @@ describe('GrantFolderAccessDialog', () => {
     // The bar is back to breadcrumb rendering.
     expect(pathInput()).toBeNull()
     expect(document.body.querySelector('[data-testid="grant-access-path-bar"]')).not.toBeNull()
+  })
+
+  it('does not re-select the path text on each keystroke', async () => {
+    renderDialog()
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))
+    const input = pathInput() as HTMLInputElement
+    // Mount: caret at the end of the prefilled path, nothing selected.
+    expect(input.selectionStart).toBe(HOME.length)
+    expect(input.selectionEnd).toBe(HOME.length)
+
+    // A keystroke appends at the caret and leaves it after the new character, like a real browser.
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set
+      setter?.call(input, `${HOME}X`)
+      input.setSelectionRange(HOME.length + 1, HOME.length + 1)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    // The re-render must not move the caret or re-select (an inline ref callback re-ran on every
+    // keystroke and reset the selection while typing).
+    expect(input.value).toBe(`${HOME}X`)
+    expect(input.selectionStart).toBe(HOME.length + 1)
+    expect(input.selectionEnd).toBe(HOME.length + 1)
   })
 
   it('submits the path edit on blur and navigates', async () => {
@@ -303,8 +332,101 @@ describe('GrantFolderAccessDialog', () => {
     expect(listDir.mock.calls.length).toBe(initialCalls)
   })
 
-  it('lists the drives in the root crumb menu and navigates on select', async () => {
+  it('does not treat a click inside the portaled drive menu as an outside dismissal', async () => {
+    const onOpenChange = vi.fn()
+    act(() => {
+      root.render(<GrantFolderAccessDialog open onOpenChange={onOpenChange} />)
+    })
+    await flush()
+
+    // The real DropdownMenuContent portals to <body>, outside the dialog's DOM. Modal dialogs
+    // defer left-button dismissal to the click, so reproduce the pointerdown+click sequence on a
+    // node marked like the shared dropdown content.
+    const menuContent = document.createElement('div')
+    menuContent.setAttribute('data-slot', 'dropdown-menu-content')
+    document.body.appendChild(menuContent)
+    await act(async () => {
+      menuContent.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      menuContent.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+      await Promise.resolve()
+    })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    menuContent.remove()
+
+    // Control: a genuine outside click still dismisses the dialog (proves the guard is selective
+    // and that this harness actually reaches Radix's outside-interaction path).
+    const outside = document.createElement('div')
+    document.body.appendChild(outside)
+    await act(async () => {
+      outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }))
+      await Promise.resolve()
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    outside.remove()
+  })
+
+  it('leads the bar with the Home shortcut, divider, then the drive crumb', async () => {
     renderDialog()
+    await flush()
+
+    const homeButton = document.body.querySelector('[data-testid="grant-access-crumb-home"]')
+    const driveTrigger = document.body.querySelector('[data-testid="grant-access-drive-root"]')
+    expect(homeButton).not.toBeNull()
+    expect(driveTrigger).not.toBeNull()
+    expect(
+      (homeButton as Element).compareDocumentPosition(driveTrigger as Element) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it('shows a disabled "No other drives" placeholder when only the current drive exists', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      localFs: {
+        getRoots: vi.fn().mockResolvedValue({ home: HOME, machineName: 'Test Mac' }),
+        listDrives: vi.fn().mockResolvedValue([{ path: '/', label: '/' }]),
+        listDir,
+        listGrantedRoots: vi.fn().mockResolvedValue([]),
+        grantRoot
+      }
+    }
+    renderDialog()
+    await flush()
+
+    const placeholder = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="grant-access-no-drives"]'
+    )
+    expect(placeholder).not.toBeNull()
+    expect(placeholder?.textContent).toContain('No other drives')
+    expect(placeholder?.disabled).toBe(true)
+    // Not selectable: clicking changes nothing.
+    const callsBefore = listDir.mock.calls.length
+    await click(placeholder)
+    expect(listDir.mock.calls.length).toBe(callsBefore)
+  })
+
+  it('shows the "No other drives" placeholder when no drives were enumerated', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      localFs: {
+        getRoots: vi.fn().mockResolvedValue({ home: HOME, machineName: 'Test Mac' }),
+        listDrives: vi.fn().mockResolvedValue([]),
+        listDir,
+        listGrantedRoots: vi.fn().mockResolvedValue([]),
+        grantRoot
+      }
+    }
+    renderDialog()
+    await flush()
+
+    expect(document.body.textContent).toContain('No other drives')
+    expect(driveEntry('/')).toBeUndefined()
+  })
+
+  it('lists the drives in the root crumb menu and navigates on select', async () => {
+    const onOpenChange = vi.fn()
+    act(() => {
+      root.render(<GrantFolderAccessDialog open onOpenChange={onOpenChange} />)
+    })
     await flush()
 
     // The root crumb shows the current volume; the menu lists every mounted drive/volume.
@@ -323,6 +445,8 @@ describe('GrantFolderAccessDialog', () => {
 
     await click(externalItem)
     expect(listDir).toHaveBeenCalledWith('/Volumes/External')
+    // Selecting a drive must not dismiss the dialog.
+    expect(onOpenChange).not.toHaveBeenCalled()
     // The root crumb now tracks the external volume.
     expect(
       document.body.querySelector('[data-testid="grant-access-drive-root"]')?.textContent

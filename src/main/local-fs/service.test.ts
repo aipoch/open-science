@@ -11,14 +11,15 @@ vi.mock('electron', () => ({
   shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => '') }
 }))
 
-// access/readdir start as delegating wrappers so listDrives tests can substitute per-platform
-// fakes; every other export stays real for the listDir/preview tests above.
+// access/readdir/realpath start as delegating wrappers so listDrives tests can substitute
+// per-platform fakes; every other export stays real for the listDir/preview tests above.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
     access: vi.fn(actual.access),
-    readdir: vi.fn(actual.readdir)
+    readdir: vi.fn(actual.readdir),
+    realpath: vi.fn(actual.realpath)
   }
 })
 
@@ -107,6 +108,7 @@ describe('LocalFsService.listDrives', () => {
     // Hand the delegating wrappers back so later suites see the real filesystem again.
     vi.mocked(access).mockImplementation(realFsPromises.access)
     vi.mocked(readdir).mockImplementation(realFsPromises.readdir as never)
+    vi.mocked(realpath).mockImplementation(realFsPromises.realpath as never)
   })
 
   // Minimal Dirent stand-in: listDrives only reads name/isDirectory/isSymbolicLink.
@@ -138,10 +140,13 @@ describe('LocalFsService.listDrives', () => {
         return [dirent('Macintosh HD', 'link'), dirent('External'), dirent('note.txt', 'file')]
       throw new Error('ENOENT')
     }) as never)
+    // The boot-volume symlink resolves to /: the root entry takes its name and the duplicate
+    // /Volumes entry is dropped.
+    vi.mocked(realpath).mockImplementation((async (path: string) =>
+      path === '/Volumes/Macintosh HD' ? '/' : path) as never)
 
     await expect(service.listDrives()).resolves.toEqual([
-      { path: '/', label: '/' },
-      { path: '/Volumes/Macintosh HD', label: 'Macintosh HD' },
+      { path: '/', label: 'Macintosh HD' },
       { path: '/Volumes/External', label: 'External' }
     ])
   })
