@@ -1475,6 +1475,7 @@ class NotebookLocalRpcServer {
                       view_image_available:
                         sessionBinding.isControl === true &&
                         Boolean(sessionBinding.activeControlInvocation) &&
+                        Boolean(sessionBinding.workspaceCwd) &&
                         (!sessionBinding.allowedMethods ||
                           sessionBinding.allowedMethods.has('viewImageCall')) &&
                         Boolean(this.hostViewImage) &&

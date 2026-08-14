@@ -23,6 +23,21 @@ const callCapabilities = async (
   }
 }
 
+const callHostSdkHelp = async (
+  connection: RpcConnection,
+  query: string
+): Promise<{ response: Response; payload: Record<string, unknown> }> => {
+  const response = await fetch(connection.endpoint, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ method: 'hostSdkHelp', params: { query } })
+  })
+  return {
+    response,
+    payload: (await response.json()) as Record<string, unknown>
+  }
+}
+
 let server: NotebookLocalRpcServer | undefined
 
 afterEach(async () => {
@@ -172,6 +187,36 @@ describe('capabilitiesCall RPC', () => {
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
       payload: { result: { viewImage: false } }
+    })
+
+    endInvocation()
+  })
+
+  it('reports host.viewImage unavailable from host.help without a trusted Session workspace', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostViewImage: {
+        isAvailable: async () => true,
+        stage: async () => ({}) as never,
+        complete: async () => [],
+        discard: () => {},
+        discardSession: () => {},
+        shutdown: () => {}
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1'
+    })
+
+    await expect(callHostSdkHelp(connection, 'viewImage')).resolves.toMatchObject({
+      payload: { result: { availability: { status: 'unavailable' } } }
     })
 
     endInvocation()
