@@ -1363,6 +1363,7 @@ class NotebookLocalRpcServer {
               viewImage:
                 sessionBinding.isControl === true &&
                 Boolean(sessionBinding.activeControlInvocation) &&
+                Boolean(sessionBinding.workspaceCwd) &&
                 allows('viewImageCall') &&
                 Boolean(this.hostViewImage) &&
                 (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId }))

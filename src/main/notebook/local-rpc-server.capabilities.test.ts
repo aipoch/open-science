@@ -147,6 +147,100 @@ describe('capabilitiesCall RPC', () => {
     })
   })
 
+  it('does not advertise host.viewImage without a trusted Session workspace', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostViewImage: {
+        isAvailable: async () => true,
+        stage: async () => ({}) as never,
+        complete: async () => [],
+        discard: () => {},
+        discardSession: () => {},
+        shutdown: () => {}
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1'
+    })
+
+    await expect(callCapabilities(connection)).resolves.toMatchObject({
+      payload: { result: { viewImage: false } }
+    })
+
+    endInvocation()
+  })
+
+  it('advertises host.viewImage with an active invocation and trusted Session workspace', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostViewImage: {
+        isAvailable: async () => true,
+        stage: async () => ({}) as never,
+        complete: async () => [],
+        discard: () => {},
+        discardSession: () => {},
+        shutdown: () => {}
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session',
+      { role: 'main' },
+      '/trusted-workspace'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1'
+    })
+
+    await expect(callCapabilities(connection)).resolves.toMatchObject({
+      payload: { result: { viewImage: true } }
+    })
+
+    endInvocation()
+  })
+
+  it('does not advertise host.viewImage when its certified visual route is unavailable', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostViewImage: {
+        isAvailable: async () => false,
+        stage: async () => ({}) as never,
+        complete: async () => [],
+        discard: () => {},
+        discardSession: () => {},
+        shutdown: () => {}
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session',
+      { role: 'main' },
+      '/trusted-workspace'
+    )
+    const endInvocation = connection.beginControlInvocation({
+      turnId: 'turn-1',
+      controlInvocationGeneration: 1,
+      toolInvocationId: 'tool-1'
+    })
+
+    await expect(callCapabilities(connection)).resolves.toMatchObject({
+      payload: { result: { viewImage: false } }
+    })
+
+    endInvocation()
+  })
+
   it('rejects bootstrap, invalid, and released tokens instead of returning an all-false bitmap', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp'
