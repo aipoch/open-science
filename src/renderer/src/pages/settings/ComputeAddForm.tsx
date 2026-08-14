@@ -5,7 +5,13 @@ import type { CreateComputeHostRequest, SshOverrides } from '../../../../shared/
 import { DETAILS_DOC_MAX_LENGTH } from '../../../../shared/compute'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useComputeStore } from '@/stores/compute-store'
 
@@ -100,9 +106,7 @@ export function ComputeAddForm({ onCreated, onCancel }: ComputeAddFormProps): Re
           >
             <SelectTrigger aria-label="Pick a host from ~/.ssh/config">
               <SelectValue
-                placeholder={
-                  sshAliases.length === 0 ? 'No hosts in ~/.ssh/config' : 'Pick a host…'
-                }
+                placeholder={sshAliases.length === 0 ? 'No hosts in ~/.ssh/config' : 'Pick a host…'}
               />
             </SelectTrigger>
             <SelectContent>
