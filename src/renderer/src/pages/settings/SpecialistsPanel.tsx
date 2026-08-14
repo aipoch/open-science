@@ -67,10 +67,18 @@ const FILTER_LABELS: Record<CategoryFilter, string> = {
   builtin: 'Built-in'
 }
 
+const getFilterLabel = (filter: CategoryFilter, t: (key: string) => string): string => {
+  return t(FILTER_LABELS[filter])
+}
+
 const SKILL_SOURCE_LABELS: Record<SkillSource, string> = {
   featured: 'Featured',
   imported: 'Imported',
   personal: 'Personal'
+}
+
+const getSkillSourceLabel = (source: SkillSource, t: (key: string) => string): string => {
+  return t(SKILL_SOURCE_LABELS[source])
 }
 
 const formatBytes = (value: number): string =>
@@ -1050,7 +1058,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {t(FILTER_LABELS[key])}
+                {getFilterLabel(key, t)}
                 <span className="tabular-nums text-muted-foreground">({count})</span>
               </button>
             )
@@ -1424,7 +1432,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
                           <span>{skill.displayName}</span>
                           <Badge variant="outline" className="text-[11px] font-normal">
-                            {t(SKILL_SOURCE_LABELS[skill.source])}
+                            {getSkillSourceLabel(skill.source, t)}
                           </Badge>
                         </span>
                         <span className="block text-xs text-muted-foreground">{reasonText}</span>

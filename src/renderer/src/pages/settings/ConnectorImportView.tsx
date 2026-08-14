@@ -25,12 +25,12 @@ const kb = (bytes: number): string => `${Math.round(bytes / 1024)} KB`
 const diagnosticClassName = (diagnostic: ConnectorTemplateDiagnostic): string =>
   diagnostic.severity === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive'
 
-const transportLabel = (definition: ConnectorTemplateDefinition): string =>
+const transportLabel = (definition: ConnectorTemplateDefinition, t: (key: string) => string): string =>
   definition.transport === 'stdio'
-    ? 'Local command'
+    ? t('Local command')
     : definition.transport === 'streamable_http'
-      ? 'Streamable HTTP'
-      : 'SSE'
+      ? t('Streamable HTTP')
+      : t('SSE')
 
 export function ConnectorImportView({
   onUse,
@@ -159,7 +159,7 @@ export function ConnectorImportView({
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
                 <dt className="text-muted-foreground">{t('Transport')}</dt>
-                <dd className="text-foreground">{transportLabel(definition)}</dd>
+                <dd className="text-foreground">{transportLabel(definition, t)}</dd>
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
                 <dt className="text-muted-foreground">
