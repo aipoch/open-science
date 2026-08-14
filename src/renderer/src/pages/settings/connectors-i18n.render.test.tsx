@@ -15,6 +15,7 @@ import { ConnectorAddForm } from './ConnectorAddForm'
 
 let container: HTMLDivElement
 let root: Root
+let renderKey = 0
 
 const switchTo = (language: string): void => {
   act(() => {
@@ -31,8 +32,17 @@ const setup = (): void => {
 
 const render = (props: Partial<Parameters<typeof ConnectorAddForm>[0]> = {}): void => {
   act(() => {
-    root.render(<ConnectorAddForm onDone={vi.fn()} onCancel={vi.fn()} {...props} />)
+    root.render(
+      <ConnectorAddForm key={renderKey++} onDone={vi.fn()} onCancel={vi.fn()} {...props} />
+    )
   })
+}
+
+const openAdvancedSettings = (): void => {
+  const trigger = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+    (button) => button.textContent?.includes('Advanced settings')
+  )
+  act(() => trigger?.click())
 }
 
 const editServer: CustomServerView = {
@@ -142,6 +152,7 @@ describe('ConnectorAddForm copy', () => {
   // absent, which is the add-mode case below.
   it('composes the credential hint from clauses that each stand alone', () => {
     render()
+    openAdvancedSettings()
     expect(container.textContent).toContain('One KEY=VALUE per line.')
     expect(container.textContent).not.toContain('Leave blank')
 
@@ -200,6 +211,7 @@ describe('ConnectorAddForm copy', () => {
 
   it('keeps protocol values untranslated in the remote fields', () => {
     render({ editServer: remoteEditServer })
+    openAdvancedSettings()
     const transport = container.querySelector('[aria-label="Transport"]') as HTMLElement
     expect(transport.textContent).toBe('Streamable HTTP')
     expect((container.querySelector('#connector-url') as HTMLInputElement).value).toBe(

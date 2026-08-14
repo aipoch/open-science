@@ -676,7 +676,7 @@ const WorkspaceElicitationCard = ({
 
           {error ? (
             <p role="alert" className="mt-2 text-sm text-destructive">
-              {error}
+              {t(error)}
             </p>
           ) : null}
         </form>
@@ -869,7 +869,7 @@ const WorkspaceElicitationCard = ({
 
           {error ? (
             <p role="alert" className="text-sm text-destructive">
-              {error}
+              {t(error)}
             </p>
           ) : null}
 

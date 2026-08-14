@@ -111,7 +111,7 @@ const SpecialistSwitchDetail = ({
   }
 
   const capabilityLabel =
-    profile.capabilityMode === 'full' ? 'Full access' : 'Selected capabilities'
+    profile.capabilityMode === 'full' ? t('Full access') : t('Selected capabilities')
   const openConfig = (): void => openSettingsToSpecialist(profile.id)
 
   return (

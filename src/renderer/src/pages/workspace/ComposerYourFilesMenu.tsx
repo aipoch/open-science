@@ -122,7 +122,7 @@ export const ComposerYourFilesMenu = ({
           className="py-1 pr-1.5 text-[11px] leading-4 text-text-300"
           style={{ paddingLeft: indentForDepth(depth) }}
         >
-          {listing.summary}
+          {t(listing.summary)}
         </div>
       )
     }
@@ -210,8 +210,10 @@ export const ComposerYourFilesMenu = ({
                           data-testid={`your-files-send-${root.id}-${relativePath}`}
                           aria-label={
                             isAdded
-                              ? `${relativePath} added to conversation`
-                              : `Add ${relativePath} to conversation as attachment`
+                              ? t('{{path}} added to conversation', { path: relativePath })
+                              : t('Add {{path}} to conversation as attachment', {
+                                  path: relativePath
+                                })
                           }
                         >
                           {isAdded ? (
@@ -223,7 +225,9 @@ export const ComposerYourFilesMenu = ({
                       </DropdownMenuItem>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      {isAdded ? 'Added to conversation' : 'Add to conversation as attachment'}
+                      {isAdded
+                        ? t('Added to conversation')
+                        : t('Add to conversation as attachment')}
                     </TooltipContent>
                   </Tooltip>
                 )

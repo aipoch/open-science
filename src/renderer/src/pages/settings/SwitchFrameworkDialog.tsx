@@ -1,9 +1,15 @@
+import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -27,7 +33,6 @@ const SwitchFrameworkDialog = ({
   onConfirm
 }: SwitchFrameworkDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { t: tCommon } = useTranslation()
   const dialogTargetName = useRetainedDialogValue(targetName)
 
   return (
@@ -42,19 +47,38 @@ const SwitchFrameworkDialog = ({
         <AlertDialog.Content
           className={dialogPanelClassName('z-[60] w-[min(440px,calc(100vw-2rem))] p-0')}
         >
-          <AlertDialog.Title className={dialogTitleClassName}>
-            {t('Switch to {{name}}?', { name: dialogTargetName })}
-          </AlertDialog.Title>
-          <AlertDialog.Description className={dialogDescriptionClassName}>
-            {t(
-              "A conversation can't be resumed on a different backend, so switching starts a fresh agent session. Open conversations keep their existing messages, and their transcript is replayed to {{name}} so it can pick up where you left off (tool state is not carried over). New conversations are unaffected.",
-              { name: dialogTargetName }
-            )}
-          </AlertDialog.Description>
-          <div className="mt-6 flex justify-end gap-2">
+          <div className={dialogHeaderClassName}>
+            <div className="min-w-0">
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('Switch to {{name}}?', { name: dialogTargetName })}
+              </AlertDialog.Title>
+            </div>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="outline">
-                {tCommon('Cancel')}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                className={dialogCloseButtonClassName}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </AlertDialog.Cancel>
+          </div>
+
+          <div className={dialogBodyClassName}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              {t(
+                "A conversation can't be resumed on a different backend, so switching starts a fresh agent session. Open conversations keep their existing messages, and their transcript is replayed to {{name}} so it can pick up where you left off (tool state is not carried over). New conversations are unaffected.",
+                { name: dialogTargetName }
+              )}
+            </AlertDialog.Description>
+          </div>
+
+          <div className={dialogFooterClassName}>
+            <AlertDialog.Cancel asChild>
+              <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>

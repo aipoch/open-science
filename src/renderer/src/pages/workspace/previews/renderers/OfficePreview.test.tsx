@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import {
   OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
@@ -345,6 +346,11 @@ describe('OfficePreviewRenderer', () => {
     })
     expect(container.textContent).toContain('Parsing the Excel workbook')
     expect(container.querySelectorAll('[data-preview-status="loading"]')).toHaveLength(1)
+
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    expect(container.textContent).toContain('正在解析 Excel 工作簿')
+    expect(container.textContent).not.toContain('Parsing the Excel workbook')
+    await act(async () => i18next.changeLanguage('en'))
 
     await act(async () => {
       emitState({ sessionId: 'office-session-1', phase: 'ready' })

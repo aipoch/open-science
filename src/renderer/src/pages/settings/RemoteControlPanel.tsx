@@ -244,7 +244,7 @@ export const RemoteControlPanel = (): React.JSX.Element => {
           >
             <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <div className="min-w-0 flex-1">
-              <div className="font-medium">Remote access couldn&apos;t be loaded.</div>
+              <div className="font-medium">{t("Remote access couldn't be loaded.")}</div>
               <div className="mt-1 break-words text-xs">{actionError}</div>
               <Button
                 type="button"

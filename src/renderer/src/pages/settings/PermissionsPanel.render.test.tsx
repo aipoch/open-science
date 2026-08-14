@@ -267,7 +267,8 @@ describe('PermissionsPanel', () => {
     expect(revoke).toHaveBeenCalledWith({ grants: [{ id: 'grant-1', revision: 1 }] })
     expect(usePermissionGrantsStore.getState().undo).toMatchObject({
       token: 'undo-1',
-      message: 'Revoked Local compute · Shell'
+      messageKey: 'Revoked {{family}} · {{capability}}',
+      messageParams: { family: 'Local compute', capability: 'Shell' }
     })
   })
 

@@ -319,7 +319,40 @@ describe('WorkspaceToolDetailsRow', () => {
     })
 
     expect(container.textContent).toContain('1 个图表')
+    expect(container.textContent).toContain('Notebook 运行')
+    expect(container.textContent).toContain('代码')
+    expect(container.textContent).toContain('输出')
     expect(container.textContent).not.toMatch(/\d+ figures?/)
+
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
+  })
+
+  it('translates local approval phase metadata without translating provider data', async () => {
+    const activity = createActivity({ providerToolName: 'Provider Custom Name' })
+
+    root = createRoot(container)
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          phase="awaiting-approval"
+          details={{
+            displayName: 'Write file',
+            sections: [{ kind: 'code', label: 'Output', text: 'provider payload' }]
+          }}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('写入文件')
+    expect(container.textContent).toContain('正在等待你的批准')
+    expect(container.textContent).toContain('输出')
+    expect(container.textContent).toContain('provider payload')
 
     await act(async () => {
       await i18next.changeLanguage('en')

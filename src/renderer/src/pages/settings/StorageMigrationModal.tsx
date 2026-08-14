@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { dialogCancelButtonClassName } from '@/components/ui/dialog-chrome'
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'
 import {
@@ -248,8 +249,12 @@ const StorageMigrationModal = ({
               <Dialog.Title className="text-sm font-semibold">{t('Move app data?')}</Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-muted-foreground">
                 {hasDelegatedWork
-                  ? 'Subagents are still running. Return to each task below, stop its subagents, then try moving app data again.'
-                  : 'Starting this move will interrupt the running sessions below and restart the app.'}
+                  ? t(
+                      'Subagents are still running. Return to each task below, stop its subagents, then try moving app data again.'
+                    )
+                  : t(
+                      'Starting this move will interrupt the running sessions below and restart the app.'
+                    )}
               </Dialog.Description>
               <ul className="mt-3 max-h-40 space-y-1 overflow-auto rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground">
                 {active.map((session) => (
@@ -259,8 +264,13 @@ const StorageMigrationModal = ({
                 ))}
               </ul>
               <div className="mt-4 flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={onClose}>
-                  {hasDelegatedWork ? 'Return to tasks' : 'Cancel'}
+                <Button
+                  type="button"
+                  variant={hasDelegatedWork ? 'outline' : 'ghost'}
+                  className={hasDelegatedWork ? undefined : dialogCancelButtonClassName}
+                  onClick={onClose}
+                >
+                  {hasDelegatedWork ? t('Return to tasks') : tCommon('Cancel')}
                 </Button>
                 {!hasDelegatedWork ? (
                   <Button type="button" onClick={startMigration}>
@@ -305,7 +315,12 @@ const StorageMigrationModal = ({
                 {t("Don't quit Open Science or turn off your computer until this finishes.")}
               </p>
               <div className="mt-4 flex justify-end">
-                <Button type="button" variant="outline" onClick={handleCancel}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  onClick={handleCancel}
+                >
                   {tCommon('Cancel')}
                 </Button>
               </div>

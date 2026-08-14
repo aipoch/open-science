@@ -1,4 +1,4 @@
-import { CheckCircle2, FolderInput, Package, RefreshCw, Search } from 'lucide-react'
+import { CheckCircle2, FolderInput, Package, RefreshCw, Search, X } from 'lucide-react'
 import { AlertDialog, Dialog } from 'radix-ui'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -6,8 +6,12 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -686,24 +690,43 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
             data-testid="disable-impact-dialog"
             className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
           >
-            <AlertDialog.Title className={dialogTitleClassName}>
-              {t('Disable {{label}}?', { label: dialogDisableImpact?.env.label ?? '' })}
-            </AlertDialog.Title>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              {t(
-                'It is in use by {{total}} active session(s) — {{running}} running, {{idle}} idle. Disabling lets any running cell finish, then closes its kernel; those sessions must switch to another runtime to keep working.',
-                {
-                  total:
-                    (dialogDisableImpact?.usage.running ?? 0) +
-                    (dialogDisableImpact?.usage.idle ?? 0),
-                  running: dialogDisableImpact?.usage.running ?? 0,
-                  idle: dialogDisableImpact?.usage.idle ?? 0
-                }
-              )}
-            </AlertDialog.Description>
-            <div className="mt-6 flex justify-end gap-2">
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Disable {{label}}?', { label: dialogDisableImpact?.env.label ?? '' })}
+                </AlertDialog.Title>
+              </div>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Close')}
+                  className={dialogCloseButtonClassName}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t(
+                  'It is in use by {{total}} active session(s) — {{running}} running, {{idle}} idle. Disabling lets any running cell finish, then closes its kernel; those sessions must switch to another runtime to keep working.',
+                  {
+                    total:
+                      (dialogDisableImpact?.usage.running ?? 0) +
+                      (dialogDisableImpact?.usage.idle ?? 0),
+                    running: dialogDisableImpact?.usage.running ?? 0,
+                    idle: dialogDisableImpact?.usage.idle ?? 0
+                  }
+                )}
+              </AlertDialog.Description>
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
                   {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
@@ -744,114 +767,115 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
           >
             {dialogPackagesEnv ? (
               <>
-                <Dialog.Title className={dialogTitleClassName}>
-                  {t('Packages in {{label}}', { label: dialogPackagesEnv.label })}
-                  {dialogPackagesEnv.version ? ` · ${dialogPackagesEnv.version}` : ''}
-                </Dialog.Title>
-                <Dialog.Description className={dialogDescriptionClassName}>
-                  {t('Installed packages in this environment.')}
-                </Dialog.Description>
+                <div className={dialogHeaderClassName}>
+                  <div className="min-w-0">
+                    <Dialog.Title className={dialogTitleClassName}>
+                      {t('Packages in {{label}}', { label: dialogPackagesEnv.label })}
+                      {dialogPackagesEnv.version ? ` · ${dialogPackagesEnv.version}` : ''}
+                    </Dialog.Title>
+                    <Dialog.Description className="sr-only">
+                      {t('Installed packages in this environment.')}
+                    </Dialog.Description>
+                  </div>
+                  <Dialog.Close asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t('Close')}
+                      className={dialogCloseButtonClassName}
+                    >
+                      <X className="size-4" aria-hidden="true" />
+                    </Button>
+                  </Dialog.Close>
+                </div>
 
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
-                  <Badge variant="secondary">{providerType(dialogPackagesEnv, t)}</Badge>
-                  {/* Conda env name badge — but only when the provenance badge doesn't already carry
+                <div className={`${dialogBodyClassName} min-h-0 flex-1 overflow-hidden`}>
+                  <p className={dialogDescriptionClassName}>
+                    {t('Installed packages in this environment.')}
+                  </p>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                    <Badge variant="secondary">{providerType(dialogPackagesEnv, t)}</Badge>
+                    {/* Conda env name badge — but only when the provenance badge doesn't already carry
                       it: providerType() returns the "Conda: <name>" label for user-own conda envs, so
                       the name badge is added just for app-owned (app-managed/agent-created) conda
                       envs. Comparing against the same catalog string keeps that true in any locale. */}
-                  {dialogPackagesEnv.condaEnv &&
-                  providerType(dialogPackagesEnv, t) !==
-                    t('Conda: {{name}}', { name: dialogPackagesEnv.condaEnv }) ? (
-                    <Badge variant="secondary">
-                      {t('Conda: {{name}}', { name: dialogPackagesEnv.condaEnv })}
+                    {dialogPackagesEnv.condaEnv &&
+                    providerType(dialogPackagesEnv, t) !==
+                      t('Conda: {{name}}', { name: dialogPackagesEnv.condaEnv }) ? (
+                      <Badge variant="secondary">
+                        {t('Conda: {{name}}', { name: dialogPackagesEnv.condaEnv })}
+                      </Badge>
+                    ) : null}
+                    <Badge variant={dialogPackagesEnv.runnable ? 'secondary' : 'destructive'}>
+                      {dialogPackagesEnv.runnable ? t('Ready') : t('Not runnable')}
                     </Badge>
-                  ) : null}
-                  <Badge variant={dialogPackagesEnv.runnable ? 'secondary' : 'destructive'}>
-                    {dialogPackagesEnv.runnable ? t('Ready') : t('Not runnable')}
-                  </Badge>
-                  <code className="truncate text-xs">{dialogPackagesEnv.interpreterPath}</code>
-                </div>
-
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="relative max-w-sm flex-1">
-                    <Search
-                      aria-hidden="true"
-                      className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                    />
-                    <Input
-                      ref={packagesFilterRef}
-                      value={packagesFilter}
-                      onChange={(event) => setPackagesFilter(event.target.value)}
-                      placeholder={t('Filter packages…')}
-                      aria-label={t('Filter packages')}
-                      aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
-                      data-testid="runtime-packages-filter"
-                      className="pl-8"
-                    />
+                    <code className="truncate text-xs">{dialogPackagesEnv.interpreterPath}</code>
                   </div>
-                  {packages !== null ? (
-                    <span className="text-xs text-muted-foreground">
-                      {t('{{visible}} of {{total}}', {
-                        visible: visiblePackages.length,
-                        total: packages.length
-                      })}
-                      {hasCondaFields
-                        ? ` · ${t('{{conda}} conda, {{pypi}} pypi', {
-                            conda: condaPackageCount,
-                            pypi: packages.length - condaPackageCount
-                          })}`
-                        : ''}
-                    </span>
-                  ) : null}
-                </div>
 
-                <div className="mt-2 min-h-0 flex-1 overflow-y-auto rounded-md border border-border">
-                  {packagesError !== null ? (
-                    <div className="flex flex-col items-center gap-2 px-3 py-6">
-                      <p role="alert" className="text-sm text-destructive">
-                        {packagesError}
-                      </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setPackages(null)
-                          setPackagesError(null)
-                          setPackagesRetryNonce((nonce) => nonce + 1)
-                        }}
-                      >
-                        {t('Retry')}
-                      </Button>
+                  <div className="mt-3 flex items-center gap-3">
+                    <div className="relative max-w-sm flex-1">
+                      <Search
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                      />
+                      <Input
+                        ref={packagesFilterRef}
+                        value={packagesFilter}
+                        onChange={(event) => setPackagesFilter(event.target.value)}
+                        placeholder={t('Filter packages…')}
+                        aria-label={t('Filter packages')}
+                        aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
+                        data-testid="runtime-packages-filter"
+                        className="pl-8"
+                      />
                     </div>
-                  ) : packages === null ? (
-                    <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                      {t('Listing packages…')}
-                    </p>
-                  ) : (
-                    <table className="w-full border-collapse text-[13px]">
-                      <thead className="sticky top-0 bg-card">
-                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 pl-3 pr-3 font-medium">{t('Name')}</th>
-                          <th className="py-2 pr-3 font-medium">{t('Version')}</th>
-                          {hasCondaFields ? (
-                            <>
-                              <th className="py-2 pr-3 font-medium">{t('Build')}</th>
-                              <th className="py-2 pr-3 font-medium">{t('Channel')}</th>
-                            </>
-                          ) : null}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visiblePackages.map((pkg) => (
-                          <tr
-                            key={pkg.name}
-                            data-testid="runtime-package-row"
-                            className="border-b border-border last:border-b-0"
-                          >
-                            <td className="py-1.5 pl-3 pr-3 text-foreground">{pkg.name}</td>
-                            <td className="py-1.5 pr-3">
-                              <code className="text-xs text-muted-foreground">{pkg.version}</code>
-                            </td>
+                    {packages !== null ? (
+                      <span className="text-xs text-muted-foreground">
+                        {t('{{visible}} of {{total}}', {
+                          visible: visiblePackages.length,
+                          total: packages.length
+                        })}
+                        {hasCondaFields
+                          ? ` · ${t('{{conda}} conda, {{pypi}} pypi', {
+                              conda: condaPackageCount,
+                              pypi: packages.length - condaPackageCount
+                            })}`
+                          : ''}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-2 max-h-[48vh] min-h-0 overflow-y-auto rounded-md border border-border">
+                    {packagesError !== null ? (
+                      <div className="flex flex-col items-center gap-2 px-3 py-6">
+                        <p role="alert" className="text-sm text-destructive">
+                          {packagesError}
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setPackages(null)
+                            setPackagesError(null)
+                            setPackagesRetryNonce((nonce) => nonce + 1)
+                          }}
+                        >
+                          {t('Retry')}
+                        </Button>
+                      </div>
+                    ) : packages === null ? (
+                      <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        {t('Listing packages…')}
+                      </p>
+                    ) : (
+                      <table className="w-full border-collapse text-[13px]">
+                        <thead className="sticky top-0 bg-card">
+                          <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                            <th className="py-2 pl-3 pr-3 font-medium">{t('Name')}</th>
+                            <th className="py-2 pr-3 font-medium">{t('Version')}</th>
                             {hasCondaFields ? (
                               <>
                                 <th className="py-2 pr-3 font-medium">{t('Build')}</th>
@@ -859,28 +883,54 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                               </>
                             ) : null}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                  {packages !== null &&
-                  packagesError === null &&
-                  packages.length > 0 &&
-                  visiblePackages.length === 0 ? (
-                    <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                      {t('No packages match “{{filter}}”.', { filter: packagesFilter })}
-                    </p>
-                  ) : null}
-                  {packages !== null && packagesError === null && packages.length === 0 ? (
-                    <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                      {t('No packages installed.')}
-                    </p>
-                  ) : null}
+                        </thead>
+                        <tbody>
+                          {visiblePackages.map((pkg) => (
+                            <tr
+                              key={pkg.name}
+                              data-testid="runtime-package-row"
+                              className="border-b border-border last:border-b-0"
+                            >
+                              <td className="py-1.5 pl-3 pr-3 text-foreground">{pkg.name}</td>
+                              <td className="py-1.5 pr-3">
+                                <code className="text-xs text-muted-foreground">{pkg.version}</code>
+                              </td>
+                              {hasCondaFields ? (
+                                <>
+                                  <td className="py-1.5 pr-3">
+                                    <code className="text-xs text-muted-foreground">
+                                      {pkg.build ?? '—'}
+                                    </code>
+                                  </td>
+                                  <td className="py-1.5 pr-3 text-xs text-muted-foreground">
+                                    {pkg.channel ?? '—'}
+                                  </td>
+                                </>
+                              ) : null}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {packages !== null &&
+                    packagesError === null &&
+                    packages.length > 0 &&
+                    visiblePackages.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        {t('No packages match “{{filter}}”.', { filter: packagesFilter })}
+                      </p>
+                    ) : null}
+                    {packages !== null && packagesError === null && packages.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        {t('No packages installed.')}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className={dialogFooterClassName}>
                   <Dialog.Close asChild>
-                    <Button type="button" variant="outline" size="sm">
+                    <Button type="button" variant="outline">
                       {t('Close')}
                     </Button>
                   </Dialog.Close>

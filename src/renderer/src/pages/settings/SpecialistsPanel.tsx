@@ -13,13 +13,19 @@ import {
   Pencil,
   Plus,
   Trash2,
-  Upload
+  Upload,
+  X
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -293,13 +299,13 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
       setTemplateSaveError(undefined)
       try {
         if (typeof window.api?.specialist?.exportContributionTemplate !== 'function') {
-          setTemplateSaveError(t('Contribution templates are only available in the desktop app.'))
+          setTemplateSaveError('Contribution templates are only available in the desktop app.')
           return
         }
         const result = await window.api.specialist.exportContributionTemplate()
         if (result?.saved) setTemplateSaved(true)
       } catch {
-        setTemplateSaveError(t('Could not save contribution template. Try again.'))
+        setTemplateSaveError('Could not save contribution template. Try again.')
       } finally {
         setTemplateSaving(false)
       }
@@ -363,7 +369,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             </div>
             <h2 className="mt-4 text-lg font-semibold">{t('Export complete')}</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              {exportPreview.fileName} was saved. No location is shown here.
+              {t('{{fileName}} was saved. No location is shown here.', {
+                fileName: exportPreview.fileName
+              })}
             </p>
             <Button
               type="button"
@@ -417,7 +425,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm"
             role="alert"
           >
-            {exportError}
+            {t(exportError)}
           </div>
         ) : null}
         {exportPreview ? (
@@ -453,13 +461,25 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                       <strong className="block">{skill.id}</strong>
                       <span className="text-xs text-muted-foreground">
                         {skill.kind === 'builtin'
-                          ? 'Featured Skill · referenced by name and not copied into the package.'
+                          ? t(
+                              'Featured Skill · referenced by name and not copied into the package.'
+                            )
                           : skill.kind === 'owned'
-                            ? `Owned Skill · v${skill.version} · bundled by default.`
-                            : `Installed Skill · v${skill.version} · include it to bundle a copy.`}
+                            ? t('Owned Skill · v{{version}} · bundled by default.', {
+                                version: skill.version
+                              })
+                            : t('Installed Skill · v{{version}} · include it to bundle a copy.', {
+                                version: skill.version
+                              })}
                       </span>
                     </span>
-                    <span className="text-xs capitalize text-muted-foreground">{skill.kind}</span>
+                    <span className="text-xs capitalize text-muted-foreground">
+                      {skill.kind === 'builtin'
+                        ? t('Featured')
+                        : skill.kind === 'owned'
+                          ? t('Owned')
+                          : t('Installed')}
+                    </span>
                   </label>
                 )
               })}
@@ -467,14 +487,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <div className="rounded-lg border border-border p-3 text-sm" role="status">
               <strong>{t('What the package carries')}</strong>
               <p className="text-muted-foreground">
-                Only checked Skills are bundled. Connector names are imported as selected
-                references; full access can only be chosen later in the configuration page.
+                {t(
+                  'Only checked Skills are bundled. Connector names are imported as selected references; full access can only be chosen later in the configuration page.'
+                )}
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
                 {t('Connectors:')}{' '}
                 {exportPreview.connectorIds.length
                   ? exportPreview.connectorIds.join(', ')
-                  : 'None selected'}
+                  : t('None selected')}
               </p>
             </div>
             <div className="flex justify-between gap-3">
@@ -634,7 +655,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 role="alert"
                 className="mt-4 rounded-lg border border-danger-000/30 bg-danger-000/10 p-3 text-sm text-danger-000"
               >
-                {templateSaveError}
+                {t(templateSaveError)}
               </p>
             ) : null}
           </div>
@@ -648,15 +669,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             <div className="grid grid-cols-2 gap-3 rounded-xl border border-border p-4 text-sm">
               <div>
                 <span className="block text-xs text-muted-foreground">{t('Specialist')}</span>
-                {summary?.name ?? 'Unknown'}
+                {summary?.name ?? t('Unknown')}
               </div>
               <div>
                 <span className="block text-xs text-muted-foreground">{t('Immutable ID')}</span>
-                {summary?.id ?? 'Unknown'}
+                {summary?.id ?? t('Unknown')}
               </div>
               <div>
                 <span className="block text-xs text-muted-foreground">{t('Package version')}</span>
-                {summary?.version ?? 'Unknown'}
+                {summary?.version ?? t('Unknown')}
               </div>
             </div>
 
@@ -664,8 +685,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               <h3 className="text-sm font-semibold">{t('Skills')}</h3>
               <p className="mt-1 text-xs text-muted-foreground">
                 {summary?.bundledSkillIds.length
-                  ? `Bundled: ${summary.bundledSkillIds.join(', ')}`
-                  : 'No bundled Skills'}
+                  ? t('Bundled: {{skills}}', { skills: summary.bundledSkillIds.join(', ') })
+                  : t('No bundled Skills')}
               </p>
               {summary?.skills?.length ? (
                 <div className="mt-3 space-y-2">
@@ -803,7 +824,9 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                     <span className="mt-0.5 block font-mono text-[10px] opacity-60">
                                       {diagnostic.path}
                                       {diagnostic.path && diagnostic.relatedId ? ' · ' : ''}
-                                      {diagnostic.relatedId ? `ID: ${diagnostic.relatedId}` : ''}
+                                      {diagnostic.relatedId
+                                        ? t('ID: {{id}}', { id: diagnostic.relatedId })
+                                        : ''}
                                     </span>
                                   ) : null}
                                 </div>
@@ -884,7 +907,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     .finally(() => setPackageBusy(false))
                 }}
               >
-                {packagePreview.overwrite ? 'Review overwrite' : 'Next'}
+                {packagePreview.overwrite ? t('Review overwrite') : t('Next')}
               </Button>
             </div>
             {packagePreview.overwrite ? (
@@ -897,61 +920,84 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   <AlertDialog.Content
                     className={dialogPanelClassName('w-[min(520px,calc(100vw-2rem))] p-0')}
                   >
-                    <AlertDialog.Title className={dialogTitleClassName}>
-                      {t('Local changes will be permanently replaced')}
-                    </AlertDialog.Title>
-                    <AlertDialog.Description className={dialogDescriptionClassName}>
-                      {t(
-                        'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.'
-                      )}
-                    </AlertDialog.Description>
-                    <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg border border-border p-3 text-xs">
-                      <div>
-                        <dt className="text-muted-foreground">{t('Current version')}</dt>
-                        <dd>{packagePreview.overwrite.currentVersion}</dd>
+                    <div className={dialogHeaderClassName}>
+                      <div className="min-w-0">
+                        <AlertDialog.Title className={dialogTitleClassName}>
+                          {t('Local changes will be permanently replaced')}
+                        </AlertDialog.Title>
                       </div>
-                      <div>
-                        <dt className="text-muted-foreground">{t('Incoming version')}</dt>
-                        <dd>
-                          {packagePreview.overwrite.incomingVersion}
-                          {packagePreview.diagnostics.some(
-                            (item) => item.code === 'specialist.overwrite-downgrade'
-                          )
-                            ? ' · downgrade'
-                            : ''}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">{t('Local status')}</dt>
-                        <dd>
-                          {packagePreview.overwrite.hasImportBaseline
-                            ? packagePreview.overwrite.modifiedSinceImport
-                              ? 'Modified after import'
-                              : 'Unchanged since import'
-                            : 'No import baseline'}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">{t('Target')}</dt>
-                        <dd>{t('Custom Specialist only')}</dd>
-                      </div>
-                    </dl>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="mt-4"
-                      onClick={() => {
-                        setExportSaved(false)
-                        setExportError(undefined)
-                        clearExport()
-                        onNavigate({ kind: 'export', id: packagePreview.overwrite!.id })
-                      }}
-                    >
-                      {t('Export current version first')}
-                    </Button>
-                    <div className="mt-6 flex justify-end gap-2">
                       <AlertDialog.Cancel asChild>
-                        <Button type="button" variant="outline">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={t('Close')}
+                          className={dialogCloseButtonClassName}
+                        >
+                          <X className="size-4" aria-hidden="true" />
+                        </Button>
+                      </AlertDialog.Cancel>
+                    </div>
+
+                    <div className={dialogBodyClassName}>
+                      <AlertDialog.Description className={dialogDescriptionClassName}>
+                        {t(
+                          'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.'
+                        )}
+                      </AlertDialog.Description>
+                      <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg border border-border p-3 text-xs">
+                        <div>
+                          <dt className="text-muted-foreground">{t('Current version')}</dt>
+                          <dd>{packagePreview.overwrite.currentVersion}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">{t('Incoming version')}</dt>
+                          <dd>
+                            {packagePreview.overwrite.incomingVersion}
+                            {packagePreview.diagnostics.some(
+                              (item) => item.code === 'specialist.overwrite-downgrade'
+                            )
+                              ? ` · ${t('downgrade')}`
+                              : ''}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">{t('Local status')}</dt>
+                          <dd>
+                            {packagePreview.overwrite.hasImportBaseline
+                              ? packagePreview.overwrite.modifiedSinceImport
+                                ? t('Modified after import')
+                                : t('Unchanged since import')
+                              : t('No import baseline')}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-muted-foreground">{t('Target')}</dt>
+                          <dd>{t('Custom Specialist only')}</dd>
+                        </div>
+                      </dl>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="mt-4"
+                        onClick={() => {
+                          setExportSaved(false)
+                          setExportError(undefined)
+                          clearExport()
+                          onNavigate({ kind: 'export', id: packagePreview.overwrite!.id })
+                        }}
+                      >
+                        {t('Export current version first')}
+                      </Button>
+                    </div>
+
+                    <div className={dialogFooterClassName}>
+                      <AlertDialog.Cancel asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className={dialogCancelButtonClassName}
+                        >
                           {t('Cancel')}
                         </Button>
                       </AlertDialog.Cancel>
@@ -1024,7 +1070,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
           <div className="mt-5">
             <h3 className="text-sm font-semibold text-foreground">{t('Capabilities')}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              {specialist.capabilityMode === 'full' ? 'Full access' : 'Selected capabilities'}
+              {specialist.capabilityMode === 'full' ? t('Full access') : t('Selected capabilities')}
             </p>
             {skillIds.length > 0 ? (
               <ul className="mt-2 list-inside list-disc text-xs text-foreground">
@@ -1383,91 +1429,113 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
       >
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
-            <AlertDialog.Title className={dialogTitleClassName}>
-              {t('Delete “{{name}}”?', { name: deletingItem?.name ?? '' })}
-            </AlertDialog.Title>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              {t(
-                'This permanently deletes the Specialist. Conversations using it will no longer be able to use it.'
-              )}
-            </AlertDialog.Description>
-            <div className="mt-4">
-              <p className="text-sm font-medium text-foreground">
-                <Trans
-                  i18nKey="Skills you can also delete <muted>(optional)</muted>"
-                  components={{ muted: <span className="font-normal text-muted-foreground" /> }}
-                />
-              </p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                {t(
-                  'Only Skills used exclusively by this Specialist can be deleted. Other linked Skills will be kept automatically.'
-                )}
-              </p>
-            </div>
-            <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-border px-3">
-              {visibleDeleteSkills?.length ? (
-                visibleDeleteSkills.map((skill) => {
-                  const reasonText =
-                    skill.reasons
-                      .map((reason) =>
-                        reason.code === 'standalone'
-                          ? 'Already exists independently and will be kept.'
-                          : reason.code === 'shared-owner'
-                            ? 'Also owned by another Specialist and will be kept.'
-                            : reason.code === 'referenced'
-                              ? 'Used by another Specialist and will be kept.'
-                              : 'Managed by the app and will be kept.'
-                      )
-                      .join(' ') || 'Used only by this Specialist. Select to permanently delete it.'
-                  return (
-                    <label
-                      key={skill.id}
-                      className="flex items-start gap-3 border-b border-border py-3 last:border-b-0"
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 size-4"
-                        disabled={!skill.deletable}
-                        checked={deleteSkillIds.has(skill.id)}
-                        onChange={(event) =>
-                          setDeleteSkillIds((current) => {
-                            const next = new Set(current)
-                            if (event.target.checked) next.add(skill.id)
-                            else next.delete(skill.id)
-                            return next
-                          })
-                        }
-                      />
-                      <span className="min-w-0">
-                        <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
-                          <span>{skill.displayName}</span>
-                          <Badge variant="outline" className="text-[11px] font-normal">
-                            {getSkillSourceLabel(skill.source, t)}
-                          </Badge>
-                        </span>
-                        <span className="block text-xs text-muted-foreground">{reasonText}</span>
-                      </span>
-                    </label>
-                  )
-                })
-              ) : (
-                <p className="py-3 text-xs text-muted-foreground">
-                  {t('No additional Skills will be deleted.')}
-                </p>
-              )}
-            </div>
-            {deleteError ? (
-              <p
-                role="alert"
-                className="mt-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-              >
-                {deleteError}
-              </p>
-            ) : null}
-            <div className="mt-6 flex justify-end gap-2">
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] max-h-[85vh] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Delete “{{name}}”?', { name: deletingItem?.name ?? '' })}
+                </AlertDialog.Title>
+              </div>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Close')}
+                  className={dialogCloseButtonClassName}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+
+            <div className={`${dialogBodyClassName} overflow-y-auto`}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {t(
+                  'This permanently deletes the Specialist. Conversations using it will no longer be able to use it.'
+                )}
+              </AlertDialog.Description>
+              <div className="mt-4">
+                <p className="text-sm font-medium text-foreground">
+                  <Trans
+                    i18nKey="Skills you can also delete <muted>(optional)</muted>"
+                    components={{ muted: <span className="font-normal text-muted-foreground" /> }}
+                  />
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t(
+                    'Only Skills used exclusively by this Specialist can be deleted. Other linked Skills will be kept automatically.'
+                  )}
+                </p>
+              </div>
+              <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-border px-3">
+                {visibleDeleteSkills?.length ? (
+                  visibleDeleteSkills.map((skill) => {
+                    const reasonText =
+                      skill.reasons
+                        .map((reason) =>
+                          reason.code === 'standalone'
+                            ? t('Already exists independently and will be kept.')
+                            : reason.code === 'shared-owner'
+                              ? t('Also owned by another Specialist and will be kept.')
+                              : reason.code === 'referenced'
+                                ? t('Used by another Specialist and will be kept.')
+                                : t('Managed by the app and will be kept.')
+                        )
+                        .join(' ') ||
+                      t('Used only by this Specialist. Select to permanently delete it.')
+                    return (
+                      <label
+                        key={skill.id}
+                        className="flex items-start gap-3 border-b border-border py-3 last:border-b-0"
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 size-4"
+                          disabled={!skill.deletable}
+                          checked={deleteSkillIds.has(skill.id)}
+                          onChange={(event) =>
+                            setDeleteSkillIds((current) => {
+                              const next = new Set(current)
+                              if (event.target.checked) next.add(skill.id)
+                              else next.delete(skill.id)
+                              return next
+                            })
+                          }
+                        />
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+                            <span>{skill.displayName}</span>
+                            <Badge variant="outline" className="text-[11px] font-normal">
+                              {getSkillSourceLabel(skill.source, t)}
+                            </Badge>
+                          </span>
+                          <span className="block text-xs text-muted-foreground">{reasonText}</span>
+                        </span>
+                      </label>
+                    )
+                  })
+                ) : (
+                  <p className="py-3 text-xs text-muted-foreground">
+                    {t('No additional Skills will be deleted.')}
+                  </p>
+                )}
+              </div>
+              {deleteError ? (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+                >
+                  {t(deleteError)}
+                </p>
+              ) : null}
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
                   {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>

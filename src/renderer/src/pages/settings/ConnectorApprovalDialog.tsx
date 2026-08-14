@@ -5,10 +5,13 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
   dialogOverlayClassName,
-  dialogPanelClassName
+  dialogPanelClassName,
+  dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import {
@@ -75,10 +78,12 @@ export function ConnectorApprovalDialog({
           <div className={cn(dialogHeaderClassName, 'items-start justify-start')}>
             <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-500" aria-hidden="true" />
             <div className="min-w-0">
-              <Dialog.Title className="text-sm font-semibold text-foreground">
+              <Dialog.Title className={dialogTitleClassName}>
                 {t('Allow external request?')}
               </Dialog.Title>
-              <Dialog.Description className="mt-1 text-xs text-muted-foreground [text-wrap:pretty]">
+              <Dialog.Description
+                className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}
+              >
                 {t(
                   'The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.'
                 )}
@@ -86,20 +91,22 @@ export function ConnectorApprovalDialog({
             </div>
           </div>
 
-          <div className="mt-3 space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">{t('Connector')}</span>
-              <span className="min-w-0 truncate font-medium text-foreground">{displayName}</span>
-            </div>
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">{t('Tool')}</span>
-              <span className="min-w-0 truncate font-mono text-foreground">{request.method}</span>
-            </div>
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">{t('Args')}</span>
-              <span className="min-w-0 break-all font-mono text-muted-foreground">
-                {request.argsPreview}
-              </span>
+          <div className={dialogBodyClassName}>
+            <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Connector')}</span>
+                <span className="min-w-0 truncate font-medium text-foreground">{displayName}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Tool')}</span>
+                <span className="min-w-0 truncate font-mono text-foreground">{request.method}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Args')}</span>
+                <span className="min-w-0 break-all font-mono text-muted-foreground">
+                  {request.argsPreview}
+                </span>
+              </div>
             </div>
           </div>
 

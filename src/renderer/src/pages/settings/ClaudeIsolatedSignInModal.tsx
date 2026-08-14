@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
-import { Check, Copy, Loader2 } from 'lucide-react'
+import { Check, Copy, Loader2, X } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
   dialogFormInputClassName,
   dialogFormLabelClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -70,7 +74,6 @@ const ClaudeIsolatedSignInModalBody = ({
   'onOpenChange' | 'onSubmit' | 'browserSignInPending'
 >): React.JSX.Element => {
   const { t } = useTranslation()
-  const { t: tCommon } = useTranslation()
   const [token, setToken] = useState('')
   const [copied, setCopied] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -122,100 +125,57 @@ const ClaudeIsolatedSignInModalBody = ({
   return (
     <>
       <AlertDialog.Overlay className={dialogOverlayClassName} />
-      <AlertDialog.Content className={dialogPanelClassName('w-[min(560px,92vw)]')}>
-        <AlertDialog.Title className={dialogTitleClassName}>
-          {t('Sign in with Anthropic')}
-        </AlertDialog.Title>
-        <AlertDialog.Description className={dialogDescriptionClassName}>
-          <Trans
-            i18nKey="Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow."
-            components={{
-              code: <code className="font-mono" />,
-              // Named docsLink, not link: <link> is a void HTML element, so the parser Trans uses
-              // self-closes it and the label would render as a sibling of an empty anchor.
-              docsLink: (
-                <a
-                  href={SETUP_TOKEN_DOCS_URL}
-                  className="text-primary underline underline-offset-2"
-                  target="_blank"
-                  rel="noreferrer"
-                />
-              )
-            }}
-          />
-        </AlertDialog.Description>
+      <AlertDialog.Content className={dialogPanelClassName('w-[min(560px,92vw)] p-0')}>
+        <div className={dialogHeaderClassName}>
+          <AlertDialog.Title className={dialogTitleClassName}>
+            {t('Sign in with Anthropic')}
+          </AlertDialog.Title>
+          <AlertDialog.Cancel asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('Close')}
+              className={dialogCloseButtonClassName}
+              disabled={isSubmitting}
+            >
+              <X className="size-4" aria-hidden="true" />
+            </Button>
+          </AlertDialog.Cancel>
+        </div>
 
-        {browserSignInPending ? (
-          // The browser sign-in is running: its CLI callback captures the token and auto-closes this
-          // modal on success. This banner tells the user the paste form below is only a fallback.
-          <div
-            className="mt-4 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
-            role="status"
-          >
-            <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
-            <span>
-              {t(
-                "Opening your browser to sign in… finish there and this closes automatically. Didn't open, or prefer a token? Paste one below."
-              )}
-            </span>
-          </div>
-        ) : null}
-
-        <div className="mt-5 space-y-4">
-          {/* The "Run this command" step only makes sense for a pure manual sign-in. During a browser
-              sign-in the app already runs `claude setup-token` for the user, so showing it as a step
-              they must run would be misleading — hide it and drop the now-orphaned "Step" numbering. */}
-          {browserSignInPending ? null : (
-            <div className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">{t('Step 1 · Run')}</span>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded-md border border-border bg-muted/40 px-2 py-1 font-mono text-xs">
-                  {SETUP_TOKEN_COMMAND}
-                </code>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void copyCommand()}
-                  aria-label={t('Copy command')}
-                >
-                  {copied ? (
-                    <>
-                      <Check className="size-3.5" aria-hidden="true" />
-                      {t('Copied')}
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="size-3.5" aria-hidden="true" />
-                      {t('Copy')}
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium" htmlFor="claude-setup-token-input">
-              {browserSignInPending
-                ? t('Paste the token printed by setup-token')
-                : t('Step 2 · Paste the token printed by setup-token')}
-            </label>
-            <Input
-              id="claude-setup-token-input"
-              aria-label={t('Claude setup token')}
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              placeholder="sk-ant-..."
-              autoComplete="off"
-              spellCheck={false}
+        <div className={dialogBodyClassName}>
+          <AlertDialog.Description className={dialogDescriptionClassName}>
+            <Trans
+              i18nKey="Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow."
+              components={{
+                code: <code className="font-mono" />,
+                docsLink: (
+                  <a
+                    href={SETUP_TOKEN_DOCS_URL}
+                    className="text-primary underline underline-offset-2"
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                )
+              }}
             />
-          </div>
+          </AlertDialog.Description>
 
-          {submitError ? (
-            <p className="text-xs text-destructive" role="alert">
-              {submitError}
-            </p>
+          {browserSignInPending ? (
+            // The browser sign-in is running: its CLI callback captures the token and auto-closes this
+            // modal on success. This banner tells the user the paste form below is only a fallback.
+            <div
+              className="mt-4 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+              role="status"
+            >
+              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+              <span>
+                {t(
+                  "Opening your browser to sign in… finish there and this closes automatically. Didn't open, or prefer a token? Paste one below."
+                )}
+              </span>
+            </div>
           ) : null}
 
           <div className="mt-5 space-y-4">
@@ -255,8 +215,8 @@ const ClaudeIsolatedSignInModalBody = ({
             <div className="space-y-1.5">
               <label className={dialogFormLabelClassName} htmlFor="claude-setup-token-input">
                 {browserSignInPending
-                  ? 'Paste the token printed by setup-token'
-                  : 'Step 2 · Paste the token printed by setup-token'}
+                  ? t('Paste the token printed by setup-token')
+                  : t('Step 2 · Paste the token printed by setup-token')}
               </label>
               <Input
                 id="claude-setup-token-input"
@@ -280,8 +240,13 @@ const ClaudeIsolatedSignInModalBody = ({
 
         <div className={dialogFooterClassName}>
           <AlertDialog.Cancel asChild>
-            <Button type="button" variant="outline" disabled={isSubmitting}>
-              {tCommon('Cancel')}
+            <Button
+              type="button"
+              variant="ghost"
+              className={dialogCancelButtonClassName}
+              disabled={isSubmitting}
+            >
+              {t('Cancel')}
             </Button>
           </AlertDialog.Cancel>
           <Button

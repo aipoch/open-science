@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import type { GrantedLocalRoot, LocalDirListing } from '../../../../shared/local-fs'
 import {
   createInitialGrantedFoldersState,
@@ -292,6 +293,11 @@ describe('GrantFolderAccessDialog', () => {
 
     expect(document.body.textContent).toContain('That path contains invalid characters.')
     expect(document.body.textContent).not.toContain('Projects')
+
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    expect(document.body.textContent).toContain('该路径包含无效字符。')
+    expect(document.body.textContent).not.toContain('That path contains invalid characters.')
+    await act(async () => i18next.changeLanguage('en'))
 
     // Reopening the editor and submitting the unchanged cwd re-lists and clears the error.
     await click(document.body.querySelector('[data-testid="grant-access-path-bar"]'))

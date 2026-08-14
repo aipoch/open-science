@@ -372,7 +372,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   className="relative mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50 focus-within:ring-3 focus-within:ring-ring/50"
                 >
                   {referenceDrop.isDragging ? (
-                    <FileDropOverlay label="Drop reference files" className="rounded-lg" />
+                    <FileDropOverlay label={t('Drop reference files')} className="rounded-lg" />
                   ) : null}
                   <input
                     type="file"

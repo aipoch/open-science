@@ -8,13 +8,13 @@ import {
   dialogBodyClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { StorageMigrationModal } from '@/pages/settings/StorageMigrationModal'
-import { APP } from '../../../shared/app-config'
 
 type LegacyDataMoveDialogProps = {
   // App Shell presentation ownership may temporarily cover this prompt without discarding its state.
@@ -78,10 +78,9 @@ const LegacyDataMoveDialog = ({
       setPickError(
         inspection.kind === 'adopt'
           ? t(
-              'That folder already contains {{appName}} data. Pick an empty folder, or use the default location.',
-              { appName: APP.name }
+              'That folder already contains Open Science data. Pick an empty folder, or use the default location.'
             )
-          : (inspection.error ?? t("That folder can't be used. Pick another one."))
+          : (inspection.error ?? t('That folder can’t be used. Pick another one.'))
       )
     } finally {
       setIsPicking(false)
@@ -107,15 +106,14 @@ const LegacyDataMoveDialog = ({
     <AlertDialog.Root open={active}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>
-          <AlertDialog.Title className={dialogTitleClassName}>
-            {t('Move your data to a visible folder?')}
-          </AlertDialog.Title>
-          <AlertDialog.Description className={dialogDescriptionClassName}>
-            {t(
-              'Your research data is in a hidden folder. Moving it into a visible OpenScience folder makes it easy to find and back up — your settings and history stay where they are.'
-            )}
-          </AlertDialog.Description>
+        <AlertDialog.Content
+          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
+        >
+          <div className={dialogHeaderClassName}>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              {t('Move your data to a visible folder?')}
+            </AlertDialog.Title>
+          </div>
 
           <div className={cn(dialogBodyClassName, 'space-y-4')}>
             <AlertDialog.Description className={dialogDescriptionClassName}>

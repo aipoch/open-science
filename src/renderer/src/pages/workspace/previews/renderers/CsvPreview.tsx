@@ -107,7 +107,10 @@ export const CsvPreviewRenderer = ({ item }: PreviewFileRendererProps): React.JS
       </div>
       {hiddenColumnCount > 0 ? (
         <div className="shrink-0 border-t border-border-300 bg-bg-000 px-3 py-2 text-[12px] text-text-300">
-          {hiddenColumnCount} more columns hidden in this preview
+          {t('{{count}} more columns hidden in this preview', {
+            count: hiddenColumnCount,
+            defaultValue_one: '{{count}} more column hidden in this preview'
+          })}
         </div>
       ) : null}
     </div>

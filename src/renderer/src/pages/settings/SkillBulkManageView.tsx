@@ -1,5 +1,6 @@
 import { AlertTriangle, LoaderCircle, SearchX } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { SkillSource } from '../../../../shared/settings'
 import { Badge } from '@/components/ui/badge'
@@ -12,17 +13,17 @@ type ManageableSkillSource = Exclude<SkillSource, 'featured'>
 type SourceFilter = 'all' | ManageableSkillSource
 type StatusFilter = 'all' | 'enabled' | 'disabled'
 
-const SOURCE_LABELS: Record<SourceFilter, string> = {
+const SOURCE_LABEL_KEYS = {
   all: 'All sources',
   imported: 'Imported',
   personal: 'Personal'
-}
+} as const satisfies Record<SourceFilter, string>
 
-const STATUS_LABELS: Record<StatusFilter, string> = {
+const STATUS_LABEL_KEYS = {
   all: 'Any status',
   enabled: 'Enabled',
   disabled: 'Disabled'
-}
+} as const satisfies Record<StatusFilter, string>
 
 const errorMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
@@ -30,6 +31,7 @@ const errorMessage = (error: unknown): string => {
 }
 
 const SkillBulkManageView = (): React.JSX.Element => {
+  const { t } = useTranslation()
   const skills = useSettingsStore((state) => state.skills)
   const setSkillsEnabled = useSettingsStore((state) => state.setSkillsEnabled)
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
@@ -119,7 +121,11 @@ const SkillBulkManageView = (): React.JSX.Element => {
     } catch (error) {
       setBulkError(
         errorMessage(error) ||
-          `Could not ${enabled ? 'enable' : 'disable'} the selected Skills. Try again.`
+          t(
+            enabled
+              ? 'Could not enable the selected Skills. Try again.'
+              : 'Could not disable the selected Skills. Try again.'
+          )
       )
     } finally {
       setPendingEnabled(undefined)
@@ -129,7 +135,9 @@ const SkillBulkManageView = (): React.JSX.Element => {
   return (
     <div className="p-5">
       <p className="text-[13px] leading-5 text-muted-foreground">
-        Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.
+        {t(
+          'Enable or disable imported and personal Skills in bulk. Featured Skills are not changed.'
+        )}
       </p>
 
       <div className="sticky top-0 z-10 -mx-5 mt-4 border-y border-border bg-card px-5 py-3">
@@ -141,13 +149,13 @@ const SkillBulkManageView = (): React.JSX.Element => {
               setShowSelectedOnly(false)
             }}
           >
-            <SelectTrigger aria-label="Filter manageable skills by source" className="w-36">
-              <span>{SOURCE_LABELS[sourceFilter]}</span>
+            <SelectTrigger aria-label={t('Filter manageable skills by source')} className="w-36">
+              <span>{t(SOURCE_LABEL_KEYS[sourceFilter])}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All sources</SelectItem>
-              <SelectItem value="imported">Imported</SelectItem>
-              <SelectItem value="personal">Personal</SelectItem>
+              <SelectItem value="all">{t('All sources')}</SelectItem>
+              <SelectItem value="imported">{t('Imported')}</SelectItem>
+              <SelectItem value="personal">{t('Personal')}</SelectItem>
             </SelectContent>
           </Select>
           <Select
@@ -157,18 +165,18 @@ const SkillBulkManageView = (): React.JSX.Element => {
               setShowSelectedOnly(false)
             }}
           >
-            <SelectTrigger aria-label="Filter manageable skills by status" className="w-32">
-              <span>{STATUS_LABELS[statusFilter]}</span>
+            <SelectTrigger aria-label={t('Filter manageable skills by status')} className="w-32">
+              <span>{t(STATUS_LABEL_KEYS[statusFilter])}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Any status</SelectItem>
-              <SelectItem value="enabled">Enabled</SelectItem>
-              <SelectItem value="disabled">Disabled</SelectItem>
+              <SelectItem value="all">{t('Any status')}</SelectItem>
+              <SelectItem value="enabled">{t('Enabled')}</SelectItem>
+              <SelectItem value="disabled">{t('Disabled')}</SelectItem>
             </SelectContent>
           </Select>
           <SettingsSearchInput
-            aria-label="Search manageable skills"
-            placeholder="Search skills…"
+            aria-label={t('Search manageable skills')}
+            placeholder={t('Search skills…')}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
@@ -180,22 +188,22 @@ const SkillBulkManageView = (): React.JSX.Element => {
 
         <div
           role="group"
-          aria-label="Bulk Skill controls"
+          aria-label={t('Bulk Skill controls')}
           className="mt-3 flex min-h-9 flex-wrap items-center gap-1.5"
         >
           <label className="flex min-h-9 items-center gap-1.5 pr-2 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11">
             <input
               type="checkbox"
-              aria-label="Select all results"
+              aria-label={t('Select all results')}
               checked={allResultsSelected}
               onChange={toggleAllResults}
               disabled={busy || resultIds.length === 0}
               className="size-4 shrink-0"
             />
-            Select all results
+            {t('Select all results')}
           </label>
           <span className="mr-1 text-xs tabular-nums text-muted-foreground">
-            {validSelectedIds.size} selected
+            {t('{{selectedCount}} selected', { selectedCount: validSelectedIds.size })}
           </span>
           <Button
             type="button"
@@ -205,7 +213,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
             onClick={() => setShowSelectedOnly((current) => !current)}
             disabled={busy || validSelectedIds.size === 0}
           >
-            Selected ({validSelectedIds.size})
+            {t('Selected ({{selectedCount}})', { selectedCount: validSelectedIds.size })}
           </Button>
           <Button
             type="button"
@@ -214,7 +222,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
             onClick={clearSelection}
             disabled={busy || validSelectedIds.size === 0}
           >
-            Clear selection
+            {t('Clear selection')}
           </Button>
           <div className="ml-auto flex items-center gap-2">
             <Button
@@ -227,10 +235,12 @@ const SkillBulkManageView = (): React.JSX.Element => {
               {pendingEnabled === true ? (
                 <>
                   <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
-                  Enabling…
+                  {t('Enabling…')}
                 </>
               ) : (
-                `Enable selected (${validSelectedIds.size})`
+                t('Enable selected ({{selectedCount}})', {
+                  selectedCount: validSelectedIds.size
+                })
               )}
             </Button>
             <Button
@@ -243,10 +253,12 @@ const SkillBulkManageView = (): React.JSX.Element => {
               {pendingEnabled === false ? (
                 <>
                   <LoaderCircle className="animate-spin motion-reduce:animate-none" aria-hidden />
-                  Disabling…
+                  {t('Disabling…')}
                 </>
               ) : (
-                `Disable selected (${validSelectedIds.size})`
+                t('Disable selected ({{selectedCount}})', {
+                  selectedCount: validSelectedIds.size
+                })
               )}
             </Button>
           </div>
@@ -274,7 +286,7 @@ const SkillBulkManageView = (): React.JSX.Element => {
               <span className="flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:size-11">
                 <input
                   type="checkbox"
-                  aria-label={`Select ${skill.displayName}`}
+                  aria-label={t('Select {{name}}', { name: skill.displayName })}
                   checked={validSelectedIds.has(skill.id)}
                   onChange={() => toggleSelected(skill.id)}
                   disabled={busy}
@@ -288,13 +300,13 @@ const SkillBulkManageView = (): React.JSX.Element => {
                 </span>
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">
-                {skill.source === 'imported' ? 'Imported' : 'Personal'}
+                {skill.source === 'imported' ? t('Imported') : t('Personal')}
               </span>
               <Badge
                 variant={skill.enabled ? 'secondary' : 'outline'}
                 data-skill-status={skill.enabled ? 'enabled' : 'disabled'}
               >
-                {skill.enabled ? 'Enabled' : 'Disabled'}
+                {skill.enabled ? t('Enabled') : t('Disabled')}
               </Badge>
             </li>
           ))}
@@ -304,14 +316,14 @@ const SkillBulkManageView = (): React.JSX.Element => {
           <SearchX className="size-5" aria-hidden="true" />
           <p>
             {showSelectedOnly
-              ? 'No Skills are selected.'
+              ? t('No Skills are selected.')
               : manageableSkills.length === 0
-                ? 'No imported or personal Skills yet.'
-                : 'No manageable Skills match these filters.'}
+                ? t('No imported or personal Skills yet.')
+                : t('No manageable Skills match these filters.')}
           </p>
           {manageableSkills.length > 0 ? (
             <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
-              Show all manageable Skills
+              {t('Show all manageable Skills')}
             </Button>
           ) : null}
         </div>

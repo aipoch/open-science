@@ -14,7 +14,7 @@ import i18next, { type i18n } from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
 import { DEFAULT_LOCALE, LOCALES, type Locale } from '../../../shared/locale'
-import { DEFAULT_NAMESPACE, resources } from './resources'
+import { DEFAULT_NAMESPACE, englishSourceFallbackPostProcessor, resources } from './resources'
 
 // zh-Hant falls back to English, not to zh-Hans. Falling back across scripts would mix Simplified and
 // Traditional in one screen whenever a key is missing, which reads worse than a clean English string
@@ -33,23 +33,27 @@ export const initI18n = (locale: Locale): i18n => {
     return i18next
   }
 
-  void i18next.use(initReactI18next).init({
-    lng: locale,
-    fallbackLng,
-    supportedLngs: [...LOCALES],
-    resources,
-    defaultNS: DEFAULT_NAMESPACE,
-    ns: [DEFAULT_NAMESPACE],
-    // Both separators are off because keys are English sentences. Left at their defaults, a period in
-    // 'Data folder not found.' would be read as key nesting and a colon in 'Note: saved' as a
-    // namespace prefix, so either would silently fail to resolve.
-    keySeparator: false,
-    nsSeparator: false,
-    // Our copy goes through JSX, which escapes on its own; i18next escaping on top would double-encode
-    // apostrophes and quotes that appear throughout the English source.
-    interpolation: { escapeValue: false },
-    returnNull: false
-  })
+  void i18next
+    .use(englishSourceFallbackPostProcessor)
+    .use(initReactI18next)
+    .init({
+      lng: locale,
+      fallbackLng,
+      supportedLngs: [...LOCALES],
+      resources,
+      defaultNS: DEFAULT_NAMESPACE,
+      ns: [DEFAULT_NAMESPACE],
+      // Both separators are off because keys are English sentences. Left at their defaults, a period in
+      // 'Data folder not found.' would be read as key nesting and a colon in 'Note: saved' as a
+      // namespace prefix, so either would silently fail to resolve.
+      keySeparator: false,
+      nsSeparator: false,
+      // Our copy goes through JSX, which escapes on its own; i18next escaping on top would double-encode
+      // apostrophes and quotes that appear throughout the English source.
+      interpolation: { escapeValue: false },
+      postProcess: [englishSourceFallbackPostProcessor.name],
+      returnNull: false
+    })
 
   initialized = true
   return i18next

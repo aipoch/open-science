@@ -81,10 +81,10 @@ const GeneralPanel = (): React.JSX.Element => {
       const result = await window.api.logs.openFile()
 
       if (!result.opened) {
-        setMessage(result.error ?? t('Could not open the log file.'))
+        setMessage(result.error ?? 'Could not open the log file.')
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t('Could not open the log file.'))
+      setMessage(error instanceof Error ? error.message : 'Could not open the log file.')
     } finally {
       setIsOpening(false)
     }
@@ -97,10 +97,10 @@ const GeneralPanel = (): React.JSX.Element => {
       const result = await window.api.logs.revealInFolder()
 
       if (!result.revealed) {
-        setMessage(result.error ?? t('Could not reveal the log file.'))
+        setMessage(result.error ?? 'Could not reveal the log file.')
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t('Could not reveal the log file.'))
+      setMessage(error instanceof Error ? error.message : 'Could not reveal the log file.')
     }
   }
 
@@ -268,7 +268,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {message ? (
           <p className="mt-2 text-xs text-destructive" role="alert">
-            {message}
+            {t(message)}
           </p>
         ) : null}
 
@@ -332,7 +332,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {cliError ? (
           <p className="mt-2 text-xs text-destructive" role="alert">
-            {cliError}
+            {t(cliError)}
           </p>
         ) : null}
 

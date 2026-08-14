@@ -173,7 +173,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
             !hasUsable &&
               'text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400'
           )}
-          aria-label={hasUsable ? 'Select model' : 'No compatible model'}
+          aria-label={hasUsable ? t('Select model') : t('No compatible model')}
         >
           {hasUsable ? (
             <>
@@ -228,7 +228,7 @@ const ComposerModelPicker = (): React.JSX.Element | null => {
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-bg-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-text-100">
-                {defaultEffortChecked ? 'Default' : selectedEffortLabel}
+                {defaultEffortChecked ? t('Default') : selectedEffortLabel}
                 <ChevronRight
                   className="size-3 shrink-0 opacity-60"
                   strokeWidth={2}

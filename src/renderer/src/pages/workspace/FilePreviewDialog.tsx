@@ -1,5 +1,6 @@
 import { FocusScope } from '@radix-ui/react-focus-scope'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Dialog } from 'radix-ui'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
@@ -46,6 +47,7 @@ const setBackgroundIsolation = (isolated: boolean): void => {
 // The dialog is deliberately transient: Files tiles and panel previews can open it without
 // creating or removing a preview-workbench item.
 const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const dialogItem = useRetainedDialogValue(item)
   const open = Boolean(item)
   const [hasNestedFullscreen, setHasNestedFullscreen] = useState(hasStreamdownFullscreen)
@@ -104,7 +106,7 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
           )}
         >
           <Dialog.Title className="sr-only">
-            {dialogItem ? `Preview ${dialogItem.title}` : 'File preview'}
+            {dialogItem ? t('Preview {{title}}', { title: dialogItem.title }) : t('File preview')}
           </Dialog.Title>
           <FocusScope asChild loop trapped={!(open && hasNestedFullscreen)}>
             <div className="flex size-full min-h-0 min-w-0">

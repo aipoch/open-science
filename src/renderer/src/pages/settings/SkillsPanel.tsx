@@ -258,7 +258,7 @@ const SkillsPanel = ({
         />
         <Button type="button" variant="outline" onClick={() => onNavigate({ kind: 'manage' })}>
           <ListChecks data-icon="inline-start" aria-hidden="true" />
-          Manage
+          {t('Manage')}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

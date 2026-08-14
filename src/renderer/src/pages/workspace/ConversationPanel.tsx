@@ -21,6 +21,7 @@ import { isReportableRunFailure } from '../../../../shared/run-error-classificat
 import {
   AlertTriangle,
   ArrowUp,
+  BookMarked,
   BookOpen,
   ChartNoAxesCombined,
   ChevronDown,
@@ -252,6 +253,18 @@ type ConversationPanelReview = {
   request: () => void
 }
 
+type ConversationPanelSaveAsSkill = {
+  disabled: boolean
+  disabledReason?: string
+  running: boolean
+  request: () => void
+}
+
+type ConversationPanelWorkflows = {
+  review: ConversationPanelReview
+  saveAsSkill: ConversationPanelSaveAsSkill
+}
+
 type ConversationPanelSessionTools = {
   notebookReference: NotebookSessionReference | undefined
   openNotebook: (notebook: NotebookSessionReference) => void
@@ -274,7 +287,7 @@ type ConversationPanelProps = {
   elicitation: ConversationPanelElicitation
   agentControls: ConversationPanelAgentControls
   contextWindow: ConversationPanelContextWindow
-  review: ConversationPanelReview
+  workflows: ConversationPanelWorkflows
   sessionTools: ConversationPanelSessionTools
   subagents: ConversationPanelSubagents
 }
@@ -291,7 +304,7 @@ const ConversationPanel = ({
   elicitation,
   agentControls,
   contextWindow,
-  review,
+  workflows,
   sessionTools,
   subagents
 }: ConversationPanelProps): React.JSX.Element => {
@@ -363,11 +376,18 @@ const ConversationPanel = ({
     compactDisabledReason: compactContextDisabledReason,
     compact: onCompactContext
   } = contextWindow
+  const { review, saveAsSkill } = workflows
   const {
     disabled: isRequestReviewDisabled,
     running: isReviewing,
     request: onRequestReview
   } = review
+  const {
+    disabled: isSaveAsSkillDisabledFromParent,
+    disabledReason: saveAsSkillDisabledReasonFromParent,
+    running: isSavingAsSkill,
+    request: onSaveAsSkill
+  } = saveAsSkill
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
   const { unavailableReason: subagentUnavailableReason, stop: onStopSubagents } = subagents
   const specialistId = activeSession
@@ -454,6 +474,10 @@ const ConversationPanel = ({
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
   const hasRunningSubagents = subagentSummary.runningCount > 0
+  const isSaveAsSkillDisabled = isSaveAsSkillDisabledFromParent || hasRunningSubagents
+  const saveAsSkillDisabledReason = hasRunningSubagents
+    ? t('Wait for all subagents to finish.')
+    : saveAsSkillDisabledReasonFromParent
   const effectiveCanSend = canSendMessage && !isStopping
   const rootTurnBusy =
     activeSession?.status === 'running' ||
@@ -1207,10 +1231,10 @@ const ConversationPanel = ({
                                     aria-label={
                                       activeBranchPlan
                                         ? t(
-                                            'Add attachment, view context window, view plan, or request review'
+                                            'Add attachment, save as skill, view context window, view plan, or request review'
                                           )
                                         : t(
-                                            'Add attachment, view context window, or request review'
+                                            'Add attachment, save as skill, view context window, or request review'
                                           )
                                     }
                                     data-testid="composer-plus-trigger"
@@ -1222,9 +1246,11 @@ const ConversationPanel = ({
                               <TooltipContent side="top">
                                 {activeBranchPlan
                                   ? t(
-                                      'Add attachment, view context window, view plan, or request review'
+                                      'Add attachment, save as skill, view context window, view plan, or request review'
                                     )
-                                  : t('Add attachment, view context window, or request review')}
+                                  : t(
+                                      'Add attachment, save as skill, view context window, or request review'
+                                    )}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -1326,9 +1352,57 @@ const ConversationPanel = ({
                                 />
                               )}
                               <span className="text-[13px] font-medium leading-5">
-                                {t('Request review')}
+                                {isReviewing ? t('Reviewing…') : t('Request review')}
                               </span>
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <TooltipProvider delayDuration={200}>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <DropdownMenuItem
+                                    data-testid="menu-save-as-skill"
+                                    aria-disabled={isSaveAsSkillDisabled}
+                                    aria-busy={isSavingAsSkill}
+                                    onSelect={(event) => {
+                                      if (isSaveAsSkillDisabled) {
+                                        event.preventDefault()
+                                        return
+                                      }
+                                      onSaveAsSkill()
+                                    }}
+                                    className={cn(
+                                      'items-center gap-2',
+                                      isSaveAsSkillDisabled && 'cursor-not-allowed opacity-50'
+                                    )}
+                                  >
+                                    {isSavingAsSkill ? (
+                                      <Loader2
+                                        className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <BookMarked
+                                        className="size-4 shrink-0 text-text-200"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    )}
+                                    <span className="text-[13px] font-medium leading-5">
+                                      {isSavingAsSkill ? t('Saving as skill…') : t('Save as skill')}
+                                    </span>
+                                  </DropdownMenuItem>
+                                </TooltipTrigger>
+                                {saveAsSkillDisabledReason ? (
+                                  <TooltipContent
+                                    side="right"
+                                    className="max-w-[280px] px-3 py-2 leading-5 whitespace-normal"
+                                  >
+                                    {saveAsSkillDisabledReason}
+                                  </TooltipContent>
+                                ) : null}
+                              </Tooltip>
+                            </TooltipProvider>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               data-testid="menu-context-window"

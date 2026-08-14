@@ -173,7 +173,7 @@ export const LocalFileHeaderActions = ({
             ) : (
               <ClipboardCopy className="size-4" aria-hidden="true" />
             )}
-            {copied ? 'Copied' : 'Copy path'}
+            {copied ? t('Copied') : t('Copy path')}
           </DropdownMenuItem>
           <DropdownMenuLabel className="px-1 text-[10px] font-medium uppercase tracking-wider">
             {t('On this machine')}
@@ -189,7 +189,7 @@ export const LocalFileHeaderActions = ({
               className="gap-2"
             >
               <PackagePlus className="size-4" aria-hidden="true" />
-              {saveAsArtifactState === 'saving' ? 'Saving…' : 'Save as artifact'}
+              {saveAsArtifactState === 'saving' ? t('Saving…') : t('Save as artifact')}
             </DropdownMenuItem>
           ) : null}
         </DropdownMenuContent>

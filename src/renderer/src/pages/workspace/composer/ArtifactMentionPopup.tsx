@@ -258,7 +258,7 @@ export const ArtifactMentionPopup = ({
         </span>
         {size ? <span className="text-xs text-text-300 shrink-0">{size}</span> : null}
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground shrink-0">
-          {row.tag}
+          {row.tag === 'upload' ? t('upload') : t('output')}
         </span>
       </li>
     )
@@ -292,7 +292,7 @@ export const ArtifactMentionPopup = ({
               aria-hidden="true"
               className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
             >
-              {SECTION_UPLOADS_KEY}
+              {t(SECTION_UPLOADS_KEY)}
             </li>
             {uploadMatches.map((row, index) => renderRow(row, index))}
           </>
@@ -303,7 +303,7 @@ export const ArtifactMentionPopup = ({
               aria-hidden="true"
               className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
             >
-              {SECTION_ARTIFACTS_KEY}
+              {t(SECTION_ARTIFACTS_KEY)}
             </li>
             {artifactMatches.map((row, index) => renderRow(row, uploadMatches.length + index))}
           </>

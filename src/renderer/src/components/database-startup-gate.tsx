@@ -66,7 +66,9 @@ const DatabaseStartupGate = ({ children }: DatabaseStartupGateProps): React.JSX.
             <p className="mt-3 text-sm leading-6 text-muted-foreground">{state.error.message}</p>
             <p className="mt-4 font-mono text-xs text-muted-foreground">
               {t('Error code:')} {state.error.code}
-              {state.error.migrationId ? ` · Migration: ${state.error.migrationId}` : ''}
+              {state.error.migrationId
+                ? t(' · Migration: {{id}}', { id: state.error.migrationId })
+                : ''}
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <Button variant="outline" onClick={() => void databaseStartup?.quit()}>

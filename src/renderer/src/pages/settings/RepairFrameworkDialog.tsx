@@ -1,7 +1,20 @@
+import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
+  dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
 import type { ClaudeInstallSource } from '../../../../shared/settings'
 import { AgentInstallSourceMenu, type AgentInstallSourceMenuProps } from './AgentInstallSourceMenu'
 
@@ -27,8 +40,6 @@ const RepairFrameworkDialog = ({
   onRepair
 }: RepairFrameworkDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { t: tCommon } = useTranslation()
-
   return (
     <AlertDialog.Root
       open={Boolean(name)}
@@ -37,18 +48,39 @@ const RepairFrameworkDialog = ({
       }}
     >
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 z-[60] bg-black/50" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-[60] w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-popover p-6 text-foreground shadow-menu">
-          <AlertDialog.Title className="text-base font-semibold text-foreground">
-            {t('{{name}} needs repair', { name })}
-          </AlertDialog.Title>
-          <AlertDialog.Description className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            {t('Repair this agent before selecting it.')}
-          </AlertDialog.Description>
-          <div className="mt-6 flex justify-end gap-2">
+        <AlertDialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
+        <AlertDialog.Content
+          className={dialogPanelClassName('z-[60] w-[min(440px,calc(100vw-2rem))] p-0')}
+        >
+          <div className={dialogHeaderClassName}>
+            <div className="min-w-0">
+              <AlertDialog.Title className={dialogTitleClassName}>
+                {t('{{name}} needs repair', { name })}
+              </AlertDialog.Title>
+            </div>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="outline">
-                {tCommon('Cancel')}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t('Close')}
+                className={dialogCloseButtonClassName}
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </AlertDialog.Cancel>
+          </div>
+
+          <div className={dialogBodyClassName}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              {t('Repair this agent before selecting it.')}
+            </AlertDialog.Description>
+          </div>
+
+          <div className={dialogFooterClassName}>
+            <AlertDialog.Cancel asChild>
+              <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             {name ? (

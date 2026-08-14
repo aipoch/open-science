@@ -7,7 +7,8 @@ import {
   Pencil,
   Plus,
   Terminal,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useEffect, useMemo, useState } from 'react'
@@ -21,7 +22,12 @@ import type {
 } from '../../../../shared/settings'
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -454,7 +460,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
             role="alert"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{authError}</span>
+            <span>{t(authError)}</span>
           </div>
         ) : null}
         {showFeatured
@@ -521,16 +527,16 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           }`}
                         >
                           {retryingIds.has(server.id)
-                            ? 'Checking…'
+                            ? t('Checking…')
                             : server.checking
-                              ? 'Checking…'
+                              ? t('Checking…')
                               : server.availability === 'unavailable'
-                                ? 'Unavailable'
+                                ? t('Unavailable')
                                 : server.availability === 'unauthenticated'
-                                  ? 'Sign-in required'
+                                  ? t('Sign-in required')
                                   : server.enabled
-                                    ? 'Connected'
-                                    : 'Disabled'}
+                                    ? t('Connected')
+                                    : t('Disabled')}
                         </span>
                       </div>
                       <SettingsIconAction
@@ -557,7 +563,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           disabled={retryingIds.has(server.id)}
                           onClick={() => void retry(server.id)}
                         >
-                          {retryingIds.has(server.id) ? 'Checking…' : 'Retry'}
+                          {retryingIds.has(server.id) ? t('Checking…') : t('Retry')}
                         </Button>
                       ) : null}
                       {server.availability === 'unauthenticated' && !server.oauth ? (
@@ -587,12 +593,12 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                           onClick={() => void signIn(server.id)}
                         >
                           {authenticatingIds.has(server.id)
-                            ? 'Connecting…'
+                            ? t('Connecting…')
                             : server.oauth.hasTokens && server.availability !== 'unauthenticated'
-                              ? 'Connected'
+                              ? t('Connected')
                               : server.availability === 'unauthenticated'
-                                ? 'Retry'
-                                : 'Sign in'}
+                                ? t('Retry')
+                                : t('Sign in')}
                         </Button>
                       ) : null}
                       <SettingsToggle
@@ -638,51 +644,78 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
       >
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))]')}>
-            <AlertDialog.Title className={dialogTitleClassName}>
-              {t('Remove “{{name}}”?', { name: removal?.server.displayName ?? '' })}
-            </AlertDialog.Title>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              {tCommon(
-                'This removes the Connector configuration and credentials from this app. Existing conversation history is kept.'
-              )}
-            </AlertDialog.Description>
-            {removal?.specialistNames?.length ? (
-              <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
-                <p>
-                  {removal.specialistNames.length === 1
-                    ? t(
-                        'This Connector is used by {{count}} Specialist. Its saved references will become unavailable.',
-                        { count: removal.specialistNames.length }
-                      )
-                    : t(
-                        'This Connector is used by {{count}} Specialists. Their saved references will become unavailable.',
-                        { count: removal.specialistNames.length }
-                      )}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {removal.specialistNames.join(', ')}
-                </p>
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Remove “{{name}}”?', { name: removal?.server.displayName ?? '' })}
+                </AlertDialog.Title>
               </div>
-            ) : removal?.specialistNames === undefined ? (
-              <p className="mt-4 text-xs text-muted-foreground">
-                {tCommon(
-                  'Specialist references could not be checked. You can still remove this Connector.'
-                )}
-              </p>
-            ) : null}
-            {removalError ? (
-              <div
-                role="alert"
-                className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
-              >
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-                <span>{removalError}</span>
-              </div>
-            ) : null}
-            <div className="mt-6 flex justify-end gap-2">
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline" disabled={removing}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Close')}
+                  className={dialogCloseButtonClassName}
+                  disabled={removing}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                {tCommon(
+                  'This removes the Connector configuration and credentials from this app. Existing conversation history is kept.'
+                )}
+              </AlertDialog.Description>
+              {removal?.specialistNames?.length ? (
+                <div className="mt-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2.5 text-sm text-foreground">
+                  <p>
+                    {removal.specialistNames.length === 1
+                      ? t(
+                          'This Connector is used by {{count}} Specialist. Its saved references will become unavailable.',
+                          { count: removal.specialistNames.length }
+                        )
+                      : t(
+                          'This Connector is used by {{count}} Specialists. Their saved references will become unavailable.',
+                          { count: removal.specialistNames.length }
+                        )}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {removal.specialistNames.join(', ')}
+                  </p>
+                </div>
+              ) : removal?.specialistNames === undefined ? (
+                <p className="mt-4 text-xs text-muted-foreground">
+                  {tCommon(
+                    'Specialist references could not be checked. You can still remove this Connector.'
+                  )}
+                </p>
+              ) : null}
+              {removalError ? (
+                <div
+                  role="alert"
+                  className="mt-4 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+                >
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{t(removalError)}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className={dialogFooterClassName}>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className={dialogCancelButtonClassName}
+                  disabled={removing}
+                >
                   {tCommon('Cancel')}
                 </Button>
               </AlertDialog.Cancel>
@@ -692,7 +725,7 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                 disabled={removing}
                 onClick={() => void confirmRemoval()}
               >
-                {removing ? 'Removing…' : 'Remove Connector'}
+                {removing ? t('Removing…') : t('Remove Connector')}
               </Button>
             </div>
           </AlertDialog.Content>

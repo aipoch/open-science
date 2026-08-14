@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -34,7 +35,6 @@ const DeleteSessionDialog = ({
   onConfirmDelete
 }: DeleteSessionDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { t: tCommon } = useTranslation()
   const dialogSession = useRetainedDialogValue(session)
 
   return (
@@ -54,18 +54,12 @@ const DeleteSessionDialog = ({
               <AlertDialog.Title className={dialogTitleClassName}>
                 {t('Delete Session?')}
               </AlertDialog.Title>
-              <AlertDialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. This action cannot be undone.',
-                  { title: dialogSession?.title ?? '' }
-                )}
-              </AlertDialog.Description>
             </div>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label={tCommon('Close')}
+              aria-label={t('Close')}
               className={dialogCloseButtonClassName}
               onClick={onCancel}
             >
@@ -74,14 +68,16 @@ const DeleteSessionDialog = ({
           </div>
           <div className={dialogBodyClassName}>
             <AlertDialog.Description className={dialogDescriptionClassName}>
-              This will permanently delete &quot;{dialogSession?.title}&quot;. Artifacts created in
-              this session will remain in the project. This action cannot be undone.
+              {t(
+                'This will permanently delete "{{title}}". Artifacts created in this session will remain in the project. This action cannot be undone.',
+                { title: dialogSession?.title ?? '' }
+              )}
             </AlertDialog.Description>
           </div>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="outline">
-                {tCommon('Cancel')}
+              <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
             <AlertDialog.Action asChild>

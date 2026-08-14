@@ -333,8 +333,8 @@ const RemoteOfficePreviewContent = ({
       {state.kind === 'loading' ? (
         <div className="absolute inset-0 z-10 bg-bg-000">
           <PreviewLoadingContent
-            title={state.titleKey ? t(state.titleKey) : state.title}
-            description={state.description}
+            title={state.titleKey ? t(state.titleKey) : state.title ? t(state.title) : undefined}
+            description={state.description ? t(state.description) : undefined}
           />
         </div>
       ) : null}

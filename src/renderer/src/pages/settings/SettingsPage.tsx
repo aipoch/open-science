@@ -205,7 +205,7 @@ const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
 )
 
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
-// (skills: list / detail / create / edit / import; model: list / create / edit; connectors: list /
+// (skills: list / manage / detail / create / edit / import; model: list / create / edit; connectors: list /
 // detail / add / edit). `connectors` is optional so panel switches that don't touch it stay terse.
 // Network panel sub-view: the package-mirror list vs. the configure form (a breadcrumb drill-in).
 type NetworkView = { kind: 'list' | 'mirror' | 'proxy' }
@@ -486,16 +486,18 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         skillsView.kind === 'create'
           ? t('New skill')
-          : skillsView.kind === 'upload'
-            ? t('Upload skills')
-            : skillsView.kind === 'import'
-              ? t('Import from GitHub')
-              : skillsView.kind === 'import-agent-home'
-                ? t('Import installed skills')
-                : (() => {
-                    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                    return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
-                  })()
+          : skillsView.kind === 'manage'
+            ? t('Manage skills')
+            : skillsView.kind === 'upload'
+              ? t('Upload skills')
+              : skillsView.kind === 'import'
+                ? t('Import from GitHub')
+                : skillsView.kind === 'import-agent-home'
+                  ? t('Import installed skills')
+                  : (() => {
+                      const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+                      return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
+                    })()
       return {
         rootLabelKey: 'Skills',
         rootTo: { panel: 'skills', skills: { kind: 'list' }, model: currentLocation.model },
@@ -522,7 +524,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           model: currentLocation.model,
           network: { kind: 'list' }
         },
-        leaf: networkView.kind === 'proxy' ? 'Proxy' : 'Package mirror'
+        leaf: networkView.kind === 'proxy' ? t('Proxy') : t('Package mirror')
       }
     }
     if (activePanel === 'connectors' && connectorsView.kind !== 'list') {

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -36,7 +37,6 @@ const RenameSessionDialog = ({
   onConfirmRename
 }: RenameSessionDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
-  const { t: tCommon } = useTranslation()
   const dialogRenameDraft = useRetainedDialogValue(session ? renameDraft : undefined) ?? renameDraft
 
   return (
@@ -58,15 +58,12 @@ const RenameSessionDialog = ({
             <div className={dialogHeaderClassName}>
               <div className="min-w-0">
                 <Dialog.Title className={dialogTitleClassName}>{t('Rename session')}</Dialog.Title>
-                <Dialog.Description className={dialogDescriptionClassName}>
-                  {t('Update the name shown in the session list.')}
-                </Dialog.Description>
               </div>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label={tCommon('Close')}
+                aria-label={t('Close')}
                 className={dialogCloseButtonClassName}
                 onClick={onCancel}
               >
@@ -97,9 +94,9 @@ const RenameSessionDialog = ({
                 type="button"
                 variant="ghost"
                 onClick={onCancel}
-                className="cursor-pointer border-0 shadow-none hover:bg-bg-200 hover:text-foreground"
+                className={dialogCancelButtonClassName}
               >
-                {tCommon('Cancel')}
+                {t('Cancel')}
               </Button>
               <Button type="submit" disabled={dialogRenameDraft.trim().length === 0}>
                 {t('Rename')}

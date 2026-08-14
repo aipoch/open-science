@@ -22,7 +22,7 @@ import {
   MessageCircleMore,
   Pencil
 } from 'lucide-react'
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react'
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
@@ -742,7 +742,7 @@ const MessagePartsContent = ({
           )
         }
         if (part.type === 'artifact') {
-          if (isStatic) {
+          if (isStatic || !('source' in part)) {
             return (
               <span
                 key={index}
@@ -754,7 +754,7 @@ const MessagePartsContent = ({
           }
           // Linked-folder mentions read as a dark-gray `@` pill over the relative path; other
           // sources keep the green `@<name>` pill.
-          if ('source' in part && part.source === 'linked-folder') {
+          if (part.source === 'linked-folder') {
             return (
               <button
                 key={index}
@@ -764,7 +764,7 @@ const MessagePartsContent = ({
                   mentionButtonClassName,
                   'bg-path-chip text-path-chip-foreground'
                 )}
-                onClick={() => onPreviewMentionArtifact(part as ArtifactMentionPart)}
+                onClick={() => onPreviewMentionArtifact(part)}
                 aria-label={t('Preview {{name}}', { name: part.name })}
                 title={`@${part.relativePath}`}
               >
@@ -772,28 +772,26 @@ const MessagePartsContent = ({
               </button>
             )
           }
-          if ('source' in part) {
-            return (
-              <button
-                key={index}
-                type="button"
-                className={cn(
-                  artifactMentionPillClassName,
-                  mentionButtonClassName,
-                  'bg-mention-chip text-mention-chip-foreground'
-                )}
-                onClick={() => onPreviewMentionArtifact(part as ArtifactMentionPart)}
-                aria-label={t('Preview {{name}}', { name: part.name })}
-              >
-                @<ExtensionPreservingFileName name={part.name} />
-              </button>
-            )
-          }
+          return (
+            <button
+              key={index}
+              type="button"
+              className={cn(
+                artifactMentionPillClassName,
+                mentionButtonClassName,
+                'bg-mention-chip text-mention-chip-foreground'
+              )}
+              onClick={() => onPreviewMentionArtifact(part)}
+              aria-label={t('Preview {{name}}', { name: part.name })}
+            >
+              @<ExtensionPreservingFileName name={part.name} />
+            </button>
+          )
         }
 
         return (
           <span key={index} className="whitespace-pre-wrap">
-            {'text' in part ? part.text : ''}
+            {part.text}
           </span>
         )
       })}
@@ -802,7 +800,7 @@ const MessagePartsContent = ({
 }
 
 // Renders one chat message with user bubbles and full-width assistant markdown surfaces.
-const WorkspaceMessageItem = ({
+const WorkspaceMessageItemImpl = ({
   message,
   onPreviewArtifact,
   onPreviewUploadAttachment,
@@ -1142,6 +1140,78 @@ const WorkspaceMessageItem = ({
     </MessageScrollerItem>
   )
 }
+
+// The scroller resolves artifacts fresh on every transcript rebuild, but the referenced artifact
+// objects keep their identity (the store projects immutably), so compare element by element.
+const areMessageArtifactsEqual = (
+  previous: MessageArtifact[] | undefined,
+  next: MessageArtifact[] | undefined
+): boolean => {
+  if (previous === next) return true
+  const previousArtifacts = previous ?? []
+  const nextArtifacts = next ?? []
+  return (
+    previousArtifacts.length === nextArtifacts.length &&
+    previousArtifacts.every((artifact, index) => artifact === nextArtifacts[index])
+  )
+}
+
+// Only these three fields are rendered (turn usage popover); the scroller may pass a whole
+// runtime segment whose other fields are irrelevant here.
+const areRuntimeIdentitiesEqual = (
+  previous: MessageRuntimeIdentity | undefined,
+  next: MessageRuntimeIdentity | undefined
+): boolean =>
+  previous === next ||
+  (previous !== undefined &&
+    next !== undefined &&
+    previous.frameworkId === next.frameworkId &&
+    previous.backendId === next.backendId &&
+    previous.model === next.model)
+
+// The scroller rebuilds this object (with fresh closures) on every render. The closures only
+// capture the session id and a revision's branch id, both of which change only together with
+// index/total or the message itself, so those fields fully determine what a re-render would show.
+const areRevisionNavigationsEqual = (
+  previous: WorkspaceMessageItemProps['revisionNavigation'],
+  next: WorkspaceMessageItemProps['revisionNavigation']
+): boolean =>
+  previous === next ||
+  (previous !== undefined &&
+    next !== undefined &&
+    previous.index === next.index &&
+    previous.total === next.total &&
+    (previous.onPrevious === undefined) === (next.onPrevious === undefined) &&
+    (previous.onNext === undefined) === (next.onNext === undefined))
+
+// Streaming rebuilds the transcript once per chunk; a message whose object identity is unchanged
+// renders identically, so bail out before re-running the Markdown pipeline for it.
+const areWorkspaceMessageItemPropsEqual = (
+  previous: WorkspaceMessageItemProps,
+  next: WorkspaceMessageItemProps
+): boolean =>
+  previous.message === next.message &&
+  previous.onPreviewArtifact === next.onPreviewArtifact &&
+  previous.onPreviewUploadAttachment === next.onPreviewUploadAttachment &&
+  previous.onOpenSkillMention === next.onOpenSkillMention &&
+  previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
+  previous.onSendEditedMessage === next.onSendEditedMessage &&
+  (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
+  (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
+  previous.contentPaddingClassName === next.contentPaddingClassName &&
+  previous.turnStartedAt === next.turnStartedAt &&
+  (previous.showAssistantFooter ?? true) === (next.showAssistantFooter ?? true) &&
+  (previous.subsequentTurns ?? 0) === (next.subsequentTurns ?? 0) &&
+  previous.staticParts === next.staticParts &&
+  areMessageArtifactsEqual(previous.artifacts, next.artifacts) &&
+  areRuntimeIdentitiesEqual(previous.runtimeIdentity, next.runtimeIdentity) &&
+  areRevisionNavigationsEqual(previous.revisionNavigation, next.revisionNavigation) &&
+  previous.onPresentationChange === next.onPresentationChange &&
+  (previous.presentationSourceOpen ?? true) === (next.presentationSourceOpen ?? true) &&
+  (previous.presentationAnimateOnMount ?? true) === (next.presentationAnimateOnMount ?? true)
+
+const WorkspaceMessageItem = memo(WorkspaceMessageItemImpl, areWorkspaceMessageItemPropsEqual)
+WorkspaceMessageItem.displayName = 'WorkspaceMessageItem'
 
 export { MessageArtifactList, WorkspaceMessageItem }
 export type { ArtifactMentionPart }

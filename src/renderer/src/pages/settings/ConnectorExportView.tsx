@@ -88,7 +88,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
             className="flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
+            <span>{t(error)}</span>
           </div>
         ) : null}
 
@@ -109,7 +109,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
               </div>
               <div className="grid grid-cols-[8rem_1fr] gap-3 py-2.5">
                 <dt className="text-muted-foreground">
-                  {definition.transport === 'stdio' ? 'Command' : 'Server URL'}
+                  {definition.transport === 'stdio' ? t('Command') : t('Server URL')}
                 </dt>
                 <dd className="min-w-0 break-all font-mono text-xs text-foreground">
                   {definition.transport === 'stdio'
@@ -121,10 +121,10 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
                 <dt className="text-muted-foreground">{t('Credentials')}</dt>
                 <dd className="text-foreground">
                   {definition.oauth
-                    ? 'OAuth configuration only; tokens excluded'
+                    ? t('OAuth configuration only; tokens excluded')
                     : secretNames.length
-                      ? `Names only: ${secretNames.join(', ')}`
-                      : 'None declared'}
+                      ? t('Names only: {{names}}', { names: secretNames.join(', ') })
+                      : t('None declared')}
                 </dd>
               </div>
             </dl>
@@ -158,7 +158,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
 
         <div className="flex items-center justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onDone}>
-            {saved ? 'Done' : 'Cancel'}
+            {saved ? t('Done') : t('Cancel')}
           </Button>
           <Button
             type="button"
@@ -166,7 +166,7 @@ export function ConnectorExportView({ id, onDone }: ConnectorExportViewProps): R
             onClick={() => void save()}
           >
             <Download data-icon="inline-start" aria-hidden="true" />
-            {saving ? 'Saving…' : 'Save configuration'}
+            {saving ? t('Saving…') : t('Save configuration')}
           </Button>
         </div>
       </div>

@@ -137,12 +137,12 @@ export function ConnectorAddForm({
       return t('Use only lowercase letters, numbers, and hyphens.')
     }
     if (connectors.some((connector) => connector.id === currentName)) {
-      return t('This ID is reserved by a built-in Connector.')
+      return t('This name is reserved by a built-in Connector.')
     }
     if (
       customServers.some((server) => server.id !== editServer?.id && server.name === currentName)
     ) {
-      return t('A custom Connector with this ID already exists.')
+      return t('A custom Connector with this name already exists.')
     }
     return null
   }, [connectors, currentName, customServers, editServer?.id, t])
@@ -445,12 +445,12 @@ export function ConnectorAddForm({
             <div id="connector-advanced-settings" className="mt-3 flex flex-col gap-4">
               <div data-slot="settings-editor-field" className={fieldClassName}>
                 <label className={fieldLabelClassName} htmlFor="connector-name-id">
-                  {t('Connector ID')}
+                  {t('Connector name')}
                   {isEdit ? null : <RequiredMark />}
                 </label>
                 <Input
                   id="connector-name-id"
-                  aria-label={t('Connector ID')}
+                  aria-label={t('Connector name')}
                   value={currentName}
                   disabled={isEdit}
                   aria-invalid={nameError ? true : undefined}

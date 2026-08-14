@@ -346,7 +346,7 @@ const SideChatPanel = ({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top">
-                  {view.running ? 'Cancel response' : 'Send follow up'}
+                  {view.running ? t('Cancel response') : t('Send follow up')}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

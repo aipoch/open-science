@@ -22,6 +22,11 @@ const PermissionUndoItem = ({
   isRestoring: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const messageParams = { ...undo.messageParams }
+  for (const name of undo.translatedMessageParams ?? []) {
+    const value = messageParams[name]
+    if (typeof value === 'string') messageParams[name] = t(value)
+  }
 
   const [pointerPaused, setPointerPaused] = useState(false)
   const [focusPaused, setFocusPaused] = useState(false)
@@ -75,7 +80,7 @@ const PermissionUndoItem = ({
       className="pointer-events-auto flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-2xl border border-border/80 bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg shadow-black/10"
     >
       <KeyRound className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="max-w-[min(28rem,55vw)] truncate">{undo.message}</span>
+      <span className="max-w-[min(28rem,55vw)] truncate">{t(undo.messageKey, messageParams)}</span>
       {undo.canRestore !== false ? (
         <Button
           type="button"

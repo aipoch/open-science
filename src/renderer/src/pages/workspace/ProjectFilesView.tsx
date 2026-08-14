@@ -484,7 +484,7 @@ const ProjectFilesViewContent = ({
   const selectedLocalRoot = selectedLocalRootId
     ? grantedRoots.find((root) => root.id === selectedLocalRootId)
     : undefined
-  const filesExpansionLabel = isFilesExpanded ? 'Exit full screen files' : 'Expand files'
+  const filesExpansionLabel = isFilesExpanded ? t('Exit full screen files') : t('Expand files')
 
   return (
     <div data-testid="files-view" className="flex h-full min-h-0 w-full flex-col bg-bg-10">

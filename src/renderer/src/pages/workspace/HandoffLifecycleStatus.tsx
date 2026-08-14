@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import type { TFunction } from 'i18next'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -7,22 +8,22 @@ import type { HandoffTranscriptProjection } from './handoff-lifecycle-projection
 const targetLabel = (target: HandoffTranscriptProjection['target']): string =>
   target.kind === 'main' ? 'Main Agent' : target.name
 
-const statusCopy = (handoff: HandoffTranscriptProjection): string => {
+const statusCopy = (handoff: HandoffTranscriptProjection, t: TFunction): string => {
   const target = targetLabel(handoff.target)
 
   switch (handoff.phase) {
     case 'awaiting-approval':
-      return `Awaiting approval to switch to ${target}`
+      return t('Awaiting approval to switch to {{target}}', { target })
     case 'switching':
-      return `Switching to ${target}`
+      return t('Switching to {{target}}', { target })
     case 'reconfiguring':
-      return `Reconfiguring ${target}`
+      return t('Reconfiguring {{target}}', { target })
     case 'continuation-start':
-      return `Starting continuation with ${target}`
+      return t('Starting continuation with {{target}}', { target })
     case 'continued':
-      return `Continued with ${target}`
+      return t('Continued with {{target}}', { target })
     case 'failed':
-      return `Could not continue with ${target}`
+      return t('Could not continue with {{target}}', { target })
   }
 }
 
@@ -37,16 +38,16 @@ const HandoffLifecycleStatus = ({
 
   const isFailure = handoff.phase === 'failed'
   const [isRetrying, setIsRetrying] = useState(false)
-  const [retryError, setRetryError] = useState<string | undefined>()
+  const [retryError, setRetryError] = useState(false)
 
   const retry = async (): Promise<void> => {
     if (!onRetry || isRetrying) return
     setIsRetrying(true)
-    setRetryError(undefined)
+    setRetryError(false)
     try {
       await onRetry()
     } catch {
-      setRetryError('Retry could not start. The saved handoff remains available.')
+      setRetryError(true)
     } finally {
       setIsRetrying(false)
     }
@@ -66,7 +67,7 @@ const HandoffLifecycleStatus = ({
           : 'rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground'
       }
     >
-      <span className="font-medium text-foreground">{statusCopy(handoff)}</span>
+      <span className="font-medium text-foreground">{statusCopy(handoff, t)}</span>
       {handoff.phase === 'continued' ? (
         <span className="ml-1">{t('The original task continues in this turn.')}</span>
       ) : null}
@@ -80,10 +81,14 @@ const HandoffLifecycleStatus = ({
           disabled={isRetrying}
           onClick={() => void retry()}
         >
-          {isRetrying ? 'Retrying…' : 'Retry handoff'}
+          {isRetrying ? t('Retrying…') : t('Retry handoff')}
         </Button>
       ) : null}
-      {isFailure && retryError ? <span className="ml-1">{retryError}</span> : null}
+      {isFailure && retryError ? (
+        <span className="ml-1">
+          {t('Retry could not start. The saved handoff remains available.')}
+        </span>
+      ) : null}
     </div>
   )
 }

@@ -533,11 +533,11 @@ const SpecialistEditor = ({
                   {editSpecialist.displayName ?? editSpecialist.name}
                 </span>
                 <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {editSpecialist.setupPending ? 'Setup incomplete' : 'Saved'}
+                  {editSpecialist.setupPending ? t('Setup incomplete') : t('Saved')}
                 </span>
               </div>
               <p className="mt-0.5 line-clamp-2 max-w-xl text-xs text-muted-foreground">
-                {editSpecialist.description || 'No description'}
+                {editSpecialist.description || t('No description')}
               </p>
               {editSpecialist.origin === 'imported' ? (
                 <div className="mt-2 text-xs text-muted-foreground">
@@ -575,7 +575,7 @@ const SpecialistEditor = ({
             <SpecialistAvatar iconKey={form.iconKey} colorKey={form.colorKey} size="lg" />
             <div className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold text-foreground">
-                {form.name.trim() || 'Untitled specialist'}
+                {form.name.trim() || t('Untitled specialist')}
               </span>
               <span className="text-xs text-muted-foreground">
                 {t('Preview — matches the list and picker.')}
@@ -935,7 +935,9 @@ const SpecialistEditor = ({
                         <div className="flex-1">
                           {filteredAddableSkills.length === 0 ? (
                             <p className="px-3 py-3 text-[12px] text-muted-foreground">
-                              {skillSearchQuery ? 'No matching skills' : 'No more skills to add'}
+                              {skillSearchQuery
+                                ? t('No matching skills')
+                                : t('No more skills to add')}
                             </p>
                           ) : (
                             filteredAddableSkills.map((skill) => (
@@ -990,8 +992,8 @@ const SpecialistEditor = ({
                           {filteredAddableConnectors.length === 0 ? (
                             <p className="px-3 py-3 text-[12px] text-muted-foreground">
                               {connectorSearchQuery
-                                ? 'No matching connectors'
-                                : 'No more connectors to add'}
+                                ? t('No matching connectors')
+                                : t('No more connectors to add')}
                             </p>
                           ) : (
                             filteredAddableConnectors.map((connector) => (
@@ -1169,7 +1171,7 @@ const SpecialistEditor = ({
                 disabled={isReloading}
                 className="shrink-0"
               >
-                {isReloading ? 'Reloading…' : 'Reload'}
+                {isReloading ? t('Reloading…') : t('Reload')}
               </Button>
             ) : null}
           </div>
@@ -1187,11 +1189,11 @@ const SpecialistEditor = ({
           >
             {isSaving
               ? isEdit
-                ? 'Saving…'
-                : 'Creating…'
+                ? t('Saving…')
+                : t('Creating…')
               : isEdit
-                ? 'Save changes'
-                : 'Create specialist'}
+                ? t('Save changes')
+                : t('Create specialist')}
           </Button>
         </div>
       </div>

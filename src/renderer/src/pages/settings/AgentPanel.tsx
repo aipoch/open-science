@@ -632,8 +632,10 @@ const AgentPanel = ({
           ) : null}
           {activeFramework && !activeFramework.supportsSkills ? (
             <p className="text-xs text-muted-foreground">
-              Skills aren&apos;t available with {activeFramework.displayName}; use Claude Code for
-              skill-based workflows.
+              {t(
+                "Skills aren't available with {{name}}; use Claude Code for skill-based workflows.",
+                { name: activeFramework.displayName }
+              )}
             </p>
           ) : null}
         </div>

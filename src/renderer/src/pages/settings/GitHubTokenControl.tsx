@@ -9,7 +9,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-type Feedback = { kind: 'error' | 'success'; text: string }
+type Feedback = { kind: 'error' | 'success'; text: string; suffix?: string }
 type Availability = 'checking' | 'available' | 'unavailable'
 
 const isLocalOnlyActionError = (error: unknown): boolean =>
@@ -68,7 +68,8 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
       const detail = error instanceof Error ? error.message : 'Token verification failed.'
       setFeedback({
         kind: 'error',
-        text: `${detail} Your saved token was not changed.`
+        text: detail,
+        suffix: 'Your saved token was not changed.'
       })
     } finally {
       setBusy(null)
@@ -113,7 +114,9 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
         ) : (
           <KeyRound className="size-4" aria-hidden="true" />
         )}
-        {status?.configured && status.mask ? `GitHub token · ${status.mask}` : 'GitHub token'}
+        {status?.configured && status.mask
+          ? t('GitHub token · {{mask}}', { mask: status.mask })
+          : t('GitHub token')}
       </Button>
 
       {expanded ? (
@@ -204,7 +207,10 @@ const GitHubTokenControl = (): React.JSX.Element | null => {
                 ) : (
                   <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 )}
-                <p>{feedback.text}</p>
+                <p>
+                  {t(feedback.text)}
+                  {feedback.suffix ? ` ${t(feedback.suffix)}` : null}
+                </p>
               </div>
             ) : status?.configured ? (
               <p className="text-xs text-muted-foreground">

@@ -815,7 +815,10 @@ const formatPackageChange = (value: unknown): string | undefined => {
 
 // Summarizes a package install: which packages, the installer used, and a cleaned collapsible log —
 // instead of dumping the raw { ok, needsRestart, log, method } JSON envelope into the transcript.
-const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildManagePackagesDetails = (
+  activity: ToolActivity,
+  t: TranslateClause = identityTranslate
+): ToolActivityDetails | undefined => {
   const result = parseManagePackagesResult(activity)
 
   // Nothing parseable to summarize; let the generic input/output view handle it.
@@ -838,7 +841,10 @@ const buildManagePackagesDetails = (activity: ToolActivity): ToolActivityDetails
   const packageChanges = Array.isArray(result.packageChanges)
     ? result.packageChanges.map(formatPackageChange).filter((change): change is string => !!change)
     : []
-  const metaLabel = [ok === false ? 'failed' : method, needsRestart ? 'restart needed' : undefined]
+  const metaLabel = [
+    ok === false ? t('failed') : method,
+    needsRestart ? t('restart needed') : undefined
+  ]
     .filter(Boolean)
     .join(' · ')
   const sections: ToolDetailSection[] = []
@@ -998,7 +1004,7 @@ const buildToolActivityDetails = (
     return buildDiffDetails(activity, t) ?? buildGenericDetails(activity)
   // Package installs show which packages / installer and a cleaned log, not the raw result JSON.
   if (isManagePackagesActivity(activity)) {
-    return buildManagePackagesDetails(activity) ?? buildGenericDetails(activity)
+    return buildManagePackagesDetails(activity, t) ?? buildGenericDetails(activity)
   }
   // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
   if (isNotebookKernelRunActivity(activity)) {

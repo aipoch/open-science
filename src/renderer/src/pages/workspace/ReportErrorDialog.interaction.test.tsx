@@ -143,6 +143,18 @@ describe('ReportErrorDialog', () => {
     expect(issueLink()?.getAttribute('href')).toContain('template=bug_report.yml')
   })
 
+  it('renders the GitHub privacy statement as a working link inside the consent copy', () => {
+    renderDialog()
+
+    const privacyLink = Array.from(document.body.querySelectorAll<HTMLAnchorElement>('a')).find(
+      (link) => link.textContent === 'Privacy Statement'
+    )
+    expect(privacyLink?.href).toBe(
+      'https://docs.github.com/site-policy/privacy-policies/github-privacy-statement'
+    )
+    expect(privacyLink?.target).toBe('_blank')
+  })
+
   it('resets consent when the user edits the textarea', () => {
     renderDialog()
     act(() => {

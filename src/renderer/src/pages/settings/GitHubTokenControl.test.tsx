@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
 import { GitHubTokenControl } from './GitHubTokenControl'
 
 let container: HTMLDivElement
@@ -93,6 +94,11 @@ describe('GitHubTokenControl', () => {
     expect(document.body.textContent).toContain('Token verified and saved.')
     expect(document.body.textContent).toContain('GitHub token · gith…fied')
     expect(document.body.querySelector<HTMLInputElement>('#github-token')?.value).toBe('')
+
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    expect(document.body.textContent).toContain('令牌已验证并保存。')
+    expect(document.body.textContent).not.toContain('Token verified and saved.')
+    await act(async () => i18next.changeLanguage('en'))
   })
 
   it('keeps the existing masked token visible when replacement validation fails', async () => {

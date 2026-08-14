@@ -8,13 +8,13 @@ import {
   dialogBodyClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { cn } from '@/lib/utils'
-import { APP } from '../../../shared/app-config'
 
 type DataRootMissingDialogProps = {
   open: boolean
@@ -80,19 +80,24 @@ const DataRootMissingDialog = ({
     <AlertDialog.Root open={open}>
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
-        <AlertDialog.Content className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))]')}>
-          <AlertDialog.Title className={dialogTitleClassName}>
-            {t('Data folder not found')}
-          </AlertDialog.Title>
-          <AlertDialog.Description className={dialogDescriptionClassName}>
-            <Trans
-              i18nKey="Your data folder <path>{{path}}</path> can't be found. It may have been deleted, or it's on a drive that isn't connected."
-              values={{ path: dialogDataRoot }}
-              components={{ path: <span className="font-mono" /> }}
-            />
-          </AlertDialog.Description>
+        <AlertDialog.Content
+          className={dialogPanelClassName('w-[min(460px,calc(100vw-2rem))] p-0')}
+        >
+          <div className={dialogHeaderClassName}>
+            <AlertDialog.Title className={dialogTitleClassName}>
+              {t('Data folder not found')}
+            </AlertDialog.Title>
+          </div>
 
           <div className={dialogBodyClassName}>
+            <AlertDialog.Description className={dialogDescriptionClassName}>
+              <Trans
+                i18nKey="Your data folder <path>{{path}}</path> can't be found. It may have been deleted, or it's on a drive that isn't connected."
+                values={{ path: dialogDataRoot }}
+                components={{ path: <span className="font-mono" /> }}
+              />
+            </AlertDialog.Description>
+
             {stillMissing ? (
               <p className="mt-3 text-xs text-destructive" role="alert">
                 {t(
@@ -138,8 +143,7 @@ const DataRootMissingDialog = ({
             </AlertDialog.Cancel>
             <p className="text-xs text-muted-foreground">
               {t(
-                "{{appName}} will recreate the folder as you use it. Files from the old location won't be available until it's reconnected.",
-                { appName: APP.name }
+                "Open Science will recreate the folder as you use it. Files from the old location won't be available until it's reconnected."
               )}
             </p>
           </div>

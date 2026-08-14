@@ -29,7 +29,7 @@ const EnvProvisionOverlay = ({
       data-testid="notebook-env-gate"
       className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-bg-000/80 p-6 text-center backdrop-blur-sm"
     >
-      <p className="text-sm font-medium text-text-000">{title}</p>
+      <p className="text-sm font-medium text-text-000">{t(title)}</p>
       {ui.kind === 'preparing' ? (
         <>
           {ui.message ? <p className="text-xs text-text-300">{ui.message}</p> : null}

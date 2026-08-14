@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
 import { useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -11,7 +12,11 @@ import {
   CardTitle
 } from '@/components/ui/card'
 import {
+  dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
+  dialogFooterClassName,
+  dialogHeaderClassName,
   dialogOverlayClassName,
   dialogPanelClassName,
   dialogTitleClassName
@@ -197,7 +202,7 @@ const LocationStep = ({
               className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
               role="alert"
             >
-              {t('Could not finish setting up storage:')} {relaunchError}{' '}
+              {t('Could not finish setting up storage:')} {t(relaunchError)}{' '}
               {t('You can retry or keep the default location.')}
             </p>
           ) : null}
@@ -276,31 +281,48 @@ const LocationStep = ({
       >
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
-          <AlertDialog.Content className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))]')}>
-            <AlertDialog.Title className={dialogTitleClassName}>
-              {t('Restart to set up your data?')}
-            </AlertDialog.Title>
-            <AlertDialog.Description className={dialogDescriptionClassName}>
-              <Trans
-                i18nKey="Open Science will restart to set up your data at <path>{{path}}</path>."
-                values={{ path: chosenDataRoot }}
-                components={{ path: <span className="font-mono" /> }}
-              />
-            </AlertDialog.Description>
-            <div className="mt-6 flex justify-end gap-2">
+          <AlertDialog.Content
+            className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}
+          >
+            <div className={dialogHeaderClassName}>
+              <div className="min-w-0">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Restart to set up your data?')}
+                </AlertDialog.Title>
+              </div>
+              <AlertDialog.Cancel asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t('Close')}
+                  className={dialogCloseButtonClassName}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </AlertDialog.Cancel>
+            </div>
+
+            <div className={dialogBodyClassName}>
+              <AlertDialog.Description className={dialogDescriptionClassName}>
+                <Trans
+                  i18nKey="Open Science will restart to set up your data at <path>{{path}}</path>."
+                  values={{ path: chosenDataRoot }}
+                  components={{ path: <span className="font-mono" /> }}
+                />
+              </AlertDialog.Description>
+            </div>
+
+            <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="outline">
                   {t('Keep default')}
                 </Button>
               </AlertDialog.Cancel>
               <AlertDialog.Action asChild>
-                <button
-                  type="button"
-                  onClick={() => void handleRestart()}
-                  className="rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
+                <Button type="button" onClick={() => void handleRestart()}>
                   {t('Restart')}
-                </button>
+                </Button>
               </AlertDialog.Action>
             </div>
           </AlertDialog.Content>

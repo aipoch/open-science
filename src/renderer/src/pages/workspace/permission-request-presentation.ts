@@ -10,6 +10,8 @@ type NotebookRuntime = 'python' | 'r' | 'js' | 'bash'
 
 type PermissionPresentation = {
   actionTitle: string
+  actionTitleKey?: string
+  actionTitleValues?: Record<string, string>
   categoryLabel: string
   description: string
   actionDetail?: string
@@ -194,6 +196,12 @@ const specialistHandoffPresentation = (
   const isMain = payload.targetName === null
   return {
     actionTitle: isMain ? 'Switch to Main Agent?' : `Switch to ${targetName ?? 'Specialist'}?`,
+    ...(!isMain
+      ? {
+          actionTitleKey: 'Switch to {{name}}?',
+          actionTitleValues: { name: targetName ?? 'Specialist' }
+        }
+      : {}),
     categoryLabel: 'Specialist handoff',
     description: 'Approval changes the active Specialist after the current control tool completes.',
     hideToolIdentity: true
@@ -208,6 +216,8 @@ const specialistDeletePresentation = (
   const name = typeof payload.name === 'string' ? payload.name : undefined
   return {
     actionTitle: `Delete ${name ?? 'Specialist'}?`,
+    actionTitleKey: 'Delete {{name}}?',
+    actionTitleValues: { name: name ?? 'Specialist' },
     categoryLabel: 'Specialist delete',
     description:
       'Permanently removes the Specialist. Conversations still bound to it become unavailable and are not switched to Main Agent automatically.',
@@ -335,6 +345,12 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
     const actionDetail = humanizeMcpIdentity(request.mcpIdentity) ?? humanizeUnresolvedMcp(request)
     return {
       actionTitle: actionDetail ? `Use ${actionDetail}?` : 'Use external service?',
+      ...(actionDetail
+        ? {
+            actionTitleKey: 'Use {{service}}?',
+            actionTitleValues: { service: actionDetail }
+          }
+        : {}),
       categoryLabel: 'External service',
       description: 'Uses an MCP service configured for this conversation.',
       actionDetail

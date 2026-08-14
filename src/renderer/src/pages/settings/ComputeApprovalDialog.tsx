@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
@@ -89,56 +90,58 @@ export function ComputeApprovalDialog({
             </div>
           </div>
 
-          <div className="mt-3 space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
-              <span className="min-w-0 truncate font-medium text-foreground">
-                {dialogRequest.provider_name}
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
-              <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
-            </div>
-            <div className="flex gap-2">
-              <span className="w-16 shrink-0 text-muted-foreground">{t('Command')}</span>
-              <div className="min-w-0 flex-1">
-                <span className="break-all font-mono text-muted-foreground">
-                  {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
-                </span>
-                {isLongCommand && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedRequestId((id) =>
-                        id === dialogRequest.id ? null : dialogRequest.id
-                      )
-                    }
-                    className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
-                    aria-expanded={showFull}
-                  >
-                    {showFull ? (
-                      <>
-                        <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="size-3" aria-hidden="true" />{' '}
-                        {t('Show full command')}
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-            {dialogRequest.inputs_summary && (
+          <div className={dialogBodyClassName}>
+            <div className="space-y-1.5 rounded-lg border border-border bg-muted/40 p-3 text-xs">
               <div className="flex gap-2">
-                <span className="w-16 shrink-0 text-muted-foreground">{t('Inputs')}</span>
-                <span className="min-w-0 break-words text-foreground">
-                  {dialogRequest.inputs_summary}
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Host')}</span>
+                <span className="min-w-0 truncate font-medium text-foreground">
+                  {dialogRequest.provider_name}
                 </span>
               </div>
-            )}
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Intent')}</span>
+                <span className="min-w-0 break-words text-foreground">{dialogRequest.intent}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="w-16 shrink-0 text-muted-foreground">{t('Command')}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="break-all font-mono text-muted-foreground">
+                    {showFull ? dialogRequest.command_full : dialogRequest.command_preview}
+                  </span>
+                  {isLongCommand && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedRequestId((id) =>
+                          id === dialogRequest.id ? null : dialogRequest.id
+                        )
+                      }
+                      className="mt-1 flex items-center gap-0.5 text-xs text-primary hover:underline"
+                      aria-expanded={showFull}
+                    >
+                      {showFull ? (
+                        <>
+                          <ChevronUp className="size-3" aria-hidden="true" /> {t('Show less')}
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="size-3" aria-hidden="true" />{' '}
+                          {t('Show full command')}
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {dialogRequest.inputs_summary && (
+                <div className="flex gap-2">
+                  <span className="w-16 shrink-0 text-muted-foreground">{t('Inputs')}</span>
+                  <span className="min-w-0 break-words text-foreground">
+                    {dialogRequest.inputs_summary}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className={cn(dialogFooterClassName, 'flex-wrap')}>

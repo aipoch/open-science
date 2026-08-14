@@ -134,41 +134,46 @@ const FileActionButtons = ({
   disabled: boolean
   className: string
   onOpenInPanel: () => void
-}): React.JSX.Element => (
-  <div
-    className={cn(
-      'absolute z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100',
-      className
-    )}
-  >
-    <ManagedFileDownloadButton
-      source={source}
-      path={path}
-      suggestedName={name}
-      disabled={disabled}
-      iconSize="icon-sm"
-      className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
-    />
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
-            aria-label={`Open ${name} in split view beside the session`}
-            disabled={disabled}
-            onClick={onOpenInPanel}
-          >
-            <ArrowUpRight aria-hidden="true" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{`Open ${name} in split view beside the session`}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  </div>
-)
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const openLabel = t('Open {{name}} in split view beside the session', { name })
+
+  return (
+    <div
+      className={cn(
+        'absolute z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100',
+        className
+      )}
+    >
+      <ManagedFileDownloadButton
+        source={source}
+        path={path}
+        suggestedName={name}
+        disabled={disabled}
+        iconSize="icon-sm"
+        className="cursor-pointer border-border bg-bg-000/95 shadow-sm"
+      />
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className="cursor-pointer bg-bg-000/95 text-text-100 shadow-sm"
+              aria-label={openLabel}
+              disabled={disabled}
+              onClick={onOpenInPanel}
+            >
+              <ArrowUpRight aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{openLabel}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
+  )
+}
 
 const FileTile = ({
   name,
@@ -355,48 +360,55 @@ const ProjectFileItems = ({
   previewById: Map<string, ArtifactPreviewResult | undefined>
   onPreview: (file: ProjectFileItem) => void
   onOpenInPanel: (file: ProjectFileItem) => void
-}): React.JSX.Element => (
-  <div
-    data-view-mode={viewMode}
-    className={cn(
-      viewMode === 'grid'
-        ? 'grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-2 px-4 py-3'
-        : 'px-4 py-2'
-    )}
-  >
-    {files.map((file) => {
-      const previewLabel = `Preview ${file.source === 'upload' ? 'uploaded' : 'generated'} file ${file.name}`
-      if (viewMode === 'list') {
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <div
+      data-view-mode={viewMode}
+      className={cn(
+        viewMode === 'grid'
+          ? 'grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-2 px-4 py-3'
+          : 'px-4 py-2'
+      )}
+    >
+      {files.map((file) => {
+        const previewLabel =
+          file.source === 'upload'
+            ? t('Preview uploaded file {{name}}', { name: file.name })
+            : t('Preview generated file {{name}}', { name: file.name })
+        if (viewMode === 'list') {
+          return (
+            <FileListRow
+              key={file.id}
+              file={file}
+              previewLabel={previewLabel}
+              onPreview={() => onPreview(file)}
+              onOpenInPanel={() => onOpenInPanel(file)}
+            />
+          )
+        }
+
         return (
-          <FileListRow
+          <FileTile
             key={file.id}
-            file={file}
+            name={file.name}
+            previewArtifact={createProjectFilePreviewArtifact(file)}
+            preview={previewById.get(file.id)}
+            source={file.source}
+            projectId={file.projectId}
+            sessionId={file.sessionId}
+            size={file.size}
+            timestamp={file.mtimeMs ?? file.sortAtMs}
             previewLabel={previewLabel}
             onPreview={() => onPreview(file)}
             onOpenInPanel={() => onOpenInPanel(file)}
           />
         )
-      }
-
-      return (
-        <FileTile
-          key={file.id}
-          name={file.name}
-          previewArtifact={createProjectFilePreviewArtifact(file)}
-          preview={previewById.get(file.id)}
-          source={file.source}
-          projectId={file.projectId}
-          sessionId={file.sessionId}
-          size={file.size}
-          timestamp={file.mtimeMs ?? file.sortAtMs}
-          previewLabel={previewLabel}
-          onPreview={() => onPreview(file)}
-          onOpenInPanel={() => onOpenInPanel(file)}
-        />
-      )
-    })}
-  </div>
-)
+      })}
+    </div>
+  )
+}
 
 const FilterMenuItem = ({
   option,

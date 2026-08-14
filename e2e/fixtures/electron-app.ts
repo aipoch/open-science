@@ -1,4 +1,4 @@
-import { test as base } from '@playwright/test'
+import { expect, test as base } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -218,30 +218,30 @@ const makeTreeWritable = async (root: string): Promise<void> => {
   )
 }
 
-// const _openMainWindow = async (
-//   application: ElectronApplication,
-//   rendererFailures: RendererFailureGate,
-//   windowMode: E2eWindowMode
-// ): Promise<Page> => {
-//   const page = await application.firstWindow()
-//   // Hidden BrowserWindows do not produce animation frames reliably, so make
-//   // presentation buffers commit immediately without changing normal-window tests.
-//   if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
-//   await rendererFailures.observe(page)
-//   await page.waitForLoadState('domcontentloaded')
-//   await expect
-//     .poll(() =>
-//       page.evaluate(async () => {
-//         const bridge = globalThis as unknown as {
-//           api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
-//         }
-//         return (await bridge.api.databaseStartup.getState()).phase
-//       })
-//     )
-//     .toBe('ready')
-//   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
-//   return page
-// }
+const openMainWindow = async (
+  application: ElectronApplication,
+  rendererFailures: RendererFailureGate,
+  windowMode: E2eWindowMode
+): Promise<Page> => {
+  const page = await application.firstWindow()
+  // Hidden BrowserWindows do not produce animation frames reliably, so make
+  // presentation buffers commit immediately without changing normal-window tests.
+  if (windowMode === 'hidden') await page.emulateMedia({ reducedMotion: 'reduce' })
+  await rendererFailures.observe(page)
+  await page.waitForLoadState('domcontentloaded')
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const bridge = globalThis as unknown as {
+          api: { databaseStartup: { getState: () => Promise<{ phase: string }> } }
+        }
+        return (await bridge.api.databaseStartup.getState()).phase
+      })
+    )
+    .toBe('ready')
+  await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
+  return page
+}
 
 class ElectronAppHarness implements ElectronApp {
   private application: ElectronApplication | undefined
@@ -525,6 +525,11 @@ class ElectronAppHarness implements ElectronApp {
       this.fakeAgentEnabled,
       this.fakeRemoteItEnabled,
       this.roots.fakeRemoteItRoot,
+      this.windowMode
+    )
+    this.currentPage = await openMainWindow(
+      this.application,
+      this.rendererFailures,
       this.windowMode
     )
   }

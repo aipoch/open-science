@@ -10,18 +10,39 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import i18next from 'i18next'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { I18nextProvider, Trans } from 'react-i18next'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_NAMESPACE, resources } from './resources'
+import zhHans from '../locales/zh-Hans.json'
+import zhHant from '../locales/zh-Hant.json'
+import {
+  englishSourceFallbackPostProcessor,
+  hasValidTagStructure,
+  sanitizeCatalog
+} from './resources'
 
 type Catalog = Record<string, string>
 
-type TranslatedLocale = keyof typeof resources
+const sourceCatalogs = {
+  'zh-Hans': zhHans,
+  'zh-Hant': zhHant
+} as const
 
-const TRANSLATED = Object.keys(resources) as TranslatedLocale[]
+type TranslatedLocale = keyof typeof sourceCatalogs
 
-const catalog = (locale: TranslatedLocale): Catalog =>
-  resources[locale][DEFAULT_NAMESPACE] as Catalog
+const TRANSLATED = Object.keys(sourceCatalogs) as TranslatedLocale[]
+
+const catalog = (locale: TranslatedLocale): Catalog => sourceCatalogs[locale] as Catalog
+
+const rawCatalog = (locale: TranslatedLocale): string =>
+  readFileSync(join(__dirname, '..', 'locales', `${locale}.json`), 'utf8')
+
+const rawCatalogKeys = (source: string): string[] =>
+  [...source.matchAll(/^\s*"((?:[^"\\]|\\.)+)"\s*:/gm)].map((match) => JSON.parse(`"${match[1]}"`))
 
 // {{name}} interpolation placeholders and <tag> markers consumed by the Trans component. Both must
 // survive translation: a dropped placeholder renders a blank where a value belongs, and a dropped tag
@@ -35,8 +56,120 @@ const markers = (text: string): string[] =>
 const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
+// This key is selected by a lookup table whose caller always supplies count=0, even though the copy
+// itself has no interpolation marker. Keep the exceptional contract explicit; every other counted
+// key is discovered by its {{count}} marker below.
+const COUNTED_KEYS_WITHOUT_MARKER = ['probed just now'] as const
+
+describe('runtime catalog fallback', () => {
+  it('keeps valid translations without copying the catalog', () => {
+    const valid = {
+      'Hello {{name}}': '你好，{{name}}',
+      'Open <docsLink>the guide</docsLink>': '打开 <docsLink>指南</docsLink>'
+    }
+
+    expect(sanitizeCatalog(valid)).toBe(valid)
+  })
+
+  it('replaces invalid translations with the English source text', () => {
+    const invalid: Record<string, unknown> = {
+      Empty: '   ',
+      'Wrong type': null,
+      'Hello {{name}}': '你好',
+      'Hello there': '你好 {{name}}',
+      'Open <docsLink>the guide</docsLink>': '打开指南',
+      Archive_verb: '',
+      '{{count}} files_other': '{{total}} 个文件',
+      '{{count}}d_ago_other': '{{total}} 天前'
+    }
+
+    expect(sanitizeCatalog(invalid)).toEqual({
+      Empty: 'Empty',
+      'Wrong type': 'Wrong type',
+      'Hello {{name}}': 'Hello {{name}}',
+      'Hello there': 'Hello there',
+      'Open <docsLink>the guide</docsLink>': 'Open <docsLink>the guide</docsLink>',
+      Archive_verb: 'Archive',
+      '{{count}} files_other': '{{count}} files',
+      '{{count}}d_ago_other': '{{count}}d'
+    })
+    expect(invalid.Archive_verb).toBe('')
+  })
+
+  it('rejects crossed or unbalanced Trans tags even when the marker sets match', () => {
+    const key = 'Open <outer><inner>the guide</inner></outer>'
+    expect(hasValidTagStructure('<outer><inner>打开指南</outer></inner>')).toBe(false)
+
+    expect(
+      sanitizeCatalog({
+        [key]: '<outer><inner>打开指南</outer></inner>'
+      })
+    ).toEqual({ [key]: key })
+  })
+
+  it('renders sanitized context, plural, and Trans values as usable English', async () => {
+    const richKey = 'Open <outer><inner>the guide</inner></outer>'
+    const instance = i18next.createInstance()
+    instance.use(englishSourceFallbackPostProcessor)
+    await instance.init({
+      lng: 'zh-Hans',
+      fallbackLng: 'en',
+      supportedLngs: ['en', 'zh-Hans'],
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      postProcess: [englishSourceFallbackPostProcessor.name],
+      resources: {
+        'zh-Hans': {
+          translation: sanitizeCatalog({
+            Archive: '压缩包',
+            Archive_verb: '',
+            '{{count}} files_other': '{{total}} 个文件',
+            '{{count}}d_ago_other': '{{total}} 天前',
+            [richKey]: '<outer><inner>打开指南</outer></inner>'
+          })
+        }
+      }
+    })
+
+    expect(instance.t('Archive', { context: 'verb' })).toBe('Archive')
+    expect(instance.t('{{count}} files', { count: 1, defaultValue_one: '{{count}} file' })).toBe(
+      '1 file'
+    )
+    expect(instance.t('{{count}} files', { count: 2, defaultValue_one: '{{count}} file' })).toBe(
+      '2 files'
+    )
+    expect(instance.t('{{count}}d', { count: 3, context: 'ago' })).toBe('3d')
+
+    const html = renderToStaticMarkup(
+      createElement(
+        I18nextProvider,
+        { i18n: instance },
+        createElement(Trans, {
+          i18nKey: richKey,
+          components: {
+            outer: createElement('strong'),
+            inner: createElement('a', { href: '/guide' })
+          }
+        })
+      )
+    )
+    expect(html).toContain('<a href="/guide">the guide</a>')
+  })
+})
 
 describe.each(TRANSLATED)('%s catalog', (locale) => {
+  it('has no duplicate raw JSON keys', () => {
+    const seen = new Set<string>()
+    const duplicates = rawCatalogKeys(rawCatalog(locale)).filter((key) => {
+      if (seen.has(key)) return true
+      seen.add(key)
+      return false
+    })
+
+    expect(duplicates).toEqual([])
+  })
+
   it('has no empty strings', () => {
     const empty = Object.entries(catalog(locale))
       .filter(([, value]) => typeof value !== 'string' || value.trim().length === 0)
@@ -55,6 +188,16 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
     expect(mismatched).toEqual([])
   })
 
+  it('uses balanced, properly nested non-void Trans tags', () => {
+    const malformed = Object.entries(catalog(locale))
+      .filter(
+        ([key, value]) => !hasValidTagStructure(englishOf(key)) || !hasValidTagStructure(value)
+      )
+      .map(([key]) => key)
+
+    expect(malformed).toEqual([])
+  })
+
   // Chinese has a single plural category, so a `_one` entry is copy that can never render. English
   // needs no catalog entry at all: the key carries the plural form and the call site passes the
   // singular as `defaultValue_one`.
@@ -66,6 +209,74 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
 
     expect(wrong).toEqual([])
   })
+
+  it('stores every counted translation under the Chinese _other category', () => {
+    const bareCountedKeys = Object.keys(catalog(locale)).filter(
+      (key) => englishOf(key).includes('{{count}}') && !key.endsWith('_other')
+    )
+
+    expect(bareCountedKeys).toEqual([])
+  })
+
+  it('suffixes dynamic counted keys that have no interpolation marker', () => {
+    const entries = catalog(locale)
+    const invalid = COUNTED_KEYS_WITHOUT_MARKER.filter(
+      (key) => entries[key] !== undefined || entries[`${key}_other`] === undefined
+    )
+
+    expect(invalid).toEqual([])
+  })
+})
+
+describe('dynamic counted lookup translations', () => {
+  it.each([
+    {
+      locale: 'zh-Hans' as const,
+      expected: ['刚刚探测', '3 小时前探测', '3 天前', '3 天前']
+    },
+    {
+      locale: 'zh-Hant' as const,
+      expected: ['剛剛探測', '3 小時前探測', '3 天前', '3 天前']
+    }
+  ])('resolves $locale lookup-table keys through _other', async ({ locale, expected }) => {
+    const instance = i18next.createInstance()
+    await instance.init({
+      lng: locale,
+      fallbackLng: 'en',
+      keySeparator: false,
+      nsSeparator: false,
+      interpolation: { escapeValue: false },
+      resources: { [locale]: { translation: catalog(locale) } }
+    })
+
+    expect([
+      instance.t('probed just now', { count: 0 }),
+      instance.t('probed {{count}} h ago', { count: 3 }),
+      instance.t('{{count}}d ago', { count: 3 }),
+      instance.t('{{count}} days ago', { count: 3 })
+    ]).toEqual(expected)
+  })
+})
+
+describe('mandatory product glossary', () => {
+  const glossary = [
+    { term: 'Agent', source: /\b(?:sub)?agents?\b/i, ignore: /ssh-agent/i },
+    { term: 'Notebook', source: /\bnotebooks?\b/i },
+    { term: 'Skill', source: /\bskills?\b/i, ignore: /(?:\.skill|SKILL\.md|skill:\/\/)/ }
+  ]
+
+  it.each(TRANSLATED)('%s keeps branded terms in English', (locale) => {
+    const offenders = Object.entries(catalog(locale)).flatMap(([key, value]) => {
+      const source = englishOf(key).replace(/\{\{\w+\}\}/g, '')
+      return glossary
+        .filter(({ term, source: pattern, ignore }) => {
+          return pattern.test(source) && !ignore?.test(source) && !value.includes(term)
+        })
+        .map(({ term }) => `${key}: ${term}`)
+    })
+
+    expect(offenders).toEqual([])
+  })
 })
 
 // The suffix convention above is only unambiguous while no English string contains an underscore.
@@ -73,15 +284,17 @@ describe.each(TRANSLATED)('%s catalog', (locale) => {
 // the wrong text, so this is asserted rather than assumed.
 describe('key shape', () => {
   it.each(TRANSLATED)('%s keys carry no underscore inside the English text', (locale) => {
-    // i18next's plural suffixes, plus the one context suffix a call site actually resolves. The
-    // other disambiguating suffixes this list used to carry (`_ago`, `_step`, …) belonged to keys
-    // nothing resolved and were deleted; a new one still has to be added here deliberately.
-    //
-    // `_verb` is not optional. 'Archive' is a noun in the file browser (a .zip) and a verb on the
-    // project menus, and zh needs different words: 压缩包 against 归档. i18next drops the context
-    // suffix on a miss, so leaving Archive_verb out of the catalog does not fall back to English —
-    // it silently renders the noun where the action belongs.
-    const suffixes = new Set([...PLURAL_CATEGORIES, 'verb'])
+    // i18next's plural and context suffixes used by literal call sites. Each new context has to be
+    // listed deliberately so an underscore in source copy cannot be mistaken for resolver syntax.
+    const suffixes = new Set([
+      ...PLURAL_CATEGORIES,
+      'verb',
+      'step',
+      'files',
+      'ago',
+      'duration',
+      'inUse'
+    ])
     const offenders = Object.keys(catalog(locale))
       .filter((key) => key.includes('_'))
       .filter((key) =>
@@ -377,13 +590,19 @@ const transCallSites = (source: string): CallSite[] =>
     ]
   })
 
-// A counted call resolves through a plural category, so the bare key need not exist at all; a context
-// call resolves through the suffixed key first.
+// A context call must resolve through its exact suffix. Accepting a bare key here hides semantic
+// collisions such as noun/verb and duration/runtime, while i18next silently renders the wrong copy.
 const resolvesIn = (entries: Catalog, { key, plural, context }: CallSite): boolean => {
-  if (context && entries[`${key}_${context}`] !== undefined) return true
-  if (entries[key] !== undefined) return true
+  if (context) {
+    if (plural) {
+      return [...PLURAL_CATEGORIES].some(
+        (category) => entries[`${key}_${context}_${category}`] !== undefined
+      )
+    }
+    return entries[`${key}_${context}`] !== undefined
+  }
   if (plural) return [...PLURAL_CATEGORIES].some((c) => entries[`${key}_${c}`] !== undefined)
-  return false
+  return entries[key] !== undefined
 }
 
 describe('missing translations', () => {
@@ -498,6 +717,33 @@ describe('t() call-site extraction', () => {
 
     expect(resolvesIn(entries, { key: '{{count}} file', plural: true, context: null })).toBe(true)
     expect(resolvesIn(entries, { key: '{{count}} file', plural: false, context: null })).toBe(false)
+    expect(
+      resolvesIn(
+        { '{{count}} file': '{{count}} 个文件' },
+        { key: '{{count}} file', plural: true, context: null }
+      )
+    ).toBe(false)
+  })
+
+  it('requires the exact context and plural-context key shapes', () => {
+    expect(resolvesIn({ Back: '返回' }, { key: 'Back', plural: false, context: 'step' })).toBe(
+      false
+    )
+    expect(
+      resolvesIn({ Back_step: '返回上一步' }, { key: 'Back', plural: false, context: 'step' })
+    ).toBe(true)
+    expect(
+      resolvesIn(
+        { '{{count}}d_ago_other': '{{count}} 天前' },
+        { key: '{{count}}d', plural: true, context: 'ago' }
+      )
+    ).toBe(true)
+    expect(
+      resolvesIn(
+        { '{{count}}d_other': '{{count}} 天' },
+        { key: '{{count}}d', plural: true, context: 'ago' }
+      )
+    ).toBe(false)
   })
 
   it('reports a key the catalog does not have', () => {
@@ -665,6 +911,54 @@ const isProse = (text: string): boolean => {
 
 type BareCopy = { text: string; line: number }
 
+const decodeJsxEntities = (text: string): string =>
+  text
+    .replaceAll('&apos;', "'")
+    .replaceAll('&quot;', '"')
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+
+const bareJsxAstText = (source: string): BareCopy[] => {
+  const sourceFile = ts.createSourceFile(
+    'component.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const found: BareCopy[] = []
+
+  const isInsideTrans = (node: ts.Node): boolean => {
+    for (let current = node.parent; current; current = current.parent) {
+      if (
+        (ts.isJsxElement(current) &&
+          current.openingElement.tagName.getText(sourceFile) === 'Trans') ||
+        (ts.isJsxSelfClosingElement(current) && current.tagName.getText(sourceFile) === 'Trans')
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxText(node) && !isInsideTrans(node)) {
+      const text = decodeJsxEntities(node.text).replace(/\s+/g, ' ').trim()
+      if (isProse(text)) {
+        found.push({
+          text,
+          line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+  return found
+}
+
 const bareJsxText = (source: string): BareCopy[] => {
   const masked = maskTransElements(maskStringBodies(maskComments(source)))
   const found: BareCopy[] = []
@@ -710,6 +1004,83 @@ const bareAttributeValues = (source: string): BareCopy[] => {
   })
 }
 
+// String literals inside JSX expressions are just as visible as text nodes. In particular,
+// conditional labels and template strings were invisible to the original scanner even though they
+// are common for loading states and result banners.
+const bareJsxExpressionValues = (source: string): BareCopy[] => {
+  const sourceFile = ts.createSourceFile(
+    'component.tsx',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const found: BareCopy[] = []
+
+  const record = (node: ts.Node, text: string): void => {
+    const normalized = text.replace(/\s+/g, ' ').trim()
+    if (!isProse(normalized)) return
+    found.push({
+      text: normalized,
+      line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+    })
+  }
+
+  const inspect = (expression: ts.Expression): void => {
+    if (
+      ts.isParenthesizedExpression(expression) ||
+      ts.isAsExpression(expression) ||
+      ts.isSatisfiesExpression(expression) ||
+      ts.isNonNullExpression(expression)
+    ) {
+      inspect(expression.expression)
+      return
+    }
+    if (ts.isConditionalExpression(expression)) {
+      inspect(expression.whenTrue)
+      inspect(expression.whenFalse)
+      return
+    }
+    if (
+      ts.isBinaryExpression(expression) &&
+      [
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken
+      ].includes(expression.operatorToken.kind)
+    ) {
+      inspect(expression.left)
+      inspect(expression.right)
+      return
+    }
+    if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+      record(expression, expression.text)
+      return
+    }
+    if (ts.isTemplateExpression(expression)) {
+      record(
+        expression,
+        expression.head.text + expression.templateSpans.map((span) => span.literal.text).join('')
+      )
+    }
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxExpression(node) && node.expression) {
+      const parent = node.parent
+      const isVisibleAttribute =
+        ts.isJsxAttribute(parent) && VISIBLE_ATTRIBUTES.includes(parent.name.getText(sourceFile))
+      if (isVisibleAttribute || ts.isJsxElement(parent) || ts.isJsxFragment(parent)) {
+        inspect(node.expression)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+  return found
+}
+
 // Proper nouns, product names and literal keystrokes. These render identically in every locale, so
 // wrapping them would add a catalog entry that can only ever be copied verbatim.
 const NOT_TRANSLATABLE = new Set([
@@ -723,10 +1094,15 @@ const NOT_TRANSLATABLE = new Set([
   'Python',
   'Enter',
   'Esc',
+  'Ctrl',
+  'Ctrl+',
   'Enter / Tab',
   // A placeholder showing literal CLI arguments. Translating it would suggest the user should type
   // words instead of flags.
-  '-y @modelcontextprotocol/server-memory'
+  '-y @modelcontextprotocol/server-memory',
+  'KEY=value ANOTHER_KEY=value',
+  'Authorization: Bearer <token> X-Api-Key: <key>',
+  '# Instructions Step-by-step guidance for the agent…'
 ])
 
 // `return <Icon />` inside a switch leaves the following `default: return` sitting between a `/>` and
@@ -751,7 +1127,11 @@ describe('bare copy', () => {
   const offenders = components.flatMap((path) => {
     const source = readFileSync(path, 'utf8')
     const file = path.slice(SRC_ROOT.length + 1)
-    return [...bareJsxText(source), ...bareAttributeValues(source)]
+    return [
+      ...bareJsxAstText(source),
+      ...bareAttributeValues(source),
+      ...bareJsxExpressionValues(source)
+    ]
       .filter(({ text }) => !NOT_TRANSLATABLE.has(text) && !CODE_LOOKALIKE.test(text))
       .map(({ text, line }) => ({
         // Line numbers move with unrelated edits, so the baseline keys on file and text only.
@@ -788,6 +1168,12 @@ describe('bare copy', () => {
 describe('bare copy detection', () => {
   it('finds text in an element', () => {
     expect(bareJsxText('<span>Needs repair</span>')).toEqual([{ text: 'Needs repair', line: 1 }])
+  })
+
+  it('finds JSX text containing an entity or semicolon', () => {
+    expect(bareJsxAstText('<p>Skills aren&apos;t available; choose another Agent.</p>')).toEqual([
+      { text: "Skills aren't available; choose another Agent.", line: 1 }
+    ])
   })
 
   it('finds text that runs into an expression', () => {
@@ -850,5 +1236,41 @@ describe('bare copy detection', () => {
 
   it('accepts an aria-label already inside t()', () => {
     expect(bareAttributeValues(`<button aria-label={t('Dismiss storage warning')} />`)).toEqual([])
+  })
+
+  it('finds bare conditional labels in JSX children and visible attributes', () => {
+    expect(
+      bareJsxExpressionValues(
+        `<><span>{loading ? 'Downloading…' : 'Download'}</span><button aria-label={copied ? 'Copied' : 'Copy path'} /></>`
+      )
+    ).toEqual([
+      { text: 'Downloading…', line: 1 },
+      { text: 'Download', line: 1 },
+      { text: 'Copied', line: 1 },
+      { text: 'Copy path', line: 1 }
+    ])
+  })
+
+  it('finds bare template copy rendered from a JSX expression', () => {
+    expect(bareJsxExpressionValues('<p>{`Saved to Downloads: ${name}`}</p>')).toEqual([
+      { text: 'Saved to Downloads:', line: 1 }
+    ])
+  })
+
+  it('finds fallback copy in JSX nullish and logical expressions', () => {
+    expect(
+      bareJsxExpressionValues(
+        `<><span>{description ?? 'No description'}</span><span>{title || 'Untitled'}</span></>`
+      )
+    ).toEqual([
+      { text: 'No description', line: 1 },
+      { text: 'Untitled', line: 1 }
+    ])
+  })
+
+  it('accepts translated conditional labels', () => {
+    expect(
+      bareJsxExpressionValues(`<span>{loading ? t('Downloading…') : t('Download')}</span>`)
+    ).toEqual([])
   })
 })

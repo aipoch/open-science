@@ -5,7 +5,6 @@ import type {
   PermissionGrantSnapshot,
   PermissionGrantView
 } from '../../../shared/permission-grants'
-import { i18next } from '../i18n'
 
 const EMPTY_SNAPSHOT: PermissionGrantSnapshot = {
   version: 0,
@@ -17,7 +16,9 @@ const EMPTY_SNAPSHOT: PermissionGrantSnapshot = {
 type PermissionUndo = {
   token: string
   expiresAt: number
-  message: string
+  messageKey: string
+  messageParams?: Record<string, string | number>
+  translatedMessageParams?: string[]
   canRestore?: boolean
   retry?: boolean
 }
@@ -46,6 +47,43 @@ const FAMILY_LABELS: Record<PermissionGrantView['family'], string> = {
   file_operations: 'File operations',
   skills: 'Skills',
   built_in_tools: 'Built-in tools'
+}
+
+const revokeUndoMessage = (
+  revoked: PermissionGrantView[],
+  revokedCount: number,
+  conflictCount: number
+): Pick<PermissionUndo, 'messageKey' | 'messageParams' | 'translatedMessageParams'> => {
+  if (revokedCount === 1 && revoked[0]) {
+    return {
+      messageKey:
+        conflictCount > 0
+          ? 'Revoked {{family}} · {{capability}}; {{conflictCount}} changed before it could be revoked'
+          : 'Revoked {{family}} · {{capability}}',
+      messageParams: {
+        family: FAMILY_LABELS[revoked[0].family],
+        capability: revoked[0].capabilityLabel,
+        conflictCount
+      },
+      translatedMessageParams: ['family', 'capability']
+    }
+  }
+
+  const family =
+    new Set(revoked.map((grant) => grant.family)).size === 1 && revoked[0]
+      ? FAMILY_LABELS[revoked[0].family]
+      : undefined
+  return {
+    messageKey: family
+      ? conflictCount > 0
+        ? 'Revoked {{count}} permissions in {{family}}; {{conflictCount}} changed before it could be revoked'
+        : 'Revoked {{count}} permissions in {{family}}'
+      : conflictCount > 0
+        ? 'Revoked {{count}} permissions; {{conflictCount}} changed before it could be revoked'
+        : 'Revoked {{count}} permissions',
+    messageParams: { count: revokedCount, conflictCount, ...(family ? { family } : {}) },
+    translatedMessageParams: family ? ['family'] : undefined
+  }
 }
 
 const nextUndoState = (
@@ -204,12 +242,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
       const conflictCount = result.conflicts.length
       const conflictIds = new Set(result.conflicts.map((conflict) => conflict.id))
       const revoked = grants.filter((grant) => !conflictIds.has(grant.id))
-      const oneFamily = new Set(revoked.map((grant) => grant.family)).size === 1
-      const message = `${
-        revokedCount === 1
-          ? `${i18next.t('Revoked')} ${i18next.t(FAMILY_LABELS[revoked[0].family])} · ${i18next.t(revoked[0].capabilityLabel)}`
-          : `${i18next.t('Revoked {{count}} permissions', { count: revokedCount })}${oneFamily && revoked[0] ? ` ${i18next.t('in')} ${i18next.t(FAMILY_LABELS[revoked[0].family])}` : ''}`
-      }${conflictCount > 0 ? `; ${i18next.t('{{count}} changed before it could be revoked', { count: conflictCount })}` : ''}`
+      const message = revokeUndoMessage(revoked, revokedCount, conflictCount)
       pendingRevocations.delete(requestId)
       set((state) => {
         const current =
@@ -219,7 +252,7 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
           ? {
               token: result.receipt.undoToken,
               expiresAt: result.receipt.expiresAt,
-              message
+              ...message
             }
           : undefined
         const authoritative = applyAuthoritativeSnapshot(state, {
@@ -321,18 +354,16 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
           ? {
               ...applyAuthoritativeSnapshot(state, mutationState(result)),
               ...(() => {
-                const t = i18next.t.bind(i18next)
                 const items = undoItems(state).map((item) =>
                   item.token === undo.token
                     ? {
                         token: undo.token,
                         expiresAt: Date.now() + 5_000,
-                        message: t(
+                        messageKey:
                           targetUnavailable === 1
                             ? "Couldn't restore permission: owner no longer exists"
                             : "Couldn't restore {{count}} permissions: owner no longer exists",
-                          { count: targetUnavailable }
-                        ),
+                        messageParams: { count: targetUnavailable },
                         canRestore: false
                       }
                     : item
@@ -351,10 +382,9 @@ const usePermissionGrantsStore = create<PermissionGrantsStore>((set, get) => ({
       )
     } catch (error) {
       set((state) => {
-        const t = i18next.t.bind(i18next)
         const items = undoItems(state).map((item) =>
           item.token === undo.token
-            ? { ...undo, message: t("Couldn't restore permission. Retry."), retry: true }
+            ? { ...undo, messageKey: "Couldn't restore permission. Retry.", retry: true }
             : item
         )
         return {

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
@@ -47,16 +48,16 @@ import { useProjectStore } from '@/stores/project-store'
 // ---------------------------------------------------------------------------
 
 // Returns a human-readable relative time string from a mtime timestamp.
-const relativeTime = (mtimeMs: number): string => {
+const relativeTime = (mtimeMs: number, t: TFunction): string => {
   const ageMs = Date.now() - mtimeMs
   const sec = Math.round(ageMs / 1000)
-  if (sec < 60) return `${sec}s`
+  if (sec < 60) return t('{{count}}s', { count: sec })
   const min = Math.round(sec / 60)
-  if (min < 60) return `${min}m`
+  if (min < 60) return t('{{count}}m', { count: min })
   const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr}h`
+  if (hr < 24) return t('{{count}}h', { count: hr })
   const days = Math.round(hr / 24)
-  return `${days}d`
+  return t('{{count}}d', { count: days })
 }
 
 // Formats a byte count as a short human-readable string.
@@ -157,7 +158,12 @@ type DetailPanelProps = {
 type ActionStatus =
   | { kind: 'idle' }
   | { kind: 'loading'; action: 'download' | 'import' }
-  | { kind: 'success'; action: 'download' | 'import'; message: string; filePath?: string }
+  | {
+      kind: 'success'
+      action: 'download' | 'import'
+      name: string
+      filePath?: string
+    }
   | { kind: 'error'; message: string }
 
 function DetailPanel({
@@ -188,13 +194,13 @@ function DetailPanel({
       setActionStatus({
         kind: 'success',
         action: 'download',
-        message: `Saved to Downloads: ${result.name}`,
+        name: result.name,
         filePath: result.path
       })
     } catch (err) {
       const e = err as Error & { remoteFsError?: { detail: string; remoteKind: string } }
       const fsErr = e.remoteFsError ?? decodeRemoteFsError(e.message ?? '')
-      const detail = fsErr?.detail ?? e.message ?? 'Download failed'
+      const detail = fsErr?.detail ?? e.message ?? t('Download failed')
       setActionStatus({ kind: 'error', message: detail })
     }
   }
@@ -235,7 +241,7 @@ function DetailPanel({
         <div className="space-y-1.5">
           <MetaRow label={t('SIZE')} value={formatSize(entry.size)} />
           <MetaRow label={t('MODIFIED')} value={new Date(entry.mtimeMs).toLocaleString()} />
-          <MetaRow label={t('TYPE')} value={inferType(entry.name)} />
+          <MetaRow label={t('TYPE')} value={t(inferType(entry.name))} />
         </div>
 
         {/* No preview placeholder */}
@@ -248,7 +254,11 @@ function DetailPanel({
         {/* Action status banner */}
         {actionStatus.kind === 'success' && (
           <div className="rounded bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-2 py-1.5 text-xs text-emerald-700 dark:text-emerald-300 space-y-1">
-            <p>{actionStatus.message}</p>
+            <p>
+              {actionStatus.action === 'download'
+                ? t('Saved to Downloads: {{name}}', { name: actionStatus.name })
+                : t('Added to project: {{name}}', { name: actionStatus.name })}
+            </p>
             {actionStatus.action === 'download' && actionStatus.filePath && (
               <button
                 type="button"
@@ -281,8 +291,8 @@ function DetailPanel({
         >
           <Download className="size-3.5" />
           {actionStatus.kind === 'loading' && actionStatus.action === 'download'
-            ? 'Downloading…'
-            : 'Download'}
+            ? t('Downloading…')
+            : t('Download')}
         </Button>
 
         {/* Add to project → artifact. Disabled until artifact persistence is wired: the download
@@ -314,7 +324,7 @@ function DetailPanel({
           aria-label={t('Copy remote absolute path to clipboard')}
         >
           <ClipboardCopy className="size-3.5" />
-          {copied ? 'Copied!' : 'Copy path'}
+          {copied ? t('Copied!') : t('Copy path')}
         </Button>
       </div>
     </div>
@@ -527,7 +537,7 @@ export function FileBrowserModal({
     if (validateRemotePath(resolved) === 'outside_roots') {
       setBrowserState({
         kind: 'error',
-        detail: 'Path must be absolute and contain no control characters.',
+        detail: t('Path must be absolute and contain no control characters.'),
         kind_hint: 'outside_roots'
       })
       return
@@ -602,10 +612,10 @@ export function FileBrowserModal({
 
   const goToItems: GoToItem[] = [
     ...(roots?.scratch
-      ? [{ label: 'Scratch', path: roots.scratch, icon: <Folder className="size-3.5" /> }]
+      ? [{ label: t('Scratch'), path: roots.scratch, icon: <Folder className="size-3.5" /> }]
       : []),
     ...(roots?.home
-      ? [{ label: 'Home', path: roots.home, icon: <Folder className="size-3.5" /> }]
+      ? [{ label: t('Home'), path: roots.home, icon: <Folder className="size-3.5" /> }]
       : [])
   ]
 
@@ -770,7 +780,7 @@ export function FileBrowserModal({
                           </button>
                           <button
                             type="button"
-                            aria-label={`Remove bookmark ${bm}`}
+                            aria-label={t('Remove bookmark {{path}}', { path: bm })}
                             className="mr-1 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
                             onClick={() => void handleRemoveBookmark(bm)}
                           >
@@ -837,7 +847,7 @@ export function FileBrowserModal({
                   className="m-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive"
                 >
                   <div className="flex-1">
-                    <p className="font-semibold">Couldn&apos;t open this path.</p>
+                    <p className="font-semibold">{t("Couldn't open this path.")}</p>
                     <p className="mt-0.5 text-muted-foreground">{browserState.detail}</p>
                   </div>
                   <div className="flex gap-1.5">
@@ -924,7 +934,7 @@ export function FileBrowserModal({
                         {entry.isDirectory ? '—' : formatSize(entry.size)}
                       </span>
                       <span className="text-right text-muted-foreground">
-                        {relativeTime(entry.mtimeMs)}
+                        {relativeTime(entry.mtimeMs, t)}
                       </span>
                     </button>
                   ))}

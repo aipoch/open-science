@@ -141,7 +141,7 @@ const NotebookRunCell = ({
               </span>
             )
           ) : statusLabel ? (
-            <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{statusLabel}</span>
+            <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{t(statusLabel)}</span>
           ) : null}
         </div>
         {originLabel ? (

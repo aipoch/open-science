@@ -12,6 +12,7 @@ import type {
 } from '../../../../shared/permission-grants'
 import { Button } from '@/components/ui/button'
 import {
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
@@ -348,7 +349,7 @@ const PermissionsPanel = ({
         >
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <p>{error}</p>
+            <p>{t(error)}</p>
           </div>
           <Button
             type="button"
@@ -469,7 +470,7 @@ const PermissionsPanel = ({
             </div>
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
+                <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
                   {t('Cancel')}
                 </Button>
               </AlertDialog.Cancel>

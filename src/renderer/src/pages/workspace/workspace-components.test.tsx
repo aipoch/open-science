@@ -83,8 +83,9 @@ describe('workspace page component boundaries', () => {
     }
 
     expect(rawLineCount(facadeSource)).toBeLessThanOrEqual(900)
-    // The granted-roots menu rows (access badge, manage submenu) added 90 presentation lines.
-    expect(rawLineCount(presentationSource)).toBeLessThanOrEqual(750)
+    // Translation wrappers add render-only lines to the granted-roots presentation. Keep the cap
+    // close to the current size so functional responsibilities still have to move behind an owner.
+    expect(rawLineCount(presentationSource)).toBeLessThanOrEqual(790)
     expect(facadeSource).toContain("from './project-files-presentation-owner'")
     expect(presentationSource).not.toContain("from './ProjectFilesView'")
     expect(facadeSource.match(/export \{ ProjectFilesView \}/g)).toHaveLength(1)
@@ -516,14 +517,14 @@ describe('conversation message scroller integration', () => {
     expect(workspaceActivityGroupSource).toContain('data-testid="tool-group-header"')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceWebSearchActivityRow')
     expect(workspaceActivityGroupSource).toMatch(
-      /formatActivityGroupPresentationTitle\(\s*group\.activities,\s*group\.title,\s*permission,\s*notebookRunsById\s*\)/
+      /formatActivityGroupPresentationTitle\(\s*group\.activities,\s*group\.title,\s*permission,\s*notebookRunsById,\s*t\s*\)/
     )
     expect(workspaceActivityGroupSource).toContain('getRenderableActivityEntries(group.activities)')
     expect(workspaceWebSearchActivityRowSource).toContain('const WorkspaceWebSearchActivityRow')
     expect(workspaceWebSearchActivityRowSource).toContain('<WorkspaceToolActivityRowButton')
     expect(workspaceWebSearchActivityRowSource).toContain('panelTestId="tool-search-details"')
     expect(workspaceWebSearchActivityRowSource).toContain(
-      'formatResultCountLabel(details.resultCount)'
+      'formatResultCountLabel(details.resultCount, t)'
     )
     expect(workspaceWebSearchActivityRowSource).toContain(
       'canExpand={Boolean(details.query || details.resultCount)}'
@@ -557,7 +558,7 @@ describe('conversation message scroller integration', () => {
     const workspaceToolCodeBlockSource = readFileSync(workspaceToolCodeBlockPath, 'utf8')
     const workspaceToolRowButtonSource = readFileSync(workspaceToolRowButtonPath, 'utf8')
 
-    expect(workspaceActivityGroupSource).toContain('buildToolActivityDetails(activity)')
+    expect(workspaceActivityGroupSource).toContain('buildToolActivityDetails(activity, t)')
     expect(workspaceActivityGroupSource).toContain('<WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('const WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('<WorkspaceToolActivityRowButton')

@@ -4,8 +4,12 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import {
+  dialogBodyClassName,
+  dialogCancelButtonClassName,
   dialogCloseButtonClassName,
+  dialogFormHelpClassName,
   dialogFormInputClassName,
+  dialogFormLabelClassName,
   dialogFormTextareaClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
@@ -88,12 +92,9 @@ const ProjectFormDialog = ({
                 <X className="size-4" aria-hidden="true" />
               </Button>
             </div>
-            <div className="mt-4 space-y-3">
-              <div className="space-y-1.5">
-                <label
-                  className="text-xs font-medium text-muted-foreground"
-                  htmlFor="project-form-name"
-                >
+            <div className={`${dialogBodyClassName} space-y-4`}>
+              <div>
+                <label className={dialogFormLabelClassName} htmlFor="project-form-name">
                   {t('Name')}
                 </label>
                 <Input
@@ -105,17 +106,11 @@ const ProjectFormDialog = ({
                   className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label
-                  className="text-xs font-medium text-muted-foreground"
-                  htmlFor="project-form-description"
-                >
+              <div>
+                <label className={dialogFormLabelClassName} htmlFor="project-form-description">
                   {t('Description')}
                 </label>
-                <p
-                  id="project-form-description-help"
-                  className="text-xs leading-relaxed text-muted-foreground"
-                >
+                <p id="project-form-description-help" className={dialogFormHelpClassName}>
                   {t(
                     "Shown in the project list for your reference — not included in the agent's prompt."
                   )}
@@ -130,17 +125,11 @@ const ProjectFormDialog = ({
                   className={dialogFormTextareaClassName}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label
-                  className="text-xs font-medium text-muted-foreground"
-                  htmlFor="project-form-agent-context"
-                >
+              <div>
+                <label className={dialogFormLabelClassName} htmlFor="project-form-agent-context">
                   {t('Agent Context')}
                 </label>
-                <p
-                  id="project-form-agent-context-help"
-                  className="text-xs leading-relaxed text-muted-foreground"
-                >
+                <p id="project-form-agent-context-help" className={dialogFormHelpClassName}>
                   {t(
                     'Injected into the system prompt of every agent session in this project, including resumed ones. Sent to the model provider with every session — do not include secrets.'
                   )}
@@ -165,7 +154,12 @@ const ProjectFormDialog = ({
               </p>
             ) : null}
             <div className={dialogFooterClassName}>
-              <Button type="button" variant="outline" onClick={onCancel}>
+              <Button
+                type="button"
+                variant="ghost"
+                className={dialogCancelButtonClassName}
+                onClick={onCancel}
+              >
                 {t('Cancel')}
               </Button>
               <Button type="submit" disabled={nameDraft.trim().length === 0 || isSubmitting}>

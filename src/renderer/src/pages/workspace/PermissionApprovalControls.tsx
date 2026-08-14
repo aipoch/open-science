@@ -149,9 +149,10 @@ const CANONICAL_ACTION_LABEL_KEY = {
 const getExtraOptionLabel = (option: PermissionOption, t: TFunction): string => {
   const kind = option.kind.toLowerCase()
   if (!(kind in CANONICAL_ACTION_LABEL_KEY)) return option.name
-  const canonical = t(CANONICAL_ACTION_LABEL_KEY[kind as keyof typeof CANONICAL_ACTION_LABEL_KEY])
+  const canonicalKey = CANONICAL_ACTION_LABEL_KEY[kind as keyof typeof CANONICAL_ACTION_LABEL_KEY]
+  const canonical = t(canonicalKey)
   const provider = option.name.trim()
-  return provider && provider.toLowerCase() !== canonical.toLowerCase()
+  return provider && provider.toLowerCase() !== canonicalKey.toLowerCase()
     ? `${canonical} · ${provider}`
     : canonical
 }
@@ -263,7 +264,7 @@ const getPermissionActionTitle = (
   fallback: string,
   t: TFunction
 ): string => {
-  if (resolveNotebookToolName(request)) return t('Run notebook cell')
+  if (resolveNotebookToolName(request)) return t('Start Notebook run')
   if (isArtifactWriteRequest(request)) return t('Artifact file input')
   if (isMcpPermissionRequest(request)) return t('External service input')
   if (request.toolKind === 'execute' || request.providerToolName === 'Bash') return t('Run command')
@@ -637,7 +638,15 @@ const PermissionApprovalCard = ({
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
   const permCode = extractPermissionCode(request)
-  const presentation = describePermissionRequest(request)
+  const sourcePresentation = describePermissionRequest(request)
+  const presentation: PermissionPresentation = {
+    ...sourcePresentation,
+    actionTitle: t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
+      ...sourcePresentation.actionTitleValues
+    }),
+    categoryLabel: t(sourcePresentation.categoryLabel),
+    description: t(sourcePresentation.description)
+  }
   const allowOptionId = getAllowOptionId(request.options, effectiveScope)
   const denyOptionId = getDenyOptionId(request.options)
   // The trailing clause of the Allow button ("Allow for this project"). Kept as a per-scope key so
@@ -992,6 +1001,7 @@ const PermissionApprovalControls = ({
   notebookLookup,
   disabled = false
 }: PermissionApprovalControlsProps): React.JSX.Element | null => {
+  const { t } = useTranslation()
   const surfaceRef = useRef<HTMLDivElement>(null)
   const focusReturnFromRef = useRef<string | undefined>(undefined)
   useEffect(() => {
@@ -1012,8 +1022,10 @@ const PermissionApprovalControls = ({
   return (
     <div ref={surfaceRef} data-testid="permission-approval-controls">
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {visibleRequests.filter((request) => request.delegated).length} subagent permission requests
-        pending
+        {t('{{count}} subagent permission requests pending', {
+          count: visibleRequests.filter((request) => request.delegated).length,
+          defaultValue_one: '{{count}} subagent permission request pending'
+        })}
       </span>
       {visibleRequests.map((request) => (
         <PermissionApprovalCard

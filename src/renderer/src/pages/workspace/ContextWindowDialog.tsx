@@ -182,7 +182,10 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
         ) : null}
         {cacheReadPercent === undefined ? null : (
           <div className="mt-2 text-[10px] tabular-nums text-muted-foreground">
-            cache-read {cacheReadPercent}% · uncached {100 - cacheReadPercent}%
+            {t('cache-read {{cached}}% · uncached {{uncached}}%', {
+              cached: cacheReadPercent,
+              uncached: 100 - cacheReadPercent
+            })}
           </div>
         )}
       </div>
