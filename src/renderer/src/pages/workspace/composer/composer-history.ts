@@ -1,6 +1,7 @@
 import { isHiddenControlMessage, type MessagePart } from '../../../../../shared/session-persistence'
 import type { ChatMessage, ChatSession } from '@/stores/session-store'
 
+import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from '../visible-project-sessions'
 import {
   docFromMessageParts,
   docFromText,
@@ -21,6 +22,11 @@ type HistoryMessage = Pick<
   'id' | 'role' | 'content' | 'parts' | 'uploads' | 'turnIntent'
 >
 type HistorySession = Pick<ChatSession, 'id' | 'messages' | 'isPending' | 'createdAt' | 'updatedAt'>
+
+export const starterHistorySessionSelector =
+  (projectId: string, hidden: boolean) =>
+  (state: { sessions: ChatSession[] }): ChatSession[] =>
+    hidden ? NO_VISIBLE_SESSIONS : visibleProjectSessions(state.sessions, projectId)
 
 const docFromHistoryMessage = (message: HistoryMessage): ComposerDoc => {
   if (!message.parts) return docFromText(message.content)

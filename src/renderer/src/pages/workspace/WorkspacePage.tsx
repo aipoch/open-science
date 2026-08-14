@@ -37,7 +37,8 @@ import {
 } from './composer/composer-doc'
 import {
   buildSessionComposerHistory,
-  buildStarterComposerHistory
+  buildStarterComposerHistory,
+  starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
@@ -54,7 +55,6 @@ import {
   hasBlockingRootPermissionRequest
 } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
-import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from './visible-project-sessions'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
@@ -246,12 +246,9 @@ const WorkspacePage = ({
   // Starter history is only consumed when no session is active, so this subscription collapses to
   // a stable empty list while a session is selected — background session updates then never
   // re-render the page through it.
+  const hideStarterHistory = activeSession !== undefined || activeProject?.archivedAt !== undefined
   const starterHistorySessions = useSessionStore(
-    useShallow((state) =>
-      activeSession === undefined && activeProject?.archivedAt === undefined
-        ? visibleProjectSessions(state.sessions, scopedProjectId)
-        : NO_VISIBLE_SESSIONS
-    )
+    useShallow(starterHistorySessionSelector(scopedProjectId, hideStarterHistory))
   )
   const composerHistoryEntries = useMemo(
     () =>

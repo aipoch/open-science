@@ -5,7 +5,8 @@ import type { ChatMessage, ChatSession } from '@/stores/session-store'
 import {
   buildSessionComposerHistory,
   buildStarterComposerHistory,
-  normalizeHistorySkills
+  normalizeHistorySkills,
+  starterHistorySessionSelector
 } from './composer-history'
 
 const message = (
@@ -119,6 +120,21 @@ describe('composer history', () => {
 
     expect(entries.map((entry) => entry.messageId)).toEqual(['shared-opener', 'older-opener'])
     expect(entries[0].id).toBe('branch-a:shared-opener')
+  })
+
+  it('selects visible same-Project sessions only while starter history is active', () => {
+    const sessions = [
+      session('visible', []),
+      session('archived', [], { archivedAt: 2 }),
+      session('other-project', [], { projectId: 'project-2' })
+    ]
+
+    expect(
+      starterHistorySessionSelector('project-1', false)({ sessions }).map(({ id }) => id)
+    ).toEqual(['visible'])
+
+    const hiddenSelector = starterHistorySessionSelector('project-1', true)
+    expect(hiddenSelector({ sessions })).toBe(hiddenSelector({ sessions: [] }))
   })
 
   it('downgrades missing and Specialist-disallowed Skills to plain text', () => {
