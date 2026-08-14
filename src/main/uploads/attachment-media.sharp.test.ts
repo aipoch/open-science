@@ -143,8 +143,8 @@ describe('sharp image-processing adapter', () => {
     })
     await writeFile(filePath, await source.toFormat(format).toBuffer())
 
-    await expect(
-      buildImageContentData(filePath, mimeType, 3 * 1024 * 1024)
-    ).resolves.toMatchObject({ mimeType: 'image/jpeg' })
+    await expect(buildImageContentData(filePath, mimeType, 3 * 1024 * 1024)).resolves.toMatchObject(
+      { mimeType: 'image/jpeg' }
+    )
   })
 })
