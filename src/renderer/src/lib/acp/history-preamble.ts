@@ -5,6 +5,7 @@ import type {
   HistoryReplayTarget
 } from '../../../../shared/history-preamble'
 import { buildSessionHistoryReplay } from '../../../../shared/session-history-replay'
+import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import {
   requiresChatCompletionsBridge,
@@ -76,7 +77,12 @@ export const buildWorkspaceHistoryReplay = (
       historyImages: AcpMessageImage[]
     }
   | undefined => {
-  return buildSessionHistoryReplay(messages, descriptor, projectId, supportsImageInput)
+  return buildSessionHistoryReplay(
+    messages.filter((message) => !isHiddenControlMessage(message)),
+    descriptor,
+    projectId,
+    supportsImageInput
+  )
 }
 
 export {
