@@ -52,6 +52,8 @@ describe('skill-creator bundled package', () => {
     const skill = await readFile(join(skillRoot, 'SKILL.md'), 'utf8')
     expect(skill).toContain('JavaScript control-plane REPL')
     expect(skill).toContain('host.skills.validate(')
+    expect(skill).toContain('oldString')
+    expect(skill).not.toContain('old_string')
     expect(skill).toContain('host.agents.attachSkill(')
     expect(skill).toContain('references/schemas.md')
     expect(skill).toContain('agents/grader.md')

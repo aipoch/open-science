@@ -1,13 +1,15 @@
-import { lstat, readFile, readdir } from 'node:fs/promises'
-import { basename, join, posix } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 
 import { zipSync, type Zippable } from 'fflate'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import type { BundledSkill } from './registry'
 import { canonicalSkillDocument } from './skill-document-name'
-import { isUnsafeSkillArchivePath } from './zip-extract'
-
-const INTERNAL_SKILL_FILES = new Set(['.source.json', '.specialist-package.json'])
+import {
+  inspectSkillPackage,
+  SkillPackagePolicyError,
+  type SkillPackageFile
+} from './skill-package-inspection'
 const WINDOWS_RESERVED_BASENAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 
 const normalizeExportedSkillDocument = (raw: string, name: string): string => {
@@ -47,71 +49,53 @@ type SkillExportDialog = {
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<unknown>
 }
 
-const collectFiles = async (
-  directory: string,
-  skillName: string,
-  relativeDirectory = '',
-  state: { files: Zippable; fileCount: number; totalBytes: number } = {
-    files: {},
-    fileCount: 0,
-    totalBytes: 0
-  },
-  depth = 0
-): Promise<Zippable> => {
-  if (depth > SKILL_IMPORT_LIMITS.maxDepth) {
-    throw new Error('Skill tree exceeds the export depth limit.')
-  }
-  const entries = await readdir(directory, { withFileTypes: true })
-  entries.sort((left, right) => left.name.localeCompare(right.name))
-
-  for (const entry of entries) {
-    if (!relativeDirectory && INTERNAL_SKILL_FILES.has(entry.name)) continue
-    const relativePath = relativeDirectory ? posix.join(relativeDirectory, entry.name) : entry.name
-    if (isUnsafeSkillArchivePath(relativePath)) {
-      throw new Error('Skill path cannot be imported safely.')
-    }
-    const absolutePath = join(directory, entry.name)
-    const metadata = await lstat(absolutePath)
-    if (metadata.isSymbolicLink() || (metadata.isFile() && metadata.nlink > 1)) {
+const collectFiles = async (directory: string, skillName: string): Promise<Zippable> => {
+  let inventory: SkillPackageFile[]
+  try {
+    inventory = await inspectSkillPackage(directory)
+  } catch (error) {
+    if (!(error instanceof SkillPackagePolicyError)) throw error
+    if (error.reason === 'unsafePath') throw new Error('Skill path cannot be imported safely.')
+    if (error.reason === 'symbolicLink' || error.reason === 'hardLink') {
       throw new Error('Unsafe Skill filesystem entry.')
     }
-    if (metadata.isDirectory()) {
-      await collectFiles(absolutePath, skillName, relativePath, state, depth + 1)
-    } else if (metadata.isFile()) {
-      state.fileCount += 1
-      state.totalBytes += metadata.size
-      if (state.fileCount > SKILL_IMPORT_LIMITS.maxFiles) {
-        throw new Error('Skill tree exceeds the export file-count limit.')
-      }
-      if (metadata.size > SKILL_IMPORT_LIMITS.maxFileBytes) {
-        throw new Error('Skill file exceeds the export size limit.')
-      }
-      if (state.totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
-        throw new Error('Skill tree exceeds the total export size limit.')
-      }
-      let bytes = new Uint8Array(await readFile(absolutePath))
-      if (relativePath === 'SKILL.md') {
-        bytes = new TextEncoder().encode(
-          normalizeExportedSkillDocument(
-            new TextDecoder('utf-8', { fatal: true }).decode(bytes),
-            skillName
-          )
-        )
-      }
-      state.totalBytes += bytes.byteLength - metadata.size
-      if (bytes.byteLength > SKILL_IMPORT_LIMITS.maxFileBytes) {
-        throw new Error('Skill file exceeds the export size limit.')
-      }
-      if (state.totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
-        throw new Error('Skill tree exceeds the total export size limit.')
-      }
-      state.files[relativePath] = [bytes, { mtime: new Date('1980-01-01T00:00:00.000Z') }]
-    } else {
+    if (error.reason === 'unsupportedEntry') {
       throw new Error('Unsupported Skill filesystem entry.')
     }
+    if (error.reason === 'depthLimit') {
+      throw new Error('Skill tree exceeds the export depth limit.')
+    }
+    if (error.reason === 'fileCountLimit') {
+      throw new Error('Skill tree exceeds the export file-count limit.')
+    }
+    if (error.reason === 'fileSizeLimit') {
+      throw new Error('Skill file exceeds the export size limit.')
+    }
+    throw new Error('Skill tree exceeds the total export size limit.')
   }
 
-  return state.files
+  const files: Zippable = {}
+  let totalBytes = 0
+  for (const file of inventory) {
+    let bytes = new Uint8Array(await readFile(file.absolutePath))
+    if (file.relativePath === 'SKILL.md') {
+      bytes = new TextEncoder().encode(
+        normalizeExportedSkillDocument(
+          new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+          skillName
+        )
+      )
+    }
+    totalBytes += bytes.byteLength
+    if (bytes.byteLength > SKILL_IMPORT_LIMITS.maxFileBytes) {
+      throw new Error('Skill file exceeds the export size limit.')
+    }
+    if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+      throw new Error('Skill tree exceeds the total export size limit.')
+    }
+    files[file.relativePath] = [bytes, { mtime: new Date('1980-01-01T00:00:00.000Z') }]
+  }
+  return files
 }
 
 export const buildSkillExportArchive = async (

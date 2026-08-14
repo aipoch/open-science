@@ -4,8 +4,13 @@ import { dirname, join, resolve, sep } from 'node:path'
 
 import type { TrustedCallingSession } from '../../shared/agents-contract'
 import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
-import { frontmatterFieldNames, parseSkillDocument } from './frontmatter'
+import { parseSkillDocument } from './frontmatter'
 import type { BundledSkill } from './registry'
+import {
+  inspectSkillPackage,
+  validateSkillPackage,
+  type SkillValidationIssue
+} from './skill-package-inspection'
 import { SAFE_SKILL_NAME, assertUsableSkillName, parseUserSkillId } from './user-skill-repository'
 import { isUnsafeSkillArchivePath } from './zip-extract'
 
@@ -27,6 +32,59 @@ type HostSkillsServiceOptions = {
 }
 
 type Params = Record<string, unknown>
+
+type HostSkillOrigin = 'draft' | BundledSkill['source']
+
+export type HostSkillSummary = Readonly<{
+  id: string
+  name: string
+  displayName: string
+  description: string
+  origin: HostSkillOrigin
+  editable: boolean
+}>
+
+export type HostSkillReadResult = Readonly<{
+  name: string
+  origin: HostSkillOrigin
+  path: string
+  content: string
+  files?: string[]
+}>
+
+export type HostSkillValidationResult = Readonly<{
+  valid: boolean
+  name: string
+  origin: HostSkillOrigin
+  errors: SkillValidationIssue[]
+  warnings: SkillValidationIssue[]
+}>
+
+type HostSkillEditResult = Readonly<{
+  status: 'edited'
+  name: string
+  path: string
+  origin: 'draft'
+}>
+
+type HostSkillPublishResult = Readonly<{
+  status: 'published'
+  id: string
+  name: string
+  origin: 'personal'
+}>
+
+type HostSkillDeleteResult =
+  | Readonly<{ status: 'declined'; operation: 'delete' }>
+  | Readonly<{ status: 'deleted'; operation: 'delete'; name: string }>
+
+export type HostSkillsResult =
+  | HostSkillSummary[]
+  | HostSkillReadResult
+  | HostSkillValidationResult
+  | HostSkillEditResult
+  | HostSkillPublishResult
+  | HostSkillDeleteResult
 
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
@@ -109,7 +167,7 @@ export class HostSkillsService {
     return result
   }
 
-  async dispatch(request: unknown, context: TrustedCallingSession = {}): Promise<unknown> {
+  async dispatch(request: unknown, context: TrustedCallingSession = {}): Promise<HostSkillsResult> {
     const op =
       request && typeof request === 'object' && 'op' in request
         ? asString((request as { op: unknown }).op)
@@ -150,7 +208,7 @@ export class HostSkillsService {
     }
   }
 
-  private async list(): Promise<unknown[]> {
+  private async list(): Promise<HostSkillSummary[]> {
     const installed = (await this.options.catalog.list()).map((skill) => ({
       id: skill.id,
       name: skill.name,
@@ -179,7 +237,7 @@ export class HostSkillsService {
           name,
           displayName,
           description,
-          origin: 'draft',
+          origin: 'draft' as const,
           editable: true
         }
       })
@@ -197,7 +255,26 @@ export class HostSkillsService {
     return matches[0]
   }
 
-  private async read(params: Params): Promise<unknown> {
+  private async readFromPackage(
+    root: string,
+    name: string,
+    origin: HostSkillOrigin,
+    relativePath: string
+  ): Promise<HostSkillReadResult> {
+    const files =
+      relativePath === 'SKILL.md'
+        ? (await inspectSkillPackage(root)).map(({ relativePath: path }) => path)
+        : undefined
+    return {
+      name,
+      path: relativePath,
+      content: await readPackageText(root, relativePath),
+      origin,
+      ...(files ? { files } : {})
+    }
+  }
+
+  private async read(params: Params): Promise<HostSkillReadResult> {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
     const relativePath = safeRelativePath(params.path, 'SKILL.md')
@@ -205,65 +282,56 @@ export class HostSkillsService {
       explicitDraftName(requestedName) ??
       (SAFE_SKILL_NAME.test(requestedName) ? requestedName : undefined)
     if (draftName && (await exists(this.draftDir(draftName)))) {
-      return {
-        name: draftName,
-        path: relativePath,
-        content: await readPackageText(this.draftDir(draftName), relativePath),
-        origin: 'draft'
-      }
+      return this.readFromPackage(this.draftDir(draftName), draftName, 'draft', relativePath)
     }
 
     const skill = await this.resolvePublished(requestedName)
     if (!skill) throw new Error(`Unknown Skill: ${requestedName}`)
-    const result = await this.options.catalog.withSkillRead(skill.id, async (lockedSkill) => ({
-      name: lockedSkill.name,
-      path: relativePath,
-      content: await readPackageText(lockedSkill.sourceDir, relativePath),
-      origin: lockedSkill.source
-    }))
+    const result = await this.options.catalog.withSkillRead(skill.id, (lockedSkill) =>
+      this.readFromPackage(
+        lockedSkill.sourceDir,
+        lockedSkill.name,
+        lockedSkill.source,
+        relativePath
+      )
+    )
     if (!result) throw new Error(`Unknown Skill: ${requestedName}`)
     return result
   }
 
-  private async validatePackage(sourceDir: string, expectedName?: string): Promise<string> {
-    const skillDocument = await readPackageText(sourceDir, 'SKILL.md')
-    const parsed = parseSkillDocument(skillDocument)
-    if (!parsed.name?.trim() || !parsed.description?.trim()) {
-      throw new Error('SKILL.md requires name and description frontmatter')
+  private async validationResult(
+    sourceDir: string,
+    name: string,
+    origin: HostSkillOrigin,
+    expectedName?: string
+  ): Promise<HostSkillValidationResult> {
+    const report = await validateSkillPackage(sourceDir, name, expectedName)
+    return {
+      valid: report.errors.length === 0,
+      name: report.name,
+      origin,
+      errors: report.errors,
+      warnings: report.warnings
     }
-    const fieldNames = frontmatterFieldNames(skillDocument).sort()
-    if (
-      (fieldNames.length !== 2 && fieldNames.length !== 3) ||
-      fieldNames[0] !== 'description' ||
-      (fieldNames.length === 3 && fieldNames[1] !== 'displayname') ||
-      fieldNames.at(-1) !== 'name'
-    ) {
-      throw new Error('SKILL.md frontmatter may only contain name, displayName, and description')
-    }
-    const name = parsed.name.trim()
-    if (expectedName && name !== expectedName)
-      throw new Error('SKILL.md name must match the draft name')
-    return name
   }
 
-  private async validate(params: Params): Promise<unknown> {
+  private async validate(params: Params): Promise<HostSkillValidationResult> {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
     const draftName =
       explicitDraftName(requestedName) ??
       (SAFE_SKILL_NAME.test(requestedName) ? requestedName : undefined)
     if (draftName && (await exists(this.draftDir(draftName)))) {
-      const name = await this.validatePackage(this.draftDir(draftName), draftName)
-      return { valid: true, name, origin: 'draft' }
+      return this.validationResult(this.draftDir(draftName), draftName, 'draft', draftName)
     }
 
     const published = await this.resolvePublished(requestedName)
     if (!published) throw new Error(`Unknown Skill: ${requestedName}`)
-    const name = await this.options.catalog.withSkillRead(published.id, (skill) =>
-      this.validatePackage(skill.sourceDir)
+    const result = await this.options.catalog.withSkillRead(published.id, (skill) =>
+      this.validationResult(skill.sourceDir, skill.name, skill.source)
     )
-    if (!name) throw new Error(`Unknown Skill: ${requestedName}`)
-    return { valid: true, name, origin: published.source }
+    if (!result) throw new Error(`Unknown Skill: ${requestedName}`)
+    return result
   }
 
   private async ensureDraft(name: string): Promise<{ name: string; path: string }> {
@@ -327,25 +395,11 @@ export class HostSkillsService {
     target: string,
     nextBytes: number
   ): Promise<void> {
-    let count = 0
-    let total = 0
-    let replacedBytes = 0
-    const visit = async (dir: string, depth: number): Promise<void> => {
-      if (depth > SKILL_IMPORT_LIMITS.maxDepth) throw new Error('draft is nested too deeply')
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name)
-        const metadata = await lstat(path)
-        if (metadata.isSymbolicLink()) throw new Error('draft contains a symbolic link')
-        if (entry.isDirectory()) {
-          await visit(path, depth + 1)
-        } else if (entry.isFile()) {
-          count += 1
-          total += metadata.size
-          if (resolve(path) === resolve(target)) replacedBytes = metadata.size
-        }
-      }
-    }
-    await visit(root, 0)
+    const inventory = await inspectSkillPackage(root)
+    let count = inventory.length
+    const total = inventory.reduce((sum, file) => sum + file.size, 0)
+    const replacedBytes =
+      inventory.find(({ absolutePath }) => resolve(absolutePath) === resolve(target))?.size ?? 0
     if (!(await exists(target))) count += 1
     if (count > SKILL_IMPORT_LIMITS.maxFiles) throw new Error('draft has too many files')
     if (total - replacedBytes + nextBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
@@ -370,7 +424,7 @@ export class HostSkillsService {
     }
   }
 
-  private async edit(params: Params): Promise<unknown> {
+  private async edit(params: Params): Promise<HostSkillEditResult> {
     const requestedName = asString(params.name)?.trim()
     const content = asString(params.content)
     if (!requestedName) throw new Error('name is required')
@@ -392,14 +446,14 @@ export class HostSkillsService {
     let next = content
     if (hasOldString) {
       const oldString = asString(params.old_string)
-      if (!oldString) throw new Error('old_string must be a non-empty string')
+      if (!oldString) throw new Error('oldString must be a non-empty string')
       const current = await readBoundedText(target)
       const first = current.indexOf(oldString)
-      const second = first < 0 ? -1 : current.indexOf(oldString, first + oldString.length)
-      if (first < 0 || second >= 0) throw new Error('old_string must match exactly once')
+      const second = first < 0 ? -1 : current.indexOf(oldString, first + 1)
+      if (first < 0 || second >= 0) throw new Error('oldString must match exactly once')
       next = `${current.slice(0, first)}${content}${current.slice(first + oldString.length)}`
     } else if (await exists(target)) {
-      throw new Error(`${relativePath} already exists; use old_string for an exact replacement`)
+      throw new Error(`${relativePath} already exists; use oldString for an exact replacement`)
     }
 
     await this.validateDraftBudget(root, target, Buffer.byteLength(next))
@@ -414,7 +468,7 @@ export class HostSkillsService {
     return { status: 'edited', name: draft.name, path: relativePath, origin: 'draft' }
   }
 
-  private async publish(params: Params): Promise<unknown> {
+  private async publish(params: Params): Promise<HostSkillPublishResult> {
     const name = asString(params.name)?.trim()
     if (!name || !SAFE_SKILL_NAME.test(name)) throw new Error('a draft name is required')
     const overwrite = params.overwrite === true
@@ -423,7 +477,8 @@ export class HostSkillsService {
     }
     const draft = this.draftDir(name)
     if (!(await exists(draft))) throw new Error(`Unknown draft: ${name}`)
-    await this.validatePackage(draft, name)
+    const validation = await this.validationResult(draft, name, 'draft', name)
+    if (!validation.valid) throw new Error(validation.errors[0]?.message ?? 'Skill is invalid')
 
     const id = await this.options.catalog.publishPersonalDirectory(name, draft, overwrite)
     await rm(draft, { recursive: true, force: true })
@@ -431,7 +486,10 @@ export class HostSkillsService {
     return { status: 'published', id, name, origin: 'personal' }
   }
 
-  private async delete(params: Params, context: TrustedCallingSession): Promise<unknown> {
+  private async delete(
+    params: Params,
+    context: TrustedCallingSession
+  ): Promise<HostSkillDeleteResult> {
     const requestedName = asString(params.name)?.trim()
     if (!requestedName) throw new Error('name is required')
 

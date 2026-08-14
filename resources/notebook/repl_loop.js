@@ -2744,6 +2744,9 @@ const hostSkills = {
     return skillsRpc('validate', { name })
   },
   async edit(name, path, content, oldString = undefined) {
+    if (oldString !== undefined && (typeof oldString !== 'string' || oldString.length === 0)) {
+      throw new TypeError('host.skills.edit: oldString must be a non-empty string when provided')
+    }
     return skillsRpc('edit', {
       name,
       path,

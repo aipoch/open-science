@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -81,11 +81,349 @@ describe('HostSkillsService', () => {
 
     await expect(
       service.dispatch({ op: 'validate', params: { name: 'analysis-helper' } })
-    ).resolves.toEqual({ valid: true, name: 'analysis-helper', origin: 'draft' })
+    ).resolves.toEqual({
+      valid: true,
+      name: 'analysis-helper',
+      origin: 'draft',
+      errors: [],
+      warnings: []
+    })
+  })
+
+  it('returns a deterministic recursive file inventory only for SKILL.md reads', async () => {
+    const { service, root } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'package-reader',
+        path: 'SKILL.md',
+        content: '---\nname: package-reader\ndescription: Read a package.\n---\nBody.\n'
+      }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'package-reader', path: 'z-last.md', content: 'Last.\n' }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'package-reader', path: 'references/guide.md', content: 'Guide.\n' }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'package-reader', path: 'scripts/check.js', content: 'export {}\n' }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'package-reader', path: 'a/nested.md', content: 'Nested.\n' }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'package-reader', path: 'a-file.md', content: 'Sibling.\n' }
+    })
+    await writeFile(
+      join(root, 'skills', 'drafts', 'package-reader', '.specialist-package.json'),
+      '{"ownerIds":["internal-id"]}'
+    )
+
+    await expect(
+      service.dispatch({ op: 'read', params: { name: 'package-reader' } })
+    ).resolves.toEqual({
+      name: 'package-reader',
+      origin: 'draft',
+      path: 'SKILL.md',
+      content: '---\nname: package-reader\ndescription: Read a package.\n---\nBody.\n',
+      files: [
+        'SKILL.md',
+        'a-file.md',
+        'a/nested.md',
+        'references/guide.md',
+        'scripts/check.js',
+        'z-last.md'
+      ]
+    })
+    await expect(
+      service.dispatch({
+        op: 'read',
+        params: { name: 'package-reader', path: 'references/guide.md' }
+      })
+    ).resolves.toEqual({
+      name: 'package-reader',
+      origin: 'draft',
+      path: 'references/guide.md',
+      content: 'Guide.\n'
+    })
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'fails closed when SKILL.md inventory contains a symbolic link',
+    async () => {
+      const { service, root } = await makeFixture()
+      await service.dispatch({
+        op: 'edit',
+        params: {
+          name: 'unsafe-package',
+          path: 'SKILL.md',
+          content: '---\nname: unsafe-package\ndescription: Unsafe package.\n---\nBody.\n'
+        }
+      })
+      const packageRoot = join(root, 'skills', 'drafts', 'unsafe-package')
+      await symlink(join(root, 'outside.md'), join(packageRoot, 'linked.md'))
+
+      await expect(
+        service.dispatch({ op: 'read', params: { name: 'unsafe-package' } })
+      ).rejects.toThrow('host.skills.read: Skill package contains a symbolic link.')
+    }
+  )
+
+  it('fails closed when SKILL.md inventory contains a hard link', async () => {
+    const { service, root } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'unsafe-package',
+        path: 'SKILL.md',
+        content: '---\nname: unsafe-package\ndescription: Unsafe package.\n---\nBody.\n'
+      }
+    })
+    const packageRoot = join(root, 'skills', 'drafts', 'unsafe-package')
+    await mkdir(join(packageRoot, 'references'))
+    await link(join(packageRoot, 'SKILL.md'), join(packageRoot, 'references', 'shared.md'))
+    await expect(
+      service.dispatch({ op: 'read', params: { name: 'unsafe-package' } })
+    ).rejects.toThrow('host.skills.read: Skill package contains a hard link.')
+  })
+
+  it('reports deterministic frontmatter, body, Markdown link, and evaluation issues', async () => {
+    const { service } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'report-example',
+        path: 'SKILL.md',
+        content:
+          '---\nname: report-example\ndescription: Report issues.\nlicense: MIT\n---\n\n[missing](references/missing.md)\n'
+      }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'report-example',
+        path: 'references/guide.md',
+        content:
+          '[also missing](../assets/missing.txt) [external](https://example.com) [section](#part)\n'
+      }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'report-example', path: 'trigger-evals.json', content: '{not json' }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'report-example',
+        path: 'evals/evals.json',
+        content: JSON.stringify({ schema_version: 2, evals: [] })
+      }
+    })
+
+    await expect(
+      service.dispatch({ op: 'validate', params: { name: 'report-example' } })
+    ).resolves.toEqual({
+      valid: false,
+      name: 'report-example',
+      origin: 'draft',
+      errors: [
+        {
+          code: 'invalidFrontmatterFields',
+          path: 'SKILL.md',
+          message: 'SKILL.md frontmatter may only contain name, displayName, and description.'
+        },
+        {
+          code: 'invalidOutputEvals',
+          path: 'evals/evals.json',
+          message: 'evals/evals.json does not match the supported version 1 structure.'
+        },
+        {
+          code: 'invalidJson',
+          path: 'trigger-evals.json',
+          message: 'trigger-evals.json must contain valid JSON.'
+        }
+      ],
+      warnings: [
+        {
+          code: 'missingLocalLink',
+          path: 'SKILL.md',
+          message: 'Local Markdown target does not exist: references/missing.md.'
+        },
+        {
+          code: 'missingLocalLink',
+          path: 'references/guide.md',
+          message: 'Local Markdown target does not exist: assets/missing.txt.'
+        }
+      ]
+    })
+  })
+
+  it('warns for an empty instruction body without blocking publish', async () => {
+    const { service, reload } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'empty-body',
+        path: 'SKILL.md',
+        content: '---\nname: empty-body\ndescription: Empty body.\n---\n  \n'
+      }
+    })
+
+    await expect(
+      service.dispatch({ op: 'validate', params: { name: 'empty-body' } })
+    ).resolves.toEqual({
+      valid: true,
+      name: 'empty-body',
+      origin: 'draft',
+      errors: [],
+      warnings: [
+        {
+          code: 'emptyBody',
+          path: 'SKILL.md',
+          message: 'SKILL.md has no instruction body.'
+        }
+      ]
+    })
+    await expect(
+      service.dispatch({ op: 'publish', params: { name: 'empty-body' } })
+    ).resolves.toMatchObject({ status: 'published', name: 'empty-body' })
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'returns package safety violations as validation errors and blocks publish',
+    async () => {
+      const { service, root, userSkills, reload } = await makeFixture()
+      await service.dispatch({
+        op: 'edit',
+        params: {
+          name: 'unsafe-validation',
+          path: 'SKILL.md',
+          content: '---\nname: unsafe-validation\ndescription: Unsafe package.\n---\nBody.\n'
+        }
+      })
+      await symlink(
+        join(root, 'outside.md'),
+        join(root, 'skills', 'drafts', 'unsafe-validation', 'linked.md')
+      )
+
+      await expect(
+        service.dispatch({ op: 'validate', params: { name: 'unsafe-validation' } })
+      ).resolves.toEqual({
+        valid: false,
+        name: 'unsafe-validation',
+        origin: 'draft',
+        errors: [
+          {
+            code: 'unsafePackageEntry',
+            path: 'linked.md',
+            message: 'Skill package contains a symbolic link.'
+          }
+        ],
+        warnings: []
+      })
+      await expect(
+        service.dispatch({ op: 'publish', params: { name: 'unsafe-validation' } })
+      ).rejects.toThrow('host.skills.publish: Skill package contains a symbolic link.')
+      expect(await userSkills.list()).toHaveLength(0)
+      expect(reload).not.toHaveBeenCalled()
+      await expect(
+        readFile(join(root, 'skills', 'drafts', 'unsafe-validation', 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: unsafe-validation')
+    }
+  )
+
+  it('returns a validation report for a known draft without SKILL.md', async () => {
+    const { service, reload } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'incomplete-draft', path: 'references/notes.md', content: 'Notes.\n' }
+    })
+
+    await expect(
+      service.dispatch({ op: 'validate', params: { name: 'incomplete-draft' } })
+    ).resolves.toEqual({
+      valid: false,
+      name: 'incomplete-draft',
+      origin: 'draft',
+      errors: [
+        {
+          code: 'missingSkillDocument',
+          path: 'SKILL.md',
+          message: 'Skill package must contain SKILL.md at its root.'
+        }
+      ],
+      warnings: []
+    })
+    await expect(
+      service.dispatch({ op: 'publish', params: { name: 'incomplete-draft' } })
+    ).rejects.toThrow('host.skills.publish: Skill package must contain SKILL.md at its root.')
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('enforces the documented trigger and output evaluation structures', async () => {
+    const { service } = await makeFixture()
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'valid-evals',
+        path: 'SKILL.md',
+        content: '---\nname: valid-evals\ndescription: Validate evals.\n---\nBody.\n'
+      }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'valid-evals',
+        path: 'trigger-evals.json',
+        content: JSON.stringify({
+          schema_version: 1,
+          kind: 'trigger',
+          cases: [{ id: 'create', query: 'Create a Skill.', should_trigger: true }]
+        })
+      }
+    })
+    await service.dispatch({
+      op: 'edit',
+      params: {
+        name: 'valid-evals',
+        path: 'evals/evals.json',
+        content: JSON.stringify({
+          schema_version: 1,
+          skill_id: 'personal-valid-evals',
+          source_revision: 'revision',
+          evals: [
+            {
+              id: 'create',
+              prompt: 'Create a Skill.',
+              expected_output: 'A Skill package.',
+              files: [],
+              expectations: ['The package is valid.']
+            }
+          ]
+        })
+      }
+    })
+
+    await expect(
+      service.dispatch({ op: 'validate', params: { name: 'valid-evals' } })
+    ).resolves.toEqual({
+      valid: true,
+      name: 'valid-evals',
+      origin: 'draft',
+      errors: [],
+      warnings: []
+    })
   })
 
   it('creates a draft with exact create/replace semantics, publishes it, and reads it back', async () => {
-    const { service, root, reload } = await makeFixture()
+    const { service, root, userSkills, reload } = await makeFixture()
     const manifest =
       '---\nname: analysis-helper\ndescription: Analyze a dataset.\n---\nUse the script.\n'
 
@@ -115,6 +453,14 @@ describe('HostSkillsService', () => {
       }
     })
 
+    const draftSkillDocument = join(root, 'skills', 'drafts', 'analysis-helper', 'SKILL.md')
+    reload.mockImplementationOnce(async () => {
+      await expect(userSkills.list()).resolves.toContainEqual(
+        expect.objectContaining({ id: 'personal-analysis-helper' })
+      )
+      await expect(readFile(draftSkillDocument)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
     await expect(
       service.dispatch({ op: 'publish', params: { name: 'analysis-helper' } })
     ).resolves.toEqual({
@@ -134,9 +480,7 @@ describe('HostSkillsService', () => {
       content: 'console.log("v2")\n',
       origin: 'personal'
     })
-    await expect(
-      readFile(join(root, 'skills', 'drafts', 'analysis-helper', 'SKILL.md'))
-    ).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(draftSkillDocument)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(reload).toHaveBeenCalledTimes(1)
   })
 
@@ -190,6 +534,17 @@ describe('HostSkillsService', () => {
       service.dispatch({
         op: 'edit',
         params: { name: 'bad', path: 'SKILL.md', old_string: 'same', content: 'new' }
+      })
+    ).rejects.toThrow('exactly once')
+
+    await service.dispatch({
+      op: 'edit',
+      params: { name: 'overlap', path: 'SKILL.md', content: 'aaa' }
+    })
+    await expect(
+      service.dispatch({
+        op: 'edit',
+        params: { name: 'overlap', path: 'SKILL.md', old_string: 'aa', content: 'new' }
       })
     ).rejects.toThrow('exactly once')
   })
@@ -443,6 +798,9 @@ describe('HostSkillsService', () => {
     expect(await userSkills.list()).toHaveLength(1)
     expect(reload).not.toHaveBeenCalled()
 
+    reload.mockImplementationOnce(async () => {
+      await expect(userSkills.list()).resolves.toHaveLength(0)
+    })
     await expect(
       service.dispatch(
         { op: 'delete', params: { name: 'personal-disposable' } },

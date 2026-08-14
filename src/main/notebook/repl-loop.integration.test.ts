@@ -1907,15 +1907,51 @@ describe('repl_loop local RPC transport', () => {
   }, 60_000)
 
   it('routes host.skills through its native skillsCall method', async () => {
-    let received: { method?: string; params?: Record<string, unknown> } = {}
+    const requests: { method?: string; params?: Record<string, unknown> }[] = []
     const server = createServer((request, response) => {
       let body = ''
       request.on('data', (chunk) => (body += chunk))
       request.on('end', () => {
-        received = JSON.parse(body)
+        const received = JSON.parse(body) as {
+          method?: string
+          params?: Record<string, unknown>
+        }
+        requests.push(received)
+        const results: Record<string, unknown> = {
+          list: [
+            {
+              id: 'personal:demo',
+              name: 'demo',
+              displayName: 'Demo',
+              description: 'Demo Skill',
+              origin: 'personal',
+              editable: true
+            }
+          ],
+          read: {
+            name: 'demo',
+            origin: 'draft',
+            path: 'SKILL.md',
+            content: '---\nname: demo\n---\nDemo\n',
+            files: ['SKILL.md', 'references/guide.md']
+          },
+          validate: {
+            valid: true,
+            name: 'demo',
+            origin: 'draft',
+            errors: [],
+            warnings: [{ code: 'missingResource', path: 'SKILL.md', message: 'Missing guide.md' }]
+          },
+          edit: { status: 'edited', name: 'demo', path: 'SKILL.md', origin: 'draft' },
+          publish: { status: 'published', id: 'personal:demo', name: 'demo', origin: 'personal' },
+          delete:
+            received.params?.name === 'declined-demo'
+              ? { status: 'declined', operation: 'delete' }
+              : { status: 'deleted', operation: 'delete', name: 'demo' }
+        }
         response
           .writeHead(200, { 'content-type': 'application/json' })
-          .end(JSON.stringify({ result: { status: 'edited', origin: 'draft' } }))
+          .end(JSON.stringify({ result: results[String(received.params?.op)] }))
       })
     })
     const connection = await listenForLocalRpc(server, {
@@ -1930,27 +1966,104 @@ describe('repl_loop local RPC transport', () => {
     })
 
     try {
+      const methods = await send('return Object.keys(host.skills).sort()')
+      expect(JSON.parse(methods.result ?? '[]')).toEqual([
+        'delete',
+        'edit',
+        'list',
+        'publish',
+        'read',
+        'validate'
+      ])
+
       const result = await send(
-        "return await host.skills.edit('demo', 'SKILL.md', 'new body', 'old body')"
+        'return JSON.stringify({' +
+          'list: await host.skills.list(), ' +
+          "read: await host.skills.read('demo'), " +
+          "validate: await host.skills.validate('demo'), " +
+          "edit: await host.skills.edit('demo', 'SKILL.md', 'new body', 'old body'), " +
+          "publish: await host.skills.publish('demo', true), " +
+          "deleted: await host.skills.delete('demo'), " +
+          "declined: await host.skills.delete('declined-demo')" +
+          '})'
       )
       expect(result.error).toBeNull()
-      expect(received).toMatchObject({
-        method: 'skillsCall',
-        params: {
-          op: 'edit',
+      expect(JSON.parse(result.result ?? '{}')).toEqual({
+        list: [
+          {
+            id: 'personal:demo',
+            name: 'demo',
+            displayName: 'Demo',
+            description: 'Demo Skill',
+            origin: 'personal',
+            editable: true
+          }
+        ],
+        read: {
           name: 'demo',
+          origin: 'draft',
           path: 'SKILL.md',
-          content: 'new body',
-          old_string: 'old body'
+          content: '---\nname: demo\n---\nDemo\n',
+          files: ['SKILL.md', 'references/guide.md']
+        },
+        validate: {
+          valid: true,
+          name: 'demo',
+          origin: 'draft',
+          errors: [],
+          warnings: [{ code: 'missingResource', path: 'SKILL.md', message: 'Missing guide.md' }]
+        },
+        edit: { status: 'edited', name: 'demo', path: 'SKILL.md', origin: 'draft' },
+        publish: { status: 'published', id: 'personal:demo', name: 'demo', origin: 'personal' },
+        deleted: { status: 'deleted', operation: 'delete', name: 'demo' },
+        declined: { status: 'declined', operation: 'delete' }
+      })
+      expect(requests).toEqual([
+        { method: 'skillsCall', params: { op: 'list', session_id: 'session-1' } },
+        {
+          method: 'skillsCall',
+          params: { op: 'read', name: 'demo', path: 'SKILL.md', session_id: 'session-1' }
+        },
+        {
+          method: 'skillsCall',
+          params: { op: 'validate', name: 'demo', session_id: 'session-1' }
+        },
+        {
+          method: 'skillsCall',
+          params: {
+            op: 'edit',
+            name: 'demo',
+            path: 'SKILL.md',
+            content: 'new body',
+            old_string: 'old body',
+            session_id: 'session-1'
+          }
+        },
+        {
+          method: 'skillsCall',
+          params: { op: 'publish', name: 'demo', overwrite: true, session_id: 'session-1' }
+        },
+        {
+          method: 'skillsCall',
+          params: { op: 'delete', name: 'demo', session_id: 'session-1' }
+        },
+        {
+          method: 'skillsCall',
+          params: { op: 'delete', name: 'declined-demo', session_id: 'session-1' }
         }
-      })
+      ])
+      expect(JSON.stringify(result)).not.toContain('old_string')
+      expect(JSON.stringify(result)).not.toContain('body')
 
-      const validated = await send("return await host.skills.validate('demo')")
-      expect(validated.error).toBeNull()
-      expect(received).toMatchObject({
-        method: 'skillsCall',
-        params: { op: 'validate', name: 'demo' }
-      })
+      const publicError = await send(
+        "try { await host.skills.edit('demo', 'SKILL.md', 'new body', '') } " +
+          'catch (error) { return error.message }'
+      )
+      expect(publicError.result).toBe(
+        'host.skills.edit: oldString must be a non-empty string when provided'
+      )
+      expect(JSON.stringify(publicError)).not.toContain('old_string')
+      expect(requests).toHaveLength(7)
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

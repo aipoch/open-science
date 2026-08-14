@@ -1206,34 +1206,49 @@ describe('AgentBackendResolver bridge predicates', () => {
         provider: { apiEndpoints: ['openai'] as const }
       }
     }
-  ])('advertises exact enabled Connector Skill names to $name', async (testCase) => {
-    const harness = makeHarness({
-      connectorIds: ['pubmed', 'literature'],
-      connectorSkillNames: ['mcp-pubmed', 'mcp-literature', 'mcp-custom-chemistry'],
-      targetOverride: () => testCase.target
-    })
+  ])(
+    'rematerializes exact enabled Connector Skill names for each $name generation',
+    async (testCase) => {
+      const harness = makeHarness({
+        connectorIds: ['pubmed', 'literature'],
+        connectorSkillNames: ['mcp-pubmed', 'mcp-literature', 'mcp-custom-chemistry'],
+        targetOverride: () => testCase.target
+      })
+      const target = {
+        frameworkId: testCase.frameworkId,
+        providerId: 'provider-a',
+        model: { kind: 'provider-default' as const },
+        reasoningEffort: 'high' as const
+      }
 
-    const backend = await harness.resolver.resolveExplicitTarget({
-      frameworkId: testCase.frameworkId,
-      providerId: 'provider-a',
-      model: { kind: 'provider-default' },
-      reasoningEffort: 'high'
-    })
-    const instructions =
-      testCase.frameworkId === 'claude-code'
-        ? backend.systemPromptAppends?.join('\n\n')
-        : backend.persistentSystemPrompt
+      const previousBackend = await harness.resolver.resolveExplicitTarget(target)
+      await previousBackend.anthropicBridgeLease?.release()
+      await previousBackend.responsesBridgeLease?.release()
+      await previousBackend.providerTransportLease?.release()
 
-    expect(instructions).toContain(
-      'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
-    )
-    expect(instructions).toContain('Allowed Specialist Skills for this session')
-    expect(instructions).not.toContain('host.mcp("custom-chemistry"')
-    expect(instructions).not.toContain('`mcp-openalex`')
-    await backend.anthropicBridgeLease?.release()
-    await backend.responsesBridgeLease?.release()
-    await backend.providerTransportLease?.release()
-  })
+      const backend = await harness.resolver.resolveExplicitTarget(target)
+      const instructions =
+        testCase.frameworkId === 'claude-code'
+          ? backend.systemPromptAppends?.join('\n\n')
+          : backend.persistentSystemPrompt
+
+      expect(instructions).toContain(
+        'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
+      )
+      expect(instructions).toContain('Allowed Specialist Skills for this session')
+      expect(instructions).not.toContain('host.mcp("custom-chemistry"')
+      expect(instructions).not.toContain('`mcp-openalex`')
+      expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledTimes(
+        testCase.frameworkId === 'claude-code' ? 2 : 0
+      )
+      expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledTimes(
+        testCase.frameworkId === 'claude-code' ? 0 : 2
+      )
+      await backend.anthropicBridgeLease?.release()
+      await backend.responsesBridgeLease?.release()
+      await backend.providerTransportLease?.release()
+    }
+  )
 
   it.each([
     { name: 'OpenCode', frameworkId: 'opencode' as const, target: {} },

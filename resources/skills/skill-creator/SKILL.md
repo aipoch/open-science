@@ -22,7 +22,7 @@ await host.skills.publish(name, true)
 await host.skills.delete(stableId)
 ```
 
-Without `old_string`, `edit` creates a file and fails if it exists. With `old_string`, the old text
+Without `oldString`, `edit` creates a file and fails if it exists. With `oldString`, the old text
 must occur exactly once. Never silently overwrite an existing draft file. `publish` promotes the
 complete draft into Personal Skills. `delete` is privileged and always uses app approval. When a
 published Skill and its draft coexist, delete only by the exact `draft-<name>` or `personal-<name>`
