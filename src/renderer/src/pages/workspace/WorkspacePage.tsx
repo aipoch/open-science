@@ -127,8 +127,6 @@ const WorkspacePage = ({
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
-  const openFileDialog = usePreviewWorkbenchStore((state) => state.openFileDialog)
-  const closeFileDialog = usePreviewWorkbenchStore((state) => state.closeFileDialog)
   const upsertPreviewItem = usePreviewWorkbenchStore((state) => state.upsertItem)
   const upsertAndActivatePreviewItem = usePreviewWorkbenchStore(
     (state) => state.upsertAndActivateItem
@@ -233,9 +231,7 @@ const WorkspacePage = ({
     Record<string, NotebookSessionReference>
   >({})
 
-  // The selected session is the only conversation rendered in the center panel. Selecting it by
-  // id (instead of deriving it from the full list) keeps chunk commits for other sessions from
-  // re-rendering the page; the active session's own per-chunk identity changes still do.
+  // Select by id so chunk commits for other sessions do not re-render the page.
   const activeSession = useSessionStore((state) => {
     if (activeProject?.archivedAt !== undefined) return undefined
     const selected = state.sessions.find((session) => session.id === selectedSessionId)
@@ -244,9 +240,7 @@ const WorkspacePage = ({
     }
     return selected
   })
-  // Starter history is only consumed when no session is active, so this subscription collapses to
-  // a stable empty list while a session is selected — background session updates then never
-  // re-render the page through it.
+  // Return a stable empty list so background sessions cannot re-render an active conversation.
   const starterHistorySessions = useSessionStore(
     useShallow((state) =>
       activeSession === undefined && activeProject?.archivedAt === undefined
@@ -1182,8 +1176,8 @@ const WorkspacePage = ({
             ? fileDialogItem
             : undefined
         }
-        onClose={closeFileDialog}
-        onItemChange={openFileDialog}
+        onClose={usePreviewWorkbenchStore.getState().closeFileDialog}
+        onItemChange={usePreviewWorkbenchStore.getState().openFileDialog}
       />
 
       <SessionNotebookDialog
