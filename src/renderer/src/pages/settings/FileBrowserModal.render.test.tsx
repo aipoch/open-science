@@ -495,6 +495,37 @@ describe('FileBrowserModal', () => {
     expect(document.body.textContent).toContain('Bookmark write failed')
   })
 
+  it('removes a bookmark and persists the updated list', async () => {
+    const bookmarksSet = vi.fn().mockResolvedValue(undefined)
+    setComputeApi({
+      listDir: vi.fn().mockResolvedValue(mockListing),
+      bookmarksGet: vi.fn().mockResolvedValue(['/scratch/user/pinned']),
+      bookmarksSet
+    })
+
+    await act(async () => {
+      root.render(
+        <FileBrowserModal open={true} onClose={vi.fn()} initialProviderId={'ssh:biowulf'} />
+      )
+      await Promise.resolve()
+    })
+    const goToButton = document.querySelector('[aria-haspopup=listbox]') as
+      HTMLButtonElement | undefined
+    await act(async () => {
+      goToButton?.click()
+    })
+    const removeButton = Array.from(document.querySelectorAll('button')).find(
+      (element) => element.getAttribute('aria-label') === 'Remove bookmark /scratch/user/pinned'
+    ) as HTMLButtonElement | undefined
+    await act(async () => {
+      removeButton?.click()
+      await Promise.resolve()
+    })
+
+    expect(bookmarksSet).toHaveBeenCalledWith('ssh:biowulf', [])
+    expect(document.body.textContent).not.toContain('/scratch/user/pinned')
+  })
+
   it('shows Add to project button when a project is active', async () => {
     // Set an active project
     useProjectStore.setState({
