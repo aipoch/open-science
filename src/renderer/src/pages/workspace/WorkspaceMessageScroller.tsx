@@ -27,6 +27,7 @@ import {
   type ReactNode
 } from 'react'
 import { ArrowDownIcon } from 'lucide-react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 
 import { getAgentLoadingPhase } from './agent-loading-message'
 import {
@@ -140,6 +141,24 @@ const SCROLL_TO_FIRST_MESSAGE_MIN_DISTANCE_VIEWPORTS = 1
 const SCROLL_TO_FIRST_MESSAGE_IDLE_TIMEOUT_MS = 3000
 // How long a "no longer available" mention notice stays visible before auto-dismissing.
 const MENTION_NOTICE_TIMEOUT_MS = 3000
+// Transcripts larger than this render through a virtualizer-owned window; smaller ones keep the
+// primitive's direct-children measurement path, which owns anchoring for them.
+const VIRTUALIZATION_ROW_THRESHOLD = 100
+const SCROLL_PREVIOUS_ITEM_PEEK = 64
+const SCROLL_FOLLOW_EDGE_PX = 8
+// Stable fallbacks keep memoized transcript rows from rebuilding when session-scoped UI state
+// belongs to a different session/scope.
+const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>()
+const EMPTY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
+
+// One flattened transcript row. The virtualized path positions these absolutely; the classic path
+// renders them as direct content children in the same order.
+type TranscriptRow = {
+  key: string
+  estimatedSize: number
+  scrollAnchor: boolean
+  node: () => React.JSX.Element | null
+}
 
 const structurallyMatches = (left: unknown, right: unknown): boolean =>
   JSON.stringify(left) === JSON.stringify(right)
@@ -307,6 +326,14 @@ const WorkspaceMessageScrollerImpl = ({
   const scrollToFirstMessageButtonRef = useRef<HTMLButtonElement | null>(null)
   const previousMessageScrollerScrollTopRef = useRef(0)
   const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
+  // Virtualized-path scroll engine state (used only past VIRTUALIZATION_ROW_THRESHOLD rows).
+  const virtualizationEnabledRef = useRef(false)
+  const virtualScrollStateRef = useRef<{
+    scopeId: string | undefined
+    initialized: boolean
+    follow: boolean
+    handledAnchorKeys: Set<string>
+  }>({ scopeId: undefined, initialized: false, follow: true, handledAnchorKeys: new Set() })
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
   const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
     (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
@@ -315,6 +342,7 @@ const WorkspaceMessageScrollerImpl = ({
     ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
     : undefined
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
+  const artifactsForMessage = artifactVisibility.artifactsForMessage
   const notebookRunsById = useNotebookRunsById(notebookReference)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
   // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
@@ -391,11 +419,11 @@ const WorkspaceMessageScrollerImpl = ({
   const collapsedActivityGroups =
     collapsedActivityGroupState.sessionId === currentSessionId
       ? collapsedActivityGroupState.groupIds
-      : new Set<string>()
+      : EMPTY_ID_SET
   const activityExpansionOverrides =
     activityExpansionOverrideState.sessionId === currentSessionId
       ? activityExpansionOverrideState.overrides
-      : {}
+      : EMPTY_EXPANSION_OVERRIDES
   const rawConversationItems = useMemo(
     () => createConversationItems(activeSession, handoffEvents),
     [activeSession, handoffEvents]
@@ -412,7 +440,7 @@ const WorkspaceMessageScrollerImpl = ({
   const presentingMessageIds =
     messagePresentationState.scopeId === currentPresentationScopeId
       ? messagePresentationState.messageIds
-      : new Set<string>()
+      : EMPTY_ID_SET
   const presentationBarrierIndex = conversationItems.findIndex(
     (item) => item.type === 'message' && presentingMessageIds.has(item.message.id)
   )
@@ -478,6 +506,14 @@ const WorkspaceMessageScrollerImpl = ({
 
     const previousScrollTop = previousMessageScrollerScrollTopRef.current
     previousMessageScrollerScrollTopRef.current = viewport.scrollTop
+    if (virtualizationEnabledRef.current) {
+      // The virtualized path owns follow-output: release on any upward scroll, re-engage at the
+      // live edge. Downward programmatic pins never release.
+      const followState = virtualScrollStateRef.current
+      const maximumScrollTop = viewport.scrollHeight - viewport.clientHeight
+      if (viewport.scrollTop >= maximumScrollTop - SCROLL_FOLLOW_EDGE_PX) followState.follow = true
+      else if (viewport.scrollTop < previousScrollTop) followState.follow = false
+    }
     const eligible = updateScrollToFirstMessageEligibility()
     if (viewport.scrollTop < previousScrollTop && eligible) revealScrollToFirstMessage()
     else if (viewport.scrollTop > previousScrollTop) hideScrollToFirstMessage()
@@ -589,21 +625,6 @@ const WorkspaceMessageScrollerImpl = ({
         : undefined,
     [legacyAgentBackendId, legacyAgentModel]
   )
-  const messageCreatedAtById = new Map(
-    activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
-  )
-
-  // Counts the user turns after each message; the destructive-resend warning keys off turns, not
-  // raw message count, so a single follow-up turn stays warning-free.
-  const subsequentTurnCountByMessageId = new Map<string, number>()
-  if (activeSession) {
-    let subsequentTurns = 0
-    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
-      const message = activeSession.messages[index]
-      subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
-      if (message.role === 'user') subsequentTurns += 1
-    }
-  }
 
   // Build a map from job_id → JobSummary for all session jobs (used in binding)
   const sessionJobs = useMemo((): JobSummary[] => {
@@ -788,54 +809,63 @@ const WorkspaceMessageScrollerImpl = ({
   )
 
   // Toggles a whole adjacent tool-activity group without affecting other sessions.
-  const toggleActivityGroup = (groupId: string): void => {
-    setCollapsedActivityGroupState((currentState) => {
-      const currentGroupIds =
-        currentState.sessionId === currentSessionId ? currentState.groupIds : new Set<string>()
-      const nextGroupIds = new Set(currentGroupIds)
+  const toggleActivityGroup = useCallback(
+    (groupId: string): void => {
+      setCollapsedActivityGroupState((currentState) => {
+        const currentGroupIds =
+          currentState.sessionId === currentSessionId ? currentState.groupIds : new Set<string>()
+        const nextGroupIds = new Set(currentGroupIds)
 
-      if (nextGroupIds.has(groupId)) {
-        nextGroupIds.delete(groupId)
-      } else {
-        nextGroupIds.add(groupId)
-      }
+        if (nextGroupIds.has(groupId)) {
+          nextGroupIds.delete(groupId)
+        } else {
+          nextGroupIds.add(groupId)
+        }
 
-      return {
-        sessionId: currentSessionId,
-        groupIds: nextGroupIds
-      }
-    })
-  }
+        return {
+          sessionId: currentSessionId,
+          groupIds: nextGroupIds
+        }
+      })
+    },
+    [currentSessionId]
+  )
 
   // Records the user's explicit expansion choice for a single tool-activity detail row.
-  const toggleActivityRow = (activityId: string, nextExpanded: boolean): void => {
-    setActivityExpansionOverrideState((currentState) => {
-      const currentOverrides =
-        currentState.sessionId === currentSessionId ? currentState.overrides : {}
+  const toggleActivityRow = useCallback(
+    (activityId: string, nextExpanded: boolean): void => {
+      setActivityExpansionOverrideState((currentState) => {
+        const currentOverrides =
+          currentState.sessionId === currentSessionId ? currentState.overrides : {}
 
-      return {
-        sessionId: currentSessionId,
-        overrides: {
-          ...currentOverrides,
-          [activityId]: nextExpanded
+        return {
+          sessionId: currentSessionId,
+          overrides: {
+            ...currentOverrides,
+            [activityId]: nextExpanded
+          }
         }
-      }
-    })
-  }
+      })
+    },
+    [currentSessionId]
+  )
 
   // Opens the Session reviewer panel positioned at the finding the user clicked.
   // Only the "Go to transcript" button on a finding fires this; clicking the card itself does not.
-  const handleGoToTranscript = (intent: GoToTranscriptIntent): void => {
-    if (!currentSessionId) return
-    openSessionReviewer(currentSessionId, intent)
-  }
+  const handleGoToTranscript = useCallback(
+    (intent: GoToTranscriptIntent): void => {
+      if (!currentSessionId) return
+      openSessionReviewer(currentSessionId, intent)
+    },
+    [currentSessionId]
+  )
 
   // Re-runs the review for a specific (stale) turn — the actionable refresh the stale notice offers.
   // Unlike the composer's last-turn-only "Request review", this reaches any turn's review. The row is
   // grouped under review.turnMessageId (so a fix-loop review refreshes in place), but the audited
   // content is review.scope.turnMessageId — the turn whose bytes actually changed. Fire-and-forget:
   // a fresh review supersedes the stale one via reviewer:updated; concurrent runs are deduped in main.
-  const handleRerunReview = async (review: ReviewWithChecks): Promise<boolean> => {
+  const handleRerunReview = useCallback(async (review: ReviewWithChecks): Promise<boolean> => {
     try {
       const result = await window.api.reviewer.run({
         sessionId: review.sessionId,
@@ -852,7 +882,468 @@ const WorkspaceMessageScrollerImpl = ({
     } catch {
       return false
     }
-  }
+  }, [])
+
+  // Flatten the transcript timeline into row descriptors. The classic path renders them as
+  // direct content children (identical DOM to before); the virtualized path mounts only the
+  // window the virtualizer covers. Kept memoized so virtualizer window shifts during scrolling
+  // do not rebuild descriptors for the whole transcript.
+  const transcriptRows = useMemo<readonly TranscriptRow[]>(() => {
+    const messageCreatedAtById = new Map(
+      activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
+    )
+
+    // Counts the user turns after each message; the destructive-resend warning keys off turns, not
+    // raw message count, so a single follow-up turn stays warning-free.
+    const subsequentTurnCountByMessageId = new Map<string, number>()
+    if (activeSession) {
+      let subsequentTurns = 0
+      for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
+        const message = activeSession.messages[index]
+        subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
+        if (message.role === 'user') subsequentTurns += 1
+      }
+    }
+
+    const rows: TranscriptRow[] = []
+    // Messages and tool activities share one sorted transcript timeline.
+    conversationItems.forEach((item, itemIndex) => {
+      // Only later text messages stay behind the presentation barrier; tool,
+      // activity, and other non-message rows render in real time so their
+      // running state stays visible while the reply paces above them.
+      if (
+        presentationBarrierIndex >= 0 &&
+        itemIndex > presentationBarrierIndex &&
+        (item.type === 'message' || item.type === 'subagent-message')
+      ) {
+        return
+      }
+
+      if (item.type === 'message') {
+        const artifacts = artifactsForMessage(item.message)
+        // Jobs pre-assigned to this slot: each job appears in exactly one slot.
+        const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
+        const graph = activeSession?.conversationGraph
+        const messageNode = graph?.messages.find((message) => message.id === item.message.id)
+        const runtimeSegment = messageNode?.runtimeSegmentId
+          ? graph?.runtimeSegments.find((segment) => segment.id === messageNode.runtimeSegmentId)
+          : undefined
+        // Legacy sessions synthesize this segment with a fallback framework. Keep only
+        // the session-level values that were actually persisted.
+        const synthesizedLegacyRuntime =
+          runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
+          !activeSession?.agentFrameworkId
+        const runtimeIdentity = synthesizedLegacyRuntime ? legacyRuntimeIdentity : runtimeSegment
+        const revisionRootMessageId = messageNode?.revisionRootMessageId
+        const revisions = revisionRootMessageId
+          ? (graph?.messages
+              .filter(
+                (message) =>
+                  message.role === 'user' && message.revisionRootMessageId === revisionRootMessageId
+              )
+              .sort(
+                (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+              ) ?? [])
+          : []
+        const revisionIndex = revisions.findIndex((message) => message.id === item.message.id)
+        const activateRevision = (index: number): (() => void) | undefined => {
+          const revision = revisions[index]
+          return revision && activeSession
+            ? () =>
+                useSessionStore
+                  .getState()
+                  .activateMessageBranch(activeSession.id, revision.introducedOnBranchId)
+            : undefined
+        }
+        const messageItemProps: EditableWorkspaceMessageItemProps = {
+          message: item.message,
+          onPreviewArtifact,
+          onPreviewUploadAttachment,
+          onOpenSkillMention,
+          onPreviewMentionArtifact,
+          onSendEditedMessage,
+          turnStartedAt: item.message.responseToMessageId
+            ? messageCreatedAtById.get(item.message.responseToMessageId)
+            : undefined,
+          runtimeIdentity,
+          showAssistantFooter:
+            item.message.role !== 'agent' || assistantFooterMessageIds.has(item.message.id),
+          subsequentTurns: subsequentTurnCountByMessageId.get(item.message.id) ?? 0,
+          revisionNavigation:
+            revisionIndex >= 0 && revisions.length > 1
+              ? {
+                  index: revisionIndex,
+                  total: revisions.length,
+                  onPrevious: activateRevision(revisionIndex - 1),
+                  onNext: activateRevision(revisionIndex + 1)
+                }
+              : undefined,
+          artifacts
+        }
+        if (item.message.role === 'agent') {
+          messageItemProps.onPresentationChange = handleMessagePresentationChange
+          messageItemProps.presentationSourceOpen = itemIndex === conversationItems.length - 1
+          messageItemProps.presentationAnimateOnMount =
+            presentationScopeRemainedVisible &&
+            !visibleMessageSnapshot.messageIds.has(item.message.id)
+        }
+
+        // Unbound completed jobs that belong chronologically before this message.
+        for (const job of jobsBeforeMessage) {
+          rows.push({
+            key: `completed-job-${job.job_id}`,
+            estimatedSize: 96,
+            scrollAnchor: false,
+            node: () => (
+              <MessageScrollerItem messageId={`completed-job-${job.job_id}`} className="min-w-0">
+                <div className="px-4 py-1 md:px-6">
+                  <div className="mx-auto w-full max-w-4xl">
+                    <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+                  </div>
+                </div>
+              </MessageScrollerItem>
+            )
+          })
+        }
+        // #1124: the composite key remounts the message row when the presentation scope changes.
+        const messageRowKey = JSON.stringify([currentPresentationScopeId, item.id])
+        rows.push({
+          key: messageRowKey,
+          estimatedSize: item.message.role === 'user' ? 46 : 336,
+          scrollAnchor: item.message.role === 'user',
+          node: () =>
+            item.message.role === 'user' ? (
+              <EditableWorkspaceMessageItem key={messageRowKey} {...messageItemProps} />
+            ) : (
+              <WorkspaceMessageItem
+                key={messageRowKey}
+                {...messageItemProps}
+                canEditMessage={false}
+              />
+            )
+        })
+        if (
+          currentSessionId &&
+          item.message.role === 'agent' &&
+          !presentingMessageIds.has(item.message.id)
+        ) {
+          const reviewSessionId = currentSessionId
+          rows.push({
+            key: `${messageRowKey}:review`,
+            estimatedSize: 200,
+            scrollAnchor: false,
+            node: () => (
+              <WorkspaceMessageReview
+                projectId={currentProjectId}
+                sessionId={reviewSessionId}
+                turnMessageId={item.message.id}
+                onGoToTranscript={handleGoToTranscript}
+                onRerun={handleRerunReview}
+              />
+            )
+          })
+        }
+        return
+      }
+
+      if (item.type === 'subagent-message') {
+        rows.push({
+          key: item.id,
+          estimatedSize: 96,
+          scrollAnchor: false,
+          node: () => (
+            <MessageScrollerItem messageId={item.id} className="min-w-0">
+              <div className="px-4 pb-1 pt-3 md:px-6">
+                <div className="mx-auto w-full max-w-[56rem]">
+                  <WorkspaceSubagentMessageRow
+                    message={item.message}
+                    onOpenSource={() => {
+                      if (!currentSessionId) return
+                      usePreviewWorkbenchStore
+                        .getState()
+                        .upsertAndActivateItem(
+                          createSessionSubagentsPreviewItem(
+                            currentSessionId,
+                            currentProjectId,
+                            item.message.sourceFrameId
+                          )
+                        )
+                    }}
+                  />
+                </div>
+              </div>
+            </MessageScrollerItem>
+          )
+        })
+        return
+      }
+
+      if (item.type === 'handoff') {
+        rows.push({
+          key: item.id,
+          estimatedSize: 96,
+          scrollAnchor: false,
+          node: () => (
+            <MessageScrollerItem messageId={item.id} className="min-w-0">
+              <div className="px-4 pb-1 pt-3 md:px-6">
+                <div className="mx-auto w-full max-w-[56rem]">
+                  <HandoffLifecycleStatus
+                    handoff={item}
+                    onRetry={
+                      item.phase === 'failed' && onRetryHandoff
+                        ? async () =>
+                            onRetryHandoff({
+                              sessionId: item.sessionId,
+                              originatingTurnId: item.originatingTurnId
+                            })
+                        : undefined
+                    }
+                  />
+                </div>
+              </div>
+            </MessageScrollerItem>
+          )
+        })
+        return
+      }
+
+      if (item.type === 'plan-activity') {
+        rows.push({
+          key: item.id,
+          estimatedSize: 96,
+          scrollAnchor: false,
+          node: () => (
+            <WorkspacePlanActivityRecord
+              activity={item.activity}
+              hasDurablePlanAuthority={item.activity.id === durablePlanOwnerActivityId}
+            />
+          )
+        })
+        return
+      }
+
+      if (item.type === 'compaction-activity') {
+        rows.push({
+          key: item.id,
+          estimatedSize: 48,
+          scrollAnchor: false,
+          node: () => <WorkspaceContextCompactionActivityRow activity={item.activity} />
+        })
+        return
+      }
+
+      if (item.type === 'activity') {
+        const elicitation = item.activity.elicitation
+        if (!elicitation) return
+        const elicitationRequest =
+          pendingElicitations.find((request) => request.toolCallId === item.activity.id) ??
+          (activeSession && elicitation.durable
+            ? {
+                requestId: elicitation.durable.requestId,
+                sessionId: activeSession.id,
+                toolCallId: item.activity.id,
+                message: elicitation.message,
+                fields: elicitation.fields,
+                durable: elicitation.durable
+              }
+            : undefined)
+        rows.push({
+          key: item.id,
+          estimatedSize: 200,
+          scrollAnchor: false,
+          node: () => (
+            <MessageScrollerItem messageId={item.id} className="min-w-0">
+              <div className="px-4 pb-1 pt-3 md:px-6">
+                <div className="mx-auto w-full max-w-4xl">
+                  <WorkspaceElicitationCard
+                    key={elicitationRequest?.requestId ?? item.activity.id}
+                    elicitation={elicitation}
+                    request={elicitationRequest}
+                    variant={elicitation.state === 'pending' ? 'pending-placeholder' : 'default'}
+                  />
+                </div>
+              </div>
+            </MessageScrollerItem>
+          )
+        })
+        return
+      }
+
+      rows.push({
+        key: item.id,
+        estimatedSize: 96,
+        scrollAnchor: false,
+        node: () => (
+          <WorkspaceActivityGroup
+            group={item}
+            isExpanded={!collapsedActivityGroups.has(item.id)}
+            onToggleGroup={toggleActivityGroup}
+            expansionOverrides={activityExpansionOverrides}
+            onToggleRow={toggleActivityRow}
+            notebookRunsById={notebookRunsById}
+            permission={activeSession?.runtimeContext?.permission}
+            jobsByActivityId={jobsByActivityId}
+            onOpenJobDetail={handleOpenJobDetail}
+          />
+        )
+      })
+    })
+
+    // Render any remaining unbound completed jobs after all conversation items.
+    for (const job of trailingJobs) {
+      rows.push({
+        key: `completed-job-${job.job_id}`,
+        estimatedSize: 96,
+        scrollAnchor: false,
+        node: () => (
+          <MessageScrollerItem messageId={`completed-job-${job.job_id}`} className="min-w-0">
+            <div className="px-4 py-1 md:px-6">
+              <div className="mx-auto w-full max-w-4xl">
+                <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
+              </div>
+            </div>
+          </MessageScrollerItem>
+        )
+      })
+    }
+
+    if (presentationBarrierIndex < 0 && trailingContent != null) {
+      rows.push({
+        key: 'trailing-content',
+        estimatedSize: 200,
+        scrollAnchor: false,
+        node: () => <>{trailingContent}</>
+      })
+    }
+
+    if (isResumingSession && activeSession) {
+      rows.push({
+        key: 'agent-loading-resuming',
+        estimatedSize: 64,
+        scrollAnchor: false,
+        node: () => <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
+      })
+    } else if (agentLoadingPhase !== 'hidden' && activeSession) {
+      rows.push({
+        key: 'agent-loading',
+        estimatedSize: 64,
+        scrollAnchor: false,
+        node: () => (
+          <WorkspaceAgentLoadingRow
+            sessionId={activeSession.id}
+            phase={agentLoadingPhase}
+            agentStatus={activeSession.agentStatus}
+          />
+        )
+      })
+    }
+
+    return rows
+  }, [
+    activeSession,
+    activityExpansionOverrides,
+    agentLoadingPhase,
+    artifactsForMessage,
+    assistantFooterMessageIds,
+    collapsedActivityGroups,
+    conversationItems,
+    currentPresentationScopeId,
+    currentProjectId,
+    currentSessionId,
+    durablePlanOwnerActivityId,
+    handleGoToTranscript,
+    handleMessagePresentationChange,
+    handleOpenJobDetail,
+    handleRerunReview,
+    isResumingSession,
+    jobSlotsByItemIndex,
+    jobsByActivityId,
+    legacyRuntimeIdentity,
+    notebookRunsById,
+    onPreviewArtifact,
+    onPreviewMentionArtifact,
+    onPreviewUploadAttachment,
+    onOpenSkillMention,
+    onRetryHandoff,
+    onSendEditedMessage,
+    pendingElicitations,
+    presentationBarrierIndex,
+    presentationScopeRemainedVisible,
+    presentingMessageIds,
+    toggleActivityGroup,
+    toggleActivityRow,
+    trailingContent,
+    trailingJobs,
+    visibleMessageSnapshot
+  ])
+
+  const virtualizationEnabled = transcriptRows.length > VIRTUALIZATION_ROW_THRESHOLD
+  virtualizationEnabledRef.current = virtualizationEnabled
+  const transcriptVirtualizer = useVirtualizer({
+    count: transcriptRows.length,
+    getScrollElement: () => messageScrollerViewportRef.current,
+    estimateSize: (index) => transcriptRows[index]?.estimatedSize ?? 160,
+    getItemKey: (index) => transcriptRows[index]?.key ?? index,
+    overscan: 8
+  })
+  const transcriptVirtualSize = transcriptVirtualizer.getTotalSize()
+
+  // With virtualization the primitive only sees the total-size wrapper as Content's child, so its
+  // MutationObserver-driven behaviors never fire for transcript rows. Re-drive them against the
+  // virtualizer: initial last-anchor position, new-turn anchoring, and follow-output pinning.
+  // Follow state itself is maintained by handleMessageScrollerScroll.
+  useLayoutEffect(() => {
+    if (!virtualizationEnabled || transcriptVirtualSize <= 0) return
+    const viewport = messageScrollerViewportRef.current
+    if (!viewport) return
+    const state = virtualScrollStateRef.current
+    if (state.scopeId !== currentPresentationScopeId) {
+      state.scopeId = currentPresentationScopeId
+      state.initialized = false
+      state.follow = true
+      state.handledAnchorKeys = new Set()
+    }
+    const anchorIndexes: number[] = []
+    transcriptRows.forEach((row, index) => {
+      if (row.scrollAnchor) anchorIndexes.push(index)
+    })
+    // Land an anchor row at the viewport top with the previous-item peek above it. The offset
+    // clamps to the scrollable range, so an anchor whose remaining content fits the viewport
+    // naturally lands at the end, matching the primitive's last-anchor fallback.
+    const scrollToAnchorIndex = (index: number): void => {
+      const offset = transcriptVirtualizer.getOffsetForIndex(index, 'start')?.[0]
+      if (offset === undefined) {
+        transcriptVirtualizer.scrollToIndex(index, { align: 'start' })
+        return
+      }
+      transcriptVirtualizer.scrollToOffset(Math.max(0, offset - SCROLL_PREVIOUS_ITEM_PEEK))
+    }
+    if (!state.initialized) {
+      if (transcriptRows.length === 0) return
+      state.initialized = true
+      for (const index of anchorIndexes) state.handledAnchorKeys.add(transcriptRows[index].key)
+      const lastAnchorIndex = anchorIndexes.at(-1)
+      if (lastAnchorIndex === undefined) viewport.scrollTop = viewport.scrollHeight
+      else scrollToAnchorIndex(lastAnchorIndex)
+      return
+    }
+    const newAnchorIndexes = anchorIndexes.filter(
+      (index) => !state.handledAnchorKeys.has(transcriptRows[index].key)
+    )
+    for (const index of anchorIndexes) state.handledAnchorKeys.add(transcriptRows[index].key)
+    if (newAnchorIndexes.length > 0) {
+      if (state.follow && newAnchorIndexes.length > 1) viewport.scrollTop = viewport.scrollHeight
+      else scrollToAnchorIndex(newAnchorIndexes[0])
+      return
+    }
+    if (state.follow) viewport.scrollTop = viewport.scrollHeight
+  }, [
+    currentPresentationScopeId,
+    transcriptRows,
+    transcriptVirtualSize,
+    transcriptVirtualizer,
+    virtualizationEnabled
+  ])
 
   return (
     <>
@@ -860,7 +1351,7 @@ const WorkspaceMessageScrollerImpl = ({
         key={activeSession?.id ?? 'empty-conversation'}
         autoScroll
         defaultScrollPosition="last-anchor"
-        scrollPreviousItemPeek={64}
+        scrollPreviousItemPeek={SCROLL_PREVIOUS_ITEM_PEEK}
       >
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
           <div
@@ -872,298 +1363,44 @@ const WorkspaceMessageScrollerImpl = ({
             aria-label="Conversation"
             onScroll={handleMessageScrollerScroll}
           >
-            {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
             <MessageScrollerContent
               ref={messageScrollerContentRef}
-              className="gap-0 px-4 pb-[56px]"
+              className={
+                virtualizationEnabled
+                  ? 'block min-h-full gap-0 px-4 pb-[56px]'
+                  : 'gap-0 px-4 pb-[56px]'
+              }
             >
               <VisibleMessageSnapshotCommit
                 scopeId={currentPresentationScopeId}
                 messageIdsKey={visibleMessageIdsKey}
                 onCommit={handleVisibleMessageSnapshotCommit}
               />
-              {/* Messages and tool activities share one sorted transcript timeline. */}
-              {conversationItems.map((item, itemIndex) => {
-                // Only later text messages stay behind the presentation barrier; tool,
-                // activity, and other non-message rows render in real time so their
-                // running state stays visible while the reply paces above them.
-                if (
-                  presentationBarrierIndex >= 0 &&
-                  itemIndex > presentationBarrierIndex &&
-                  (item.type === 'message' || item.type === 'subagent-message')
-                ) {
-                  return null
-                }
-
-                if (item.type === 'message') {
-                  const artifacts = artifactVisibility.artifactsForMessage(item.message)
-                  // Jobs pre-assigned to this slot: each job appears in exactly one slot.
-                  const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
-                  const graph = activeSession?.conversationGraph
-                  const messageNode = graph?.messages.find(
-                    (message) => message.id === item.message.id
-                  )
-                  const runtimeSegment = messageNode?.runtimeSegmentId
-                    ? graph?.runtimeSegments.find(
-                        (segment) => segment.id === messageNode.runtimeSegmentId
-                      )
-                    : undefined
-                  // Legacy sessions synthesize this segment with a fallback framework. Keep only
-                  // the session-level values that were actually persisted.
-                  const synthesizedLegacyRuntime =
-                    runtimeSegment?.id === `runtime-segment-${activeSession?.id}` &&
-                    !activeSession?.agentFrameworkId
-                  const runtimeIdentity = synthesizedLegacyRuntime
-                    ? legacyRuntimeIdentity
-                    : runtimeSegment
-                  const revisionRootMessageId = messageNode?.revisionRootMessageId
-                  const revisions = revisionRootMessageId
-                    ? (graph?.messages
-                        .filter(
-                          (message) =>
-                            message.role === 'user' &&
-                            message.revisionRootMessageId === revisionRootMessageId
-                        )
-                        .sort(
-                          (left, right) =>
-                            left.createdAt - right.createdAt || left.id.localeCompare(right.id)
-                        ) ?? [])
-                    : []
-                  const revisionIndex = revisions.findIndex(
-                    (message) => message.id === item.message.id
-                  )
-                  const activateRevision = (index: number): (() => void) | undefined => {
-                    const revision = revisions[index]
-                    return revision && activeSession
-                      ? () =>
-                          useSessionStore
-                            .getState()
-                            .activateMessageBranch(activeSession.id, revision.introducedOnBranchId)
-                      : undefined
-                  }
-                  const messageItemProps: EditableWorkspaceMessageItemProps = {
-                    message: item.message,
-                    onPreviewArtifact,
-                    onPreviewUploadAttachment,
-                    onOpenSkillMention,
-                    onPreviewMentionArtifact,
-                    onSendEditedMessage,
-                    turnStartedAt: item.message.responseToMessageId
-                      ? messageCreatedAtById.get(item.message.responseToMessageId)
-                      : undefined,
-                    runtimeIdentity,
-                    showAssistantFooter:
-                      item.message.role !== 'agent' ||
-                      assistantFooterMessageIds.has(item.message.id),
-                    subsequentTurns: subsequentTurnCountByMessageId.get(item.message.id) ?? 0,
-                    revisionNavigation:
-                      revisionIndex >= 0 && revisions.length > 1
-                        ? {
-                            index: revisionIndex,
-                            total: revisions.length,
-                            onPrevious: activateRevision(revisionIndex - 1),
-                            onNext: activateRevision(revisionIndex + 1)
-                          }
-                        : undefined,
-                    artifacts
-                  }
-                  if (item.message.role === 'agent') {
-                    messageItemProps.onPresentationChange = handleMessagePresentationChange
-                    messageItemProps.presentationSourceOpen =
-                      itemIndex === conversationItems.length - 1
-                    messageItemProps.presentationAnimateOnMount =
-                      presentationScopeRemainedVisible &&
-                      !visibleMessageSnapshot.messageIds.has(item.message.id)
-                  }
-
-                  return (
-                    <Fragment key={item.id}>
-                      {/* Unbound completed jobs that belong chronologically before this message */}
-                      {jobsBeforeMessage.map((job) => (
-                        <MessageScrollerItem
-                          key={`completed-job-${job.job_id}`}
-                          messageId={`completed-job-${job.job_id}`}
-                          className="min-w-0"
-                        >
-                          <div className="px-4 py-1 md:px-6">
-                            <div className="mx-auto w-full max-w-4xl">
-                              <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                            </div>
-                          </div>
-                        </MessageScrollerItem>
-                      ))}
-                      {/* #1124: the composite key remounts the message row when the presentation
-                          scope changes; the surrounding fragment keeps sibling rows stable. */}
-                      {item.message.role === 'user' ? (
-                        <EditableWorkspaceMessageItem
-                          key={JSON.stringify([currentPresentationScopeId, item.id])}
-                          {...messageItemProps}
-                        />
-                      ) : (
-                        <WorkspaceMessageItem
-                          key={JSON.stringify([currentPresentationScopeId, item.id])}
-                          {...messageItemProps}
-                          canEditMessage={false}
-                        />
-                      )}
-                      {currentSessionId &&
-                      item.message.role === 'agent' &&
-                      !presentingMessageIds.has(item.message.id) ? (
-                        <WorkspaceMessageReview
-                          projectId={currentProjectId}
-                          sessionId={currentSessionId}
-                          turnMessageId={item.message.id}
-                          onGoToTranscript={handleGoToTranscript}
-                          onRerun={handleRerunReview}
-                        />
-                      ) : null}
-                    </Fragment>
-                  )
-                }
-
-                if (item.type === 'subagent-message') {
-                  return (
-                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
-                      <div className="px-4 pb-1 pt-3 md:px-6">
-                        <div className="mx-auto w-full max-w-[56rem]">
-                          <WorkspaceSubagentMessageRow
-                            message={item.message}
-                            onOpenSource={() => {
-                              if (!currentSessionId) return
-                              usePreviewWorkbenchStore
-                                .getState()
-                                .upsertAndActivateItem(
-                                  createSessionSubagentsPreviewItem(
-                                    currentSessionId,
-                                    currentProjectId,
-                                    item.message.sourceFrameId
-                                  )
-                                )
-                            }}
-                          />
-                        </div>
+              {virtualizationEnabled ? (
+                // The primitive's MutationObserver only watches Content's direct children, so the
+                // virtualizer owns row mounting inside one total-size wrapper; scroll behaviors are
+                // re-driven by the layout effect above.
+                <div className="relative w-full" style={{ height: transcriptVirtualSize }}>
+                  {transcriptVirtualizer.getVirtualItems().map((virtualItem) => {
+                    const row = transcriptRows[virtualItem.index]
+                    if (!row) return null
+                    return (
+                      <div
+                        key={virtualItem.key}
+                        ref={transcriptVirtualizer.measureElement}
+                        data-index={virtualItem.index}
+                        className="absolute start-0 top-0 w-full"
+                        style={{ transform: `translateY(${virtualItem.start}px)` }}
+                      >
+                        {row.node()}
                       </div>
-                    </MessageScrollerItem>
-                  )
-                }
-
-                if (item.type === 'handoff') {
-                  return (
-                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
-                      <div className="px-4 pb-1 pt-3 md:px-6">
-                        <div className="mx-auto w-full max-w-[56rem]">
-                          <HandoffLifecycleStatus
-                            handoff={item}
-                            onRetry={
-                              item.phase === 'failed' && onRetryHandoff
-                                ? async () =>
-                                    onRetryHandoff({
-                                      sessionId: item.sessionId,
-                                      originatingTurnId: item.originatingTurnId
-                                    })
-                                : undefined
-                            }
-                          />
-                        </div>
-                      </div>
-                    </MessageScrollerItem>
-                  )
-                }
-
-                if (item.type === 'plan-activity') {
-                  return (
-                    <WorkspacePlanActivityRecord
-                      key={item.id}
-                      activity={item.activity}
-                      hasDurablePlanAuthority={item.activity.id === durablePlanOwnerActivityId}
-                    />
-                  )
-                }
-
-                if (item.type === 'compaction-activity') {
-                  return (
-                    <WorkspaceContextCompactionActivityRow key={item.id} activity={item.activity} />
-                  )
-                }
-
-                if (item.type === 'activity') {
-                  if (!item.activity.elicitation) return null
-                  const elicitationRequest =
-                    pendingElicitations.find(
-                      (request) => request.toolCallId === item.activity.id
-                    ) ??
-                    (activeSession && item.activity.elicitation.durable
-                      ? {
-                          requestId: item.activity.elicitation.durable.requestId,
-                          sessionId: activeSession.id,
-                          toolCallId: item.activity.id,
-                          message: item.activity.elicitation.message,
-                          fields: item.activity.elicitation.fields,
-                          durable: item.activity.elicitation.durable
-                        }
-                      : undefined)
-                  return (
-                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
-                      <div className="px-4 pb-1 pt-3 md:px-6">
-                        <div className="mx-auto w-full max-w-4xl">
-                          <WorkspaceElicitationCard
-                            key={elicitationRequest?.requestId ?? item.activity.id}
-                            elicitation={item.activity.elicitation}
-                            request={elicitationRequest}
-                            variant={
-                              item.activity.elicitation.state === 'pending'
-                                ? 'pending-placeholder'
-                                : 'default'
-                            }
-                          />
-                        </div>
-                      </div>
-                    </MessageScrollerItem>
-                  )
-                }
-
-                return (
-                  <WorkspaceActivityGroup
-                    key={item.id}
-                    group={item}
-                    isExpanded={!collapsedActivityGroups.has(item.id)}
-                    onToggleGroup={toggleActivityGroup}
-                    expansionOverrides={activityExpansionOverrides}
-                    onToggleRow={toggleActivityRow}
-                    notebookRunsById={notebookRunsById}
-                    permission={activeSession?.runtimeContext?.permission}
-                    jobsByActivityId={jobsByActivityId}
-                    onOpenJobDetail={handleOpenJobDetail}
-                  />
-                )
-              })}
-
-              {/* Render any remaining unbound completed jobs after all conversation items */}
-              {trailingJobs.map((job) => (
-                <MessageScrollerItem
-                  key={`completed-job-${job.job_id}`}
-                  messageId={`completed-job-${job.job_id}`}
-                  className="min-w-0"
-                >
-                  <div className="px-4 py-1 md:px-6">
-                    <div className="mx-auto w-full max-w-4xl">
-                      <CompletedJobCard job={job} onOpen={handleOpenJobDetail} />
-                    </div>
-                  </div>
-                </MessageScrollerItem>
-              ))}
-
-              {presentationBarrierIndex < 0 ? trailingContent : null}
-
-              {isResumingSession && activeSession ? (
-                <WorkspaceAgentLoadingRow sessionId={activeSession.id} phase="resuming" />
-              ) : agentLoadingPhase !== 'hidden' && activeSession ? (
-                <WorkspaceAgentLoadingRow
-                  sessionId={activeSession.id}
-                  phase={agentLoadingPhase}
-                  agentStatus={activeSession.agentStatus}
-                />
-              ) : null}
+                    )
+                  })}
+                </div>
+              ) : (
+                // No wrapper div: message-scroller only measures/anchors Content's direct children.
+                transcriptRows.map((row) => <Fragment key={row.key}>{row.node()}</Fragment>)
+              )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
 
