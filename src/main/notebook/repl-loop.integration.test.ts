@@ -1024,17 +1024,6 @@ describe('repl_loop local RPC transport', () => {
         const result =
           requests.length === 3
             ? {
-                mcp: 'yes',
-                compute: true,
-                agents: true,
-                skills: true,
-                artifacts: true,
-                lineage: true,
-                frames: true,
-                llm: true,
-                viewImage: true
-              }
-            : {
                 mcp: true,
                 compute: true,
                 agents: true,
@@ -1043,8 +1032,44 @@ describe('repl_loop local RPC transport', () => {
                 lineage: true,
                 frames: true,
                 llm: true,
-                viewImage: true
+                viewImage: true,
+                'not-valid': true
               }
+            : requests.length === 4
+              ? {
+                  mcp: 'yes',
+                  compute: true,
+                  agents: true,
+                  skills: true,
+                  artifacts: true,
+                  lineage: true,
+                  frames: true,
+                  llm: true,
+                  viewImage: true
+                }
+              : requests.length === 2
+                ? {
+                    mcp: true,
+                    compute: true,
+                    agents: true,
+                    skills: true,
+                    artifacts: true,
+                    lineage: true,
+                    frames: true,
+                    llm: true
+                  }
+                : {
+                    mcp: true,
+                    compute: true,
+                    agents: true,
+                    skills: true,
+                    artifacts: true,
+                    lineage: true,
+                    frames: true,
+                    llm: true,
+                    viewImage: true,
+                    experimentalFeature: true
+                  }
         response
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify({ result }))
@@ -1064,7 +1089,8 @@ describe('repl_loop local RPC transport', () => {
       const projection = await send(
         'const first = await host.capabilities(); first.mcp = false; ' +
           'const second = await host.capabilities(); ' +
-          'return JSON.stringify({ first, second, frozen: Object.isFrozen(first), same: first === second })'
+          'return JSON.stringify({ first, second, frozen: Object.isFrozen(first), same: first === second, ' +
+          "missingKnownKey: Object.hasOwn(second, 'viewImage') })"
       )
       expect(projection.error).toBeNull()
       expect(JSON.parse(projection.result ?? '{}')).toEqual({
@@ -1077,7 +1103,8 @@ describe('repl_loop local RPC transport', () => {
           lineage: true,
           frames: true,
           llm: true,
-          viewImage: true
+          viewImage: true,
+          experimentalFeature: true
         },
         second: {
           mcp: true,
@@ -1087,11 +1114,11 @@ describe('repl_loop local RPC transport', () => {
           artifacts: true,
           lineage: true,
           frames: true,
-          llm: true,
-          viewImage: true
+          llm: true
         },
         frozen: true,
-        same: false
+        same: false,
+        missingKnownKey: false
       })
       expect(requests).toEqual([
         { method: 'capabilitiesCall', params: {} },
@@ -1105,14 +1132,19 @@ describe('repl_loop local RPC transport', () => {
       expect(extraArgument.result).toBe('TypeError: host.capabilities accepts no arguments')
       expect(requests).toHaveLength(2)
 
-      const invalidProjection = await send(
+      const invalidKey = await send(
         "try { await host.capabilities(); return 'no error' } " +
           'catch (error) { return error.message }'
       )
-      expect(invalidProjection.result).toBe(
-        'host.capabilities returned an invalid capability projection'
-      )
+      expect(invalidKey.result).toBe('host.capabilities returned an invalid capability projection')
       expect(requests).toHaveLength(3)
+
+      const nonBoolean = await send(
+        "try { await host.capabilities(); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(nonBoolean.result).toBe('host.capabilities returned an invalid capability projection')
+      expect(requests).toHaveLength(4)
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

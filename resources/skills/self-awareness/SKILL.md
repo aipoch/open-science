@@ -14,7 +14,7 @@ JavaScript control REPL; Python and R data kernels do not receive it.
 const caps = await host.capabilities()
 ```
 
-The v1 result contains exactly nine boolean keys:
+The current v1 known result contains exactly nine boolean keys:
 
 - `mcp` gates `host.mcp` connector calls.
 - `compute` gates the `host.compute` namespace.
@@ -27,7 +27,10 @@ The v1 result contains exactly nine boolean keys:
 - `viewImage` gates transient `host.viewImage(source, options?)` image attachment from an Artifact or
   Upload Version in the current Project, or a current-Session relative workspace path.
 
-Interpret the result narrowly:
+Newer runtimes may return additive boolean keys. Do not assume their meaning until their matching
+Skill documents them. Older runtimes can omit known keys.
+
+Interpret every key narrowly:
 
 - `true` means the current session capability authorizes the namespace and the application has its
   handler configured. It does not mean a resource exists, approval is unnecessary, or a call will
