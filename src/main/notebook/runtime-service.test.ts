@@ -1453,6 +1453,8 @@ describe('notebook runtime service', () => {
 
   it('binds each executeControl generation to the cached session capability and releases both lifetimes', async () => {
     const root = await createStorageRoot()
+    const projectWorkspace = join(root, 'project-workspace')
+    await mkdir(projectWorkspace, { recursive: true })
     const executions: NotebookExecutionRequest[] = []
     const release = vi.fn()
     const releaseInvocation = vi.fn()
@@ -1499,7 +1501,7 @@ describe('notebook runtime service', () => {
           service.executeControl({
             projectName: 'default-project',
             sessionId: 'session-1',
-            workspaceCwd: root,
+            workspaceCwd: projectWorkspace,
             code
           })
         ).resolves.toMatchObject({
@@ -1515,7 +1517,7 @@ describe('notebook runtime service', () => {
       sessionId: 'session-1',
       projectId: 'default-project',
       agentFrameId: 'root-frame-session-1',
-      workspaceCwd: root
+      workspaceCwd: join(root, 'notebooks', 'default-project', 'session-1', 'data')
     })
     expect(executions.map((request) => request.mcpRpcToken)).toEqual([
       'session-token',
@@ -1545,7 +1547,7 @@ describe('notebook runtime service', () => {
     expect(persistedRun).not.toContain(Buffer.from('image').toString('base64'))
     expect(persistedRun).not.toContain('viewImages')
 
-    await service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
+    await service.shutdown({ sessionId: 'session-1', workspaceCwd: projectWorkspace })
     expect(release).toHaveBeenCalledOnce()
   })
 
@@ -1711,14 +1713,30 @@ describe('notebook runtime service', () => {
       projectId: 'project-1',
       agentFrameId: 'child-frame',
       attemptId: 'attempt-1',
-      workspaceCwd: root
+      workspaceCwd: join(
+        root,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'child-frame',
+        'data'
+      )
     })
     expect(resolveConnection).toHaveBeenNthCalledWith(2, {
       sessionId: 'session-1',
       projectId: 'project-1',
       agentFrameId: 'child-frame',
       attemptId: 'attempt-2',
-      workspaceCwd: root
+      workspaceCwd: join(
+        root,
+        'notebooks',
+        'project-1',
+        'session-1',
+        'frames',
+        'child-frame',
+        'data'
+      )
     })
     expect(releaseFirst).toHaveBeenCalledOnce()
     expect(releaseSecond).not.toHaveBeenCalled()

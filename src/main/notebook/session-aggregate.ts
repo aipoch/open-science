@@ -104,7 +104,6 @@ export type NotebookSessionAggregateInit<
 > = ProjectIdScope & {
   sessionId: string
   cwd: string
-  workspaceCwd?: string
   notebookSessionRoot: string
   dataRoot: string
   runtimeRoot: string
@@ -155,7 +154,6 @@ export class NotebookSessionAggregate<
   readonly id: string
   readonly sessionId: string
   readonly projectId: string
-  readonly workspaceCwd: string
   readonly notebookSessionRoot: string
   readonly dataRoot: string
   readonly runtimeRoot: string
@@ -186,7 +184,6 @@ export class NotebookSessionAggregate<
     this.id = `notebook-session-${init.sessionId}`
     this.sessionId = init.sessionId
     this.projectId = resolveProjectId(init)
-    this.workspaceCwd = init.workspaceCwd ?? init.cwd
     this.cwdValue = init.cwd
     this.notebookSessionRoot = init.notebookSessionRoot
     this.dataRoot = init.dataRoot
@@ -486,7 +483,7 @@ export class NotebookSessionAggregate<
         sessionId: this.sessionId,
         projectId: this.projectId,
         agentFrameId: lane.agentFrameId,
-        workspaceCwd: this.workspaceCwd,
+        workspaceCwd: this.dataRoot,
         ...(lane.attemptId ? { attemptId: lane.attemptId } : {})
       })
       return this.mcpRpcConnection
