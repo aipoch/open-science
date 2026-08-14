@@ -81,10 +81,10 @@ const getSkillSourceLabel = (source: SkillSource, t: (key: string) => string): s
   return t(SKILL_SOURCE_LABELS[source])
 }
 
-const formatBytes = (value: number): string =>
+const formatBytes = (value: number, t: (key: string, options?: any) => string): string =>
   value >= 1024 * 1024
-    ? `${Number((value / (1024 * 1024)).toFixed(1))} MB`
-    : `${Number((value / 1024).toFixed(1))} KB`
+    ? t('{{size}} MB', { size: Number((value / (1024 * 1024)).toFixed(1)) })
+    : t('{{size}} KB', { size: Number((value / 1024).toFixed(1)) })
 
 // User-facing presentation of package diagnostics (see lib/specialist-diagnostics.ts).
 // Severity is distinguished by icon shape, color and grouping, not by color alone.
@@ -93,6 +93,14 @@ const SEVERITY_GROUPS = [
   { severity: 'warning', label: 'Warnings' },
   { severity: 'info', label: 'Information' }
 ] as const
+
+const getSeverityLabel = (
+  severity: 'error' | 'warning' | 'info',
+  t: (key: string) => string
+): string => {
+  const group = SEVERITY_GROUPS.find((g) => g.severity === severity)
+  return group ? t(group.label) : severity
+}
 
 const SEVERITY_ICON = {
   error: CircleX,
@@ -690,15 +698,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   <div>
                     <dt className="text-muted-foreground">{t('Compressed')}</dt>
                     <dd>
-                      {formatBytes(packagePreview.archive.compressedBytes)} /{' '}
-                      {formatBytes(packagePreview.archive.limits.compressedBytes)}
+                      {formatBytes(packagePreview.archive.compressedBytes, t)} /{' '}
+                      {formatBytes(packagePreview.archive.limits.compressedBytes, t)}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-muted-foreground">{t('Uncompressed')}</dt>
                     <dd>
-                      {formatBytes(packagePreview.archive.uncompressedBytes ?? 0)} /{' '}
-                      {formatBytes(packagePreview.archive.limits.uncompressedBytes)}
+                      {formatBytes(packagePreview.archive.uncompressedBytes ?? 0, t)} /{' '}
+                      {formatBytes(packagePreview.archive.limits.uncompressedBytes, t)}
                     </dd>
                   </div>
                   <div>
@@ -712,7 +720,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     <dt className="text-muted-foreground">{t('Per file')}</dt>
                     <dd>
                       {t('Up to {{size}}', {
-                        size: formatBytes(packagePreview.archive.limits.fileBytes)
+                        size: formatBytes(packagePreview.archive.limits.fileBytes, t)
                       })}
                     </dd>
                   </div>
@@ -769,7 +777,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                     return (
                       <div key={group.severity}>
                         <h4 className="text-xs font-semibold">
-                          {group.label} ({items.length})
+                          {getSeverityLabel(group.severity, t)} ({items.length})
                         </h4>
                         <ul className="mt-1 space-y-2">
                           {items.map((diagnostic, index) => {
