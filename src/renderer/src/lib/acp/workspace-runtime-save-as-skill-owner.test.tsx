@@ -56,22 +56,15 @@ describe('workspace Save as skill owner', () => {
   beforeEach(() => {
     useSettingsStore.setState({
       ...createInitialSettingsState(),
-      activeProviderId: 'active-provider',
+      activeProviderId: 'session-provider',
+      activeModel: 'selected-model',
+      agentFrameworkId: 'claude-code',
       providers: [
-        {
-          id: 'active-provider',
-          type: 'custom',
-          name: 'Active provider',
-          models: ['active-model'],
-          supportsImageInput: false,
-          hasKey: true,
-          needsKey: false
-        },
         {
           id: 'session-provider',
           type: 'custom',
           name: 'Session provider',
-          models: ['session-model'],
+          models: ['selected-model'],
           supportsImageInput: true,
           hasKey: true,
           needsKey: false
@@ -86,7 +79,7 @@ describe('workspace Save as skill owner', () => {
     vi.restoreAllMocks()
   })
 
-  it('deduplicates one Session and replays with its persisted Provider capability', async () => {
+  it('deduplicates one Session and replays with the current Provider capability', async () => {
     useSessionStore.setState({ sessions: [session] })
     let release!: () => void
     const saveAsSkill = vi.fn(
@@ -107,7 +100,7 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
       })
       return null
     }
@@ -159,7 +152,7 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
       })
       return null
     }
@@ -215,7 +208,7 @@ describe('workspace Save as skill owner', () => {
       const Harness = (): null => {
         owner = useWorkspaceRuntimeSaveAsSkillOwner({
           runtime,
-          getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+          historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
         })
         return null
       }
@@ -267,6 +260,101 @@ describe('workspace Save as skill owner', () => {
     }
   )
 
+  it.each([
+    {
+      name: 'removed Provider',
+      persistedFrameworkId: 'codex' as const,
+      persistedBackendId: 'codex:removed-provider',
+      attached: true
+    },
+    {
+      name: 'legacy Session without Provider identity',
+      persistedFrameworkId: undefined,
+      persistedBackendId: undefined,
+      attached: false
+    }
+  ])(
+    'adopts the current Provider for a $name',
+    async ({ persistedFrameworkId, persistedBackendId, attached }) => {
+      const original = structuredClone(session)
+      original.agentFrameworkId = persistedFrameworkId
+      original.agentBackendId = persistedBackendId
+      useSessionStore.setState({ sessions: [original] })
+      const saveAsSkill = vi.fn(async () => undefined)
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: { acp: { saveAsSkill } }
+      })
+      const resumeSession = vi.fn(async () => ({
+        sessionId: session.id,
+        cwd: session.cwd,
+        frameworkId: 'opencode' as const,
+        backendId: 'opencode:active-provider',
+        contextReset: true
+      }))
+      const runtime = {
+        state: { cwd: session.cwd, sessionIds: attached ? [session.id] : [] },
+        resumeSession,
+        resetSessionContext: vi.fn()
+      } as never
+      useSettingsStore.setState({
+        ...useSettingsStore.getState(),
+        activeProviderId: 'active-provider',
+        activeModel: 'active-model',
+        agentFrameworkId: 'opencode',
+        providers: [
+          {
+            id: 'active-provider',
+            type: 'custom',
+            name: 'Active provider',
+            models: ['active-model'],
+            supportsImageInput: false,
+            hasKey: true,
+            needsKey: false
+          }
+        ]
+      })
+      let owner!: ReturnType<typeof useWorkspaceRuntimeSaveAsSkillOwner>
+      const Harness = (): null => {
+        owner = useWorkspaceRuntimeSaveAsSkillOwner({
+          runtime,
+          historyReplayDescriptor: { target: 'opencode', contextWindow: 200_000 }
+        })
+        return null
+      }
+      root = createRoot(document.createElement('div'))
+      act(() => root?.render(createElement(Harness)))
+      const graph = original.conversationGraph!
+      const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)!
+
+      await act(() =>
+        owner.saveAsSkill({
+          projectId: original.projectId,
+          sessionId: original.id,
+          agentFrameId: frame.id,
+          messageBranchId: frame.activeBranchId
+        })
+      )
+
+      expect(resumeSession).toHaveBeenCalledOnce()
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        agentFrameworkId: 'opencode',
+        agentBackendId: 'opencode:active-provider',
+        agentModel: 'active-model'
+      })
+      expect(saveAsSkill).toHaveBeenCalledWith(
+        expect.objectContaining({
+          historyReplay: {
+            target: 'opencode',
+            contextWindow: 200_000,
+            supportsImageInput: false,
+            contextReset: true
+          }
+        })
+      )
+    }
+  )
+
   it('resets and replays the selected Branch before dispatch', async () => {
     useSessionStore.setState({
       sessions: [{ ...session, branchContextResetRequired: true }]
@@ -291,7 +379,7 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
       })
       return null
     }
@@ -342,7 +430,7 @@ describe('workspace Save as skill owner', () => {
     const Harness = (): null => {
       owner = useWorkspaceRuntimeSaveAsSkillOwner({
         runtime,
-        getHistoryReplayDescriptor: () => ({ target: 'claude-code', contextWindow: 100_000 })
+        historyReplayDescriptor: { target: 'claude-code', contextWindow: 100_000 }
       })
       return null
     }

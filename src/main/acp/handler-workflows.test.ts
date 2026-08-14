@@ -96,7 +96,7 @@ const createHarness = (
   const session = createSession()
   mutate?.(session)
   prepareControlTurn(session)
-  const startContinuation = vi.fn(async () => undefined)
+  const startContinuation = vi.fn(async (request: unknown) => void request)
   const hasLiveSession = vi.fn(() => true)
   const captureSessionBackend = vi.fn(
     () =>
