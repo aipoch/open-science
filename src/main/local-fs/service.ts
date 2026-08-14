@@ -1,6 +1,6 @@
 import { hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { access, readdir, realpath, stat } from 'node:fs/promises'
+import { readdir, realpath, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { app, shell } from 'electron'
@@ -24,6 +24,7 @@ import {
   validateLocalPath
 } from '../../shared/local-fs'
 import { readBoundedManagedFilePreview } from '../managed-file-preview'
+import { isWindowsPlatform, listWindowsDrives } from './windows-drive-listing'
 
 // The slice of the granted-roots repository the feature persists through. Structural so tests can
 // inject an in-memory store; production wires the SQLite-backed GrantedLocalRootsRepository.
@@ -75,24 +76,10 @@ export class LocalFsService {
     return { home: app.getPath('home'), machineName: buildMachineName() }
   }
 
-  // Mounted drives/volumes for the browsers' drive switchers. win32 probes A:–Z: for existence
-  // (no volume labels — that would need PowerShell/wmic); darwin lists /Volumes; other POSIX
-  // checks the conventional per-user and /mnt mount parents. Everything is existence-checked, so
-  // unmounted letters and empty mount parents never surface.
+  // Mounted drives/volumes for the browsers' drive switchers. Windows probes mounted drive letters;
+  // darwin lists /Volumes; other POSIX checks conventional mount parents.
   async listDrives(): Promise<LocalDrive[]> {
-    if (process.platform === 'win32') {
-      const drives: LocalDrive[] = []
-      for (let code = 65; code <= 90; code += 1) {
-        const letter = String.fromCharCode(code)
-        try {
-          await access(`${letter}:\\`)
-          drives.push({ path: `${letter}:\\`, label: `${letter}:` })
-        } catch {
-          // Letter not mounted.
-        }
-      }
-      return drives
-    }
+    if (isWindowsPlatform(process.platform)) return listWindowsDrives()
     if (process.platform === 'darwin') {
       const volumes = await this.listMountEntries('/Volumes')
       // The boot volume appears in /Volumes as a symlink to /. Label the root entry with the

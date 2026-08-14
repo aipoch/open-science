@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import { SubagentModelSelect } from './SubagentModelSelect'
+import { ReviewerModelSelect, SubagentModelSelect } from './SubagentModelSelect'
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -221,6 +221,36 @@ describe('SubagentModelSelect', () => {
     expect(
       document.body.querySelector('[aria-label="Subagent model Reasoning effort"]')?.textContent
     ).toContain('High')
+    act(() => root.unmount())
+  })
+})
+
+describe('ReviewerModelSelect', () => {
+  beforeEach(() => {
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      setReviewerModel: vi.fn(async () => undefined)
+    })
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('presents Follow Active as the default Reviewer policy', () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<ReviewerModelSelect />))
+
+    expect(
+      document.body.querySelector('[aria-label="Reviewer model Model"]')?.textContent
+    ).toContain('Follow Active model')
+    expect(
+      document.body.querySelector<HTMLButtonElement>(
+        '[aria-label="Reviewer model Reasoning effort"]'
+      )?.disabled
+    ).toBe(true)
     act(() => root.unmount())
   })
 })

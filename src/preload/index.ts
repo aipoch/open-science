@@ -220,6 +220,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setAgentFramework', request),
     setReasoningEffort: (request) =>
       electronRendererContracts.invoke('settings.setReasoningEffort', request),
+    setReviewerModel: (request) =>
+      electronRendererContracts.invoke('settings.setReviewerModel', request),
     setSubagentModel: (request) =>
       electronRendererContracts.invoke('settings.setSubagentModel', request),
     onChanged: (listener) => electronRendererContracts.subscribe('settings.onChanged', listener),

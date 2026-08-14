@@ -59,8 +59,11 @@ export type RunReviewOptions = {
   // Joins every durable Review write to the Session deletion/save ordering boundary without holding
   // the lock while the remote reviewer model is running.
   runSessionMutation?: ReviewMutationRunner
-  // The ACP runtime that owns the agent connection (used to spawn the reviewer session).
+  // The ACP runtime that owns the main Agent connection and correction turns.
   acpRuntime: ReviewerAcpRuntime
+  // Optional fixed-model runtime used only for Reviewer sessions. When absent, Reviewer sessions
+  // use the scoped main runtime selected at Review-chain start.
+  reviewerAcpRuntime?: ReviewerAcpRuntime
   // Storage root for artifact reads (used by the scope-bounded evidence reader).
   artifactStorageRoot: string
   // Native Version resolver for current provenance rows. Tests and legacy callers may omit it and
@@ -128,6 +131,7 @@ const runReviewWithSession = async (
     reviewRepository,
     runSessionMutation,
     acpRuntime,
+    reviewerAcpRuntime = acpRuntime,
     artifactStorageRoot,
     artifactVersionContentResolver,
     reviewerMcpEntryPath,
@@ -156,7 +160,7 @@ const runReviewWithSession = async (
     projectId,
     reviewRepository,
     runSessionMutation,
-    acpRuntime,
+    acpRuntime: reviewerAcpRuntime,
     artifactStorageRoot,
     artifactVersionContentResolver,
     reviewerMcpEntryPath,
@@ -186,6 +190,7 @@ const runReviewWithSession = async (
         reviewRepository,
         runSessionMutation,
         acpRuntime,
+        reviewerAcpRuntime,
         artifactStorageRoot,
         artifactVersionContentResolver,
         reviewerMcpEntryPath,

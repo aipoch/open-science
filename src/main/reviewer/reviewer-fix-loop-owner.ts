@@ -1,14 +1,15 @@
 // Owns the bounded Reviewer correction loop and its durable re-review lifecycle.
 
-import { randomUUID } from 'node:crypto'
-
 import { createLogger } from '../logger'
 import type { ReviewCheck, ReviewWithChecks } from '../../shared/reviewer'
 import {
   materializeSessionConversationGraph,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import { getActiveConversationContext } from '../../shared/conversation-graph'
+import {
+  getActiveConversationContext,
+  resolveActiveConversationMessages
+} from '../../shared/conversation-graph'
 import type { ReviewerAcpRuntime } from './acp-runtime'
 import { injectAuditorMessage } from './correction'
 import type { ArtifactVersionContentResolver } from './host-sdk'
@@ -42,7 +43,10 @@ type ReviewerFixLoopOptions = {
   getSession: SessionProvider
   reviewRepository: ReviewRepository
   runSessionMutation?: ReviewMutationRunner
+  // Main Agent runtime used for [Auditor] correction turns.
   acpRuntime: ReviewerAcpRuntime
+  // Runtime pinned for every scoped Reviewer re-assessment in this chain.
+  reviewerAcpRuntime?: ReviewerAcpRuntime
   artifactStorageRoot: string
   artifactVersionContentResolver?: ArtifactVersionContentResolver
   reviewerMcpEntryPath?: string
@@ -110,6 +114,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     reviewRepository,
     runSessionMutation,
     acpRuntime,
+    reviewerAcpRuntime = acpRuntime,
     artifactStorageRoot,
     artifactVersionContentResolver,
     reviewerMcpEntryPath,
@@ -192,9 +197,19 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
     // Step B: inject [Auditor] with the currently-open warn/fail checks.
     let correctionFailed = false
     try {
+      const conversationGraph =
+        materializeSessionConversationGraph(sessionBefore).conversationGraph!
+      const originatingPrompt = resolveActiveConversationMessages(conversationGraph)
+        .toReversed()
+        .find((message) => message.role === 'user' && message.status === 'complete')
+      if (!originatingPrompt) {
+        throw new Error(
+          'The active conversation has no complete user prompt for correction provenance.'
+        )
+      }
       const provenanceContext = getActiveConversationContext(
-        materializeSessionConversationGraph(sessionBefore).conversationGraph!,
-        `prompt-${randomUUID()}`
+        conversationGraph,
+        originatingPrompt.id
       )
       await injectAuditorMessage({
         sessionId,
@@ -290,7 +305,7 @@ export const runReviewerFixLoop = async (options: ReviewerFixLoopOptions): Promi
       projectId,
       reviewRepository,
       runSessionMutation,
-      acpRuntime,
+      acpRuntime: reviewerAcpRuntime,
       artifactStorageRoot,
       artifactVersionContentResolver,
       reviewerMcpEntryPath,

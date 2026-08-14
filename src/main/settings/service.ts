@@ -50,6 +50,7 @@ import type {
   PreviewSkillZipRequest,
   ProjectFilesFilterPreference,
   ReasoningEffort,
+  ReviewerModelConfiguration,
   SubagentModelConfiguration,
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
@@ -107,6 +108,7 @@ import type { StoredConnectors, StoredCustomMcpOAuthState, StoredSettings } from
 import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
 import { createSubagentModels, SubagentModelOwner } from './subagent-model-owner'
+import { createReviewerModels, ReviewerModelOwner } from './reviewer-model-owner'
 
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
@@ -187,6 +189,7 @@ class SettingsService {
   private readonly runtimeManager: AgentRuntimeManager
   private readonly backendResolver: AgentBackendResolver
   private readonly subagentModels: SubagentModelOwner
+  private readonly reviewerModels: ReviewerModelOwner
   private readonly storageRoot: string
   private readonly applyNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
   private readonly userClaudeDir: string
@@ -256,6 +259,11 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir
     })
     this.subagentModels = createSubagentModels(
+      this.repository,
+      this.providers,
+      this.backendResolver
+    )
+    this.reviewerModels = createReviewerModels(
       this.repository,
       this.providers,
       this.backendResolver
@@ -384,6 +392,15 @@ class SettingsService {
   async setSubagentModel(configuration: SubagentModelConfiguration): Promise<SettingsSnapshot> {
     await this.subagentModels.set(configuration)
     return this.getSettingsView()
+  }
+
+  async setReviewerModel(configuration: ReviewerModelConfiguration): Promise<SettingsSnapshot> {
+    await this.reviewerModels.set(configuration)
+    return this.getSettingsView()
+  }
+
+  async admitReviewerExecutionModel(): ReturnType<ReviewerModelOwner['admit']> {
+    return this.reviewerModels.admit()
   }
 
   // Projects one of the app's five stable user-intent slots through the active model's static effort

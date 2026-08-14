@@ -79,8 +79,14 @@ export const injectAuditorMessage = async (options: {
 
   try {
     // Inject through the main-session sendPrompt path (design.md cross-cutting requirement).
-    // This is a normal prompt turn that the user sees in the conversation.
-    await acpRuntime.sendPrompt({ sessionId: mainSessionId, text: message, provenanceContext })
+    // The provider retains the ordinary save-as-user prompt semantics, while Open Science keeps
+    // the application-owned Auditor instruction out of the visible and durable local transcript.
+    await acpRuntime.sendPrompt({
+      sessionId: mainSessionId,
+      text: message,
+      provenanceContext,
+      suppressUserMessage: true
+    })
     log.info('[Auditor] correction turn complete', { mainSessionId })
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error)

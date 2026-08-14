@@ -152,8 +152,22 @@ const makeRepository = (): ReviewRepository =>
     })
   }) as unknown as ReviewRepository
 
-const runtime = (): AcpRuntime =>
+const runtime = (contextModel?: string, sessionModel?: string): AcpRuntime =>
   ({
+    ...(contextModel || sessionModel
+      ? {
+          captureBackend: () => ({
+            context: {
+              ...(contextModel ? { model: contextModel } : {}),
+              supportsImageInput: false
+            },
+            session: {
+              ...(sessionModel ? { model: sessionModel } : {}),
+              modelRequired: false
+            }
+          })
+        }
+      : {}),
     buildReviewerSession: async () => {
       outsideMutation('acp:build')
       return {
@@ -244,6 +258,63 @@ describe('review assessment owner', () => {
       'write:commit',
       'mutation:end'
     ])
+  })
+
+  it('reconciles the Review model with the backend pinned by the runtime', async () => {
+    const reviewRepository = makeRepository()
+    const updates: ReviewWithChecks[] = []
+
+    await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      acpRuntime: runtime('actual-runtime-model'),
+      mode: 'initial',
+      onReviewUpdate: (value) => updates.push(value)
+    })
+
+    expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
+      model: 'actual-runtime-model'
+    })
+    expect(updates).toContainEqual(
+      expect.objectContaining({ lifecycle: 'running', model: 'actual-runtime-model' })
+    )
+  })
+
+  it('records the selected session model instead of the context tokenization model', async () => {
+    const reviewRepository = makeRepository()
+
+    await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      acpRuntime: runtime('tokenization-model', 'selected-runtime-model'),
+      mode: 'initial'
+    })
+
+    expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
+      model: 'selected-runtime-model'
+    })
+  })
+
+  it('disposes a built session when the pinned model cannot be persisted', async () => {
+    const reviewRepository = makeRepository()
+    const updateReview = vi.mocked(reviewRepository.updateReview)
+    const persistUpdate = updateReview.getMockImplementation()
+    updateReview.mockImplementation(async (id, patch) => {
+      if (patch.model) {
+        insideMutation('write:model-error')
+        throw new Error('model persistence failed')
+      }
+      if (!persistUpdate) throw new Error('missing repository test implementation')
+      return persistUpdate(id, patch)
+    })
+
+    const result = await runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      acpRuntime: runtime('actual-runtime-model'),
+      mode: 'initial'
+    })
+
+    expect(result.review.lifecycle).toBe('error')
+    expect(result.review.errorMessage).toBe('model persistence failed')
+    expect(harness.events).toContain('acp:dispose')
   })
 
   it('stops MCP independently and preserves session then bridge error precedence', async () => {

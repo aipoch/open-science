@@ -71,6 +71,7 @@ import type {
   ProviderType,
   ProviderView,
   ReasoningEffort,
+  ReviewerModelConfiguration,
   SettingsSnapshot,
   AppIconVariant,
   SubagentModelConfiguration
@@ -110,6 +111,8 @@ type SettingsStoreData = RuntimeSetupState &
     networkProxy: NetworkProxySettings
     // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
     reasoningEffort: ReasoningEffort
+    reviewerModel: ReviewerModelConfiguration
+    reviewerModelPending: boolean
     subagentModel: SubagentModelConfiguration
     subagentModelPending: boolean
     // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
@@ -169,6 +172,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   packageMirror: undefined,
   networkProxy: DEFAULT_NETWORK_PROXY_SETTINGS,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
+  reviewerModel: { mode: 'inherit' },
+  reviewerModelPending: false,
   subagentModel: { mode: 'inherit' },
   subagentModelPending: false,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
@@ -190,6 +195,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   packageMirror: isMirrorConfigured(snapshot.packageMirror) ? snapshot.packageMirror : undefined,
   networkProxy: snapshot.networkProxy ?? DEFAULT_NETWORK_PROXY_SETTINGS,
   reasoningEffort: snapshot.reasoningEffort,
+  reviewerModel: snapshot.reviewerModel ?? { mode: 'inherit' },
   subagentModel: snapshot.subagentModel ?? { mode: 'inherit' },
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
   // write undefined into the boolean preference.

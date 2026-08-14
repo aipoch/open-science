@@ -8,7 +8,7 @@ import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { ActiveModelSelect } from './ActiveModelSelect'
 import { ProviderList } from './ProviderList'
 import { ReasoningEffortSelect } from './ReasoningEffortSelect'
-import { SubagentModelSelect } from './SubagentModelSelect'
+import { ReviewerModelSelect, SubagentModelSelect } from './SubagentModelSelect'
 import { SettingsSection } from './SettingsLayout'
 import { ClaudeIsolatedSignInModal } from './ClaudeIsolatedSignInModal'
 
@@ -340,6 +340,19 @@ const ProvidersPanel = ({
       >
         <div className="max-w-2xl">
           <SubagentModelSelect />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection
+        title={t('Reviewer model')}
+        aria-label={t('Reviewer model')}
+        description={t(
+          'Model used for manual, automatic, and re-run Reviews. Follow Active model keeps the current behavior; a fixed selection runs in an isolated Reviewer runtime.'
+        )}
+        separated
+      >
+        <div className="max-w-2xl">
+          <ReviewerModelSelect />
         </div>
       </SettingsSection>
 

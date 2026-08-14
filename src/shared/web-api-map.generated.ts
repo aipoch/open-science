@@ -215,6 +215,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setPackageMirror': 'settings:set-package-mirror',
   'settings.setProjectFilesFilter': 'settings:set-project-files-filter',
   'settings.setReasoningEffort': 'settings:set-reasoning-effort',
+  'settings.setReviewerModel': 'settings:set-reviewer-model',
   'settings.setSkillEnabled': 'settings:set-skill-enabled',
   'settings.setSkillsEnabled': 'settings:set-skills-enabled',
   'settings.setSubagentModel': 'settings:set-subagent-model',

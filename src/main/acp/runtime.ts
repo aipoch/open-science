@@ -676,16 +676,14 @@ class AcpRuntime {
     return this.modelChanges.apply(target)
   }
 
-  // Live-applies a reasoning-effort change to every open session — the ACP equivalent of a model
-  // switch, no respawn. Returns false when the active framework only carries effort in its baked
-  // spawn config (opencode advertises no thought_level option), or when applying to a session
-  // genuinely failed — the caller then falls back to the provider-switch reconnect rather than
-  // leaving the UI showing a level the agent never received. All sessions are attempted even after
-  // a failure, so the set never straddles two levels longer than the reconnect takes. Sessions that
-  // simply advertise no effort option are skipped (a reconnect could not give their model one
-  // either). On success the generation view tracks the new level, so sessions created later in
-  // this process inherit it; the persisted setting covers the next respawn.
+  // Live-applies a reasoning-effort change to every open session when the generation is idle. A
+  // prompt or background activity keeps its admitted model/effort immutable; returning false lets
+  // the settings workflow defer the new persisted effort through its reconnect path. The same
+  // fallback covers frameworks that carry effort only in baked spawn config and genuine live-update
+  // failures. On success the generation view tracks the new level, so sessions created later in this
+  // process inherit it; the persisted setting covers the next respawn.
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
+    if (!this.modelChanges.barrier && this.generationActivity.blocksLiveEffortChange()) return false
     return this.modelChanges.applyReasoningEffort(effort)
   }
 

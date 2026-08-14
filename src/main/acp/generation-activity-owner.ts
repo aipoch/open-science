@@ -21,16 +21,20 @@ export class AcpGenerationActivityOwner {
   constructor(private readonly options: AcpGenerationActivityOwnerOptions) {}
 
   blockers(): AcpGenerationActivityBlockers {
-    const reconnect =
-      this.options.hasActivePrompts() ||
-      this.options.hasActiveReviewerSessions() ||
-      this.additionalActivity?.() === true ||
-      this.activityLeaseCount > 0 ||
-      this.startupTokens.size > 0
+    const reconnect = this.blocksLiveEffortChange() || this.startupTokens.size > 0
     return Object.freeze({
       reconnect,
       retirement: reconnect || this.operationLeaseCount > 0
     })
+  }
+
+  blocksLiveEffortChange(): boolean {
+    return (
+      this.options.hasActivePrompts() ||
+      this.options.hasActiveReviewerSessions() ||
+      this.additionalActivity?.() === true ||
+      this.activityLeaseCount > 0
+    )
   }
 
   bindAdditionalActivity(probe: () => boolean): void {

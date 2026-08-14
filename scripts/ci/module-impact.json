@@ -130,7 +130,9 @@
     },
     "reviewer_orchestrator": {
       "ownerPaths": [
+        "src/main/reviewer/acp-runtime.ts",
         "src/main/reviewer/orchestrator.ts",
+        "src/main/reviewer/model-runtime-owner.ts",
         "src/main/reviewer/review-assessment-owner.ts",
         "src/main/reviewer/reviewer-fix-loop-owner.ts",
         "src/main/reviewer/reviewer-session-driver.ts"
@@ -144,6 +146,7 @@
       "testFiles": {
         "owner": [
           "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
+          "src/main/reviewer/model-runtime-owner.test.ts",
           "src/main/reviewer/review-assessment-owner.test.ts",
           "src/main/reviewer/orchestrator.test.ts",
           "src/main/reviewer/orchestrator-drive.test.ts",
@@ -442,7 +445,11 @@
       "fallbackCapability": "main_runtime"
     },
     "settings_service_facade": {
-      "ownerPaths": ["src/main/settings/service.ts", "src/main/settings/subagent-model-owner.ts"],
+      "ownerPaths": [
+        "src/main/settings/service.ts",
+        "src/main/settings/reviewer-model-owner.ts",
+        "src/main/settings/subagent-model-owner.ts"
+      ],
       "interfacePaths": [
         "src/main/settings/service.ts",
         "src/main/settings/application-commands.ts",

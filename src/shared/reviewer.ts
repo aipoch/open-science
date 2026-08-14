@@ -260,7 +260,8 @@ export type ReviewRunRequest = {
   // Main session to inject the [Auditor] correction message into (if warn/fail checks exist).
   // In production auto-review this is the same as sessionId. Omitting it skips correction injection.
   mainSessionId?: string
-  // Provider/model tag recorded on the Review row (e.g. 'claude-opus-4-5'). Falls back to ''.
+  // Legacy mixed-version hint. Production Main resolves and persists its admitted Reviewer model;
+  // callers that do not install a model admission owner may still use this as a fallback.
   model?: string
   // Turn whose content is actually audited, when it differs from turnMessageId (the grouping id).
   // Defaults to turnMessageId. Used when re-running a fix-loop review: the review row is grouped under

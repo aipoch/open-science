@@ -157,6 +157,7 @@ import {
   registerReviewerIpcHandlers,
   type ReviewerCommandOwner
 } from './reviewer/ipc'
+import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
 import {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
@@ -2051,8 +2052,25 @@ const createApplicationModules = async (
   permissionGrantRegistry.subscribe(() => runtime.notifyPermissionGrantsChanged())
   // Single shared teardown owner for both the before-quit handler (index.ts) and the pre-update-install
   // gate. Update handling is deliberately constructed below, after this dependency is complete.
+  let reviewerModelRuntimeShutdown:
+    Pick<ReviewerModelRuntimeOwner, 'shutdown' | 'shutdownForUpdateGate'> | undefined
   const shutdownCoordinator = new BackendShutdownCoordinator({
-    runtime,
+    runtime: {
+      shutdownForQuit: async () => {
+        const [main, reviewer] = await Promise.all([
+          runtime.shutdownForQuit(),
+          reviewerModelRuntimeShutdown?.shutdown() ?? Promise.resolve({ reaped: true })
+        ])
+        return { reaped: main.reaped && reviewer.reaped }
+      },
+      shutdownForUpdateGate: async () => {
+        const [main, reviewer] = await Promise.all([
+          runtime.shutdownForUpdateGate(),
+          reviewerModelRuntimeShutdown?.shutdownForUpdateGate() ?? Promise.resolve({ reaped: true })
+        ])
+        return { reaped: main.reaped && reviewer.reaped }
+      }
+    },
     notebook: notebookService,
     log: createLogger('shutdown')
   })
@@ -2567,8 +2585,35 @@ const createApplicationModules = async (
   // and 'reviewer:get-for-session' so the renderer's fire-and-forget reviewer calls resolve to
   // real handlers instead of no-ops. Passing the already-constructed AcpRuntime so the reviewer
   // can spawn sessions under the same agent connection.
+  const reviewerModelRuntime = await modules.add(
+    {
+      appVersion: app.getVersion(),
+      captureModel: () => settingsService.admitReviewerExecutionModel(),
+      resolveTarget: (target, context) =>
+        settingsService.resolveExplicitAgentBackend(target, context)
+    },
+    (options) => {
+      const owner = new ReviewerModelRuntimeOwner(options)
+      reviewerModelRuntimeShutdown = owner
+      return {
+        name: 'reviewer-model-runtime',
+        capability: owner,
+        disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
+        dispose: async () => {
+          try {
+            if (!(await owner.shutdown()).reaped) {
+              throw new BackendShutdownOutcomeError('degraded')
+            }
+          } finally {
+            if (reviewerModelRuntimeShutdown === owner) reviewerModelRuntimeShutdown = undefined
+          }
+        }
+      }
+    }
+  )
   const reviewerOptions = {
     acpRuntime: runtime,
+    modelRuntime: reviewerModelRuntime,
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     withSessionMutation: <Result>(

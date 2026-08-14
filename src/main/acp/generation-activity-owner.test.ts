@@ -23,12 +23,14 @@ describe('AcpGenerationActivityOwner', () => {
     const activity = owner.withActivity(() => release.promise)
 
     expect(owner.blockers()).toEqual({ reconnect: true, retirement: true })
+    expect(owner.blocksLiveEffortChange()).toBe(true)
     expect(Object.isFrozen(owner.blockers())).toBe(true)
 
     release.resolve()
     await activity
 
     expect(owner.blockers()).toEqual({ reconnect: false, retirement: false })
+    expect(owner.blocksLiveEffortChange()).toBe(false)
     expect(activityChanged).toHaveBeenCalledOnce()
   })
 
@@ -48,6 +50,7 @@ describe('AcpGenerationActivityOwner', () => {
     const operation = owner.withOperation(() => failed)
 
     expect(owner.blockers()).toEqual({ reconnect: false, retirement: true })
+    expect(owner.blocksLiveEffortChange()).toBe(false)
     reject(boom)
     await expect(operation).rejects.toBe(boom)
 
@@ -89,6 +92,7 @@ describe('AcpGenerationActivityOwner', () => {
 
     owner.acquireStartup(token)
     expect(owner.blockers()).toEqual({ reconnect: true, retirement: true })
+    expect(owner.blocksLiveEffortChange()).toBe(false)
 
     owner.releaseStartup(token)
     owner.releaseStartup(token)

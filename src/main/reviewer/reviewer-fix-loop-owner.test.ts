@@ -10,7 +10,15 @@ import type { ReviewRepository } from './repository'
 
 const mocks = vi.hoisted(() => ({
   injectAuditorMessage: vi.fn(),
-  runReviewAssessment: vi.fn()
+  runReviewAssessment: vi.fn(),
+  getActiveConversationContext: vi.fn(() => ({})),
+  resolveActiveConversationMessages: vi.fn(() => [
+    {
+      id: 'originating-user',
+      role: 'user',
+      status: 'complete'
+    }
+  ])
 }))
 
 vi.mock('./correction', () => ({ injectAuditorMessage: mocks.injectAuditorMessage }))
@@ -21,7 +29,8 @@ vi.mock('../../shared/session-persistence', () => ({
   materializeSessionConversationGraph: () => ({ conversationGraph: {} })
 }))
 vi.mock('../../shared/conversation-graph', () => ({
-  getActiveConversationContext: () => ({})
+  getActiveConversationContext: mocks.getActiveConversationContext,
+  resolveActiveConversationMessages: mocks.resolveActiveConversationMessages
 }))
 
 const { runReviewerFixLoop } = await import('./reviewer-fix-loop-owner')
@@ -109,6 +118,14 @@ describe('reviewer fix-loop owner', () => {
   beforeEach(() => {
     mocks.injectAuditorMessage.mockReset().mockResolvedValue(undefined)
     mocks.runReviewAssessment.mockReset()
+    mocks.getActiveConversationContext.mockReset().mockReturnValue({})
+    mocks.resolveActiveConversationMessages.mockReset().mockReturnValue([
+      {
+        id: 'originating-user',
+        role: 'user',
+        status: 'complete'
+      }
+    ])
   })
 
   it('reviews the exact durable snapshot that proves the correction completed', async () => {
@@ -144,6 +161,7 @@ describe('reviewer fix-loop owner', () => {
       })
     )
     expect(getSession).toHaveBeenCalledTimes(2)
+    expect(mocks.getActiveConversationContext).toHaveBeenCalledWith({}, 'originating-user')
     expect(repository.commitFindingDispositions).not.toHaveBeenCalled()
   })
 

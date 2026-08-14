@@ -505,6 +505,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setPackageMirror',
       'settings.setProjectFilesFilter',
       'settings.setReasoningEffort',
+      'settings.setReviewerModel',
       'settings.setSkillEnabled',
       'settings.setSkillsEnabled',
       'settings.setSubagentModel',
@@ -611,7 +612,7 @@ describe('preload bridge — runtime renderer contract catalog', () => {
   it('routes every owned method through its cataloged Electron channel', async () => {
     const requestContracts = runtimeContracts.filter(({ kind }) => kind === 'method')
 
-    expect(runtimeContracts).toHaveLength(197)
+    expect(runtimeContracts).toHaveLength(198)
 
     for (const contract of requestContracts) {
       invokeMock.mockClear()
