@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE } from '../../shared/acp'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
 import {
   HostViewImageService,
@@ -386,5 +387,27 @@ describe('HostViewImageService', () => {
     await expect(
       h.service.stage({ path: 'image.png' }, {}, context(root, 'run-after-shutdown'))
     ).rejects.toThrow(/shut down/u)
+  })
+
+  it('keeps staged encoded image bytes within the ACP per-message image budget', async () => {
+    root = await mkdtemp(join(tmpdir(), 'host-view-image-acp-budget-'))
+    await writeFile(join(root, 'image.png'), 'image')
+    const encodedImageBytes = 3 * 1024 * 1024
+    const data = Buffer.alloc(encodedImageBytes).toString('base64')
+    const h = harness({
+      prepareImage: vi.fn(async () => ({
+        data,
+        mimeType: 'image/png' as const,
+        originalSize: { width: 20, height: 10 },
+        outputSize: { width: 20, height: 10 }
+      }))
+    })
+
+    await h.service.stage({ path: 'image.png' }, {}, context(root, 'run-acp-budget'))
+    await h.service.stage({ path: 'image.png' }, {}, context(root, 'run-acp-budget'))
+    await expect(
+      h.service.stage({ path: 'image.png' }, {}, context(root, 'run-acp-budget'))
+    ).rejects.toThrow(new RegExp(`${MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE}`, 'u'))
+    await expect(h.service.complete('run-acp-budget')).resolves.toHaveLength(2)
   })
 })

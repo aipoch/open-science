@@ -46,6 +46,9 @@ files:
 asarUnpack:
   - resources/**
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
+  # sharp loads its platform N-API binding and libvips shared libraries by physical path.
+  - node_modules/sharp/**
+  - node_modules/@img/**
   # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
   - node_modules/@agentclientprotocol/claude-agent-acp/**
 # The Prisma generated client (`node_modules/.prisma`) is produced by `prisma generate` and is NOT a

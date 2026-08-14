@@ -685,7 +685,8 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         name: 'source',
         type: '{ versionId: string } | { path: string }',
         required: true,
-        description: 'Current-Project Version or current-Session relative workspace path.'
+        description:
+          'Artifact or Upload Version in the current Project, or current-Session relative workspace path.'
       }
     ]
   },
@@ -760,7 +761,7 @@ if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_
 }
 
 const MAX_HELP_QUERY_CHARS = 128
-const MAX_CATALOG_RESULT_CHARS = 3_000
+const MAX_CATALOG_RESULT_CHARS = 2_500
 const MAX_OPERATION_RESULT_CHARS = 3_600
 const MAX_DELEGATE_RESULT_CHARS = 3_200
 

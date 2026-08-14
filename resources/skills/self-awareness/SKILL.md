@@ -24,8 +24,8 @@ The v1 result contains exactly nine boolean keys:
 - `lineage` gates the read-only `host.lineage` namespace.
 - `frames` gates the read-only `host.frames` namespace.
 - `llm` gates `host.llm` one-shot, tool-less inference.
-- `viewImage` gates transient `host.viewImage(source, options?)` image attachment from a current-
-  Project Version or current-Session relative workspace path.
+- `viewImage` gates transient `host.viewImage(source, options?)` image attachment from an Artifact or
+  Upload Version in the current Project, or a current-Session relative workspace path.
 
 Interpret the result narrowly:
 

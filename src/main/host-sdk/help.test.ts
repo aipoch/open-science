@@ -61,7 +61,7 @@ describe('Host SDK help', () => {
         aliases: [id.slice('host.'.length)]
       }))
     )
-    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(3_000)
+    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_500)
   })
 
   it('documents the transient visual-model-gated viewImage contract', () => {
@@ -75,6 +75,10 @@ describe('Host SDK help', () => {
       availability: { status: 'available' },
       call_forms: [{ signature: 'await host.viewImage(source, options?)' }]
     })
+    if (help.kind !== 'operation') throw new Error('expected operation help')
+    expect(JSON.stringify(help.request)).toMatch(
+      /Artifact or Upload Version in the current Project/u
+    )
   })
 
   it('keeps the published REPL subagent surface and Help registry in lockstep', () => {

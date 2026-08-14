@@ -1,15 +1,14 @@
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, posix, relative, resolve, sep, win32 } from 'node:path'
 
+import { MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE } from '../../shared/acp'
 import type { HostArtifactCatalogItem } from '../../shared/project-files'
 import { createUploadVersionReference } from '../../shared/uploads'
 import {
   ImageContentError,
   MAX_IMAGE_LONG_EDGE,
-  consumeInlineImageBudget,
   prepareImageContentData,
   type ImageCrop,
-  type InlineImageBudget,
   type PreparedImageContentData
 } from '../uploads/attachment-media'
 
@@ -96,7 +95,7 @@ type StagedInvocation = {
   nextOrdinal: number
   reserved: Set<number>
   images: Map<number, TransientViewImage>
-  budget: InlineImageBudget
+  encodedImageBytes: number
 }
 
 type NormalizedSource = { versionId: string } | { path: string }
@@ -329,7 +328,7 @@ export class HostViewImageService {
         nextOrdinal: 0,
         reserved: new Set(),
         images: new Map(),
-        budget: { imageCount: 0, base64Bytes: 0 }
+        encodedImageBytes: 0
       }
       this.invocations.set(context.controlInvocationId, invocation)
     }
@@ -436,7 +435,21 @@ export class HostViewImageService {
       if (current !== invocation) {
         throw new HostViewImageError('invocation ended before the image could be attached.')
       }
-      invocation.budget = consumeInlineImageBudget(invocation.budget, image)
+      const payloadBytes = Buffer.byteLength(image.data, 'base64')
+      const encodedImageBytes = invocation.encodedImageBytes + payloadBytes
+      if (encodedImageBytes > MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE) {
+        throw new ImageContentError(
+          'IMAGE_TOTAL_BUDGET_EXCEEDED',
+          `Encoded image content requires ${encodedImageBytes} bytes, exceeding the ${MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE}-byte ACP per-message image budget.`,
+          {
+            payloadBytes,
+            usedBytes: encodedImageBytes,
+            limitBytes: MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+            imageCount: invocation.images.size + 1
+          }
+        )
+      }
+      invocation.encodedImageBytes = encodedImageBytes
       invocation.images.set(
         ordinal,
         Object.freeze({

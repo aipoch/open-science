@@ -6,6 +6,17 @@ import { describe, expect, it } from 'vitest'
 
 import { WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES } from '../src/main/notebook/micromamba-cache'
 
+describe('electron-builder native image processing', () => {
+  it('ships sharp and its platform binary outside the ASAR archive', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      asarUnpack?: string[]
+    }
+
+    expect(config.asarUnpack).toContain('node_modules/sharp/**')
+    expect(config.asarUnpack).toContain('node_modules/@img/**')
+  })
+})
+
 describe('electron-builder Windows targets', () => {
   it('ships both the NSIS installer and the portable zip', () => {
     const config = readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')

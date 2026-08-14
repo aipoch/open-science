@@ -3,6 +3,8 @@ import { open, readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type { Sharp } from 'sharp'
+
 // Images larger than this are downscaled/re-encoded before inlining so a single upload never
 // blows past the model's per-image (~5MB) and total-request (~32MB) limits after base64 growth.
 export const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
@@ -25,10 +27,9 @@ export const MAX_INLINE_IMAGE_TOTAL_BASE64_BYTES = 24 * 1024 * 1024
 // Anthropic downscales images past 1568px on the long edge anyway, so this is a lossless-of-info cap.
 export const MAX_IMAGE_LONG_EDGE = 1568
 
-// Electron nativeImage exposes no decoder-side pixel limit. Preflight PNG/JPEG dimensions before
-// native decoding, then verify the decoded bitmap again before crop or resize can allocate a second
-// one. 16 MP is at most ~64 MiB at four bytes per pixel, keeping the two-bitmap processing peak near
-// 128 MiB instead of trusting compressed source size alone.
+// Keep the cheap PNG/JPEG header preflight in front of sharp's decoder-side pixel limit so
+// malformed or oversized inputs fail before native decoding and allocation. 16 MP is at most
+// ~64 MiB at four bytes per pixel, which bounds processing independently of compressed size.
 export const MAX_DECODED_IMAGE_PIXELS = 16_000_000
 
 // A conversation replays its full history every turn, so inlined image payloads accumulate across
@@ -284,6 +285,111 @@ const resolvedCrop = (
   return rect
 }
 
+const processImageBytes = async (
+  bytes: Buffer,
+  options: { crop?: ImageCrop; maxSize?: number } = {},
+  signal?: AbortSignal
+): Promise<PreparedImageContentData> => {
+  const { default: sharp } = await import('sharp')
+  const inputOptions = {
+    failOn: 'error' as const,
+    limitInputPixels: MAX_DECODED_IMAGE_PIXELS,
+    sequentialRead: true
+  }
+  const source = sharp(bytes, inputOptions)
+  const metadata = await source.metadata().catch((error: unknown) => {
+    throw new ImageContentError('IMAGE_DECODE_FAILED', 'Could not decode the image source.', {
+      cause: error
+    })
+  })
+  signal?.throwIfAborted()
+  const originalSize = metadata.autoOrient ?? {
+    width: metadata.width ?? 0,
+    height: metadata.height ?? 0
+  }
+  assertImagePixelLimit(originalSize)
+
+  const crop = resolvedCrop(options.crop, originalSize)
+  const croppedSize = crop
+    ? { width: crop.right - crop.left, height: crop.bottom - crop.top }
+    : originalSize
+  const maxSize = options.maxSize ?? MAX_IMAGE_LONG_EDGE
+  const scale = Math.min(1, maxSize / Math.max(croppedSize.width, croppedSize.height))
+  let outputSize = {
+    width: Math.max(1, Math.round(croppedSize.width * scale)),
+    height: Math.max(1, Math.round(croppedSize.height * scale))
+  }
+  const prepare = (size: ImageDimensions = outputSize): Sharp => {
+    let pipeline = source.clone().autoOrient()
+    if (crop) {
+      pipeline = pipeline.extract({
+        left: crop.left,
+        top: crop.top,
+        width: croppedSize.width,
+        height: croppedSize.height
+      })
+    }
+    if (size.width !== croppedSize.width || size.height !== croppedSize.height) {
+      pipeline = pipeline.resize(size.width, size.height, {
+        fit: 'fill',
+        kernel: 'lanczos3',
+        withoutEnlargement: true
+      })
+    }
+    return pipeline
+  }
+  const preserveTransparency = metadata.hasAlpha === true && !(await prepare().stats()).isOpaque
+  signal?.throwIfAborted()
+  const outputMimeType: 'image/png' | 'image/jpeg' = preserveTransparency
+    ? 'image/png'
+    : 'image/jpeg'
+  let buffer =
+    outputMimeType === 'image/png'
+      ? await prepare().png().toBuffer()
+      : await prepare().jpeg({ quality: 80 }).toBuffer()
+  if (outputMimeType === 'image/png' && buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
+    // Transparent output cannot fall back to JPEG. Reduce dimensions to a size whose raw RGBA
+    // pixels fit below the inline payload limit even when PNG compression is ineffective.
+    const fallbackScale = Math.min(1, 768 / Math.max(outputSize.width, outputSize.height))
+    if (fallbackScale < 1) {
+      outputSize = {
+        width: Math.max(1, Math.round(outputSize.width * fallbackScale)),
+        height: Math.max(1, Math.round(outputSize.height * fallbackScale))
+      }
+    }
+    buffer = await prepare().png().toBuffer()
+  } else if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
+    buffer = await prepare().jpeg({ quality: 70 }).toBuffer()
+    if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
+      const fallbackScale = Math.min(1, 1024 / Math.max(outputSize.width, outputSize.height))
+      if (fallbackScale < 1) {
+        outputSize = {
+          width: Math.max(1, Math.round(outputSize.width * fallbackScale)),
+          height: Math.max(1, Math.round(outputSize.height * fallbackScale))
+        }
+      }
+      buffer = await prepare().jpeg({ quality: 65 }).toBuffer()
+    }
+  }
+  if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
+    throw new ImageContentError(
+      'IMAGE_PAYLOAD_TOO_LARGE',
+      `Processed image is ${buffer.byteLength} bytes, exceeding the ${MAX_IMAGE_PAYLOAD_BYTES}-byte inline limit.`,
+      { payloadBytes: buffer.byteLength, limitBytes: MAX_IMAGE_PAYLOAD_BYTES }
+    )
+  }
+
+  signal?.throwIfAborted()
+
+  return {
+    data: buffer.toString('base64'),
+    mimeType: outputMimeType,
+    originalSize,
+    ...(crop ? { crop } : {}),
+    outputSize
+  }
+}
+
 export const prepareImageContentData = async (
   filePath: string,
   options: { crop?: ImageCrop; maxSize?: number } = {},
@@ -349,79 +455,14 @@ export const prepareImageContentData = async (
       )
     }
     assertImagePixelLimit(declaredImageDimensions(bytes, mimeType))
-
-    const { nativeImage } = await import('electron')
-    const image = nativeImage.createFromBuffer(bytes)
-    if (image.isEmpty()) {
-      throw new ImageContentError('IMAGE_DECODE_FAILED', 'Could not decode the image source.')
-    }
-    const originalSize = image.getSize()
-    assertImagePixelLimit(originalSize)
-
-    const crop = resolvedCrop(options.crop, originalSize)
-    const croppedSize = crop
-      ? { width: crop.right - crop.left, height: crop.bottom - crop.top }
-      : originalSize
-    const cropped = crop
-      ? image.crop({
-          x: crop.left,
-          y: crop.top,
-          width: croppedSize.width,
-          height: croppedSize.height
-        })
-      : image
-    const maxSize = options.maxSize ?? MAX_IMAGE_LONG_EDGE
-    const scale = Math.min(1, maxSize / Math.max(croppedSize.width, croppedSize.height))
-    let outputSize = {
-      width: Math.max(1, Math.round(croppedSize.width * scale)),
-      height: Math.max(1, Math.round(croppedSize.height * scale))
-    }
-    let prepared =
-      scale < 1 ? cropped.resize({ ...outputSize, quality: 'better' as const }) : cropped
-    const outputMimeType: 'image/png' | 'image/jpeg' = mimeType
-    let buffer = mimeType === 'image/png' ? prepared.toPNG() : prepared.toJPEG(80)
-    if (mimeType === 'image/png' && buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
-      // PNG may carry transparency. Keep the format and reduce dimensions to a size whose raw RGBA
-      // pixels fit below the inline payload limit even when compression is ineffective.
-      const fallbackScale = Math.min(1, 768 / Math.max(outputSize.width, outputSize.height))
-      if (fallbackScale < 1) {
-        outputSize = {
-          width: Math.max(1, Math.round(outputSize.width * fallbackScale)),
-          height: Math.max(1, Math.round(outputSize.height * fallbackScale))
-        }
-        prepared = prepared.resize({ ...outputSize, quality: 'better' })
-      }
-      buffer = prepared.toPNG()
-    } else if (mimeType === 'image/jpeg' && buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
-      buffer = prepared.toJPEG(70)
-      if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
-        const fallbackScale = Math.min(1, 1024 / Math.max(outputSize.width, outputSize.height))
-        if (fallbackScale < 1) {
-          outputSize = {
-            width: Math.max(1, Math.round(outputSize.width * fallbackScale)),
-            height: Math.max(1, Math.round(outputSize.height * fallbackScale))
-          }
-          prepared = prepared.resize({ ...outputSize, quality: 'better' })
-        }
-        buffer = prepared.toJPEG(65)
-      }
-    }
-    if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
-      throw new ImageContentError(
-        'IMAGE_PAYLOAD_TOO_LARGE',
-        `Processed image is ${buffer.byteLength} bytes, exceeding the ${MAX_IMAGE_PAYLOAD_BYTES}-byte inline limit.`,
-        { payloadBytes: buffer.byteLength, limitBytes: MAX_IMAGE_PAYLOAD_BYTES }
-      )
-    }
-
-    signal?.throwIfAborted()
-
-    return {
-      data: buffer.toString('base64'),
-      mimeType: outputMimeType,
-      originalSize,
-      ...(crop ? { crop } : {}),
-      outputSize
+    try {
+      return await processImageBytes(bytes, options, signal)
+    } catch (error) {
+      if (error instanceof ImageContentError) throw error
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new ImageContentError('IMAGE_DECODE_FAILED', 'Could not decode the image source.', {
+        cause: error
+      })
     }
   } finally {
     await handle.close()
@@ -450,71 +491,28 @@ export const buildImageContentData = async (
     return { data: (await readFile(filePath)).toString('base64'), mimeType: fallbackMimeType }
   }
 
-  let nativeImage: (typeof import('electron'))['nativeImage']
   try {
-    const electron = await import('electron')
-    nativeImage = electron.nativeImage
-  } catch (error) {
-    throw new ImageContentError(
-      'IMAGE_PROCESSING_FAILED',
-      `Image processing is unavailable for an oversized ${size}-byte image.`,
-      { sourceBytes: size, limitBytes: MAX_IMAGE_PAYLOAD_BYTES, cause: error }
-    )
-  }
-
-  try {
-    const image = nativeImage.createFromPath(filePath)
-
-    if (image.isEmpty()) {
+    const bytes = await readFile(filePath)
+    if (bytes.byteLength > MAX_AUTO_PROCESS_IMAGE_BYTES) {
       throw new ImageContentError(
-        'IMAGE_DECODE_FAILED',
-        `Could not decode oversized ${size}-byte image for safe inlining.`,
-        { sourceBytes: size, limitBytes: MAX_IMAGE_PAYLOAD_BYTES }
+        'IMAGE_SOURCE_TOO_LARGE',
+        `Image source is ${bytes.byteLength} bytes, exceeding the automatic processing limit.`,
+        { sourceBytes: bytes.byteLength, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
       )
     }
-
-    const { width, height } = image.getSize()
-    const longEdge = Math.max(width, height)
-    const scale = longEdge > MAX_IMAGE_LONG_EDGE ? MAX_IMAGE_LONG_EDGE / longEdge : 1
-    const resized =
-      scale < 1
-        ? image.resize({
-            width: Math.max(1, Math.round(width * scale)),
-            height: Math.max(1, Math.round(height * scale)),
-            quality: 'better'
-          })
-        : image
-
-    // PNGs keep transparency on the first pass; everything else re-encodes to JPEG for size.
-    const preferPng = mimeType === 'image/png'
-    let outMimeType = preferPng ? 'image/png' : 'image/jpeg'
-    let buffer = preferPng ? resized.toPNG() : resized.toJPEG(80)
-
-    // Progressive fallbacks keep the payload under the per-image limit for stubborn inputs.
-    if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
-      outMimeType = 'image/jpeg'
-      buffer = resized.toJPEG(70)
-    }
-    if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
-      const smaller = resized.resize({ width: 1024, quality: 'better' })
-      buffer = smaller.toJPEG(65)
-    }
-
-    if (buffer.byteLength > MAX_IMAGE_PAYLOAD_BYTES) {
-      throw new ImageContentError(
-        'IMAGE_PAYLOAD_TOO_LARGE',
-        `Processed image is ${buffer.byteLength} bytes, exceeding the ${MAX_IMAGE_PAYLOAD_BYTES}-byte inline limit.`,
-        {
-          sourceBytes: size,
-          payloadBytes: buffer.byteLength,
-          limitBytes: MAX_IMAGE_PAYLOAD_BYTES
-        }
-      )
-    }
-
-    return { data: buffer.toString('base64'), mimeType: outMimeType }
+    const processed = await processImageBytes(bytes)
+    return { data: processed.data, mimeType: processed.mimeType }
   } catch (error) {
-    if (error instanceof ImageContentError) throw error
+    if (error instanceof ImageContentError) {
+      throw new ImageContentError(error.code, error.message, {
+        sourceBytes: error.sourceBytes ?? size,
+        payloadBytes: error.payloadBytes,
+        usedBytes: error.usedBytes,
+        limitBytes: error.limitBytes ?? MAX_IMAGE_PAYLOAD_BYTES,
+        imageCount: error.imageCount,
+        cause: error.cause
+      })
+    }
 
     throw new ImageContentError(
       'IMAGE_PROCESSING_FAILED',

@@ -19,27 +19,101 @@ import {
   type ImageContentData
 } from './attachment-media'
 
-// A configurable fake nativeImage so the >2MB compression path is exercised without an Electron runtime.
+// A configurable processor double keeps policy/error tests deterministic. The separate
+// attachment-media.sharp test exercises the real cross-platform adapter and image fixtures.
 type FakeImage = {
   isEmpty: () => boolean
   getSize: () => { width: number; height: number }
-  crop: ReturnType<typeof vi.fn>
-  resize: ReturnType<typeof vi.fn>
+  crop: ReturnType<
+    typeof vi.fn<(options: { x: number; y: number; width: number; height: number }) => FakeImage>
+  >
+  resize: ReturnType<
+    typeof vi.fn<(options: { width: number; height: number; quality: 'better' }) => FakeImage>
+  >
   toJPEG: (quality: number) => Buffer
   toPNG: () => Buffer
+  hasAlpha?: boolean
+  isOpaque?: boolean
+}
+
+type FakeSharpPipeline = {
+  metadata: ReturnType<
+    typeof vi.fn<
+      () => Promise<{
+        width: number
+        height: number
+        autoOrient: { width: number; height: number }
+        hasAlpha: boolean
+      }>
+    >
+  >
+  clone: () => FakeSharpPipeline
+  autoOrient: () => FakeSharpPipeline
+  extract: (options: {
+    left: number
+    top: number
+    width: number
+    height: number
+  }) => FakeSharpPipeline
+  resize: (width: number, height: number) => FakeSharpPipeline
+  stats: ReturnType<typeof vi.fn<() => Promise<{ isOpaque: boolean }>>>
+  png: () => FakeSharpPipeline
+  jpeg: (options: { quality: number }) => FakeSharpPipeline
+  toBuffer: ReturnType<typeof vi.fn<() => Promise<Buffer>>>
 }
 
 let fakeImage: FakeImage
-// The wrapper ignores the path arg at runtime; the spy just records that a decode was attempted.
-const createFromPath = vi.fn(() => fakeImage)
-const createFromBuffer = vi.fn(() => fakeImage)
-
-vi.mock('electron', () => ({
-  nativeImage: {
-    createFromPath: () => createFromPath(),
-    createFromBuffer: () => createFromBuffer()
+const makeSharpPipeline = (input: Buffer): FakeSharpPipeline => {
+  let encode = (): Buffer => fakeImage.toPNG()
+  const pipeline = {
+    metadata: vi.fn(async () => {
+      if (fakeImage.isEmpty()) throw new Error('decode failed')
+      const size = fakeImage.getSize()
+      const inputIsPng = input[0] === 0x89 && input[1] === 0x50
+      return {
+        ...size,
+        autoOrient: size,
+        hasAlpha: fakeImage.hasAlpha ?? inputIsPng
+      }
+    }),
+    clone: () => makeSharpPipeline(input),
+    autoOrient() {
+      return this
+    },
+    extract({
+      left,
+      top,
+      width,
+      height
+    }: {
+      left: number
+      top: number
+      width: number
+      height: number
+    }) {
+      fakeImage.crop({ x: left, y: top, width, height })
+      return this
+    },
+    resize(width: number, height: number) {
+      fakeImage.resize({ width, height, quality: 'better' })
+      return this
+    },
+    stats: vi.fn(async () => ({ isOpaque: fakeImage.isOpaque ?? false })),
+    png() {
+      encode = () => fakeImage.toPNG()
+      return this
+    },
+    jpeg({ quality }: { quality: number }) {
+      encode = () => fakeImage.toJPEG(quality)
+      return this
+    },
+    toBuffer: vi.fn(async () => encode())
   }
-}))
+  return pipeline
+}
+const sharpFactory = vi.fn((input: Buffer) => makeSharpPipeline(input))
+
+vi.mock('sharp', () => ({ default: (input: Buffer) => sharpFactory(input) }))
 
 // A fake pdfjs document so text extraction is deterministic and does not parse a real PDF.
 let fakePdf: { numPages: number; pages: string[][] }
@@ -62,8 +136,7 @@ let root: string
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'attachment-media-'))
-  createFromPath.mockClear()
-  createFromBuffer.mockClear()
+  sharpFactory.mockClear()
   getDocument.mockClear()
   fakeImage = {
     isEmpty: () => false,
@@ -173,7 +246,7 @@ describe('prepareImageContentData', () => {
       mimeType: 'image/jpeg',
       originalSize: { width: 120, height: 80 }
     })
-    expect(createFromBuffer).toHaveBeenCalledOnce()
+    expect(sharpFactory).toHaveBeenCalledOnce()
   })
 
   it('rejects malformed JPEG frame markers before native decode', async () => {
@@ -210,7 +283,7 @@ describe('prepareImageContentData', () => {
         code: 'IMAGE_DECODE_FAILED'
       })
     }
-    expect(createFromBuffer).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('rejects a truncated PNG IHDR before native decode', async () => {
@@ -220,7 +293,7 @@ describe('prepareImageContentData', () => {
     await expect(prepareImageContentData(filePath)).rejects.toMatchObject({
       code: 'IMAGE_DECODE_FAILED'
     })
-    expect(createFromBuffer).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('rejects SVG and optional formats before invoking the native decoder', async () => {
@@ -234,7 +307,7 @@ describe('prepareImageContentData', () => {
         code: 'IMAGE_DECODE_FAILED'
       })
     }
-    expect(createFromBuffer).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('rejects source bytes and declared pixels before native decode or crop/resize allocations', async () => {
@@ -253,7 +326,7 @@ describe('prepareImageContentData', () => {
       await writeFile(bomb, bytes)
       await expect(prepareImageContentData(bomb)).rejects.toThrow(/pixel processing limit/u)
     }
-    expect(createFromBuffer).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
     expect(fakeImage.crop).not.toHaveBeenCalled()
     expect(fakeImage.resize).not.toHaveBeenCalled()
   })
@@ -275,7 +348,7 @@ describe('prepareImageContentData', () => {
         code: 'IMAGE_SOURCE_TOO_LARGE',
         sourceBytes: MAX_AUTO_PROCESS_IMAGE_BYTES + 1
       })
-      expect(createFromBuffer).not.toHaveBeenCalled()
+      expect(sharpFactory).not.toHaveBeenCalled()
     } finally {
       readFile.mockRestore()
     }
@@ -330,7 +403,7 @@ describe('prepareImageContentData', () => {
     await expect(prepareImageContentData(filePath, {}, controller.signal)).rejects.toThrow(
       /aborted/u
     )
-    expect(createFromBuffer).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('rejects a workspace file replaced by an outside symlink after authorization', async () => {
@@ -345,7 +418,7 @@ describe('prepareImageContentData', () => {
     await expect(
       prepareImageContentData(authorized, {}, undefined, expectedCanonicalPath)
     ).rejects.toThrow(/changed while it was being opened/u)
-    expect(createFromBuffer).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 })
 
@@ -370,7 +443,7 @@ describe('buildImageContentData', () => {
     await expect(
       buildImageContentData(filePath, 'image/png', MAX_AUTO_PROCESS_IMAGE_BYTES + 1)
     ).rejects.toMatchObject({ code: 'IMAGE_SOURCE_TOO_LARGE' })
-    expect(createFromPath).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('passes small images through untouched as raw base64', async () => {
@@ -381,7 +454,7 @@ describe('buildImageContentData', () => {
     const result = await buildImageContentData(filePath, 'image/png', bytes.byteLength)
 
     expect(result).toEqual({ data: bytes.toString('base64'), mimeType: 'image/png' })
-    expect(createFromPath).not.toHaveBeenCalled()
+    expect(sharpFactory).not.toHaveBeenCalled()
   })
 
   it('downscales large images to the long-edge cap and re-encodes to JPEG', async () => {
@@ -399,6 +472,7 @@ describe('buildImageContentData', () => {
   })
 
   it('keeps PNG encoding for large PNGs to preserve transparency', async () => {
+    fakeImage.hasAlpha = true
     const filePath = join(root, 'large.png')
     await writeFile(filePath, Buffer.from('ignored'))
 
@@ -425,7 +499,7 @@ describe('buildImageContentData', () => {
   })
 
   it('reports image processing failures without falling back to the original file', async () => {
-    createFromPath.mockImplementationOnce(() => {
+    sharpFactory.mockImplementationOnce(() => {
       throw new Error('decoder crashed')
     })
     const filePath = join(root, 'large.jpg')
