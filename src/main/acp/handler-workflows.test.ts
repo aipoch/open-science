@@ -11,6 +11,7 @@ import {
 } from '../../shared/session-persistence'
 import type { HistoryReplayTarget } from '../../shared/history-preamble'
 import type { AgentFrameworkId } from '../../shared/settings'
+import type { AgentModelRoute } from '../agent-framework'
 import { createAcpHandlerWorkflows } from './handler-workflows'
 
 const createSession = (): PersistedChatSession =>
@@ -81,6 +82,7 @@ const createHarness = (
   startContinuation: ReturnType<typeof vi.fn>
   startContinuationWhen: ReturnType<typeof vi.fn>
   hasLiveSession: ReturnType<typeof vi.fn>
+  captureSessionBackend: ReturnType<typeof vi.fn>
   session: PersistedChatSession
   request: {
     projectId: string
@@ -94,8 +96,21 @@ const createHarness = (
   const session = createSession()
   mutate?.(session)
   prepareControlTurn(session)
-  const startContinuation = vi.fn(async (_request: unknown) => undefined)
+  const startContinuation = vi.fn(async () => undefined)
   const hasLiveSession = vi.fn(() => true)
+  const captureSessionBackend = vi.fn(
+    () =>
+      ({
+        framework: { id: session.agentFrameworkId ?? 'claude-code' },
+        ...(session.agentBackendId ? { backendId: session.agentBackendId } : {}),
+        modelRoute:
+          session.agentFrameworkId === 'codex'
+            ? 'codex-responses'
+            : session.agentFrameworkId === 'opencode'
+              ? 'opencode-openai'
+              : 'claude-anthropic'
+      }) as never
+  )
   const snapshot = { status: 'connected' } as never
   const startContinuationWhen = vi.fn(async (request: unknown, validate: () => Promise<void>) => {
     await validate()
@@ -105,6 +120,7 @@ const createHarness = (
     {
       getSnapshot: () => snapshot,
       hasLiveSession,
+      captureSessionBackend,
       resumeSession: vi.fn(),
       sendPrompt: vi.fn(),
       getLatestUserPrompt: vi.fn(),
@@ -123,6 +139,7 @@ const createHarness = (
     startContinuation,
     startContinuationWhen,
     hasLiveSession,
+    captureSessionBackend,
     session,
     request: {
       projectId: session.projectId,
@@ -256,36 +273,43 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget]>([
-    ['Claude Code', 'claude-code', 'claude-code'],
-    ['OpenCode', 'opencode', 'opencode'],
-    ['Codex Responses', 'codex', 'codex-response'],
-    ['Codex Bridge', 'codex', 'codex-bridge']
-  ])('binds context-reset hidden-turn provenance on %s', async (_name, frameworkId, target) => {
-    const harness = createHarness((session) => {
-      session.agentFrameworkId = frameworkId
-      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
-        id: 'runtime-segment-after-context-reset',
-        frameworkId,
-        startedAt: 3,
-        forceNew: true
-      })
-    })
-
-    await harness.workflows.saveAsSkill({
-      ...harness.request,
-      historyReplay: { target, contextReset: true }
-    })
-
-    expect(harness.startContinuation).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contextReset: true,
-        provenanceContext: expect.objectContaining({
-          runtimeSegmentId: 'runtime-segment-after-context-reset'
+  it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget, AgentModelRoute]>([
+    ['Claude Code', 'claude-code', 'claude-code', 'claude-anthropic'],
+    ['OpenCode', 'opencode', 'opencode', 'opencode-openai'],
+    ['Codex Responses', 'codex', 'codex-response', 'codex-responses'],
+    ['Codex Bridge', 'codex', 'codex-bridge', 'codex-bridge']
+  ])(
+    'binds context-reset hidden-turn provenance on %s',
+    async (_name, frameworkId, target, modelRoute) => {
+      const harness = createHarness((session) => {
+        session.agentFrameworkId = frameworkId
+        session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+          id: 'runtime-segment-after-context-reset',
+          frameworkId,
+          startedAt: 3,
+          forceNew: true
         })
       })
-    )
-  })
+      harness.captureSessionBackend.mockReturnValue({
+        framework: { id: frameworkId },
+        modelRoute
+      } as never)
+
+      await harness.workflows.saveAsSkill({
+        ...harness.request,
+        historyReplay: { target, contextReset: true }
+      })
+
+      expect(harness.startContinuation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contextReset: true,
+          provenanceContext: expect.objectContaining({
+            runtimeSegmentId: 'runtime-segment-after-context-reset'
+          })
+        })
+      )
+    }
+  )
 
   it('rejects when the prepared control changes before runtime admission', async () => {
     const harness = createHarness()
@@ -390,15 +414,19 @@ describe('ACP Save as skill workflow', () => {
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
-  it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget]>([
-    ['Claude Code', 'claude-code', 'claude-code'],
-    ['OpenCode', 'opencode', 'opencode'],
-    ['Codex Responses', 'codex', 'codex-response'],
-    ['Codex Bridge', 'codex', 'codex-bridge']
-  ])('keeps shared hidden-turn semantics on %s', async (_name, frameworkId, target) => {
+  it.each<readonly [string, AgentFrameworkId, HistoryReplayTarget, AgentModelRoute]>([
+    ['Claude Code', 'claude-code', 'claude-code', 'claude-anthropic'],
+    ['OpenCode', 'opencode', 'opencode', 'opencode-openai'],
+    ['Codex Responses', 'codex', 'codex-response', 'codex-responses'],
+    ['Codex Bridge', 'codex', 'codex-bridge', 'codex-bridge']
+  ])('keeps shared hidden-turn semantics on %s', async (_name, frameworkId, target, modelRoute) => {
     const harness = createHarness((session) => {
       session.agentFrameworkId = frameworkId
     })
+    harness.captureSessionBackend.mockReturnValue({
+      framework: { id: frameworkId },
+      modelRoute
+    } as never)
 
     await harness.workflows.saveAsSkill({
       ...harness.request,
@@ -415,6 +443,32 @@ describe('ACP Save as skill workflow', () => {
       })
     )
   })
+
+  it.each<readonly [string, AgentFrameworkId, AgentModelRoute, HistoryReplayTarget]>([
+    ['Claude Code', 'claude-code', 'claude-anthropic', 'opencode'],
+    ['OpenCode', 'opencode', 'opencode-openai', 'claude-code'],
+    ['Codex Responses', 'codex', 'codex-responses', 'codex-bridge'],
+    ['Codex Bridge', 'codex', 'codex-bridge', 'codex-response']
+  ])(
+    'rejects a replay target that differs from the %s Session backend',
+    async (_name, frameworkId, modelRoute, target) => {
+      const harness = createHarness((session) => {
+        session.agentFrameworkId = frameworkId
+      })
+      harness.captureSessionBackend.mockReturnValue({
+        framework: { id: frameworkId },
+        modelRoute
+      } as never)
+
+      await expect(
+        harness.workflows.saveAsSkill({
+          ...harness.request,
+          historyReplay: { target }
+        })
+      ).rejects.toThrow('history replay target does not match the Session backend')
+      expect(harness.startContinuation).not.toHaveBeenCalled()
+    }
+  )
 
   it('validates and replays the active Branch instead of the flat compatibility projection', async () => {
     const harness = createHarness((session) => {

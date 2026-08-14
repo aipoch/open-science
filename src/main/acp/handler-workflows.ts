@@ -22,6 +22,7 @@ import {
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
 import { buildSessionHistoryReplay } from '../../shared/session-history-replay'
 import type { HistoryReplayDescriptor, HistoryReplayTarget } from '../../shared/history-preamble'
+import type { AcpBackendGenerationView } from './backend-generation-owner'
 
 const log = createLogger('acp')
 const resumeLogHashKey = randomBytes(32)
@@ -47,6 +48,7 @@ const SAVE_AS_SKILL_REPLAY_TARGETS = new Set<HistoryReplayTarget>([
 type AcpHandlerWorkflowRuntime = {
   getSnapshot(): AcpStateSnapshot
   hasLiveSession(projectId: string, sessionId: string): boolean
+  captureSessionBackend(sessionId: string): AcpBackendGenerationView | undefined
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   sendPrompt(request: AcpPromptRequest): Promise<unknown>
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
@@ -141,14 +143,33 @@ const frameworkForSaveAsSkillReplayTarget = (
   return 'claude-code'
 }
 
+const saveAsSkillReplayTargetForBackend = (
+  backend: AcpBackendGenerationView
+): HistoryReplayTarget => {
+  if (backend.framework.id === 'opencode') return 'opencode'
+  if (backend.framework.id === 'codex') {
+    return backend.modelRoute === 'codex-bridge' ? 'codex-bridge' : 'codex-response'
+  }
+  return 'claude-code'
+}
+
 const prepareSaveAsSkillContinuation = (
-  runtime: Pick<AcpHandlerWorkflowRuntime, 'hasLiveSession'>,
+  runtime: Pick<AcpHandlerWorkflowRuntime, 'captureSessionBackend' | 'hasLiveSession'>,
   session: PersistedChatSession | undefined,
   request: AcpSaveAsSkillRequest,
   replayPolicy: SaveAsSkillReplayPolicy
 ): { session: PersistedChatSession; continuation: AcpPromptRequest } => {
   if (!session || session.projectId !== request.projectId || session.id !== request.sessionId) {
     throw new Error('Save as skill Session is unavailable.')
+  }
+  const sessionBackend = runtime.captureSessionBackend(session.id)
+  if (
+    !sessionBackend ||
+    (session.agentFrameworkId && session.agentFrameworkId !== sessionBackend.framework.id) ||
+    (session.agentBackendId && session.agentBackendId !== sessionBackend.backendId) ||
+    replayPolicy.descriptor.target !== saveAsSkillReplayTargetForBackend(sessionBackend)
+  ) {
+    throw new Error('Save as skill history replay target does not match the Session backend.')
   }
   const preparedControlRun =
     session.status === 'running' && session.activeRun?.promptMessageId === request.promptMessageId

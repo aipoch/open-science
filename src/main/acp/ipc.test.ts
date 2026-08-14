@@ -68,6 +68,10 @@ const {
       compactSession,
       deleteSession,
       disconnect,
+      captureBackend: vi.fn().mockReturnValue({
+        framework: { id: 'claude-code' },
+        modelRoute: 'claude-anthropic'
+      }),
       resetSessionContext,
       resumeSession,
       sendAppContinuation: (request, promptAttemptId) => {
@@ -79,13 +83,14 @@ const {
       getSnapshot: vi.fn().mockReturnValue({
         status: 'idle',
         cwd: '/workspace',
-        sessionIds: [],
+        sessionIds: ['session-1'],
         events: [],
         pendingPermissions: [],
         permissionProfiles: {},
         permissionGrants: {},
         promptInFlight: false,
-        promptInFlightSessionIds: []
+        promptInFlightSessionIds: [],
+        contextUsageBySession: {}
       })
     }
   })
