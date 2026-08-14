@@ -100,7 +100,7 @@ const createCompositionHarness = async (
   admissionError?: Error,
   owners: Pick<
     ProductionDelegatedWorkOptions,
-    'artifactEvidence' | 'reviewEvidence' | 'parentMessages'
+    'artifactEvidence' | 'reviewEvidence' | 'parentMessages' | 'onCleanupError'
   > = {},
   initialRootInvocations: readonly Readonly<{
     rootMessageId: string
@@ -2492,9 +2492,10 @@ describe('production delegated-work composition', () => {
     expect(harness.execution.reservationCounts()).toEqual([])
   })
 
-  it('production-composes branch Stop partial failure without rolling back successful targets', async () => {
+  it('production-composes non-blocking branch Stop while reporting detached cleanup failure', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-partial-stop-'))
     const handles = new Map<string, { executionId: string }>()
+    const cleanupErrors: unknown[] = []
     let failedOnce = false
     const harness = await createCompositionHarness(root, 'codex', undefined, undefined, {
       artifactEvidence: {
@@ -2530,7 +2531,8 @@ describe('production delegated-work composition', () => {
         async project() {
           return []
         }
-      }
+      },
+      onCleanupError: (_scope, error) => cleanupErrors.push(error)
     })
     const receipt = await harness.composition.host.delegate(
       harness.caller,
@@ -2542,21 +2544,19 @@ describe('production delegated-work composition', () => {
     )
     await expect.poll(() => harness.execution.controls()).toHaveLength(2)
 
-    await expect(harness.composition.root.stopActiveBranch?.(harness.session.id)).rejects.toThrow(
-      'could not be stopped'
-    )
-    const statusesAfterFailure = harness
-      .durable()
-      .runtimeContext!.delegatedWork!.records.map((record) => record.attempts.at(-1)!.status)
-    expect(statusesAfterFailure.sort()).toEqual(['cancelled', 'running'])
     await expect(
       harness.composition.root.stopActiveBranch?.(harness.session.id)
     ).resolves.toBeUndefined()
+    await expect.poll(() => cleanupErrors).toHaveLength(1)
+    expect(cleanupErrors[0]).toBeInstanceOf(AggregateError)
     expect(
       harness
         .durable()
         .runtimeContext!.delegatedWork!.records.map((record) => record.attempts.at(-1)!.status)
     ).toEqual(['cancelled', 'cancelled'])
+    await expect(
+      harness.composition.root.stopActiveBranch?.(harness.session.id)
+    ).resolves.toBeUndefined()
     expect(receipt.children).toHaveLength(2)
   })
 })

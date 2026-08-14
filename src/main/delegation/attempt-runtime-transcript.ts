@@ -42,9 +42,19 @@ type StageAttemptRuntimeTranscriptInput = Readonly<{
   turnUsageUnavailable?: true
 }>
 
-type AttemptRuntimeTranscriptStager = (
-  input: StageAttemptRuntimeTranscriptInput
-) => Promise<AttemptRuntimeTranscript | undefined>
+type AttemptRuntimeTranscriptLane = Readonly<{
+  runtimeSegmentId: string
+  promptMessageId: string
+}>
+
+type AttemptRuntimeTranscriptStager = Readonly<{
+  observe(update: AcpAgentRuntimeUpdate): Promise<void>
+  settle(
+    lane: AttemptRuntimeTranscriptLane,
+    input: StageAttemptRuntimeTranscriptInput
+  ): Promise<AttemptRuntimeTranscript>
+  flush(): Promise<void>
+}>
 
 type AttemptCancellationReason = 'main_agent_stop' | 'session_stop' | 'runtime_interrupted'
 
@@ -107,6 +117,7 @@ const projectAttemptRuntimeTranscript = (
         role: 'assistant',
         content: text,
         responseToMessageId: promptMessageId,
+        runtimeSegmentId: scope.runtimeSegmentId,
         eventIds: [event.id],
         ...(event.image ? { images: [{ id: event.id, ...event.image }] } : {}),
         createdAt: event.timestamp,
@@ -194,7 +205,7 @@ const projectAttemptRuntimeTranscript = (
   }
 
   const messages = [...messagesByStream.values()]
-  const terminalStatus = input.terminalStatus ?? 'completed'
+  const terminalStatus = input.terminalStatus
   if (messages.length === 0 && terminalStatus === 'completed') {
     messages.push({
       id: input.createMessageId(),
@@ -202,6 +213,7 @@ const projectAttemptRuntimeTranscript = (
       role: 'assistant',
       content: input.fallbackResponse,
       responseToMessageId: promptMessageId,
+      runtimeSegmentId: input.runtimeSegmentId,
       eventIds: [],
       createdAt: input.endedAt,
       updatedAt: input.endedAt,
@@ -210,6 +222,10 @@ const projectAttemptRuntimeTranscript = (
   }
   const terminalMessage = messages[messages.length - 1]
   for (const message of messages) {
+    if (!terminalStatus) {
+      message.status = 'streaming'
+      continue
+    }
     const isTerminalMessage = message === terminalMessage
     message.status = isTerminalMessage && terminalStatus !== 'completed' ? 'error' : 'complete'
     message.completedAt = isTerminalMessage ? input.endedAt : message.updatedAt
@@ -221,7 +237,7 @@ const projectAttemptRuntimeTranscript = (
   }
 
   const activities = [...activitiesById.values()].map((activity) =>
-    isTerminalToolStatus(activity.status)
+    !terminalStatus || isTerminalToolStatus(activity.status)
       ? activity
       : {
           ...activity,
@@ -229,12 +245,16 @@ const projectAttemptRuntimeTranscript = (
           updatedAt: input.endedAt
         }
   )
-  const activityGroups = [...groupsById.values()].map((group) => ({
-    ...group,
-    promptMessageId: group.promptMessageId ?? promptMessageId,
-    completedAt: input.endedAt,
-    updatedAt: input.endedAt
-  }))
+  const activityGroups = [...groupsById.values()].map((group) =>
+    terminalStatus
+      ? {
+          ...group,
+          promptMessageId: group.promptMessageId ?? promptMessageId,
+          completedAt: input.endedAt,
+          updatedAt: input.endedAt
+        }
+      : group
+  )
 
   return { messages, activities, activityGroups, terminalMessage }
 }
@@ -263,19 +283,38 @@ const createAttemptRuntimeTranscriptStager = (options: {
   records: DelegatedWorkDurableRecords
   frameId: string
   attemptId: string
-  updates: readonly AcpAgentRuntimeUpdate[]
-  promptMessageId(): string | undefined
   createMessageId(): string
 }): AttemptRuntimeTranscriptStager => {
-  let stagingStarted = false
-  return async (input) => {
-    const promptMessageId = options.promptMessageId()
-    if (!promptMessageId || stagingStarted) return undefined
-    stagingStarted = true
+  type LaneState = {
+    updates: AcpAgentRuntimeUpdate[]
+    messageIds: string[]
+    terminalStatus?: StageAttemptRuntimeTranscriptInput['terminalStatus']
+  }
+  const lanes = new Map<string, LaneState>()
+  let stagingTail: Promise<unknown> = Promise.resolve()
+  const laneKey = (lane: AttemptRuntimeTranscriptLane): string =>
+    `${lane.runtimeSegmentId}\u0000${lane.promptMessageId}`
+  const laneState = (lane: AttemptRuntimeTranscriptLane): LaneState => {
+    const key = laneKey(lane)
+    const existing = lanes.get(key)
+    if (existing) return existing
+    const created: LaneState = { updates: [], messageIds: [] }
+    lanes.set(key, created)
+    return created
+  }
+  const stage = async (
+    lane: AttemptRuntimeTranscriptLane,
+    state: LaneState,
+    input: Omit<StageAttemptRuntimeTranscriptInput, 'terminalStatus'> & {
+      terminalStatus?: StageAttemptRuntimeTranscriptInput['terminalStatus']
+    }
+  ): Promise<AttemptRuntimeTranscript> => {
+    let messageIndex = 0
     return stageAttemptRuntimeTranscript(options.records, options.frameId, options.attemptId, {
-      updates: options.updates,
+      updates: state.updates,
       frameId: options.frameId,
-      promptMessageId,
+      promptMessageId: lane.promptMessageId,
+      runtimeSegmentId: lane.runtimeSegmentId,
       fallbackResponse: input.fallbackResponse ?? '',
       endedAt: input.endedAt,
       terminalStatus: input.terminalStatus,
@@ -284,8 +323,53 @@ const createAttemptRuntimeTranscriptStager = (options: {
         : input.turnUsageUnavailable
           ? { turnUsageUnavailable: true }
           : {}),
-      createMessageId: options.createMessageId
+      createMessageId: () => {
+        const index = messageIndex++
+        return (state.messageIds[index] ??= options.createMessageId())
+      }
     })
+  }
+  const observe = async (update: AcpAgentRuntimeUpdate): Promise<void> => {
+    if (
+      update.scope.agentFrameId !== options.frameId ||
+      update.scope.attemptId !== options.attemptId
+    ) {
+      throw new Error('Runtime evidence does not belong to the transcript Attempt.')
+    }
+    const lane = {
+      runtimeSegmentId: update.scope.runtimeSegmentId,
+      promptMessageId: update.scope.promptMessageId
+    }
+    const state = laneState(lane)
+    const next = stagingTail.then(async () => {
+      if (!state.updates.some((candidate) => candidate.event.id === update.event.id)) {
+        state.updates.push(update)
+      }
+      await stage(lane, state, {
+        ...(state.terminalStatus ? { terminalStatus: state.terminalStatus } : {}),
+        endedAt: update.event.timestamp,
+        fallbackResponse: ''
+      })
+    })
+    stagingTail = next
+    return next
+  }
+  const settle = (
+    lane: AttemptRuntimeTranscriptLane,
+    input: StageAttemptRuntimeTranscriptInput
+  ): Promise<AttemptRuntimeTranscript> => {
+    const state = laneState(lane)
+    state.terminalStatus = input.terminalStatus
+    const settled = stagingTail.then(() => stage(lane, state, input))
+    stagingTail = settled
+    return settled
+  }
+  return {
+    observe,
+    settle,
+    async flush() {
+      await stagingTail
+    }
   }
 }
 
@@ -297,16 +381,20 @@ const terminalizeUnsuccessfulAttempt = async (
     attemptId: string
     endedAt: number
     error: unknown
+    lane?: AttemptRuntimeTranscriptLane
     cancellationReason?: AttemptCancellationReason
   }>
 ): Promise<void> => {
   let terminalError = input.error
   try {
-    await stageTranscript({
-      terminalStatus: input.cancellationReason ? 'cancelled' : 'error',
-      endedAt: input.endedAt
-    })
+    if (input.lane) {
+      await stageTranscript.settle(input.lane, {
+        terminalStatus: input.cancellationReason ? 'cancelled' : 'error',
+        endedAt: input.endedAt
+      })
+    }
   } catch (stagingError) {
+    if (input.cancellationReason) throw stagingError
     terminalError = stagingError
   }
   if (input.cancellationReason) {
@@ -339,6 +427,7 @@ export {
 }
 export type {
   AttemptRuntimeTranscript,
+  AttemptRuntimeTranscriptLane,
   AttemptRuntimeTranscriptStager,
   ProjectAttemptRuntimeTranscriptInput,
   StageAttemptRuntimeTranscriptInput

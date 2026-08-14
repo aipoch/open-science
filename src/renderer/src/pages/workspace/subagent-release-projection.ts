@@ -61,6 +61,51 @@ const latestAttempt = (
     .find((record) => record.agentFrameId === frameId)
     ?.attempts.at(-1)
 
+const questionSource = (
+  session: PersistedChatSession,
+  request: DelegatedQuestionRequest
+): PersistedAgentFrame | undefined => {
+  const graph = session.conversationGraph
+  if (!graph || request.status !== 'pending') return undefined
+  const root = graph.frames.find((frame) => frame.id === graph.rootFrameId && frame.kind === 'root')
+  const activeRootMessageIds = resolveActiveRootMessageIds(graph)
+  if (
+    !root ||
+    !activeRootMessageIds ||
+    request.rootBranchId !== root.activeBranchId ||
+    !activeRootMessageIds.has(request.rootOriginMessageId)
+  ) {
+    return undefined
+  }
+  const source = graph.frames.find((frame) => frame.id === request.sourceFrameId)
+  if (
+    !source ||
+    source.kind !== 'delegate' ||
+    source.parentFrameId !== root.id ||
+    source.originBindingState !== 'validated' ||
+    source.originMessageId !== request.rootOriginMessageId ||
+    source.activeBranchId !== request.sourceMessageBranchId ||
+    (source.delegateName?.trim() || source.agentName?.trim()) !== request.sourceName
+  ) {
+    return undefined
+  }
+  const attempt = latestAttempt(session, source.id)
+  return attempt?.id === request.sourceAttemptId &&
+    attempt.runtimeSegmentIds.at(-1) === request.sourceRuntimeSegmentId
+    ? source
+    : undefined
+}
+
+const isAnswerableQuestion = (
+  session: PersistedChatSession,
+  request: DelegatedQuestionRequest
+): boolean => {
+  const source = questionSource(session, request)
+  if (!source || source.status === 'cancelled' || source.status === 'error') return false
+  const attempt = latestAttempt(session, source.id)
+  return attempt?.status === 'running' || attempt?.status === 'completed'
+}
+
 const readableNameForFrame = (frame: PersistedAgentFrame): string | undefined =>
   frame.delegateName?.trim() || frame.agentName?.trim() || undefined
 
@@ -92,7 +137,8 @@ const projectSessionSubagents = (
           (!attempt || permission.delegated.attemptId === attempt.id)
       )
     const awaitingUser = session.runtimeContext?.delegatedWork?.questionRequests?.some(
-      (request) => request.sourceFrameId === frame.id && request.status === 'pending'
+      (request) =>
+        questionSource(session, request)?.id === frame.id && isAnswerableQuestion(session, request)
     )
     return {
       frameId: frame.id,
@@ -119,28 +165,9 @@ const projectAnswerableDelegatedQuestions = (
   if (!graph || !owner?.questionRequests || owner.questionRequestsQuarantine !== undefined) {
     return []
   }
-  const root = graph.frames.find((frame) => frame.id === graph.rootFrameId && frame.kind === 'root')
-  const activeRootMessageIds = resolveActiveRootMessageIds(graph)
-  if (!root || !activeRootMessageIds) return []
-  const eligible = owner.questionRequests.filter((request) => {
-    if (
-      request.status !== 'pending' ||
-      request.rootBranchId !== root.activeBranchId ||
-      !activeRootMessageIds.has(request.rootOriginMessageId)
-    ) {
-      return false
-    }
-    const source = graph.frames.find((frame) => frame.id === request.sourceFrameId)
-    return Boolean(
-      source &&
-      source.kind === 'delegate' &&
-      source.parentFrameId === root.id &&
-      source.originBindingState === 'validated' &&
-      source.originMessageId === request.rootOriginMessageId &&
-      source.activeBranchId === request.sourceMessageBranchId &&
-      (source.delegateName?.trim() || source.agentName?.trim()) === request.sourceName
-    )
-  })
+  const eligible = owner.questionRequests.filter((request) =>
+    isAnswerableQuestion(session, request)
+  )
   const useFallbackOrder = eligible.some((request) => request.sequence === undefined)
   return eligible.toSorted((left, right) => {
     const sequenceOrder = useFallbackOrder ? 0 : left.sequence! - right.sequence!
@@ -234,7 +261,8 @@ const selectSubagentFrame = (
     title: titleForFrame(frame),
     agentLabel: agentLabelForFrame(session, frame),
     status: session.runtimeContext?.delegatedWork?.questionRequests?.some(
-      (request) => request.sourceFrameId === frameId && request.status === 'pending'
+      (request) =>
+        questionSource(session, request)?.id === frameId && isAnswerableQuestion(session, request)
     )
       ? 'awaiting_user'
       : frame.status,

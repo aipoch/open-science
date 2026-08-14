@@ -298,6 +298,10 @@ type CreateDurableDelegatedWorkOptions = Readonly<{
   reviewEvidence?: DelegatedReviewEvidence
   onRootPermissionEvent?(event: RootDelegatePermissionEvent): void
   onAgentRuntimeUpdate?(update: AcpAgentRuntimeUpdate): void
+  onCleanupError?(
+    scope: Readonly<{ session: SessionKey; frameId: string; attemptId: string }>,
+    error: unknown
+  ): void
   now?: () => number
   createId?: (kind: 'frame' | 'attempt' | 'message' | 'runtime' | 'question') => string
   collectPollIntervalMs?: number

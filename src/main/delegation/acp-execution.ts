@@ -285,6 +285,10 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
     let ownsWorkspace = false
     let writable = true
     let capabilityRevoked = false
+    let providerSessionDeleted = false
+    let runtimeShutdown = false
+    let resourcesDisposed = false
+    let slotReleased = false
     let acceptedSettled = false
     let terminalSettled = false
     let cancelRequested = false
@@ -295,7 +299,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
     let lastStopEvent: AcpAgentRuntimeUpdate['event'] | undefined
     let currentStopEvent: AcpAgentRuntimeUpdate['event'] | undefined
     // Provider event ids are unique within this Attempt-owned runtime lifetime.
-    const seenStopEventIds = new Set<string>()
+    const seenEventIds = new Set<string>()
     let activeMessage: QueuedPrompt | undefined
     let activeTurn: QueuedPrompt['turn']
     let providerPromptStarted = false
@@ -313,6 +317,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       if (!writable || terminalSettled) return
       for (const listener of listeners) listener(event)
     }
+    const publishObservation = (event: DelegateExecutionEvent): void => {
+      for (const listener of listeners) listener(event)
+    }
     const callbacks: AcpDelegateExecutionCallbacks = {
       onProviderPromptAccepted(sessionId) {
         if (!writable || sessionId !== providerSessionId) return
@@ -320,10 +327,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         else settleAccepted('provider_prompt_accepted')
       },
       onEvent(event) {
-        if (!writable || event.sessionId !== providerSessionId) return
+        if (event.sessionId !== providerSessionId || seenEventIds.has(event.id)) return
+        seenEventIds.add(event.id)
         if (event.kind === 'stop') {
-          if (seenStopEventIds.has(event.id)) return
-          seenStopEventIds.add(event.id)
           sawStopEvent = true
           if (!event.turnUsage || !turnUsageAvailable) {
             turnUsageAvailable = false
@@ -340,7 +346,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         const text = getAcpRuntimeEventText(event)
         if (event.kind === 'message' && event.role === 'assistant' && text) {
           currentResponse.push(text)
-          publish({ kind: 'message', text })
+          if (writable && !terminalSettled) publish({ kind: 'message', text })
         }
 
         const promptMessageId = activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId
@@ -366,9 +372,10 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         if (event.kind === 'stop') {
           lastStopEvent = ownedEvent
           currentStopEvent = ownedEvent
+          if (cancelRequested || terminalSettled) publishObservation({ kind: 'runtime', update })
           return
         }
-        publish({ kind: 'runtime', update })
+        publishObservation({ kind: 'runtime', update })
       },
       onPermissionRequest(request) {
         if (!writable || request.sessionId !== providerSessionId) return
@@ -396,27 +403,29 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       activeMessage = undefined
       for (const pending of queuedPrompts.splice(0)) pending.acceptance.reject(deliveryError)
       if (scope && !capabilityRevoked) {
-        capabilityRevoked = true
         await scope.capability.revoke()
+        capabilityRevoked = true
       }
     }
-    const cleanup = async (): Promise<void> => {
+    const cleanupOnce = async (): Promise<void> => {
       let firstError: unknown
       try {
         await revokeWrites()
       } catch (error) {
         firstError = error
       }
-      if (runtime && providerSessionId) {
+      if (runtime && providerSessionId && !providerSessionDeleted) {
         try {
           await runtime.deleteSession({ sessionId: providerSessionId })
+          providerSessionDeleted = true
         } catch (error) {
           firstError ??= error
         }
       }
-      if (runtime) {
+      if (runtime && !runtimeShutdown) {
         try {
           await runtime.shutdownForQuit()
+          runtimeShutdown = true
         } catch (error) {
           firstError ??= error
         }
@@ -430,15 +439,27 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           activeWorkspaces.delete(scope.workspace.cwd)
           ownsWorkspace = false
         }
-        try {
-          await scope.disposeResources?.()
-        } catch (error) {
-          firstError ??= error
+        if (!resourcesDisposed) {
+          try {
+            await scope.disposeResources?.()
+            resourcesDisposed = true
+          } catch (error) {
+            firstError ??= error
+          }
         }
       }
       listeners.clear()
-      releaseSlot(slotId)
+      if (!slotReleased) {
+        slotReleased = true
+        releaseSlot(slotId)
+      }
       if (firstError !== undefined) throw firstError
+    }
+    let cleanupTail = Promise.resolve()
+    const cleanup = (): Promise<void> => {
+      const next = cleanupTail.then(cleanupOnce, cleanupOnce)
+      cleanupTail = next.catch(() => undefined)
+      return next
     }
 
     const promptRequest = (
@@ -533,6 +554,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         let response = ''
         while (!cancelRequested) {
           await activeTurn?.begin?.()
+          if (cancelRequested) break
           currentResponse = []
           providerPromptStarted = true
           const outcome = await runtime.sendAppContinuation(promptRequest(nextPrompt))
@@ -616,7 +638,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
       accepted: acceptance.promise,
       completion: terminal.promise,
       subscribe(listener) {
-        if (!terminalSettled) listeners.add(listener)
+        listeners.add(listener)
         return () => listeners.delete(listener)
       },
       async sendMessage(message, turn) {
@@ -653,13 +675,27 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         publish({ kind: 'permission', awaiting: false, requestId: response.requestId })
       },
       async cancel() {
-        if (terminalSettled) return
+        if (terminalSettled && !cancelRequested) return
         cancelRequested = true
-        await revokeWrites().catch(() => undefined)
+        await revokeWrites()
         if (runtime && providerSessionId) {
           await runtime.cancelPrompt({ sessionId: providerSessionId }).catch(() => undefined)
         }
-        await work.catch(() => undefined)
+        // A terminated provider may never settle its in-flight prompt. Cancellation owns the
+        // terminal signal; cleanup is idempotent and remains observed if transport teardown stalls
+        // or the provider task resumes later.
+        settleAccepted(
+          'provider_prompt_completed',
+          new DelegateMessagePreAcceptanceError(
+            'delegate execution was cancelled before provider acceptance'
+          )
+        )
+        if (!terminalSettled) {
+          terminalSettled = true
+          terminal.resolve({ status: 'cancelled' })
+        }
+        await cleanup()
+        void work.catch(() => undefined)
       }
     })
   }

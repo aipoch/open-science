@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { useLayoutEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatSession } from '@/stores/session-store'
 import type { AcpAgentRuntimeUpdate } from '../../../../shared/acp'
+import { useSubagentRuntimePresentation } from '@/lib/acp/workspace-subagent-runtime-presentation'
 
 const runtimeUpdateHarness = vi.hoisted(() => {
   const listeners = new Set<(update: AcpAgentRuntimeUpdate) => void>()
@@ -47,6 +49,58 @@ import {
 import { MobilePreviewSheet } from './MobilePreviewSheet'
 
 const renderSurface = (surface: React.ReactNode): ReturnType<typeof render> => render(surface)
+
+const RuntimePresentationProbe = ({
+  session,
+  detail,
+  publishAfterLayout
+}: {
+  session: ChatSession
+  detail: Parameters<typeof useSubagentRuntimePresentation>[2]
+  publishAfterLayout?: () => void
+}): React.JSX.Element => {
+  const projected = useSubagentRuntimePresentation(runtimeUpdateHarness.subscribe, session, detail)
+  useLayoutEffect(() => publishAfterLayout?.(), [publishAfterLayout])
+  return (
+    <pre data-testid="runtime-presentation-probe">
+      {JSON.stringify({
+        status: projected.status,
+        error: projected.error,
+        agentStatus: projected.agentStatus,
+        activeRun: Boolean(projected.activeRun),
+        agentPromptInFlight: Boolean(projected.agentPromptInFlight),
+        awaitingFirstAgentOutput: Boolean(projected.awaitingFirstAgentOutput),
+        interactionState: Boolean(projected.interactionState),
+        messages: projected.messages.map(({ content }) => content),
+        activities: projected.activities?.map(
+          ({
+            id,
+            title,
+            status,
+            activityGroupId,
+            eventIds,
+            terminalOutput,
+            rawOutput,
+            providerToolName
+          }) => ({
+            id,
+            title,
+            status,
+            activityGroupId,
+            eventIds,
+            terminalOutput,
+            rawOutput,
+            providerToolName
+          })
+        ),
+        activityGroups: projected.activityGroups?.map(({ id, activityIds }) => ({
+          id,
+          activityIds
+        }))
+      })}
+    </pre>
+  )
+}
 
 const createSession = (): ChatSession => {
   const now = 1_700_000_000_000
@@ -447,7 +501,7 @@ describe('release-gate Subagent surfaces', () => {
     )
 
     expect(screen.getByLabelText('Subagent Frame').className).toContain('focus-visible:ring-3')
-    expect(screen.getByText('error')).toBeTruthy()
+    expect(screen.getByText('Failed')).toBeTruthy()
     expect(screen.getByText('Provider turn failed')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /stop/i })).toBeNull()
 
@@ -627,6 +681,542 @@ describe('release-gate Subagent surfaces', () => {
     expect(useSessionStore.getState().sessions[0]).toEqual(rootBefore)
   })
 
+  it.each(['cancelled', 'error', 'awaiting_user'] as const)(
+    'clears the isolated running presentation when durable child state becomes %s',
+    async (status) => {
+      const running = createSession()
+      const childBranch = running.conversationGraph?.branches.find(
+        (branch) => branch.id === 'child-a-branch'
+      )
+      if (childBranch) childBranch.headMessageId = 'child-a-prompt'
+      if (running.conversationGraph) {
+        running.conversationGraph.messages = running.conversationGraph.messages.filter(
+          (message) => message.id !== 'child-a-answer'
+        )
+      }
+      useSessionStore.setState({ ...createInitialSessionState(), sessions: [running] })
+
+      renderSurface(
+        <SubagentPreview
+          item={{
+            id: 'tool:session-1:subagents',
+            type: 'tool',
+            toolKind: 'subagents',
+            title: 'Subagents',
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            selectedAgentFrameId: 'child-a'
+          }}
+        />
+      )
+      expect(screen.getByText('Thinking')).toBeTruthy()
+      await act(async () => {
+        runtimeUpdateHarness.publish({
+          scope: {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            agentFrameId: 'child-a',
+            attemptId: 'attempt-a',
+            runtimeSegmentId: 'runtime-a',
+            promptMessageId: 'child-a-prompt'
+          },
+          event: {
+            id: `child-warning-${status}`,
+            timestamp: running.updatedAt + 1,
+            kind: 'system',
+            level: 'warning',
+            text: 'Retrying child request'
+          }
+        })
+      })
+      expect(screen.getByText('Retrying child request')).toBeTruthy()
+
+      const durable = structuredClone(running)
+      const runtimeContext = durable.runtimeContext!
+      durable.runtimeContext = { ...runtimeContext, revision: runtimeContext.revision + 1 }
+      const frame = durable.conversationGraph?.frames.find(({ id }) => id === 'child-a')
+      const attempt = durable.runtimeContext.delegatedWork?.records
+        .find(({ agentFrameId }) => agentFrameId === 'child-a')
+        ?.attempts.at(-1)
+      if (!frame || !attempt) throw new Error('Expected child-a durable fixtures')
+
+      if (status === 'awaiting_user') {
+        Object.assign(durable.runtimeContext.delegatedWork!, {
+          questionRequests: [
+            {
+              requestId: 'question-a',
+              canonicalDigest: 'a'.repeat(64),
+              sourceFrameId: 'child-a',
+              sourceAttemptId: 'attempt-a',
+              sourceRuntimeSegmentId: 'runtime-a',
+              sourceMessageBranchId: 'child-a-branch',
+              rootOriginMessageId: 'root-prompt',
+              rootBranchId: 'root-branch',
+              sourceName: 'Evidence landscape',
+              questions: [{ question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+              askedAt: running.updatedAt,
+              status: 'pending',
+              draftAnswers: [],
+              draftQuestionIndex: 0
+            }
+          ]
+        })
+      } else {
+        frame.status = status
+        frame.completedAt = running.updatedAt
+        Object.assign(attempt, {
+          status,
+          endedAt: running.updatedAt,
+          ...(status === 'cancelled'
+            ? { cancellationReason: 'main_agent_stop' as const }
+            : { error: { code: 'provider', message: 'Child failed durably' } })
+        })
+      }
+
+      await act(async () => {
+        useSessionStore.getState().upsertPersistedSession(durable)
+      })
+
+      expect(document.querySelector(`[data-subagent-status="${status}"]`)).not.toBeNull()
+      expect(screen.queryByText('Thinking')).toBeNull()
+      expect(screen.queryByText('Retrying child request')).toBeNull()
+      if (status === 'error') expect(screen.getByText('Child failed durably')).toBeTruthy()
+
+      await act(async () => {
+        runtimeUpdateHarness.publish({
+          scope: {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            agentFrameId: 'child-a',
+            attemptId: 'attempt-a',
+            runtimeSegmentId: 'runtime-a',
+            promptMessageId: 'child-a-prompt'
+          },
+          event: {
+            id: `child-late-warning-${status}`,
+            timestamp: running.updatedAt + 20,
+            kind: 'system',
+            level: 'warning',
+            text: 'Late child warning'
+          }
+        })
+        runtimeUpdateHarness.publish({
+          scope: {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            agentFrameId: 'child-a',
+            attemptId: 'attempt-a',
+            runtimeSegmentId: 'runtime-a',
+            promptMessageId: 'child-a-prompt'
+          },
+          event: {
+            id: `child-late-error-${status}`,
+            timestamp: running.updatedAt + 21,
+            kind: 'error',
+            level: 'error',
+            text: 'Late runtime error'
+          }
+        })
+      })
+
+      expect(document.querySelector(`[data-subagent-status="${status}"]`)).not.toBeNull()
+      expect(screen.queryByText('Provider notice')).toBeNull()
+      expect(screen.queryByText('Provider error')).toBeNull()
+      expect(screen.queryByText('Late child warning')).toBeNull()
+      expect(screen.queryByText('Late runtime error')).toBeNull()
+      expect(screen.queryByText('Thinking')).toBeNull()
+    }
+  )
+
+  it('preserves accepted content and applies same-runtime events after durable termination', async () => {
+    const running = createSession()
+    const prompt = running.conversationGraph!.messages.find(({ id }) => id === 'child-a-prompt')!
+    const attempt = running.runtimeContext!.delegatedWork!.records.find(
+      ({ agentFrameId }) => agentFrameId === 'child-a'
+    )!.attempts[0]
+    const runningDetail = {
+      frameId: 'child-a',
+      status: 'running' as const,
+      attempt,
+      messages: [prompt]
+    }
+    const rendered = render(<RuntimePresentationProbe session={running} detail={runningDetail} />)
+    const scope = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      agentFrameId: 'child-a',
+      attemptId: 'attempt-a',
+      runtimeSegmentId: 'runtime-a',
+      promptMessageId: 'child-a-prompt'
+    }
+
+    await act(async () => {
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'live-group-start',
+          timestamp: running.updatedAt + 10,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'live-group-call',
+          providerToolName: 'mcp__open-science-activity__begin_activity_group',
+          rawInput: { title: 'Accepted live group' },
+          status: 'in_progress'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'live-ghost-message',
+          timestamp: running.updatedAt + 11,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'live-ghost-stream',
+          text: 'Live ghost message'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'live-ghost-tail',
+          timestamp: running.updatedAt + 12,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'live-ghost-stream',
+          text: ' with live tail'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'live-ghost-tool',
+          timestamp: running.updatedAt + 13,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'live-ghost-tool-call',
+          providerToolName: 'Read',
+          toolKind: 'read',
+          title: 'Live ghost tool',
+          status: 'in_progress'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'live-ghost-tool-complete',
+          timestamp: running.updatedAt + 14,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'live-ghost-tool-call',
+          providerToolName: 'Read',
+          toolKind: 'read',
+          title: 'Live ghost tool',
+          status: 'completed',
+          terminalOutput: 'Accepted completion output',
+          rawOutput: { phase: 'complete' }
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'live-only-message',
+          timestamp: running.updatedAt + 15,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'live-only-stream',
+          text: 'Accepted live-only message'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'live-warning',
+          timestamp: running.updatedAt + 16,
+          kind: 'system',
+          level: 'warning',
+          text: 'Transient live warning'
+        }
+      })
+    })
+    const probe = screen.getByTestId('runtime-presentation-probe')
+    expect(probe.textContent).toContain('Live ghost message with live tail')
+    expect(probe.textContent).toContain('Accepted live-only message')
+    expect(probe.textContent).toContain('Live ghost tool')
+    expect(probe.textContent).toContain('Transient live warning')
+    expect(probe.textContent).toContain('"activeRun":true')
+    expect(probe.textContent).toContain('"agentPromptInFlight":true')
+
+    const terminal = structuredClone(running)
+    const terminalFrame = terminal.conversationGraph!.frames.find(({ id }) => id === 'child-a')!
+    const terminalAttempt = terminal.runtimeContext!.delegatedWork!.records.find(
+      ({ agentFrameId }) => agentFrameId === 'child-a'
+    )!.attempts[0]
+    terminalFrame.status = 'cancelled'
+    terminalFrame.completedAt = running.updatedAt + 12
+    Object.assign(terminalAttempt, {
+      status: 'cancelled',
+      endedAt: running.updatedAt + 12,
+      cancellationReason: 'main_agent_stop'
+    })
+    terminal.conversationGraph!.activities.push({
+      id: 'agent-runtime:runtime-a:live-ghost-tool-call',
+      kind: 'tool',
+      title: 'Live ghost tool',
+      activityGroupId: 'agent-runtime:runtime-a:live-group-call',
+      promptMessageId: 'child-a-prompt',
+      status: 'failed',
+      sortIndex: 2,
+      eventIds: ['live-ghost-tool'],
+      providerToolName: 'Read',
+      toolKind: 'read',
+      terminalOutput: 'Durable stale output',
+      rawOutput: { phase: 'start' },
+      createdAt: running.updatedAt + 13,
+      updatedAt: running.updatedAt + 16,
+      agentFrameId: 'child-a',
+      messageBranchId: 'child-a-branch',
+      runtimeSegmentId: 'runtime-a'
+    })
+    terminal.conversationGraph!.activityGroups.push({
+      id: 'agent-runtime:runtime-a:live-group-call',
+      title: 'Accepted live group',
+      sortIndex: 1,
+      activityIds: ['agent-runtime:runtime-a:live-ghost-tool-call'],
+      promptMessageId: 'child-a-prompt',
+      createdAt: running.updatedAt + 10,
+      updatedAt: running.updatedAt + 16,
+      completedAt: running.updatedAt + 16,
+      agentFrameId: 'child-a',
+      messageBranchId: 'child-a-branch'
+    })
+    const terminalDetail = {
+      frameId: 'child-a',
+      status: 'cancelled' as const,
+      attempt: terminalAttempt,
+      messages: [
+        prompt,
+        {
+          id: 'durable-live-message',
+          role: 'agent' as const,
+          content: 'Live ghost message',
+          status: 'complete' as const,
+          eventIds: ['live-ghost-message'],
+          responseToMessageId: 'child-a-prompt',
+          createdAt: running.updatedAt + 10,
+          updatedAt: running.updatedAt + 12
+        }
+      ]
+    }
+    await act(async () => {
+      rendered.rerender(
+        <RuntimePresentationProbe
+          session={terminal}
+          detail={terminalDetail}
+          publishAfterLayout={() => {
+            runtimeUpdateHarness.publish({
+              scope,
+              event: {
+                id: 'layout-gap-message',
+                timestamp: running.updatedAt + 17,
+                kind: 'message',
+                level: 'info',
+                role: 'assistant',
+                messageId: 'layout-gap-stream',
+                text: 'Evidence from the layout-to-passive cleanup gap'
+              }
+            })
+            runtimeUpdateHarness.publish({
+              scope,
+              event: {
+                id: 'layout-gap-error',
+                timestamp: running.updatedAt + 18,
+                kind: 'error',
+                level: 'error',
+                text: 'Error from the layout-to-passive cleanup gap'
+              }
+            })
+          }}
+        />
+      )
+    })
+
+    expect(probe.textContent).toContain('"status":"idle"')
+    expect(probe.textContent?.match(/Live ghost message with live tail/g)).toHaveLength(1)
+    expect(probe.textContent).toContain('Accepted live-only message')
+    expect(probe.textContent?.match(/Live ghost tool/g)).toHaveLength(1)
+    expect(probe.textContent).toContain('agent-runtime:runtime-a:live-ghost-tool-call')
+    expect(probe.textContent).not.toContain('"id":"live-ghost-tool-call"')
+    expect(probe.textContent).toContain(
+      '"activityIds":["agent-runtime:runtime-a:live-ghost-tool-call"]'
+    )
+    expect(probe.textContent).toContain('"eventIds":["live-ghost-tool","live-ghost-tool-complete"]')
+    expect(probe.textContent).toContain('"status":"completed"')
+    expect(probe.textContent).toContain('"terminalOutput":"Accepted completion output"')
+    expect(probe.textContent).toContain('"rawOutput":{"phase":"complete"}')
+    expect(probe.textContent).not.toContain('Durable stale output')
+    expect(probe.textContent).not.toContain('Transient live warning')
+    expect(probe.textContent).toContain('Evidence from the layout-to-passive cleanup gap')
+    expect(probe.textContent).toContain('Error from the layout-to-passive cleanup gap')
+    expect(probe.textContent).not.toContain('AgentRuntimeEvidence')
+    expect(probe.textContent).toContain('"activeRun":false')
+    expect(probe.textContent).toContain('"agentPromptInFlight":false')
+    expect(probe.textContent).toContain('"awaitingFirstAgentOutput":false')
+    expect(probe.textContent).toContain('"interactionState":false')
+
+    await act(async () => {
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-message-prefix',
+          timestamp: running.updatedAt + 20,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'late-terminal-stream',
+          text: 'Late terminal message'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-message-final',
+          timestamp: running.updatedAt + 21,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'late-terminal-stream',
+          text: ' final'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-tool',
+          timestamp: running.updatedAt + 22,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'late-terminal-tool-call',
+          providerToolName: 'Read',
+          toolKind: 'read',
+          title: 'Late terminal tool',
+          status: 'in_progress'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-tool-complete',
+          timestamp: running.updatedAt + 23,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'late-terminal-tool-call',
+          providerToolName: 'Read',
+          toolKind: 'read',
+          title: 'Late terminal tool',
+          status: 'completed',
+          terminalOutput: 'Late tool output'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-stop',
+          timestamp: running.updatedAt + 24,
+          kind: 'stop',
+          level: 'info',
+          turnUsage: { inputTokens: 9, cacheTokens: 0, outputTokens: 4 }
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-error',
+          timestamp: running.updatedAt + 25,
+          kind: 'error',
+          level: 'error',
+          text: 'Late provider error must not replace cancellation'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-warning',
+          timestamp: running.updatedAt + 26,
+          kind: 'system',
+          level: 'warning',
+          text: 'Late provider warning evidence'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope,
+        event: {
+          id: 'late-terminal-message-final',
+          timestamp: running.updatedAt + 27,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'late-terminal-stream',
+          text: ' duplicated final'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope: { ...scope, attemptId: 'different-attempt' },
+        event: {
+          id: 'wrong-attempt-message',
+          timestamp: running.updatedAt + 28,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'wrong-attempt-stream',
+          text: 'Wrong attempt evidence'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope: { ...scope, runtimeSegmentId: 'different-runtime' },
+        event: {
+          id: 'wrong-runtime-message',
+          timestamp: running.updatedAt + 29,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'wrong-runtime-stream',
+          text: 'Wrong runtime evidence'
+        }
+      })
+      runtimeUpdateHarness.publish({
+        scope: { ...scope, promptMessageId: 'different-prompt' },
+        event: {
+          id: 'wrong-prompt-message',
+          timestamp: running.updatedAt + 30,
+          kind: 'message',
+          level: 'info',
+          role: 'assistant',
+          messageId: 'wrong-prompt-stream',
+          text: 'Wrong prompt evidence'
+        }
+      })
+    })
+
+    expect(probe.textContent).toContain('"status":"idle"')
+    expect(probe.textContent).toContain('Late terminal message final')
+    expect(probe.textContent).toContain('Late terminal tool')
+    expect(probe.textContent).toContain('Late tool output')
+    expect(probe.textContent).not.toContain('duplicated final')
+    expect(probe.textContent).not.toContain('Wrong attempt evidence')
+    expect(probe.textContent).not.toContain('Wrong runtime evidence')
+    expect(probe.textContent).not.toContain('Wrong prompt evidence')
+    expect(probe.textContent).toContain('Late provider error must not replace cancellation')
+    expect(probe.textContent).not.toContain('Late provider warning evidence')
+    expect(probe.textContent).not.toContain('AgentRuntimeEvidence')
+    expect(probe.textContent).toContain('"activeRun":false')
+    expect(probe.textContent).toContain('"agentPromptInFlight":false')
+    expect(probe.textContent).toContain('"awaitingFirstAgentOutput":false')
+    expect(probe.textContent).toContain('"interactionState":false')
+  })
+
   it('reconciles a newer durable projection for the same running Attempt', async () => {
     const running = createSession()
     const childBranch = running.conversationGraph?.branches.find(
@@ -698,7 +1288,7 @@ describe('release-gate Subagent surfaces', () => {
     expect(screen.queryByText('Thinking')).toBeNull()
   })
 
-  it('offers Retry when the selected durable Frame cannot be read', () => {
+  it('falls back to the first existing Frame when the selected Frame was removed', () => {
     renderSurface(
       <SubagentPreview
         item={{
@@ -712,10 +1302,28 @@ describe('release-gate Subagent surfaces', () => {
       />
     )
 
-    expect(screen.getByRole('alert').textContent).toContain('could not be read')
-    expect(screen.getByRole('button', { name: 'Retry Subagent preview' }).className).toContain(
-      'focus-visible:ring-[3px]'
-    )
+    expect(screen.getByLabelText('Subagent Frame').textContent).toContain('Evidence landscape')
+    expect(screen.getByText('Fourteen strong studies remain.')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('uses distinct terminal labels and the warning color for cancellation', () => {
+    const session = createSession()
+    const cancelledFrame = session.conversationGraph!.frames.find(({ id }) => id === 'child-a')!
+    const cancelledAttempt = session.runtimeContext!.delegatedWork!.records.find(
+      ({ agentFrameId }) => agentFrameId === 'child-a'
+    )!.attempts[0]
+    Object.assign(cancelledFrame, { status: 'cancelled' })
+    Object.assign(cancelledAttempt, { status: 'cancelled' })
+
+    renderSurface(<SubagentsBar session={session} permissions={[]} />)
+    fireEvent.click(screen.getByRole('button', { name: '2 subagents' }))
+
+    const cancelled = screen.getByText('Cancelled')
+    const failed = screen.getByText('Failed')
+    expect(cancelled.getAttribute('data-subagent-status')).toBe('cancelled')
+    expect(cancelled.previousElementSibling?.className).toContain('bg-warning-100')
+    expect(failed.getAttribute('data-subagent-status')).toBe('error')
   })
 
   it('shows an actionable unavailable notice and no false support claim', () => {

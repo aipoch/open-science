@@ -153,6 +153,16 @@ const createSessionDelegatedWorkRecords = (
         })
       )
     },
+    async cancelAttempt(input) {
+      const outcome = await mutate((expectedRevision) =>
+        options.commands.transitionAttempt(key, {
+          expectedRevision,
+          ...input,
+          status: 'cancelled'
+        })
+      )
+      return outcome === 'transitioned' ? 'cancelled' : 'already_terminal'
+    },
     async startRuntime(frameId, attemptId, runtimeSegmentId) {
       const attempt = (await load()).runtimeContext?.delegatedWork?.records
         .find((record) => record.agentFrameId === frameId)
@@ -202,9 +212,10 @@ const createSessionDelegatedWorkRecords = (
           expectedRevision,
           frameId,
           attemptId,
+          allowTerminalEvidence: true,
           event: {
             kind: 'message',
-            runtimeSegmentId: attempt?.runtimeSegmentIds.at(-1) ?? '',
+            runtimeSegmentId: message.runtimeSegmentId ?? attempt?.runtimeSegmentIds.at(-1) ?? '',
             message: {
               id: message.id,
               role: 'agent',
@@ -216,7 +227,7 @@ const createSessionDelegatedWorkRecords = (
               turnUsage: message.turnUsage ? { ...message.turnUsage } : undefined,
               turnUsageUnavailable: message.turnUsageUnavailable,
               createdAt: message.createdAt,
-              completedAt: message.completedAt ?? message.updatedAt ?? message.createdAt,
+              ...(message.completedAt !== undefined ? { completedAt: message.completedAt } : {}),
               updatedAt: message.updatedAt ?? message.createdAt
             }
           }
@@ -237,6 +248,7 @@ const createSessionDelegatedWorkRecords = (
             expectedRevision,
             frameId,
             attemptId,
+            allowTerminalEvidence: true,
             event: {
               kind: 'activity',
               runtimeSegmentId,
@@ -253,8 +265,10 @@ const createSessionDelegatedWorkRecords = (
             expectedRevision,
             frameId,
             attemptId,
+            allowTerminalEvidence: true,
             event: {
               kind: 'activity-group',
+              runtimeSegmentId,
               promptMessageId: activityGroup.promptMessageId!,
               activityGroup
             }
@@ -277,6 +291,7 @@ const createSessionDelegatedWorkRecords = (
               expectedRevision,
               frameId: input.frameId,
               attemptId: input.attemptId,
+              allowTerminalEvidence: true,
               event: {
                 kind: 'message',
                 runtimeSegmentId: attempt?.runtimeSegmentIds.at(-1) ?? '',

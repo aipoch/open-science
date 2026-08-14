@@ -41,6 +41,14 @@ const statusDotClassName: Record<SubagentRawStatus, string> = {
   error: 'bg-danger-000'
 }
 
+const statusLabel: Record<SubagentRawStatus, string> = {
+  running: 'Running',
+  awaiting_user: 'Awaiting user',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  error: 'Failed'
+}
+
 const SubagentStatus = ({
   status,
   awaitingPermission = false
@@ -50,9 +58,7 @@ const SubagentStatus = ({
 }): React.JSX.Element => (
   <span className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-text-300">
     <span className={cn('size-1.5 rounded-full', statusDotClassName[status])} aria-hidden="true" />
-    <span className="capitalize" data-subagent-status={status}>
-      {status}
-    </span>
+    <span data-subagent-status={status}>{statusLabel[status]}</span>
     {awaitingPermission ? (
       <span className="text-[9px] font-normal text-primary">Waiting for permission</span>
     ) : null}
@@ -262,7 +268,10 @@ const SubagentPreview = ({
     state.sessions.find((candidate) => candidate.id === item.sessionId)
   )
   const summary = useMemo(() => projectSessionSubagents(session, []), [session])
-  const effectiveFrameId = item.selectedAgentFrameId ?? summary.children[0]?.frameId ?? ''
+  const effectiveFrameId =
+    summary.children.find(({ frameId }) => frameId === item.selectedAgentFrameId)?.frameId ??
+    summary.children[0]?.frameId ??
+    ''
   const [isRetrying, setIsRetrying] = useState(false)
   const detail = useMemo(
     () => selectSubagentFrame(session, effectiveFrameId),

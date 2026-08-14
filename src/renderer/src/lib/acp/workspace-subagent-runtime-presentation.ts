@@ -1,74 +1,29 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 
 import type { AcpAgentRuntimeUpdate, AcpRuntimeEvent } from '../../../../shared/acp'
-import type {
-  DelegatedWorkAttemptRecord,
-  PersistedChatMessage
-} from '../../../../shared/session-persistence'
-import { createSessionStore, type ChatSession } from '../../stores/session-store'
+import type { ChatSession } from '../../stores/session-store'
+import { createSessionStore } from '../../stores/session-store'
 import {
   applyRuntimePresentationEvent,
   createRuntimePresentationContext
 } from './runtime-event-presentation'
-
-type WorkspaceSubagentFrameProjection = Readonly<{
-  frameId: string
-  status: 'running' | 'awaiting_user' | 'completed' | 'cancelled' | 'error'
-  attempt?: DelegatedWorkAttemptRecord
-  messages: readonly PersistedChatMessage[]
-}>
+import {
+  childConversationSession,
+  fenceTerminalLifecycle,
+  reconcileDurableChildProjection,
+  type WorkspaceSubagentFrameProjection
+} from './workspace-subagent-runtime-transcript'
 
 type SubscribeToSubagentRuntimeUpdates = (
   listener: (update: AcpAgentRuntimeUpdate) => void
 ) => () => void
 
-const childConversationSession = (
-  session: ChatSession,
-  detail: WorkspaceSubagentFrameProjection
-): ChatSession => {
-  const messages = [...detail.messages]
-  const promptMessage = messages.findLast((message) => message.role === 'user')
-  const running = detail.status === 'running' && detail.attempt?.status === 'running'
-
-  return {
-    ...session,
-    status: detail.status === 'running' ? 'running' : detail.status === 'error' ? 'error' : 'idle',
-    error: detail.attempt?.error?.message,
-    activeRun:
-      running && promptMessage
-        ? { promptMessageId: promptMessage.id, startedAt: detail.attempt.startedAt }
-        : undefined,
-    agentPromptInFlight: running ? true : undefined,
-    messages,
-    conversationGraph: session.conversationGraph
-      ? { ...session.conversationGraph, activeFrameId: detail.frameId }
-      : undefined,
-    // This store is an isolated presentation projection. Authority remains in the root Session
-    // graph; the adapter only lets the existing transcript components render the selected Frame.
-    activities: session.conversationGraph?.activities
-      .filter((activity) => activity.agentFrameId === detail.frameId)
-      .map(({ agentFrameId, messageBranchId, runtimeSegmentId, ...activity }) => {
-        void agentFrameId
-        void messageBranchId
-        void runtimeSegmentId
-        return activity
-      }) as ChatSession['activities'],
-    activityGroups: session.conversationGraph?.activityGroups
-      .filter((group) => group.agentFrameId === detail.frameId)
-      .map(({ agentFrameId, messageBranchId, ...group }) => {
-        void agentFrameId
-        void messageBranchId
-        return group
-      })
-  }
-}
-
 const isSelectedRuntimeUpdate = (
   update: AcpAgentRuntimeUpdate,
   session: ChatSession,
   detail: WorkspaceSubagentFrameProjection,
-  runtimeSegmentId: string | undefined,
+  runtimeSegmentId: string,
   promptMessageId: string | undefined
 ): boolean =>
   update.scope.projectId === session.projectId &&
@@ -99,21 +54,48 @@ const useSubagentRuntimePresentation = (
   const processedEventIds = useRef(new Set<string>())
   const runtimeSegmentId = detail.attempt?.runtimeSegmentIds.at(-1)
   const promptMessageId = detail.messages.findLast((message) => message.role === 'user')?.id
+  const running = detail.status === 'running' && detail.attempt?.status === 'running'
+  const runtimeIdentity =
+    detail.attempt && runtimeSegmentId && promptMessageId
+      ? [
+          session.projectId,
+          session.id,
+          detail.frameId,
+          detail.attempt.id,
+          runtimeSegmentId,
+          promptMessageId
+        ].join('\u0000')
+      : undefined
+  const currentRuntimeIdentity = useRef(runtimeIdentity)
+  const latestLifecycle = useRef({
+    running,
+    terminalProjection: childConversationSession(session, detail)
+  })
+  useLayoutEffect(() => {
+    currentRuntimeIdentity.current = runtimeIdentity
+    latestLifecycle.current = {
+      running,
+      terminalProjection: childConversationSession(session, detail)
+    }
+  }, [detail, running, runtimeIdentity, session])
   const liveSession = useStore(store, (state) => state.sessions[0])
 
-  // Runtime updates are ephemeral, so a subscription can miss an event while the selected detail
-  // is mounting or being replaced. Reconcile every newer durable projection into the isolated
-  // store; the store's identity merge preserves already-applied live events until durability
-  // catches up, while a terminal projection advances status and the transcript authoritatively.
   useEffect(() => {
-    store.getState().upsertPersistedSession(childConversationSession(session, detail))
-  }, [detail, session, store])
+    reconcileDurableChildProjection(
+      store,
+      childConversationSession(session, detail),
+      running,
+      detail.status,
+      runtimeSegmentId
+    )
+  }, [detail, running, runtimeSegmentId, session, store])
 
   useEffect(() => {
-    if (!runtimeSegmentId) return
+    if (!runtimeIdentity || !runtimeSegmentId) return
 
     return subscribe((update) => {
       if (
+        currentRuntimeIdentity.current !== runtimeIdentity ||
         !isSelectedRuntimeUpdate(update, session, detail, runtimeSegmentId, promptMessageId) ||
         processedEventIds.current.has(update.event.id)
       ) {
@@ -125,21 +107,37 @@ const useSubagentRuntimePresentation = (
         sessionId: session.id,
         promptMessageId: update.scope.promptMessageId
       } as AcpRuntimeEvent
+      const lifecycle = latestLifecycle.current
+      const appliedPresentation = applyRuntimePresentationEvent(event, store, presentationContext)
 
-      if (applyRuntimePresentationEvent(event, store, presentationContext)) return
-      if (event.kind === 'stop') {
+      if (!appliedPresentation && event.kind === 'stop') {
         presentationContext.activityGroupToolCallIdsBySession.delete(session.id)
         store.getState().finishRun(session.id, event.turnUsage, update.scope.promptMessageId)
-      } else if (event.kind === 'error') {
+      } else if (!appliedPresentation && event.kind === 'error') {
         presentationContext.activityGroupToolCallIdsBySession.delete(session.id)
         store
           .getState()
           .failRun(session.id, event.text?.trim() || event.title?.trim() || 'Agent run failed')
-      } else if (event.kind === 'system' && event.level === 'warning' && event.text) {
+      } else if (
+        !appliedPresentation &&
+        event.kind === 'system' &&
+        event.level === 'warning' &&
+        event.text
+      ) {
         store.getState().setAgentStatus(session.id, event.text)
       }
+      if (!lifecycle.running) fenceTerminalLifecycle(store, lifecycle.terminalProjection)
     })
-  }, [detail, presentationContext, promptMessageId, runtimeSegmentId, session, store, subscribe])
+  }, [
+    detail,
+    presentationContext,
+    promptMessageId,
+    runtimeIdentity,
+    runtimeSegmentId,
+    session,
+    store,
+    subscribe
+  ])
 
   return liveSession
 }

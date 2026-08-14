@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
-import { projectAttemptRuntimeTranscript } from './attempt-runtime-transcript'
+import {
+  createAttemptRuntimeTranscriptStager,
+  projectAttemptRuntimeTranscript
+} from './attempt-runtime-transcript'
+import type { DelegatedWorkDurableRecords, DurableMessage } from './delegated-work-record-types'
 
 const scope = {
   projectId: 'project-1',
@@ -15,6 +19,112 @@ const scope = {
 const update = (event: AcpAgentRuntimeUpdate['event']): AcpAgentRuntimeUpdate => ({ scope, event })
 
 describe('Attempt runtime transcript projection', () => {
+  it('isolates two Turn lanes and retains one Message identity per provider stream', async () => {
+    const messages = new Map<string, DurableMessage>()
+    const activityWrites: Array<{
+      runtimeSegmentId: string
+      promptMessageIds: string[]
+    }> = []
+    const records = {
+      async stageTerminalMessage(_frameId: string, _attemptId: string, message: DurableMessage) {
+        messages.set(message.id, structuredClone(message))
+      },
+      async stageTerminalActivities(
+        _frameId: string,
+        _attemptId: string,
+        runtimeSegmentId: string,
+        activities: Parameters<
+          NonNullable<DelegatedWorkDurableRecords['stageTerminalActivities']>
+        >[3]
+      ) {
+        activityWrites.push({
+          runtimeSegmentId,
+          promptMessageIds: activities.map((activity) => activity.promptMessageId!)
+        })
+      }
+    } as unknown as DelegatedWorkDurableRecords
+    const ids = ['message-lane-1', 'message-lane-2']
+    const owner = createAttemptRuntimeTranscriptStager({
+      records,
+      frameId: 'frame-1',
+      attemptId: 'attempt-1',
+      createMessageId: () => ids.shift()!
+    })
+    const lane1 = { runtimeSegmentId: 'runtime-1', promptMessageId: 'prompt-1' }
+    const lane2 = { runtimeSegmentId: 'runtime-2', promptMessageId: 'prompt-2' }
+    const observe = async (
+      lane: typeof lane1,
+      event: AcpAgentRuntimeUpdate['event']
+    ): Promise<void> => owner.observe({ scope: { ...scope, ...lane }, event })
+
+    await observe(lane1, {
+      id: 'lane-1-message',
+      timestamp: 10,
+      kind: 'message',
+      level: 'info',
+      messageId: 'provider-stream',
+      role: 'assistant',
+      text: 'First turn'
+    })
+    await observe(lane1, {
+      id: 'lane-1-tool',
+      timestamp: 11,
+      kind: 'tool',
+      level: 'info',
+      toolCallId: 'tool-1',
+      status: 'in_progress'
+    })
+    await owner.settle(lane1, {
+      terminalStatus: 'completed',
+      endedAt: 12,
+      fallbackResponse: 'First turn'
+    })
+    await observe(lane2, {
+      id: 'lane-2-message',
+      timestamp: 20,
+      kind: 'message',
+      level: 'info',
+      messageId: 'provider-stream',
+      role: 'assistant',
+      text: 'Second turn'
+    })
+    await observe(lane2, {
+      id: 'lane-2-tool',
+      timestamp: 21,
+      kind: 'tool',
+      level: 'info',
+      toolCallId: 'tool-2',
+      status: 'completed'
+    })
+    await owner.settle(lane2, {
+      terminalStatus: 'completed',
+      endedAt: 22,
+      fallbackResponse: 'Second turn'
+    })
+
+    expect([...messages.values()]).toEqual([
+      expect.objectContaining({
+        id: 'message-lane-1',
+        responseToMessageId: 'prompt-1',
+        runtimeSegmentId: 'runtime-1',
+        content: 'First turn'
+      }),
+      expect.objectContaining({
+        id: 'message-lane-2',
+        responseToMessageId: 'prompt-2',
+        runtimeSegmentId: 'runtime-2',
+        content: 'Second turn'
+      })
+    ])
+    expect(activityWrites).toEqual(
+      expect.arrayContaining([
+        { runtimeSegmentId: 'runtime-1', promptMessageIds: ['prompt-1'] },
+        { runtimeSegmentId: 'runtime-2', promptMessageIds: ['prompt-2'] }
+      ])
+    )
+    expect(ids).toEqual([])
+  })
+
   it('preserves message boundaries, tool history, groups, and terminal usage', () => {
     let messageId = 0
     const transcript = projectAttemptRuntimeTranscript({
@@ -82,6 +192,7 @@ describe('Attempt runtime transcript projection', () => {
       promptMessageId: 'prompt-1',
       fallbackResponse: 'Final answer.',
       endedAt: 20,
+      terminalStatus: 'completed',
       turnUsage: {
         inputTokens: 100,
         cacheTokens: 20,
@@ -145,6 +256,7 @@ describe('Attempt runtime transcript projection', () => {
       promptMessageId: 'prompt-1',
       fallbackResponse: 'Fallback response',
       endedAt: 30,
+      terminalStatus: 'completed',
       turnUsageUnavailable: true,
       createMessageId: () => 'fallback-message'
     })
@@ -157,6 +269,44 @@ describe('Attempt runtime transcript projection', () => {
         turnUsageUnavailable: true
       })
     ])
+  })
+
+  it('keeps live message and tool evidence open until terminal settlement', () => {
+    const transcript = projectAttemptRuntimeTranscript({
+      updates: [
+        update({
+          id: 'live-message',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          messageId: 'live-stream',
+          role: 'assistant',
+          text: 'Still working'
+        }),
+        update({
+          id: 'live-tool',
+          timestamp: 11,
+          kind: 'tool',
+          level: 'info',
+          toolCallId: 'tool-live',
+          title: 'Inspect source',
+          status: 'in_progress'
+        })
+      ],
+      frameId: 'frame-1',
+      promptMessageId: 'prompt-1',
+      runtimeSegmentId: 'runtime-1',
+      fallbackResponse: '',
+      endedAt: 11,
+      createMessageId: () => 'live-message-id'
+    })
+
+    expect(transcript.messages).toEqual([
+      expect.objectContaining({ id: 'live-message-id', status: 'streaming' })
+    ])
+    expect(transcript.messages[0].completedAt).toBeUndefined()
+    expect(transcript.activities).toEqual([expect.objectContaining({ status: 'in_progress' })])
+    expect('completedAt' in transcript.activities[0]).toBe(false)
   })
 
   it('derives graph-unique activity identities from each app-owned Runtime Segment', () => {
@@ -195,6 +345,7 @@ describe('Attempt runtime transcript projection', () => {
         promptMessageId: 'prompt-1',
         fallbackResponse: 'done',
         endedAt: 12,
+        terminalStatus: 'completed',
         createMessageId: () => `${runtimeSegmentId}:message`
       })
 

@@ -578,7 +578,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     return this.delegatedWorkOwner.applyAgentEvent(key, input)
   }
 
-  transitionAttempt(key: SessionKey, input: TransitionAttemptInput): Promise<void> {
+  transitionAttempt(
+    key: SessionKey,
+    input: TransitionAttemptInput
+  ): Promise<'transitioned' | 'already_terminal'> {
     return this.delegatedWorkOwner.transitionAttempt(key, input)
   }
 

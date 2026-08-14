@@ -82,7 +82,14 @@ const privateOwnerTargets = new Set(ownerTargets.values())
 const subagentPresentationTarget = modulePath(
   resolve(__dirname, 'workspace-subagent-runtime-presentation')
 )
-const privateRuntimeTargets = new Set([...privateOwnerTargets, subagentPresentationTarget])
+const subagentTranscriptTarget = modulePath(
+  resolve(__dirname, 'workspace-subagent-runtime-transcript')
+)
+const privateRuntimeTargets = new Set([
+  ...privateOwnerTargets,
+  subagentPresentationTarget,
+  subagentTranscriptTarget
+])
 const facadeTarget = modulePath(facadePath)
 const workspaceEventsTarget = modulePath(resolve(__dirname, 'workspace-events'))
 const resolveImportTarget = (sourcePath: string, specifier: string): string | undefined => {
@@ -805,7 +812,8 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       ...ownerNames.map((name) => `src/renderer/src/lib/acp/${name}.ts`),
-      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-transcript.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual([
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts'

@@ -312,17 +312,59 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
   }
 
   applyAgentEvent(key: SessionKey, input: AttemptAgentEventInput): Promise<void> {
+    return this.persistAgentEvent(
+      key,
+      input,
+      input.allowTerminalEvidence ? 'current-attempt-evidence' : 'running'
+    )
+  }
+
+  private persistAgentEvent(
+    key: SessionKey,
+    input: AttemptAgentEventInput,
+    mode: 'running' | 'current-attempt-evidence'
+  ): Promise<void> {
     return this.store.mutate(key, input.expectedRevision, (graph, records) => {
-      assertCurrentRunningAttempt(records, input.frameId, input.attemptId)
+      const record = records.find((candidate) => candidate.agentFrameId === input.frameId)
+      const attempt =
+        mode === 'current-attempt-evidence'
+          ? record && currentAttempt(record)
+          : assertCurrentRunningAttempt(records, input.frameId, input.attemptId).attempt
+      if (!record || !attempt) throw new DelegatedWorkAttemptConflictError()
+      if (attempt.id !== input.attemptId) throw new DelegatedWorkAttemptConflictError()
       const frame = graph.frames.find((candidate) => candidate.id === input.frameId)
       if (!frame) throw new Error(`Delegate Frame not found: ${input.frameId}`)
-      const branch = graph.branches.find((candidate) => candidate.id === frame.activeBranchId)
-      if (!branch) throw new Error(`Delegate Branch not found: ${frame.activeBranchId}`)
       const event = input.event
+      const runtimeSegmentId =
+        event.runtimeSegmentId ??
+        (mode === 'running' ? attempt.runtimeSegmentIds.at(-1) : undefined)
+      if (!runtimeSegmentId || !attempt.runtimeSegmentIds.includes(runtimeSegmentId)) {
+        throw new Error('Agent event Runtime Segment is outside the Attempt.')
+      }
+      const promptMessageId =
+        (event.kind === 'message' ? event.message.responseToMessageId : event.promptMessageId) ??
+        (mode === 'running'
+          ? graph.branches.find((candidate) => candidate.id === frame.activeBranchId)?.headMessageId
+          : undefined)
+      const promptMessage = graph.messages.find(
+        (message) =>
+          message.id === promptMessageId &&
+          message.agentFrameId === input.frameId &&
+          message.runtimeSegmentId === runtimeSegmentId
+      )
+      if (!promptMessage?.introducedOnBranchId) {
+        throw new Error('Agent event prompt provenance is outside the Attempt Frame.')
+      }
+      const branch = graph.branches.find(
+        (candidate) =>
+          candidate.id === promptMessage.introducedOnBranchId &&
+          candidate.agentFrameId === input.frameId
+      )
+      if (!branch) throw new Error('Agent event Branch is outside the Attempt Frame.')
       if (event.kind === 'message') {
         const segment = graph.runtimeSegments.find(
           (candidate) =>
-            candidate.id === event.runtimeSegmentId && candidate.agentFrameId === input.frameId
+            candidate.id === runtimeSegmentId && candidate.agentFrameId === input.frameId
         )
         if (!segment) throw new Error('Agent event Runtime Segment is outside the Attempt Frame.')
         const nextMessage: PersistedConversationGraph['messages'][number] = {
@@ -331,12 +373,21 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
           introducedOnBranchId: branch.id,
           ...(branch.headMessageId ? { parentMessageId: branch.headMessageId } : {}),
           ...(event.message.role === 'user' ? { revisionRootMessageId: event.message.id } : {}),
-          runtimeSegmentId: event.runtimeSegmentId
+          runtimeSegmentId
         }
         const existing = graph.messages.find((message) => message.id === event.message.id)
         if (existing) {
           if (JSON.stringify(existing) === JSON.stringify(nextMessage)) return
-          throw new Error(`Message already exists: ${event.message.id}`)
+          if (
+            existing.agentFrameId !== input.frameId ||
+            existing.runtimeSegmentId !== runtimeSegmentId ||
+            existing.role !== nextMessage.role
+          ) {
+            throw new Error(`Message already exists: ${event.message.id}`)
+          }
+          nextMessage.parentMessageId = existing.parentMessageId
+          Object.assign(existing, nextMessage)
+          return
         }
         graph.messages.push(nextMessage)
         branch.headMessageId = event.message.id
@@ -348,8 +399,7 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
               message.id === event.promptMessageId && message.agentFrameId === input.frameId
           ) ||
           !graph.runtimeSegments.some(
-            (segment) =>
-              segment.id === event.runtimeSegmentId && segment.agentFrameId === input.frameId
+            (segment) => segment.id === runtimeSegmentId && segment.agentFrameId === input.frameId
           )
         ) {
           throw new Error('Activity provenance is outside the Attempt Frame.')
@@ -359,12 +409,19 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
           agentFrameId: input.frameId,
           messageBranchId: branch.id,
           promptMessageId: event.promptMessageId,
-          runtimeSegmentId: event.runtimeSegmentId
+          runtimeSegmentId
         }
         const existing = graph.activities.find((activity) => activity.id === event.activity.id)
         if (existing) {
           if (JSON.stringify(existing) === JSON.stringify(nextActivity)) return
-          throw new Error(`Activity already exists: ${event.activity.id}`)
+          if (
+            existing.agentFrameId !== input.frameId ||
+            existing.runtimeSegmentId !== runtimeSegmentId
+          ) {
+            throw new Error(`Activity already exists: ${event.activity.id}`)
+          }
+          Object.assign(existing, nextActivity)
+          return
         }
         graph.activities.push(nextActivity)
       } else {
@@ -385,57 +442,94 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
         const existing = graph.activityGroups.find((group) => group.id === event.activityGroup.id)
         if (existing) {
           if (JSON.stringify(existing) === JSON.stringify(nextActivityGroup)) return
-          throw new Error(`Activity Group already exists: ${event.activityGroup.id}`)
+          if (existing.agentFrameId !== input.frameId) {
+            throw new Error(`Activity Group already exists: ${event.activityGroup.id}`)
+          }
+          Object.assign(existing, nextActivityGroup)
+          return
         }
         graph.activityGroups.push(nextActivityGroup)
       }
     })
   }
 
-  transitionAttempt(key: SessionKey, input: TransitionAttemptInput): Promise<void> {
-    return this.store.mutate(key, input.expectedRevision, (graph, records) => {
-      const { record, attempt } = assertCurrentRunningAttempt(
+  transitionAttempt(
+    key: SessionKey,
+    input: TransitionAttemptInput
+  ): Promise<'transitioned' | 'already_terminal'> {
+    return this.store.mutate(
+      key,
+      input.expectedRevision,
+      (
+        graph,
         records,
-        input.frameId,
-        input.attemptId
-      )
-      if (input.endedAt < attempt.startedAt) throw new Error('Attempt end precedes its start.')
-      if (input.status === 'completed' && !input.terminalMessageId) {
-        throw new Error('A completed Attempt requires a terminal Message.')
+        _session,
+        _commands,
+        _messagesQuarantined,
+        questions,
+        questionsQuarantined
+      ) => {
+        let cancelledQuestion = false
+        if (input.questionReason !== undefined) {
+          if (questionsQuarantined) throw new Error('Delegated question owner is quarantined.')
+          for (const [index, request] of questions.entries()) {
+            if (request.sourceFrameId !== input.frameId || request.status !== 'pending') continue
+            cancelledQuestion = true
+            questions[index] = {
+              ...request,
+              status: 'cancelled',
+              respondedAt: input.endedAt,
+              failure: { code: 'cancelled', message: input.questionReason }
+            }
+          }
+        }
+        const record = records.find((candidate) => candidate.agentFrameId === input.frameId)
+        const attempt = record && currentAttempt(record)
+        if (!record || !attempt || attempt.id !== input.attemptId || attempt.status !== 'running') {
+          if (input.questionReason !== undefined) {
+            return cancelledQuestion ? 'transitioned' : 'already_terminal'
+          }
+          throw new DelegatedWorkAttemptConflictError()
+        }
+        if (input.endedAt < attempt.startedAt) throw new Error('Attempt end precedes its start.')
+        if (input.status === 'completed' && !input.terminalMessageId) {
+          throw new Error('A completed Attempt requires a terminal Message.')
+        }
+        if (input.status === 'cancelled' && !input.cancellationReason) {
+          throw new Error('A cancelled Attempt requires a cancellation reason.')
+        }
+        if (input.status === 'error' && !input.error) {
+          throw new Error('An errored Attempt requires error detail.')
+        }
+        if (
+          input.terminalMessageId &&
+          !graph.messages.some(
+            (message) =>
+              message.id === input.terminalMessageId && message.agentFrameId === input.frameId
+          )
+        ) {
+          throw new Error('Terminal Message is outside the Attempt Frame.')
+        }
+        const attempts = record.attempts as DelegatedWorkAttemptRecord[]
+        attempts[attempts.length - 1] = {
+          ...attempt,
+          status: input.status,
+          endedAt: input.endedAt,
+          ...(input.terminalMessageId ? { terminalMessageId: input.terminalMessageId } : {}),
+          ...(input.cancellationReason ? { cancellationReason: input.cancellationReason } : {}),
+          ...(input.error ? { error: input.error } : {})
+        }
+        const frame = graph.frames.find((candidate) => candidate.id === input.frameId)
+        if (!frame) throw new Error(`Delegate Frame not found: ${input.frameId}`)
+        frame.status = input.status
+        frame.completedAt = input.endedAt
+        for (const segmentId of attempt.runtimeSegmentIds) {
+          const segment = graph.runtimeSegments.find((candidate) => candidate.id === segmentId)
+          if (segment && segment.endedAt === undefined) segment.endedAt = input.endedAt
+        }
+        return 'transitioned'
       }
-      if (input.status === 'cancelled' && !input.cancellationReason) {
-        throw new Error('A cancelled Attempt requires a cancellation reason.')
-      }
-      if (input.status === 'error' && !input.error) {
-        throw new Error('An errored Attempt requires error detail.')
-      }
-      if (
-        input.terminalMessageId &&
-        !graph.messages.some(
-          (message) =>
-            message.id === input.terminalMessageId && message.agentFrameId === input.frameId
-        )
-      ) {
-        throw new Error('Terminal Message is outside the Attempt Frame.')
-      }
-      const attempts = record.attempts as DelegatedWorkAttemptRecord[]
-      attempts[attempts.length - 1] = {
-        ...attempt,
-        status: input.status,
-        endedAt: input.endedAt,
-        ...(input.terminalMessageId ? { terminalMessageId: input.terminalMessageId } : {}),
-        ...(input.cancellationReason ? { cancellationReason: input.cancellationReason } : {}),
-        ...(input.error ? { error: input.error } : {})
-      }
-      const frame = graph.frames.find((candidate) => candidate.id === input.frameId)
-      if (!frame) throw new Error(`Delegate Frame not found: ${input.frameId}`)
-      frame.status = input.status
-      frame.completedAt = input.endedAt
-      for (const segmentId of attempt.runtimeSegmentIds) {
-        const segment = graph.runtimeSegments.find((candidate) => candidate.id === segmentId)
-        if (segment && segment.endedAt === undefined) segment.endedAt = input.endedAt
-      }
-    })
+    )
   }
 
   submitStructuredOutput(

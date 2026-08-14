@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 
-import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
   DelegateExecutionError,
@@ -64,6 +63,7 @@ import type {
 import { submitStructuredOutput } from './structured-output-submission'
 import { ReliableMessageDeliveryOwner } from './message-delivery-owner'
 import { DelegatedUserQuestionOwner } from './delegated-user-question-owner'
+import { createDelegatedCleanup } from './delegated-cleanup'
 
 const createDurableDelegatedWork = (
   options: CreateDurableDelegatedWorkOptions
@@ -109,6 +109,7 @@ const createDurableDelegatedWork = (
     options.resolveSpecialistReference,
     options.validateInput
   )
+  const cleanup = createDelegatedCleanup(options.onCleanupError)
   const running = new Map<
     string,
     {
@@ -117,10 +118,10 @@ const createDurableDelegatedWork = (
       deliver(message: DurablePendingMessage): Promise<DelegateMessageAcceptanceEvidence>
       setPermissionProfile(profile: PermissionProfileId): Promise<void>
       cancel(reason: 'main_agent_stop' | 'session_stop' | 'runtime_interrupted'): Promise<void>
-      executionStarted(): boolean
+      flushEvidence(): Promise<void>
+      finalize(): Promise<void>
       reservation: DelegateCapacityReservation
       slotId: string
-      artifact?: DelegatedArtifactHandle
     }
   >()
 
@@ -155,7 +156,12 @@ const createDurableDelegatedWork = (
       rejectHandle = reject
     })
     void deliveryHandle.catch(() => undefined)
-    const runtimeUpdates: AcpAgentRuntimeUpdate[] = []
+    const stageRuntimeTranscript = createAttemptRuntimeTranscriptStager({
+      records: options.records,
+      frameId: child.frameId,
+      attemptId: attempt.id,
+      createMessageId: () => createId('message')
+    })
     const turnLifecycle = createDelegatedTurnLifecycle({
       records: options.records,
       artifactEvidence: options.artifactEvidence,
@@ -166,22 +172,36 @@ const createDurableDelegatedWork = (
         attempt.resolvedAgent.kind === 'specialist'
           ? attempt.resolvedAgent.displayName
           : 'Main Agent',
-      runtimeUpdates,
-      now,
-      createMessageId: () => createId('message')
+      transcript: stageRuntimeTranscript,
+      now
     })
     let cancelRequested = false
     let cancellationReason: 'main_agent_stop' | 'session_stop' | 'runtime_interrupted' =
       'main_agent_stop'
     let context: Awaited<ReturnType<DelegatedWorkDurableRecords['startRuntime']>> | undefined
-    const stageRuntimeTranscript = createAttemptRuntimeTranscriptStager({
-      records: options.records,
-      frameId: child.frameId,
-      attemptId: attempt.id,
-      updates: runtimeUpdates,
-      promptMessageId: () => context?.promptMessageId,
-      createMessageId: () => createId('message')
-    })
+    const finalizationScope = { session, frameId: child.frameId, attemptId: attempt.id }
+    const disposeTurn = cleanup.retryable(finalizationScope, 'turn artifact disposal', () =>
+      turnLifecycle.dispose()
+    )
+    const releaseBackendClaim = cleanup.retryable(
+      finalizationScope,
+      'execution backend claim release',
+      () => (executionBackendClaim ? executionBackendClaim.release() : Promise.resolve())
+    )
+    const releaseReservation = cleanup.retryable(
+      finalizationScope,
+      'capacity reservation release',
+      () => reservation.release(slotId)
+    )
+    const finalize = (): Promise<void> => {
+      permissionOwner.clearAttempt(child.frameId, attempt.id)
+      if (running.get(child.frameId)?.attemptId === attempt.id) running.delete(child.frameId)
+      // Start every independent release before awaiting any of them. A provider or artifact that
+      // never finishes draining must not retain the execution-backend claim or capacity slot.
+      return Promise.all([disposeTurn(), releaseBackendClaim(), releaseReservation()]).then(
+        () => undefined
+      )
+    }
     const completion = (async () => {
       try {
         const workspace = await options.workspace?.prepare(session, child.frameId, child.inputs)
@@ -197,8 +217,6 @@ const createDurableDelegatedWork = (
         }
         await turnLifecycle.openInitial(startedContext)
         const artifact = turnLifecycle.currentArtifact()
-        const runningAttempt = running.get(child.frameId)
-        if (runningAttempt?.attemptId === attempt.id) runningAttempt.artifact = artifact
         const ready = await snapshotChild(child.frameId)
         if (cancelRequested || !ready || currentAttempt(ready).status !== 'running') {
           throw new Error('delegate execution was cancelled before launch establishment')
@@ -228,7 +246,7 @@ const createDurableDelegatedWork = (
         handle = options.execution.run(executionInput, slotId)
         resolveHandle(handle)
         markEstablished()
-        const unsubscribe = handle.subscribe((event) => {
+        handle.subscribe((event) => {
           permissionOwner.observe(child.frameId, attempt.id, child.title, handle!, event)
           if (event.kind !== 'runtime') return
           const { scope: eventScope } = event.update
@@ -242,10 +260,11 @@ const createDurableDelegatedWork = (
           ) {
             return
           }
-          runtimeUpdates.push(event.update)
+          void stageRuntimeTranscript
+            .observe(event.update)
+            .catch((error) => cleanup.report(finalizationScope, 'runtime evidence append', error))
           options.onAgentRuntimeUpdate?.(event.update)
         })
-        void handle.completion.finally(unsubscribe).catch(() => undefined)
         await Promise.race([handle.accepted, handle.completion.then(() => undefined)])
         const outcome = await handle.completion
         const endedAt = now()
@@ -253,16 +272,18 @@ const createDurableDelegatedWork = (
           const lastTurnMessage = turnLifecycle.lastTurnMessage()
           const transcript = lastTurnMessage
             ? undefined
-            : await stageRuntimeTranscript({
-                terminalStatus: 'completed',
-                endedAt,
-                fallbackResponse: outcome.response,
-                ...(outcome.turnUsage
-                  ? { turnUsage: outcome.turnUsage }
-                  : outcome.turnUsageUnavailable
-                    ? { turnUsageUnavailable: true }
-                    : {})
-              })
+            : context
+              ? await stageRuntimeTranscript.settle(context, {
+                  terminalStatus: 'completed',
+                  endedAt,
+                  fallbackResponse: outcome.response,
+                  ...(outcome.turnUsage
+                    ? { turnUsage: outcome.turnUsage }
+                    : outcome.turnUsageUnavailable
+                      ? { turnUsageUnavailable: true }
+                      : {})
+                })
+              : undefined
           const terminalMessage = lastTurnMessage ?? transcript?.terminalMessage
           if (!terminalMessage)
             throw new Error('Completed delegated runtime has no terminal Message.')
@@ -275,7 +296,12 @@ const createDurableDelegatedWork = (
             terminalMessage
           })
         } else {
-          await stageRuntimeTranscript({ terminalStatus: 'cancelled', endedAt })
+          if (context) {
+            await stageRuntimeTranscript.settle(context, {
+              terminalStatus: 'cancelled',
+              endedAt
+            })
+          }
           await options.records.terminalize({
             frameId: child.frameId,
             attemptId: attempt.id,
@@ -303,6 +329,7 @@ const createDurableDelegatedWork = (
                 attemptId: attempt.id,
                 endedAt,
                 error,
+                ...(context ? { lane: context } : {}),
                 ...(cancelRequested ? { cancellationReason } : {})
               })
             } catch (terminalizeError) {
@@ -314,13 +341,12 @@ const createDurableDelegatedWork = (
           markEstablished()
         }
       } finally {
-        permissionOwner.clearAttempt(child.frameId, attempt.id)
-        await turnLifecycle.dispose()
-        await executionBackendClaim?.release().catch(() => undefined)
-        await reservation.release(slotId).catch(() => undefined)
-        if (running.get(child.frameId)?.attemptId === attempt.id) running.delete(child.frameId)
+        await finalize()
       }
     })()
+    // A detached delegate can outlive the caller that admitted it. Always observe the task so a
+    // late cleanup failure after an explicit Stop cannot become an unhandled rejection.
+    void completion.catch(() => undefined)
     running.set(child.frameId, {
       attemptId: attempt.id,
       completion,
@@ -356,7 +382,8 @@ const createDurableDelegatedWork = (
         rejectHandle(new Error('delegate execution was cancelled before message delivery'))
         await handle?.cancel()
       },
-      executionStarted: () => handle !== undefined,
+      flushEvidence: () => stageRuntimeTranscript.flush(),
+      finalize,
       reservation,
       slotId
     })
@@ -492,40 +519,43 @@ const createDurableDelegatedWork = (
     child: DurableChild,
     reason: 'main_agent_stop' | 'session_stop' | 'runtime_interrupted'
   ): Promise<StopOutcome> => {
-    await options.records.cancelQuestions(child.frameId, now(), 'Subagent was stopped.')
     const attempt = currentAttempt(child)
-    if (attempt.status !== 'running') {
-      return { frameId: child.frameId, status: 'already_terminal' }
-    }
+    const wasRunning = attempt.status === 'running'
     const snapshot = await options.records.snapshot()
     const session = snapshot.session
     const scope = { session, frameId: child.frameId, attemptId: attempt.id }
     const pendingPermissions = permissionOwner.takeAttempt(child.frameId, attempt.id)
     const evidenceScope = projectionOwner.attemptScope(snapshot, child, attempt)
     try {
-      if (evidenceScope) await options.artifactEvidence?.revoke?.(evidenceScope)
       const candidate = running.get(child.frameId)
       const active = candidate?.attemptId === attempt.id ? candidate : undefined
-      await active?.artifact?.dispose()
-      await options.revokeAttemptWrites?.(scope)
-      const executionStarted = active?.executionStarted() === true
-      await active?.cancel(reason).catch(() => undefined)
-      await options.settleAttemptCleanup?.(scope)
-      if (executionStarted) await active?.completion
-      const latest = await snapshotChild(child.frameId)
-      if (latest && currentAttempt(latest).status !== 'running') {
-        return currentAttempt(latest).status === 'cancelled'
-          ? { frameId: child.frameId, status: 'cancelled' }
-          : { frameId: child.frameId, status: 'already_terminal' }
+      // Calling these operations establishes their in-memory cancellation/revocation fences before
+      // the durable terminal transition. Their physical drains are deliberately detached: Stop is
+      // an ownership transition and must not wait forever for an external provider or resource.
+      cleanup.start(scope, 'execution cancellation', () => active?.cancel(reason))
+      cleanup.start(scope, 'attempt write revocation', () => options.revokeAttemptWrites?.(scope))
+      cleanup.start(scope, 'artifact evidence revocation', () =>
+        evidenceScope ? options.artifactEvidence?.revoke?.(evidenceScope) : undefined
+      )
+      cleanup.start(scope, 'attempt cleanup drain', () => options.settleAttemptCleanup?.(scope))
+      cleanup.start(scope, 'attempt ownership release', () => active?.finalize(), true)
+      await active?.flushEvidence()
+      const stopped = await withAdmissionLock(() =>
+        options.records.cancelAttempt({
+          frameId: child.frameId,
+          attemptId: attempt.id,
+          endedAt: now(),
+          cancellationReason: reason,
+          questionReason: 'Subagent was stopped.'
+        })
+      )
+      if (stopped === 'already_terminal') {
+        const latest = await snapshotChild(child.frameId)
+        if (wasRunning && latest && currentAttempt(latest).status === 'cancelled') {
+          return { frameId: child.frameId, status: 'cancelled' }
+        }
       }
-      await options.records.terminalize({
-        frameId: child.frameId,
-        attemptId: attempt.id,
-        status: 'cancelled',
-        endedAt: now(),
-        cancellationReason: reason
-      })
-      return { frameId: child.frameId, status: 'cancelled' }
+      return { frameId: child.frameId, status: stopped }
     } catch (error) {
       const latest = await snapshotChild(child.frameId)
       if (latest && currentAttempt(latest).status !== 'running') {
@@ -581,28 +611,18 @@ const createDurableDelegatedWork = (
       const pinnedAttempt = currentAttempt(child)
       const candidate = running.get(child.frameId)
       const active = candidate?.attemptId === pinnedAttempt.id ? candidate : undefined
-      const settleBestEffort = async (
-        operation: () => unknown | Promise<unknown>
-      ): Promise<void> => {
-        try {
-          await operation()
-        } catch (cleanupError) {
-          failures.push(cleanupError)
-        }
-      }
-      await settleBestEffort(() => active?.cancel(reason))
       try {
         const cleanupSnapshot = await options.records.snapshot()
         const session = cleanupSnapshot.session
         const scope = { session, frameId: child.frameId, attemptId: pinnedAttempt.id }
         const evidenceScope = projectionOwner.attemptScope(cleanupSnapshot, child, pinnedAttempt)
-        await settleBestEffort(() =>
+        cleanup.start(scope, 'execution cancellation', () => active?.cancel(reason))
+        cleanup.start(scope, 'artifact evidence revocation', () =>
           evidenceScope ? options.artifactEvidence?.revoke?.(evidenceScope) : undefined
         )
-        await settleBestEffort(() => active?.artifact?.dispose())
-        await settleBestEffort(() => options.revokeAttemptWrites?.(scope))
-        await settleBestEffort(() => options.settleAttemptCleanup?.(scope))
-        await settleBestEffort(() => active?.completion)
+        cleanup.start(scope, 'attempt write revocation', () => options.revokeAttemptWrites?.(scope))
+        cleanup.start(scope, 'attempt cleanup drain', () => options.settleAttemptCleanup?.(scope))
+        cleanup.start(scope, 'attempt ownership release', () => active?.finalize(), true)
         const latest = await snapshotChild(child.frameId)
         if (
           latest &&
@@ -983,9 +1003,11 @@ const createDurableDelegatedWork = (
         if (attempt.status !== 'running') continue
         const scope = { session: snapshot.session, frameId: child.frameId, attemptId: attempt.id }
         const evidenceScope = projectionOwner.attemptScope(snapshot, child, attempt)
-        if (evidenceScope) await options.artifactEvidence?.revoke?.(evidenceScope)
-        await options.revokeAttemptWrites?.(scope)
-        await options.settleAttemptCleanup?.(scope)
+        cleanup.start(scope, 'artifact evidence revocation', () =>
+          evidenceScope ? options.artifactEvidence?.revoke?.(evidenceScope) : undefined
+        )
+        cleanup.start(scope, 'attempt write revocation', () => options.revokeAttemptWrites?.(scope))
+        cleanup.start(scope, 'attempt cleanup drain', () => options.settleAttemptCleanup?.(scope))
         try {
           await options.records.terminalize({
             frameId: child.frameId,
