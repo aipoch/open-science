@@ -25,7 +25,10 @@ const kb = (bytes: number): string => `${Math.round(bytes / 1024)} KB`
 const diagnosticClassName = (diagnostic: ConnectorTemplateDiagnostic): string =>
   diagnostic.severity === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive'
 
-const transportLabel = (definition: ConnectorTemplateDefinition, t: (key: string) => string): string =>
+const transportLabel = (
+  definition: ConnectorTemplateDefinition,
+  t: (key: string) => string
+): string =>
   definition.transport === 'stdio'
     ? t('Local command')
     : definition.transport === 'streamable_http'
@@ -69,7 +72,9 @@ export function ConnectorImportView({
     }
     if (file.size > CONNECTOR_TEMPLATE_MAX_BYTES) {
       setError(
-        t('Connector configuration files must be {{size}} or smaller.', { size: kb(CONNECTOR_TEMPLATE_MAX_BYTES) })
+        t('Connector configuration files must be {{size}} or smaller.', {
+          size: kb(CONNECTOR_TEMPLATE_MAX_BYTES)
+        })
       )
       return
     }

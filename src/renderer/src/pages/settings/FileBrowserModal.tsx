@@ -498,7 +498,7 @@ export function FileBrowserModal({
         })
       }
     })()
-  }, [bookmarkProviderId, open])
+  }, [bookmarkProviderId, open, t])
 
   useEffect(() => {
     if (!open) invalidatePendingRequests()

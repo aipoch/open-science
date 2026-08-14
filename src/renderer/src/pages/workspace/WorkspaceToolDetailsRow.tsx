@@ -35,7 +35,10 @@ type WorkspaceToolDetailsRowProps = {
 const sectionLabelClassName = 'text-[11px] font-medium uppercase tracking-wide text-text-300'
 
 // Renders a code block plus its optional truncation note.
-const renderCodeBody = (section: ToolCodeSection, t: (key: string) => string): React.JSX.Element => (
+const renderCodeBody = (
+  section: ToolCodeSection,
+  t: (key: string) => string
+): React.JSX.Element => (
   <>
     <WorkspaceToolCodeBlock code={section.text} language={section.language} />
     {section.truncated ? (

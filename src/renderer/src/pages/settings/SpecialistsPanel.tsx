@@ -81,7 +81,10 @@ const getSkillSourceLabel = (source: SkillSource, t: (key: string) => string): s
   return t(SKILL_SOURCE_LABELS[source])
 }
 
-const formatBytes = (value: number, t: (key: string, options?: any) => string): string =>
+const formatBytes = (
+  value: number,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string =>
   value >= 1024 * 1024
     ? t('{{size}} MB', { size: Number((value / (1024 * 1024)).toFixed(1)) })
     : t('{{size}} KB', { size: Number((value / 1024).toFixed(1)) })

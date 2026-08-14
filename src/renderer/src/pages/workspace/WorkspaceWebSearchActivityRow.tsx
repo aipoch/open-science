@@ -63,7 +63,9 @@ const WorkspaceWebSearchActivityRow = ({
       phase={phase}
       label={t('Web Search')}
       subtitle={details.query || undefined}
-      metaLabel={phase === 'closed' ? t('request ended') : formatResultCountLabel(details.resultCount, t)}
+      metaLabel={
+        phase === 'closed' ? t('request ended') : formatResultCountLabel(details.resultCount, t)
+      }
       isExpanded={isExpanded}
       // Rows without any query or result metadata remain visible but non-interactive.
       canExpand={Boolean(details.query || details.resultCount)}

@@ -369,7 +369,9 @@ export const OfficePreviewContent = ({
         item={item}
         source={source}
         title={t('Preview unavailable')}
-        message={t('Office preview is only available in the desktop app. Download this file to view it.')}
+        message={t(
+          'Office preview is only available in the desktop app. Download this file to view it.'
+        )}
       />
     )
   }

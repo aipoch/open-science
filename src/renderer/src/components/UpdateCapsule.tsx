@@ -21,7 +21,7 @@ const FOCUS_ATTENTION_COOLDOWN_MS = 15 * 60 * 1000
 
 const updateCopy = (
   status: UpdateStatus,
-  t: (key: string, options?: any) => string
+  t: (key: string, options?: Record<string, unknown>) => string
 ): { title: string; action: string; icon: LucideIcon } => {
   if (status.state === 'downloading') {
     return {

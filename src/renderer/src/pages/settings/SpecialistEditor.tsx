@@ -96,7 +96,6 @@ const COLOR_OPTIONS = [
   { key: 'slate', label: 'Slate' }
 ] as const
 
-
 const SpecialistEditor = ({
   onCancel,
   onSave,
