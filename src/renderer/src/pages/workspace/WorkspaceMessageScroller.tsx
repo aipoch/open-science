@@ -721,21 +721,52 @@ const WorkspaceMessageScrollerImpl = ({
         : undefined,
     [legacyAgentBackendId, legacyAgentModel]
   )
-  const messageCreatedAtById = new Map(
-    activeSession?.messages.map((message) => [message.id, message.createdAt]) ?? []
+  const sessionMessages = activeSession?.messages
+  const messageCreatedAtById = useMemo(
+    () => new Map(sessionMessages?.map((message) => [message.id, message.createdAt]) ?? []),
+    [sessionMessages]
   )
 
   // Counts the user turns after each message; the destructive-resend warning keys off turns, not
   // raw message count, so a single follow-up turn stays warning-free.
-  const subsequentTurnCountByMessageId = new Map<string, number>()
-  if (activeSession) {
+  const subsequentTurnCountByMessageId = useMemo(() => {
+    const counts = new Map<string, number>()
     let subsequentTurns = 0
-    for (let index = activeSession.messages.length - 1; index >= 0; index -= 1) {
-      const message = activeSession.messages[index]
-      subsequentTurnCountByMessageId.set(message.id, subsequentTurns)
+    for (let index = (sessionMessages?.length ?? 0) - 1; index >= 0; index -= 1) {
+      const message = sessionMessages?.[index]
+      if (!message) continue
+      counts.set(message.id, subsequentTurns)
       if (message.role === 'user') subsequentTurns += 1
     }
-  }
+    return counts
+  }, [sessionMessages])
+
+  // Streaming rebuilds the transcript once per chunk. Index the conversation graph once per render
+  // so the per-row lookups in the item map below stay O(1) instead of scanning the graph per row.
+  const conversationGraph = activeSession?.conversationGraph
+  const graphMessageNodeById = useMemo(
+    () => new Map(conversationGraph?.messages.map((message) => [message.id, message]) ?? []),
+    [conversationGraph]
+  )
+  const graphRuntimeSegmentById = useMemo(
+    () => new Map(conversationGraph?.runtimeSegments.map((segment) => [segment.id, segment]) ?? []),
+    [conversationGraph]
+  )
+  const revisionMessagesByRootId = useMemo(() => {
+    const byRootId = new Map<string, NonNullable<typeof conversationGraph>['messages']>()
+    for (const message of conversationGraph?.messages ?? []) {
+      if (message.role !== 'user' || message.revisionRootMessageId === undefined) continue
+      const revisions = byRootId.get(message.revisionRootMessageId) ?? []
+      revisions.push(message)
+      byRootId.set(message.revisionRootMessageId, revisions)
+    }
+    for (const revisions of byRootId.values()) {
+      revisions.sort(
+        (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+      )
+    }
+    return byRootId
+  }, [conversationGraph])
 
   // Build a map from job_id → JobSummary for all session jobs (used in binding)
   const sessionJobs = useMemo((): JobSummary[] => {
@@ -1060,14 +1091,9 @@ const WorkspaceMessageScrollerImpl = ({
                   const artifacts = artifactVisibility.artifactsForMessage(item.message)
                   // Jobs pre-assigned to this slot: each job appears in exactly one slot.
                   const jobsBeforeMessage = jobSlotsByItemIndex.get(itemIndex) ?? []
-                  const graph = activeSession?.conversationGraph
-                  const messageNode = graph?.messages.find(
-                    (message) => message.id === item.message.id
-                  )
+                  const messageNode = graphMessageNodeById.get(item.message.id)
                   const runtimeSegment = messageNode?.runtimeSegmentId
-                    ? graph?.runtimeSegments.find(
-                        (segment) => segment.id === messageNode.runtimeSegmentId
-                      )
+                    ? graphRuntimeSegmentById.get(messageNode.runtimeSegmentId)
                     : undefined
                   // Legacy sessions synthesize this segment with a fallback framework. Keep only
                   // the session-level values that were actually persisted.
@@ -1082,16 +1108,7 @@ const WorkspaceMessageScrollerImpl = ({
                     ? messageNode?.revisionRootMessageId
                     : undefined
                   const revisions = revisionRootMessageId
-                    ? (graph?.messages
-                        .filter(
-                          (message) =>
-                            message.role === 'user' &&
-                            message.revisionRootMessageId === revisionRootMessageId
-                        )
-                        .sort(
-                          (left, right) =>
-                            left.createdAt - right.createdAt || left.id.localeCompare(right.id)
-                        ) ?? [])
+                    ? (revisionMessagesByRootId.get(revisionRootMessageId) ?? [])
                     : []
                   const revisionIndex = revisions.findIndex(
                     (message) => message.id === item.message.id
