@@ -724,20 +724,21 @@ export const commitDataRootSwitch = async (
   const dirsToDelete = runtimePreserved ? [...MIGRATED_DIRS, 'runtime'] : migratedDirs
 
   const doDeleteSources = deps.deleteSources ?? deleteSources
-  let deleteResult: Awaited<ReturnType<NonNullable<MigrationCommitDeps['deleteSources']>>>
+  let cleanupFailureCount = 0
   try {
-    deleteResult = await doDeleteSources(deps.currentDataRoot, dirsToDelete)
-  } catch (error) {
-    operation.fail(error)
-    throw error
-  }
-  if (deleteResult.failed.length > 0) {
+    const deleteResult = await doDeleteSources(deps.currentDataRoot, dirsToDelete)
+    cleanupFailureCount = deleteResult.failed.length
+    if (cleanupFailureCount > 0) cleanupDegraded = true
+  } catch {
+    // Pointer persistence above is the commit boundary. An unexpected cleanup rejection cannot roll
+    // that back, so treat it like any other harmless old-root residue and continue to relaunch. This
+    // keeps the write-gate raised until the fresh process starts against the persisted new root.
     cleanupDegraded = true
   }
 
   operation.complete({
     cleanupDegraded,
-    cleanupFailureCount: deleteResult.failed.length
+    cleanupFailureCount
   })
   return { ok: true }
 }

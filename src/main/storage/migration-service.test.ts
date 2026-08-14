@@ -1516,7 +1516,7 @@ describe('commitDataRootSwitch (commit phase)', () => {
     }
   )
 
-  it('preserves an unexpected cleanup rejection while diagnosing its phase', async () => {
+  it('treats an unexpected cleanup rejection as degraded success after pointer persistence', async () => {
     await seedVerifiedMarker(emptyParent, currentDataRoot)
     const deps = fakeDeps()
     const logger = fakeDiagnosticLogger()
@@ -1524,24 +1524,26 @@ describe('commitDataRootSwitch (commit phase)', () => {
       throw new Error('cleanup-secret')
     })
 
-    await expect(
-      commitDataRootSwitch(
-        {
-          currentDataRoot,
-          setDataRoot: deps.setDataRoot,
-          deleteSources,
-          expectedToken: 'tok-test',
-          logger
-        },
-        emptyParent
-      )
-    ).rejects.toThrow('cleanup-secret')
+    const result = await commitDataRootSwitch(
+      {
+        currentDataRoot,
+        setDataRoot: deps.setDataRoot,
+        deleteSources,
+        expectedToken: 'tok-test',
+        logger
+      },
+      emptyParent
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(deps.setDataRoot).toHaveBeenCalledOnce()
     expect(diagnosticRecords(logger)).toContainEqual(
       expect.objectContaining({
         operation: 'data-root-commit',
         phase: 'cleanup-source',
-        outcome: 'failed',
-        errorCategory: 'error'
+        outcome: 'completed',
+        cleanupDegraded: true,
+        cleanupFailureCount: 0
       })
     )
     expect(JSON.stringify(diagnosticRecords(logger))).not.toContain('cleanup-secret')
