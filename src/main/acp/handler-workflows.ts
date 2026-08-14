@@ -122,14 +122,50 @@ const prepareSaveAsSkillContinuation = (
     session.resumeRecovery.promptMessageId === request.promptMessageId &&
     !session.pendingHistoryReplay &&
     runtime.hasLiveSession(session.projectId, session.id)
-  if (session.pendingHistoryReplay || (session.resumeRecovery && !recoveredPreparedControlRun)) {
+  const graph = session.conversationGraph
+  const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+  const activeBranchMessages =
+    graph && frame ? resolveMessageBranchPath(graph, frame.activeBranchId) : []
+  const controlMessage = activeBranchMessages.at(-1)
+  const previousMessage = activeBranchMessages.at(-2)
+  const preparedControlTurn = Boolean(
+    (preparedControlRun || recoveredPreparedControlRun) &&
+    controlMessage?.id === request.promptMessageId &&
+    controlMessage.role === 'user' &&
+    controlMessage.turnIntent === 'save-as-skill' &&
+    previousMessage?.role === 'agent' &&
+    previousMessage.status === 'complete'
+  )
+  const controlRuntimeSegment = graph?.runtimeSegments.find(
+    ({ id }) => id === controlMessage?.runtimeSegmentId
+  )
+  const latestFrameRuntimeSegment = graph?.runtimeSegments
+    .filter(({ agentFrameId }) => agentFrameId === frame?.id)
+    .at(-1)
+  const verifiedContextReset = Boolean(
+    controlMessage?.runtimeSegmentId &&
+    previousMessage?.runtimeSegmentId &&
+    controlMessage.runtimeSegmentId !== previousMessage.runtimeSegmentId &&
+    controlRuntimeSegment?.id === latestFrameRuntimeSegment?.id &&
+    controlRuntimeSegment?.agentFrameId === frame?.id &&
+    controlRuntimeSegment?.frameworkId === sessionBackend.framework.id &&
+    (!session.agentFrameworkId || session.agentFrameworkId === sessionBackend.framework.id)
+  )
+  const preparedContextResetReplay = Boolean(
+    preparedControlRun &&
+    preparedControlTurn &&
+    session.pendingHistoryReplay?.kind === 'all' &&
+    verifiedContextReset
+  )
+  if (
+    (session.pendingHistoryReplay && !preparedContextResetReplay) ||
+    (session.resumeRecovery && !recoveredPreparedControlRun)
+  ) {
     throw new Error('Save as skill requires a prepared Session.')
   }
   if (hasCurrentRunningDelegatedAttempt(session)) {
     throw new Error('Save as skill is unavailable while delegated work is still running.')
   }
-  const graph = session.conversationGraph
-  const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
   if (
     !graph ||
     !frame ||
@@ -138,35 +174,9 @@ const prepareSaveAsSkillContinuation = (
   ) {
     throw new Error('Save as skill stopped because the active conversation branch changed.')
   }
-  const activeBranchMessages = resolveMessageBranchPath(graph, frame.activeBranchId)
-  const controlMessage = activeBranchMessages.at(-1)
-  const previousMessage = activeBranchMessages.at(-2)
-  if (
-    (!preparedControlRun && !recoveredPreparedControlRun) ||
-    controlMessage?.id !== request.promptMessageId ||
-    controlMessage.role !== 'user' ||
-    controlMessage.turnIntent !== 'save-as-skill' ||
-    previousMessage?.role !== 'agent' ||
-    previousMessage.status !== 'complete'
-  ) {
+  if (!preparedControlTurn) {
     throw new Error('Save as skill requires a prepared control turn.')
   }
-
-  const controlRuntimeSegment = graph.runtimeSegments.find(
-    ({ id }) => id === controlMessage.runtimeSegmentId
-  )
-  const latestFrameRuntimeSegment = graph.runtimeSegments
-    .filter(({ agentFrameId }) => agentFrameId === frame.id)
-    .at(-1)
-  const verifiedContextReset = Boolean(
-    controlMessage.runtimeSegmentId &&
-    previousMessage.runtimeSegmentId &&
-    controlMessage.runtimeSegmentId !== previousMessage.runtimeSegmentId &&
-    controlRuntimeSegment?.id === latestFrameRuntimeSegment?.id &&
-    controlRuntimeSegment?.agentFrameId === frame.id &&
-    controlRuntimeSegment?.frameworkId === sessionBackend.framework.id &&
-    (!session.agentFrameworkId || session.agentFrameworkId === sessionBackend.framework.id)
-  )
 
   const historyReplay = buildSessionHistoryReplay(
     activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),

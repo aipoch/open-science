@@ -292,9 +292,10 @@ describe('ACP Save as skill workflow', () => {
     ['OpenCode', 'opencode', 'opencode-openai'],
     ['Codex Responses', 'codex', 'codex-responses'],
     ['Codex Bridge', 'codex', 'codex-bridge']
-  ])('binds context-reset hidden-turn provenance on %s', async (_name, frameworkId, modelRoute) => {
+  ])('accepts pending context-reset replay on %s', async (_name, frameworkId, modelRoute) => {
     const harness = createHarness((session) => {
       session.agentFrameworkId = frameworkId
+      session.pendingHistoryReplay = { kind: 'all' }
       session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
         id: 'runtime-segment-after-context-reset',
         frameworkId,
@@ -318,6 +319,34 @@ describe('ACP Save as skill workflow', () => {
         })
       })
     )
+  })
+
+  it('rejects pending full replay without a fresh durable Runtime Segment', async () => {
+    const harness = createHarness((session) => {
+      session.pendingHistoryReplay = { kind: 'all' }
+    })
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
+      'requires a prepared Session'
+    )
+    expect(harness.startContinuation).not.toHaveBeenCalled()
+  })
+
+  it('rejects pending interrupted-turn replay after a context reset', async () => {
+    const harness = createHarness((session) => {
+      session.pendingHistoryReplay = { kind: 'before-message', messageId: 'prompt-1' }
+      session.conversationGraph = ensureConversationRuntimeSegment(session.conversationGraph!, {
+        id: 'runtime-segment-after-context-reset',
+        frameworkId: 'claude-code',
+        startedAt: 3,
+        forceNew: true
+      })
+    })
+
+    await expect(harness.workflows.saveAsSkill(harness.request)).rejects.toThrow(
+      'requires a prepared Session'
+    )
+    expect(harness.startContinuation).not.toHaveBeenCalled()
   })
 
   it('rejects when the prepared control changes before runtime admission', async () => {
