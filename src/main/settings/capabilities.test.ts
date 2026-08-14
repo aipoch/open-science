@@ -37,7 +37,8 @@ describe('Settings capabilities', () => {
       closePreference: 'minimize',
       notebookRuntimes: { python: { source: 'managed' } },
       packageMirror: { pypiIndex: 'https://pypi.example/simple' },
-      subagentModel: { mode: 'inherit' }
+      subagentModel: { mode: 'inherit' },
+      reviewerModel: { mode: 'inherit' }
     })
   })
 })

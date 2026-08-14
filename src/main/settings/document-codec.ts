@@ -204,7 +204,8 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
     providers,
-    subagentModel: sanitizeSubagentModel(value.subagentModel)
+    subagentModel: sanitizeSubagentModel(value.subagentModel),
+    reviewerModel: sanitizeSubagentModel(value.reviewerModel)
   }
   const claudeSubscriptionProviderId = asString(value.claudeSubscriptionProviderId)
   if (

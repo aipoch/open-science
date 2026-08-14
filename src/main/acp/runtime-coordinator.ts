@@ -1070,6 +1070,7 @@ class AcpRuntimeCoordinator {
     }
 
     return {
+      captureBackend: () => runtime.captureBackend(),
       buildReviewerSession: (request) => this.buildReviewerSessionOnRuntime(runtime, request),
       disposeReviewerSession: (session) => {
         this.reviewerRuntimes.delete(session)

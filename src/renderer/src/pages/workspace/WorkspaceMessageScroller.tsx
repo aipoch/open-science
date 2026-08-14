@@ -843,7 +843,6 @@ const WorkspaceMessageScrollerImpl = ({
         scopeTurnMessageId: review.scope.turnMessageId,
         projectId: review.projectId,
         mainSessionId: review.sessionId,
-        model: useSettingsStore.getState().activeModel,
         // Explicit user Re-run: bypass main's auto-only per-turn idempotency so the stale/error review
         // is genuinely re-run rather than refused as already-reviewed.
         origin: 'manual'
@@ -875,7 +874,7 @@ const WorkspaceMessageScrollerImpl = ({
             {/* No wrapper div: message-scroller only measures/anchors Content's direct children. */}
             <MessageScrollerContent
               ref={messageScrollerContentRef}
-              className="gap-0 px-4 pb-[56px]"
+              className="mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]"
             >
               <VisibleMessageSnapshotCommit
                 scopeId={currentPresentationScopeId}

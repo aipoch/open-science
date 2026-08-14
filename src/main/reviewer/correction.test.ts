@@ -319,12 +319,13 @@ describe('single-round auditor correction', () => {
     expect(correctionSendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'main-session-1',
+        suppressUserMessage: true,
         provenanceContext: expect.objectContaining({
           rootFrameId: 'root-frame-pending-session-1',
           agentFrameId: 'root-frame-pending-session-1',
           messageBranchId: 'message-branch-pending-session-1',
           runtimeSegmentId: 'runtime-segment-pending-session-1',
-          promptMessageId: expect.stringMatching(/^prompt-/u)
+          promptMessageId: 'msg-1'
         })
       })
     )

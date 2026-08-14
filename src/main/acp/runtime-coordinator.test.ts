@@ -2767,23 +2767,29 @@ describe('AcpRuntimeCoordinator', () => {
     })
     const oldActivityStarted = createDeferred()
     const releaseOldActivity = createDeferred()
+    let oldBackendId: string | undefined
+    let newBackendId: string | undefined
 
     const oldActivity = coordinator.withActivity({}, async (runtime) => {
       oldActivityStarted.resolve()
       await releaseOldActivity.promise
+      oldBackendId = runtime.captureBackend?.().backendId
       await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
     })
     await oldActivityStarted.promise
 
     await coordinator.requestAgentFrameworkSwitch()
-    await coordinator.withActivity({}, (runtime) =>
-      runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
-    )
+    await coordinator.withActivity({}, (runtime) => {
+      newBackendId = runtime.captureBackend?.().backendId
+      return runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
+    })
     releaseOldActivity.resolve()
     await oldActivity
 
     expect(vi.mocked(created[0].runtime.buildReviewerSession)).toHaveBeenCalledOnce()
     expect(vi.mocked(created[1].runtime.buildReviewerSession)).toHaveBeenCalledOnce()
+    expect(oldBackendId).toBe('claude-code:owned')
+    expect(newBackendId).toBe('codex:owned')
   })
 
   it('lazily adopts the main session on the pinned runtime only when an activity sends a prompt', async () => {

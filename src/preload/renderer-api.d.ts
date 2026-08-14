@@ -238,6 +238,7 @@ import type {
   SetDefaultPermissionProfileRequest,
   SetAppIconVariantRequest,
   SetReasoningEffortRequest,
+  SetReviewerModelRequest,
   SetSubagentModelRequest,
   SetSkillEnabledRequest,
   SetSkillsEnabledRequest,
@@ -469,6 +470,7 @@ export interface OpenScienceAPI {
     setActiveProvider(request: SetActiveProviderRequest): Promise<SettingsSnapshot>
     setAgentFramework(request: SetAgentFrameworkRequest): Promise<SettingsSnapshot>
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
+    setReviewerModel(request: SetReviewerModelRequest): Promise<SettingsSnapshot>
     setSubagentModel(request: SetSubagentModelRequest): Promise<SettingsSnapshot>
     onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>

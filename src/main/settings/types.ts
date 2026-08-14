@@ -9,6 +9,7 @@ import type {
   ProviderType,
   ProviderValidationFailure,
   ReasoningEffort,
+  ReviewerModelConfiguration,
   SubagentModelConfiguration
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
@@ -156,6 +157,8 @@ export type StoredSettings = {
   reasoningEffort?: ReasoningEffort
   // Global direct-Subagent model routing. Absence in older documents means dynamic inheritance.
   subagentModel?: SubagentModelConfiguration
+  // Global Reviewer model routing. Absence in older documents means follow the Active model.
+  reviewerModel?: ReviewerModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
   // Conversation-driven Skill package import. Absent means enabled.

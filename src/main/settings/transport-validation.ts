@@ -4,6 +4,7 @@ import {
   type AppIconVariant,
   type ProjectFilesFilterPreference,
   type ReasoningEffort,
+  type ReviewerModelConfiguration,
   type SubagentModelConfiguration
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
@@ -30,10 +31,13 @@ const readReasoningEffort = (request: unknown): ReasoningEffort => {
   return effort
 }
 
-const readSubagentModel = (request: unknown): SubagentModelConfiguration => {
+const readModelConfiguration = (
+  request: unknown,
+  label: 'Subagent' | 'Reviewer'
+): SubagentModelConfiguration => {
   const configuration = readField(request, 'configuration')
   if (typeof configuration !== 'object' || configuration === null || Array.isArray(configuration)) {
-    throw new Error('Invalid Subagent model configuration.')
+    throw new Error(`Invalid ${label} model configuration.`)
   }
   const value = configuration as Record<string, unknown>
   if (value.mode === 'inherit' && Object.keys(value).length === 1) return { mode: 'inherit' }
@@ -56,8 +60,14 @@ const readSubagentModel = (request: unknown): SubagentModelConfiguration => {
       reasoningEffort: value.reasoningEffort
     }
   }
-  throw new Error('Invalid Subagent model configuration.')
+  throw new Error(`Invalid ${label} model configuration.`)
 }
+
+const readSubagentModel = (request: unknown): SubagentModelConfiguration =>
+  readModelConfiguration(request, 'Subagent')
+
+const readReviewerModel = (request: unknown): ReviewerModelConfiguration =>
+  readModelConfiguration(request, 'Reviewer')
 
 const readConversationSkillImportEnabled = (request: unknown): boolean => {
   const enabled = readField(request, 'enabled')
@@ -144,5 +154,6 @@ export {
   readNotificationsEnabled,
   readProjectFilesFilter,
   readReasoningEffort,
+  readReviewerModel,
   readSubagentModel
 }

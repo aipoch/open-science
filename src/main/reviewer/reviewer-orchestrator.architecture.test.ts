@@ -430,7 +430,9 @@ describe('Reviewer orchestrator architecture', () => {
 
     expect(module).toEqual({
       ownerPaths: [
+        'src/main/reviewer/acp-runtime.ts',
         'src/main/reviewer/orchestrator.ts',
+        'src/main/reviewer/model-runtime-owner.ts',
         'src/main/reviewer/review-assessment-owner.ts',
         'src/main/reviewer/reviewer-fix-loop-owner.ts',
         'src/main/reviewer/reviewer-session-driver.ts'
@@ -444,6 +446,7 @@ describe('Reviewer orchestrator architecture', () => {
       testFiles: {
         owner: [
           architectureTestPath,
+          'src/main/reviewer/model-runtime-owner.test.ts',
           'src/main/reviewer/review-assessment-owner.test.ts',
           'src/main/reviewer/orchestrator.test.ts',
           'src/main/reviewer/orchestrator-drive.test.ts',

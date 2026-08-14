@@ -349,8 +349,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain('sessionLinks')
   })
 
-  // Agent replies should read as a full-width transcript surface, while user bubbles stay compact.
-  it('renders agent replies across the full scroller width', () => {
+  // The transcript shares the composer's centered content track; agent replies fill that track,
+  // while user bubbles stay compact and right-aligned within it.
+  it('aligns the transcript width with the composer', () => {
     if (!existsSync(workspaceMessageScrollerPath)) {
       expect(existsSync(workspaceMessageScrollerPath)).toBe(true)
       return
@@ -369,7 +370,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageItemSource).toContain(
       "'relative w-full max-w-[56rem] text-sm leading-relaxed text-text-000 md:text-[15px]'"
     )
-    expect(workspaceMessageScrollerSource).toContain('className="gap-0 px-4 pb-[56px]"')
+    expect(workspaceMessageScrollerSource).toContain(
+      'className="mx-auto w-full max-w-4xl gap-0 px-4 pb-[56px]"'
+    )
     // Rows must stay direct children of MessageScrollerContent; no transcript wrapper div.
     expect(workspaceMessageScrollerSource).not.toContain('conversationContentClassName')
   })

@@ -170,6 +170,33 @@ describe('reviewer IPC handlers', () => {
     expect(passed.artifactStorageRoot).not.toBe(CONFIG_ROOT)
   })
 
+  it('uses the Main-process Reviewer model admission instead of the renderer model label', async () => {
+    const fixedReviewerRuntime = {} as AcpRuntime
+    const release = vi.fn(async () => undefined)
+    const modelRuntime = {
+      admit: vi.fn(async () => ({
+        model: 'reviewer-model',
+        reviewerAcpRuntime: fixedReviewerRuntime,
+        release
+      }))
+    }
+    const owner = createReviewerCommandOwner({ acpRuntime, modelRuntime })
+
+    await expect(owner.run({ ...createRequest(), model: 'renderer-model' })).resolves.toEqual({
+      started: true
+    })
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+
+    const passed = runReview.mock.calls[0][0] as {
+      acpRuntime: AcpRuntime
+      reviewerAcpRuntime?: AcpRuntime
+      model: string
+    }
+    expect(passed.acpRuntime).toBe(acpRuntime)
+    expect(passed.reviewerAcpRuntime).toBe(fixedReviewerRuntime)
+    expect(passed.model).toBe('reviewer-model')
+  })
+
   it('lets injected options override the config/data split independently', async () => {
     runReview.mockClear()
     // Reset the captured-roots recorders so this test only observes its own wiring.

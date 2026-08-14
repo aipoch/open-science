@@ -319,6 +319,14 @@ export const DEFAULT_SUBAGENT_MODEL_CONFIGURATION: SubagentModelConfiguration = 
   mode: 'inherit'
 })
 
+// Reviewer uses the same compound provider/model/effort selection shape as direct Subagents, but
+// keeps an independent persisted policy and runtime admission path.
+export type ReviewerModelConfiguration = SubagentModelConfiguration
+
+export const DEFAULT_REVIEWER_MODEL_CONFIGURATION: ReviewerModelConfiguration = Object.freeze({
+  mode: 'inherit'
+})
+
 // Desktop notifications for finished/failed agent tasks are opt-out: they only fire while the app
 // is unfocused, so the default surprises no one staring at the window.
 export const DEFAULT_NOTIFICATIONS_ENABLED = true
@@ -413,6 +421,7 @@ export type SettingsSnapshot = {
   // default untouched; concrete levels apply to subsequent requests when the agent supports them.
   reasoningEffort: ReasoningEffort
   subagentModel?: SubagentModelConfiguration
+  reviewerModel?: ReviewerModelConfiguration
   // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
   notificationsEnabled: boolean
   // Whether conversations may detect attached Skill packages and request an app-owned import flow.
@@ -452,6 +461,10 @@ export type SetReasoningEffortRequest = {
 
 export type SetSubagentModelRequest = {
   configuration: SubagentModelConfiguration
+}
+
+export type SetReviewerModelRequest = {
+  configuration: ReviewerModelConfiguration
 }
 
 export type SetNotificationsEnabledRequest = {
