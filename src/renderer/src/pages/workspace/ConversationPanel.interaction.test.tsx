@@ -467,6 +467,7 @@ const createPanelDefaults = (): PanelProps => ({
     },
     saveAsSkill: {
       disabled: false,
+      running: false,
       request: vi.fn()
     }
   },
@@ -3134,6 +3135,25 @@ describe('ConversationPanel + menu', () => {
     expect(disabledItem?.getAttribute('aria-disabled')).toBe('true')
     act(() => disabledItem?.click())
     expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('shows a running Save as skill without losing its disabled interaction contract', () => {
+    renderPanel({
+      workflows: {
+        saveAsSkill: {
+          disabled: true,
+          disabledReason: 'Save as skill is running.',
+          running: true
+        }
+      }
+    })
+
+    const item = container.querySelector<HTMLButtonElement>('[data-testid="menu-save-as-skill"]')
+    expect(item?.disabled).toBe(false)
+    expect(item?.getAttribute('aria-disabled')).toBe('true')
+    expect(item?.getAttribute('aria-busy')).toBe('true')
+    expect(item?.querySelector('svg')?.classList.contains('animate-spin')).toBe(true)
+    expect(item?.textContent).toBe('Saving as skill…')
   })
 
   it('Request review is disabled when isRequestReviewDisabled is true', () => {

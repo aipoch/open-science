@@ -239,6 +239,7 @@ type ConversationPanelReview = {
 type ConversationPanelSaveAsSkill = {
   disabled: boolean
   disabledReason?: string
+  running: boolean
   request: () => void
 }
 
@@ -366,6 +367,7 @@ const ConversationPanel = ({
   const {
     disabled: isSaveAsSkillDisabledFromParent,
     disabledReason: saveAsSkillDisabledReasonFromParent,
+    running: isSavingAsSkill,
     request: onSaveAsSkill
   } = saveAsSkill
   const { notebookReference, openNotebook: onOpenNotebook, openJobs: onOpenJobList } = sessionTools
@@ -1317,6 +1319,7 @@ const ConversationPanel = ({
                                   <DropdownMenuItem
                                     data-testid="menu-save-as-skill"
                                     aria-disabled={isSaveAsSkillDisabled}
+                                    aria-busy={isSavingAsSkill}
                                     onSelect={(event) => {
                                       if (isSaveAsSkillDisabled) {
                                         event.preventDefault()
@@ -1329,13 +1332,21 @@ const ConversationPanel = ({
                                       isSaveAsSkillDisabled && 'cursor-not-allowed opacity-50'
                                     )}
                                   >
-                                    <BookMarked
-                                      className="size-4 shrink-0 text-text-200"
-                                      strokeWidth={2}
-                                      aria-hidden="true"
-                                    />
+                                    {isSavingAsSkill ? (
+                                      <Loader2
+                                        className="size-4 shrink-0 animate-spin text-text-200 motion-reduce:animate-none"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    ) : (
+                                      <BookMarked
+                                        className="size-4 shrink-0 text-text-200"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    )}
                                     <span className="text-[13px] font-medium leading-5">
-                                      Save as skill
+                                      {isSavingAsSkill ? 'Saving as skill…' : 'Save as skill'}
                                     </span>
                                   </DropdownMenuItem>
                                 </TooltipTrigger>

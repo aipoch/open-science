@@ -59,7 +59,7 @@ import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
 import { useWorkspaceSessionController } from './workspace-session-controller'
 import { useSideChatController } from './use-side-chat-controller'
-import { resolveSaveAsSkillAvailability } from './save-as-skill-availability'
+import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 
 type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
@@ -579,11 +579,14 @@ const WorkspacePage = ({
     catalogSkillIds.has('customize') &&
     !sessionController.view.specialist.unavailable &&
     (!activeSpecialistAllowedSkillIds || activeSpecialistAllowedSkillIds.has('customize'))
+  const activeSessionSaveAsSkillRunning =
+    activeSessionSaveAsSkillPending || isSaveAsSkillRunning(activeSession)
   const saveAsSkillAvailability = resolveSaveAsSkillAvailability({
     session: activeSession,
     persistenceReady: isSessionPersistenceReady,
     runtimeInteraction: activeSessionHasRuntimeInteraction,
     pending: activeSessionSaveAsSkillPending,
+    running: activeSessionSaveAsSkillRunning,
     customizeAvailable,
     hasRunningSubagents: hasCurrentRunningDelegatedAttempt(activeSession),
     sideChatOpen: sideChat.view !== undefined
@@ -1112,6 +1115,7 @@ const WorkspacePage = ({
               saveAsSkill: {
                 disabled: !saveAsSkillAvailability.enabled,
                 disabledReason: saveAsSkillAvailability.disabledReason,
+                running: activeSessionSaveAsSkillRunning,
                 request: requestSaveAsSkill
               }
             }}

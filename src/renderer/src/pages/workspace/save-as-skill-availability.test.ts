@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { materializeSessionConversationGraph } from '../../../../shared/session-persistence'
 import type { ChatSession } from '@/stores/session-store'
-import { resolveSaveAsSkillAvailability } from './save-as-skill-availability'
+import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 
 const session = (): ChatSession =>
   materializeSessionConversationGraph({
@@ -45,6 +45,7 @@ const availability = (
     persistenceReady: true,
     runtimeInteraction: false,
     pending: false,
+    running: false,
     customizeAvailable: true,
     hasRunningSubagents: false,
     sideChatOpen: false,
@@ -106,5 +107,41 @@ describe('Save as skill availability', () => {
       availability({ session: { ...session(), specialistSwitchResetRequired: true } })
         .disabledReason
     ).toContain('Session operation')
+  })
+
+  it('describes a cancelled turn as interrupted instead of still running', () => {
+    expect(
+      availability({
+        session: {
+          ...session(),
+          status: 'error',
+          resumeRecovery: {
+            kind: 'resume-required',
+            cause: 'cancelled',
+            promptMessageId: 'prompt-1'
+          }
+        }
+      }).disabledReason
+    ).toContain('Session operation')
+  })
+
+  it('recognizes the active hidden control turn as Save as skill running', () => {
+    const running = session()
+    running.messages.push({
+      id: 'save-as-skill-control',
+      role: 'user',
+      content: 'Save as skill',
+      status: 'complete',
+      eventIds: [],
+      turnIntent: 'save-as-skill',
+      createdAt: 3,
+      updatedAt: 3
+    })
+    running.activeRun = { promptMessageId: 'save-as-skill-control', startedAt: 3 }
+
+    expect(isSaveAsSkillRunning(running)).toBe(true)
+    expect(availability({ session: running, running: true }).disabledReason).toBe(
+      'Save as skill is running.'
+    )
   })
 })

@@ -386,6 +386,7 @@ describe('workspace runtime events', () => {
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('error')
+    expect(session.activeRun).toBeUndefined()
     expect(session.resumeRecovery).toMatchObject({
       kind: 'resume-required',
       cause: 'cancelled',

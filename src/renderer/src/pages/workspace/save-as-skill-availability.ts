@@ -1,4 +1,5 @@
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { resolveMessageBranchPath } from '../../../../shared/conversation-graph'
 
 type SaveAsSkillSession = PersistedChatSession & {
@@ -15,6 +16,7 @@ type SaveAsSkillAvailabilityInput = {
   persistenceReady: boolean
   runtimeInteraction: boolean
   pending: boolean
+  running: boolean
   customizeAvailable: boolean
   hasRunningSubagents: boolean
   sideChatOpen: boolean
@@ -28,6 +30,7 @@ export const resolveSaveAsSkillAvailability = ({
   persistenceReady,
   runtimeInteraction,
   pending,
+  running,
   customizeAvailable,
   hasRunningSubagents,
   sideChatOpen
@@ -54,8 +57,8 @@ export const resolveSaveAsSkillAvailability = ({
           ? 'Close Side chat before saving this conversation as a Skill.'
           : hasRunningSubagents
             ? 'Wait for all subagents to finish.'
-            : pending || runtimeInteraction || session.status !== 'idle' || session.activeRun
-              ? 'Wait for the current agent activity to finish.'
+            : running
+              ? 'Save as skill is running.'
               : session.interrupted ||
                   session.resumeRecovery ||
                   session.pendingHistoryReplay ||
@@ -64,16 +67,27 @@ export const resolveSaveAsSkillAvailability = ({
                   session.fixLoopActive ||
                   session.compacting
                 ? 'Resolve the current Session operation first.'
-                : session.conversationGraphSyncBlocked
-                  ? 'Resolve the conversation branch synchronization error first.'
-                  : !session.conversationGraph || !activeBranchMessages
-                    ? 'Conversation branch history is unavailable.'
-                    : activeBranchMessages?.at(-1)?.role !== 'agent' ||
-                        activeBranchMessages.at(-1)?.status !== 'complete'
-                      ? 'Wait for a completed Agent response.'
-                      : undefined
+                : pending || runtimeInteraction || session.status !== 'idle' || session.activeRun
+                  ? 'Wait for the current agent activity to finish.'
+                  : session.conversationGraphSyncBlocked
+                    ? 'Resolve the conversation branch synchronization error first.'
+                    : !session.conversationGraph || !activeBranchMessages
+                      ? 'Conversation branch history is unavailable.'
+                      : activeBranchMessages?.at(-1)?.role !== 'agent' ||
+                          activeBranchMessages.at(-1)?.status !== 'complete'
+                        ? 'Wait for a completed Agent response.'
+                        : undefined
 
   return disabledReason
     ? { enabled: false, disabledReason }
     : { enabled: true, disabledReason: undefined }
+}
+
+export const isSaveAsSkillRunning = (session: SaveAsSkillSession | undefined): boolean => {
+  const promptMessageId = session?.activeRun?.promptMessageId
+  if (!promptMessageId) return false
+
+  return session.messages.some(
+    (message) => message.id === promptMessageId && isHiddenControlMessage(message)
+  )
 }
