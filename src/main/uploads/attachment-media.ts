@@ -285,11 +285,25 @@ const resolvedCrop = (
   return rect
 }
 
+type ImageSourcePolicy = 'png-jpeg-only' | 'sharp-raster'
+
 const processImageBytes = async (
   bytes: Buffer,
+  sourcePolicy: ImageSourcePolicy,
   options: { crop?: ImageCrop; maxSize?: number } = {},
   signal?: AbortSignal
 ): Promise<PreparedImageContentData> => {
+  if (sourcePolicy === 'png-jpeg-only') {
+    const mimeType = detectedImageMimeType(bytes)
+    if (!mimeType) {
+      throw new ImageContentError(
+        'IMAGE_DECODE_FAILED',
+        'Only PNG and JPEG image sources are supported.'
+      )
+    }
+    assertImagePixelLimit(declaredImageDimensions(bytes, mimeType))
+  }
+
   const { default: sharp } = await import('sharp')
   const inputOptions = {
     failOn: 'error' as const,
@@ -457,16 +471,8 @@ export const prepareImageContentData = async (
       )
     }
     signal?.throwIfAborted()
-    const mimeType = detectedImageMimeType(bytes)
-    if (!mimeType) {
-      throw new ImageContentError(
-        'IMAGE_DECODE_FAILED',
-        'Only PNG and JPEG image sources are supported.'
-      )
-    }
-    assertImagePixelLimit(declaredImageDimensions(bytes, mimeType))
     try {
-      return await processImageBytes(bytes, options, signal)
+      return await processImageBytes(bytes, 'png-jpeg-only', options, signal)
     } catch (error) {
       if (error instanceof ImageContentError) throw error
       if (error instanceof DOMException && error.name === 'AbortError') throw error
@@ -510,7 +516,7 @@ export const buildImageContentData = async (
         { sourceBytes: bytes.byteLength, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
       )
     }
-    const processed = await processImageBytes(bytes)
+    const processed = await processImageBytes(bytes, 'sharp-raster')
     return { data: processed.data, mimeType: processed.mimeType }
   } catch (error) {
     if (error instanceof ImageContentError) {
