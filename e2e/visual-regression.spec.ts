@@ -107,6 +107,27 @@ const seedHomeActivitySessions = async (page: Page, cwd: string): Promise<void> 
           cwd: sessionCwd,
           status: 'waiting-for-user',
           messages: [],
+          activities: [
+            {
+              id: 'mobile-needs-you-activity',
+              kind: 'tool',
+              title: 'Waiting for an answer',
+              status: 'in_progress',
+              sortIndex: 1,
+              eventIds: [],
+              elicitation: {
+                message: 'Choose one',
+                fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
+                state: 'pending',
+                durable: {
+                  kind: 'agent-user-choice',
+                  requestId: 'mobile-needs-you-choice'
+                }
+              },
+              createdAt: now - 2_000,
+              updatedAt: now - 1_000
+            }
+          ],
           createdAt: now - 2_000,
           updatedAt: now - 1_000
         },
