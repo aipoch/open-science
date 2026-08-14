@@ -832,7 +832,10 @@ class TaskRunner {
     if (!run.cancellation && completed!.session.autoReviewEnabled === true) {
       const reviewedMessage = [...completed!.session.messages]
         .reverse()
-        .find((message) => message.role === 'agent')
+        .find(
+          (message) =>
+            message.role === 'agent' && message.responseToMessageId === run.promptMessageId
+        )
       if (reviewedMessage) {
         try {
           run.review = await this.dependencies.reviewer.review(
@@ -851,6 +854,7 @@ class TaskRunner {
     const terminalCancellation = run.cancellation
     if (terminalCancellation) await terminalCancellation.dispatch.catch(() => undefined)
     const terminalCancellationAccepted = terminalCancellation?.accepted === true
+    if (terminalCancellationAccepted) run.attention = undefined
     run.status = terminalCancellationAccepted ? 'cancelled' : 'completed'
     run.output = completed!.output
     run.artifacts = completed!.artifacts
@@ -881,6 +885,7 @@ class TaskRunner {
       updatedAt: this.dependencies.now()
     }
     run.status = 'failed'
+    run.attention = undefined
     run.error = message
     run.output = completed?.output
     run.artifacts = completed?.artifacts ?? []
