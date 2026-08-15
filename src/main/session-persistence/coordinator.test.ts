@@ -922,6 +922,25 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
   })
 
+  it('rejects saving a globally identified Session under another Project', async () => {
+    const existing = createSession({ id: 'session-1', projectId: 'project-a' })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [existing], manifest: { version: 1 } },
+        isComplete: true
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await coordinator.loadAll()
+    vi.mocked(repository.saveSession).mockClear()
+
+    await expect(
+      coordinator.saveSession(createSession({ id: existing.id, projectId: 'project-b' }))
+    ).rejects.toThrow(/Session id.*another Project/)
+    expect(repository.loadSessionWithDiagnostics).not.toHaveBeenCalled()
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
   it('keeps branch source immutable and does not backfill historical Sessions', async () => {
     const originalBranchSource = {
       sessionId: 'source-session',

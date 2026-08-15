@@ -11,10 +11,9 @@
 // - The restart-recovery scan fires whenever the active session id changes (session navigation).
 
 import { useEffect, useEffectEvent } from 'react'
-import type { ComputeSessionOwner } from '../../../../shared/compute'
 
 import { useSessionJobStore } from '../../stores/session-job-store'
-import { type ChatSession, useSessionStore } from '../../stores/session-store'
+import { useSessionStore } from '../../stores/session-store'
 import { createJobAnalysisTrigger } from '../compute/job-analysis-trigger'
 
 // Matches the sendMessage signature returned by useWorkspaceAgentRuntime.
@@ -28,23 +27,6 @@ type UseJobAnalysisEffectOptions = {
   sendMessage: SendMessageFn
 }
 
-const uniqueSessionForOwner = (owner: ComputeSessionOwner): ChatSession | undefined => {
-  const matches = useSessionStore
-    .getState()
-    .sessions.filter((session) => session.id === owner.sessionId)
-  if (matches.length !== 1 || matches[0]?.projectId !== owner.projectId) return undefined
-  return matches[0]
-}
-
-const sameOwner = (
-  left: ComputeSessionOwner | undefined,
-  right: ComputeSessionOwner | undefined
-): boolean =>
-  left === right ||
-  (left !== undefined &&
-    right !== undefined &&
-    left.projectId === right.projectId &&
-    left.sessionId === right.sessionId)
 // Subscribes to all done-state compute:job-updated broadcasts and runs the analysis turn trigger.
 // Also scans for pending notifications on session load (restart recovery path).
 export const useJobAnalysisEffect = ({
@@ -61,34 +43,31 @@ export const useJobAnalysisEffect = ({
     let isActive = true
     const turnEndUnsubscribes = new Set<() => void>()
     const trigger = createJobAnalysisTrigger({
-      canAddressOwner: (owner) => uniqueSessionForOwner(owner) !== undefined,
-      isSessionInFlight: (owner) => {
-        const session = uniqueSessionForOwner(owner)
+      isSessionInFlight: (sessionId) => {
+        const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId)
         return (
           session?.status === 'running' ||
           session?.status === 'waiting-for-user' ||
           session?.status === 'waiting-permission'
         )
       },
-      sendPrompt: async (owner, text) => {
+      sendPrompt: async (sessionId, text) => {
         if (!isActive) return undefined
-        if (!uniqueSessionForOwner(owner)) return undefined
-        return sendLatestMessage({ sessionId: owner.sessionId, text })
+        return sendLatestMessage({ sessionId, text })
       },
-      markConsumed: async (owner, jobIds) => {
+      markConsumed: async (sessionId, jobIds) => {
         if (!isActive) return
         if (typeof window.api?.compute?.jobsMarkConsumed === 'function') {
-          await window.api.compute.jobsMarkConsumed(owner, jobIds)
+          await window.api.compute.jobsMarkConsumed(sessionId, jobIds)
           // Refresh the in-memory job store so CompletedJobCard re-renders with consumed state.
-          void useSessionJobStore.getState().hydrate(owner)
+          void useSessionJobStore.getState().hydrate(sessionId)
         }
       },
-      onTurnEnd: (owner, callback) => {
+      onTurnEnd: (sessionId, callback) => {
         // Keep runtime completion listeners inside the same readiness lifecycle as dispatch.
         const unsubscribe = useSessionStore.subscribe((state) => {
-          const matches = state.sessions.filter((candidate) => candidate.id === owner.sessionId)
-          if (matches.length !== 1 || matches[0]?.projectId !== owner.projectId) return
-          const session = matches[0]
+          const session = state.sessions.find((candidate) => candidate.id === sessionId)
+          if (!session) return
           if (
             session.status !== 'running' &&
             session.status !== 'waiting-for-user' &&
@@ -114,11 +93,11 @@ export const useJobAnalysisEffect = ({
       }
     }
 
-    const scanPendingJobs = (owner: ComputeSessionOwner | undefined): void => {
-      if (!owner) return
+    const scanPendingJobs = (sessionId: string | undefined): void => {
+      if (!sessionId) return
       if (typeof window.api?.compute?.jobsPendingNotification !== 'function') return
 
-      void window.api.compute.jobsPendingNotification(owner).then((jobs) => {
+      void window.api.compute.jobsPendingNotification(sessionId).then((jobs) => {
         if (!isActive) return
         for (const job of jobs) trigger.onJobDone(job)
       })
@@ -126,12 +105,12 @@ export const useJobAnalysisEffect = ({
 
     const initialState = useSessionJobStore.getState()
     feedNotifiedJobs(initialState)
-    scanPendingJobs(initialState.hydratedOwner)
+    scanPendingJobs(initialState.hydratedSessionId)
 
     const unsubscribeJobs = useSessionJobStore.subscribe((state, previousState) => {
       feedNotifiedJobs(state)
-      if (!sameOwner(state.hydratedOwner, previousState.hydratedOwner)) {
-        scanPendingJobs(state.hydratedOwner)
+      if (state.hydratedSessionId !== previousState.hydratedSessionId) {
+        scanPendingJobs(state.hydratedSessionId)
       }
     })
 

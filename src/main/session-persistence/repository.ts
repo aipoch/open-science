@@ -288,14 +288,36 @@ class SessionRepository {
       quarantineInvalidFiles,
       scanMetrics
     })
+    const projectIdsBySessionId = new Map<string, Set<string>>()
+    for (const session of sessions) {
+      const projectIds = projectIdsBySessionId.get(session.id) ?? new Set<string>()
+      projectIds.add(session.projectId)
+      projectIdsBySessionId.set(session.id, projectIds)
+    }
+    const duplicateSessionIds = new Set(
+      [...projectIdsBySessionId].filter(([, projectIds]) => projectIds.size > 1).map(([id]) => id)
+    )
+    const globallyIdentifiedSessions = sessions.filter(
+      (session) => !duplicateSessionIds.has(session.id)
+    )
+    const identityWarnings: SessionLoadWarning[] = sessions
+      .filter((session) => duplicateSessionIds.has(session.id))
+      .map((session) => ({
+        kind: 'unreadable',
+        projectId: session.projectId,
+        fileName: `${session.id}.json`,
+        recovered: false
+      }))
     const manifestRead = await this.readManifest({ quarantineInvalidFiles })
 
     return {
-      result: { sessions, manifest: manifestRead.manifest },
+      result: { sessions: globallyIdentifiedSessions, manifest: manifestRead.manifest },
       // The manifest is only a last-open pointer. It must never make a complete Session authority
       // scan read-only; a later selection write will retry persistence through the normal saver.
-      isComplete,
-      warnings: manifestRead.warning ? [...warnings, manifestRead.warning] : warnings,
+      isComplete: isComplete && duplicateSessionIds.size === 0,
+      warnings: manifestRead.warning
+        ? [...warnings, ...identityWarnings, manifestRead.warning]
+        : [...warnings, ...identityWarnings],
       scanMetrics
     }
   }

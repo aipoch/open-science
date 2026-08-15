@@ -299,6 +299,12 @@ class SessionPersistenceStateOwner {
   sessionProjectId(sessionId: string): string | undefined {
     return this.sessionMetadata.get(sessionId)?.projectId
   }
+  private assertSessionIdentityProject(projectId: string, sessionId: string): void {
+    const existingProjectId = this.sessionMetadata.get(sessionId)?.projectId
+    if (existingProjectId !== undefined && existingProjectId !== projectId) {
+      throw new Error('Cannot save a Session id that is already owned by another Project.')
+    }
+  }
   invalidateBindingTopology(projectId: string, sessionId: string): void {
     this.validatedBindingTopologies.delete(`${projectId}:${sessionId}`)
   }
@@ -516,6 +522,7 @@ class SessionPersistenceStateOwner {
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
+    this.assertSessionIdentityProject(session.projectId, session.id)
     this.options.assertMutable(session.projectId, session.id, 'save')
     const authoritative = await this.options.repository.loadSessionWithDiagnostics(
       session.projectId,

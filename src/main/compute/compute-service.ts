@@ -1,7 +1,6 @@
 import type {
   ComputeHost,
   ComputeJob,
-  ComputeSessionOwner,
   DetailsAuthor,
   ExecResult,
   JobResult,
@@ -160,12 +159,12 @@ export class ComputeService {
     return this.jobWorkflow.getJobResult(jobId)
   }
 
-  async setSessionConcurrencyLimit(owner: ComputeSessionOwner, limit: number): Promise<void> {
-    return this.jobWorkflow.setSessionConcurrencyLimit(owner, limit)
+  async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
+    return this.jobWorkflow.setSessionConcurrencyLimit(sessionId, limit)
   }
 
-  async getSessionConcurrencyStatus(owner: ComputeSessionOwner): Promise<SessionStatus> {
-    return this.jobWorkflow.getSessionConcurrencyStatus(owner)
+  async getSessionConcurrencyStatus(sessionId: string): Promise<SessionStatus> {
+    return this.jobWorkflow.getSessionConcurrencyStatus(sessionId)
   }
 
   handleJobUpdated = (job: ComputeJob): void => {

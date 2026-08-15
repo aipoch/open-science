@@ -10,7 +10,6 @@ import { formatDuration, jobElapsedMs } from './remote-job-badge-utils'
 // Badge props — sessionId is used to scope the running job list to the active session.
 type RemoteJobBadgeProps = {
   sessionId: string
-  projectId: string
   onOpenJobList?: () => void
 }
 
@@ -20,7 +19,6 @@ type RemoteJobBadgeProps = {
 // Hover reveals a tooltip listing each running job's host + intent + duration.
 export const RemoteJobBadge = ({
   sessionId,
-  projectId,
   onOpenJobList
 }: RemoteJobBadgeProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -33,7 +31,7 @@ export const RemoteJobBadge = ({
     return () => clearInterval(id)
   }, [])
 
-  const allJobs = allJobsForSession({ projectId, sessionId })
+  const allJobs = allJobsForSession(sessionId)
 
   // Count active jobs (running + submitted) for display
   const activeJobs = allJobs.filter((j) => j.status === 'running' || j.status === 'submitted')

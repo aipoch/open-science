@@ -309,20 +309,14 @@ describe('ComputeService job workflow facade', () => {
     )
     const status = await service.getJobStatus(submitted.job_id)
     const result = await service.getJobResult(submitted.job_id)
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 7)
-    const concurrency = await service.getSessionConcurrencyStatus({
-      projectId: 'project-1',
-      sessionId: 'session-1'
-    })
+    await service.setSessionConcurrencyLimit('session-1', 7)
+    const concurrency = await service.getSessionConcurrencyStatus('session-1')
     service.handleJobUpdated(storedJob!)
 
     expect(submitted.status).toBe('queued')
     expect(status).toMatchObject({ job_id: submitted.job_id, status: 'queued' })
     expect(result).toMatchObject({ job_id: submitted.job_id, output_files: [] })
-    expect(setSessionLimit).toHaveBeenCalledWith(
-      { projectId: 'project-1', sessionId: 'session-1' },
-      7
-    )
+    expect(setSessionLimit).toHaveBeenCalledWith('session-1', 7)
     expect(concurrency).toMatchObject({ session_limit: 7, queued_count: 1 })
     expect(handleJobUpdated).toHaveBeenCalledWith(storedJob)
   })

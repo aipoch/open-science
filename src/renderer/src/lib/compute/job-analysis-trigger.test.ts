@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeSessionOwner, JobSummary } from '../../../../shared/compute'
+import type { JobSummary } from '../../../../shared/compute'
 import {
   buildAnalysisPrompt,
   createJobAnalysisTrigger,
@@ -19,7 +19,6 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
   display_name: 'biowulf',
   shape: 'direct_ssh',
   session_id: 'sess-1',
-  project_id: 'project-a',
   status: 'success',
   intent: 'Salary analysis',
   created_at: 1000,
@@ -38,10 +37,7 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
   ...overrides
 })
 
-const defaultOwner: ComputeSessionOwner = { projectId: 'project-a', sessionId: 'sess-1' }
-
 const createDeps = (overrides: Partial<JobAnalysisTriggerDeps> = {}): JobAnalysisTriggerDeps => ({
-  canAddressOwner: vi.fn().mockReturnValue(true),
   isSessionInFlight: vi.fn().mockReturnValue(false),
   sendPrompt: vi.fn().mockResolvedValue({ sessionId: 'sess-1', messageId: 'msg-1' }),
   markConsumed: vi.fn().mockResolvedValue(undefined),
@@ -93,11 +89,11 @@ describe('createJobAnalysisTrigger — immediate send', () => {
     await flushMicrotasks()
 
     expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
-    const [owner, text] = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0] as [
-      ComputeSessionOwner,
+    const [sessionId, text] = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
       string
     ]
-    expect(owner).toEqual(defaultOwner)
+    expect(sessionId).toBe('sess-1')
     expect(text).toContain('job-1')
   })
 
@@ -111,17 +107,17 @@ describe('createJobAnalysisTrigger — immediate send', () => {
 
     // onTurnEnd should have been called to register a callback
     expect(deps.onTurnEnd).toHaveBeenCalledTimes(1)
-    const [owner, callback] = (deps.onTurnEnd as ReturnType<typeof vi.fn>).mock.calls[0] as [
-      ComputeSessionOwner,
+    const [sessionId, callback] = (deps.onTurnEnd as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
       () => void
     ]
-    expect(owner).toEqual(defaultOwner)
+    expect(sessionId).toBe('sess-1')
 
     // Simulate turn completion by invoking the callback
     await callback()
 
     // Now markConsumed should be called
-    expect(deps.markConsumed).toHaveBeenCalledWith(defaultOwner, ['job-1'])
+    expect(deps.markConsumed).toHaveBeenCalledWith('sess-1', ['job-1'])
   })
 
   it('does not call markConsumed when sendPrompt returns undefined (failed)', async () => {
@@ -189,10 +185,7 @@ describe('createJobAnalysisTrigger — batching', () => {
     await flushMicrotasks()
 
     expect(deps.sendPrompt).toHaveBeenCalledTimes(1)
-    const [, text] = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0] as [
-      ComputeSessionOwner,
-      string
-    ]
+    const [, text] = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0] as [string, string]
     expect(text).toContain('job-1')
     expect(text).toContain('job-2')
   })
@@ -208,10 +201,10 @@ describe('createJobAnalysisTrigger — batching', () => {
 
     expect(deps.sendPrompt).toHaveBeenCalledTimes(2)
     const sessions = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls.map(
-      (call) => (call as [ComputeSessionOwner, string])[0]
+      (call) => (call as [string, string])[0]
     )
-    expect(sessions).toContainEqual({ projectId: 'project-a', sessionId: 'sess-1' })
-    expect(sessions).toContainEqual({ projectId: 'project-a', sessionId: 'sess-2' })
+    expect(sessions).toContain('sess-1')
+    expect(sessions).toContain('sess-2')
   })
 })
 
@@ -231,7 +224,7 @@ describe('createJobAnalysisTrigger — queuing', () => {
 
     // Not sent yet — queued
     expect(deps.sendPrompt).not.toHaveBeenCalled()
-    expect(deps.onTurnEnd).toHaveBeenCalledWith(defaultOwner, expect.any(Function))
+    expect(deps.onTurnEnd).toHaveBeenCalledWith('sess-1', expect.any(Function))
 
     // Turn ends
     ;(deps.isSessionInFlight as ReturnType<typeof vi.fn>).mockReturnValue(false)
@@ -285,38 +278,7 @@ describe('createJobAnalysisTrigger — cross-session isolation', () => {
     trigger.onJobDone(makeJob({ session_id: 'sess-xyz' }))
     await flushMicrotasks()
 
-    const [owner] = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0] as [
-      ComputeSessionOwner
-    ]
-    expect(owner).toEqual({ projectId: 'project-a', sessionId: 'sess-xyz' })
-  })
-})
-
-describe('createJobAnalysisTrigger compound owner isolation', () => {
-  it('keeps identical session ids in different projects in separate batches', async () => {
-    const deps = createDeps()
-    const trigger = createJobAnalysisTrigger(deps)
-
-    trigger.onJobDone(makeJob({ job_id: 'job-a', project_id: 'project-a', session_id: 'shared' }))
-    trigger.onJobDone(makeJob({ job_id: 'job-b', project_id: 'project-b', session_id: 'shared' }))
-    await flushMicrotasks()
-
-    const owners = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls.map(
-      (call) => (call as [ComputeSessionOwner, string])[0]
-    )
-    expect(owners).toContainEqual({ projectId: 'project-a', sessionId: 'shared' })
-    expect(owners).toContainEqual({ projectId: 'project-b', sessionId: 'shared' })
-  })
-
-  it('fails closed when the runtime cannot uniquely address the owner', async () => {
-    const deps = createDeps({ canAddressOwner: vi.fn().mockReturnValue(false) })
-    const trigger = createJobAnalysisTrigger(deps)
-
-    trigger.onJobDone(makeJob())
-    await flushMicrotasks()
-
-    expect(deps.sendPrompt).not.toHaveBeenCalled()
-    expect(deps.markConsumed).not.toHaveBeenCalled()
-    expect(deps.log).toHaveBeenCalledWith('analysis-turn:ambiguous-owner', expect.any(String))
+    const [sessionId] = (deps.sendPrompt as ReturnType<typeof vi.fn>).mock.calls[0] as [string]
+    expect(sessionId).toBe('sess-xyz')
   })
 })

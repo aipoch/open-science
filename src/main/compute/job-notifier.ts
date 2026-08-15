@@ -170,7 +170,6 @@ export const emitJobNotification = async (
     display_name: displayName,
     shape: updatedJob.shape,
     session_id: updatedJob.session_id,
-    project_id: updatedJob.project_id,
     status: updatedJob.status,
     intent: updatedJob.intent,
     created_at: updatedJob.created_at,

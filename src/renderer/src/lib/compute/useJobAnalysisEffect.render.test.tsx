@@ -16,7 +16,6 @@ const makeCompletedJob = (): JobSummary => ({
   display_name: 'biowulf',
   shape: 'direct_ssh',
   session_id: 'session-1',
-  project_id: 'project-a',
   status: 'success',
   intent: 'Analyze results',
   created_at: 1000,
@@ -65,24 +64,10 @@ describe('useJobAnalysisEffect persistence readiness', () => {
     jobsList.mockClear()
     useSessionJobStore.setState({
       ...createInitialSessionJobState(),
-      hydratedOwner: { projectId: 'project-a', sessionId: 'session-1' },
+      hydratedSessionId: 'session-1',
       isLoaded: true
     })
-    useSessionStore.setState({
-      ...createInitialSessionState(),
-      sessions: [
-        {
-          id: 'session-1',
-          projectId: 'project-a',
-          title: 'Ready',
-          cwd: '/workspace/project-a',
-          status: 'idle',
-          messages: [],
-          createdAt: 1,
-          updatedAt: 1
-        }
-      ]
-    })
+    useSessionStore.setState(createInitialSessionState())
     window.api = {
       compute: {
         jobsPendingNotification,
@@ -120,10 +105,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
       root.render(<Probe enabled />)
       await Promise.resolve()
     })
-    expect(jobsPendingNotification).toHaveBeenCalledWith({
-      projectId: 'project-a',
-      sessionId: 'session-1'
-    })
+    expect(jobsPendingNotification).toHaveBeenCalledWith('session-1')
 
     await act(async () => root.render(<Probe enabled={false} />))
     await act(async () => {
@@ -243,26 +225,7 @@ describe('useJobAnalysisEffect persistence readiness', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(jobsPendingNotification).toHaveBeenCalledWith({
-      projectId: 'project-a',
-      sessionId: 'session-1'
-    })
+    expect(jobsPendingNotification).toHaveBeenCalledWith('session-1')
     expect(sendMessage).toHaveBeenCalledOnce()
-  })
-  it('does not dispatch or consume when duplicate session ids make the runtime target ambiguous', async () => {
-    useSessionStore.setState((state) => ({
-      sessions: [
-        ...state.sessions,
-        { ...state.sessions[0]!, projectId: 'project-b', cwd: '/workspace/project-b' }
-      ]
-    }))
-
-    await act(async () => {
-      root.render(<Probe enabled />)
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-
-    expect(sendMessage).not.toHaveBeenCalled()
-    expect(jobsMarkConsumed).not.toHaveBeenCalled()
   })
 })

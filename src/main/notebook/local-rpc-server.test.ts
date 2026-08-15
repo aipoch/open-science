@@ -2793,7 +2793,7 @@ describe('notebook local RPC server', () => {
       projectName: 'default-project',
       repository: new NotebookRunRepository(root)
     })
-    const calls: Array<{ owner: { projectId: string; sessionId: string }; limit: number }> = []
+    const calls: Array<{ sessionId: string; limit: number }> = []
     const fakeComputeService = {
       callCommand: async () => ({}),
       list: async () => [],
@@ -2805,11 +2805,8 @@ describe('notebook local RPC server', () => {
       getJobStatus: async () => ({}),
       getJobResult: async () => ({}),
       getEnabledComputeHosts: () => [],
-      setSessionConcurrencyLimit: async (
-        owner: { projectId: string; sessionId: string },
-        limit: number
-      ) => {
-        calls.push({ owner, limit })
+      setSessionConcurrencyLimit: async (sessionId: string, limit: number) => {
+        calls.push({ sessionId, limit })
       },
       getSessionConcurrencyStatus: async () => ({
         session_limit: null,
@@ -2843,9 +2840,7 @@ describe('notebook local RPC server', () => {
       })
 
       expect(response.status).toBe(200)
-      expect(calls).toEqual([
-        { owner: { projectId: 'default-project', sessionId: 'my-session' }, limit: 10 }
-      ])
+      expect(calls).toEqual([{ sessionId: 'my-session', limit: 10 }])
     } finally {
       await server.close()
     }
@@ -2871,9 +2866,8 @@ describe('notebook local RPC server', () => {
       getJobResult: async () => ({}),
       getEnabledComputeHosts: () => [],
       setSessionConcurrencyLimit: async () => {},
-      getSessionConcurrencyStatus: async (owner: { projectId: string; sessionId: string }) => ({
-        session_limit:
-          owner.sessionId === 'my-session' && owner.projectId === 'default-project' ? 5 : null,
+      getSessionConcurrencyStatus: async (sessionId: string) => ({
+        session_limit: sessionId === 'my-session' ? 5 : null,
         active_count: 2,
         queued_count: 1,
         provider_ceilings: { 'ssh:cluster-a': 10 }

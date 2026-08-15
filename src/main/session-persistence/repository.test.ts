@@ -1448,6 +1448,41 @@ describe('session persistence repository (per-session files)', () => {
     expect(sessions[0]).toMatchObject({ id: 'session-1', projectId: 'project-a' })
   })
 
+  it('omits every cross-project duplicate Session id without modifying durable files', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(createSession({ id: 'duplicate-session', projectId: 'project-a' }))
+    await repository.saveSession(createSession({ id: 'duplicate-session', projectId: 'project-b' }))
+    await repository.saveSession(createSession({ id: 'healthy-session', projectId: 'project-c' }))
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions.map((session) => session.id)).toEqual(['healthy-session'])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual(
+      expect.arrayContaining([
+        {
+          kind: 'unreadable',
+          projectId: 'project-a',
+          fileName: 'duplicate-session.json',
+          recovered: false
+        },
+        {
+          kind: 'unreadable',
+          projectId: 'project-b',
+          fileName: 'duplicate-session.json',
+          recovered: false
+        }
+      ])
+    )
+    expect(scan.warnings).toHaveLength(2)
+    await expect(
+      readFile(join(storageRoot!, 'sessions', 'project-a', 'duplicate-session.json'), 'utf8')
+    ).resolves.toContain('duplicate-session')
+    await expect(
+      readFile(join(storageRoot!, 'sessions', 'project-b', 'duplicate-session.json'), 'utf8')
+    ).resolves.toContain('duplicate-session')
+  })
+
   it('keeps session data in ~/.open-science under the user home directory by default', () => {
     // Build the expectation with join() so the separator matches the host the test runs on.
     expect(getSessionPersistenceDir('/Users/example')).toBe(join('/Users/example', '.open-science'))

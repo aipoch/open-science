@@ -3,12 +3,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
 import type { OpenScienceAPI } from './renderer-api'
 
-import type {
-  ComputeApprovalDecision,
-  ComputeApprovalRequest,
-  ComputeSessionOwner,
-  JobSummary
-} from '../shared/compute'
+import type { ComputeApprovalDecision, ComputeApprovalRequest, JobSummary } from '../shared/compute'
 import type { NotebookLanguage } from '../shared/notebook'
 import type { DiscoveredInterpreter } from '../shared/notebook-runtime'
 import type {
@@ -539,14 +534,14 @@ const api: OpenScienceAPI = {
     bookmarksSet: (providerId, folders) =>
       electronRendererContracts.invoke('compute.bookmarksSet', providerId, folders),
     // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
-    jobsList: (filter: ComputeSessionOwner & { status?: string[] }) =>
+    jobsList: (filter: { sessionId: string; status?: string[] }) =>
       electronRendererContracts.invoke('compute.jobsList', filter),
     // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null).
-    jobsPendingNotification: (owner) =>
-      electronRendererContracts.invoke('compute.jobsPendingNotification', owner),
+    jobsPendingNotification: (sessionId) =>
+      electronRendererContracts.invoke('compute.jobsPendingNotification', sessionId),
     // Marks job ids as notification-consumed after a successful analysis turn (issue 05).
-    jobsMarkConsumed: (owner, jobIds) =>
-      electronRendererContracts.invoke('compute.jobsMarkConsumed', owner, jobIds),
+    jobsMarkConsumed: (sessionId, jobIds) =>
+      electronRendererContracts.invoke('compute.jobsMarkConsumed', sessionId, jobIds),
     // Fires when a job's status or tail changes (broadcast from the main-process poller).
     onJobUpdated: (listener: (job: JobSummary) => void) =>
       electronRendererContracts.subscribe('compute.onJobUpdated', listener),

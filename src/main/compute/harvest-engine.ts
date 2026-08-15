@@ -369,7 +369,6 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
         job_id: updatedJob.job_id,
         provider_id: updatedJob.provider_id,
         display_name: displayName,
-        project_id: updatedJob.project_id,
         shape: updatedJob.shape,
         session_id: updatedJob.session_id,
         status: updatedJob.status,

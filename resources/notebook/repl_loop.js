@@ -1010,9 +1010,9 @@ function isValidHostCapabilityProjection(value) {
   if (Object.getPrototypeOf(value) !== Object.prototype) return false
 
   const entries = Object.entries(value)
-  const knownEntries = HOST_CAPABILITY_KNOWN_KEYS.filter((name) =>
-    Object.hasOwn(value, name)
-  ).map((name) => [name, value[name]])
+  const knownEntries = HOST_CAPABILITY_KNOWN_KEYS.filter((name) => Object.hasOwn(value, name)).map(
+    (name) => [name, value[name]]
+  )
   const unknownEntries = entries.filter(([name]) => !HOST_CAPABILITY_KNOWN_KEYS.includes(name))
   return (
     entries.length <= HOST_CAPABILITY_MAX_FIELDS &&

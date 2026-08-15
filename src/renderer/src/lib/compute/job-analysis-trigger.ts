@@ -9,7 +9,7 @@
 //  - markConsumed only on successful sendPrompt (failure → retry on next broadcast).
 //  - Cross-session isolation: prompt goes to job.session_id.
 
-import type { ComputeSessionOwner, JobSummary } from '../../../../shared/compute'
+import type { JobSummary } from '../../../../shared/compute'
 
 // Prompt text shown as the user message that kicks off the analysis turn. English per CLAUDE.md.
 export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
@@ -57,25 +57,22 @@ export const buildAnalysisPrompt = (jobs: JobSummary[]): string => {
 
 // Injected dependencies so the trigger is fully testable without React or Electron.
 export type JobAnalysisTriggerDeps = {
-  // Returns false when a bare runtime session id is ambiguous across projects.
-  canAddressOwner: (owner: ComputeSessionOwner) => boolean
   // Returns true if the given session currently has a prompt in flight (ACP single-in-flight guard).
-  isSessionInFlight: (owner: ComputeSessionOwner) => boolean
+  isSessionInFlight: (sessionId: string) => boolean
   // Sends a prompt to a session; resolves to a result object on success or undefined on failure.
   sendPrompt: (
-    owner: ComputeSessionOwner,
+    sessionId: string,
     text: string
   ) => Promise<{ sessionId: string; messageId: string } | undefined>
   // Persists notificationConsumedAt for the given job ids (IPC to main process).
-  markConsumed: (owner: ComputeSessionOwner, jobIds: string[]) => Promise<void>
+  markConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
   // Registers a one-shot callback for when the given session's turn finishes (idle transition).
-  onTurnEnd: (owner: ComputeSessionOwner, callback: () => void) => void
+  onTurnEnd: (sessionId: string, callback: () => void) => void
   // Structured logger; receives a tag and a detail message for observability.
   log: (tag: string, message: string) => void
 }
 
 type PendingBatch = {
-  owner: ComputeSessionOwner
   // jobs waiting to be sent once the session is free
   jobs: Map<string, JobSummary>
   // whether we've already registered an onTurnEnd callback for this session
@@ -91,7 +88,7 @@ export type JobAnalysisTrigger = {
   onJobDone: (job: JobSummary) => void
   // Notify the trigger that a session's turn has ended (called by the turn-end listener).
   // Exposed separately so hook integration can wire this without coupling to onTurnEnd dep.
-  _notifyTurnEnd: (owner: ComputeSessionOwner) => void
+  _notifyTurnEnd: (sessionId: string) => void
 }
 
 export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnalysisTrigger => {
@@ -102,10 +99,6 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
   // Track jobs waiting for turn completion (dispatch sent, not yet consumed).
   const awaitingTurnEnd = new Map<string, string[]>() // sessionId -> jobIds[]
 
-  const ownerKey = (owner: ComputeSessionOwner): string =>
-    JSON.stringify([owner.projectId, owner.sessionId])
-  const ownerLabel = (owner: ComputeSessionOwner): string =>
-    `project=${owner.projectId} session=${owner.sessionId}`
   const isDoneState = (job: JobSummary): boolean =>
     job.notified_at !== undefined && job.notified_at !== null
 
@@ -113,10 +106,9 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     job.notification_consumed_at !== undefined && job.notification_consumed_at !== null
 
   // Attempts to send the batched analysis prompt for a session immediately.
-  const flushSession = async (key: string): Promise<void> => {
-    const batch = pendingBySession.get(key)
+  const flushSession = async (sessionId: string): Promise<void> => {
+    const batch = pendingBySession.get(sessionId)
     if (!batch || batch.jobs.size === 0) return
-    const { owner } = batch
 
     const jobsToSend = Array.from(batch.jobs.values())
     const jobIds = jobsToSend.map((j) => j.job_id)
@@ -125,93 +117,90 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     for (const id of jobIds) inFlight.add(id)
 
     // Clear the pending queue for this session.
-    pendingBySession.delete(key)
+    pendingBySession.delete(sessionId)
 
-    deps.log('analysis-turn:sending', `${ownerLabel(owner)} jobs=[${jobIds.join(',')}]`)
+    deps.log('analysis-turn:sending', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
 
     const prompt = buildAnalysisPrompt(jobsToSend)
 
     let result: Awaited<ReturnType<typeof deps.sendPrompt>>
 
     try {
-      result = await deps.sendPrompt(owner, prompt)
+      result = await deps.sendPrompt(sessionId, prompt)
     } catch (err) {
-      deps.log('analysis-turn:send-failed', `${ownerLabel(owner)} error=${String(err)}`)
+      deps.log('analysis-turn:send-failed', `session=${sessionId} error=${String(err)}`)
       // Don't mark consumed — will retry on next broadcast.
       for (const id of jobIds) inFlight.delete(id)
       return
     }
 
     if (!result) {
-      deps.log('analysis-turn:send-returned-undefined', ownerLabel(owner))
+      deps.log('analysis-turn:send-returned-undefined', `session=${sessionId}`)
       for (const id of jobIds) inFlight.delete(id)
       return
     }
 
-    deps.log('analysis-turn:sent', `${ownerLabel(owner)} jobs=[${jobIds.join(',')}]`)
+    deps.log('analysis-turn:sent', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
 
     // Register these jobs as awaiting turn completion. Mark consumed only when turn ends idle.
-    awaitingTurnEnd.set(key, jobIds)
+    awaitingTurnEnd.set(sessionId, jobIds)
 
     // Register onTurnEnd callback to mark consumed when turn truly completes (fix issue #3).
     if (!batch.waitRegistered) {
       batch.waitRegistered = true
-      deps.onTurnEnd(owner, () => onTurnEndCallback(owner))
+      deps.onTurnEnd(sessionId, () => onTurnEndCallback(sessionId))
     }
   }
 
   // Called when a turn ends. Marks jobs consumed if the session is now idle.
-  const onTurnEndCallback = async (owner: ComputeSessionOwner): Promise<void> => {
-    const key = ownerKey(owner)
-    const jobIds = awaitingTurnEnd.get(key)
+  const onTurnEndCallback = async (sessionId: string): Promise<void> => {
+    const jobIds = awaitingTurnEnd.get(sessionId)
     if (!jobIds || jobIds.length === 0) return
 
     // If session is still in-flight, another turn started — wait for the next onTurnEnd.
-    if (deps.isSessionInFlight(owner)) {
-      deps.log('analysis-turn:requeued-consumed', `${ownerLabel(owner)} still-in-flight`)
-      deps.onTurnEnd(owner, () => onTurnEndCallback(owner))
+    if (deps.isSessionInFlight(sessionId)) {
+      deps.log('analysis-turn:requeued-consumed', `session=${sessionId} still-in-flight`)
+      deps.onTurnEnd(sessionId, () => onTurnEndCallback(sessionId))
       return
     }
 
     // Session is now idle — mark these jobs as consumed.
-    awaitingTurnEnd.delete(key)
+    awaitingTurnEnd.delete(sessionId)
 
     try {
-      await deps.markConsumed(owner, jobIds)
-      deps.log('analysis-turn:consumed', `${ownerLabel(owner)} jobs=[${jobIds.join(',')}]`)
+      await deps.markConsumed(sessionId, jobIds)
+      deps.log('analysis-turn:consumed', `session=${sessionId} jobs=[${jobIds.join(',')}]`)
     } catch (err) {
-      deps.log('analysis-turn:mark-consumed-failed', `${ownerLabel(owner)} error=${String(err)}`)
+      deps.log('analysis-turn:mark-consumed-failed', `session=${sessionId} error=${String(err)}`)
     } finally {
       // Clear in-flight markers now that we've attempted to mark consumed.
       for (const id of jobIds) inFlight.delete(id)
     }
   }
 
-  const scheduleFlush = (owner: ComputeSessionOwner): void => {
+  const scheduleFlush = (sessionId: string): void => {
     // Use a microtask to batch multiple synchronous onJobDone calls.
-    const key = ownerKey(owner)
-    void Promise.resolve().then(() => flushSession(key))
+    void Promise.resolve().then(() => flushSession(sessionId))
   }
 
-  const notifyTurnEnd = (owner: ComputeSessionOwner): void => {
-    const key = ownerKey(owner)
-    const batch = pendingBySession.get(key)
+  const notifyTurnEnd = (sessionId: string): void => {
+    const batch = pendingBySession.get(sessionId)
     if (!batch || batch.jobs.size === 0) return
 
     // Reset waitRegistered so a new callback can be registered if needed.
     batch.waitRegistered = false
 
-    if (deps.isSessionInFlight(owner)) {
+    if (deps.isSessionInFlight(sessionId)) {
       // Another turn started; re-register.
       if (!batch.waitRegistered) {
         batch.waitRegistered = true
-        deps.onTurnEnd(owner, () => notifyTurnEnd(owner))
-        deps.log('analysis-turn:requeued', `${ownerLabel(owner)} still-in-flight`)
+        deps.onTurnEnd(sessionId, () => notifyTurnEnd(sessionId))
+        deps.log('analysis-turn:requeued', `session=${sessionId} still-in-flight`)
       }
       return
     }
 
-    scheduleFlush(owner)
+    scheduleFlush(sessionId)
   }
 
   const onJobDone = (job: JobSummary): void => {
@@ -219,39 +208,33 @@ export const createJobAnalysisTrigger = (deps: JobAnalysisTriggerDeps): JobAnaly
     if (isAlreadyConsumed(job)) return
     if (inFlight.has(job.job_id)) return
 
-    const owner = { projectId: job.project_id, sessionId: job.session_id }
-    const jobId = job.job_id
-    if (!deps.canAddressOwner(owner)) {
-      deps.log('analysis-turn:ambiguous-owner', ownerLabel(owner))
-      return
-    }
-    const key = ownerKey(owner)
+    const { session_id: sessionId, job_id: jobId } = job
 
-    let batch = pendingBySession.get(key)
+    let batch = pendingBySession.get(sessionId)
 
     if (!batch) {
-      batch = { owner, jobs: new Map(), waitRegistered: false }
-      pendingBySession.set(key, batch)
+      batch = { jobs: new Map(), waitRegistered: false }
+      pendingBySession.set(sessionId, batch)
     }
 
     if (batch.jobs.has(jobId)) return // already queued for this session
 
     batch.jobs.set(jobId, job)
 
-    deps.log('analysis-turn:queued', `${ownerLabel(owner)} job=${jobId}`)
+    deps.log('analysis-turn:queued', `session=${sessionId} job=${jobId}`)
 
-    if (deps.isSessionInFlight(owner)) {
+    if (deps.isSessionInFlight(sessionId)) {
       // Session has a turn running — wait for it to finish.
       if (!batch.waitRegistered) {
         batch.waitRegistered = true
-        deps.onTurnEnd(owner, () => notifyTurnEnd(owner))
-        deps.log('analysis-turn:waiting-for-turn-end', `${ownerLabel(owner)} job=${jobId}`)
+        deps.onTurnEnd(sessionId, () => notifyTurnEnd(sessionId))
+        deps.log('analysis-turn:waiting-for-turn-end', `session=${sessionId} job=${jobId}`)
       }
       return
     }
 
     // Session is idle — flush on next microtask (allows batching of same-tick arrivals).
-    scheduleFlush(owner)
+    scheduleFlush(sessionId)
   }
 
   return { onJobDone, _notifyTurnEnd: notifyTurnEnd }

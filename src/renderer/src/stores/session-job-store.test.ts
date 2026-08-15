@@ -10,7 +10,6 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
   display_name: 'biowulf',
   shape: 'direct_ssh',
   session_id: 'session-abc',
-  project_id: 'project-a',
   status: 'running',
   intent: 'Salary analysis',
   created_at: 1000,
@@ -42,11 +41,11 @@ describe('session job store — hydrate', () => {
     const jobs = [makeJob({ job_id: 'job-1', session_id: 'sess-1' })]
     setJobsApi({ jobsList: vi.fn().mockResolvedValue(jobs) })
 
-    await useSessionJobStore.getState().hydrate({ projectId: 'project-a', sessionId: 'sess-1' })
+    await useSessionJobStore.getState().hydrate('sess-1')
 
     const state = useSessionJobStore.getState()
     expect(state.isLoaded).toBe(true)
-    expect(state.hydratedOwner).toEqual({ projectId: 'project-a', sessionId: 'sess-1' })
+    expect(state.hydratedSessionId).toBe('sess-1')
     expect(state.jobsById.get('job-1')).toEqual(jobs[0])
   })
 
@@ -57,13 +56,13 @@ describe('session job store — hydrate', () => {
       jobsList: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second)
     })
 
-    await useSessionJobStore.getState().hydrate({ projectId: 'project-a', sessionId: 'sess-1' })
-    await useSessionJobStore.getState().hydrate({ projectId: 'project-a', sessionId: 'sess-2' })
+    await useSessionJobStore.getState().hydrate('sess-1')
+    await useSessionJobStore.getState().hydrate('sess-2')
 
     const state = useSessionJobStore.getState()
     expect(state.jobsById.has('old')).toBe(false)
     expect(state.jobsById.has('new')).toBe(true)
-    expect(state.hydratedOwner).toEqual({ projectId: 'project-a', sessionId: 'sess-2' })
+    expect(state.hydratedSessionId).toBe('sess-2')
   })
 })
 
@@ -93,9 +92,7 @@ describe('session job store — runningJobsForSession', () => {
     useSessionJobStore.getState().applyUpdate(success)
     useSessionJobStore.getState().applyUpdate(otherSession)
 
-    const result = useSessionJobStore
-      .getState()
-      .runningJobsForSession({ projectId: 'project-a', sessionId: 'sess-A' })
+    const result = useSessionJobStore.getState().runningJobsForSession('sess-A')
     expect(result).toHaveLength(1)
     expect(result[0]!.job_id).toBe('r')
   })
@@ -104,20 +101,12 @@ describe('session job store — runningJobsForSession', () => {
     const job = makeJob({ job_id: 'j', session_id: 'sess-A', status: 'success' })
     useSessionJobStore.getState().applyUpdate(job)
 
-    expect(
-      useSessionJobStore
-        .getState()
-        .runningJobsForSession({ projectId: 'project-a', sessionId: 'sess-A' })
-    ).toHaveLength(0)
+    expect(useSessionJobStore.getState().runningJobsForSession('sess-A')).toHaveLength(0)
   })
 
   it('returns an empty array for an unknown session id', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ session_id: 'sess-A', status: 'running' }))
-    expect(
-      useSessionJobStore
-        .getState()
-        .runningJobsForSession({ projectId: 'project-a', sessionId: 'sess-UNKNOWN' })
-    ).toHaveLength(0)
+    expect(useSessionJobStore.getState().runningJobsForSession('sess-UNKNOWN')).toHaveLength(0)
   })
 })
 
@@ -148,9 +137,7 @@ describe('session job store — allJobsForSession', () => {
     useSessionJobStore.getState().applyUpdate(job3)
     useSessionJobStore.getState().applyUpdate(otherSession)
 
-    const result = useSessionJobStore
-      .getState()
-      .allJobsForSession({ projectId: 'project-a', sessionId: 'sess-A' })
+    const result = useSessionJobStore.getState().allJobsForSession('sess-A')
     expect(result).toHaveLength(3)
     expect(result[0]!.job_id).toBe('j2') // created_at: 3000
     expect(result[1]!.job_id).toBe('j3') // created_at: 2000
@@ -159,29 +146,6 @@ describe('session job store — allJobsForSession', () => {
 
   it('returns an empty array when session has no jobs', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ session_id: 'sess-A' }))
-    expect(
-      useSessionJobStore
-        .getState()
-        .allJobsForSession({ projectId: 'project-a', sessionId: 'sess-B' })
-    ).toHaveLength(0)
-  })
-
-  it('does not return a different project job with the same session id', () => {
-    useSessionJobStore
-      .getState()
-      .applyUpdate(
-        makeJob({ job_id: 'owned', project_id: 'project-a', session_id: 'shared-session' })
-      )
-    useSessionJobStore
-      .getState()
-      .applyUpdate(
-        makeJob({ job_id: 'foreign', project_id: 'project-b', session_id: 'shared-session' })
-      )
-
-    const result = useSessionJobStore.getState().allJobsForSession({
-      projectId: 'project-a',
-      sessionId: 'shared-session'
-    })
-    expect(result.map((job) => job.job_id)).toEqual(['owned'])
+    expect(useSessionJobStore.getState().allJobsForSession('sess-B')).toHaveLength(0)
   })
 })

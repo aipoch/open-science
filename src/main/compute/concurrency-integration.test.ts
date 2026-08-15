@@ -106,7 +106,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     const providerId = computeProviderId('test-host')
 
     // Set session limit to 2
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 2)
+    await service.setSessionConcurrencyLimit('session-1', 2)
 
     const result = await service.submitJob(
       providerId,
@@ -126,7 +126,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     const providerId = computeProviderId('test-host')
 
     // Set session limit to 1
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 1)
+    await service.setSessionConcurrencyLimit('session-1', 1)
 
     // Submit first job (should be submitted)
     const result1 = await service.submitJob(
@@ -228,7 +228,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     const providerId = computeProviderId('test-host')
 
     // Set session limit to 1
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 1)
+    await service.setSessionConcurrencyLimit('session-1', 1)
 
     // Submit first job (submitted)
     const result1 = await service.submitJob(
@@ -276,7 +276,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     const providerId = computeProviderId('test-host')
 
     // Set session limit to 1
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 1)
+    await service.setSessionConcurrencyLimit('session-1', 1)
 
     // Submit first job (submitted)
     const result1 = await service.submitJob(
@@ -338,7 +338,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
   it('should return session status with correct counts', async () => {
     const providerId = computeProviderId('test-host')
 
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 2)
+    await service.setSessionConcurrencyLimit('session-1', 2)
 
     // Submit 2 jobs (should be submitted)
     const result1 = await service.submitJob(
@@ -370,10 +370,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
 
     expect(result3.status).toBe('queued')
 
-    const status = await service.getSessionConcurrencyStatus({
-      projectId: 'project-1',
-      sessionId: 'session-1'
-    })
+    const status = await service.getSessionConcurrencyStatus('session-1')
 
     expect(status.session_limit).toBe(2)
     expect(status.active_count).toBe(2)
@@ -384,7 +381,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
   it('should not dispatch queued job if status is not terminal', async () => {
     const providerId = computeProviderId('test-host')
 
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 1)
+    await service.setSessionConcurrencyLimit('session-1', 1)
 
     const result1 = await service.submitJob(
       providerId,
@@ -420,7 +417,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
 
   it('should handle terminal states: success, failed, timeout, error', async () => {
     const providerId = computeProviderId('test-host')
-    await service.setSessionConcurrencyLimit({ projectId: 'project-1', sessionId: 'session-1' }, 1)
+    await service.setSessionConcurrencyLimit('session-1', 1)
 
     const terminalStates: Array<'success' | 'failed' | 'timeout' | 'error'> = [
       'success',
@@ -439,10 +436,7 @@ describe('ConcurrencyManager integration with ComputeService', () => {
         { sessionId: `session-${terminalState}`, projectId: 'project-1' }
       )
 
-      await service.setSessionConcurrencyLimit(
-        { projectId: 'project-1', sessionId: `session-${terminalState}` },
-        1
-      )
+      await service.setSessionConcurrencyLimit(`session-${terminalState}`, 1)
 
       const result2 = await service.submitJob(
         providerId,

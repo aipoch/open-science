@@ -1,8 +1,4 @@
-import type {
-  ComputeJobOwner,
-  ComputeJobRepository,
-  ComputeJobSessionOwner
-} from './job-repository'
+import type { ComputeJobOwner, ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 import type { ComputeJob } from '../../shared/compute'
 import { ComputeJobLifecycle } from './compute-job-lifecycle'
@@ -68,8 +64,8 @@ export class ConcurrencyManager {
   }
 
   // Set session-level concurrency limit (stored in memory, not persisted).
-  setSessionLimit(owner: ComputeJobSessionOwner, limit: number): void {
-    this.sessionLimits.set(this.sessionOwnerKey(owner.projectId, owner.sessionId), limit)
+  setSessionLimit(sessionId: string, limit: number): void {
+    this.sessionLimits.set(sessionId, limit)
   }
 
   async pauseOwner(owner: ComputeJobOwner): Promise<void> {
@@ -106,16 +102,10 @@ export class ConcurrencyManager {
   // Returns true when a new active job for this (session, provider) would exceed the session limit
   // or the provider ceiling — i.e. the job should be queued rather than dispatched immediately.
   // Only active jobs (submitted + running) count; queued jobs do not occupy a slot.
-  private async overActiveLimits(
-    owner: ComputeJobSessionOwner,
-    providerId: string
-  ): Promise<boolean> {
-    const sessionOwner = { projectId: owner.projectId, sessionId: owner.sessionId }
-    const sessionLimit = this.sessionLimits.get(
-      this.sessionOwnerKey(owner.projectId, owner.sessionId)
-    )
+  private async overActiveLimits(sessionId: string, providerId: string): Promise<boolean> {
+    const sessionLimit = this.sessionLimits.get(sessionId)
     if (sessionLimit !== undefined) {
-      const activeInSession = await this.jobRepository.countActiveBySession(sessionOwner)
+      const activeInSession = await this.jobRepository.countActiveBySession(sessionId)
       if (activeInSession >= sessionLimit) return true
     }
 
@@ -131,7 +121,7 @@ export class ConcurrencyManager {
   // pass the same slot. Returns the committed status, or 'queue_full' WITHOUT committing when the
   // global queue is at capacity (the caller must not create a row in that case).
   async admit(
-    params: ComputeJobSessionOwner & { providerId: string },
+    params: { sessionId: string; providerId: string },
     commit: (status: 'submitted' | 'queued') => Promise<void>
   ): Promise<'submitted' | 'queued' | 'queue_full'> {
     return this.runExclusive(async () => {
@@ -139,7 +129,7 @@ export class ConcurrencyManager {
       if (globalQueuedCount >= GLOBAL_QUEUE_LIMIT) return 'queue_full'
 
       const status: 'submitted' | 'queued' = (await this.overActiveLimits(
-        params,
+        params.sessionId,
         params.providerId
       ))
         ? 'queued'
@@ -161,10 +151,12 @@ export class ConcurrencyManager {
   // authoritative admission decision, because reading the count here and committing the row later is
   // not atomic (the race admit() closes). The binding decision + row commit is admit(). Do NOT route
   // a real submit decision through enqueue() — use admit() so the read→decide→commit stays atomic.
-  async enqueue(
-    params: ComputeJobSessionOwner & { jobId: string; providerId: string }
-  ): Promise<'can_dispatch' | 'should_queue' | 'queue_full'> {
-    const { providerId } = params
+  async enqueue(params: {
+    jobId: string
+    sessionId: string
+    providerId: string
+  }): Promise<'can_dispatch' | 'should_queue' | 'queue_full'> {
+    const { sessionId, providerId } = params
 
     // 1. Check global queue limit
     const globalQueuedCount = await this.jobRepository.countQueuedJobs()
@@ -173,7 +165,7 @@ export class ConcurrencyManager {
     }
 
     // 2. Check session limit + provider ceiling (only active jobs count, not queued).
-    if (await this.overActiveLimits(params, providerId)) {
+    if (await this.overActiveLimits(sessionId, providerId)) {
       return 'should_queue'
     }
 
@@ -186,13 +178,12 @@ export class ConcurrencyManager {
   }
 
   // Query session status (active/queued counts, limits, provider ceilings).
-  async getStatus(owner: ComputeJobSessionOwner): Promise<SessionStatus> {
-    const sessionLimit =
-      this.sessionLimits.get(this.sessionOwnerKey(owner.projectId, owner.sessionId)) ?? null
-    const activeCount = await this.jobRepository.countActiveBySession(owner)
+  async getStatus(sessionId: string): Promise<SessionStatus> {
+    const sessionLimit = this.sessionLimits.get(sessionId) ?? null
+    const activeCount = await this.jobRepository.countActiveBySession(sessionId)
 
     // Find all jobs for this session to compute queued count and provider ceilings
-    const allJobs = await this.jobRepository.findBySession(owner)
+    const allJobs = await this.jobRepository.findBySession(sessionId)
     const queuedJobs = allJobs.filter((job) => job.status === 'queued')
     const queuedCount = queuedJobs.length
 
@@ -240,7 +231,7 @@ export class ConcurrencyManager {
           // across SSH work would serialize every submission behind network latency.
           const reserved = await this.runExclusive(async () => {
             if (this.isOwnerPaused(owner)) return false
-            if (await this.overActiveLimits(owner, job.provider_id)) return false
+            if (await this.overActiveLimits(job.session_id, job.provider_id)) return false
             if (this.isOwnerPaused(owner)) return false
             const promotion = await this.lifecycle.promoteQueued(job.job_id)
             return promotion.kind === 'applied'

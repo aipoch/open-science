@@ -988,14 +988,8 @@ describe('setSessionConcurrencyLimit', () => {
       concurrencyManager as unknown as ConcurrencyManager
     )
 
-    await service.setSessionConcurrencyLimit(
-      { projectId: 'project-123', sessionId: 'session-123' },
-      10
-    )
-    expect(setSessionLimit).toHaveBeenCalledWith(
-      { projectId: 'project-123', sessionId: 'session-123' },
-      10
-    )
+    await service.setSessionConcurrencyLimit('session-123', 10)
+    expect(setSessionLimit).toHaveBeenCalledWith('session-123', 10)
   })
 
   it('throws when concurrency manager not initialized', async () => {
@@ -1009,9 +1003,9 @@ describe('setSessionConcurrencyLimit', () => {
     const { repo } = makeRepo()
     const service = makeOwner(runner, repo)
 
-    await expect(
-      service.setSessionConcurrencyLimit({ projectId: 'project-123', sessionId: 'session-123' }, 10)
-    ).rejects.toThrow(/ConcurrencyManager is required/)
+    await expect(service.setSessionConcurrencyLimit('session-123', 10)).rejects.toThrow(
+      /ConcurrencyManager is required/
+    )
   })
 
   it('validates limit is positive integer', async () => {
@@ -1040,18 +1034,15 @@ describe('setSessionConcurrencyLimit', () => {
       concurrencyManager as unknown as ConcurrencyManager
     )
 
-    await expect(
-      service.setSessionConcurrencyLimit({ projectId: 'project-123', sessionId: 'session-123' }, 0)
-    ).rejects.toThrow(/integer in the range 1\.\.500/)
-    await expect(
-      service.setSessionConcurrencyLimit({ projectId: 'project-123', sessionId: 'session-123' }, -5)
-    ).rejects.toThrow(/integer in the range 1\.\.500/)
-    await expect(
-      service.setSessionConcurrencyLimit(
-        { projectId: 'project-123', sessionId: 'session-123' },
-        3.5
-      )
-    ).rejects.toThrow(/integer in the range 1\.\.500/)
+    await expect(service.setSessionConcurrencyLimit('session-123', 0)).rejects.toThrow(
+      /integer in the range 1\.\.500/
+    )
+    await expect(service.setSessionConcurrencyLimit('session-123', -5)).rejects.toThrow(
+      /integer in the range 1\.\.500/
+    )
+    await expect(service.setSessionConcurrencyLimit('session-123', 3.5)).rejects.toThrow(
+      /integer in the range 1\.\.500/
+    )
   })
 })
 
@@ -1095,11 +1086,8 @@ describe('getSessionConcurrencyStatus', () => {
       concurrencyManager as unknown as ConcurrencyManager
     )
 
-    const result = await service.getSessionConcurrencyStatus({
-      projectId: 'project-123',
-      sessionId: 'session-123'
-    })
-    expect(getStatus).toHaveBeenCalledWith({ projectId: 'project-123', sessionId: 'session-123' })
+    const result = await service.getSessionConcurrencyStatus('session-123')
+    expect(getStatus).toHaveBeenCalledWith('session-123')
     expect(result.session_limit).toBe(10)
     expect(result.active_count).toBe(3)
     expect(result.queued_count).toBe(2)
@@ -1120,9 +1108,9 @@ describe('getSessionConcurrencyStatus', () => {
     const { repo } = makeRepo()
     const service = makeOwner(runner, repo)
 
-    await expect(
-      service.getSessionConcurrencyStatus({ projectId: 'project-123', sessionId: 'session-123' })
-    ).rejects.toThrow(/ConcurrencyManager is required/)
+    await expect(service.getSessionConcurrencyStatus('session-123')).rejects.toThrow(
+      /ConcurrencyManager is required/
+    )
   })
 })
 

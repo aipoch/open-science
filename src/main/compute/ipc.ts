@@ -7,7 +7,6 @@ import { BrowserWindow, shell } from 'electron'
 import type {
   ComputeApprovalDecision,
   ComputeHost,
-  ComputeSessionOwner,
   ComputeApprovalRequest,
   ComputeJob,
   JobSummary,
@@ -103,7 +102,6 @@ export const toJobSummary = async (
     display_name: displayName,
     shape: job.shape,
     session_id: job.session_id,
-    project_id: job.project_id,
     status: job.status,
     intent: job.intent,
     created_at: job.created_at,
@@ -155,8 +153,8 @@ type ComputeHandlers = {
   // Concurrent job limit: store 1..500 (not enforced in Phase 1).
   concurrencySet: (providerId: string, limit: number) => Promise<void>
   // Session-level concurrency control (Phase 3c, issue 04).
-  setSessionConcurrencyLimit: (owner: ComputeSessionOwner, limit: number) => Promise<void>
-  getSessionConcurrencyStatus: (owner: ComputeSessionOwner) => Promise<{
+  setSessionConcurrencyLimit: (sessionId: string, limit: number) => Promise<void>
+  getSessionConcurrencyStatus: (sessionId: string) => Promise<{
     session_limit: number | null
     active_count: number
     queued_count: number
@@ -175,11 +173,11 @@ type ComputeHandlers = {
   approvalPauseSession: (sessionId: string) => void
   approvalResumeSession: (sessionId: string) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
-  jobsList: (filter: ComputeSessionOwner & { status?: string[] }) => Promise<JobSummary[]>
+  jobsList: (filter: { sessionId: string; status?: string[] }) => Promise<JobSummary[]>
   // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
-  jobsPendingNotification: (owner: ComputeSessionOwner) => Promise<JobSummary[]>
+  jobsPendingNotification: (sessionId: string) => Promise<JobSummary[]>
   // Marks the given job ids as notification-consumed. Idempotent (issue 05).
-  jobsMarkConsumed: (owner: ComputeSessionOwner, jobIds: string[]) => Promise<void>
+  jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
 }
 
 type ComputeHostLifecycle = Readonly<{
@@ -371,8 +369,9 @@ const createComputeHandlers = (
       service.replaceDetails(providerId, { text, oldText, author }),
     scratchSet: (providerId, path) => service.setScratchRoot(providerId, path),
     concurrencySet: (providerId, limit) => service.setConcurrencyLimit(providerId, limit),
-    setSessionConcurrencyLimit: (owner, limit) => service.setSessionConcurrencyLimit(owner, limit),
-    getSessionConcurrencyStatus: (owner) => service.getSessionConcurrencyStatus(owner),
+    setSessionConcurrencyLimit: (sessionId, limit) =>
+      service.setSessionConcurrencyLimit(sessionId, limit),
+    getSessionConcurrencyStatus: (sessionId) => service.getSessionConcurrencyStatus(sessionId),
     listDir: (providerId, path) => service.listDir(providerId, path),
     download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
     revealInFolder: (filePath) => {
@@ -388,28 +387,27 @@ const createComputeHandlers = (
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
-      const owner = { projectId: filter.projectId, sessionId: filter.sessionId }
-      const jobs = await jobRepository.findBySession(owner, filter.status)
+      const jobs = await jobRepository.findBySession(filter.sessionId, filter.status)
       return Promise.all(
         jobs.map((j) =>
           toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
         )
       )
     },
-    jobsPendingNotification: async (owner) => {
+    jobsPendingNotification: async (sessionId) => {
       if (!jobRepository || !storageRoot) return []
       const hosts = await repository.list()
       const hostNameMap = new Map(hosts.map((h) => [h.providerId, h.displayName]))
-      const jobs = await jobRepository.findPendingNotifications(owner)
+      const jobs = await jobRepository.findPendingNotifications(sessionId)
       return Promise.all(
         jobs.map((j) =>
           toJobSummary(j, hostNameMap.get(j.provider_id) ?? j.provider_id, storageRoot)
         )
       )
     },
-    jobsMarkConsumed: async (owner, jobIds) => {
+    jobsMarkConsumed: async (sessionId, jobIds) => {
       if (!jobRepository) return
-      await jobRepository.markNotificationsConsumed(owner, jobIds)
+      await jobRepository.markNotificationsConsumed(sessionId, jobIds)
     }
   }
 }

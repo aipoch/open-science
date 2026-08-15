@@ -469,10 +469,7 @@ const ConversationPanel = ({
 
   // Unconditional hook: check if the active session has any jobs (running or finished).
   const allJobsForSession = useSessionJobStore((s) => s.allJobsForSession)
-  const hasAnyJobs =
-    activeSession !== undefined &&
-    allJobsForSession({ projectId: activeSession.projectId, sessionId: activeSession.id }).length >
-      0
+  const hasAnyJobs = activeSession !== undefined && allJobsForSession(activeSession.id).length > 0
   const activeBranchPlan = selectActiveBranchPlan(activeSession)
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
@@ -892,7 +889,6 @@ const ConversationPanel = ({
                     {hasAnyJobs && activeSession ? (
                       <RemoteJobBadge
                         sessionId={activeSession.id}
-                        projectId={activeSession.projectId}
                         onOpenJobList={
                           onOpenJobList ? () => onOpenJobList(activeSession.id) : undefined
                         }
