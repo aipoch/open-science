@@ -525,17 +525,25 @@ const ConversationPanel = ({
         : undefined
 
   const sessionActivities = activeSession?.activities ?? []
+  const sessionPendingElicitations = activeSession
+    ? pendingElicitations.filter((request) => request.sessionId === activeSession.id)
+    : []
   // Runtime requests and activity events can reach the renderer in either order. Whichever arrives
   // first must reserve the single bottom interaction lane so the ordinary composer never competes
-  // with a question that is waiting for an answer.
-  const livePendingElicitationRequest = pendingElicitations.find((request) => {
+  // with a question that is waiting for an answer. A projection without a live request is
+  // actionable only when its durable context can reconstruct that request.
+  const livePendingElicitationRequest = sessionPendingElicitations.find((request) => {
     const state = sessionActivities.find((activity) => activity.id === request.toolCallId)
       ?.elicitation?.state
     return state === undefined || state === 'pending'
   })
   const pendingElicitationActivity = livePendingElicitationRequest
     ? sessionActivities.find((activity) => activity.id === livePendingElicitationRequest.toolCallId)
-    : sessionActivities.find((activity) => activity.elicitation?.state === 'pending')
+    : sessionActivities.find(
+        (activity) =>
+          activity.elicitation?.state === 'pending' &&
+          activity.elicitation.durable?.kind === 'agent-user-choice'
+      )
   const restoredElicitation = pendingElicitationActivity?.elicitation
   const pendingElicitationRequest: PendingElicitationRequest | undefined =
     livePendingElicitationRequest ??
@@ -731,7 +739,7 @@ const ConversationPanel = ({
             isResumingSession={isResuming}
             notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
-            pendingElicitations={sideChat ? [] : pendingElicitations}
+            pendingElicitations={sideChat ? [] : sessionPendingElicitations}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
             onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
           />

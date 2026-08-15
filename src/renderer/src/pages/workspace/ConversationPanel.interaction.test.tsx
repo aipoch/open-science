@@ -1343,6 +1343,124 @@ describe('ConversationPanel composer intake', () => {
     })
   })
 
+  it('scopes live Ask-User requests to the active session', () => {
+    const fields = [
+      {
+        id: 'question_0',
+        label: 'Course priority',
+        kind: 'multi-select' as const,
+        options: [
+          { value: 'statistics', label: 'Statistics' },
+          { value: 'visualization', label: 'Visualization' }
+        ]
+      },
+      { id: 'question_0_custom', label: 'Other', kind: 'text' as const }
+    ]
+    const activeSession: ChatSession = {
+      id: 'session-active-choice',
+      projectId: 'project-a',
+      title: 'Active choice',
+      cwd: '/workspace',
+      status: 'waiting-for-user',
+      messages: [],
+      activities: [
+        {
+          id: 'tool-active-choice',
+          kind: 'tool',
+          title: 'Choose course priorities',
+          status: 'in_progress',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Which courses should be prioritized?',
+            fields,
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'active-choice' }
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    renderPanel({
+      view: { activeSession },
+      elicitation: {
+        requests: [
+          {
+            requestId: 'foreign-choice',
+            sessionId: 'session-foreign-choice',
+            toolCallId: 'tool-foreign-choice',
+            message: 'Choose a foreign option',
+            fields: [
+              {
+                id: 'foreign',
+                label: 'Foreign option',
+                kind: 'single-select',
+                required: true,
+                options: [{ value: 'foreign', label: 'Foreign' }]
+              }
+            ]
+          }
+        ]
+      }
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-option-statistics"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Choose a foreign option')
+  })
+
+  it('does not block the composer for an orphaned non-durable Ask-User activity', () => {
+    const activeSession: ChatSession = {
+      id: 'session-orphaned-choice',
+      projectId: 'project-a',
+      title: 'Orphaned choice',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [],
+      activities: [
+        {
+          id: 'tool-orphaned-choice',
+          kind: 'tool',
+          title: 'Choose course priorities',
+          status: 'completed',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Which courses should be prioritized?',
+            fields: [
+              {
+                id: 'courses',
+                label: 'Courses',
+                kind: 'multi-select',
+                options: [
+                  { value: 'statistics', label: 'Statistics' },
+                  { value: 'visualization', label: 'Visualization' }
+                ]
+              }
+            ],
+            state: 'pending'
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    renderPanel({
+      view: { activeSession },
+      elicitation: { requests: [] }
+    })
+
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(getComposerForm().hidden).toBe(false)
+    expect(container.textContent).not.toContain('Waiting for a response')
+  })
+
   it('keeps attachment limits discoverable in the tooltip and touch fallback', () => {
     renderPanel()
 
@@ -2248,7 +2366,7 @@ describe('ConversationPanel composer intake', () => {
       updatedAt: 2
     }
     const pendingPermissions = [{} as never]
-    const pendingElicitations = [{} as never]
+    const pendingElicitations = [{ sessionId: activeSession.id } as never]
 
     renderPanel({
       view: {
