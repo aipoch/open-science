@@ -43,8 +43,10 @@ class ProjectRuntimeQuiescenceOwner {
       failures,
       [...acpSessionIds].map((sessionId) => () => this.options.acp.deleteSession(sessionId))
     )
-    // ACP teardown closes the source of new delegated work. Delete the authoritative Project
-    // workspace only after that drain so cached, late, and dormant Frame state are covered together.
+    // ACP teardown and Notebook shutdown close both sources of new delegated work. Delete the
+    // authoritative Project workspace only after those drains so cached, late, and dormant Frame
+    // state are covered together.
+    await this.capture(failures, () => this.options.notebook.shutdownProject(projectId))
     await this.capture(failures, () => this.options.delegation.deleteProject(projectId))
     const remainingAcpSessionIds = this.projectAcpSessionIds(projectId, failures)
     await this.captureAll(
@@ -53,7 +55,6 @@ class ProjectRuntimeQuiescenceOwner {
         (sessionId) => () => this.options.acp.deleteSession(sessionId)
       )
     )
-    await this.capture(failures, () => this.options.notebook.shutdownProject(projectId))
     await this.capture(failures, () => this.options.compute.reconcileProject(projectId))
 
     if (failures.length > 0) {

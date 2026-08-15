@@ -94,4 +94,38 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
     expect(deleteSession).toHaveBeenNthCalledWith(1, 'root-session')
     expect(deleteSession).toHaveBeenNthCalledWith(2, 'late-continuation')
   })
+
+  it('drains Notebook work before deleting authoritative Project Delegation state', async () => {
+    let releaseNotebook!: () => void
+    const notebookDrained = new Promise<void>((resolve) => {
+      releaseNotebook = resolve
+    })
+    const delegation = {
+      deleteProject: vi.fn().mockResolvedValue(undefined)
+    }
+    const notebook = {
+      shutdownProject: vi.fn(() => notebookDrained)
+    }
+    const owner = new ProjectRuntimeQuiescenceOwner({
+      acp: {
+        listSessionIds: vi.fn(() => []),
+        liveSessionProjectId: vi.fn(),
+        deleteSession: vi.fn().mockResolvedValue(undefined)
+      },
+      delegation,
+      notebook,
+      sideChat: { invalidateProject: vi.fn().mockResolvedValue(undefined) },
+      compute: { reconcileProject: vi.fn().mockResolvedValue(undefined) }
+    })
+
+    const quiescing = owner.quiesceProject('project-1')
+    await vi.waitFor(() => expect(notebook.shutdownProject).toHaveBeenCalledWith('project-1'))
+
+    expect(delegation.deleteProject).not.toHaveBeenCalled()
+
+    releaseNotebook()
+    await quiescing
+
+    expect(delegation.deleteProject).toHaveBeenCalledWith('project-1')
+  })
 })
