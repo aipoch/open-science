@@ -80,11 +80,17 @@ describe('production delegated Frame workspace', () => {
       ['upload-version:upload-1']
     )
 
-    await workspace.deleteProject('project-1')
+    try {
+      await workspace.deleteProject('project-1')
 
-    await expect(stat(join(workspaceRoot, 'project-1'))).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(stat(first.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(stat(second.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(stat(other.cwd)).resolves.toBeDefined()
+      await expect(stat(join(workspaceRoot, 'project-1'))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(first.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(second.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(other.cwd)).resolves.toBeDefined()
+    } finally {
+      // Prepared inputs are read-only. Restore their permissions through the production cleanup
+      // boundary so the shared temporary-root teardown is portable to macOS.
+      await workspace.deleteProject('project-2')
+    }
   })
 })
