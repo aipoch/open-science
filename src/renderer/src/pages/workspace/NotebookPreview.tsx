@@ -253,7 +253,10 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const notebookRequest = createNotebookRequest(item.notebook)
   const notebookRequestKey = JSON.stringify(notebookRequest)
   const latestNotebookRequest = useRef({ request: notebookRequest, key: notebookRequestKey })
-  latestNotebookRequest.current = { request: notebookRequest, key: notebookRequestKey }
+
+  useEffect(() => {
+    latestNotebookRequest.current = { request: notebookRequest, key: notebookRequestKey }
+  }, [notebookRequest, notebookRequestKey])
 
   // Greys the pane while python is unavailable or an upgrade is running (spec §6.5).
   const envStatus = useNotebookEnvStore((s) => s.status)
