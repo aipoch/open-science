@@ -2476,6 +2476,82 @@ describe('production delegated-work composition', () => {
     await expect(access(stableSessionWorkspace)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('retains failed Project work ownership and permission routing for cleanup retry', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-project-delete-retry-'))
+    const handles = new Map<string, { executionId: string }>()
+    let failDispose = true
+    const harness = await createCompositionHarness(root, 'codex', undefined, undefined, {
+      artifactEvidence: {
+        turns: {
+          async openExecution({ executionId }: { executionId: string }) {
+            const handle = { executionId }
+            handles.set(executionId, handle)
+            return handle
+          },
+          async finalize() {
+            return undefined
+          },
+          async dispose() {
+            if (failDispose) {
+              failDispose = false
+              throw new Error('injected Project cleanup failure')
+            }
+          },
+          handleForExecution(executionId: string) {
+            const handle = handles.get(executionId)
+            if (!handle) throw new Error(`No active Artifact turn for ${executionId}`)
+            return handle
+          },
+          handoffFile: () => '/tmp/current-run.json',
+          async publishHandoff() {
+            return undefined
+          }
+        } as never,
+        artifactStorageSessionId: ({ sessionId }) => sessionId,
+        async finalizePublication() {
+          return undefined
+        },
+        async project() {
+          return []
+        }
+      }
+    })
+    await harness.composition.host.delegate(
+      harness.caller,
+      { task: 'Retain cleanup owner', name: 'Retain cleanup owner' },
+      { wait: false }
+    )
+    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    const control = harness.execution.controls()[0]
+    control.accept()
+    control.emit({
+      kind: 'permission',
+      awaiting: true,
+      requestId: 'provider-project-delete-retry',
+      title: 'Write evidence',
+      options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }]
+    })
+    await expect.poll(() => harness.composition.root.pendingPermissions()).toHaveLength(1)
+
+    await expect(harness.composition.root.deleteProject(harness.session.projectId)).rejects.toThrow(
+      'Delegated Project cleanup failed'
+    )
+
+    expect(harness.durable().runtimeContext?.delegatedWork?.records[0].attempts[0].status).toBe(
+      'running'
+    )
+    expect(harness.composition.root.pendingPermissions()).toHaveLength(1)
+
+    await expect(
+      harness.composition.root.deleteProject(harness.session.projectId)
+    ).resolves.toBeUndefined()
+    expect(harness.durable().runtimeContext?.delegatedWork?.records[0].attempts[0]).toMatchObject({
+      status: 'cancelled',
+      cancellationReason: 'session_stop'
+    })
+    expect(harness.composition.root.pendingPermissions()).toEqual([])
+  })
+
   it('keeps a Turn fence when cancellation precedes scoped-work creation', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-prework-fence-'))
     const harness = await createCompositionHarness(root, 'codex')

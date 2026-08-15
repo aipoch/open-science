@@ -140,6 +140,18 @@ class ArchiveCoordinator {
     })
   }
 
+  withProjectDeletionAdmission<Result>(
+    projectId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    // Parent-message delivery holds this short lifecycle through validation, optional resume, and
+    // provider acceptance so Project deletion cannot snapshot ACP ownership in the middle.
+    return this.enqueue(async () => {
+      this.assertProjectDeletionAvailable(projectId)
+      return operation()
+    })
+  }
+
   restoreProjectDeletion(projectId: string): void {
     this.deletingProjectIds.add(projectId)
   }

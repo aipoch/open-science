@@ -752,6 +752,23 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     validate: () => Promise<void>
   ): Promise<DelegateMessageAcceptanceEvidence> {
+    return this.startContinuationWhenWithDispatchAdmission(request, validate, false)
+  }
+
+  startContinuationWhenDispatchAdmitted(
+    request: AcpPromptRequest,
+    validate: () => Promise<void>
+  ): Promise<DelegateMessageAcceptanceEvidence> {
+    // The caller owns final deletion admission for the whole validation/resume/acceptance lifecycle.
+    // Bypass only the nested dispatch guard; root-session admission remains linearized below.
+    return this.startContinuationWhenWithDispatchAdmission(request, validate, true)
+  }
+
+  private startContinuationWhenWithDispatchAdmission(
+    request: AcpPromptRequest,
+    validate: () => Promise<void>,
+    dispatchAdmitted: boolean
+  ): Promise<DelegateMessageAcceptanceEvidence> {
     let resolve!: (evidence: DelegateMessageAcceptanceEvidence) => void
     let reject!: (error: unknown) => void
     const accepted = new Promise<DelegateMessageAcceptanceEvidence>(
@@ -786,7 +803,9 @@ class AcpRuntimeCoordinator {
           error
         )
       }
-      await this.dispatchPrompt(request, acceptance, 'sendAppContinuation')
+      await (dispatchAdmitted
+        ? this.dispatchAdmittedPrompt(request, acceptance, 'sendAppContinuation')
+        : this.dispatchPrompt(request, acceptance, 'sendAppContinuation'))
       if (!acceptance.settled) {
         acceptance.settled = true
         resolve('provider_prompt_completed')

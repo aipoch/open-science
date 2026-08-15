@@ -1366,6 +1366,34 @@ describe('AcpRuntimeCoordinator', () => {
     expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
   })
 
+  it('does not reacquire dispatch admission for an already admitted continuation', async () => {
+    let createdRuntime!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      createdRuntime = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return createdRuntime.runtime
+    })
+    const session = await coordinator.createSession({ cwd: '/workspace' })
+    const admittedSessionIds: string[] = []
+    coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
+      admittedSessionIds.push(sessionId)
+      return dispatch()
+    })
+
+    await expect(
+      coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'already deletion-admitted' },
+        async () => undefined
+      )
+    ).resolves.toBe('provider_prompt_accepted')
+
+    expect(admittedSessionIds).toEqual([])
+    expect(createdRuntime.sendAppContinuation).toHaveBeenCalledOnce()
+  })
+
   it('stops a prompt for handoff without reporting a user generation cancellation', async () => {
     const onSessionCancellationRequested = vi.fn()
     const fake = createFakeRuntime({

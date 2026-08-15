@@ -451,11 +451,17 @@ const createProductionDelegatedWorkComposition = (
       // covers Sessions that have no in-memory work after restart as well as every cached Session
       // settled above.
       const workspaceDeletion = await Promise.allSettled([workspace.deleteProject(projectId)])
-      for (const { key } of scoped) works.delete(keyOf(key))
-      for (const [requestId, pending] of permissions) {
-        if (pending.key.projectId === projectId) permissions.delete(requestId)
+      for (const [index, result] of workDeletion.entries()) {
+        if (result.status === 'rejected') continue
+        const { key } = scoped[index]
+        works.delete(keyOf(key))
+        for (const [requestId, pending] of permissions) {
+          if (pending.key.projectId === key.projectId && pending.key.sessionId === key.sessionId) {
+            permissions.delete(requestId)
+          }
+        }
+        unavailableReasons.delete(key.sessionId)
       }
-      for (const { key } of scoped) unavailableReasons.delete(key.sessionId)
       const failures = [...workDeletion, ...workspaceDeletion].flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : []
       )

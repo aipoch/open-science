@@ -384,6 +384,44 @@ describe('ArchiveCoordinator', () => {
     await expect(prompting).resolves.toBe('complete')
   })
 
+  it('drains an admitted Project continuation before establishing its deletion fence', async () => {
+    const continuation = createDeferred<string>()
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn(),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn()
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const deliver = vi.fn(() => continuation.promise)
+    const quiesce = vi.fn().mockResolvedValue(undefined)
+
+    const delivering = coordinator.withProjectDeletionAdmission(project.id, deliver)
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce())
+    const deletion = coordinator.withProjectDeletion(project.id, quiesce)
+    await Promise.resolve()
+
+    expect(quiesce).not.toHaveBeenCalled()
+    continuation.resolve('accepted')
+    await expect(delivering).resolves.toBe('accepted')
+    await deletion
+
+    expect(quiesce).toHaveBeenCalledOnce()
+    const lateDelivery = vi.fn().mockResolvedValue('accepted')
+    await expect(
+      coordinator.withProjectDeletionAdmission(project.id, lateDelivery)
+    ).rejects.toThrow('Project is being deleted.')
+    expect(lateDelivery).not.toHaveBeenCalled()
+  })
+
   it('allows deletion-only dispatch admission for a non-Project runtime', async () => {
     const projects = {
       get: vi.fn(),

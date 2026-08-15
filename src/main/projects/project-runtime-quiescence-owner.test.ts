@@ -66,19 +66,21 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
   })
 
   it('deletes authoritative Project Delegation state after ACP teardown closes admission', async () => {
-    let acpStopped = false
+    const ownedSessionIds = new Set(['root-session'])
+    const deleteSession = vi.fn(async (sessionId: string) => {
+      ownedSessionIds.delete(sessionId)
+    })
     const delegation = {
       deleteProject: vi.fn(async () => {
-        expect(acpStopped).toBe(true)
+        expect(ownedSessionIds.has('root-session')).toBe(false)
+        ownedSessionIds.add('late-continuation')
       })
     }
     const owner = new ProjectRuntimeQuiescenceOwner({
       acp: {
-        listSessionIds: () => ['root-session'],
+        listSessionIds: () => [...ownedSessionIds],
         liveSessionProjectId: () => 'project-1',
-        deleteSession: vi.fn(async () => {
-          acpStopped = true
-        })
+        deleteSession
       },
       delegation,
       notebook: { shutdownProject: vi.fn().mockResolvedValue(undefined) },
@@ -89,5 +91,7 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
     await owner.quiesceProject('project-1')
 
     expect(delegation.deleteProject).toHaveBeenCalledWith('project-1')
+    expect(deleteSession).toHaveBeenNthCalledWith(1, 'root-session')
+    expect(deleteSession).toHaveBeenNthCalledWith(2, 'late-continuation')
   })
 })

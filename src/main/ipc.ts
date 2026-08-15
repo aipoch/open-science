@@ -1506,89 +1506,98 @@ const createApplicationModules = async (
     },
     parentMessages: {
       async deliver(delivery) {
-        const runtime = runtimeRef.current
-        if (!runtime) throw new Error('ACP runtime is not available.')
-        const session = await sessionRepository.loadSession(
+        return archiveCoordinator.withProjectDeletionAdmission(
           delivery.session.projectId,
-          delivery.session.sessionId
-        )
-        const graph = session?.conversationGraph
-        const rootFrame = graph?.frames.find((frame) => frame.id === delivery.targetFrameId)
-        const rootBranch = graph?.branches.find((branch) => branch.id === rootFrame?.activeBranchId)
-        if (
-          !session ||
-          session.id !== delivery.session.sessionId ||
-          session.projectId !== delivery.session.projectId ||
-          graph?.rootFrameId !== delivery.targetFrameId ||
-          !rootBranch ||
-          !graph.messages.some((message) => message.id === delivery.originMessageId)
-        ) {
-          throw new Error('Parent message durable root provenance is unavailable.')
-        }
-        return runtime.startContinuationWhen(
-          {
-            sessionId: delivery.session.sessionId,
-            text:
-              `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
-              `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
-            suppressUserMessage: true,
-            provenanceContext: {
-              promptMessageId: delivery.rootPromptMessageId,
-              originMessageId: delivery.originMessageId,
-              rootFrameId: graph.rootFrameId,
-              agentFrameId: graph.rootFrameId,
-              messageBranchId: delivery.rootBranchId,
-              messageBranchAncestry: [delivery.rootBranchId],
-              messageAncestry: [delivery.originMessageId],
-              runtimeSegmentId: `delegated-message-${delivery.messageId}`
-            }
-          },
           async () => {
-            const latest = await sessionRepository.loadSession(
+            const runtime = runtimeRef.current
+            if (!runtime) throw new Error('ACP runtime is not available.')
+            const session = await sessionRepository.loadSession(
               delivery.session.projectId,
               delivery.session.sessionId
             )
-            const latestGraph = latest?.conversationGraph
-            const latestRoot = latestGraph?.frames.find(({ id }) => id === delivery.targetFrameId)
-            const latestBranch = latestGraph?.branches.find(
-              ({ id }) => id === latestRoot?.activeBranchId
+            const graph = session?.conversationGraph
+            const rootFrame = graph?.frames.find((frame) => frame.id === delivery.targetFrameId)
+            const rootBranch = graph?.branches.find(
+              (branch) => branch.id === rootFrame?.activeBranchId
             )
             if (
-              !latest ||
-              latestBranch?.id !== delivery.rootBranchId ||
-              `${latestBranch.id}:${latestBranch.createdAt}` !== delivery.rootBranchRevision
+              !session ||
+              session.id !== delivery.session.sessionId ||
+              session.projectId !== delivery.session.projectId ||
+              graph?.rootFrameId !== delivery.targetFrameId ||
+              !rootBranch ||
+              !graph.messages.some((message) => message.id === delivery.originMessageId)
             ) {
-              throw new DelegateMessageParkedError(
-                'Parent message root Branch changed before dispatch.'
-              )
+              throw new Error('Parent message durable root provenance is unavailable.')
             }
-            const started = await delivery.startDispatch()
-            if (started !== 'started') {
-              throw new DelegateMessageParkedError(
-                'Parent message dispatch fence was not acquired.'
-              )
-            }
-            if (!runtime.hasLiveSession(latest.projectId, latest.id)) {
-              await runtime.resumeSession({
-                sessionId: latest.id,
-                cwd: latest.cwd,
-                projectName: latest.projectId,
-                ...(latest.permissionProfile
-                  ? { permissionProfile: latest.permissionProfile }
-                  : {}),
-                ...(latest.agentFrameworkId
-                  ? { previousFrameworkId: latest.agentFrameworkId }
-                  : {}),
-                ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
-                ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
-                ...(latest.providerSessionId
-                  ? { providerSessionId: latest.providerSessionId }
-                  : {}),
-                ...(latest.providerContinuityToken
-                  ? { providerContinuityToken: latest.providerContinuityToken }
-                  : {})
-              })
-            }
+            return runtime.startContinuationWhenDispatchAdmitted(
+              {
+                sessionId: delivery.session.sessionId,
+                text:
+                  `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
+                  `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
+                suppressUserMessage: true,
+                provenanceContext: {
+                  promptMessageId: delivery.rootPromptMessageId,
+                  originMessageId: delivery.originMessageId,
+                  rootFrameId: graph.rootFrameId,
+                  agentFrameId: graph.rootFrameId,
+                  messageBranchId: delivery.rootBranchId,
+                  messageBranchAncestry: [delivery.rootBranchId],
+                  messageAncestry: [delivery.originMessageId],
+                  runtimeSegmentId: `delegated-message-${delivery.messageId}`
+                }
+              },
+              async () => {
+                const latest = await sessionRepository.loadSession(
+                  delivery.session.projectId,
+                  delivery.session.sessionId
+                )
+                const latestGraph = latest?.conversationGraph
+                const latestRoot = latestGraph?.frames.find(
+                  ({ id }) => id === delivery.targetFrameId
+                )
+                const latestBranch = latestGraph?.branches.find(
+                  ({ id }) => id === latestRoot?.activeBranchId
+                )
+                if (
+                  !latest ||
+                  latestBranch?.id !== delivery.rootBranchId ||
+                  `${latestBranch.id}:${latestBranch.createdAt}` !== delivery.rootBranchRevision
+                ) {
+                  throw new DelegateMessageParkedError(
+                    'Parent message root Branch changed before dispatch.'
+                  )
+                }
+                const started = await delivery.startDispatch()
+                if (started !== 'started') {
+                  throw new DelegateMessageParkedError(
+                    'Parent message dispatch fence was not acquired.'
+                  )
+                }
+                if (!runtime.hasLiveSession(latest.projectId, latest.id)) {
+                  await runtime.resumeSession({
+                    sessionId: latest.id,
+                    cwd: latest.cwd,
+                    projectName: latest.projectId,
+                    ...(latest.permissionProfile
+                      ? { permissionProfile: latest.permissionProfile }
+                      : {}),
+                    ...(latest.agentFrameworkId
+                      ? { previousFrameworkId: latest.agentFrameworkId }
+                      : {}),
+                    ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
+                    ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
+                    ...(latest.providerSessionId
+                      ? { providerSessionId: latest.providerSessionId }
+                      : {}),
+                    ...(latest.providerContinuityToken
+                      ? { providerContinuityToken: latest.providerContinuityToken }
+                      : {})
+                  })
+                }
+              }
+            )
           }
         )
       }
