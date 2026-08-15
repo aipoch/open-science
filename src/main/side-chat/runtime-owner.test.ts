@@ -707,6 +707,13 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     const persistence = createPersistence()
     const captureTarget = vi.fn()
     const relay = createRelayOwner()
+    const deletedProfile = join(
+      temporaryRoot,
+      'runtime-support',
+      'side-chat',
+      'side-chat-project-deleted'
+    )
+    await mkdir(deletedProfile, { recursive: true })
     relay.hydrate([
       {
         projectId: 'project-deleted',
@@ -774,11 +781,13 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     ])
 
     await owner.invalidateProject('project-deleted')
+    await owner.invalidateParents(['parent-deleted'])
     const deletedRelayClaim = relay.claim('parent-deleted')
 
     expect(owner.list().chats).toEqual([
       expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
     ])
+    await expect(access(deletedProfile)).resolves.toBeUndefined()
     expect(deletedRelayClaim?.messages).toEqual([expect.objectContaining({ id: 'relay-deleted' })])
     expect(persistence.clear).not.toHaveBeenCalled()
     await expect(
@@ -808,6 +817,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
     await owner.invalidateProject('project-deleted')
     await owner.completeProjectDeletion('project-deleted')
+    await expect(access(deletedProfile)).rejects.toThrow()
     expect(deletedRelayClaim?.commit()).toEqual([])
     deletedRelayClaim?.restore()
     expect(relay.claim('parent-deleted')).toBeUndefined()

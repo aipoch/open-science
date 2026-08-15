@@ -645,9 +645,15 @@ class SideChatRuntimeOwner {
   }
 
   async invalidateParents(parentSessionIds: readonly string[]): Promise<void> {
-    for (const parentSessionId of parentSessionIds) this.invalidatedParents.add(parentSessionId)
+    const parentSessionIdsToInvalidate = parentSessionIds.filter((parentSessionId) => {
+      const dormant = this.dormantByParent.get(parentSessionId)
+      return !dormant || !this.invalidatedProjects.has(dormant.projectId)
+    })
+    for (const parentSessionId of parentSessionIdsToInvalidate) {
+      this.invalidatedParents.add(parentSessionId)
+    }
     await Promise.all(
-      parentSessionIds.map(async (parentSessionId) => {
+      parentSessionIdsToInvalidate.map(async (parentSessionId) => {
         try {
           await this.closeActiveForParent(parentSessionId)
         } finally {
