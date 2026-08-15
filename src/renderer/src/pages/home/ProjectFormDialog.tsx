@@ -19,6 +19,10 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Input } from '@/components/ui/input'
+import {
+  PROJECT_DESCRIPTION_MAX_LENGTH,
+  PROJECT_NAME_MAX_LENGTH
+} from '../../../../shared/projects'
 
 type ProjectFormDialogProps = {
   open: boolean
@@ -103,6 +107,7 @@ const ProjectFormDialog = ({
                   onChange={(event) => onNameChange(event.target.value)}
                   placeholder={t('e.g. Reproduction of published research')}
                   autoFocus
+                  maxLength={PROJECT_NAME_MAX_LENGTH}
                   className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
                 />
               </div>
@@ -122,6 +127,7 @@ const ProjectFormDialog = ({
                   onChange={(event) => onDescriptionChange(event.target.value)}
                   placeholder={t('Describe what this project is about…')}
                   rows={3}
+                  maxLength={PROJECT_DESCRIPTION_MAX_LENGTH}
                   className={dialogFormTextareaClassName}
                 />
               </div>

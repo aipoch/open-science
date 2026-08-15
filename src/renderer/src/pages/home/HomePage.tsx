@@ -141,6 +141,7 @@ const HomePage = ({
   const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
   const loadError = useProjectStore((state) => state.loadError)
+  const loadProjects = useProjectStore((state) => state.loadProjects)
   const updateProject = useProjectStore((state) => state.updateProject)
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
   const deleteProject = useProjectStore((state) => state.deleteProject)
@@ -172,6 +173,7 @@ const HomePage = ({
   const [archivingProjectIds, setArchivingProjectIds] = useState<Set<string>>(() => new Set())
   const [pinningProjectIds, setPinningProjectIds] = useState<Set<string>>(() => new Set())
   const [projectActionError, setProjectActionError] = useState<string | undefined>(undefined)
+  const [isRetryingProjects, setIsRetryingProjects] = useState(false)
   const [artifactCounts, setArtifactCounts] = useState<Map<string, number>>(() => new Map())
   const [markingReadSessionIds, setMarkingReadSessionIds] = useState<Set<string>>(() => new Set())
   const [markReadErrorSessionIds, setMarkReadErrorSessionIds] = useState<Set<string>>(
@@ -357,6 +359,13 @@ const HomePage = ({
     })
   }, [consumeProjectCreation, openCreateDialog, pendingProjectCreation])
 
+  const retryProjectLoad = (): void => {
+    if (isRetryingProjects) return
+
+    setIsRetryingProjects(true)
+    void loadProjects().finally(() => setIsRetryingProjects(false))
+  }
+
   const openDeleteDialog = (project: Project): void => {
     if (!canDeleteProjects) return
 
@@ -433,7 +442,11 @@ const HomePage = ({
 
     setPinningProjectIds((current) => new Set(current).add(project.id))
     setProjectActionError(undefined)
-    void updateProject({ id: project.id, pinned: !project.pinned })
+    void updateProject({
+      id: project.id,
+      pinned: !project.pinned,
+      expectedUpdatedAt: project.updatedAt
+    })
       .catch((error: unknown) =>
         setProjectActionError(
           error instanceof Error ? error.message : t('Could not update project pin.')
@@ -732,7 +745,17 @@ const HomePage = ({
                 className="rounded-2xl border border-danger-000/30 px-4 py-6 text-center text-sm text-danger-000"
                 role="alert"
               >
-                {t('Could not load projects: {{error}}', { error: loadError })}
+                <p>{t('Could not load projects: {{error}}', { error: loadError })}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  disabled={isRetryingProjects}
+                  onClick={retryProjectLoad}
+                >
+                  {isRetryingProjects ? t('Retrying...') : t('Retry')}
+                </Button>
               </div>
             ) : projectSummaries.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">

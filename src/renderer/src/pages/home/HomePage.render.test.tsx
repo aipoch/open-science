@@ -650,7 +650,11 @@ describe('HomePage activity overview', () => {
     )
     await act(async () => Promise.resolve())
 
-    expect(updateProject).toHaveBeenCalledWith({ id: project.id, pinned: true })
+    expect(updateProject).toHaveBeenCalledWith({
+      id: project.id,
+      pinned: true,
+      expectedUpdatedAt: project.updatedAt
+    })
     expect(container.textContent).toContain('Pinned project')
 
     openRadixMenu(
@@ -663,7 +667,11 @@ describe('HomePage activity overview', () => {
     clickRadixMenuItem(unpinItem)
     await act(async () => Promise.resolve())
 
-    expect(updateProject).toHaveBeenLastCalledWith({ id: project.id, pinned: false })
+    expect(updateProject).toHaveBeenLastCalledWith({
+      id: project.id,
+      pinned: false,
+      expectedUpdatedAt: project.updatedAt
+    })
   })
 
   it('groups pinned Projects first while preserving recent activity order inside both groups', async () => {
@@ -1500,5 +1508,29 @@ describe('HomePage activity overview', () => {
     const recentRow = container.querySelector<HTMLElement>('[aria-label="Recent sessions"] button')
     expect(recentRow?.textContent).toContain(project.name)
     expect(recentRow?.textContent?.match(/Live analysis/g)).toHaveLength(1)
+  })
+
+  it('offers a Retry action when loading Projects fails', async () => {
+    const loadProjects = vi.fn().mockResolvedValue(undefined)
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      isLoaded: true,
+      loadError: 'database is locked',
+      loadProjects
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+
+    await act(async () => retry?.click())
+    expect(loadProjects).toHaveBeenCalledOnce()
   })
 })

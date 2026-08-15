@@ -447,6 +447,7 @@
   "Could not reveal the log file.": "無法在資料夾中顯示記錄檔。",
   "Could not save contribution template. Try again.": "無法儲存貢獻範本，請重試。",
   "Could not save project.": "無法儲存專案。",
+  "Project changed elsewhere. Reopen Project Settings and try again.": "專案已在其他位置變更。請重新開啟專案設定後再試。",
   "Could not save provider.": "無法儲存模型服務商。",
   "Could not save the Claude token.": "無法儲存 Claude token。",
   "Could not save the Claude token. Try again.": "無法儲存 Claude token。重試一次。",

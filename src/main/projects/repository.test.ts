@@ -98,17 +98,41 @@ describe('project repository', () => {
   })
 
   it('patches only the provided fields on update', async () => {
+    const updated = createRow({ name: 'Renamed', updatedAt: new Date(1710000000200) })
     const { client, project } = createMockClient({
-      update: () => Promise.resolve(createRow({ name: 'Renamed' }))
+      findUnique: () => Promise.resolve(updated),
+      updateMany: () => Promise.resolve({ count: 1 })
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
-    await repository.update({ id: 'project-1', name: '  Renamed  ' })
+    await repository.update({
+      id: 'project-1',
+      name: '  Renamed  ',
+      expectedUpdatedAt: 1710000000100
+    })
 
-    expect(project.update).toHaveBeenCalledWith({
-      where: { id: 'project-1' },
+    expect(project.updateMany).toHaveBeenCalledWith({
+      where: { id: 'project-1', updatedAt: new Date(1710000000100) },
       data: { name: 'Renamed' }
     })
+    expect(project.update).not.toHaveBeenCalled()
+  })
+
+  it('rejects an ordinary update when the Project changed elsewhere', async () => {
+    const { client, project } = createMockClient({
+      updateMany: () => Promise.resolve({ count: 0 })
+    })
+    const repository = new ProjectRepository(() => Promise.resolve(client))
+
+    await expect(
+      repository.update({
+        id: 'project-1',
+        name: 'Renamed',
+        expectedUpdatedAt: 1710000000100
+      })
+    ).rejects.toThrow('Project changed elsewhere.')
+
+    expect(project.findUnique).not.toHaveBeenCalled()
   })
 
   it('does not roll back concurrent activity time while changing pin placement', async () => {
@@ -127,10 +151,13 @@ describe('project repository', () => {
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
-    await expect(repository.update({ id: 'project-1', pinned: true })).resolves.toMatchObject({
-      pinned: true,
-      updatedAt: concurrentUpdatedAt.getTime()
-    })
+    await expect(
+      repository.update({
+        id: 'project-1',
+        pinned: true,
+        expectedUpdatedAt: 1710000000100
+      })
+    ).resolves.toMatchObject({ pinned: true, updatedAt: concurrentUpdatedAt.getTime() })
 
     expect(executeRaw).toHaveBeenCalledOnce()
     expect(project.update).not.toHaveBeenCalled()
@@ -214,31 +241,43 @@ describe('project repository', () => {
 
   it('patches the Agent Context on update without touching other fields', async () => {
     const { client, project } = createMockClient({
-      update: () => Promise.resolve(createRow({ agentContext: 'Prefer Python.' }))
+      findUnique: () => Promise.resolve(createRow({ agentContext: 'Prefer Python.' })),
+      updateMany: () => Promise.resolve({ count: 1 })
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
-    await repository.update({ id: 'project-1', agentContext: '  Prefer Python.  ' })
+    await repository.update({
+      id: 'project-1',
+      agentContext: '  Prefer Python.  ',
+      expectedUpdatedAt: 1710000000100
+    })
 
-    expect(project.update).toHaveBeenCalledWith({
-      where: { id: 'project-1' },
+    expect(project.updateMany).toHaveBeenCalledWith({
+      where: { id: 'project-1', updatedAt: new Date(1710000000100) },
       data: { agentContext: 'Prefer Python.' }
     })
   })
 
   it('keeps the Agent Context when pinning in the same update', async () => {
     const { client, executeRaw, project } = createMockClient({
-      update: () => Promise.resolve(createRow({ pinned: true, agentContext: 'Always cite DOIs.' }))
+      findUnique: () =>
+        Promise.resolve(createRow({ pinned: true, agentContext: 'Always cite DOIs.' })),
+      updateMany: () => Promise.resolve({ count: 1 })
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
-    await repository.update({ id: 'project-1', pinned: true, agentContext: 'Always cite DOIs.' })
+    await repository.update({
+      id: 'project-1',
+      pinned: true,
+      agentContext: 'Always cite DOIs.',
+      expectedUpdatedAt: 1710000000100
+    })
 
     // A combined pin + Agent Context edit must not enter the pin-only raw-SQL fast path, which
     // would silently drop the Agent Context.
     expect(executeRaw).not.toHaveBeenCalled()
-    expect(project.update).toHaveBeenCalledWith({
-      where: { id: 'project-1' },
+    expect(project.updateMany).toHaveBeenCalledWith({
+      where: { id: 'project-1', updatedAt: new Date(1710000000100) },
       data: { pinned: true, agentContext: 'Always cite DOIs.' }
     })
   })

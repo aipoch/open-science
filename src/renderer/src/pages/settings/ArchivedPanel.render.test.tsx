@@ -123,4 +123,39 @@ describe('ArchivedPanel', () => {
     })
     expect(useArchiveUndoStore.getState().notices).toEqual([])
   })
+
+  it('clears a failed Project deletion error before opening the next confirmation', async () => {
+    const deleteProject = vi.fn().mockRejectedValue(new Error('first deletion failed'))
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [{ ...project, archivedAt: 2 }],
+      isLoaded: true,
+      deleteProject
+    })
+    useSessionStore.setState({ ...createInitialSessionState(), sessions: [] })
+    await act(async () =>
+      root.render(
+        <ArchivedPanel view={{ kind: 'project', projectId: project.id }} onNavigate={vi.fn()} />
+      )
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    await act(async () => openDelete?.click())
+    let dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    const confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toBe('first deletion failed')
+
+    const close = dialog?.querySelector<HTMLButtonElement>('[aria-label="Close"]')
+    await act(async () => close?.click())
+    await act(async () => openDelete?.click())
+    dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+
+    expect(dialog?.querySelector('[role="alert"]')).toBeNull()
+  })
 })

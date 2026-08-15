@@ -904,10 +904,18 @@ describe('project prisma client (integration)', () => {
     const fetched = await repository.get(created.id)
     expect(fetched?.name).toBe('Reproduction')
 
-    const renamed = await repository.update({ id: created.id, name: 'Renamed' })
+    const renamed = await repository.update({
+      id: created.id,
+      name: 'Renamed',
+      expectedUpdatedAt: created.updatedAt
+    })
     expect(renamed.name).toBe('Renamed')
 
-    const pinned = await repository.update({ id: created.id, pinned: true })
+    const pinned = await repository.update({
+      id: created.id,
+      pinned: true,
+      expectedUpdatedAt: renamed.updatedAt
+    })
     expect(pinned.pinned).toBe(true)
     expect(pinned.updatedAt).toBe(renamed.updatedAt)
 

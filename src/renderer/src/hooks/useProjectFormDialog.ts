@@ -5,7 +5,8 @@ import type { Project } from '../../../shared/projects'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 
-type ProjectFormState = { mode: 'create' } | { mode: 'edit'; projectId: string }
+type ProjectFormState =
+  { mode: 'create' } | { mode: 'edit'; projectId: string; expectedUpdatedAt: number }
 
 // Structurally matches ProjectFormDialog's props; the dialog stays a controlled component.
 type ProjectFormDialogProps = {
@@ -63,7 +64,11 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
       // A submission is in flight: ignore reopens so the pending mutation keeps its drafts.
       if (isSubmitting) return
 
-      setFormState({ mode: 'edit', projectId: project.id })
+      setFormState({
+        mode: 'edit',
+        projectId: project.id,
+        expectedUpdatedAt: project.updatedAt
+      })
       setNameDraft(project.name)
       setDescriptionDraft(project.description)
       setAgentContextDraft(project.agentContext ?? '')
@@ -96,7 +101,13 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
 
     const request = isCreate
       ? createProject({ name, description, agentContext })
-      : updateProject({ id: formState.projectId, name, description, agentContext })
+      : updateProject({
+          id: formState.projectId,
+          name,
+          description,
+          agentContext,
+          expectedUpdatedAt: formState.expectedUpdatedAt
+        })
 
     void request
       .then((project) => {
@@ -112,7 +123,13 @@ const useProjectFormDialog = (): UseProjectFormDialogResult => {
         if (isCreate) openProject(project.id, 'user')
       })
       .catch((error: unknown) => {
-        setFormError(error instanceof Error ? error.message : t('Could not save project.'))
+        setFormError(
+          error instanceof Error && error.message === 'Project changed elsewhere.'
+            ? t('Project changed elsewhere. Reopen Project Settings and try again.')
+            : error instanceof Error
+              ? error.message
+              : t('Could not save project.')
+        )
       })
       .finally(() => {
         setIsSubmitting(false)

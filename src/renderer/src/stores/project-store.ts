@@ -39,6 +39,7 @@ const upsertProjectList = (projects: Project[], project: Project): Project[] => 
 }
 
 let projectLoadSequence = 0
+let projectMutationSequence = 0
 
 export const createInitialProjectState = (): ProjectStoreData => ({
   projects: [],
@@ -47,20 +48,30 @@ export const createInitialProjectState = (): ProjectStoreData => ({
 })
 
 // Renderer cache of the SQLite-backed project list; the DB remains the source of truth.
-export const useProjectStore = create<ProjectStore>((set) => ({
+export const useProjectStore = create<ProjectStore>((set, get) => ({
   ...createInitialProjectState(),
 
   // Loads the full project list once at startup and after mutations that need a resync. A DB/IPC
   // failure is recorded (not thrown) so the home screen can show an error instead of a silent empty list.
   loadProjects: async () => {
     const loadSequence = ++projectLoadSequence
+    const mutationSequence = projectMutationSequence
     try {
       const projects = await window.api.projects.list()
       if (loadSequence !== projectLoadSequence) return
+      if (mutationSequence !== projectMutationSequence) {
+        await get().loadProjects()
+        return
+      }
 
       set({ projects: sortByUpdatedDesc(projects), isLoaded: true, loadError: undefined })
     } catch (error) {
       if (loadSequence !== projectLoadSequence) return
+      if (mutationSequence !== projectMutationSequence) {
+        await get().loadProjects()
+        return
+      }
+
       set({ isLoaded: true, loadError: describeError(error) })
     }
   },
@@ -70,6 +81,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   createProject: async (request) => {
     const project = await window.api.projects.create(request)
 
+    projectMutationSequence += 1
     set((state) => ({ projects: upsertProjectList(state.projects, project), loadError: undefined }))
 
     return project
@@ -79,6 +91,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   updateProject: async (request) => {
     const project = await window.api.projects.update(request)
 
+    projectMutationSequence += 1
     set((state) => ({ projects: upsertProjectList(state.projects, project) }))
 
     return project
@@ -87,6 +100,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   updateProjectArchive: async (request) => {
     const project = await window.api.projects.updateArchive(request)
 
+    projectMutationSequence += 1
     set((state) => ({ projects: upsertProjectList(state.projects, project) }))
     return project
   },
@@ -95,12 +109,17 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   deleteProject: async (id) => {
     await window.api.projects.delete({ id })
 
+    projectMutationSequence += 1
     set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }))
   },
 
-  upsertProject: (project) =>
-    set((state) => ({ projects: upsertProjectList(state.projects, project) })),
+  upsertProject: (project) => {
+    projectMutationSequence += 1
+    set((state) => ({ projects: upsertProjectList(state.projects, project) }))
+  },
 
-  removeProject: (id) =>
+  removeProject: (id) => {
+    projectMutationSequence += 1
     set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }))
+  }
 }))

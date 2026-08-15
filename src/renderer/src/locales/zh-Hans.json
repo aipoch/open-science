@@ -448,6 +448,7 @@
   "Could not reveal the log file.": "无法在文件夹中显示日志文件。",
   "Could not save contribution template. Try again.": "无法保存贡献模板，请重试。",
   "Could not save project.": "无法保存项目。",
+  "Project changed elsewhere. Reopen Project Settings and try again.": "项目已在其他位置更改。请重新打开项目设置后再试。",
   "Could not save provider.": "无法保存模型服务商。",
   "Could not save the Claude token.": "无法保存 Claude token。",
   "Could not save the Claude token. Try again.": "无法保存 Claude token。重试一次。",

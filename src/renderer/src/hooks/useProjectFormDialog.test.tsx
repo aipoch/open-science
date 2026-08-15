@@ -139,7 +139,8 @@ describe('useProjectFormDialog', () => {
       id: 'project-1',
       name: 'Renamed',
       description: 'A project',
-      agentContext: 'Always cite DOIs.'
+      agentContext: 'Always cite DOIs.',
+      expectedUpdatedAt: 1
     })
     expect(hook.current().dialogProps.open).toBe(false)
     expect(openProject).not.toHaveBeenCalled()
@@ -167,6 +168,23 @@ describe('useProjectFormDialog', () => {
     expect(hook.current().dialogProps.error).toBe('database is locked')
     expect(hook.current().dialogProps.isSubmitting).toBe(false)
     expect(openProject).not.toHaveBeenCalled()
+    hook.unmount()
+  })
+
+  it('explains how to recover from a stale Project edit', async () => {
+    setProjectsApi({
+      update: vi.fn().mockRejectedValue(new Error('Project changed elsewhere.'))
+    })
+    const hook = renderHook()
+
+    act(() => hook.current().openEditDialog(createProject()))
+    await act(async () => submitForm(hook.current()))
+
+    expect(hook.current().dialogProps.open).toBe(true)
+    expect(hook.current().dialogProps.error).toBe(
+      'Project changed elsewhere. Reopen Project Settings and try again.'
+    )
+    expect(hook.current().dialogProps.isSubmitting).toBe(false)
     hook.unmount()
   })
 

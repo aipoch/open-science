@@ -649,7 +649,7 @@ describe('Data and content application commands', () => {
     deps.sessions.loadAll.mockResolvedValueOnce(loadResult)
     deps.sessions.loadOne.mockResolvedValueOnce(loadedSession)
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
-    const updateRequest = { id: 'project-1', name: 'Updated project' }
+    const updateRequest = { id: 'project-1', name: 'Updated project', expectedUpdatedAt: 1 }
     const deleteProjectRequest = { id: 'project-1' }
     const manifestRequest = { lastProjectId: 'project-1', lastSessionId: 'session-1' }
     const deleteSessionRequest = { projectId: 'project-1', sessionId: 'session-1' }
