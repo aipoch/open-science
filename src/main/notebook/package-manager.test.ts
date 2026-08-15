@@ -164,6 +164,34 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
     expect(result.stdoutDroppedBytes).toBe(Buffer.byteLength(stdoutPrefix + stdoutTail, 'utf8'))
     expect(result.stderrDroppedBytes).toBe(Buffer.byteLength(stderrPrefix + stderrTail, 'utf8'))
   })
+
+  it('reduces oversized micromamba JSON without retaining the complete document in memory', async () => {
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `const value = {`,
+        `padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}),`,
+        `solver_problems: ['unsatisfiable dependency constraints'],`,
+        `actions: { LINK: [{ name: 'r-base', version: '4.5.0' }], UNLINK: [] }`,
+        `};`,
+        `process.stdout.write(JSON.stringify(value));`
+      ].join(''),
+      '--',
+      '--json'
+    ])
+
+    expect(result.code).toBe(0)
+    expect(result.stdoutDroppedBytes).toBeGreaterThan(0)
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(result.structuredCondaResult).toEqual({
+      transaction: true,
+      actions: {
+        LINK: [{ name: 'r-base', version: '4.5.0' }],
+        UNLINK: []
+      },
+      diagnostics: ['solver failed']
+    })
+  })
 })
 
 describe('installPackages', () => {
@@ -639,6 +667,39 @@ describe('installPackages', () => {
       expect.objectContaining({ installer: 'conda', reason: 'solver-failed' }),
       expect.objectContaining({ installer: 'pip', status: 'succeeded' })
     ])
+  })
+
+  it('falls back using the reduced summary when bounded logs truncate structured output', async () => {
+    const solverFailure: SpawnResult = {
+      code: 1,
+      stdout: 'truncated-json-tail',
+      stderr: 'solver failed',
+      stdoutDroppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES,
+      structuredCondaResult: {
+        transaction: false,
+        actions: { LINK: [], UNLINK: [] },
+        diagnostics: ['solver failed']
+      }
+    }
+    const { spawn, calls } = scriptedSpawn([solverFailure, ok])
+
+    const result = await installPackages(
+      { language: 'python', packages: ['special-wheel'] },
+      { spawn, ...base, pypiIndex: 'https://pypi.example/simple' }
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(result).toMatchObject({
+      ok: true,
+      method: 'pip',
+      fallbackUsed: true,
+      logTruncation: { droppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES }
+    })
+    expect(result.attempts?.[0]).toMatchObject({
+      installer: 'conda',
+      reason: 'solver-failed',
+      mutationRisk: 'none'
+    })
   })
 
   it('refuses fallback when structured conda actions show possible mutation', async () => {

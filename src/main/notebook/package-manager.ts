@@ -1,7 +1,15 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import {
+  createWriteStream,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync
+} from 'node:fs'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { finished } from 'node:stream/promises'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
 import type { OptionalProjectIdScope } from '../../shared/project-scope'
@@ -84,6 +92,15 @@ export type InstallResult = {
   error?: string
 }
 
+type CondaStructuredResult = {
+  transaction: boolean
+  actions: {
+    LINK: Array<{ name: 'r-base'; version?: string }>
+    UNLINK: Array<{ name: 'r-base'; version?: string }>
+  }
+  diagnostics: string[]
+}
+
 // One spawned install command's outcome; injected so tests never launch micromamba/pip/R.
 export type SpawnResult = {
   code: number
@@ -91,6 +108,9 @@ export type SpawnResult = {
   stderr: string
   stdoutDroppedBytes?: number
   stderrDroppedBytes?: number
+  // When a bounded stream truncated micromamba --json output, a short-lived parser subprocess
+  // reduces the complete temporary capture to only the facts needed for fail-closed decisions.
+  structuredCondaResult?: CondaStructuredResult
 }
 export type InstallSpawn = (
   command: string,
@@ -187,6 +207,7 @@ const condaMatchSpecName = (spec: string): string | undefined => {
 type CondaFailureClassification = Pick<NotebookPackageInstallerAttempt, 'mutationRisk' | 'reason'>
 
 const parseStructuredCondaResult = (result: SpawnResult): Record<string, unknown> | undefined => {
+  if (result.structuredCondaResult) return result.structuredCondaResult
   for (const candidate of [result.stdout, result.stderr]) {
     try {
       const parsed = JSON.parse(candidate) as unknown
@@ -539,13 +560,226 @@ class InstallerLogTailBuffer {
   }
 }
 
+type CondaJsonCapture = {
+  directory: string
+  stdoutPath: string
+  stderrPath: string
+  stdoutStream: ReturnType<typeof createWriteStream>
+  stderrStream: ReturnType<typeof createWriteStream>
+}
+
+const CONDA_JSON_SUMMARIZER_SOURCE = String.raw`
+const { readFileSync } = require('node:fs')
+
+const strings = (value) =>
+  Array.isArray(value)
+    ? value.flatMap(strings)
+    : typeof value === 'string'
+      ? [value]
+      : typeof value === 'object' && value !== null
+        ? Object.values(value).flatMap(strings)
+        : []
+
+const summarize = (value) => {
+  let transaction = false
+  const actions = { LINK: [], UNLINK: [] }
+  const visit = (nested) => {
+    if (Array.isArray(nested)) {
+      nested.forEach(visit)
+      return
+    }
+    if (typeof nested !== 'object' || nested === null) return
+    for (const [key, child] of Object.entries(nested)) {
+      const normalized = key.toUpperCase()
+      if (/^(?:LINK|UNLINK|FETCH|PREFIX_ACTIONS|TRANSACTION)$/.test(normalized)) {
+        transaction ||= Array.isArray(child) ? child.length > 0 : Boolean(child)
+      }
+      if ((normalized === 'LINK' || normalized === 'UNLINK') && Array.isArray(child)) {
+        for (const record of child) {
+          if (
+            actions[normalized].length < 16 &&
+            typeof record === 'object' &&
+            record !== null &&
+            typeof record.name === 'string' &&
+            record.name.toLowerCase() === 'r-base'
+          ) {
+            actions[normalized].push({
+              name: 'r-base',
+              ...(typeof record.version === 'string' ? { version: record.version } : {})
+            })
+          }
+        }
+      }
+      visit(child)
+    }
+  }
+  visit(value)
+  const diagnostics = strings(value).join('\n')
+  const canonicalDiagnostic =
+    /nothing provides|package(?:s)?[^\n]*not found|does not exist|not installed/iu.test(diagnostics)
+      ? 'package not found'
+      : /solver|unsatisfiable|conflict/iu.test(diagnostics)
+        ? 'solver failed'
+        : /permission|access denied/iu.test(diagnostics)
+          ? 'permission denied'
+          : /network|timeout|tls|ssl|http/iu.test(diagnostics)
+            ? 'network timeout'
+            : undefined
+  return {
+    transaction,
+    actions,
+    diagnostics: canonicalDiagnostic ? [canonicalDiagnostic] : []
+  }
+}
+
+for (const path of process.argv.slice(1)) {
+  try {
+    const value = JSON.parse(readFileSync(path, 'utf8'))
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      process.stdout.write(JSON.stringify(summarize(value)))
+      process.exit(0)
+    }
+  } catch {
+    // Try the other captured stream.
+  }
+}
+process.exit(2)
+`
+
+const createCondaJsonCapture = (): CondaJsonCapture => {
+  const directory = mkdtempSync(join(tmpdir(), 'open-science-conda-json-'))
+  const stdoutPath = join(directory, 'stdout.json')
+  const stderrPath = join(directory, 'stderr.json')
+  const stdoutStream = createWriteStream(stdoutPath, { mode: 0o600 })
+  const stderrStream = createWriteStream(stderrPath, { mode: 0o600 })
+  // Keep late disk errors from becoming unhandled events; finished() below observes the failure and
+  // makes the structured decision fail closed.
+  stdoutStream.on('error', () => {})
+  stderrStream.on('error', () => {})
+  return {
+    directory,
+    stdoutPath,
+    stderrPath,
+    stdoutStream,
+    stderrStream
+  }
+}
+
+const isCondaStructuredResult = (value: unknown): value is CondaStructuredResult => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const candidate = value as Partial<CondaStructuredResult>
+  if (
+    typeof candidate.transaction !== 'boolean' ||
+    !candidate.actions ||
+    !Array.isArray(candidate.actions.LINK) ||
+    !Array.isArray(candidate.actions.UNLINK) ||
+    !Array.isArray(candidate.diagnostics) ||
+    !candidate.diagnostics.every((diagnostic) => typeof diagnostic === 'string')
+  ) {
+    return false
+  }
+  return [...candidate.actions.LINK, ...candidate.actions.UNLINK].every(
+    (action) =>
+      typeof action === 'object' &&
+      action !== null &&
+      action.name === 'r-base' &&
+      (action.version === undefined || typeof action.version === 'string')
+  )
+}
+
+const summarizeCondaJsonCapture = (
+  capture: CondaJsonCapture
+): Promise<CondaStructuredResult | undefined> =>
+  new Promise((resolve) => {
+    const stdout = new InstallerLogTailBuffer(64 * 1024)
+    const parser = nodeSpawn(
+      process.execPath,
+      ['-e', CONDA_JSON_SUMMARIZER_SOURCE, capture.stdoutPath, capture.stderrPath],
+      {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+      }
+    )
+    parser.stdout?.on('data', (chunk) => stdout.push(chunk))
+    let settled = false
+    const settle = (result?: CondaStructuredResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(result)
+    }
+    const timeout = setTimeout(() => {
+      parser.kill()
+      settle()
+    }, 30_000)
+    timeout.unref()
+    parser.on('error', () => settle())
+    parser.on('close', (code) => {
+      if (code !== 0) {
+        settle()
+        return
+      }
+      try {
+        const snapshot = stdout.snapshot()
+        if (snapshot.droppedBytes > 0) {
+          settle()
+          return
+        }
+        const parsed = JSON.parse(snapshot.text) as unknown
+        settle(isCondaStructuredResult(parsed) ? parsed : undefined)
+      } catch {
+        settle()
+      }
+    })
+  })
+
+const finalizeCondaJsonCapture = async (
+  capture: CondaJsonCapture | undefined,
+  summarize: boolean
+): Promise<CondaStructuredResult | undefined> => {
+  if (!capture) return undefined
+  try {
+    await Promise.all([finished(capture.stdoutStream), finished(capture.stderrStream)])
+    return summarize ? await summarizeCondaJsonCapture(capture) : undefined
+  } catch {
+    return undefined
+  } finally {
+    try {
+      rmSync(capture.directory, { recursive: true, force: true })
+    } catch {
+      // The installer result must still settle; the OS temp directory remains best-effort cleanup.
+    }
+  }
+}
+
+const discardCondaJsonCapture = async (capture: CondaJsonCapture | undefined): Promise<void> => {
+  if (!capture) return
+  capture.stdoutStream.end()
+  capture.stderrStream.end()
+  await finalizeCondaJsonCapture(capture, false)
+}
+
 // Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
 // Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
-export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) =>
-  new Promise((resolve, reject) => {
+export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) => {
+  let condaJsonCapture: CondaJsonCapture | undefined
+  try {
+    if (args.includes('--json')) condaJsonCapture = createCondaJsonCapture()
+  } catch (error) {
+    return Promise.resolve({
+      code: 1,
+      stdout: '',
+      stderr: `Failed to create the temporary micromamba JSON capture; not spawning: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    })
+  }
+  return new Promise((resolve, reject) => {
     try {
       onBeforeSpawn?.() // re-arm the per-spawn intent; fail closed if it can't be recorded
     } catch (error) {
+      void discardCondaJsonCapture(condaJsonCapture)
       resolve({
         code: 1,
         stdout: '',
@@ -555,7 +789,18 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
       })
       return
     }
-    const child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
+    let child: ReturnType<typeof nodeSpawn>
+    try {
+      child = nodeSpawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
+    } catch (error) {
+      void discardCondaJsonCapture(condaJsonCapture)
+      resolve({
+        code: 1,
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error)
+      })
+      return
+    }
     if (child.pid !== undefined) {
       try {
         onChild?.(child.pid)
@@ -564,6 +809,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
         // If it can't be confirmed, REJECT with the CHILD_UNCONFIRMED marker so the caller retains the
         // recovery evidence (a worker may still be writing) instead of clearing it.
         void killAndConfirmExit(child).then((confirmed) => {
+          void discardCondaJsonCapture(condaJsonCapture)
           if (confirmed) {
             resolve({
               code: 1,
@@ -591,10 +837,18 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
     child.stderr?.on('data', (chunk) => {
       stderr.push(chunk)
     })
+    if (condaJsonCapture) {
+      child.stdout?.pipe(condaJsonCapture.stdoutStream)
+      child.stderr?.pipe(condaJsonCapture.stderrStream)
+    }
     let settled = false
-    const result = (code: number): SpawnResult => {
+    const result = async (code: number): Promise<SpawnResult> => {
       const stdoutSnapshot = stdout.snapshot()
       const stderrSnapshot = stderr.snapshot()
+      const structuredCondaResult = await finalizeCondaJsonCapture(
+        condaJsonCapture,
+        stdoutSnapshot.droppedBytes > 0 || stderrSnapshot.droppedBytes > 0
+      )
       return {
         code,
         stdout: stdoutSnapshot.text,
@@ -604,20 +858,28 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
           : {}),
         ...(stderrSnapshot.droppedBytes > 0
           ? { stderrDroppedBytes: stderrSnapshot.droppedBytes }
-          : {})
+          : {}),
+        ...(structuredCondaResult ? { structuredCondaResult } : {})
       }
     }
     const settle = (code: number): void => {
       if (settled) return
       settled = true
-      resolve(result(code))
+      void result(code).then(resolve)
     }
     child.on('error', (error) => {
       stderr.push(String(error))
+      if (condaJsonCapture) {
+        child.stdout?.unpipe(condaJsonCapture.stdoutStream)
+        child.stderr?.unpipe(condaJsonCapture.stderrStream)
+        condaJsonCapture.stdoutStream.end()
+        condaJsonCapture.stderrStream.end()
+      }
       settle(1)
     })
     child.on('close', (code) => settle(code ?? 1))
   })
+}
 
 // Flattens one command's output into a single log string for the agent to read as install facts.
 const mergeLog = (result: SpawnResult): string =>
