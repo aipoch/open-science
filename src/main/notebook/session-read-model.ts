@@ -138,10 +138,11 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       lane: session.lane
     })
     const snapshot = session.snapshot()
+    const targetedRunRead = includeRunIds.length > 0
     const runWindow = await this.options.repository.readSessionRunWindow(
       session.projectId,
       session.sessionId,
-      NOTEBOOK_RENDERER_RUN_LIMIT,
+      targetedRunRead ? 0 : NOTEBOOK_RENDERER_RUN_LIMIT,
       includeRunIds
     )
     const liveKernelStatus = session.latestKernelStatus()
@@ -156,13 +157,17 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       pythonPath: document.kernel.pythonPath,
       kernelStatus: liveKernelStatus ?? document.kernel.lastKnownStatus,
       runJsonPath: session.runJsonPath,
-      cells: snapshot.cells.slice(-NOTEBOOK_RENDERER_RUN_LIMIT).map((cell) => ({ ...cell })),
+      cells: targetedRunRead
+        ? []
+        : snapshot.cells.slice(-NOTEBOOK_RENDERER_RUN_LIMIT).map((cell) => ({ ...cell })),
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
       runCount: runWindow.total,
       latestRunEnvironments: runWindow.latestRunEnvironments,
       runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
-      recentRuns: runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+      recentRuns: targetedRunRead
+        ? []
+        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       environments: this.environmentStatuses(session),
       runtimeBindings: this.options.runtimeBindings(session)
     }

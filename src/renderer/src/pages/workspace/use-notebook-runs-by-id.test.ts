@@ -133,9 +133,7 @@ describe('useNotebookRunsById', () => {
   it('hydrates transcript-referenced runs outside the recent state window only once', async () => {
     vi.mocked(window.api.notebook.state)
       .mockResolvedValueOnce(makeState([makeRun('recent-run', 'UkVDRU5U')]))
-      .mockResolvedValueOnce(
-        makeState([makeRun('old-run', 'T0xE'), makeRun('recent-run', 'UkVDRU5U')])
-      )
+      .mockResolvedValueOnce(makeState([makeRun('old-run', 'T0xE')]))
       .mockResolvedValueOnce(makeState([makeRun('new-run', 'TkVX')]))
 
     const { result } = renderHook(() => useNotebookRunsById(reference, ['old-run']))
@@ -152,5 +150,49 @@ describe('useNotebookRunsById', () => {
     await waitFor(() => expect(result.current.get('new-run')).toBeDefined())
     expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
     expect(result.current.get('old-run')).toBeDefined()
+  })
+
+  it('retains historical cache and requests only newly expanded run IDs', async () => {
+    vi.mocked(window.api.notebook.state)
+      .mockResolvedValueOnce(makeState([makeRun('recent-run', 'UkVDRU5U')]))
+      .mockResolvedValueOnce(makeState([makeRun('old-run-1', 'T0xEMQ==')]))
+      .mockResolvedValueOnce(makeState([makeRun('old-run-2', 'T0xEMg==')]))
+
+    const { result, rerender } = renderHook(
+      ({ runIds }) => useNotebookRunsById(reference, runIds),
+      { initialProps: { runIds: ['old-run-1'] } }
+    )
+    await waitFor(() => expect(result.current.get('old-run-1')).toBeDefined())
+
+    rerender({ runIds: ['old-run-1', 'old-run-2'] })
+    await waitFor(() => expect(result.current.get('old-run-2')).toBeDefined())
+
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
+    expect(window.api.notebook.state).toHaveBeenNthCalledWith(3, {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      workspaceCwd: '/workspace',
+      runIds: ['old-run-2']
+    })
+    expect(result.current.get('old-run-1')).toBeDefined()
+  })
+
+  it('batches targeted hydration requests at the server-enforced limit', async () => {
+    const runIds = Array.from(
+      { length: 21 },
+      (_, index) => `old-run-${String(index).padStart(2, '0')}`
+    )
+    vi.mocked(window.api.notebook.state).mockImplementation(async (request) =>
+      makeState(
+        request.runIds?.map((runId) => makeRun(runId, Buffer.from(runId).toString('base64'))) ?? []
+      )
+    )
+
+    const { result } = renderHook(() => useNotebookRunsById(reference, runIds))
+    await waitFor(() => expect(result.current.get('old-run-20')).toBeDefined())
+
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(window.api.notebook.state).mock.calls[1]?.[0].runIds).toHaveLength(20)
+    expect(vi.mocked(window.api.notebook.state).mock.calls[2]?.[0].runIds).toEqual(['old-run-20'])
   })
 })

@@ -482,6 +482,8 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
 
 // A normal state read returns the latest renderer window. Transcript hydration may additionally
 // request immutable historical Runs by id without changing or widening that default window.
+export const NOTEBOOK_STATE_TARGET_RUN_LIMIT = 20
+
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
   runIds?: string[]
 }

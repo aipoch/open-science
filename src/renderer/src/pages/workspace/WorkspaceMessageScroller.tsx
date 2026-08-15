@@ -115,6 +115,8 @@ type SessionScopedActivityExpansionState = {
   overrides: ActivityExpansionOverrides
 }
 
+const EMPTY_ACTIVITY_EXPANSION_OVERRIDES: ActivityExpansionOverrides = {}
+
 type SessionScopedMessagePresentationState = {
   scopeId: string | undefined
   messageIds: Set<string>
@@ -437,7 +439,7 @@ const WorkspaceMessageScrollerImpl = ({
   const activityExpansionOverrides =
     activityExpansionOverrideState.sessionId === currentSessionId
       ? activityExpansionOverrideState.overrides
-      : {}
+      : EMPTY_ACTIVITY_EXPANSION_OVERRIDES
   const rawConversationItems = useMemo(
     () => createConversationItems(activeSession, handoffEvents),
     [activeSession, handoffEvents]
@@ -446,23 +448,33 @@ const WorkspaceMessageScrollerImpl = ({
     () => groupConversationItems(rawConversationItems, activeSession?.activityGroups),
     [activeSession?.activityGroups, rawConversationItems]
   )
-  const referencedNotebookRunIds = useMemo(
+  const notebookRunIdByActivityId = useMemo(
     () =>
-      conversationItems.flatMap((item) => {
-        const activities =
-          item.type === 'activity-group'
-            ? item.activities
-            : item.type === 'activity'
-              ? [item.activity]
-              : []
-        return activities.flatMap((activity) => {
-          const runId = getNotebookRunIdFromActivity(activity)
-          return runId ? [runId] : []
+      new Map(
+        conversationItems.flatMap((item) => {
+          const activities =
+            item.type === 'activity-group'
+              ? item.activities
+              : item.type === 'activity'
+                ? [item.activity]
+                : []
+          return activities.flatMap((activity) => {
+            const runId = getNotebookRunIdFromActivity(activity)
+            return runId ? [[activity.id, runId] as const] : []
+          })
         })
-      }),
+      ),
     [conversationItems]
   )
-  const notebookRunsById = useNotebookRunsById(notebookReference, referencedNotebookRunIds)
+  const requestedNotebookRunIds = useMemo(
+    () =>
+      Object.entries(activityExpansionOverrides).flatMap(([activityId, expanded]) => {
+        const runId = expanded ? notebookRunIdByActivityId.get(activityId) : undefined
+        return runId ? [runId] : []
+      }),
+    [activityExpansionOverrides, notebookRunIdByActivityId]
+  )
+  const notebookRunsById = useNotebookRunsById(notebookReference, requestedNotebookRunIds)
   const [visibleMessageSnapshot, setVisibleMessageSnapshot] = useState<VisibleMessageSnapshot>(
     () => ({ scopeId: undefined, messageIds: new Set() })
   )

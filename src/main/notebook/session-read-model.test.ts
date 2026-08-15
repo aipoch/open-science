@@ -242,18 +242,17 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
-      runs: [
-        makeRun({ runId: 'run-old', startedAt: 1 }),
-        makeRun({ runId: 'run-new', startedAt: 2 })
-      ],
+      runs: [makeRun({ runId: 'run-old', startedAt: 1 })],
       total: 125,
       latestRunEnvironments: {}
     })
 
     const state = await makeReadModel(storageRoot, session, repository).state(session, ['run-old'])
 
-    expect(readWindow).toHaveBeenCalledWith(session.projectId, session.sessionId, 100, ['run-old'])
-    expect(state.runs.map((run) => run.runId)).toEqual(['run-old', 'run-new'])
+    expect(readWindow).toHaveBeenCalledWith(session.projectId, session.sessionId, 0, ['run-old'])
+    expect(state.runs.map((run) => run.runId)).toEqual(['run-old'])
+    expect(state.recentRuns).toEqual([])
+    expect(state.cells).toEqual([])
     expect(state.runCount).toBe(125)
   })
 

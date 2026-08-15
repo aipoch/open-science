@@ -396,9 +396,7 @@ class NotebookExecutionOwner {
       runtimeRoot: session.runtimeRoot,
       cwd: session.cwd
     })
-    const replWasTerminated =
-      !blockedMutation &&
-      session.kernelStatusEntries().some(([, status]) => status === 'terminated')
+    const replWasTerminated = !blockedMutation && session.kernelStatus('repl') === 'terminated'
     if (!blockedMutation) {
       session.clearKernelTerminated('repl')
       this.setReplStatus(session, 'running')

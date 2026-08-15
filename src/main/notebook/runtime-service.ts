@@ -23,6 +23,7 @@ import type {
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../../shared/notebook'
+import { NOTEBOOK_STATE_TARGET_RUN_LIMIT } from '../../shared/notebook'
 import type {
   ManageEnvironmentsRequest,
   ManageEnvironmentsResult,
@@ -799,9 +800,16 @@ class NotebookRuntimeService {
   async state(
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
+    const requestedRunIds = request.runIds ?? []
+    if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
+      throw new Error(
+        `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
+      )
+    }
+    const runIds = [...new Set(requestedRunIds)]
     const session = await this.sessionLifecycle.ensure(request)
     await this.runTerminalization.reconcilePending(session)
-    return this.sessionReadModel.state(session, request.runIds)
+    return this.sessionReadModel.state(session, runIds)
   }
 
   // Resolves the durable reference for a session, preferring the live runtime session but falling

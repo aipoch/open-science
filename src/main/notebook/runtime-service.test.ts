@@ -35,7 +35,11 @@ import type {
   InstallResult as InstallResultForTest
 } from './package-manager'
 import type { EnvironmentInfo } from '../../shared/notebook-env'
-import type { NotebookEnvironmentManifest, NotebookEnvironmentStatus } from '../../shared/notebook'
+import {
+  NOTEBOOK_STATE_TARGET_RUN_LIMIT,
+  type NotebookEnvironmentManifest,
+  type NotebookEnvironmentStatus
+} from '../../shared/notebook'
 import type { DiscoveredInterpreter, RuntimeEnablement } from '../../shared/notebook-runtime'
 import {
   CompletionGateCoordinator,
@@ -295,6 +299,20 @@ describe('notebook runtime service', () => {
     const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(state.activeWrite).toBeUndefined()
     expect(state.cells[0]).toMatchObject({ id: begin.cellId, code: '', status: 'idle' })
+  })
+
+  it('rejects an oversized targeted history request before creating a session', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const runIds = Array.from(
+      { length: NOTEBOOK_STATE_TARGET_RUN_LIMIT + 1 },
+      (_, index) => `run-${index}`
+    )
+
+    await expect(
+      service.state({ sessionId: 'session-1', workspaceCwd: root, runIds })
+    ).rejects.toThrow(/at most 20 targeted run IDs/u)
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
@@ -3326,14 +3344,16 @@ describe('notebook runtime service', () => {
     expect(afterRespawn.kernelStatus).toBe('idle')
   })
 
-  it('clears a stale terminated status once a control-plane run completes on the respawned kernel', async () => {
+  it('does not clear a terminated data-kernel status after an unrelated control run', async () => {
     const root = await createStorageRoot()
     let lifecycle!: NotebookExecutorLifecycleCallbacks
+    const repository = new NotebookRunRepository(root)
+    const statusWrite = vi.spyOn(repository, 'updateKernelStatus')
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
       projectName: 'default-project',
-      repository: new NotebookRunRepository(root),
+      repository,
       executorFactory: (_sessionId, callbacks) => {
         lifecycle = callbacks
         return {
@@ -3357,11 +3377,11 @@ describe('notebook runtime service', () => {
 
     const afterShutdown = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(afterShutdown.kernelStatus).toBe('terminated')
+    statusWrite.mockClear()
 
     await service.executeControl({ sessionId: 'session-1', workspaceCwd: root, code: '2' })
 
-    const afterRespawn = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-    expect(afterRespawn.kernelStatus).toBe('idle')
+    expect(statusWrite).not.toHaveBeenCalled()
   })
 
   describe('lifecycle & concurrency (G2/G3/G4/G5)', () => {
