@@ -232,7 +232,7 @@ describe('WorkspaceMessageScroller Reviewer load error', () => {
     reviewStoreMock.loadError = 'db down'
     let html: string
     try {
-      html = await renderScroller(createSession())
+      html = await renderScroller(createSession({}))
     } finally {
       reviewStoreMock.loadError = undefined
     }
