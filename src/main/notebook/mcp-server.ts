@@ -555,6 +555,7 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   return {
     ...pickDefined(record, [
       'runId',
+      'executionInvocationId',
       'cellId',
       'kernelKind',
       'status',
@@ -694,6 +695,7 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
   const identity = pickDefined(record, [
     'status',
     'runId',
+    'executionInvocationId',
     'sessionId',
     'kernelStatus',
     'exitCode',

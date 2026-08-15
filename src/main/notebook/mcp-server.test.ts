@@ -1021,6 +1021,7 @@ describe('compactNotebookExecutionResult', () => {
     traceback?: string
   }): Record<string, unknown> => ({
     runId: 'notebook-run-1',
+    executionInvocationId: 'invocation-1',
     status: 'completed',
     text: { stdout: '', stderr: '', traceback: '', plain: [], ...text },
     outputs: [],
@@ -1050,7 +1051,11 @@ describe('compactNotebookExecutionResult', () => {
 
     const compact = compactNotebookExecutionResult(result) as Record<string, unknown>
 
-    expect(compact).toMatchObject({ stdout: 'answer\n', stderr: 'warning\n' })
+    expect(compact).toMatchObject({
+      executionInvocationId: 'invocation-1',
+      stdout: 'answer\n',
+      stderr: 'warning\n'
+    })
     expect(compact).not.toHaveProperty('text')
     expect(compact).not.toHaveProperty('script')
     expect(compact).not.toHaveProperty('roots')
@@ -1115,6 +1120,7 @@ describe('compactNotebookExecutionResult', () => {
     const oversized = Array.from({ length: 100_000 }, (_, index) => `${index % 10}`).join('')
     const result = {
       status: 'completed',
+      executionInvocationId: 'invocation-1',
       environment: oversized,
       stdout: oversized,
       stderr: oversized,
@@ -1133,7 +1139,11 @@ describe('compactNotebookExecutionResult', () => {
     expect(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT).toBe(24_000)
     expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
     expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(8_000)
-    expect(JSON.parse(serialized)).toMatchObject({ status: 'completed', truncated: true })
+    expect(JSON.parse(serialized)).toMatchObject({
+      status: 'completed',
+      executionInvocationId: 'invocation-1',
+      truncated: true
+    })
     expect(result.stdout.length).toBe(oversized.length)
   })
 

@@ -174,7 +174,11 @@ describe('getToolExecutionPhase', () => {
             type: 'content',
             content: {
               type: 'text',
-              text: JSON.stringify({ runId: 'run-old', status })
+              text: JSON.stringify({
+                runId: 'run-old',
+                executionInvocationId: 'invocation-old',
+                status
+              })
             }
           }
         ]
@@ -189,4 +193,29 @@ describe('getToolExecutionPhase', () => {
       ).toBe('prepared')
     }
   )
+
+  it('fails closed when the compact Run result belongs to another invocation', () => {
+    expect(
+      getToolExecutionPhase(
+        activity({
+          status: 'completed',
+          executionInvocationId: 'invocation-current',
+          toolContent: [
+            {
+              type: 'content',
+              content: {
+                type: 'text',
+                text: JSON.stringify({
+                  runId: 'run-stale',
+                  executionInvocationId: 'invocation-stale',
+                  status: 'completed'
+                })
+              }
+            }
+          ]
+        }),
+        undefined
+      )
+    ).toBe('prepared')
+  })
 })

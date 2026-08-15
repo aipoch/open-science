@@ -737,7 +737,12 @@ const getNotebookRunStatusFromActivity = (
 ): NotebookRunStatus | undefined => {
   if (!activity.executionInvocationId) return undefined
   const summary = parseNotebookRunSummary(activity)
-  if (!summary || typeof summary.runId !== 'string' || typeof summary.status !== 'string') {
+  if (
+    !summary ||
+    typeof summary.runId !== 'string' ||
+    summary.executionInvocationId !== activity.executionInvocationId ||
+    typeof summary.status !== 'string'
+  ) {
     return undefined
   }
 

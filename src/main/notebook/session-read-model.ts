@@ -166,6 +166,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       document.kernel.lastKnownStatus === 'terminated' &&
       terminatedKernelInstances !== undefined &&
       !defaultKernelTerminated
+    const liveDefaultKernelStatus = session.kernelStatus(DEFAULT_KERNEL_PROCESS_KEY)
 
     return {
       id: session.id,
@@ -179,10 +180,12 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       // named-environment/R/REPL terminations are projected through `environments` instead. Legacy
       // coarse terminations have unknown ownership and remain visible until an explicit restart.
       kernelStatus:
-        defaultKernelTerminated || legacyUnknownKernelTerminated
+        liveDefaultKernelStatus ??
+        (defaultKernelTerminated || legacyUnknownKernelTerminated
           ? 'terminated'
-          : (session.kernelStatus(DEFAULT_KERNEL_PROCESS_KEY) ??
-            (onlyNonDefaultKernelTerminated ? 'idle' : document.kernel.lastKnownStatus)),
+          : onlyNonDefaultKernelTerminated
+            ? 'idle'
+            : document.kernel.lastKnownStatus),
       runJsonPath: session.runJsonPath,
       cells: sparseRunRead
         ? []
@@ -267,7 +270,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   ): NotebookEnvironmentStatus[] {
     const statuses = new Map(session.kernelStatusEntries())
     for (const instance of terminatedKernelInstances ?? []) {
-      statuses.set(kernelInstanceProcessKey(instance), 'terminated')
+      const processKey = kernelInstanceProcessKey(instance)
+      if (!statuses.has(processKey)) statuses.set(processKey, 'terminated')
     }
     return Array.from(statuses, ([processKey, status]) => {
       if (processKey === 'repl') return { processKey, kind: 'repl', status }

@@ -195,12 +195,12 @@ describe('NotebookSessionReadModel', () => {
     })
   })
 
-  it('keeps coarse status on default Python and projects persisted named terminations', async () => {
+  it('prefers live kernel statuses while projecting persisted offline terminations', async () => {
     const storageRoot = await createRoot()
     const repository = new NotebookRunRepository(storageRoot)
     const session = makeSession(storageRoot, {
       kernelStatuses: [
-        ['python:default-python', 'idle'],
+        ['python:default-python', 'running'],
         ['r:analysis', 'running']
       ]
     })
@@ -216,24 +216,41 @@ describe('NotebookSessionReadModel', () => {
       lane: session.lane,
       kernelInstance: { kind: 'r', environment: 'analysis' }
     })
+    await repository.markKernelTerminated({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      kernelInstance: { kind: 'python', environment: 'default-python' }
+    })
+    await repository.markKernelTerminated({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      kernelInstance: { kind: 'repl' }
+    })
 
     const state = await makeReadModel(storageRoot, session, repository).state(session)
 
-    expect(state.kernelStatus).toBe('idle')
+    expect(state.kernelStatus).toBe('running')
     expect(state.environments).toEqual([
       {
         processKey: 'python:default-python',
         kind: 'python',
         environment: 'default-python',
-        status: 'idle',
+        status: 'running',
         restartRecommended: false
       },
       {
         processKey: 'r:analysis',
         kind: 'r',
         environment: 'analysis',
-        status: 'terminated',
+        status: 'running',
         restartRecommended: true
+      },
+      {
+        processKey: 'repl',
+        kind: 'repl',
+        status: 'terminated'
       }
     ])
   })
