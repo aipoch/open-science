@@ -13,7 +13,7 @@ import type {
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
-import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE } from '../../shared/artifacts'
+import { ARTIFACT_OWNERSHIP_PERSISTENCE_RACE, artifactCreatedAtMs } from '../../shared/artifacts'
 import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { Project } from '../../shared/projects'
@@ -208,16 +208,27 @@ const createUserMessage = (id: string, content: string, now: number): PersistedC
   updatedAt: now
 })
 
-const toPersistedArtifact = (artifact: ArtifactFile): PersistedArtifact => ({
-  id: artifact.id,
-  kind: 'managed-file',
-  path: artifact.path,
-  fileUrl: artifact.fileUrl,
-  name: artifact.name,
-  mimeType: artifact.mimeType,
-  size: artifact.size,
-  mtimeMs: artifact.mtimeMs
-})
+const toPersistedArtifact = (
+  artifact: ArtifactFile,
+  fallbackCreatedAt?: number
+): PersistedArtifact => {
+  const createdAt =
+    artifactCreatedAtMs(artifact.createdAt) ??
+    (fallbackCreatedAt !== undefined && Number.isFinite(fallbackCreatedAt) && fallbackCreatedAt >= 0
+      ? fallbackCreatedAt
+      : undefined)
+  return {
+    id: artifact.id,
+    kind: 'managed-file',
+    path: artifact.path,
+    fileUrl: artifact.fileUrl,
+    name: artifact.name,
+    mimeType: artifact.mimeType,
+    size: artifact.size,
+    ...(createdAt === undefined ? {} : { createdAt }),
+    mtimeMs: artifact.mtimeMs
+  }
+}
 
 const selectTaskHistoryMessages = (session: PersistedChatSession): PersistedChatMessage[] => {
   const cutoffMessageIds = [
@@ -828,7 +839,9 @@ class TaskRunner {
       const uniqueArtifacts = [
         ...new Map(finalizedArtifacts.map((artifact) => [artifact.id, artifact])).values()
       ]
-      const persistedArtifacts = uniqueArtifacts.map(toPersistedArtifact)
+      const persistedArtifacts = uniqueArtifacts.map((artifact) =>
+        toPersistedArtifact(artifact, assistantMessage.createdAt)
+      )
       const linkedAssistantMessage: PersistedChatMessage = {
         ...assistantMessage,
         artifactIds: uniqueArtifacts.length

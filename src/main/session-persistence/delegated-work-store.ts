@@ -1,4 +1,5 @@
 import type { PersistedConversationGraph } from '../../shared/conversation-graph'
+import { artifactCreatedAtMs } from '../../shared/artifacts'
 import {
   materializeSessionConversationGraph,
   sanitizeSessionRuntimeContext
@@ -267,8 +268,12 @@ class SessionDelegatedWorkStore {
       const nextArtifacts = [
         ...(materialized.artifacts ?? []).map((artifact) => structuredClone(artifact))
       ]
+      const ownerCreatedAt = owner.completedAt ?? owner.createdAt
+      const fallbackCreatedAt =
+        Number.isFinite(ownerCreatedAt) && ownerCreatedAt >= 0 ? ownerCreatedAt : undefined
       let artifactsChanged = false
       for (const artifact of input.artifacts) {
+        const createdAt = artifactCreatedAtMs(artifact.createdAt) ?? fallbackCreatedAt
         const persisted: PersistedArtifact = {
           id: artifact.versionId ?? artifact.id,
           ...(artifact.artifactId ? { artifactId: artifact.artifactId } : {}),
@@ -282,6 +287,7 @@ class SessionDelegatedWorkStore {
           name: artifact.name,
           ...(artifact.mimeType ? { mimeType: artifact.mimeType } : {}),
           size: artifact.size,
+          ...(createdAt === undefined ? {} : { createdAt }),
           mtimeMs: artifact.mtimeMs,
           ...(artifact.checksum ? { sha256: artifact.checksum } : {})
         }

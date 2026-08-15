@@ -23,6 +23,12 @@ export type ArtifactFile = ProjectIdScope & {
   environment?: string
 }
 
+export const artifactCreatedAtMs = (createdAt: string | undefined): number | undefined => {
+  if (!createdAt) return undefined
+  const timestamp = Date.parse(createdAt)
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : undefined
+}
+
 // A user-picked reference to an existing file (upload or generated output) inserted via the
 // composer `@` mention. Carries the durable path so the runtime can resolve and attach the file.
 export type ArtifactReference = {

@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Bot,
   Brain,
+  ChartNoAxesCombined,
   Cloud,
   Globe,
   LockKeyhole,
@@ -35,6 +36,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SettingsPanelId } from './settings-navigation'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -60,6 +62,7 @@ import { PermissionsPanel } from './PermissionsPanel'
 import { ArchivedPanel, type ArchivedView } from './ArchivedPanel'
 import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
 import { ProviderForm } from './ProviderForm'
+import { TokenUsagePanel } from './TokenUsagePanel'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
@@ -180,6 +183,7 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
+      { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
       { id: 'general', labelKey: 'General', Icon: Settings2 }
     ]
   },
@@ -203,6 +207,8 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
 const SETTINGS_PANELS: ReadonlyArray<SettingsPanel> = SETTINGS_GROUPS.flatMap(
   (group) => group.panels
 )
+const EMPTY_USAGE_SESSIONS = [] as const
+const EMPTY_USAGE_PROJECTS = [] as const
 
 // One entry in the settings back/forward history: the active panel plus each panel's current sub-view
 // (skills: list / manage / detail / create / edit / import; model: list / create / edit; connectors: list /
@@ -279,7 +285,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const computeHosts = useComputeStore((state) => state.hosts)
-  const projects = useProjectStore((state) => state.projects)
   const specialistItems = useSpecialistStore((state) => state.items)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
@@ -384,6 +389,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const currentLocation = history[historyIndex]
   const activePanel = currentLocation.panel
+  const isUsageVisible = open && activePanel === 'usage'
+  const sessions = useSessionStore((state) =>
+    isUsageVisible ? state.sessions : EMPTY_USAGE_SESSIONS
+  )
+  const projects = useProjectStore((state) =>
+    isUsageVisible ? state.projects : EMPTY_USAGE_PROJECTS
+  )
   const skillsView = currentLocation.skills
   const modelView = currentLocation.model
   const connectorsView: ConnectorsView = currentLocation.connectors ?? { kind: 'list' }
@@ -658,8 +670,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }))
 
-  // A provider form (add/edit) is open when the model panel is on a non-list sub-view.
-  const isProviderFormOpen = activePanel === 'model' && modelView.kind !== 'list'
+  // Only create/edit locations open a provider form.
+  const isProviderFormOpen =
+    activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
@@ -1092,6 +1105,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   />
                 ) : activePanel === 'network' ? (
                   <NetworkPanel view={networkView} onNavigate={navigateNetwork} />
+                ) : activePanel === 'usage' ? (
+                  <TokenUsagePanel sessions={sessions} projects={projects} />
                 ) : activePanel === 'general' ? (
                   <GeneralPanel />
                 ) : activePanel === 'remote-control' ? (

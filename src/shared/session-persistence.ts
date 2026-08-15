@@ -317,6 +317,7 @@ export type PersistedArtifact = {
   name?: string
   mimeType?: string
   size?: number
+  createdAt?: number
   mtimeMs?: number
   sha256?: string
 }
@@ -2252,6 +2253,7 @@ const sanitizeArtifact = (artifact: unknown): PersistedArtifact | undefined => {
   const fileUrl = asString(artifact.fileUrl)
   const mimeType = asString(artifact.mimeType)
   const size = asNumber(artifact.size)
+  const createdAt = asNumber(artifact.createdAt)
   const mtimeMs = asNumber(artifact.mtimeMs)
   const sha256 = asString(artifact.sha256)
   const artifactId = asString(artifact.artifactId)
@@ -2262,6 +2264,9 @@ const sanitizeArtifact = (artifact: unknown): PersistedArtifact | undefined => {
   if (name) sanitized.name = name
   if (mimeType) sanitized.mimeType = mimeType
   if (size !== undefined) sanitized.size = size
+  if (createdAt !== undefined && Number.isFinite(createdAt) && createdAt >= 0) {
+    sanitized.createdAt = createdAt
+  }
   if (mtimeMs !== undefined) sanitized.mtimeMs = mtimeMs
   if (sha256) sanitized.sha256 = sha256
   if (artifactId) sanitized.artifactId = artifactId

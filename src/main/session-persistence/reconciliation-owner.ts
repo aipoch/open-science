@@ -1,4 +1,5 @@
 import type { ArtifactVersionFile } from '../../shared/artifact-provenance'
+import { artifactCreatedAtMs } from '../../shared/artifacts'
 import type { ProjectFileSource } from '../../shared/project-files'
 import {
   materializeSessionConversationGraph,
@@ -83,20 +84,24 @@ type ReconcileLoadedSessionsOutcome =
 
 type RecoveredMessageArtifacts = { messageId: string; artifacts: ArtifactVersionFile[] }
 
-const toPersistedArtifact = (artifact: ArtifactVersionFile): PersistedArtifact => ({
-  id: artifact.id,
-  artifactId: artifact.artifactId,
-  versionId: artifact.versionId,
-  versionNumber: artifact.versionNumber,
-  kind: 'managed-file',
-  path: artifact.path,
-  fileUrl: artifact.fileUrl,
-  name: artifact.name,
-  mimeType: artifact.mimeType,
-  size: artifact.size,
-  mtimeMs: artifact.mtimeMs,
-  sha256: artifact.checksum
-})
+const toPersistedArtifact = (artifact: ArtifactVersionFile): PersistedArtifact => {
+  const createdAt = artifactCreatedAtMs(artifact.createdAt)
+  return {
+    id: artifact.id,
+    artifactId: artifact.artifactId,
+    versionId: artifact.versionId,
+    versionNumber: artifact.versionNumber,
+    kind: 'managed-file',
+    path: artifact.path,
+    fileUrl: artifact.fileUrl,
+    name: artifact.name,
+    mimeType: artifact.mimeType,
+    size: artifact.size,
+    ...(createdAt === undefined ? {} : { createdAt }),
+    mtimeMs: artifact.mtimeMs,
+    sha256: artifact.checksum
+  }
+}
 
 const persistedArtifactsEqual = (left: PersistedArtifact, right: PersistedArtifact): boolean =>
   Object.entries(right).every(([field, value]) => left[field as keyof PersistedArtifact] === value)

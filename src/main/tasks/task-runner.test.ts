@@ -1236,6 +1236,7 @@ describe('TaskRunner', () => {
               fileUrl: 'open-science-preview://artifact-file/result.txt',
               mimeType: 'text/plain',
               size: 6,
+              createdAt: '1970-01-01T00:00:00.010Z',
               mtimeMs: 11
             }
           ]
@@ -1264,6 +1265,9 @@ describe('TaskRunner', () => {
       turnUsageUnavailable: true,
       artifactIds: ['artifact-file']
     })
+    expect(savedSessions.at(-1)?.artifacts).toEqual([
+      expect.objectContaining({ id: 'artifact-file', createdAt: 10 })
+    ])
   })
 
   it('settles a run as failed when final session persistence fails', async () => {

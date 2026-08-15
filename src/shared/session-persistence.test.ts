@@ -41,6 +41,52 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
   updatedAt: 1
 })
 
+describe('artifact persistence', () => {
+  it('preserves valid creation timestamps while accepting historical artifacts without one', () => {
+    const restored = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      artifacts: [
+        {
+          id: 'artifact-current',
+          kind: 'managed-file',
+          path: '/workspace/current.md',
+          createdAt: 1_723_000_000_000
+        },
+        {
+          id: 'artifact-historical',
+          kind: 'managed-file',
+          path: '/workspace/historical.md'
+        },
+        {
+          id: 'artifact-invalid',
+          kind: 'managed-file',
+          path: '/workspace/invalid.md',
+          createdAt: -1
+        }
+      ]
+    })
+
+    expect(restored?.artifacts).toEqual([
+      {
+        id: 'artifact-current',
+        kind: 'managed-file',
+        path: '/workspace/current.md',
+        createdAt: 1_723_000_000_000
+      },
+      {
+        id: 'artifact-historical',
+        kind: 'managed-file',
+        path: '/workspace/historical.md'
+      },
+      {
+        id: 'artifact-invalid',
+        kind: 'managed-file',
+        path: '/workspace/invalid.md'
+      }
+    ])
+  })
+})
+
 const getRestoredActivities = (session: unknown): PersistedChatSession['activities'] =>
   normalizeSessionFile(session)?.activities
 

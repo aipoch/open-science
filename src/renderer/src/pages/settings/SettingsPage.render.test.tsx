@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createRef } from 'react'
+import { act, createRef, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Dialog } from 'radix-ui'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import type { SpecialistProfileView } from '../../../../shared/specialist'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
@@ -185,6 +186,7 @@ beforeEach(() => {
   installApi()
   useSettingsStore.setState(createInitialSettingsState())
   useProjectStore.setState(createInitialProjectState())
+  useSessionStore.setState(createInitialSessionState())
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -334,7 +336,7 @@ describe('SettingsPage layout', () => {
     expect(dialog?.className).toContain('overscroll-contain')
 
     // Left navigation grouped as Capabilities (Skills, Connectors, Specialists, Compute, Network)
-    // and Workspace (Model, Agent, Permissions, Runtimes, Storage, General).
+    // and Workspace (Model, Agent, Permissions, Runtimes, Storage, Usage, General).
     // Remote access stays isolated and Archived is anchored at the navigation bottom.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
@@ -346,7 +348,7 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('Workspace')
     expect(nav?.textContent).toContain('Remote access')
     const navItems = nav?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(13)
+    expect(navItems).toHaveLength(14)
     expect(navItems[0]?.textContent).toContain('Skills')
     expect(navItems[1]?.textContent).toContain('Connectors')
     expect(navItems[2]?.textContent).toContain('Specialists')
@@ -357,9 +359,10 @@ describe('SettingsPage layout', () => {
     expect(navItems[7]?.textContent).toContain('Permissions')
     expect(navItems[8]?.textContent).toContain('Runtimes')
     expect(navItems[9]?.textContent).toContain('Storage')
-    expect(navItems[10]?.textContent).toContain('General')
-    expect(navItems[11]?.textContent).toContain('Remote control')
-    expect(navItems[12]?.textContent).toContain('Archived')
+    expect(navItems[10]?.textContent).toContain('Usage')
+    expect(navItems[11]?.textContent).toContain('General')
+    expect(navItems[12]?.textContent).toContain('Remote control')
+    expect(navItems[13]?.textContent).toContain('Archived')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
     expect(modelNavButton?.querySelector('.lucide-brain')).not.toBeNull()
@@ -856,6 +859,30 @@ describe('SettingsPage layout', () => {
     const rootCrumb = document.body.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')
     act(() => rootCrumb?.click())
     expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+  })
+
+  it('opens Usage as a standalone history-driven settings panel', () => {
+    act(() => {
+      root.render(<SettingsPage open onClose={vi.fn()} />)
+    })
+
+    const usageEntry = navButton('Usage')
+    expect(usageEntry).not.toBeNull()
+    act(() => usageEntry?.click())
+
+    expect(document.body.querySelector('[data-slot="token-usage-panel"]')).not.toBeNull()
+    expect(
+      document.body.querySelector('nav[aria-label="Settings"] [aria-current="page"]')?.textContent
+    ).toContain('Usage')
+    expect(document.body.querySelector('[aria-label="Back to model"]')).toBeNull()
+
+    const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')
+    act(() => back?.click())
+    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+
+    const forward = document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')
+    act(() => forward?.click())
+    expect(document.body.querySelector('[data-slot="token-usage-panel"]')).not.toBeNull()
   })
 
   it('closes a nested dialog, then a breadcrumb, then Settings with the close-pane shortcut', () => {
@@ -2241,6 +2268,37 @@ describe('SettingsPage layout', () => {
     })
 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('does not rerender the closed settings surface when sessions stream updates', () => {
+    let commits = 0
+    act(() => {
+      root.render(
+        <Profiler id="settings" onRender={() => (commits += 1)}>
+          <SettingsPage open={false} onClose={vi.fn()} />
+        </Profiler>
+      )
+    })
+    const commitsBeforeSessionUpdate = commits
+
+    act(() => {
+      useSessionStore.setState({
+        sessions: [
+          {
+            id: 'streaming-session',
+            projectId: 'project-1',
+            title: 'Streaming session',
+            cwd: '/workspace',
+            status: 'idle',
+            createdAt: 1,
+            updatedAt: 1,
+            messages: []
+          }
+        ]
+      })
+    })
+
+    expect(commits).toBe(commitsBeforeSessionUpdate)
   })
 
   it('navigates settings history with the back/forward controls', async () => {
