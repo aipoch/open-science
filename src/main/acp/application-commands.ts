@@ -172,6 +172,34 @@ type AcpApplicationCommandDependencies = Readonly<{
   ) => Promise<void>
 }>
 
+const permissionResponseSessionId = (
+  runtime: Pick<AcpApplicationCommandRuntime, 'getSnapshot'>,
+  response: AcpPermissionResponse
+): string | undefined =>
+  response.restored?.sessionId ??
+  runtime
+    .getSnapshot()
+    .pendingPermissions.find((request) => request.requestId === response.requestId)?.sessionId
+
+const elicitationResponseSessionId = (
+  runtime: Pick<AcpApplicationCommandRuntime, 'getSnapshot'>,
+  response: ElicitationResponse
+): string | undefined =>
+  response.delegatedQuestion?.sessionId ??
+  response.request?.sessionId ??
+  runtime
+    .getSnapshot()
+    .pendingElicitations?.find((request) => request.requestId === response.requestId)?.sessionId
+
+const withResponseAdmission = <Result>(
+  archiveAvailability: AcpApplicationCommandDependencies['archiveAvailability'],
+  sessionId: string | undefined,
+  operation: () => Promise<Result>
+): Promise<Result> =>
+  archiveAvailability && sessionId
+    ? archiveAvailability.withSessionAvailableById(sessionId, operation)
+    : operation()
+
 const registerAcpCommands = (
   registrar: ApplicationCommandRegistrar,
   dependencies: AcpApplicationCommandDependencies
@@ -232,30 +260,45 @@ const registerAcpCommands = (
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can respond to permission requests.')
         }
-        return dependencies.runtime.respondToPermission(invocation.args[0])
+        const response = invocation.args[0]
+        const sessionId = dependencies.archiveAvailability
+          ? permissionResponseSessionId(dependencies.runtime, response)
+          : undefined
+        return withResponseAdmission(dependencies.archiveAvailability, sessionId, () =>
+          dependencies.runtime.respondToPermission(response)
+        )
       },
       'acp:respond-elicitation': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can respond to structured questions.')
         }
         const response = invocation.args[0]
-        if (response.delegatedQuestion) {
-          if (!dependencies.respondDelegatedQuestion) {
-            throw new Error('Delegated question response owner is unavailable.')
+        const sessionId = dependencies.archiveAvailability
+          ? elicitationResponseSessionId(dependencies.runtime, response)
+          : undefined
+        return withResponseAdmission(dependencies.archiveAvailability, sessionId, () => {
+          if (response.delegatedQuestion) {
+            if (!dependencies.respondDelegatedQuestion) {
+              throw new Error('Delegated question response owner is unavailable.')
+            }
+            return dependencies
+              .respondDelegatedQuestion({
+                ...response.delegatedQuestion,
+                requestId: response.requestId
+              })
+              .then(() => dependencies.runtime.getSnapshot())
           }
-          return dependencies
-            .respondDelegatedQuestion({
-              ...response.delegatedQuestion,
-              requestId: response.requestId
-            })
-            .then(() => dependencies.runtime.getSnapshot())
-        }
-        return dependencies.runtime.respondToElicitation(response)
+          return dependencies.runtime.respondToElicitation(response)
+        })
       },
       'acp:set-permission-profile': (invocation) =>
-        dependencies.runtime.setPermissionProfile(invocation.args[0]),
+        withResponseAdmission(dependencies.archiveAvailability, invocation.args[0].sessionId, () =>
+          dependencies.runtime.setPermissionProfile(invocation.args[0])
+        ),
       'acp:revoke-permission-grant': (invocation) =>
-        dependencies.runtime.revokePermissionGrant(invocation.args[0]),
+        withResponseAdmission(dependencies.archiveAvailability, invocation.args[0].sessionId, () =>
+          dependencies.runtime.revokePermissionGrant(invocation.args[0])
+        ),
       'acp:get-plan-projection': (invocation) => {
         if (!canSatisfyHumanApproval(invocation.callerContext)) {
           throw new Error('Only a current human caller can access a Session Plan.')

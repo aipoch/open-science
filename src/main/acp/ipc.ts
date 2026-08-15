@@ -32,6 +32,32 @@ type AcpIpcSessionAdmission = {
   ): Promise<Result>
 }
 
+const permissionResponseSessionId = (
+  runtime: AcpRuntimeCoordinator,
+  response: AcpPermissionResponse
+): string | undefined =>
+  response.restored?.sessionId ??
+  runtime
+    .getSnapshot()
+    .pendingPermissions.find((request) => request.requestId === response.requestId)?.sessionId
+
+const elicitationResponseSessionId = (
+  runtime: AcpRuntimeCoordinator,
+  response: ElicitationResponse
+): string | undefined =>
+  response.delegatedQuestion?.sessionId ??
+  response.request?.sessionId ??
+  runtime
+    .getSnapshot()
+    .pendingElicitations?.find((request) => request.requestId === response.requestId)?.sessionId
+
+const withResponseAdmission = <Result>(
+  sessionAdmission: AcpIpcSessionAdmission,
+  sessionId: string | undefined,
+  operation: () => Promise<Result>
+): Promise<Result> =>
+  sessionId ? sessionAdmission.withSessionAvailableById(sessionId, operation) : operation()
+
 const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
@@ -93,7 +119,9 @@ const registerAcpIpcHandlerSet = (
     return runtime.deleteSession(request)
   })
   ipcMainHandle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
-    runtime.respondToPermission(response)
+    withResponseAdmission(sessionAdmission, permissionResponseSessionId(runtime, response), () =>
+      runtime.respondToPermission(response)
+    )
   )
   ipcMainHandle('acp:get-plan-projection', (_event, projectId: string, sessionId: string) =>
     runtime.getSessionPlanProjection(projectId, sessionId)
@@ -101,25 +129,37 @@ const registerAcpIpcHandlerSet = (
   ipcMainHandle(
     'acp:respond-plan',
     (_event, request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]) =>
-      runtime.respondSessionPlan(request)
+      sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+        runtime.respondSessionPlan(request)
+      )
   )
   ipcMainHandle('acp:respond-elicitation', (_event, response: ElicitationResponse) => {
-    if (response.delegatedQuestion) {
-      if (!respondDelegatedQuestion) {
-        throw new Error('Delegated question response owner is unavailable.')
+    return withResponseAdmission(
+      sessionAdmission,
+      elicitationResponseSessionId(runtime, response),
+      () => {
+        if (response.delegatedQuestion) {
+          if (!respondDelegatedQuestion) {
+            throw new Error('Delegated question response owner is unavailable.')
+          }
+          return respondDelegatedQuestion({
+            ...response.delegatedQuestion,
+            requestId: response.requestId
+          }).then(() => runtime.getSnapshot())
+        }
+        return runtime.respondToElicitation(response)
       }
-      return respondDelegatedQuestion({
-        ...response.delegatedQuestion,
-        requestId: response.requestId
-      }).then(() => runtime.getSnapshot())
-    }
-    return runtime.respondToElicitation(response)
+    )
   })
   ipcMainHandle('acp:set-permission-profile', (_event, request: AcpSetPermissionProfileRequest) =>
-    runtime.setPermissionProfile(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.setPermissionProfile(request)
+    )
   )
   ipcMainHandle('acp:revoke-permission-grant', (_event, request: AcpRevokePermissionGrantRequest) =>
-    runtime.revokePermissionGrant(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.revokePermissionGrant(request)
+    )
   )
 }
 

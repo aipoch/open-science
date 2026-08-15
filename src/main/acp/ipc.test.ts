@@ -274,6 +274,104 @@ it('routes delegated question responses to their owner without touching Main eli
   expect(respondToElicitation).not.toHaveBeenCalled()
 })
 
+it('rejects ACP response mutations before runtime work when Session admission is closed', async () => {
+  const failure = new Error('Project is being deleted.')
+  const admitted: string[] = []
+  const sessionAdmission = {
+    withSessionAvailableById: async <Result>(
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => {
+      void operation
+      admitted.push(sessionId)
+      throw failure
+    }
+  }
+  const responseSnapshot = {
+    status: 'idle',
+    cwd: '/workspace',
+    sessionIds: ['permission-session', 'elicitation-session'],
+    events: [],
+    pendingPermissions: [
+      {
+        requestId: 'permission-1',
+        sessionId: 'permission-session',
+        toolCallId: 'tool-1',
+        title: 'Use a tool',
+        options: []
+      }
+    ],
+    pendingElicitations: [
+      {
+        requestId: 'question-1',
+        sessionId: 'elicitation-session',
+        toolCallId: 'tool-2',
+        message: 'Choose',
+        fields: []
+      }
+    ],
+    permissionProfiles: {},
+    permissionGrants: {},
+    promptInFlight: false,
+    promptInFlightSessionIds: [],
+    contextUsageBySession: {}
+  }
+  const responseRuntime = {
+    getSnapshot: vi.fn(() => responseSnapshot),
+    respondToPermission: vi.fn(),
+    respondToElicitation: vi.fn(),
+    respondSessionPlan: vi.fn(),
+    setPermissionProfile: vi.fn(),
+    revokePermissionGrant: vi.fn()
+  }
+  installAcpIpcHandlers(responseRuntime as never, {} as never, undefined, sessionAdmission)
+
+  await expect(
+    handlers.get('acp:respond-permission')?.(undefined, {
+      requestId: 'permission-1',
+      optionId: 'allow-once'
+    })
+  ).rejects.toBe(failure)
+  await expect(
+    handlers.get('acp:respond-elicitation')?.(undefined, {
+      requestId: 'question-1',
+      action: 'decline'
+    })
+  ).rejects.toBe(failure)
+  await expect(
+    handlers.get('acp:respond-plan')?.(undefined, {
+      projectId: 'project-1',
+      sessionId: 'plan-session',
+      feedback: 'Revise the plan.'
+    })
+  ).rejects.toBe(failure)
+  await expect(
+    handlers.get('acp:set-permission-profile')?.(undefined, {
+      sessionId: 'profile-session',
+      profile: 'auto'
+    })
+  ).rejects.toBe(failure)
+  await expect(
+    handlers.get('acp:revoke-permission-grant')?.(undefined, {
+      sessionId: 'profile-session',
+      categoryKey: 'mcp:tool'
+    })
+  ).rejects.toBe(failure)
+
+  expect(admitted).toEqual([
+    'permission-session',
+    'elicitation-session',
+    'plan-session',
+    'profile-session',
+    'profile-session'
+  ])
+  expect(responseRuntime.respondToPermission).not.toHaveBeenCalled()
+  expect(responseRuntime.respondToElicitation).not.toHaveBeenCalled()
+  expect(responseRuntime.respondSessionPlan).not.toHaveBeenCalled()
+  expect(responseRuntime.setPermissionProfile).not.toHaveBeenCalled()
+  expect(responseRuntime.revokePermissionGrant).not.toHaveBeenCalled()
+})
+
 describe('ACP module transport seam', () => {
   it('holds archive admission until Save as skill is accepted without awaiting turn completion', async () => {
     const session = materializeSessionConversationGraph({

@@ -479,6 +479,140 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()
   })
 
+  it('holds Session admission through ACP response mutations', async () => {
+    const responseSnapshot: AcpStateSnapshot = {
+      ...snapshot,
+      pendingPermissions: [
+        {
+          requestId: 'permission-1',
+          sessionId: 'permission-session',
+          toolCallId: 'tool-1',
+          title: 'Use a tool',
+          options: []
+        }
+      ],
+      pendingElicitations: [
+        {
+          requestId: 'question-1',
+          sessionId: 'elicitation-session',
+          toolCallId: 'tool-2',
+          message: 'Choose',
+          fields: []
+        }
+      ]
+    }
+    let admittedSessionId: string | undefined
+    const admitted: string[] = []
+    const withinAdmission = async <Result>(
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => {
+      expect(admittedSessionId).toBeUndefined()
+      admittedSessionId = sessionId
+      admitted.push(sessionId)
+      try {
+        return await operation()
+      } finally {
+        admittedSessionId = undefined
+      }
+    }
+    const base = createDependencies()
+    const runtime: AcpApplicationCommandDependencies['runtime'] = {
+      ...base.runtime,
+      getSnapshot: vi.fn(() => responseSnapshot),
+      respondToPermission: vi.fn(async () => {
+        expect(admittedSessionId).toBe('permission-session')
+        return responseSnapshot
+      }),
+      respondToElicitation: vi.fn(async () => {
+        expect(admittedSessionId).toBe('elicitation-session')
+        return responseSnapshot
+      }),
+      respondSessionPlan: vi.fn(async () => {
+        expect(admittedSessionId).toBe('plan-session')
+        return { projection: {} as never, changed: true }
+      }),
+      setPermissionProfile: vi.fn(async () => {
+        expect(admittedSessionId).toBe('profile-session')
+        return responseSnapshot
+      }),
+      revokePermissionGrant: vi.fn(async () => {
+        expect(admittedSessionId).toBe('profile-session')
+        return responseSnapshot
+      })
+    }
+    const respondDelegatedQuestion = vi.fn(async () => {
+      expect(admittedSessionId).toBe('delegated-session')
+    })
+    const dependencies: AcpApplicationCommandDependencies = {
+      ...base,
+      runtime,
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => withinAdmission(sessionId, operation),
+        withSessionAvailableById: withinAdmission
+      },
+      respondDelegatedQuestion
+    }
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await router.dispatcher.invoke(
+      acpCommands.respondPermission,
+      invocation([{ requestId: 'permission-1', optionId: 'allow-once' }])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondElicitation,
+      invocation([{ requestId: 'question-1', action: 'decline' }])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondElicitation,
+      invocation([
+        {
+          requestId: 'delegated-question-1',
+          action: 'accept',
+          delegatedQuestion: {
+            projectId: 'project-1',
+            sessionId: 'delegated-session',
+            action: 'confirm',
+            answers: []
+          }
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondPlan,
+      invocation([
+        {
+          projectId: 'project-1',
+          sessionId: 'plan-session',
+          feedback: 'Revise the plan.'
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.setPermissionProfile,
+      invocation([{ sessionId: 'profile-session', profile: 'auto' }])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.revokePermissionGrant,
+      invocation([{ sessionId: 'profile-session', categoryKey: 'mcp:tool' }])
+    )
+
+    expect(admitted).toEqual([
+      'permission-session',
+      'elicitation-session',
+      'delegated-session',
+      'plan-session',
+      'profile-session',
+      'profile-session'
+    ])
+    expect(respondDelegatedQuestion).toHaveBeenCalledOnce()
+  })
+
   it('exposes Plan projection reads to the same current human callers on Electron and Web', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
