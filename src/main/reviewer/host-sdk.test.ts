@@ -8,11 +8,13 @@
 import { writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ReviewerHostServer, buildReviewerHostPythonBootstrap } from './host-sdk'
+import * as boundedFileIo from '../bounded-file-io'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { TurnScope } from '../../shared/reviewer'
+import { ResourceBudgetExceededError } from '../resource-budget'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -113,6 +115,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await server?.stop().catch(() => undefined)
   await rm(tmpDir, { recursive: true, force: true })
 })
@@ -127,6 +130,27 @@ describe('host.read_turn — frozen evidence', () => {
 
     expect(server.readTurn()).toEqual(before)
     expect(server.readTurn()[0]).toMatchObject({ content: 'Run the analysis' })
+  })
+})
+
+describe('reviewer host request budget', () => {
+  it('returns 413 for an authenticated compatibility request above the limit', async () => {
+    server = new ReviewerHostServer(makeSession(), makeScope(), tmpDir, undefined, undefined, {
+      requestBytes: 2
+    })
+    ;({ endpoint, token } = await server.start())
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: '{} '
+    })
+
+    expect(response.status).toBe(413)
+    expect(response.headers.get('connection')).toBe('close')
   })
 })
 
@@ -177,6 +201,178 @@ describe('host.read_artifact — tabular CSV', () => {
     )
 
     await expect(server.readArtifact(nativeVersionId)).rejects.toThrow(/checksum mismatch/i)
+  })
+
+  it('verifies the whole Artifact once while returning bounded pages', async () => {
+    const nativeVersionId = 'native-version-truncated'
+    const nativePath = join(tmpDir, 'immutable-truncated', 'content')
+    await mkdir(join(tmpDir, 'immutable-truncated'), { recursive: true })
+    await writeFile(nativePath, 'abcdefghij')
+    const verify = vi.spyOn(boundedFileIo, 'readFilePageAndDigest')
+    server = new ReviewerHostServer(
+      makeSession({ artifacts: [] }),
+      makeScope([nativeVersionId]),
+      tmpDir,
+      async () => ({
+        path: nativePath,
+        filename: 'native.txt',
+        contentType: 'text/plain'
+      }),
+      undefined,
+      { readBytes: 4, sessionBytes: 320 }
+    )
+
+    await expect(server.readArtifact(nativeVersionId)).resolves.toMatchObject({
+      kind: 'raw',
+      content: 'abcd',
+      sizeBytes: 10,
+      returnedBytes: 4,
+      truncated: true
+    })
+    await expect(
+      server.readArtifact(nativeVersionId, { offset: 4, maxBytes: 2 })
+    ).resolves.toMatchObject({
+      content: 'ef',
+      offset: 4,
+      returnedBytes: 2,
+      truncated: true
+    })
+    expect(verify).toHaveBeenCalledTimes(1)
+    await expect(server.readArtifact(nativeVersionId)).rejects.toBeInstanceOf(
+      ResourceBudgetExceededError
+    )
+  })
+
+  it('paginates UTF-8 text on code-point boundaries without replacement characters', async () => {
+    const nativeVersionId = 'native-version-utf8'
+    const nativePath = join(tmpDir, 'immutable-utf8', 'content')
+    await mkdir(join(tmpDir, 'immutable-utf8'), { recursive: true })
+    await writeFile(nativePath, 'a你b')
+    server = new ReviewerHostServer(
+      makeSession({ artifacts: [] }),
+      makeScope([nativeVersionId]),
+      tmpDir,
+      async () => ({ path: nativePath, filename: 'native.txt', contentType: 'text/plain' }),
+      undefined,
+      { readBytes: 4, sessionBytes: 1_000 }
+    )
+
+    await expect(server.readArtifact(nativeVersionId, { maxBytes: 2 })).resolves.toMatchObject({
+      content: 'a',
+      offset: 0,
+      returnedBytes: 1,
+      nextOffset: 1,
+      truncated: true
+    })
+    await expect(server.readArtifact(nativeVersionId, { offset: 1 })).resolves.toMatchObject({
+      content: '你b',
+      offset: 1,
+      returnedBytes: 4,
+      truncated: false
+    })
+  })
+
+  it('falls back to advancing base64 pages when text-classified bytes are invalid UTF-8', async () => {
+    const nativeVersionId = 'native-version-invalid-utf8'
+    const nativePath = join(tmpDir, 'immutable-invalid-utf8', 'content')
+    const bytes = Buffer.from([0xff, 0xfe, 0x61])
+    await mkdir(join(tmpDir, 'immutable-invalid-utf8'), { recursive: true })
+    await writeFile(nativePath, bytes)
+    server = new ReviewerHostServer(
+      makeSession({ artifacts: [] }),
+      makeScope([nativeVersionId]),
+      tmpDir,
+      async () => ({ path: nativePath, filename: 'native.txt', contentType: 'text/plain' }),
+      undefined,
+      { readBytes: 2, sessionBytes: 1_000 }
+    )
+
+    const first = await server.readArtifact(nativeVersionId)
+    expect(first).toMatchObject({
+      kind: 'raw',
+      encoding: 'base64',
+      content: bytes.subarray(0, 2).toString('base64'),
+      offset: 0,
+      returnedBytes: 2,
+      nextOffset: 2,
+      truncated: true
+    })
+    await expect(
+      server.readArtifact(nativeVersionId, { offset: first.nextOffset })
+    ).resolves.toMatchObject({
+      kind: 'raw',
+      encoding: 'utf8',
+      content: 'a',
+      offset: 2,
+      returnedBytes: 1,
+      truncated: false
+    })
+  })
+
+  it('preserves invalid UTF-8 prefixes before valid text in the same page', async () => {
+    const nativeVersionId = 'native-version-invalid-utf8-prefix'
+    const nativePath = join(tmpDir, 'immutable-invalid-utf8-prefix', 'content')
+    const bytes = Buffer.from([0x80, 0x61, 0x62])
+    await mkdir(join(tmpDir, 'immutable-invalid-utf8-prefix'), { recursive: true })
+    await writeFile(nativePath, bytes)
+    server = new ReviewerHostServer(
+      makeSession({ artifacts: [] }),
+      makeScope([nativeVersionId]),
+      tmpDir,
+      async () => ({ path: nativePath, filename: 'native.txt', contentType: 'text/plain' }),
+      undefined,
+      { readBytes: 2, sessionBytes: 1_000 }
+    )
+
+    const first = await server.readArtifact(nativeVersionId)
+    expect(first).toMatchObject({
+      kind: 'raw',
+      encoding: 'base64',
+      content: bytes.subarray(0, 2).toString('base64'),
+      offset: 0,
+      returnedBytes: 2,
+      nextOffset: 2,
+      truncated: true
+    })
+    await expect(
+      server.readArtifact(nativeVersionId, { offset: first.nextOffset })
+    ).resolves.toMatchObject({
+      kind: 'raw',
+      encoding: 'utf8',
+      content: 'b',
+      offset: 2,
+      returnedBytes: 1,
+      truncated: false
+    })
+  })
+
+  it('returns paged CSV as reconstructable raw windows across quoted records', async () => {
+    const quote = String.fromCharCode(34)
+    const content = [
+      'name,value',
+      `alpha,${quote}one`,
+      `two${quote}`,
+      `beta,${quote}escaped ${quote}${quote}quote${quote}${quote}${quote}`,
+      ''
+    ].join('\n')
+    await writeArtifact(tmpDir, V1, content)
+    server = new ReviewerHostServer(makeSession(), makeScope(), tmpDir, undefined, undefined, {
+      readBytes: 8,
+      sessionBytes: 10_000
+    })
+
+    let offset = 0
+    let reconstructed = ''
+    for (;;) {
+      const page = await server.readArtifact(V1, { offset })
+      expect(page).toMatchObject({ kind: 'raw', encoding: 'utf8', offset })
+      if (page.kind !== 'raw') throw new Error('Expected a raw CSV byte window.')
+      reconstructed += page.content
+      if (!page.truncated) break
+      expect(page.nextOffset).toBeGreaterThan(offset)
+      offset = page.nextOffset!
+    }
+    expect(reconstructed).toBe(content)
   })
 
   it('returns kind=tabular with column-addressable structure for a simple CSV', async () => {

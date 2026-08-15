@@ -307,6 +307,24 @@ describe('AgentMcpHttpHost', () => {
     expect(response.status).toBe(401)
   })
 
+  it('rejects an authenticated request body above the host budget', async () => {
+    host = new AgentMcpHttpHost({ requestBytes: 2 })
+    const { endpoint, token } = await host.ensureStarted()
+    host.registerHostMessage('bounded', { sendMessage: vi.fn() })
+
+    const response = await fetch(`${endpoint}/mcp/host-message/bounded`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json'
+      },
+      body: '{} '
+    })
+
+    expect(response.status).toBe(413)
+    expect(response.headers.get('connection')).toBe('close')
+  })
+
   it('serves one trusted side-chat host-message handler over its bound route', async () => {
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()

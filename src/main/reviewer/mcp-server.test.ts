@@ -7,6 +7,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { request as httpRequest } from 'node:http'
 import { describe, it, expect, vi } from 'vitest'
 
 import {
@@ -520,6 +521,65 @@ describe('ReviewerMcpServer HTTP transport', () => {
     }
   }
 
+  it('bounds declared and chunked HTTP bodies while accepting the exact request limit', async () => {
+    const evidence = createReviewerEvidence()
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    const initializeBody = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'budget-test', version: '1.0' }
+      }
+    })
+    const server = new ReviewerMcpServer(scope, onSubmit, evidence, [], {
+      requestBytes: Buffer.byteLength(initializeBody)
+    })
+    const { endpoint, token } = await server.start()
+    const headers = {
+      authorization: `Bearer ${token}`,
+      accept: MCP_ACCEPT,
+      'content-type': 'application/json'
+    }
+
+    try {
+      const declared = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: `${initializeBody} `
+      })
+      expect(declared.status).toBe(413)
+      expect(declared.headers.get('connection')).toBe('close')
+
+      const chunked = await new Promise<{
+        status: number | undefined
+        connection: string | undefined
+      }>((resolve, reject) => {
+        const request = httpRequest(endpoint, { method: 'POST', headers }, (response) => {
+          response.resume()
+          response.once('end', () =>
+            resolve({ status: response.statusCode, connection: response.headers.connection })
+          )
+        })
+        request.once('error', reject)
+        request.write(initializeBody)
+        request.end(' ')
+      })
+      expect(chunked).toEqual({ status: 413, connection: 'close' })
+      expect(evidence.readTurn).not.toHaveBeenCalled()
+      expect(onSubmit).not.toHaveBeenCalled()
+
+      const exact = await fetch(endpoint, { method: 'POST', headers, body: initializeBody })
+      expect(exact.status).toBe(200)
+      expect(exact.headers.get('mcp-session-id')).toBeTruthy()
+      await exact.text()
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('reuses the session transport for the GET SSE stream and still serves tool calls', async () => {
     const server = new ReviewerMcpServer(scope, async () => undefined, createReviewerEvidence())
     const { endpoint, token } = await server.start()
@@ -667,7 +727,11 @@ describe('ReviewerMcpServer HTTP transport', () => {
         expect.objectContaining({ id: 'artifact-csv', kind: 'tabular', rowCount: 1 })
       )
       expect(evidence.queryExecutionLog).toHaveBeenCalledWith('act-9')
-      expect(evidence.readArtifact).toHaveBeenCalledWith('artifact-csv')
+      expect(evidence.readArtifact).toHaveBeenCalledWith(
+        'artifact-csv',
+        { offset: undefined, maxBytes: undefined },
+        expect.any(AbortSignal)
+      )
       expect(submitted.result?.isError).not.toBe(true)
       expect(onSubmit).toHaveBeenCalledOnce()
     } finally {

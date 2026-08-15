@@ -1,4 +1,5 @@
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -6,13 +7,15 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactWriteSource } from '../../shared/artifacts'
 import { createPngBytes, createPngInlineSource } from './artifact-test-fixtures'
@@ -148,6 +151,142 @@ describe('artifact repository', () => {
 
     await expect(readFile(artifact.path)).resolves.toEqual(png)
     await expect(readFile(sourcePath)).resolves.toEqual(png)
+  })
+
+  it('rejects inline content above the configured application file budget', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    await expect(
+      repository.writePendingFile(
+        {
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          filename: 'too-large.txt',
+          source: { kind: 'inline', content: '12345', encoding: 'utf8' }
+        },
+        { maxInlineBytes: 4 }
+      )
+    ).rejects.toMatchObject({ dimension: 'file', observedBytes: 5, limitBytes: 4 })
+  })
+
+  it('rejects a local source above the configured application file budget before copying', async () => {
+    const root = await createStorageRoot()
+    const allowedRoot = join(root, 'notebook-session')
+    const sourcePath = join(allowedRoot, 'too-large.bin')
+    await mkdir(allowedRoot, { recursive: true })
+    await writeFile(sourcePath, '12345')
+    const repository = new ArtifactRepository(root)
+
+    await expect(
+      repository.writePendingFile(
+        {
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          filename: 'too-large.bin',
+          source: { kind: 'localPath', path: sourcePath }
+        },
+        { allowedImportRoots: [allowedRoot], maxFileBytes: 4 }
+      )
+    ).rejects.toMatchObject({ dimension: 'file', observedBytes: 5, limitBytes: 4 })
+  })
+
+  it('stops a local source that grows beyond its reservation while copying', async () => {
+    const root = await createStorageRoot()
+    const allowedRoot = join(root, 'notebook-session')
+    const sourcePath = join(allowedRoot, 'growing.bin')
+    await mkdir(allowedRoot, { recursive: true })
+    await writeFile(sourcePath, '1234')
+    const releaseFileReservation = vi.fn(async () => undefined)
+    const repository = new ArtifactRepository(root)
+
+    await expect(
+      repository.writePendingFile(
+        {
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          filename: 'growing.bin',
+          source: { kind: 'localPath', path: sourcePath }
+        },
+        {
+          allowedImportRoots: [allowedRoot],
+          reserveFile: async (fileBytes) => {
+            await appendFile(sourcePath, '5')
+            return { id: 'reservation-1', fileBytes }
+          },
+          releaseFileReservation
+        }
+      )
+    ).rejects.toMatchObject({ dimension: 'file', observedBytes: 5, limitBytes: 4 })
+    expect(releaseFileReservation).toHaveBeenCalledWith('reservation-1')
+    await expect(
+      readFile(
+        join(root, 'artifacts', 'default-project', 'session-1', '.pending', 'run-1', 'growing.bin')
+      )
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('copies the file opened during preflight when the source path is replaced', async () => {
+    const root = await createStorageRoot()
+    const allowedRoot = join(root, 'notebook-session')
+    const sourcePath = join(allowedRoot, 'pinned.bin')
+    const replacementPath = join(allowedRoot, 'replacement.bin')
+    const displacedPath = join(allowedRoot, 'displaced.bin')
+    await mkdir(allowedRoot, { recursive: true })
+    await writeFile(sourcePath, 'old!')
+    const fixedTimestamp = new Date('2020-01-01T00:00:00.000Z')
+    await utimes(sourcePath, fixedTimestamp, fixedTimestamp)
+    const sourceStat = await stat(sourcePath)
+    await writeFile(replacementPath, 'new!')
+    await utimes(replacementPath, fixedTimestamp, fixedTimestamp)
+    await expect(stat(replacementPath)).resolves.toMatchObject({
+      size: sourceStat.size,
+      mtimeMs: sourceStat.mtimeMs
+    })
+    const repository = new ArtifactRepository(root)
+
+    const artifact = await repository.writePendingFile(
+      {
+        projectName: 'default-project',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        filename: 'pinned.bin',
+        source: { kind: 'localPath', path: sourcePath }
+      },
+      {
+        allowedImportRoots: [allowedRoot],
+        reserveFile: async (fileBytes) => {
+          await rename(sourcePath, displacedPath)
+          await rename(replacementPath, sourcePath)
+          return { id: 'reservation-1', fileBytes }
+        },
+        releaseFileReservation: async () => undefined
+      }
+    )
+
+    await expect(readFile(artifact.path, 'utf8')).resolves.toBe('old!')
+    await expect(readFile(sourcePath, 'utf8')).resolves.toBe('new!')
+  })
+
+  it('rejects a write that would consume the configured disk reserve', async () => {
+    const root = await createStorageRoot()
+    const repository = new ArtifactRepository(root)
+
+    await expect(
+      repository.writePendingFile(
+        {
+          projectName: 'default-project',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          filename: 'reserve.txt',
+          source: { kind: 'inline', content: 'x', encoding: 'utf8' }
+        },
+        { diskReserveBytes: 1_000_000_000_000_000 }
+      )
+    ).rejects.toMatchObject({ dimension: 'disk-reserve' })
   })
 
   it('rejects a declared MIME type that conflicts with the source signature', async () => {

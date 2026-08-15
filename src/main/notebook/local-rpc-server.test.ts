@@ -77,6 +77,31 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('rejects an authenticated request body above the local RPC budget', async () => {
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      token: 'secret-token',
+      requestBytes: 2
+    })
+    const connection = await server.ensureStarted()
+
+    try {
+      const response = await fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer secret-token',
+          'content-type': 'application/json'
+        },
+        body: '{} '
+      })
+
+      expect(response.status).toBe(413)
+      expect(response.headers.get('connection')).toBe('close')
+    } finally {
+      await server.close()
+    }
+  })
+
   it('binds viewImage to the trusted active control invocation and execution workspace', async () => {
     const stage = vi.fn(async (_source, _options, trusted) => trusted)
     const isAvailable = vi.fn(async () => true)
@@ -1975,6 +2000,9 @@ describe('notebook local RPC server', () => {
       artifactRunId: 'artifact-run-1',
       writeOperationId: 'write-1',
       writeRequestChecksum: 'b'.repeat(64),
+      resourceReservationId: 'reservation-1',
+      resourceSizeBytes: 12,
+      resourceChecksum: 'a'.repeat(64),
       rootFrameId: 'frame-root',
       agentFrameId: 'frame-root',
       messageBranchId: 'branch-root',
@@ -2014,6 +2042,106 @@ describe('notebook local RPC server', () => {
       ])
     } finally {
       await server.close()
+    }
+  })
+
+  it('binds Artifact reservations to the capability and releases ownership on revoke and close', async () => {
+    const reserveWrite = vi.fn(async () => ({
+      id: 'reservation-1',
+      fileBytes: 12,
+      expiresAt: Date.now() + 60_000
+    }))
+    const releaseWriteReservation = vi.fn(async () => undefined)
+    const releaseRunWriteReservations = vi.fn(async () => undefined)
+    const releaseAllWriteReservations = vi.fn(async () => undefined)
+    const createVersion = vi.fn()
+    const server = new NotebookLocalRpcServer({} as never, {
+      transport: 'tcp',
+      token: 'secret-token',
+      artifactProvenance: {
+        createVersion,
+        reserveWrite,
+        releaseWriteReservation,
+        releaseRunWriteReservations,
+        releaseAllWriteReservations
+      }
+    })
+    const connection = await server.ensureStarted()
+    const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
+    let closed = false
+    const call = (method: string, params: Record<string, unknown>): Promise<Response> =>
+      fetch(connection.endpoint, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ method, params })
+      })
+
+    try {
+      const reserved = await call('artifactReserveWrite', {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-1',
+        filename: 'sin.png',
+        fileBytes: 12
+      })
+      await expect(reserved.json()).resolves.toEqual({
+        result: expect.objectContaining({ id: 'reservation-1', fileBytes: 12 })
+      })
+      expect(reserveWrite).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-1',
+        filename: 'sin.png',
+        fileBytes: 12
+      })
+
+      const released = await call('artifactReleaseWrite', {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        reservationId: 'reservation-1'
+      })
+      expect(released.status).toBe(200)
+      expect(releaseWriteReservation).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        reservationId: 'reservation-1'
+      })
+
+      const bypass = await call('artifactCreateVersion', {
+        ...artifactCapabilityBinding,
+        writeOperationId: 'write-without-reservation',
+        writeRequestChecksum: 'a'.repeat(64),
+        filename: 'bypass.txt'
+      })
+      expect(bypass.status).toBe(500)
+      await expect(bypass.json()).resolves.toEqual({
+        error: 'Artifact Version creation requires a write reservation.'
+      })
+      expect(createVersion).not.toHaveBeenCalled()
+
+      await server.revokeArtifactRunCapability(token)
+      expect(releaseRunWriteReservations).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1'
+      })
+      await server.close()
+      closed = true
+      expect(releaseAllWriteReservations).toHaveBeenCalledOnce()
+    } finally {
+      if (!closed) await server.close()
     }
   })
 
@@ -2071,6 +2199,9 @@ describe('notebook local RPC server', () => {
             ...artifactCapabilityBinding,
             writeOperationId: 'write-drain',
             writeRequestChecksum: 'a'.repeat(64),
+            resourceReservationId: 'reservation-drain',
+            resourceSizeBytes: 12,
+            resourceChecksum: 'a'.repeat(64),
             filename: 'sin.png'
           }
         })
@@ -2253,6 +2384,9 @@ describe('notebook local RPC server', () => {
             ...artifactCapabilityBinding,
             writeOperationId: 'write-long-turn',
             writeRequestChecksum: 'a'.repeat(64),
+            resourceReservationId: 'reservation-long-turn',
+            resourceSizeBytes: 12,
+            resourceChecksum: 'a'.repeat(64),
             filename: 'sin.png'
           }
         })

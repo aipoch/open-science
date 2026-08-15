@@ -4,14 +4,24 @@
 // longer receives its endpoint/token or executes a Python bootstrap.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 
 import { getProjectArtifactDir } from '../artifacts/repository'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ReviewScopeSnapshotBlock, TurnScope, ScopeBlock } from '../../shared/reviewer'
 import { buildReviewScopeSnapshot as buildPersistedScopeSnapshot } from './scope-snapshot'
+import {
+  readFilePageAndDigest,
+  readVerifiedFilePage,
+  type FileObservation
+} from '../bounded-file-io'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  ResourceBudgetExceededError,
+  assertWithinResourceBudget,
+  readBoundedJsonBody
+} from '../resource-budget'
 
 // One readable block as returned by host.read_turn().
 export type OrderedBlock = {
@@ -45,18 +55,30 @@ export type ExecRecord = {
   terminalExitCode?: number | null
 }
 
+// Every Artifact read is one bounded byte window. Fields stay optional in the exported contract so
+// older in-process consumers can deserialize pre-pagination results during a rolling app update.
+export type ArtifactContentWindow = {
+  sizeBytes?: number
+  offset?: number
+  returnedBytes?: number
+  truncated?: boolean
+  nextOffset?: number
+}
+
 // Column-addressable structure returned for tabular (CSV/TSV) artifacts so the reviewer can
 // match by column name instead of aligning rows visually.
-export type TabularArtifactContent = {
+export type TabularArtifactContent = ArtifactContentWindow & {
   id: string
   kind: 'tabular'
   // Each key is a column header; the array contains the string values of that column across all rows.
   columns: Record<string, string[]>
-  rowCount: number
+  rowCount: number | null
+  rowsReturned?: number
+  rowCountComplete?: boolean
 }
 
 // Raw content for non-tabular artifacts (text UTF-8 or base64-encoded binary).
-export type RawArtifactContent = {
+export type RawArtifactContent = ArtifactContentWindow & {
   id: string
   kind: 'raw'
   content: string
@@ -71,6 +93,33 @@ export type ArtifactVersionContentResolver = (request: {
   versionId: string
 }) => Promise<{ path: string; filename: string; contentType?: string; checksum?: string }>
 
+export type ReviewerResourceBudgetOptions = {
+  requestBytes?: number
+  readBytes?: number
+  sessionBytes?: number
+}
+
+export type ReviewerArtifactReadOptions = {
+  offset?: number
+  maxBytes?: number
+}
+
+type ArtifactVerification = {
+  path: string
+  checksum: string
+  sizeBytes: number
+  sample: Buffer
+  observation: FileObservation
+}
+
+type ArtifactVerificationEntry = {
+  path: string
+  expectedChecksum?: string
+  verification: Promise<ArtifactVerification>
+}
+
+class ArtifactVersionChecksumMismatchError extends Error {}
+
 // The complete set of RPC methods the host exposes. Single-sourced so the unknown-method error can
 // tell a guessing reviewer exactly what IS available (it likes to try e.g. `list_artifacts`).
 export const SUPPORTED_HOST_METHODS = ['read_turn', 'query_execution_log', 'read_artifact'] as const
@@ -79,6 +128,9 @@ export const SUPPORTED_HOST_METHODS = ['read_turn', 'query_execution_log', 'read
 export class ReviewerHostServer {
   private server: Server
   private readonly frozenScopeSnapshot: ReviewScopeSnapshotBlock[]
+  private readonly resourceBudget: Required<ReviewerResourceBudgetOptions>
+  private readonly artifactVerifications = new Map<string, ArtifactVerificationEntry>()
+  private reviewerBytesReturned = 0
   readonly token: string
   private _endpoint: string | undefined
 
@@ -87,13 +139,26 @@ export class ReviewerHostServer {
     private readonly scope: TurnScope,
     private readonly artifactStorageRoot: string,
     private readonly resolveArtifactVersion?: ArtifactVersionContentResolver,
-    frozenScopeSnapshot?: ReviewScopeSnapshotBlock[]
+    frozenScopeSnapshot?: ReviewScopeSnapshotBlock[],
+    resourceBudget: ReviewerResourceBudgetOptions = {}
   ) {
     this.frozenScopeSnapshot = frozenScopeSnapshot ?? buildPersistedScopeSnapshot(session, scope)
     this.token = randomUUID()
+    this.resourceBudget = {
+      requestBytes: resourceBudget.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes,
+      readBytes: resourceBudget.readBytes ?? LOCAL_RESOURCE_BUDGETS.reviewerReadBytes,
+      sessionBytes: resourceBudget.sessionBytes ?? LOCAL_RESOURCE_BUDGETS.reviewerSessionBytes
+    }
     this.server = createServer((req, res) => {
       void this.handleRequest(req, res).catch((error) => {
-        res.writeHead(500, { 'content-type': 'application/json' })
+        if (error instanceof ResourceBudgetExceededError) {
+          res.shouldKeepAlive = false
+          res.setHeader('connection', 'close')
+          res.once('finish', () => req.destroy())
+        }
+        res.writeHead(error instanceof ResourceBudgetExceededError ? 413 : 500, {
+          'content-type': 'application/json'
+        })
         res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
       })
     })
@@ -115,6 +180,7 @@ export class ReviewerHostServer {
   // Shuts down the server; called after the reviewer session disposes.
   async stop(): Promise<void> {
     await new Promise<void>((resolve) => this.server.close(() => resolve()))
+    this.artifactVerifications.clear()
   }
 
   get endpoint(): string {
@@ -134,12 +200,12 @@ export class ReviewerHostServer {
     }
 
     // Read body.
-    const body = await readBody(req)
     let parsed: { method?: string; params?: Record<string, unknown> }
 
     try {
-      parsed = JSON.parse(body) as typeof parsed
-    } catch {
+      parsed = await readBoundedJsonBody<typeof parsed>(req, this.resourceBudget.requestBytes)
+    } catch (error) {
+      if (error instanceof ResourceBudgetExceededError) throw error
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'Invalid JSON body' }))
       return
@@ -158,7 +224,10 @@ export class ReviewerHostServer {
         result = this.queryExecutionLog(params.activityId as string | undefined)
         break
       case 'read_artifact':
-        result = await this.readArtifact(params.id as string)
+        result = await this.readArtifact(params.id as string, {
+          offset: params.offset as number | undefined,
+          maxBytes: params.maxBytes as number | undefined
+        })
         break
       default:
         res.writeHead(400, { 'content-type': 'application/json' })
@@ -217,7 +286,11 @@ export class ReviewerHostServer {
   // Tabular artifacts (CSV/TSV) are returned as { kind:'tabular'; columns; rowCount } so the
   // reviewer can address by column name without visual row alignment. Non-tabular artifacts
   // return { kind:'raw'; content; encoding }.
-  async readArtifact(id: string): Promise<ArtifactContent> {
+  async readArtifact(
+    id: string,
+    options: ReviewerArtifactReadOptions = {},
+    signal?: AbortSignal
+  ): Promise<ArtifactContent> {
     if (!this.scope.artifactVersionIds.includes(id)) {
       throw new Error(
         `Artifact id ${JSON.stringify(id)} is not in this turn's scope. ` +
@@ -238,51 +311,188 @@ export class ReviewerHostServer {
       resolvedVersion?.path ??
       resolveArtifactPath(this.artifactStorageRoot, this.session.projectId, id)
 
-    let bytes: Buffer
+    const offset = options.offset ?? 0
+    const requestedBytes = options.maxBytes ?? this.resourceBudget.readBytes
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new Error('Reviewer Artifact offset must be a non-negative integer.')
+    }
+    if (!Number.isSafeInteger(requestedBytes) || requestedBytes <= 0) {
+      throw new Error('Reviewer Artifact maxBytes must be a positive integer.')
+    }
+    const remainingSessionBytes = this.resourceBudget.sessionBytes - this.reviewerBytesReturned
+    if (remainingSessionBytes <= 0) {
+      throw new ResourceBudgetExceededError(
+        'reviewer-session',
+        this.reviewerBytesReturned + 1,
+        this.resourceBudget.sessionBytes
+      )
+    }
+    const returnedLimit = Math.min(
+      requestedBytes,
+      this.resourceBudget.readBytes,
+      remainingSessionBytes
+    )
+    let verification: ArtifactVerification
     try {
-      bytes = await readFile(artifactPath)
+      verification = await this.verifyArtifact(id, artifactPath, resolvedVersion?.checksum, signal)
     } catch (error) {
+      if (error instanceof ArtifactVersionChecksumMismatchError) throw error
       throw new Error(
         `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
           `${error instanceof Error ? error.message : String(error)}`
       )
     }
-    if (
-      resolvedVersion?.checksum &&
-      createHash('sha256').update(bytes).digest('hex') !== resolvedVersion.checksum
-    ) {
-      throw new Error(`Artifact Version checksum mismatch while reading ${JSON.stringify(id)}.`)
-    }
 
-    const isText = isLikelyText(bytes)
+    if (offset > verification.sizeBytes) {
+      throw new Error(
+        `Reviewer Artifact offset ${offset} exceeds file size ${verification.sizeBytes}.`
+      )
+    }
+    let page: Awaited<ReturnType<typeof readVerifiedFilePage>>
+    try {
+      page = await readVerifiedFilePage(
+        artifactPath,
+        offset,
+        returnedLimit,
+        verification.observation,
+        signal
+      )
+    } catch (error) {
+      this.artifactVerifications.delete(id)
+      throw new Error(
+        `Failed to read artifact ${JSON.stringify(id)} at ${artifactPath}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    const read = {
+      ...page,
+      sizeBytes: verification.sizeBytes,
+      sample: verification.sample
+    }
+    const isText = isLikelyText(read.sample)
+    let result: ArtifactContent
+    const base64Window = (): RawArtifactContent => {
+      const truncated = offset + read.returnedBytes < read.sizeBytes
+      return {
+        id,
+        kind: 'raw',
+        content: read.page.toString('base64'),
+        encoding: 'base64',
+        sizeBytes: read.sizeBytes,
+        offset,
+        returnedBytes: read.returnedBytes,
+        truncated,
+        ...(truncated ? { nextOffset: offset + read.returnedBytes } : {})
+      }
+    }
 
     if (isText) {
-      const text = bytes.toString('utf8')
+      const safePage = decodeUtf8Page(read.page, offset)
+      if (read.returnedBytes > 0 && (safePage.offset !== offset || safePage.returnedBytes === 0)) {
+        result = base64Window()
+      } else {
+        const text = safePage.content
+        const truncated = safePage.offset + safePage.returnedBytes < read.sizeBytes
+        const window = {
+          sizeBytes: read.sizeBytes,
+          offset: safePage.offset,
+          returnedBytes: safePage.returnedBytes,
+          truncated,
+          ...(truncated ? { nextOffset: safePage.offset + safePage.returnedBytes } : {})
+        }
 
-      // Determine if this artifact is a tabular format (CSV/TSV) by mimeType or path extension.
-      const contentType = resolvedVersion?.contentType ?? artifactMeta?.mimeType
-      const filename = resolvedVersion?.filename ?? artifactMeta?.path
-      if (isTabularArtifact(contentType, filename)) {
-        const parsed = parseTabular(text, detectDelimiter(contentType, filename))
-        return { id, kind: 'tabular', columns: parsed.columns, rowCount: parsed.rowCount }
+        // A byte page can split a quoted record, escaped quote, or header. Return incomplete tabular
+        // files as raw UTF-8 windows so following nextOffset reconstructs exact source bytes; only a
+        // complete table is safe to project into column-addressable data.
+        const contentType = resolvedVersion?.contentType ?? artifactMeta?.mimeType
+        const filename = resolvedVersion?.filename ?? artifactMeta?.path
+        if (isTabularArtifact(contentType, filename) && window.offset === 0 && !window.truncated) {
+          const parsed = parseTabular(text, detectDelimiter(contentType, filename))
+          result = {
+            id,
+            kind: 'tabular',
+            columns: parsed.columns,
+            rowCount: parsed.rowCount,
+            rowsReturned: parsed.rowCount,
+            rowCountComplete: true,
+            ...window
+          }
+        } else {
+          result = { id, kind: 'raw', content: text, encoding: 'utf8', ...window }
+        }
       }
-
-      return { id, kind: 'raw', content: text, encoding: 'utf8' }
+    } else {
+      result = base64Window()
     }
 
-    return { id, kind: 'raw', content: bytes.toString('base64'), encoding: 'base64' }
+    const responseBytes = Buffer.byteLength(JSON.stringify(result), 'utf8')
+    assertWithinResourceBudget(
+      'reviewer-session',
+      this.reviewerBytesReturned + responseBytes,
+      this.resourceBudget.sessionBytes
+    )
+    this.reviewerBytesReturned += responseBytes
+    return result
+  }
+
+  private async verifyArtifact(
+    id: string,
+    path: string,
+    expectedChecksum: string | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<ArtifactVerification> {
+    const cached = this.artifactVerifications.get(id)
+    if (cached?.path === path && cached.expectedChecksum === expectedChecksum) {
+      return cached.verification
+    }
+
+    const verification = readFilePageAndDigest(path, 0, 0, signal).then((read) => {
+      if (expectedChecksum && read.checksum !== expectedChecksum) {
+        throw new ArtifactVersionChecksumMismatchError(
+          `Artifact Version checksum mismatch while reading ${JSON.stringify(id)}.`
+        )
+      }
+      return {
+        path,
+        checksum: read.checksum,
+        sizeBytes: read.sizeBytes,
+        sample: read.sample,
+        observation: read.observation
+      }
+    })
+    const entry = { path, expectedChecksum, verification }
+    this.artifactVerifications.set(id, entry)
+    try {
+      return await verification
+    } catch (error) {
+      if (this.artifactVerifications.get(id) === entry) this.artifactVerifications.delete(id)
+      throw error
+    }
   }
 }
 
-// Reads the full HTTP request body as a string.
-const readBody = (req: IncomingMessage): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-
-    req.on('data', (chunk: Buffer) => chunks.push(chunk))
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-    req.on('error', reject)
-  })
+const decodeUtf8Page = (
+  page: Buffer,
+  requestedOffset: number
+): { content: string; offset: number; returnedBytes: number } => {
+  let start = 0
+  while (start < page.length && (page[start]! & 0xc0) === 0x80) start += 1
+  let end = page.length
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+  while (end >= start) {
+    try {
+      const bytes = page.subarray(start, end)
+      return {
+        content: decoder.decode(bytes),
+        offset: requestedOffset + start,
+        returnedBytes: bytes.byteLength
+      }
+    } catch {
+      end -= 1
+    }
+  }
+  return { content: '', offset: requestedOffset + page.length, returnedBytes: 0 }
+}
 
 // Heuristic to distinguish text from binary artifact content.
 const isLikelyText = (bytes: Buffer): boolean => {

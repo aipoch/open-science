@@ -12,6 +12,7 @@ import {
   type PlanCommandErrorCode
 } from '../../shared/session-plan/contract'
 import type { SessionPlanStepStatus } from '../../shared/session-persistence'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import {
   fetchLocalRpc,
   fetchLongLivedLocalRpc,
@@ -291,7 +292,11 @@ const runPlanMcpServer = async (): Promise<void> => {
     projectId: requireEnvironment('OPEN_SCIENCE_PLAN_PROJECT_ID'),
     sessionId: requireEnvironment('OPEN_SCIENCE_PLAN_SESSION_ID')
   })
-  await server.connect(new StdioServerTransport())
+  await server.connect(
+    new StdioServerTransport(process.stdin, process.stdout, {
+      maxBufferSize: LOCAL_RESOURCE_BUDGETS.requestBytes
+    })
+  )
 }
 
 export {

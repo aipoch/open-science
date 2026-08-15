@@ -44,6 +44,10 @@ const canonicalize = (value: unknown): unknown => {
 const PUBLIC_METHODS = [
   'writeAppGeneratedVersion',
   'createVersion',
+  'reserveWrite',
+  'releaseWriteReservation',
+  'releaseRunWriteReservations',
+  'releaseAllWriteReservations',
   'replayVersion',
   'validateFinalizationOwnership',
   'finalizeRun',
@@ -60,6 +64,7 @@ const PUBLIC_METHODS = [
   'getVersionReview',
   'readCodeReconstructionCache',
   'writeCodeReconstructionCache',
+  'resolveVersionContentForStreamingVerification',
   'resolveVersionContent',
   'deleteProjectProvenance'
 ] as const satisfies readonly (keyof ArtifactProvenanceRepository)[]

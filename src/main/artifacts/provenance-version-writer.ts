@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { PrismaClient } from '@prisma/client'
@@ -8,12 +8,19 @@ import type {
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import type { ArtifactDurability } from './durability'
-import { sha256 } from './provenance-canonical'
 import type {
   ArtifactVersionProducerCapture,
   PreparedArtifactVersionPersistence
 } from './provenance-producer-capture'
 import type { ArtifactRepository } from './repository'
+import type { ArtifactWriteBudgetOwner } from './write-budget-owner'
+import { assertDiskReserve, copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  assertWithinResourceBudget,
+  type LocalResourceBudgetOverrides
+} from '../resource-budget'
+import { availableBytes } from '../storage/usage'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
@@ -76,6 +83,7 @@ const withVersionAllocationRetry = async <T>(operation: () => Promise<T>): Promi
 type CompatibilityRoutingPublicationOptions = {
   allowRoutingReplacement?: boolean
   replaceUnroutedBytes?: boolean
+  signal?: AbortSignal
 }
 type PersistedVersionFileRecord = {
   id: string
@@ -112,6 +120,8 @@ type ArtifactProvenanceVersionWriterOptions = {
   createId: () => string
   now: () => Date
   durability: ArtifactDurability
+  resourceBudgets?: LocalResourceBudgetOverrides
+  writeBudgetOwner: Pick<ArtifactWriteBudgetOwner, 'assertReserved' | 'release'>
   captureProducer: (
     request: CreateArtifactVersionRequest,
     createdAt: Date,
@@ -143,39 +153,101 @@ type ArtifactProvenanceVersionWriterOptions = {
 
 class ArtifactProvenanceVersionWriter {
   // Repository instances can coexist over separate Prisma clients for the same database. Serialize
-  // lineage identity allocation process-wide so those clients cannot race a case-folded filename.
-  private static readonly lineageWrites = new Map<string, Promise<void>>()
+  // writes per app Session process-wide so lineage allocation and aggregate byte budgets cannot race.
+  private static readonly sessionWrites = new Map<string, Promise<void>>()
 
   constructor(private readonly options: ArtifactProvenanceVersionWriterOptions) {}
 
   async writeVersion(
     request: CreateArtifactVersionRequest,
-    publishCompatibilityRouting: PublishCompatibilityRouting
+    publishCompatibilityRouting: PublishCompatibilityRouting,
+    signal?: AbortSignal
   ): Promise<ArtifactVersionFile> {
-    const lineageKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}\0${normalizeArtifactFilename(request.filename)}`
+    if (request.resourceReservationId) {
+      if (
+        request.resourceSizeBytes === undefined ||
+        !Number.isSafeInteger(request.resourceSizeBytes) ||
+        request.resourceSizeBytes < 0
+      ) {
+        throw new Error('Artifact write reservation requires a valid streamed byte count.')
+      }
+      if (!request.resourceChecksum || !SHA256_PATTERN.test(request.resourceChecksum)) {
+        throw new Error('Artifact write reservation requires a valid streamed checksum.')
+      }
+      await this.options.writeBudgetOwner.assertReserved({
+        reservationId: request.resourceReservationId,
+        projectId: request.projectId,
+        appSessionId: request.appSessionId,
+        artifactStorageSessionId: request.artifactStorageSessionId,
+        artifactRunId: request.artifactRunId,
+        writeOperationId: request.writeOperationId,
+        filename: request.filename,
+        actualBytes: request.resourceSizeBytes
+      })
+    }
+
+    let version: ArtifactVersionFile
+    try {
+      version = await this.writeVersionWithinSession(request, publishCompatibilityRouting, signal)
+    } catch (error) {
+      if (request.resourceReservationId) {
+        try {
+          await this.options.writeBudgetOwner.release({
+            projectId: request.projectId,
+            appSessionId: request.appSessionId,
+            artifactStorageSessionId: request.artifactStorageSessionId,
+            artifactRunId: request.artifactRunId,
+            reservationId: request.resourceReservationId
+          })
+        } catch {
+          // Preserve the write failure; run/session cleanup can retry reservation release.
+        }
+      }
+      throw error
+    }
+
+    if (request.resourceReservationId) {
+      await this.options.writeBudgetOwner.release({
+        projectId: request.projectId,
+        appSessionId: request.appSessionId,
+        artifactStorageSessionId: request.artifactStorageSessionId,
+        artifactRunId: request.artifactRunId,
+        reservationId: request.resourceReservationId
+      })
+    }
+    return version
+  }
+
+  private async writeVersionWithinSession(
+    request: CreateArtifactVersionRequest,
+    publishCompatibilityRouting: PublishCompatibilityRouting,
+    signal?: AbortSignal
+  ): Promise<ArtifactVersionFile> {
+    const sessionKey = `${this.options.storageRoot}\0${request.projectId}\0${request.appSessionId}`
     const previous =
-      ArtifactProvenanceVersionWriter.lineageWrites.get(lineageKey) ?? Promise.resolve()
+      ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) ?? Promise.resolve()
     let release = (): void => undefined
     const current = new Promise<void>((resolveCurrent) => {
       release = resolveCurrent
     })
     const tail = previous.then(() => current)
-    ArtifactProvenanceVersionWriter.lineageWrites.set(lineageKey, tail)
+    ArtifactProvenanceVersionWriter.sessionWrites.set(sessionKey, tail)
     await previous
 
     try {
-      return await this.writeVersionSerialized(request, publishCompatibilityRouting)
+      return await this.writeVersionSerialized(request, publishCompatibilityRouting, signal)
     } finally {
       release()
-      if (ArtifactProvenanceVersionWriter.lineageWrites.get(lineageKey) === tail) {
-        ArtifactProvenanceVersionWriter.lineageWrites.delete(lineageKey)
+      if (ArtifactProvenanceVersionWriter.sessionWrites.get(sessionKey) === tail) {
+        ArtifactProvenanceVersionWriter.sessionWrites.delete(sessionKey)
       }
     }
   }
 
   private async writeVersionSerialized(
     request: CreateArtifactVersionRequest,
-    publishCompatibilityRouting: PublishCompatibilityRouting
+    publishCompatibilityRouting: PublishCompatibilityRouting,
+    signal?: AbortSignal
   ): Promise<ArtifactVersionFile> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
@@ -224,7 +296,7 @@ class ArtifactProvenanceVersionWriter {
       }
 
       if (existing.state === 'pending') {
-        await publishCompatibilityRouting(existing, { replaceUnroutedBytes: true })
+        await publishCompatibilityRouting(existing, { replaceUnroutedBytes: true, signal })
       }
       return this.options.projectVersionFile(existing, projectId, appSessionId)
     }
@@ -261,14 +333,26 @@ class ArtifactProvenanceVersionWriter {
     const stagingDirectory = join(this.options.storageRoot, ...stagingStorageKey.split('/'))
     const stagingContentPath = join(stagingDirectory, 'content')
 
-    await mkdir(stagingDirectory, { recursive: true })
-    await copyFile(pendingFile.path, stagingContentPath)
-
     let stagingRowPersisted = false
     try {
+      await mkdir(stagingDirectory, { recursive: true })
+      const pendingStat = await stat(pendingFile.path)
+      assertDiskReserve(
+        await availableBytes(stagingDirectory),
+        pendingStat.size,
+        this.options.resourceBudgets?.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+      )
+      const contentDigest = await copyFileWithinBudget(
+        pendingFile.path,
+        stagingContentPath,
+        this.options.resourceBudgets?.artifactFileBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+        signal
+      )
       await this.options.durability.syncFile(stagingContentPath)
-      const content = await readFile(stagingContentPath)
-      const checksum = sha256(content)
+      const { checksum, sizeBytes } = contentDigest
+      if (request.resourceChecksum && request.resourceChecksum !== checksum) {
+        throw new Error('Artifact write reservation checksum does not match staged content.')
+      }
       const createdAt = this.options.now()
       const producer = await this.options.captureProducer(request, createdAt, checksum)
       const persisted = await withVersionAllocationRetry(() =>
@@ -339,7 +423,7 @@ class ArtifactProvenanceVersionWriter {
             versionId,
             versionNumber,
             checksum,
-            sizeBytes: content.byteLength,
+            sizeBytes,
             createdAt
           })
           const executionSnapshotStorageKey = prepared.executionSnapshotJson
@@ -354,6 +438,33 @@ class ArtifactProvenanceVersionWriter {
                 'execution.json'
               )
             : undefined
+
+          const countedStates = ['staging', 'pending', 'finalized']
+          const [turnUsage, sessionUsage] = await Promise.all([
+            transaction.artifactVersion.aggregate({
+              where: { artifactRunId, state: { in: countedStates } },
+              _sum: { sizeBytes: true }
+            }),
+            transaction.artifactVersion.aggregate({
+              where: {
+                artifact: { projectId, sessionId: appSessionId },
+                state: { in: countedStates }
+              },
+              _sum: { sizeBytes: true }
+            })
+          ])
+          assertWithinResourceBudget(
+            'turn',
+            Number(turnUsage._sum.sizeBytes ?? 0n) + sizeBytes,
+            this.options.resourceBudgets?.artifactTurnBytes ??
+              LOCAL_RESOURCE_BUDGETS.artifactTurnBytes
+          )
+          assertWithinResourceBudget(
+            'session',
+            Number(sessionUsage._sum.sizeBytes ?? 0n) + sizeBytes,
+            this.options.resourceBudgets?.artifactSessionBytes ??
+              LOCAL_RESOURCE_BUDGETS.artifactSessionBytes
+          )
 
           return transaction.artifactVersion.create({
             data: {
@@ -376,7 +487,7 @@ class ArtifactProvenanceVersionWriter {
               contentStorageKey,
               evidenceStorageKey,
               contentType: request.contentType,
-              sizeBytes: BigInt(content.byteLength),
+              sizeBytes: BigInt(sizeBytes),
               checksum,
               evidenceJson: prepared.evidenceJson,
               evidenceChecksum: prepared.evidenceChecksum,
@@ -397,7 +508,8 @@ class ArtifactProvenanceVersionWriter {
       await this.syncAndVerifyFile(
         evidencePath,
         persisted.evidenceChecksum,
-        `Artifact Version evidence mirror is corrupt: ${persisted.id}`
+        `Artifact Version evidence mirror is corrupt: ${persisted.id}`,
+        signal
       )
       if (persisted.executionSnapshotJson) {
         const executionPath = join(stagingDirectory, 'execution.json')
@@ -405,7 +517,8 @@ class ArtifactProvenanceVersionWriter {
         await this.syncAndVerifyFile(
           executionPath,
           persisted.executionSnapshotChecksum!,
-          `Artifact Version execution mirror is corrupt: ${persisted.id}`
+          `Artifact Version execution mirror is corrupt: ${persisted.id}`,
+          signal
         )
       }
       const finalContentPath = join(
@@ -418,7 +531,7 @@ class ArtifactProvenanceVersionWriter {
       await rename(stagingDirectory, finalDirectory)
       await this.options.durability.syncDirectory(dirname(finalDirectory))
 
-      await publishCompatibilityRouting(persisted, { allowRoutingReplacement: true })
+      await publishCompatibilityRouting(persisted, { allowRoutingReplacement: true, signal })
       const finalized = await client.$transaction(async (transaction) => {
         await transaction.artifactLineage.update({
           where: { id: persisted.artifactId },
@@ -443,11 +556,16 @@ class ArtifactProvenanceVersionWriter {
   private async syncAndVerifyFile(
     path: string,
     expectedChecksum: string,
-    corruptMessage: string
+    corruptMessage: string,
+    signal?: AbortSignal
   ): Promise<void> {
     await this.options.durability.syncFile(path)
-    const bytes = await readFile(path)
-    if (sha256(bytes) !== expectedChecksum) throw new Error(corruptMessage)
+    const { checksum } = await digestFileWithinBudget(
+      path,
+      this.options.resourceBudgets?.artifactFileBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+      signal
+    )
+    if (checksum !== expectedChecksum) throw new Error(corruptMessage)
   }
 }
 

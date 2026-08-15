@@ -11,6 +11,7 @@ import {
   MIN_AGENT_USER_CHOICE_OPTIONS
 } from '../../shared/elicitation'
 import { NOTEBOOK_MCP_SERVER_ARG } from '../mcp-server-args'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import {
   fetchLocalRpc,
   fetchLongLivedLocalRpc,
@@ -1139,7 +1140,11 @@ const runNotebookMcpServer = async (
 ): Promise<void> => {
   const server = createNotebookMcpServer(environment)
 
-  await server.connect(new StdioServerTransport())
+  await server.connect(
+    new StdioServerTransport(process.stdin, process.stdout, {
+      maxBufferSize: LOCAL_RESOURCE_BUDGETS.requestBytes
+    })
+  )
 }
 
 export {

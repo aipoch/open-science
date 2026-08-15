@@ -40,7 +40,8 @@ const productionFiles = [
   'provenance-staging-recovery.ts',
   'provenance-storage.ts',
   'provenance-unindexed-recovery.ts',
-  'provenance-version-writer.ts'
+  'provenance-version-writer.ts',
+  'write-budget-owner.ts'
 ] as const
 const deepOwnerFiles = productionFiles.filter(
   (file) => file !== 'provenance-repository.ts' && file !== 'provenance-message-snapshot.ts'
@@ -239,8 +240,13 @@ describe('Artifact Provenance repository architecture', () => {
         'prepareProjectReconciliation',
         'readCodeReconstructionCache',
         'reconcileSession',
+        'releaseAllWriteReservations',
+        'releaseRunWriteReservations',
+        'releaseWriteReservation',
         'replayVersion',
+        'reserveWrite',
         'resolveVersionContent',
+        'resolveVersionContentForStreamingVerification',
         'resolveVersionDescriptors',
         'validateFinalizationOwnership',
         'writeAppGeneratedVersion',
@@ -248,7 +254,12 @@ describe('Artifact Provenance repository architecture', () => {
       ].sort()
     )
     expect(methods(facade, 'private')).toEqual(
-      ['resolveVersionDerivedPath', 'toArtifactVersionFile', 'toDescriptor'].sort()
+      [
+        'resolveVersionContentMetadata',
+        'resolveVersionDerivedPath',
+        'toArtifactVersionFile',
+        'toDescriptor'
+      ].sort()
     )
   })
 
@@ -261,7 +272,8 @@ describe('Artifact Provenance repository architecture', () => {
       'ArtifactProvenanceReadModel',
       'ArtifactProvenanceStagingRecovery',
       'ArtifactProvenanceUnindexedRecovery',
-      'ArtifactProvenanceVersionWriter'
+      'ArtifactProvenanceVersionWriter',
+      'ArtifactWriteBudgetOwner'
     ]) {
       expect(newExpressionSites(owner), owner).toEqual(['provenance-repository.ts:constructor'])
     }
@@ -279,7 +291,8 @@ describe('Artifact Provenance repository architecture', () => {
         'readModel',
         'stagingRecovery',
         'unindexedRecovery',
-        'versionWriter'
+        'versionWriter',
+        'writeBudgetOwner'
       ].sort()
     )
     expect(mutableFields(facade)).toEqual([])
@@ -307,6 +320,10 @@ describe('Artifact Provenance repository architecture', () => {
           'getVersionProvenance',
           'getVersionReview',
           'readCodeReconstructionCache',
+          'releaseAllWriteReservations',
+          'releaseRunWriteReservations',
+          'releaseWriteReservation',
+          'reserveWrite',
           'validateFinalizationOwnership',
           'writeCodeReconstructionCache'
         ].map((method) => [method, delegationTarget(facade, facadeFile, method)])
@@ -322,6 +339,10 @@ describe('Artifact Provenance repository architecture', () => {
       getVersionProvenance: 'this.readModel.getVersionProvenance',
       getVersionReview: 'this.readModel.getVersionReview',
       readCodeReconstructionCache: 'this.readModel.readCodeReconstructionCache',
+      releaseAllWriteReservations: 'this.writeBudgetOwner.releaseAll',
+      releaseRunWriteReservations: 'this.writeBudgetOwner.releaseRun',
+      releaseWriteReservation: 'this.writeBudgetOwner.release',
+      reserveWrite: 'this.writeBudgetOwner.reserve',
       validateFinalizationOwnership: 'this.messageFinalizer.validateOwnership',
       writeCodeReconstructionCache: 'this.readModel.writeCodeReconstructionCache'
     })
@@ -397,7 +418,8 @@ describe('Artifact Provenance repository architecture', () => {
         'src/main/artifacts/provenance-message-snapshot.test.ts',
         'src/main/artifacts/provenance-repository.architecture.test.ts',
         'src/main/artifacts/provenance-repository.test.ts',
-        'src/main/artifacts/provenance-write-contract.test.ts'
+        'src/main/artifacts/provenance-write-contract.test.ts',
+        'src/main/artifacts/write-budget-owner.test.ts'
       ].sort()
     )
     expect(module.testFiles.contract).toEqual(

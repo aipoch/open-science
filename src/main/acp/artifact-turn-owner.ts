@@ -219,7 +219,12 @@ class ArtifactTurnOwner {
         ...(turn.notebookArtifactSourceScope
           ? { notebookSessionId: turn.notebookArtifactSourceScope.notebookSessionId }
           : {}),
-        allowedMethods: ['artifactCreateVersion', 'artifactReplayVersion']
+        allowedMethods: [
+          'artifactReserveWrite',
+          'artifactReleaseWrite',
+          'artifactCreateVersion',
+          'artifactReplayVersion'
+        ]
       })
       if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
 

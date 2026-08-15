@@ -24,8 +24,11 @@ import type {
 import type {
   ArtifactRpcCapabilityBinding,
   ArtifactRpcMethod,
+  ArtifactWriteReservation,
   ArtifactVersionFile,
   CreateArtifactVersionRequest,
+  ReleaseArtifactWriteReservationRequest,
+  ReserveArtifactWriteRequest,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import {
@@ -49,6 +52,11 @@ import {
   type LocalRpcListenOptions
 } from '../local-rpc-transport'
 import { createLogger, errorLogFields } from '../logger'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  ResourceBudgetExceededError,
+  readBoundedJsonBody
+} from '../resource-budget'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-llm-service'
 import type {
@@ -74,6 +82,7 @@ const log = createLogger('notebook:local-rpc')
 type NotebookLocalRpcServerOptions = {
   token?: string
   host?: string
+  requestBytes?: number
   now?: () => number
   onSessionReleased?: (sessionId: string) => void
   transport?: LocalRpcListenOptions['transport']
@@ -152,8 +161,20 @@ type NotebookLocalRpcServerOptions = {
   }
   requestUserInput?: (request: AgentUserChoiceRequest) => Promise<AgentUserChoiceResult>
   artifactProvenance?: {
-    createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile>
+    createVersion(
+      request: CreateArtifactVersionRequest,
+      signal?: AbortSignal
+    ): Promise<ArtifactVersionFile>
     replayVersion?(request: ReplayArtifactVersionRequest): Promise<ArtifactVersionFile | undefined>
+    reserveWrite?(request: ReserveArtifactWriteRequest): Promise<ArtifactWriteReservation>
+    releaseWriteReservation?(request: ReleaseArtifactWriteReservationRequest): Promise<void>
+    releaseRunWriteReservations?(request: {
+      projectId: string
+      appSessionId: string
+      artifactStorageSessionId: string
+      artifactRunId: string
+    }): Promise<void>
+    releaseAllWriteReservations?(): Promise<void>
   }
   inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
     Partial<Pick<NotebookInputRegistry, 'openRun'>>
@@ -311,6 +332,8 @@ class RpcHttpError extends Error {
 }
 
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
+  'artifactReserveWrite',
+  'artifactReleaseWrite',
   'artifactCreateVersion',
   'artifactReplayVersion'
 ])
@@ -385,17 +408,6 @@ const notebookExecutionInputFingerprint = (
     .digest('hex')
 }
 
-// Reads the full HTTP request body and parses it as the notebook RPC payload.
-const readJsonBody = async (request: IncomingMessage): Promise<NotebookRpcPayload> => {
-  const chunks: Buffer[] = []
-
-  for await (const chunk of request) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
-  }
-
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as NotebookRpcPayload
-}
-
 // Writes one JSON response with an explicit HTTP status code.
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.writeHead(statusCode, { 'content-type': 'application/json' })
@@ -414,6 +426,7 @@ const closeRequestAfterResponse = (request: IncomingMessage, response: ServerRes
 class NotebookLocalRpcServer {
   private readonly token: string
   private readonly host: string
+  private readonly requestBytes: number
   private readonly now: () => number
   private readonly onSessionReleased: NotebookLocalRpcServerOptions['onSessionReleased']
   private readonly transport: NotebookLocalRpcServerOptions['transport']
@@ -463,6 +476,7 @@ class NotebookLocalRpcServer {
   ) {
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
+    this.requestBytes = options.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes
     this.now = options.now ?? Date.now
     this.onSessionReleased = options.onSessionReleased
     this.transport = options.transport
@@ -498,7 +512,12 @@ class NotebookLocalRpcServer {
         : undefined,
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
       allowedMethods: new Set(
-        binding.allowedMethods ?? ['artifactCreateVersion', 'artifactReplayVersion']
+        binding.allowedMethods ?? [
+          'artifactReserveWrite',
+          'artifactReleaseWrite',
+          'artifactCreateVersion',
+          'artifactReplayVersion'
+        ]
       ),
       expiresAt: this.now() + ttlMs,
       inFlightRequests: 0,
@@ -507,13 +526,24 @@ class NotebookLocalRpcServer {
     return token
   }
 
-  revokeArtifactRunCapability(token: string): Promise<void> {
+  async revokeArtifactRunCapability(token: string): Promise<void> {
     const draining = this.drainingArtifactRpcCapabilities.get(token)
     if (draining) return draining
 
     const capability = this.artifactRpcCapabilities.get(token)
     this.artifactRpcCapabilities.delete(token)
-    if (!capability || capability.inFlightRequests === 0) return Promise.resolve()
+    if (!capability) return
+    const releaseReservations = (): Promise<void> =>
+      this.artifactProvenance?.releaseRunWriteReservations?.({
+        projectId: capability.projectId,
+        appSessionId: capability.appSessionId,
+        artifactStorageSessionId: capability.artifactStorageSessionId,
+        artifactRunId: capability.artifactRunId
+      }) ?? Promise.resolve()
+    if (capability.inFlightRequests === 0) {
+      await releaseReservations()
+      return
+    }
 
     const drain = new Promise<void>((resolve) => {
       capability.drainWaiters.add(resolve)
@@ -524,7 +554,8 @@ class NotebookLocalRpcServer {
         this.drainingArtifactRpcCapabilities.delete(token)
       }
     })
-    return drain
+    await drain
+    await releaseReservations()
   }
 
   // Starts the server once on an ephemeral port and returns the connection details for MCP env.
@@ -594,7 +625,9 @@ class NotebookLocalRpcServer {
     this.executionAuthorizations.clear()
     this.consumedExecutionToolCalls.clear()
 
-    if (!server || !lifecycle) return Promise.resolve()
+    if (!server || !lifecycle) {
+      return this.artifactProvenance?.releaseAllWriteReservations?.() ?? Promise.resolve()
+    }
 
     lifecycle.closing = true
 
@@ -643,7 +676,10 @@ class NotebookLocalRpcServer {
         }
       }
     })
-    const ownedClose = operation.finally(() => {
+    const operationWithReservationCleanup = operation.finally(() =>
+      this.artifactProvenance?.releaseAllWriteReservations?.()
+    )
+    const ownedClose = operationWithReservationCleanup.finally(() => {
       if (forceCloseTimer) clearTimeout(forceCloseTimer)
       if (this.closePromise === ownedClose) this.closePromise = undefined
     })
@@ -1318,7 +1354,7 @@ class NotebookLocalRpcServer {
         writeJson(response, 401, { error: 'Invalid notebook RPC token.' })
         return
       }
-      const payload = await readJsonBody(request)
+      const payload = await readBoundedJsonBody<NotebookRpcPayload>(request, this.requestBytes)
       activeRequest.bodyComplete = true
       const method = typeof payload.method === 'string' ? payload.method : ''
       activeRequest.method = method
@@ -1604,9 +1640,19 @@ class NotebookLocalRpcServer {
               }
             : message
 
-      writeJson(response, error instanceof RpcHttpError ? error.statusCode : 500, {
-        error: serializedError
-      })
+      if (error instanceof ResourceBudgetExceededError) {
+        closeRequestAfterResponse(request, response)
+      }
+
+      writeJson(
+        response,
+        error instanceof RpcHttpError
+          ? error.statusCode
+          : error instanceof ResourceBudgetExceededError
+            ? 413
+            : 500,
+        { error: serializedError }
+      )
     } finally {
       request.off('aborted', abortDisconnectedRequest)
       response.off('close', abortDisconnectedResponse)
@@ -1629,8 +1675,26 @@ class NotebookLocalRpcServer {
       if (!this.artifactProvenance) {
         throw new Error('Artifact Provenance persistence is not configured.')
       }
-
-      return this.artifactProvenance.createVersion(params as CreateArtifactVersionRequest)
+      const request = params as CreateArtifactVersionRequest
+      if (!request.resourceReservationId) {
+        throw new Error('Artifact Version creation requires a write reservation.')
+      }
+      return this.artifactProvenance.createVersion(request, signal)
+    }
+    if (method === 'artifactReserveWrite') {
+      if (!this.artifactProvenance?.reserveWrite) {
+        throw new Error('Artifact write reservation is not configured.')
+      }
+      return this.artifactProvenance.reserveWrite(params as ReserveArtifactWriteRequest)
+    }
+    if (method === 'artifactReleaseWrite') {
+      if (!this.artifactProvenance?.releaseWriteReservation) {
+        throw new Error('Artifact write reservation is not configured.')
+      }
+      await this.artifactProvenance.releaseWriteReservation(
+        params as ReleaseArtifactWriteReservationRequest
+      )
+      return { released: true }
     }
     if (method === 'artifactReplayVersion') {
       if (!this.artifactProvenance?.replayVersion) {

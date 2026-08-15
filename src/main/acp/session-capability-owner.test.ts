@@ -714,13 +714,34 @@ describe('ACP session capability owner', () => {
   })
 
   it.each([
-    ['claude-code', claudeCodeFramework, true, false, 'open-science-notebook'],
-    ['opencode', opencodeFramework, true, false, 'open_science_notebook'],
-    ['codex-response', codexFramework, true, false, 'open-science-notebook'],
-    ['codex-bridge', codexFramework, false, true, 'open-science-notebook']
+    [
+      'claude-code',
+      claudeCodeFramework,
+      true,
+      false,
+      'open-science-artifacts',
+      'open-science-notebook'
+    ],
+    ['opencode', opencodeFramework, true, false, 'open_science_artifacts', 'open_science_notebook'],
+    [
+      'codex-response',
+      codexFramework,
+      true,
+      false,
+      'open-science-artifacts',
+      'open-science-notebook'
+    ],
+    ['codex-bridge', codexFramework, false, true, 'open-science-artifacts', 'open-science-notebook']
   ] as const)(
-    'publishes the shared Host control plane through the %s primary descriptor',
-    async (_route, framework, nativeMcpEnabled, bridgeMcpAliasesEnabled, notebookServerName) => {
+    'publishes the bounded Artifact/Notebook control plane through the %s primary descriptor',
+    async (
+      _route,
+      framework,
+      nativeMcpEnabled,
+      bridgeMcpAliasesEnabled,
+      artifactServerName,
+      notebookServerName
+    ) => {
       const owner = createOwner()
       const built = await owner.provision({
         stableAppSessionId: 'session-1',
@@ -744,6 +765,8 @@ describe('ACP session capability owner', () => {
       expect(built.descriptor.capabilities).toEqual(
         expect.arrayContaining(['notebook', 'host-skills', 'host-frames', 'host-llm'])
       )
+      expect(built.descriptor.transport).toBe('stdio')
+      expect(built.descriptor.modelFacingMcpServerNames).toContain(artifactServerName)
       expect(built.descriptor.modelFacingMcpServerNames).toContain(notebookServerName)
     }
   )

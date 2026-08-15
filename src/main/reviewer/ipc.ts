@@ -81,7 +81,10 @@ type ReviewerIpcOptions = {
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
-  artifactProvenanceRepository?: Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>
+  artifactProvenanceRepository?: Pick<
+    ArtifactProvenanceRepository,
+    'resolveVersionContent' | 'resolveVersionContentForStreamingVerification'
+  >
   withSessionMutation?: <Result>(
     projectId: string,
     sessionId: string,
@@ -340,7 +343,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         // Artifacts live under the relocatable data root; DB/sessions stay on the config root.
         artifactStorageRoot: dataRoot,
         artifactVersionContentResolver: (request) =>
-          artifactProvenanceRepository.resolveVersionContent(request),
+          artifactProvenanceRepository.resolveVersionContentForStreamingVerification(request),
         reviewerMcpEntryPath: options.mcpEntryPath,
         onStarted: () => settle({ started: true }),
         onReviewUpdate: (review: ReviewWithChecks) => {

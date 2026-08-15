@@ -8,6 +8,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { REVIEWER_MCP_SERVER_NAME } from '../../shared/reviewer'
 import { fetchOverSocket } from '../local-rpc-transport'
 import { REVIEWER_MCP_PROXY_ARG } from '../mcp-server-args'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 
 type ReviewerMcpProxyEnvironment = {
   socketPath: string
@@ -80,7 +81,11 @@ const runReviewerMcpStdioProxy = async (
   environment = createReviewerMcpProxyEnvironmentFromProcess()
 ): Promise<void> => {
   const downstream = await createReviewerMcpStdioProxy(environment)
-  await downstream.connect(new StdioServerTransport())
+  await downstream.connect(
+    new StdioServerTransport(process.stdin, process.stdout, {
+      maxBufferSize: LOCAL_RESOURCE_BUDGETS.requestBytes
+    })
+  )
 }
 
 export {

@@ -1667,11 +1667,18 @@ const createApplicationModules = async (
         return runtime.requestUserInput(request)
       },
       artifactProvenance: {
-        createVersion: (request) =>
+        reserveWrite: (request) => artifactProvenanceRepository.reserveWrite(request),
+        releaseWriteReservation: (request) =>
+          artifactProvenanceRepository.releaseWriteReservation(request),
+        releaseRunWriteReservations: (request) =>
+          artifactProvenanceRepository.releaseRunWriteReservations(request),
+        releaseAllWriteReservations: () =>
+          artifactProvenanceRepository.releaseAllWriteReservations(),
+        createVersion: (request, signal) =>
           sessionPersistenceCoordinator.runSessionMutation(
             request.projectId,
             request.appSessionId,
-            () => artifactProvenanceRepository.createVersion(request)
+            () => artifactProvenanceRepository.createVersion(request, signal)
           ),
         replayVersion: (request) =>
           sessionPersistenceCoordinator.runSessionMutation(

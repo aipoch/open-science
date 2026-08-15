@@ -65,6 +65,7 @@ type PendingArtifactVersionRoutingRequest = {
   routing: PendingArtifactVersionRouting
   allowRoutingReplacement?: boolean
   replaceUnroutedBytes?: boolean
+  signal?: AbortSignal
 }
 
 type BindPendingArtifactVersionRouting = (

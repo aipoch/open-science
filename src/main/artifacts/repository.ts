@@ -33,6 +33,8 @@ import {
   getProjectArtifactDir,
   type ArtifactStorageAccessDurability
 } from './storage-access'
+import type { FileDigest } from '../bounded-file-io'
+import type { PendingFileBudgetReservation } from './pending-file-transaction'
 
 type ArtifactRepositoryWriteOptions = PendingFileTransactionOptions
 type ArtifactRepositoryStorage = ArtifactStorageAccessDurability
@@ -96,7 +98,9 @@ class ArtifactRepository {
     operation: (
       artifact: ArtifactFile,
       sourceFileObservation: ArtifactSourceFileObservation | undefined,
-      bindVersionRouting: BindPendingArtifactVersionRouting
+      bindVersionRouting: BindPendingArtifactVersionRouting,
+      fileDigest: FileDigest,
+      reservation: PendingFileBudgetReservation | undefined
     ) => Promise<Result>
   ): Promise<Result> {
     return this.publicationOwner.withPendingFileTransaction(request, options, operation)

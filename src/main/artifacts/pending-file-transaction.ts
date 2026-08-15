@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 
@@ -8,10 +8,30 @@ import type {
   WritePendingArtifactFileRequest
 } from '../../shared/artifacts'
 import { validateArtifactContentType } from './content-type'
+import {
+  assertDiskReserve,
+  copyOpenFileWithinBudget,
+  inlineDecodedSize,
+  writeInlineWithinBudget
+} from '../bounded-file-io'
+import type { FileDigest } from '../bounded-file-io'
+import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
+import { availableBytes } from '../storage/usage'
 
 type PendingFileTransactionOptions = {
   allowedImportRoots?: string[]
   relativeBaseDirs?: string[]
+  maxFileBytes?: number
+  maxInlineBytes?: number
+  diskReserveBytes?: number
+  signal?: AbortSignal
+  reserveFile?: (fileBytes: number) => Promise<{ id: string; fileBytes: number }>
+  releaseFileReservation?: (reservationId: string) => Promise<void>
+}
+
+type PendingFileBudgetReservation = {
+  id: string
+  fileBytes: number
 }
 
 type PendingFileTransactionStorage = {
@@ -53,7 +73,9 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
   operation: (
     artifact: ArtifactFile,
     sourceFileObservation: ArtifactSourceFileObservation | undefined,
-    bindVersionRouting: BindPendingArtifactVersionRouting<Routing>
+    bindVersionRouting: BindPendingArtifactVersionRouting<Routing>,
+    fileDigest: FileDigest,
+    reservation: PendingFileBudgetReservation | undefined
   ) => Promise<Result>
 }): Promise<Result> => {
   const { request, storage } = options
@@ -72,6 +94,8 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
   let replacementPublished = false
   let versionRoutingPublished = false
   let sourceFileObservation: ArtifactSourceFileObservation | undefined
+  let fileDigest: FileDigest | undefined
+  let reservation: PendingFileBudgetReservation | undefined
 
   await mkdir(directory, { recursive: true })
   try {
@@ -81,28 +105,61 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
         options.writeOptions.allowedImportRoots ?? [],
         options.writeOptions.relativeBaseDirs
       )
-      const beforeCopy = await stat(sourcePath)
-      if (!beforeCopy.isFile()) {
-        throw new Error(`Artifact local source is not a regular file: "${sourcePath}".`)
-      }
-      await copyFile(sourcePath, temporaryPath)
-      const afterCopy = await stat(sourcePath)
-      if (afterCopy.size !== beforeCopy.size || afterCopy.mtimeMs !== beforeCopy.mtimeMs) {
-        throw new Error(
-          `Artifact local source changed while it was being imported: "${sourcePath}".`
+      const sourceHandle = await open(sourcePath, 'r')
+      try {
+        const beforeCopy = await sourceHandle.stat()
+        if (!beforeCopy.isFile()) {
+          throw new Error(`Artifact local source is not a regular file: "${sourcePath}".`)
+        }
+        const maxFileBytes =
+          options.writeOptions.maxFileBytes ?? LOCAL_RESOURCE_BUDGETS.artifactFileBytes
+        assertWithinResourceBudget('file', beforeCopy.size, maxFileBytes)
+        reservation = await options.writeOptions.reserveFile?.(beforeCopy.size)
+        if (reservation && reservation.fileBytes !== beforeCopy.size) {
+          throw new Error('Artifact file reservation does not match the preflight source size.')
+        }
+        assertDiskReserve(
+          await availableBytes(directory),
+          beforeCopy.size,
+          options.writeOptions.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
         )
-      }
-      sourceFileObservation = {
-        path: sourcePath,
-        sizeBytes: afterCopy.size,
-        mtimeMs: afterCopy.mtimeMs
+        fileDigest = await copyOpenFileWithinBudget(
+          sourceHandle,
+          temporaryPath,
+          reservation ? Math.min(maxFileBytes, reservation.fileBytes) : maxFileBytes,
+          options.writeOptions.signal
+        )
+        const afterCopy = await sourceHandle.stat()
+        if (afterCopy.size !== beforeCopy.size || afterCopy.mtimeMs !== beforeCopy.mtimeMs) {
+          throw new Error(
+            `Artifact local source changed while it was being imported: "${sourcePath}".`
+          )
+        }
+        sourceFileObservation = {
+          path: sourcePath,
+          sizeBytes: afterCopy.size,
+          mtimeMs: afterCopy.mtimeMs
+        }
+      } finally {
+        await sourceHandle.close()
       }
     } else {
-      await writeFile(
+      const maxInlineBytes =
+        options.writeOptions.maxInlineBytes ?? LOCAL_RESOURCE_BUDGETS.artifactInlineBytes
+      const decodedBytes = inlineDecodedSize(request.source.content, request.source.encoding)
+      assertWithinResourceBudget('file', decodedBytes, maxInlineBytes)
+      reservation = await options.writeOptions.reserveFile?.(decodedBytes)
+      assertDiskReserve(
+        await availableBytes(directory),
+        decodedBytes,
+        options.writeOptions.diskReserveBytes ?? LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+      )
+      fileDigest = await writeInlineWithinBudget(
         temporaryPath,
-        request.source.encoding === 'base64'
-          ? Buffer.from(request.source.content, 'base64')
-          : Buffer.from(request.source.content, 'utf8')
+        request.source.content,
+        request.source.encoding,
+        maxInlineBytes,
+        options.writeOptions.signal
       )
     }
 
@@ -136,7 +193,14 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
       await options.publishRouting(routing, sourcePath)
       versionRoutingPublished = true
     }
-    const result = await options.operation(artifact, sourceFileObservation, bindVersionRouting)
+    if (!fileDigest) throw new Error('Artifact pending write completed without a file digest.')
+    const result = await options.operation(
+      artifact,
+      sourceFileObservation,
+      bindVersionRouting,
+      fileDigest,
+      reservation
+    )
     await Promise.all([
       rm(backupPath, { force: true }).catch(() => undefined),
       rm(metadataBackupPath, { force: true }).catch(() => undefined)
@@ -144,6 +208,13 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
     return result
   } catch (error) {
     const recoveryErrors: unknown[] = []
+    if (reservation && options.writeOptions.releaseFileReservation) {
+      try {
+        await options.writeOptions.releaseFileReservation(reservation.id)
+      } catch (releaseError) {
+        recoveryErrors.push(releaseError)
+      }
+    }
     await rm(temporaryPath, { force: true }).catch(() => undefined)
     if (replacementPublished && !versionRoutingPublished) {
       await Promise.all([
@@ -171,7 +242,7 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
     if (recoveryErrors.length > 0) {
       throw new AggregateError(
         [error, ...recoveryErrors],
-        `Artifact pending-file rollback failed; preserved backup files for recovery: ${recoveryErrors
+        `Artifact pending-file rollback or reservation release failed: ${recoveryErrors
           .map((recoveryError) =>
             recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
           )
@@ -193,4 +264,8 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
 }
 
 export { runPendingFileTransaction }
-export type { PendingFileTransactionOptions, PendingFileTransactionStorage }
+export type {
+  PendingFileBudgetReservation,
+  PendingFileTransactionOptions,
+  PendingFileTransactionStorage
+}

@@ -25,6 +25,11 @@ import {
 import { assertBlockInScope, type ReviewerHostServer } from './host-sdk'
 import { createLogger } from '../logger'
 import { listenForLocalRpc, localRpcServerLogFields } from '../local-rpc-transport'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  ResourceBudgetExceededError,
+  readBoundedJsonBody
+} from '../resource-budget'
 import { createReviewerMcpStdioProxyConfig } from './mcp-stdio-proxy'
 
 const log = createLogger('reviewer:mcp')
@@ -155,6 +160,7 @@ type ReviewerMcpServerOptions = {
   command?: string
   entryPath?: string
   transport?: 'tcp' | 'pipe'
+  requestBytes?: number
 }
 
 // Maps model-submitted checks onto the turn scope, enforcing the single-sourcing contract
@@ -368,13 +374,25 @@ export class ReviewerMcpServer {
         {
           title: 'Read audited artifact',
           description:
-            'Read one artifact attached to the audited turn. CSV/TSV data is returned by column; ' +
-            'an out-of-scope artifact id is rejected.',
-          inputSchema: { id: z.string().min(1).describe('In-scope artifact version id') }
+            'Read one artifact attached to the audited turn. Complete CSV/TSV data is returned by ' +
+            'column; paged CSV/TSV is returned as raw UTF-8 byte windows so record and quoting ' +
+            'semantics are not corrupted. When truncated is true, continue from nextOffset while ' +
+            'the review budget remains and report that the evidence was partial. An out-of-scope ' +
+            'artifact id is rejected.',
+          inputSchema: {
+            id: z.string().min(1).describe('In-scope artifact version id'),
+            offset: z.number().int().min(0).optional().describe('Byte offset for a bounded page'),
+            maxBytes: z
+              .number()
+              .int()
+              .positive()
+              .optional()
+              .describe('Requested source bytes; the host clamps this to its page limit')
+          }
         },
-        async ({ id }) => {
+        async ({ id, offset, maxBytes }, extra) => {
           try {
-            const artifact = await evidence.readArtifact(id)
+            const artifact = await evidence.readArtifact(id, { offset, maxBytes }, extra.signal)
             this.evidenceAccess.artifactVersionIds.add(id)
             return {
               content: [{ type: 'text', text: JSON.stringify(artifact) }]
@@ -535,6 +553,27 @@ export class ReviewerMcpServer {
       return
     }
 
+    let parsedBody: unknown
+    if (req.method === 'POST') {
+      try {
+        parsedBody = await readBoundedJsonBody(
+          req,
+          this.options.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes,
+          { emptyValue: undefined }
+        )
+      } catch (error) {
+        const exceeded = error instanceof ResourceBudgetExceededError
+        if (exceeded) {
+          res.shouldKeepAlive = false
+          res.setHeader('connection', 'close')
+          res.once('finish', () => req.destroy())
+        }
+        res.writeHead(exceeded ? 413 : 400, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }))
+        return
+      }
+    }
+
     const sessionId = req.headers['mcp-session-id'] as string | undefined
 
     let transport: StreamableHTTPServerTransport
@@ -564,6 +603,6 @@ export class ReviewerMcpServer {
       return
     }
 
-    await transport.handleRequest(req, res)
+    await transport.handleRequest(req, res, parsedBody)
   }
 }

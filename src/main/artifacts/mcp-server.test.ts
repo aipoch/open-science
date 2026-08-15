@@ -506,7 +506,12 @@ describe('artifact MCP server', () => {
       'fetch',
       vi.fn(async (url: string, init: RequestInit) => {
         calls.push({ url, init })
-        return new Response(JSON.stringify({ result: persisted }), {
+        const body = JSON.parse(String(init.body)) as { method: string }
+        const result =
+          body.method === 'artifactReserveWrite'
+            ? { id: `reservation-${calls.length}`, fileBytes: 4, expiresAt: Date.now() + 60_000 }
+            : persisted
+        return new Response(JSON.stringify({ result }), {
           status: 200,
           headers: { 'content-type': 'application/json' }
         })
@@ -537,10 +542,23 @@ describe('artifact MCP server', () => {
     )
 
     expect(result).toEqual(persisted)
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(4)
     expect(calls[0].url).toBe(environment.rpcEndpoint)
     expect(calls[0].init.headers).toMatchObject({ authorization: 'Bearer run-capability' })
-    const body = JSON.parse(String(calls[0].init.body)) as {
+    const bodies = calls.map(
+      (call) =>
+        JSON.parse(String(call.init.body)) as {
+          method: string
+          params: Record<string, unknown>
+        }
+    )
+    expect(bodies.map((body) => body.method)).toEqual([
+      'artifactReserveWrite',
+      'artifactCreateVersion',
+      'artifactReserveWrite',
+      'artifactCreateVersion'
+    ])
+    const body = bodies[1] as {
       method: string
       params: Record<string, unknown>
     }
@@ -560,10 +578,13 @@ describe('artifact MCP server', () => {
       filename: 'sin.png',
       contentType: 'image/png'
     })
-    const retryBody = JSON.parse(String(calls[1].init.body)) as {
-      params: Record<string, unknown>
-    }
+    const retryBody = bodies[3]!
     expect(retryBody.params.writeOperationId).toBe(body.params.writeOperationId)
+    expect(body.params).toMatchObject({
+      resourceReservationId: 'reservation-1',
+      resourceSizeBytes: expect.any(Number),
+      resourceChecksum: expect.stringMatching(/^[a-f0-9]{64}$/u)
+    })
     expect(body.params.writeRequestChecksum).toMatch(/^[a-f0-9]{64}$/)
     expect(toWriteArtifactToolResult(result)).toEqual({
       artifact: {
@@ -603,8 +624,11 @@ describe('artifact MCP server', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (_url: string, init: RequestInit) => {
-        const body = JSON.parse(String(init.body)) as { params: Record<string, unknown> }
-        rpcRequests.push(body.params)
+        const body = JSON.parse(String(init.body)) as {
+          method: string
+          params: Record<string, unknown>
+        }
+        rpcRequests.push({ method: body.method, ...body.params })
         for (const sessionId of ['parent-session-1', 'child-routing-session']) {
           const pendingPath = join(
             root,
@@ -623,27 +647,26 @@ describe('artifact MCP server', () => {
             pendingSessionsObserved.push(sessionId)
           }
         }
-        return new Response(
-          JSON.stringify({
-            result: {
-              id: 'version-delegated',
-              artifactId: 'artifact-delegated',
-              versionId: 'version-delegated',
-              versionNumber: 1,
-              checksum: 'b'.repeat(64),
-              createdAt: '2026-08-07T00:00:00.000Z',
-              projectName: 'default-project',
-              sessionId: 'parent-session-1',
-              runId: 'artifact-run-delegated',
-              name: 'delegated.txt',
-              path: join(root, 'immutable-delegated'),
-              fileUrl: 'file:///immutable-delegated',
-              size: 17,
-              mtimeMs: 1
-            }
-          }),
-          { status: 200 }
-        )
+        const result =
+          body.method === 'artifactReserveWrite'
+            ? { id: 'reservation-delegated', fileBytes: 17, expiresAt: Date.now() + 60_000 }
+            : {
+                id: 'version-delegated',
+                artifactId: 'artifact-delegated',
+                versionId: 'version-delegated',
+                versionNumber: 1,
+                checksum: 'b'.repeat(64),
+                createdAt: '2026-08-07T00:00:00.000Z',
+                projectName: 'default-project',
+                sessionId: 'parent-session-1',
+                runId: 'artifact-run-delegated',
+                name: 'delegated.txt',
+                path: join(root, 'immutable-delegated'),
+                fileUrl: 'file:///immutable-delegated',
+                size: 17,
+                mtimeMs: 1
+              }
+        return new Response(JSON.stringify({ result }), { status: 200 })
       })
     )
 
@@ -654,8 +677,17 @@ describe('artifact MCP server', () => {
 
     expect(result).toMatchObject({ sessionId: 'parent-session-1' })
     expect(pendingSessionsObserved).toEqual(['parent-session-1'])
-    expect(rpcRequests).toHaveLength(1)
-    expect(rpcRequests[0]).toMatchObject({ artifactStorageSessionId: 'parent-session-1' })
+    expect(rpcRequests).toHaveLength(2)
+    expect(rpcRequests).toEqual([
+      expect.objectContaining({
+        method: 'artifactReserveWrite',
+        artifactStorageSessionId: 'parent-session-1'
+      }),
+      expect.objectContaining({
+        method: 'artifactCreateVersion',
+        artifactStorageSessionId: 'parent-session-1'
+      })
+    ])
   })
 
   it('returns a compact legacy artifact receipt without echoing local paths', () => {
@@ -709,12 +741,28 @@ describe('artifact MCP server', () => {
       'artifact-run-1',
       'sin.png'
     )
-    let callCount = 0
+    let createCallCount = 0
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => {
-        callCount += 1
-        if (callCount === 2) {
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { method: string }
+        if (body.method === 'artifactReserveWrite') {
+          return new Response(
+            JSON.stringify({
+              result: {
+                id: `reservation-${createCallCount + 1}`,
+                fileBytes: 8,
+                expiresAt: Date.now() + 60_000
+              }
+            }),
+            { status: 200 }
+          )
+        }
+        if (body.method === 'artifactReleaseWrite') {
+          return new Response(JSON.stringify({ result: null }), { status: 200 })
+        }
+        createCallCount += 1
+        if (createCallCount === 2) {
           return new Response(JSON.stringify({ error: 'idempotency conflict' }), { status: 409 })
         }
         return new Response(
@@ -815,7 +863,15 @@ describe('artifact MCP server', () => {
         requests.push(body)
         methods.push(body.method)
         const result =
-          body.method === 'artifactReplayVersion' && methods.length === 1 ? null : persisted
+          body.method === 'artifactReplayVersion' && methods.length === 1
+            ? null
+            : body.method === 'artifactReserveWrite'
+              ? {
+                  id: 'reservation-local-path',
+                  fileBytes: body.params.fileBytes,
+                  expiresAt: Date.now() + 60_000
+                }
+              : persisted
         return new Response(JSON.stringify({ result }), {
           status: 200,
           headers: { 'content-type': 'application/json' }
@@ -843,14 +899,15 @@ describe('artifact MCP server', () => {
 
     expect(methods).toEqual([
       'artifactReplayVersion',
+      'artifactReserveWrite',
       'artifactCreateVersion',
       'artifactReplayVersion'
     ])
-    expect(requests[1]?.params.sourceFileObservation).toEqual({
+    expect(requests[2]?.params.sourceFileObservation).toEqual({
       path: resolvedSourcePath,
       sizeBytes: sourceStat.size,
       mtimeMs: sourceStat.mtimeMs
     })
-    expect(requests[1]?.params.sourceKind).toBe('localPath')
+    expect(requests[2]?.params.sourceKind).toBe('localPath')
   })
 })

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readFile, rm, stat } from 'node:fs/promises'
+import { rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -10,10 +10,13 @@ import type {
   ArtifactVersionDescriptor,
   ArtifactVersionFile,
   ArtifactVersionProvenance,
+  ArtifactWriteReservation,
   CreateArtifactVersionRequest,
   FinalizeArtifactVersionsRequest,
   GetArtifactLineageRequest,
   GetArtifactVersionProvenanceRequest,
+  ReleaseArtifactWriteReservationRequest,
+  ReserveArtifactWriteRequest,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import {
@@ -48,6 +51,9 @@ import { ArtifactProvenanceReadModel } from './provenance-read-model'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { ArtifactProvenanceDependencyReader } from './provenance-dependency-reader'
 import type { HostLineageDependencyRelation, HostLineageDirection } from '../../shared/host-lineage'
+import { LOCAL_RESOURCE_BUDGETS, type LocalResourceBudgetOverrides } from '../resource-budget'
+import { ArtifactWriteBudgetOwner } from './write-budget-owner'
+import { digestFileWithinBudget } from '../bounded-file-io'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
@@ -64,6 +70,7 @@ type ArtifactProvenanceRepositoryOptions = {
   createId?: () => string
   now?: () => Date
   durability?: ArtifactDurability
+  resourceBudgets?: LocalResourceBudgetOverrides
 }
 
 export type WriteAppGeneratedArtifactVersionRequest = Omit<
@@ -124,6 +131,7 @@ class ArtifactProvenanceRepository {
   private readonly stagingRecovery: ArtifactProvenanceStagingRecovery
   private readonly unindexedRecovery: ArtifactProvenanceUnindexedRecovery
   private readonly versionWriter: ArtifactProvenanceVersionWriter
+  private readonly writeBudgetOwner: ArtifactWriteBudgetOwner
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.compatibilityRepository =
@@ -133,6 +141,13 @@ class ArtifactProvenanceRepository {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
     this.durability = options.durability ?? defaultArtifactDurability
+    this.writeBudgetOwner = new ArtifactWriteBudgetOwner({
+      storageRoot: options.storageRoot,
+      getClient: options.getClient,
+      compatibilityRepository: this.compatibilityRepository,
+      resourceBudgets: options.resourceBudgets,
+      now: () => this.now().getTime()
+    })
     const inputAuthority =
       options.inputAuthority ??
       new ImmutableInputAuthority({
@@ -192,6 +207,8 @@ class ArtifactProvenanceRepository {
       createId: this.createId,
       now: this.now,
       durability: this.durability,
+      resourceBudgets: options.resourceBudgets,
+      writeBudgetOwner: this.writeBudgetOwner,
       captureProducer: (request, createdAt, checksum) =>
         this.producerCapture.captureProducer(request, createdAt, checksum),
       prepareVersionPersistence: (input) => this.producerCapture.prepareVersionPersistence(input),
@@ -210,6 +227,12 @@ class ArtifactProvenanceRepository {
   ): Promise<ArtifactVersionFile> {
     const { content, kind, ...versionRequest } = request
     const writeOperationId = `artifact-app-write-${this.createId()}`
+    const reservationScope = {
+      projectId: request.projectId,
+      appSessionId: request.appSessionId,
+      artifactStorageSessionId: request.artifactStorageSessionId,
+      artifactRunId: request.artifactRunId
+    }
 
     return this.compatibilityRepository.withPendingFileTransaction(
       {
@@ -221,9 +244,20 @@ class ArtifactProvenanceRepository {
         kind,
         source: { kind: 'inline', content, encoding: 'utf8' }
       },
-      {},
-      async (pendingFile, _sourceFileObservation, bindVersionRouting) => {
-        const contentChecksum = sha256(await readFile(pendingFile.path))
+      {
+        reserveFile: (fileBytes) =>
+          this.writeBudgetOwner.reserve({
+            ...reservationScope,
+            writeOperationId,
+            filename: request.filename,
+            fileBytes
+          }),
+        releaseFileReservation: (reservationId) =>
+          this.writeBudgetOwner.release({ ...reservationScope, reservationId })
+      },
+      async (_pendingFile, _sourceFileObservation, bindVersionRouting, fileDigest, reservation) => {
+        if (!reservation) throw new Error('App-owned Artifact write reservation was not created.')
+        const contentChecksum = fileDigest.checksum
         const writeRequestChecksum = sha256(
           canonicalJson({
             contentChecksum,
@@ -235,12 +269,15 @@ class ArtifactProvenanceRepository {
           })
         )
 
-        const version = await this.versionWriter.writeVersion(
+        return this.versionWriter.writeVersion(
           {
             ...versionRequest,
             writeOperationId,
             writeRequestChecksum,
-            sourceKind: 'inline'
+            sourceKind: 'inline',
+            resourceReservationId: reservation.id,
+            resourceSizeBytes: fileDigest.sizeBytes,
+            resourceChecksum: fileDigest.checksum
           },
           async (version) =>
             bindVersionRouting(
@@ -255,20 +292,44 @@ class ArtifactProvenanceRepository {
               resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
             )
         )
-        return version
       }
     )
   }
 
-  async createVersion(request: CreateArtifactVersionRequest): Promise<ArtifactVersionFile> {
+  async createVersion(
+    request: CreateArtifactVersionRequest,
+    signal?: AbortSignal
+  ): Promise<ArtifactVersionFile> {
     return this.versionWriter.writeVersion(
       request,
       this.stagingRecovery.routingPublisher(
         request.projectId,
         request.artifactStorageSessionId,
         request.filename
-      )
+      ),
+      signal
     )
+  }
+
+  reserveWrite(request: ReserveArtifactWriteRequest): Promise<ArtifactWriteReservation> {
+    return this.writeBudgetOwner.reserve(request)
+  }
+
+  releaseWriteReservation(request: ReleaseArtifactWriteReservationRequest): Promise<void> {
+    return this.writeBudgetOwner.release(request)
+  }
+
+  releaseRunWriteReservations(request: {
+    projectId: string
+    appSessionId: string
+    artifactStorageSessionId: string
+    artifactRunId: string
+  }): Promise<void> {
+    return this.writeBudgetOwner.releaseRun(request)
+  }
+
+  releaseAllWriteReservations(): Promise<void> {
+    return this.writeBudgetOwner.releaseAll()
   }
 
   async replayVersion(
@@ -542,9 +603,7 @@ class ArtifactProvenanceRepository {
     )
   }
 
-  // Resolves reviewer/preview reads through the Version authority rather than reconstructing a
-  // legacy session path from an id. The checksum is verified before the caller receives the path.
-  async resolveVersionContent(request: {
+  private async resolveVersionContentMetadata(request: {
     projectId: string
     versionId: string
     appSessionId?: string
@@ -570,17 +629,42 @@ class ArtifactProvenanceRepository {
     })
     if (!version) throw new Error(`Artifact Version not found: ${versionId}`)
 
-    const path = resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
-    const bytes = await readFile(path)
-    if (sha256(bytes) !== version.checksum) {
-      throw new Error(`Artifact Version content checksum mismatch: ${versionId}`)
-    }
     return {
-      path,
+      path: resolveStorageKey(this.options.storageRoot, version.contentStorageKey),
       filename: version.filename,
       contentType: version.contentType ?? undefined,
       checksum: version.checksum
     }
+  }
+
+  // Reviewer reads hash the full source while retaining only one page, so they request metadata
+  // without a redundant verification pass. The Reviewer host compares this checksum itself.
+  resolveVersionContentForStreamingVerification(request: {
+    projectId: string
+    versionId: string
+    appSessionId?: string
+    artifactId?: string
+  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
+    return this.resolveVersionContentMetadata(request)
+  }
+
+  // Resolves preview/consumer reads through the Version authority. Callers that do not stream and
+  // verify content themselves keep the existing verified-path contract.
+  async resolveVersionContent(request: {
+    projectId: string
+    versionId: string
+    appSessionId?: string
+    artifactId?: string
+  }): Promise<{ path: string; filename: string; contentType?: string; checksum?: string }> {
+    const resolved = await this.resolveVersionContentMetadata(request)
+    const digest = await digestFileWithinBudget(
+      resolved.path,
+      LOCAL_RESOURCE_BUDGETS.artifactFileBytes
+    )
+    if (digest.checksum !== resolved.checksum) {
+      throw new Error(`Artifact Version content checksum mismatch: ${request.versionId}`)
+    }
+    return resolved
   }
 
   // Project deletion is the terminal provenance boundary. Session deletion intentionally keeps this

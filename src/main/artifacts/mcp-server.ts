@@ -11,14 +11,18 @@ import type {
   ArtifactWriteSource
 } from '../../shared/artifacts'
 import type {
+  ArtifactWriteReservation,
   ArtifactVersionFile,
   CreateArtifactVersionRequest,
+  ReleaseArtifactWriteReservationRequest,
+  ReserveArtifactWriteRequest,
   ReplayArtifactVersionRequest
 } from '../../shared/artifact-provenance'
 import { resolveProjectId } from '../../shared/project-scope'
 import type { ProjectIdScope } from '../../shared/project-scope'
 import { ARTIFACT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc } from '../local-rpc-transport'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { ArtifactRepository } from './repository'
 
 const ARTIFACT_MCP_SERVER_NAME = 'open-science-artifacts'
@@ -72,6 +76,7 @@ type ArtifactToolWriteInput = {
 type ArtifactWriteInvocation = {
   writeOperationId?: string
   requestId?: string | number
+  signal?: AbortSignal
 }
 
 // Some MCP clients serialize nested tool arguments before sending them. Accept a valid JSON string
@@ -196,12 +201,13 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
   }
 }
 
-type ArtifactRpcResponse = { result?: ArtifactVersionFile | null; error?: string }
+type ArtifactRpcResponse<Result> = { result?: Result | null; error?: string }
 
 const callArtifactRpc = async (
   environment: ArtifactMcpEnvironment,
   capabilityToken: string,
-  request: CreateArtifactVersionRequest
+  request: CreateArtifactVersionRequest,
+  signal?: AbortSignal
 ): Promise<ArtifactVersionFile> => {
   if (!environment.rpcEndpoint) {
     throw new Error('Artifact Provenance RPC connection is not configured.')
@@ -218,11 +224,12 @@ const callArtifactRpc = async (
         authorization: `Bearer ${capabilityToken}`,
         'content-type': 'application/json'
       },
-      body: JSON.stringify({ method: 'artifactCreateVersion', params: request })
+      body: JSON.stringify({ method: 'artifactCreateVersion', params: request }),
+      signal
     },
     'Artifact Provenance RPC'
   )
-  const payload = (await response.json()) as ArtifactRpcResponse
+  const payload = (await response.json()) as ArtifactRpcResponse<ArtifactVersionFile>
 
   if (!response.ok || payload.error || !payload.result) {
     throw new Error(
@@ -235,7 +242,8 @@ const callArtifactRpc = async (
 const callArtifactReplayRpc = async (
   environment: ArtifactMcpEnvironment,
   capabilityToken: string,
-  request: ReplayArtifactVersionRequest
+  request: ReplayArtifactVersionRequest,
+  signal?: AbortSignal
 ): Promise<ArtifactVersionFile | undefined> => {
   if (!environment.rpcEndpoint) {
     throw new Error('Artifact Provenance RPC connection is not configured.')
@@ -251,17 +259,75 @@ const callArtifactReplayRpc = async (
         authorization: `Bearer ${capabilityToken}`,
         'content-type': 'application/json'
       },
-      body: JSON.stringify({ method: 'artifactReplayVersion', params: request })
+      body: JSON.stringify({ method: 'artifactReplayVersion', params: request }),
+      signal
     },
     'Artifact Provenance RPC'
   )
-  const payload = (await response.json()) as ArtifactRpcResponse
+  const payload = (await response.json()) as ArtifactRpcResponse<ArtifactVersionFile>
   if (!response.ok || payload.error) {
     throw new Error(
       payload.error ?? `Artifact Provenance RPC failed with status ${response.status}`
     )
   }
   return payload.result ?? undefined
+}
+
+const callArtifactReserveRpc = async (
+  environment: ArtifactMcpEnvironment,
+  capabilityToken: string,
+  request: ReserveArtifactWriteRequest,
+  signal?: AbortSignal
+): Promise<ArtifactWriteReservation> => {
+  if (!environment.rpcEndpoint) {
+    throw new Error('Artifact Provenance RPC connection is not configured.')
+  }
+  const response = await fetchLocalRpc(
+    { endpoint: environment.rpcEndpoint, socketPath: environment.rpcSocketPath },
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${capabilityToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ method: 'artifactReserveWrite', params: request }),
+      signal
+    },
+    'Artifact write reservation RPC'
+  )
+  const payload = (await response.json()) as ArtifactRpcResponse<ArtifactWriteReservation>
+  if (!response.ok || payload.error || !payload.result) {
+    throw new Error(
+      payload.error ?? `Artifact reservation RPC failed with status ${response.status}`
+    )
+  }
+  return payload.result
+}
+
+const callArtifactReleaseRpc = async (
+  environment: ArtifactMcpEnvironment,
+  capabilityToken: string,
+  request: ReleaseArtifactWriteReservationRequest
+): Promise<void> => {
+  if (!environment.rpcEndpoint) return
+  const response = await fetchLocalRpc(
+    { endpoint: environment.rpcEndpoint, socketPath: environment.rpcSocketPath },
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${capabilityToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ method: 'artifactReleaseWrite', params: request })
+    },
+    'Artifact write reservation release RPC'
+  )
+  if (!response.ok) {
+    const payload = (await response.json()) as ArtifactRpcResponse<never>
+    throw new Error(
+      payload.error ?? `Artifact reservation release RPC failed with status ${response.status}`
+    )
+  }
 }
 
 // Normalizes the legacy content/encoding shape and the new source shape into one repository input.
@@ -358,7 +424,8 @@ const writeArtifactFileForCurrentRun = async (
     allowedImportRoots: context.notebookSessionRoot
       ? [...environment.allowedImportRoots, context.notebookSessionRoot]
       : environment.allowedImportRoots,
-    relativeBaseDirs
+    relativeBaseDirs,
+    signal: invocation.signal
   }
 
   // Old handoff files remain writable during migration. New production handoffs always include the
@@ -402,26 +469,57 @@ const writeArtifactFileForCurrentRun = async (
   // app-owned operation already committed before copying or reading that path. Inline content remains
   // byte-checked below so reusing an operation with different inline bytes is still a hard conflict.
   if (source.kind === 'localPath') {
-    const replay = await callArtifactReplayRpc(environment, rpcCapabilityToken, {
-      projectId,
-      appSessionId,
-      artifactStorageSessionId,
-      artifactRunId: context.artifactRunId,
-      writeOperationId,
-      filename: input.filename,
-      contentType: input.mimeType,
-      producerRunId: input.producerRunId
-    })
+    const replay = await callArtifactReplayRpc(
+      environment,
+      rpcCapabilityToken,
+      {
+        projectId,
+        appSessionId,
+        artifactStorageSessionId,
+        artifactRunId: context.artifactRunId,
+        writeOperationId,
+        filename: input.filename,
+        contentType: input.mimeType,
+        producerRunId: input.producerRunId
+      },
+      invocation.signal
+    )
     if (replay) return replay
+  }
+
+  const nativeWriteOptions = {
+    ...writeOptions,
+    reserveFile: (fileBytes: number) =>
+      callArtifactReserveRpc(
+        environment,
+        rpcCapabilityToken,
+        {
+          projectId,
+          appSessionId,
+          artifactStorageSessionId,
+          artifactRunId: context.artifactRunId,
+          writeOperationId,
+          filename: input.filename,
+          fileBytes
+        },
+        invocation.signal
+      ),
+    releaseFileReservation: (reservationId: string) =>
+      callArtifactReleaseRpc(environment, rpcCapabilityToken, {
+        projectId,
+        appSessionId,
+        artifactStorageSessionId,
+        artifactRunId: context.artifactRunId,
+        reservationId
+      })
   }
 
   return repository.withPendingFileTransaction(
     writeRequest,
-    writeOptions,
-    async (pendingFile, sourceFileObservation) => {
-      const contentChecksum = createHash('sha256')
-        .update(await readFile(pendingFile.path))
-        .digest('hex')
+    nativeWriteOptions,
+    async (_pendingFile, sourceFileObservation, _bindVersionRouting, fileDigest, reservation) => {
+      if (!reservation) throw new Error('Artifact write reservation was not created.')
+      const contentChecksum = fileDigest.checksum
       const writeRequestChecksum = createHash('sha256')
         .update(
           JSON.stringify({
@@ -435,28 +533,36 @@ const writeArtifactFileForCurrentRun = async (
         )
         .digest('hex')
 
-      return callArtifactRpc(environment, rpcCapabilityToken, {
-        projectId,
-        appSessionId,
-        artifactStorageSessionId,
-        artifactRunId: context.artifactRunId,
-        writeOperationId,
-        writeRequestChecksum,
-        rootFrameId,
-        agentFrameId,
-        messageBranchId,
-        messageBranchAncestry: context.messageBranchAncestry,
-        messageAncestry: context.messageAncestry,
-        runtimeSegmentId,
-        promptMessageId,
-        agentName: context.agentName,
-        notebookSessionId: context.notebookSessionId,
-        producerRunId: input.producerRunId,
-        sourceKind: source.kind,
-        sourceFileObservation,
-        filename: input.filename,
-        contentType: input.mimeType
-      })
+      return callArtifactRpc(
+        environment,
+        rpcCapabilityToken,
+        {
+          projectId,
+          appSessionId,
+          artifactStorageSessionId,
+          artifactRunId: context.artifactRunId,
+          writeOperationId,
+          writeRequestChecksum,
+          rootFrameId,
+          agentFrameId,
+          messageBranchId,
+          messageBranchAncestry: context.messageBranchAncestry,
+          messageAncestry: context.messageAncestry,
+          runtimeSegmentId,
+          promptMessageId,
+          agentName: context.agentName,
+          notebookSessionId: context.notebookSessionId,
+          producerRunId: input.producerRunId,
+          sourceKind: source.kind,
+          sourceFileObservation,
+          filename: input.filename,
+          contentType: input.mimeType,
+          resourceReservationId: reservation.id,
+          resourceSizeBytes: fileDigest.sizeBytes,
+          resourceChecksum: fileDigest.checksum
+        },
+        invocation.signal
+      )
     }
   )
 }
@@ -503,7 +609,8 @@ const createArtifactMcpServer = (
     async (input, extra) => {
       // Echo the stored artifact metadata so the model can mention filenames without inventing paths.
       const artifact = await writeArtifactFileForCurrentRun(repository, environment, input, {
-        requestId: extra.requestId
+        requestId: extra.requestId,
+        signal: extra.signal
       })
 
       return {
@@ -592,7 +699,11 @@ const runArtifactMcpServer = async (
   const repository = new ArtifactRepository(environment.storageRoot)
   const server = createArtifactMcpServer(repository, environment)
 
-  await server.connect(new StdioServerTransport())
+  await server.connect(
+    new StdioServerTransport(process.stdin, process.stdout, {
+      maxBufferSize: LOCAL_RESOURCE_BUDGETS.requestBytes
+    })
+  )
 }
 
 export {

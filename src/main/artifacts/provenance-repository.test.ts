@@ -27,6 +27,7 @@ import {
   ArtifactProvenanceRepository
 } from './provenance-repository'
 import { ArtifactRepository } from './repository'
+import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
@@ -202,6 +203,181 @@ describe('artifact provenance repository', () => {
     await repository.reconcileSession('project-1', 'session-1')
 
     await expect(stat(stagingDirectory)).resolves.toBeDefined()
+  })
+
+  it('serializes same-session writes so concurrent calls cannot exceed the turn budget', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-turn-budget-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const content = createPngBytes('budgeted')
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository,
+      resourceBudgets: {
+        artifactTurnBytes: content.byteLength,
+        artifactSessionBytes: content.byteLength * 10
+      }
+    })
+    const common = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'Codex',
+      contentType: 'image/png'
+    } as const
+    for (const filename of ['a.png', 'b.png']) {
+      await compatibilityRepository.writePendingFile({
+        projectName: common.projectId,
+        sessionId: common.artifactStorageSessionId,
+        runId: common.artifactRunId,
+        filename,
+        mimeType: common.contentType,
+        source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+      })
+    }
+
+    const results = await Promise.allSettled(
+      ['a.png', 'b.png'].map((filename, index) =>
+        repository.createVersion({
+          ...common,
+          filename,
+          writeOperationId: `write-${index}`,
+          writeRequestChecksum: String(index).repeat(64)
+        })
+      )
+    )
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: { dimension: 'turn' }
+    })
+  })
+
+  it('counts durable bytes across runs in the same Session', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-session-budget-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const content = createPngBytes('session-budgeted')
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository,
+      resourceBudgets: {
+        artifactTurnBytes: content.byteLength * 10,
+        artifactSessionBytes: content.byteLength
+      }
+    })
+    const common = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      agentName: 'Codex',
+      contentType: 'image/png'
+    } as const
+
+    for (const [filename, artifactRunId] of [
+      ['first.png', 'artifact-run-1'],
+      ['second.png', 'artifact-run-2']
+    ] as const) {
+      await compatibilityRepository.writePendingFile({
+        projectName: common.projectId,
+        sessionId: common.artifactStorageSessionId,
+        runId: artifactRunId,
+        filename,
+        mimeType: common.contentType,
+        source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+      })
+    }
+    await repository.createVersion({
+      ...common,
+      artifactRunId: 'artifact-run-1',
+      filename: 'first.png',
+      writeOperationId: 'write-first',
+      writeRequestChecksum: 'a'.repeat(64)
+    })
+
+    await expect(
+      repository.createVersion({
+        ...common,
+        artifactRunId: 'artifact-run-2',
+        filename: 'second.png',
+        writeOperationId: 'write-second',
+        writeRequestChecksum: 'b'.repeat(64)
+      })
+    ).rejects.toMatchObject({ dimension: 'session' })
+  })
+
+  it('releases a write reservation after a successful Version write', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-reservation-success-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const compatibilityRepository = new ArtifactRepository(storageRoot)
+    const repository = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: () => Promise.resolve(client),
+      compatibilityRepository
+    })
+    const content = createPngBytes('reserved success')
+    const reservationRequest = {
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactStorageSessionId: 'artifact-session-1',
+      artifactRunId: 'artifact-run-1',
+      writeOperationId: 'write-reserved-success',
+      filename: 'reserved.png',
+      fileBytes: content.byteLength
+    } as const
+    const reservation = await repository.reserveWrite(reservationRequest)
+    await compatibilityRepository.writePendingFile({
+      projectName: reservationRequest.projectId,
+      sessionId: reservationRequest.artifactStorageSessionId,
+      runId: reservationRequest.artifactRunId,
+      filename: reservationRequest.filename,
+      mimeType: 'image/png',
+      source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+    })
+
+    await repository.createVersion({
+      ...reservationRequest,
+      writeRequestChecksum: 'a'.repeat(64),
+      rootFrameId: 'root-frame-1',
+      agentFrameId: 'agent-frame-1',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'runtime-segment-1',
+      promptMessageId: 'prompt-1',
+      contentType: 'image/png',
+      resourceReservationId: reservation.id,
+      resourceSizeBytes: content.byteLength,
+      resourceChecksum: createHash('sha256').update(content).digest('hex')
+    })
+
+    const replacement = await repository.reserveWrite(reservationRequest)
+    expect(replacement.id).not.toBe(reservation.id)
+    await repository.releaseWriteReservation({
+      projectId: reservationRequest.projectId,
+      appSessionId: reservationRequest.appSessionId,
+      artifactStorageSessionId: reservationRequest.artifactStorageSessionId,
+      artifactRunId: reservationRequest.artifactRunId,
+      reservationId: replacement.id
+    })
   })
 
   it('keeps immutable bytes while same-session same-name saves advance one lineage', async () => {
@@ -699,18 +875,55 @@ describe('artifact provenance repository', () => {
       filename: 'sin.png',
       contentType: 'image/png'
     } as const
+    const content = createPngBytes('durable file failure')
+    const reservationRequest = {
+      projectId: request.projectId,
+      appSessionId: request.appSessionId,
+      artifactStorageSessionId: request.artifactStorageSessionId,
+      artifactRunId: request.artifactRunId,
+      writeOperationId: request.writeOperationId,
+      filename: request.filename,
+      fileBytes: content.byteLength
+    }
+    const reservation = await repository.reserveWrite(reservationRequest)
     await compatibilityRepository.writePendingFile({
       projectName: request.projectId,
       sessionId: request.artifactStorageSessionId,
       runId: request.artifactRunId,
       filename: request.filename,
       mimeType: request.contentType,
-      source: createPngInlineSource('durable file failure')
+      source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
     })
 
-    await expect(repository.createVersion(request)).rejects.toThrow(
-      'simulated durable file failure'
-    )
+    const originalRelease = ArtifactWriteBudgetOwner.prototype.release
+    const release = vi
+      .spyOn(ArtifactWriteBudgetOwner.prototype, 'release')
+      .mockImplementationOnce(async function (this: ArtifactWriteBudgetOwner, releaseRequest) {
+        await originalRelease.call(this, releaseRequest)
+        throw new Error('simulated reservation release failure')
+      })
+    try {
+      await expect(
+        repository.createVersion({
+          ...request,
+          resourceReservationId: reservation.id,
+          resourceSizeBytes: content.byteLength,
+          resourceChecksum: createHash('sha256').update(content).digest('hex')
+        })
+      ).rejects.toThrow('simulated durable file failure')
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      release.mockRestore()
+    }
+    const replacement = await repository.reserveWrite(reservationRequest)
+    expect(replacement.id).not.toBe(reservation.id)
+    await repository.releaseWriteReservation({
+      projectId: request.projectId,
+      appSessionId: request.appSessionId,
+      artifactStorageSessionId: request.artifactStorageSessionId,
+      artifactRunId: request.artifactRunId,
+      reservationId: replacement.id
+    })
 
     const row = await client.artifactVersion.findUniqueOrThrow({
       where: { writeOperationId: request.writeOperationId }

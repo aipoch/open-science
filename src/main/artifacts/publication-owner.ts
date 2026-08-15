@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 
@@ -24,6 +24,11 @@ import type {
   PendingFileTransactionOptions,
   PrepareArtifactRunFinalizationRequest
 } from './publication-types'
+import type { FileDigest } from '../bounded-file-io'
+import type { PendingFileBudgetReservation } from './pending-file-transaction'
+import { assertDiskReserve, copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
+import { availableBytes } from '../storage/usage'
 
 class ArtifactCompatibilityScanIncompleteError extends Error {
   constructor(cause: unknown) {
@@ -99,16 +104,33 @@ class ArtifactPublicationOwner {
     ) {
       throw new Error('Artifact pending routing conflicts with an existing Version.')
     }
-    let bytes: Buffer
+    let checksum: string
     try {
-      bytes = await readFile(filePath)
+      checksum = (
+        await digestFileWithinBudget(
+          filePath,
+          LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+          request.signal
+        )
+      ).checksum
     } catch (error) {
       if (!this.storage.isMissingFileError(error)) throw error
       const temporaryPath = `${filePath}.${randomUUID()}.tmp`
       try {
-        await copyFile(request.sourcePath, temporaryPath)
-        bytes = await readFile(temporaryPath)
-        if (this.storage.sha256(bytes) !== routing.checksum) {
+        const source = await stat(request.sourcePath)
+        assertDiskReserve(
+          await availableBytes(directory),
+          source.size,
+          LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+        )
+        const copied = await copyFileWithinBudget(
+          request.sourcePath,
+          temporaryPath,
+          LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+          request.signal
+        )
+        checksum = copied.checksum
+        if (checksum !== routing.checksum) {
           throw new Error('Artifact routing source checksum mismatch.')
         }
         await this.storage.durability.syncFile(temporaryPath)
@@ -118,15 +140,25 @@ class ArtifactPublicationOwner {
         await rm(temporaryPath, { force: true }).catch(() => undefined)
       }
     }
-    if (this.storage.sha256(bytes) !== routing.checksum) {
+    if (checksum !== routing.checksum) {
       if (existingRouting || !request.replaceUnroutedBytes) {
         throw new Error('Artifact pending bytes conflict with Version routing.')
       }
       const replacementPath = `${filePath}.${randomUUID()}.tmp`
       try {
-        await copyFile(request.sourcePath, replacementPath)
-        const replacement = await readFile(replacementPath)
-        if (this.storage.sha256(replacement) !== routing.checksum) {
+        const source = await stat(request.sourcePath)
+        assertDiskReserve(
+          await availableBytes(directory),
+          source.size,
+          LOCAL_RESOURCE_BUDGETS.diskReserveBytes
+        )
+        const replacement = await copyFileWithinBudget(
+          request.sourcePath,
+          replacementPath,
+          LOCAL_RESOURCE_BUDGETS.artifactFileBytes,
+          request.signal
+        )
+        if (replacement.checksum !== routing.checksum) {
           throw new Error('Artifact routing source checksum mismatch.')
         }
         await this.storage.durability.syncFile(replacementPath)
@@ -178,7 +210,12 @@ class ArtifactPublicationOwner {
               continue
             }
             const path = join(runDirectory, entry.name)
-            if (this.storage.sha256(await readFile(path)) !== routing.checksum) continue
+            if (
+              (await digestFileWithinBudget(path, LOCAL_RESOURCE_BUDGETS.artifactFileBytes))
+                .checksum !== routing.checksum
+            ) {
+              continue
+            }
             matches.push({ ...routing, storageSessionId, filename: entry.name, path })
           }
         }
@@ -208,7 +245,10 @@ class ArtifactPublicationOwner {
         if (!SAFE_SEGMENT_PATTERN.test(storageSessionId)) continue
         const path = join(projectDirectory, storageSessionId, PENDING_DIR, runId, filename)
         try {
-          if (this.storage.sha256(await readFile(path)) === request.checksum) {
+          if (
+            (await digestFileWithinBudget(path, LOCAL_RESOURCE_BUDGETS.artifactFileBytes))
+              .checksum === request.checksum
+          ) {
             matches.push({ storageSessionId, path })
           }
         } catch (error) {
@@ -230,7 +270,9 @@ class ArtifactPublicationOwner {
     operation: (
       artifact: ArtifactFile,
       sourceFileObservation: ArtifactSourceFileObservation | undefined,
-      bindVersionRouting: BindPendingArtifactVersionRouting
+      bindVersionRouting: BindPendingArtifactVersionRouting,
+      fileDigest: FileDigest,
+      reservation: PendingFileBudgetReservation | undefined
     ) => Promise<Result>
   ): Promise<Result> {
     const normalized = {
@@ -246,7 +288,12 @@ class ArtifactPublicationOwner {
         writeOptions: options,
         storage: this.storage,
         publishRouting: (routing, sourcePath) =>
-          this.publishPendingVersionRoutingLocked({ ...normalized, sourcePath, routing }),
+          this.publishPendingVersionRoutingLocked({
+            ...normalized,
+            sourcePath,
+            routing,
+            signal: options.signal
+          }),
         operation
       })
     )
