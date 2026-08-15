@@ -16,7 +16,6 @@ import type {
   ExportNotebookResult,
   FinishNotebookCodeCellRequest,
   NotebookLanguage,
-  NotebookRunBranchFilter,
   NotebookRunSummary,
   NotebookSessionRequest,
   NotebookSessionStateRequest,
@@ -25,8 +24,6 @@ import type {
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import {
-  NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT,
-  NOTEBOOK_STATE_BRANCH_FILTER_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT
 } from '../../shared/notebook'
@@ -827,42 +824,10 @@ class NotebookRuntimeService {
         `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
       )
     }
-    const rawBranchRunFilter: unknown = request.branchRunFilter
-    if (
-      rawBranchRunFilter !== undefined &&
-      (typeof rawBranchRunFilter !== 'object' ||
-        rawBranchRunFilter === null ||
-        !('rootFrameId' in rawBranchRunFilter) ||
-        typeof rawBranchRunFilter.rootFrameId !== 'string' ||
-        rawBranchRunFilter.rootFrameId.length === 0 ||
-        Buffer.byteLength(rawBranchRunFilter.rootFrameId, 'utf8') >
-          NOTEBOOK_STATE_BRANCH_FILTER_ID_LIMIT_BYTES ||
-        !('visibleMessageBranchIds' in rawBranchRunFilter) ||
-        !Array.isArray(rawBranchRunFilter.visibleMessageBranchIds) ||
-        rawBranchRunFilter.visibleMessageBranchIds.length === 0 ||
-        rawBranchRunFilter.visibleMessageBranchIds.length >
-          NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT ||
-        !rawBranchRunFilter.visibleMessageBranchIds.every(
-          (branchId) =>
-            typeof branchId === 'string' &&
-            branchId.length > 0 &&
-            Buffer.byteLength(branchId, 'utf8') <= NOTEBOOK_STATE_BRANCH_FILTER_ID_LIMIT_BYTES
-        ))
-    ) {
-      throw new Error(
-        `Notebook state Branch filter must contain 1-${NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT} IDs, each no larger than ${NOTEBOOK_STATE_BRANCH_FILTER_ID_LIMIT_BYTES} UTF-8 bytes.`
-      )
-    }
-    const branchRunFilter = rawBranchRunFilter as NotebookRunBranchFilter | undefined
     const runIds = [...new Set(requestedRunIds)]
     const session = await this.sessionLifecycle.ensure(request)
     await this.runTerminalization.reconcilePending(session)
-    return this.sessionReadModel.state(
-      session,
-      runIds,
-      request.historySummaryFrameId,
-      branchRunFilter
-    )
+    return this.sessionReadModel.state(session, runIds, request.historySummaryFrameId)
   }
 
   // Resolves the durable reference for a session, preferring the live runtime session but falling

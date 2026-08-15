@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Download, LoaderCircle, X } from 'lucide-react'
 import { Dialog } from 'radix-ui'
@@ -36,8 +36,6 @@ import {
 import { loadSessionNotebookData } from './session-notebook-data'
 import {
   createNotebookFrameFilterOptions,
-  filterNotebookRunsForSessionBranch,
-  notebookBranchRunFilter,
   notebookFrameFilterForExport,
   notebookFrameLabels,
   projectNotebookRunsForFrame,
@@ -554,13 +552,6 @@ const SessionNotebookDialog = ({
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
   const dialogSession = useRetainedDialogValue(session)
-  const conversationGraph = dialogSession?.conversationGraph
-  const branchRunFilter = useMemo(
-    () => notebookBranchRunFilter({ conversationGraph }),
-    [conversationGraph]
-  )
-  const branchFilterKey = branchRunFilter?.visibleMessageBranchIds.join('\u0000')
-  const branchRuns = dialogSession ? filterNotebookRunsForSessionBranch(runs, dialogSession) : []
 
   const sessionId = session?.id
   const projectId = session?.projectId
@@ -573,12 +564,11 @@ const SessionNotebookDialog = ({
         sessionId: dialogSession.id,
         projectId: dialogSession.projectId,
         workspaceCwd: dialogSession.cwd ?? '',
-        historySummaryFrameId: agentFrameId,
-        ...(branchRunFilter ? { branchRunFilter } : {})
+        historySummaryFrameId: agentFrameId
       })
       return state.historySummary
     },
-    [branchRunFilter, dialogSession]
+    [dialogSession]
   )
 
   useEffect(() => {
@@ -596,8 +586,7 @@ const SessionNotebookDialog = ({
       void loadSessionNotebookData(window.api.notebook, {
         sessionId,
         projectId,
-        workspaceCwd: cwd ?? '',
-        ...(branchRunFilter ? { branchRunFilter } : {})
+        workspaceCwd: cwd ?? ''
       })
         .then((loaded) => {
           if (cancelled) return
@@ -618,7 +607,7 @@ const SessionNotebookDialog = ({
       cancelled = true
       window.clearTimeout(timeoutId)
     }
-  }, [branchRunFilter, cwd, projectId, sessionId])
+  }, [cwd, projectId, sessionId])
 
   return (
     <Dialog.Root
@@ -642,12 +631,12 @@ const SessionNotebookDialog = ({
               // Remount per session: the dialog is mounted once and the session prop swaps in
               // place, so per-session export state (a failure banner, an in-flight setState from
               // a superseded export) must be discarded rather than leak into the next session.
-              key={`${dialogSession.id}:${branchFilterKey ?? ''}`}
+              key={dialogSession.id}
               sessionId={dialogSession.id}
               projectId={dialogSession.projectId}
-              runs={branchRuns}
+              runs={runs}
               runCount={runCount}
-              loadedRunCount={branchRuns.length}
+              loadedRunCount={runs.length}
               frameLabels={notebookFrameLabels(dialogSession, t)}
               onLoadHistorySummary={loadHistorySummary}
               status={status}

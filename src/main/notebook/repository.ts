@@ -4,17 +4,12 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   NotebookKernelMetadata,
   NotebookKernelInstanceIdentity,
-  NotebookRunBranchFilter,
   NotebookRunDocument,
   NotebookRunHistorySummary,
   NotebookRunRecord,
   NotebookWorkingFile
 } from '../../shared/notebook'
-import {
-  NOTEBOOK_RUN_FILE,
-  NOTEBOOKS_DIR,
-  notebookRunMatchesBranchFilter
-} from '../../shared/notebook'
+import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { decodeRunDocumentDataPaths, encodeRunDocumentDataPaths } from './run-document-data-paths'
 import {
@@ -562,8 +557,7 @@ class NotebookRunRepository {
     sessionId: string,
     limit: number,
     includeRunIds: readonly string[] = [],
-    historySummaryFrameId?: string,
-    branchRunFilter?: NotebookRunBranchFilter
+    historySummaryFrameId?: string
   ): Promise<{
     runs: NotebookRunRecord[]
     total: number
@@ -589,7 +583,6 @@ class NotebookRunRepository {
 
     for (const document of documents) {
       for (const run of document.runs) {
-        if (!notebookRunMatchesBranchFilter(run, branchRunFilter)) continue
         total += 1
         if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
         if (historySummary && run.agentFrameId === historySummary.agentFrameId) {
