@@ -3234,7 +3234,10 @@ async function run(code) {
     if (value !== undefined) {
       // Non-serializable (e.g. circular) echoes fall back to a string so a run never fails on output.
       try {
-        result = takeOutput(outputBudget, typeof value === 'string' ? value : JSON.stringify(value))
+        const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+        // JSON.stringify returns undefined (without throwing) for functions and Symbols. Keep the
+        // protocol's null result instead of fabricating the literal string "undefined".
+        if (serialized !== undefined) result = takeOutput(outputBudget, serialized)
       } catch {
         result = takeOutput(outputBudget, String(value))
       }

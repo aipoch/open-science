@@ -2839,6 +2839,15 @@ gate('repl_loop.js host.mcp', () => {
       const c = await send('let z = 5;')
       expect(c.error).toBeNull()
       expect(c.result).toBeNull()
+
+      // JSON.stringify returns undefined for these values without throwing. They remain an absent
+      // REPL echo instead of being coerced into a fabricated literal "undefined" result.
+      const fn = await send('(() => 1)')
+      const symbol = await send("Symbol('not-json')")
+      expect(fn.error).toBeNull()
+      expect(fn.result).toBeNull()
+      expect(symbol.error).toBeNull()
+      expect(symbol.result).toBeNull()
     } finally {
       child.kill()
     }
