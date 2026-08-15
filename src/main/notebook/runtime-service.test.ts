@@ -37,6 +37,7 @@ import type {
 } from './package-manager'
 import type { EnvironmentInfo } from '../../shared/notebook-env'
 import {
+  NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
   type NotebookEnvironmentManifest,
   type NotebookEnvironmentStatus
@@ -313,6 +314,20 @@ describe('notebook runtime service', () => {
     await expect(
       service.state({ sessionId: 'session-1', workspaceCwd: root, runIds })
     ).rejects.toThrow(/at most 20 targeted run IDs/u)
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
+  it('rejects an oversized history summary Frame ID before creating a session', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+
+    await expect(
+      service.state({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        historySummaryFrameId: 'x'.repeat(NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES + 1)
+      })
+    ).rejects.toThrow(/history summary Frame ID must not exceed 1024 UTF-8 bytes/u)
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 

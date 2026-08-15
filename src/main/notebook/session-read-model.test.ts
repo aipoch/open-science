@@ -212,7 +212,7 @@ describe('NotebookSessionReadModel', () => {
       lane: session.lane,
       workspaceCwd: session.cwd
     })
-    vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+    const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
       runs: Array.from({ length: 100 }, (_, index) =>
         makeRun({ runId: `run-${index + 25}`, cellId: `cell-${index + 25}`, startedAt: index + 25 })
       ),
@@ -222,6 +222,13 @@ describe('NotebookSessionReadModel', () => {
 
     const state = await makeReadModel(storageRoot, session, repository).state(session)
 
+    expect(readWindow).toHaveBeenCalledWith(
+      session.projectId,
+      session.sessionId,
+      100,
+      [],
+      undefined
+    )
     expect(state.runCount).toBe(125)
     expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
@@ -229,6 +236,48 @@ describe('NotebookSessionReadModel', () => {
     expect(state.recentRuns).toHaveLength(20)
     expect(state.cells).toHaveLength(100)
     expect(state.cells[0]?.id).toBe('cell-25')
+  })
+
+  it('returns complete-history discovery metadata without returning the recent run window', async () => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = makeSession(storageRoot)
+    await repository.loadOrCreate({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      workspaceCwd: session.cwd
+    })
+    const historySummary = {
+      agentFrameId: 'frame-child',
+      runCount: 7,
+      kernelCounts: { python: 3, r: 2, repl: 1, bash: 1 },
+      latestDataKernel: 'r' as const
+    }
+    const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      runs: [],
+      total: 125,
+      latestRunEnvironments: {},
+      historySummary
+    })
+
+    const state = await makeReadModel(storageRoot, session, repository).state(
+      session,
+      [],
+      'frame-child'
+    )
+
+    expect(readWindow).toHaveBeenCalledWith(
+      session.projectId,
+      session.sessionId,
+      0,
+      [],
+      'frame-child'
+    )
+    expect(state.historySummary).toEqual(historySummary)
+    expect(state.runs).toEqual([])
+    expect(state.recentRuns).toEqual([])
+    expect(state.cells).toEqual([])
   })
 
   it('adds explicitly requested historical runs without widening the default window', async () => {
@@ -249,7 +298,13 @@ describe('NotebookSessionReadModel', () => {
 
     const state = await makeReadModel(storageRoot, session, repository).state(session, ['run-old'])
 
-    expect(readWindow).toHaveBeenCalledWith(session.projectId, session.sessionId, 0, ['run-old'])
+    expect(readWindow).toHaveBeenCalledWith(
+      session.projectId,
+      session.sessionId,
+      0,
+      ['run-old'],
+      undefined
+    )
     expect(state.runs.map((run) => run.runId)).toEqual(['run-old'])
     expect(state.recentRuns).toEqual([])
     expect(state.cells).toEqual([])

@@ -23,7 +23,10 @@ import type {
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../../shared/notebook'
-import { NOTEBOOK_STATE_TARGET_RUN_LIMIT } from '../../shared/notebook'
+import {
+  NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
+  NOTEBOOK_STATE_TARGET_RUN_LIMIT
+} from '../../shared/notebook'
 import type {
   ManageEnvironmentsRequest,
   ManageEnvironmentsResult,
@@ -806,10 +809,19 @@ class NotebookRuntimeService {
         `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
       )
     }
+    if (
+      request.historySummaryFrameId !== undefined &&
+      Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
+        NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
+    ) {
+      throw new Error(
+        `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
+      )
+    }
     const runIds = [...new Set(requestedRunIds)]
     const session = await this.sessionLifecycle.ensure(request)
     await this.runTerminalization.reconcilePending(session)
-    return this.sessionReadModel.state(session, runIds)
+    return this.sessionReadModel.state(session, runIds, request.historySummaryFrameId)
   }
 
   // Resolves the durable reference for a session, preferring the live runtime session but falling

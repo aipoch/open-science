@@ -2,13 +2,14 @@ import type {
   NotebookRunRecord,
   NotebookSessionReference,
   NotebookSessionRequest,
+  NotebookSessionStateRequest,
   NotebookSessionState
 } from '../../../../shared/notebook'
 
 // Minimal read-only slice of window.api.notebook the session viewer depends on.
 type NotebookLoaderApi = {
   getReference: (request: NotebookSessionRequest) => Promise<NotebookSessionReference | null>
-  state: (request: NotebookSessionRequest) => Promise<NotebookSessionState>
+  state: (request: NotebookSessionStateRequest) => Promise<NotebookSessionState>
 }
 
 // Loads a session's recent persisted run window without spawning a kernel or creating run.json. Probe the

@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type {
   NotebookKernelMetadata,
   NotebookRunDocument,
+  NotebookRunHistorySummary,
   NotebookRunRecord,
   NotebookWorkingFile
 } from '../../shared/notebook'
@@ -442,17 +443,27 @@ class NotebookRunRepository {
     projectName: string,
     sessionId: string,
     limit: number,
-    includeRunIds: readonly string[] = []
+    includeRunIds: readonly string[] = [],
+    historySummaryFrameId?: string
   ): Promise<{
     runs: NotebookRunRecord[]
     total: number
     latestRunEnvironments: Partial<Record<'python' | 'r', string>>
+    historySummary?: NotebookRunHistorySummary
   }> {
     const documents = await this.readSessionDocuments(projectName, sessionId)
     const runs: NotebookRunRecord[] = []
     const requestedRunIds = new Set(includeRunIds)
     const requestedRuns = new Map<string, NotebookRunRecord>()
     const latestEnvironmentRuns = new Map<'python' | 'r', NotebookRunRecord>()
+    const historySummary: NotebookRunHistorySummary | undefined = historySummaryFrameId
+      ? {
+          agentFrameId: historySummaryFrameId,
+          runCount: 0,
+          kernelCounts: { python: 0, r: 0, repl: 0, bash: 0 }
+        }
+      : undefined
+    let latestSummaryDataRun: NotebookRunRecord | undefined
     let total = 0
     const compareRuns = (left: NotebookRunRecord, right: NotebookRunRecord): number =>
       left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
@@ -461,6 +472,17 @@ class NotebookRunRepository {
       for (const run of document.runs) {
         total += 1
         if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
+        if (historySummary && run.agentFrameId === historySummary.agentFrameId) {
+          historySummary.runCount += 1
+          historySummary.kernelCounts[run.kernelKind] += 1
+          if (
+            (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+            (!latestSummaryDataRun || compareRuns(latestSummaryDataRun, run) < 0)
+          ) {
+            latestSummaryDataRun = run
+            historySummary.latestDataKernel = run.kernelKind
+          }
+        }
         if (
           (run.kernelKind === 'python' || run.kernelKind === 'r') &&
           run.environment &&
@@ -489,7 +511,8 @@ class NotebookRunRepository {
       total,
       latestRunEnvironments: Object.fromEntries(
         [...latestEnvironmentRuns.entries()].map(([kind, run]) => [kind, run.environment!])
-      )
+      ),
+      ...(historySummary ? { historySummary } : {})
     }
   }
 

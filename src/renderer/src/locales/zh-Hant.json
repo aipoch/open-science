@@ -994,6 +994,7 @@
   "No downloadable artifacts in this project.": "此專案中沒有可下載的產物。",
   "No downloadable artifacts in this session.": "此會話中沒有可下載的產物。",
   "No execution records for this session.": "此工作階段沒有執行記錄。",
+  "No runs from this kernel are in the recent window. Downloads include the complete history.": "最近執行視窗中沒有此核心的記錄。下載內容包含完整歷史記錄。",
   "No files match “{{query}}”": "沒有檔案符合「{{query}}」",
   "No files yet": "暫無檔案",
   "No folders granted yet.": "尚未授予任何資料夾權限。",

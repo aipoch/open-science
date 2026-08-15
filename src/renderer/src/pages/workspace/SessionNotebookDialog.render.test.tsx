@@ -230,13 +230,32 @@ describe('Session Notebook producer projection', () => {
       createNotebookFrameFilterOptions(attributedRuns, {
         'root-frame-s1': 'Main agent',
         'frame-one': 'Evidence check',
-        'frame-two': 'Sensitivity check'
+        'frame-two': 'Sensitivity check',
+        'frame-old': 'Older analysis'
       })
     ).toEqual([
       { value: 'frame:root-frame-s1', label: 'Main agent', count: 1 },
       { value: 'frame:frame-one', label: 'Evidence check', count: 1 },
-      { value: 'frame:frame-two', label: 'Sensitivity check', count: 1 }
+      { value: 'frame:frame-two', label: 'Sensitivity check', count: 1 },
+      { value: 'frame:frame-old', label: 'Older analysis' }
     ])
+    expect(
+      createNotebookFrameFilterOptions(
+        attributedRuns,
+        { 'frame-old': 'Older analysis' },
+        new Map([
+          [
+            'frame-old',
+            {
+              agentFrameId: 'frame-old',
+              runCount: 12,
+              kernelCounts: { python: 0, r: 12, repl: 0, bash: 0 },
+              latestDataKernel: 'r' as const
+            }
+          ]
+        ])
+      )
+    ).toEqual([{ value: 'frame:frame-old', label: 'Older analysis', count: 12 }])
     expect(
       projectNotebookRunsForFrame(attributedRuns, 'frame:frame-two').map((run) => run.runId)
     ).toEqual(['child-two-run'])

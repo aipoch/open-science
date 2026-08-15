@@ -129,7 +129,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
 
   async state(
     session: Session,
-    includeRunIds: readonly string[] = []
+    includeRunIds: readonly string[] = [],
+    historySummaryFrameId?: string
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.options.repository.loadOrCreate({
       projectName: session.projectId,
@@ -139,11 +140,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     })
     const snapshot = session.snapshot()
     const targetedRunRead = includeRunIds.length > 0
+    const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
+    const sparseRunRead = targetedRunRead || summaryOnlyRead
     const runWindow = await this.options.repository.readSessionRunWindow(
       session.projectId,
       session.sessionId,
-      targetedRunRead ? 0 : NOTEBOOK_RENDERER_RUN_LIMIT,
-      includeRunIds
+      sparseRunRead ? 0 : NOTEBOOK_RENDERER_RUN_LIMIT,
+      includeRunIds,
+      historySummaryFrameId
     )
     const liveKernelStatus = session.latestKernelStatus()
 
@@ -157,15 +161,16 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       pythonPath: document.kernel.pythonPath,
       kernelStatus: liveKernelStatus ?? document.kernel.lastKnownStatus,
       runJsonPath: session.runJsonPath,
-      cells: targetedRunRead
+      cells: sparseRunRead
         ? []
         : snapshot.cells.slice(-NOTEBOOK_RENDERER_RUN_LIMIT).map((cell) => ({ ...cell })),
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
       runCount: runWindow.total,
       latestRunEnvironments: runWindow.latestRunEnvironments,
+      ...(runWindow.historySummary ? { historySummary: runWindow.historySummary } : {}),
       runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
-      recentRuns: targetedRunRead
+      recentRuns: sparseRunRead
         ? []
         : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       environments: this.environmentStatuses(session),

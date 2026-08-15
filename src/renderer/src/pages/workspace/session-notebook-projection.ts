@@ -1,34 +1,36 @@
 import type { TFunction } from 'i18next'
 
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import type { NotebookRunHistorySummary, NotebookRunRecord } from '../../../../shared/notebook'
 import type { ChatSession } from '@/stores/session-store'
 
 type NotebookFrameFilterValue = `frame:${string}`
 type NotebookFrameFilterOption = Readonly<{
   value: NotebookFrameFilterValue
   label: string
-  count: number
+  count?: number
 }>
 
 const createNotebookFrameFilterOptions = (
   runs: readonly NotebookRunRecord[],
-  frameLabels: Readonly<Record<string, string>> = {}
+  frameLabels: Readonly<Record<string, string>> = {},
+  historySummaries: ReadonlyMap<string, NotebookRunHistorySummary> = new Map()
 ): NotebookFrameFilterOption[] => {
   const counts = new Map<string, number>()
   for (const run of runs) {
     if (run.agentFrameId) counts.set(run.agentFrameId, (counts.get(run.agentFrameId) ?? 0) + 1)
   }
-  return Object.entries(frameLabels).flatMap(([agentFrameId, label]) => {
-    const count = counts.get(agentFrameId)
-    return count
-      ? [
-          {
-            value: `frame:${agentFrameId}` as const,
-            label,
-            count
-          }
-        ]
-      : []
+  return Object.entries(frameLabels).map(([agentFrameId, label]) => {
+    const recentCount = counts.get(agentFrameId)
+    const historyCount = historySummaries.get(agentFrameId)?.runCount
+    return {
+      value: `frame:${agentFrameId}` as const,
+      label,
+      ...(historyCount !== undefined
+        ? { count: historyCount }
+        : recentCount !== undefined
+          ? { count: recentCount }
+          : {})
+    }
   })
 }
 

@@ -417,6 +417,15 @@ export type NotebookEnvironmentStatus = {
   restartRecommended?: boolean
 }
 
+// Bounded, non-persisted discovery metadata for one Agent's complete durable history. The renderer
+// requests one summary at a time so old kernel kinds remain exportable without widening `runs`.
+export type NotebookRunHistorySummary = {
+  agentFrameId: string
+  runCount: number
+  kernelCounts: Record<NotebookKernelKind, number>
+  latestDataKernel?: 'python' | 'r'
+}
+
 // Renderer-facing snapshot of one shared notebook interpreter session.
 export type NotebookSessionState = {
   id: string
@@ -436,6 +445,8 @@ export type NotebookSessionState = {
   runCount: number
   // Latest durable environment evidence per data kernel, independent of the bounded run window.
   latestRunEnvironments: Partial<Record<'python' | 'r', string>>
+  // Present only when state() requested one Agent's complete-history discovery metadata.
+  historySummary?: NotebookRunHistorySummary
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
   // Live per-(kind, env) kernel status view (design D6); empty until the session spawns a kernel.
@@ -483,9 +494,11 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
 // A normal state read returns the latest renderer window. Transcript hydration may additionally
 // request immutable historical Runs by id without changing or widening that default window.
 export const NOTEBOOK_STATE_TARGET_RUN_LIMIT = 20
+export const NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES = 1_024
 
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
   runIds?: string[]
+  historySummaryFrameId?: string
 }
 
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the

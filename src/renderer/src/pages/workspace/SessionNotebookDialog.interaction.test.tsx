@@ -51,6 +51,70 @@ afterEach(() => {
 })
 
 describe('SessionNotebookContent export', () => {
+  it('discovers and exports a kernel that exists only outside the recent window', async () => {
+    const onExport = vi.fn().mockResolvedValue(undefined)
+    const onLoadHistorySummary = vi.fn(async (agentFrameId: string) =>
+      agentFrameId === 'frame-child'
+        ? {
+            agentFrameId,
+            runCount: 12,
+            kernelCounts: { python: 0, r: 12, repl: 0, bash: 0 },
+            latestDataKernel: 'r' as const
+          }
+        : {
+            agentFrameId,
+            runCount: 1,
+            kernelCounts: { python: 1, r: 0, repl: 0, bash: 0 },
+            latestDataKernel: 'python' as const
+          }
+    )
+    await act(async () => {
+      root.render(
+        <SessionNotebookContent
+          sessionId="session-1"
+          frameLabels={frameLabels}
+          runs={[run]}
+          status="ready"
+          onLoadHistorySummary={onLoadHistorySummary}
+          onClose={vi.fn()}
+          onExport={onExport}
+          onExportAll={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+
+    const filter = container.querySelector<HTMLButtonElement>(
+      'button[role="combobox"][aria-label="Filter notebook runs by Agent"]'
+    )
+    await act(async () => {
+      if (filter) fireEvent.click(filter)
+    })
+    const childOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (option) => option.textContent?.includes('Evidence check')
+    )
+    await act(async () => {
+      if (childOption) fireEvent.click(childOption)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onLoadHistorySummary).toHaveBeenCalledWith('frame-child')
+    expect(container.querySelector('[data-testid="session-notebook-tab-r"]')).not.toBeNull()
+    expect(container.textContent).toContain(
+      'No runs from this kernel are in the recent window. Downloads include the complete history.'
+    )
+    const exportButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Download r as .ipynb"]'
+    )
+    expect(exportButton?.disabled).toBe(false)
+    await act(async () => {
+      exportButton?.click()
+      await Promise.resolve()
+    })
+    expect(onExport).toHaveBeenCalledWith('r', 'frame-child')
+  })
+
   it('filters the visible projection by producer Frame without mutating the Run set', async () => {
     const onExport = vi.fn().mockResolvedValue(undefined)
     const runs = [
