@@ -25,9 +25,17 @@ import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import { installAgentShutdownGuard } from './shutdown-guard'
 
+type AcpIpcSessionAdmission = {
+  withSessionAvailableById<Result>(
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result>
+}
+
 const registerAcpIpcHandlerSet = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
+  sessionAdmission: AcpIpcSessionAdmission,
   respondDelegatedQuestion?: (
     input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
   ) => Promise<void>
@@ -47,10 +55,14 @@ const registerAcpIpcHandlerSet = (
       workflows.continueInterruptedTurn(request)
   )
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
-    runtime.resetSessionContext(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.resetSessionContext(request)
+    )
   )
   ipcMainHandle('acp:compact-session', (_event, request: AcpCompactSessionRequest) =>
-    runtime.compactSession(request)
+    sessionAdmission.withSessionAvailableById(request.sessionId, () =>
+      runtime.compactSession(request)
+    )
   )
   // Prompt calls wait for the turn to stop, then return the latest snapshot.
   ipcMainHandle('acp:send-prompt', (_event, request: AcpPromptRequest) => {
@@ -115,13 +127,16 @@ const registerAcpIpcHandlerSet = (
 const installAcpIpcHandlers = (
   runtime: AcpRuntimeCoordinator,
   workflows: AcpHandlerWorkflows,
-  respondDelegatedQuestion?: (
-    input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
-  ) => Promise<void>
+  respondDelegatedQuestion:
+    | ((
+        input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
+      ) => Promise<void>)
+    | undefined,
+  sessionAdmission: AcpIpcSessionAdmission
 ): IpcHandlerInstallation => {
   const scope = createIpcHandlerInstallationScope()
   try {
-    registerAcpIpcHandlerSet(runtime, workflows, respondDelegatedQuestion)
+    registerAcpIpcHandlerSet(runtime, workflows, sessionAdmission, respondDelegatedQuestion)
     // Kill the agent child on quit so it never outlives the app as an orphaned process.
     return scope.complete(installAgentShutdownGuard(app, runtime))
   } catch (error) {
@@ -131,3 +146,4 @@ const installAcpIpcHandlers = (
 }
 
 export { installAcpIpcHandlers }
+export type { AcpIpcSessionAdmission }

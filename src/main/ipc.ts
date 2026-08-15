@@ -2851,6 +2851,10 @@ const createApplicationModules = async (
       acp: {
         runtime,
         workflows: acpHandlerWorkflows,
+        sessionAdmission: {
+          withSessionAvailableById: (sessionId, operation) =>
+            archiveCoordinator.withSessionAvailableById(sessionId, operation)
+        },
         respondDelegatedQuestion: (input) => {
           if (!delegatedWork.root.respondQuestion) {
             throw new Error('Delegated question response owner is unavailable.')

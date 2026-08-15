@@ -140,6 +140,12 @@ const { createAcpRuntime } = await import('./runtime-composition')
 const { createAcpCreateSessionWorkflow } = await import('./create-session-workflow')
 const { createAcpHandlerWorkflows } = await import('./handler-workflows')
 type AcpTestOptions = Parameters<typeof createAcpRuntime>[0]
+const passThroughSessionAdmission = {
+  withSessionAvailableById: <Result>(
+    _sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> => operation()
+}
 
 // Minimal options — createRuntime just forwards them into the mocked AcpRuntime constructor.
 const registerWithFakes = (overrides?: {
@@ -205,7 +211,9 @@ const registerWithFakes = (overrides?: {
       options.taskNotifications,
       overrides?.archiveAvailability,
       overrides?.interruptedTurnSessions
-    )
+    ),
+    undefined,
+    overrides?.archiveAvailability ?? passThroughSessionAdmission
   )
   return options as AcpTestOptions
 }
@@ -239,7 +247,8 @@ it('routes delegated question responses to their owner without touching Main eli
   installAcpIpcHandlers(
     { respondToElicitation, getSnapshot: () => snapshot } as never,
     {} as never,
-    respondDelegatedQuestion
+    respondDelegatedQuestion,
+    passThroughSessionAdmission
   )
 
   await expect(
@@ -411,7 +420,9 @@ describe('ACP module transport seam', () => {
     const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime)
     installAcpIpcHandlers(
       runtime,
-      createAcpHandlerWorkflows(runtime, createSessionWorkflow, options.taskNotifications)
+      createAcpHandlerWorkflows(runtime, createSessionWorkflow, options.taskNotifications),
+      undefined,
+      passThroughSessionAdmission
     )
 
     expect(handlers.has('acp:get-state')).toBe(true)
@@ -898,6 +909,27 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
   })
+
+  it('rejects reset before runtime mutation when Session admission is closed', async () => {
+    const failure = new Error('Project is being deleted.')
+    const withSessionAvailableById = vi.fn().mockRejectedValue(failure)
+    registerWithFakes({
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation(),
+        withSessionAvailableById
+      }
+    })
+    const request: AcpResumeSessionRequest = { sessionId: 's-1', cwd: '/workspace' }
+
+    await expect(handlers.get('acp:reset-session-context')?.({}, request)).rejects.toBe(failure)
+
+    expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))
+    expect(resetSessionContext).not.toHaveBeenCalled()
+  })
 })
 
 describe('installAcpIpcHandlers — resume-session diagnostics', () => {
@@ -1084,6 +1116,27 @@ describe('installAcpIpcHandlers — native context compaction bridge', () => {
     expect(compactSession).toHaveBeenCalledOnce()
     expect(compactSession).toHaveBeenCalledWith(request)
     expect(result).toMatchObject({ status: 'idle', cwd: '/workspace' })
+  })
+
+  it('rejects compaction before runtime mutation when Session admission is closed', async () => {
+    const failure = new Error('Project is being deleted.')
+    const withSessionAvailableById = vi.fn().mockRejectedValue(failure)
+    registerWithFakes({
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation(),
+        withSessionAvailableById
+      }
+    })
+    const request: AcpCompactSessionRequest = { sessionId: 's-1' }
+
+    await expect(handlers.get('acp:compact-session')?.({}, request)).rejects.toBe(failure)
+
+    expect(withSessionAvailableById).toHaveBeenCalledWith('s-1', expect.any(Function))
+    expect(compactSession).not.toHaveBeenCalled()
   })
 })
 

@@ -1,4 +1,4 @@
-import { installAcpIpcHandlers } from './acp/ipc'
+import { installAcpIpcHandlers, type AcpIpcSessionAdmission } from './acp/ipc'
 import type { AcpHandlerWorkflows } from './acp/handler-workflows'
 import type { AcpRuntimeCoordinator } from './acp/runtime-coordinator'
 import { installComputeIpcHandlers, type ComputeIpcAdapter } from './compute/ipc'
@@ -22,6 +22,7 @@ export type ElectronRuntimeAdapterInterfaces = {
   readonly acp: {
     runtime: AcpRuntimeCoordinator
     workflows: AcpHandlerWorkflows
+    sessionAdmission: AcpIpcSessionAdmission
     respondDelegatedQuestion?: (
       input: NonNullable<ElicitationResponse['delegatedQuestion']> & { requestId: string }
     ) => Promise<void>
@@ -65,9 +66,12 @@ export const installElectronRuntimeAdapters = async ({
     await install('compute', () => installComputeIpcHandlers(compute))
     for (const surface of beforeAcp) await install(surface.name, () => surface.install())
     await install('acp', () =>
-      acp.respondDelegatedQuestion
-        ? installAcpIpcHandlers(acp.runtime, acp.workflows, acp.respondDelegatedQuestion)
-        : installAcpIpcHandlers(acp.runtime, acp.workflows)
+      installAcpIpcHandlers(
+        acp.runtime,
+        acp.workflows,
+        acp.respondDelegatedQuestion,
+        acp.sessionAdmission
+      )
     )
     for (const surface of afterAcp) await install(surface.name, () => surface.install())
   } catch (error) {
