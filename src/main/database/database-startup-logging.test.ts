@@ -101,7 +101,8 @@ describe('database startup logging', () => {
               '0001_runtime_schema_baseline',
               '0002_project_agent_context',
               '0003_granted_local_roots',
-              '0004_review_assessment_snapshots'
+              '0004_review_assessment_snapshots',
+              '0005_project_preview_state_owner_fk'
             ],
             adoptedLegacy: true
           })
