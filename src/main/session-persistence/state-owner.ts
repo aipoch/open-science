@@ -55,7 +55,6 @@ type SessionStateRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  findSessionProjectIds(sessionId: string): Promise<{ projectIds: string[]; isComplete: boolean }>
   saveSession(session: PersistedChatSession): Promise<void>
 }
 
@@ -300,21 +299,6 @@ class SessionPersistenceStateOwner {
   sessionProjectId(sessionId: string): string | undefined {
     return this.sessionMetadata.get(sessionId)?.projectId
   }
-  private async assertSessionIdentityProject(projectId: string, sessionId: string): Promise<void> {
-    const existingProjectId = this.sessionMetadata.get(sessionId)?.projectId
-    if (existingProjectId !== undefined && existingProjectId !== projectId) {
-      throw new Error('Cannot save a Session id that is already owned by another Project.')
-    }
-    if (this.isSessionMetadataComplete) return
-
-    const ownership = await this.options.repository.findSessionProjectIds(sessionId)
-    if (!ownership.isComplete) {
-      throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
-    }
-    if (ownership.projectIds.some((ownerProjectId) => ownerProjectId !== projectId)) {
-      throw new Error('Cannot save a Session id that is already owned by another Project.')
-    }
-  }
   invalidateBindingTopology(projectId: string, sessionId: string): void {
     this.validatedBindingTopologies.delete(`${projectId}:${sessionId}`)
   }
@@ -532,7 +516,6 @@ class SessionPersistenceStateOwner {
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
-    await this.assertSessionIdentityProject(session.projectId, session.id)
     this.options.assertMutable(session.projectId, session.id, 'save')
     const authoritative = await this.options.repository.loadSessionWithDiagnostics(
       session.projectId,

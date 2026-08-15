@@ -152,6 +152,27 @@ const emitRecoverableDiagnostic = (
   }
 }
 
+const assertSessionIdentityProject = async (
+  repository: SessionMutationRepository,
+  stateOwner: Pick<SessionPersistenceStateOwner, 'metadataSnapshot'>,
+  session: Pick<PersistedChatSession, 'id' | 'projectId'>
+): Promise<void> => {
+  const metadata = stateOwner.metadataSnapshot()
+  const existingProjectId = metadata.sessions.find((item) => item.id === session.id)?.projectId
+  if (existingProjectId !== undefined && existingProjectId !== session.projectId) {
+    throw new Error('Cannot save a Session id that is already owned by another Project.')
+  }
+  if (metadata.isComplete) return
+
+  const ownership = await repository.findSessionProjectIds(session.id)
+  if (!ownership.isComplete) {
+    throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
+  }
+  if (ownership.projectIds.some((projectId) => projectId !== session.projectId)) {
+    throw new Error('Cannot save a Session id that is already owned by another Project.')
+  }
+}
+
 // Serializes authoritative session JSON and derived file-index mutations through one queue. This is
 // the consistency boundary that prevents a late save from racing or reviving a durable deletion.
 class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
@@ -681,7 +702,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     session: PersistedChatSession,
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
-    return this.enqueue(() => this.stateOwner.saveSession(session, options))
+    return this.enqueue(async () => {
+      await assertSessionIdentityProject(this.repository, this.stateOwner, session)
+      return this.stateOwner.saveSession(session, options)
+    })
   }
 
   // Specialist switching reads the latest durable Session and changes only this safe binding. Keep
@@ -690,12 +714,13 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     session: PersistedChatSession,
     specialistId: string | undefined
   ): Promise<PersistedChatSession> {
-    return this.enqueue(() =>
-      this.stateOwner.saveSession(
+    return this.enqueue(async () => {
+      await assertSessionIdentityProject(this.repository, this.stateOwner, session)
+      return this.stateOwner.saveSession(
         { ...session, specialistId },
         { conflictRebaseFields: ['specialistId'] }
       )
-    )
+    })
   }
 
   setSessionEnabledComputeHosts(
