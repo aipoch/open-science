@@ -1481,6 +1481,39 @@ describe('session persistence repository (per-session files)', () => {
     await expect(
       readFile(join(storageRoot!, 'sessions', 'project-b', 'duplicate-session.json'), 'utf8')
     ).resolves.toContain('duplicate-session')
+    const ownership = await repository.findSessionProjectIds('duplicate-session')
+    expect(new Set(ownership.projectIds)).toEqual(new Set(['project-a', 'project-b']))
+    expect(ownership.isComplete).toBe(true)
+  })
+
+  it('does not hydrate a valid Session whose id also has an unreadable cross-Project file', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    await repository.saveSession(createSession({ id: 'duplicate-session', projectId: 'project-a' }))
+    await repository.saveSession(createSession({ id: 'healthy-session', projectId: 'project-c' }))
+    const projectBDir = join(storageRoot!, 'sessions', 'project-b')
+    await mkdir(projectBDir, { recursive: true })
+    await writeFile(join(projectBDir, 'duplicate-session.json'), '{invalid', 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions.map((session) => session.id)).toEqual(['healthy-session'])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual(
+      expect.arrayContaining([
+        {
+          kind: 'unreadable',
+          projectId: 'project-a',
+          fileName: 'duplicate-session.json',
+          recovered: false
+        },
+        {
+          kind: 'corrupt',
+          projectId: 'project-b',
+          fileName: 'duplicate-session.json',
+          recovered: false
+        }
+      ])
+    )
   })
 
   it('keeps session data in ~/.open-science under the user home directory by default', () => {

@@ -201,6 +201,7 @@ const createCompositionHarness = async (
       status: 'found',
       session: structuredClone(durable)
     }),
+    findSessionProjectIds: async () => ({ projectIds: [], isComplete: true }),
     saveSession: async (next) => {
       durable = structuredClone(next)
     },
@@ -1287,6 +1288,7 @@ describe('production delegated-work composition', () => {
         status: 'found',
         session: structuredClone(durable)
       }),
+      findSessionProjectIds: async () => ({ projectIds: [], isComplete: true }),
       saveSession: async (next) => {
         durable = structuredClone(next)
       },

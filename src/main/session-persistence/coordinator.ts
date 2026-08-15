@@ -98,6 +98,7 @@ type SessionMutationRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
+  findSessionProjectIds(sessionId: string): Promise<{ projectIds: string[]; isComplete: boolean }>
   saveSession(session: PersistedChatSession): Promise<void>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>

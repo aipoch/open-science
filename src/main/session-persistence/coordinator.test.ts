@@ -941,6 +941,30 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).not.toHaveBeenCalled()
   })
 
+  it('checks durable ownership when an incomplete catalog omitted duplicate Session ids', async () => {
+    const findSessionProjectIds = vi.fn().mockResolvedValue({
+      projectIds: ['project-a', 'project-b'],
+      isComplete: true
+    })
+    const repository = createSessionRepository({
+      loadAllWithDiagnostics: vi.fn().mockResolvedValue({
+        result: { sessions: [], manifest: { version: 1 } },
+        isComplete: false,
+        warnings: []
+      }),
+      findSessionProjectIds
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+    await coordinator.loadAll()
+
+    await expect(
+      coordinator.saveSession(createSession({ id: 'session-1', projectId: 'project-c' }))
+    ).rejects.toThrow(/Session id.*another Project/)
+    expect(findSessionProjectIds).toHaveBeenCalledWith('session-1')
+    expect(repository.loadSessionWithDiagnostics).not.toHaveBeenCalled()
+    expect(repository.saveSession).not.toHaveBeenCalled()
+  })
+
   it('keeps branch source immutable and does not backfill historical Sessions', async () => {
     const originalBranchSource = {
       sessionId: 'source-session',
@@ -1726,8 +1750,7 @@ describe('SessionPersistenceCoordinator', () => {
 
     const save = coordinator.saveSession(createSession())
     const deletion = coordinator.deleteSession('project-1', 'session-1')
-    await flushMicrotasks()
-    expect(order).toEqual(['json-save:start'])
+    await vi.waitFor(() => expect(order).toEqual(['json-save:start']))
 
     saveGate.resolve()
     await Promise.all([save, deletion])
@@ -5063,6 +5086,7 @@ const createSessionRepository = (
     isComplete: true
   }),
   loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'missing' }),
+  findSessionProjectIds: vi.fn().mockResolvedValue({ projectIds: [], isComplete: true }),
   saveSession: vi.fn().mockResolvedValue(undefined),
   saveCommittedProjectSession: vi.fn().mockResolvedValue(undefined),
   deleteSession: vi.fn().mockResolvedValue(undefined),
@@ -5126,8 +5150,3 @@ const createTestLogger = (): TestLogger =>
     warn: vi.fn<Logger['warn']>(),
     error: vi.fn<Logger['error']>()
   }) satisfies Logger
-
-const flushMicrotasks = async (): Promise<void> => {
-  await Promise.resolve()
-  await Promise.resolve()
-}

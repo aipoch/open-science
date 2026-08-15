@@ -275,6 +275,40 @@ class SessionRepository {
     return quarantine.exists ? { status: 'unreadable' } : { status: 'missing' }
   }
 
+  // Resolves durable Session identity from directory/file authority without parsing JSON. This lets
+  // an incomplete hydration catalog distinguish a corrupt Session file from a genuinely unused id.
+  async findSessionProjectIds(
+    sessionIdValue: string
+  ): Promise<{ projectIds: string[]; isComplete: boolean }> {
+    const sessionId = assertSafeSegment(sessionIdValue)
+    const fileName = `${sessionId}.json`
+    const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
+    const projectIds: string[] = []
+    let isComplete = projectDirectories.isComplete
+
+    for (const projectIdValue of projectDirectories.names) {
+      let projectId: string
+      try {
+        projectId = assertSafeSegment(projectIdValue)
+      } catch {
+        isComplete = false
+        continue
+      }
+      const sessionFiles = await this.listSessionFileNames(join(this.sessionsDir, projectId), {
+        missingIsIncomplete: true
+      })
+      isComplete &&= sessionFiles.isComplete
+      if (
+        sessionFiles.names.includes(fileName) ||
+        sessionFiles.quarantinedPrimaryFileNames.includes(fileName)
+      ) {
+        projectIds.push(projectId)
+      }
+    }
+
+    return { projectIds, isComplete }
+  }
+
   // Reports whether the live sessions tree was fully scanned so DB reconciliation never acts on a
   // partial read. Project recovery owns tombstone cleanup before ordinary hydration is allowed.
   async loadAllWithDiagnostics(options: SessionScanOptions = {}): Promise<SessionLoadDiagnostics> {
@@ -289,10 +323,15 @@ class SessionRepository {
       scanMetrics
     })
     const projectIdsBySessionId = new Map<string, Set<string>>()
-    for (const session of sessions) {
-      const projectIds = projectIdsBySessionId.get(session.id) ?? new Set<string>()
-      projectIds.add(session.projectId)
-      projectIdsBySessionId.set(session.id, projectIds)
+    const recordIdentityOwner = (sessionId: string, projectId: string): void => {
+      const projectIds = projectIdsBySessionId.get(sessionId) ?? new Set<string>()
+      projectIds.add(projectId)
+      projectIdsBySessionId.set(sessionId, projectIds)
+    }
+    for (const session of sessions) recordIdentityOwner(session.id, session.projectId)
+    for (const warning of warnings) {
+      if (!('projectId' in warning) || !warning.fileName.endsWith('.json')) continue
+      recordIdentityOwner(warning.fileName.slice(0, -'.json'.length), warning.projectId)
     }
     const duplicateSessionIds = new Set(
       [...projectIdsBySessionId].filter(([, projectIds]) => projectIds.size > 1).map(([id]) => id)
@@ -300,14 +339,24 @@ class SessionRepository {
     const globallyIdentifiedSessions = sessions.filter(
       (session) => !duplicateSessionIds.has(session.id)
     )
-    const identityWarnings: SessionLoadWarning[] = sessions
-      .filter((session) => duplicateSessionIds.has(session.id))
-      .map((session) => ({
-        kind: 'unreadable',
-        projectId: session.projectId,
-        fileName: `${session.id}.json`,
-        recovered: false
-      }))
+    const warnedIdentityFiles = new Set(
+      warnings.flatMap((warning) =>
+        'projectId' in warning ? [`${warning.projectId}\0${warning.fileName}`] : []
+      )
+    )
+    const identityWarnings: SessionLoadWarning[] = []
+    for (const sessionId of duplicateSessionIds) {
+      for (const projectId of projectIdsBySessionId.get(sessionId) ?? []) {
+        const fileName = `${sessionId}.json`
+        if (warnedIdentityFiles.has(`${projectId}\0${fileName}`)) continue
+        identityWarnings.push({
+          kind: 'unreadable',
+          projectId,
+          fileName,
+          recovered: false
+        })
+      }
+    }
     const manifestRead = await this.readManifest({ quarantineInvalidFiles })
 
     return {
