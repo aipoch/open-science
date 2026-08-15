@@ -129,14 +129,10 @@ class ArchiveCoordinator {
     operation: () => Promise<Result>
   ): Promise<Result> {
     return this.enqueue(async () => {
-      this.assertProjectDeletionAvailable(projectId)
+      // ProjectDeletionIntent is durable before this boundary. Re-entry is a recovery retry, and a
+      // failed teardown must retain the fence until the coordinator completes or explicitly aborts.
       this.deletingProjectIds.add(projectId)
-      try {
-        return await operation()
-      } catch (error) {
-        this.deletingProjectIds.delete(projectId)
-        throw error
-      }
+      return operation()
     })
   }
 

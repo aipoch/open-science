@@ -355,6 +355,39 @@ describe('ArchiveCoordinator', () => {
     await expect(coordinator.assertProjectAvailable(project.id)).resolves.toBeUndefined()
   })
 
+  it('retains and re-enters a Project deletion fence after teardown fails', async () => {
+    const projects = {
+      get: vi.fn().mockResolvedValue(project),
+      updateArchive: vi.fn()
+    }
+    const sessions = {
+      assertProjectArchivable: vi.fn(),
+      assertSessionAvailable: vi.fn().mockResolvedValue(undefined),
+      updateArchive: vi.fn(),
+      sessionProjectId: vi.fn().mockResolvedValue(project.id)
+    }
+    const coordinator = new ArchiveCoordinator(projects, sessions, {
+      isSessionBusy: vi.fn(),
+      isProjectBusy: vi.fn(),
+      liveSessionProjectId: vi.fn()
+    })
+    const failedTeardown = vi.fn().mockRejectedValue(new Error('runtime cleanup failed'))
+
+    await expect(coordinator.withProjectDeletion(project.id, failedTeardown)).rejects.toThrow(
+      'runtime cleanup failed'
+    )
+    await expect(coordinator.assertProjectAvailable(project.id)).rejects.toThrow(
+      'Project is being deleted.'
+    )
+
+    const retry = vi.fn().mockResolvedValue(undefined)
+    await expect(coordinator.withProjectDeletion(project.id, retry)).resolves.toBeUndefined()
+    expect(retry).toHaveBeenCalledOnce()
+
+    coordinator.releaseProjectDeletion(project.id)
+    await expect(coordinator.assertProjectAvailable(project.id)).resolves.toBeUndefined()
+  })
+
   it('releases admission after prompt dispatch starts without awaiting prompt completion', async () => {
     const prompt = createDeferred<string>()
     const projects = {

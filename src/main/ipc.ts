@@ -730,12 +730,7 @@ const createApplicationModules = async (
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
         await archiveCoordinator.withProjectDeletion(projectId, async () => {
           notebookService.beginProjectDeletion(projectId)
-          try {
-            await owner.quiesceProject(projectId)
-          } catch (error) {
-            notebookService.releaseProjectDeletion(projectId)
-            throw error
-          }
+          await owner.quiesceProject(projectId)
         })
       },
       restoreProjectDeletion: async (projectId) => {

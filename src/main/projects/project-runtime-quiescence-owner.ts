@@ -28,9 +28,9 @@ type ProjectRuntimeQuiescenceOptions = {
   compute: ProjectComputeRuntime
 }
 
-// Owns the single fail-closed runtime boundary that every Project deletion entry must cross before
-// durable deletion begins. Each subsystem is attempted even when another teardown fails, while the
-// aggregate rejection keeps Project and Session authority intact for an explicit retry.
+// Owns the single fail-closed runtime boundary that every Project deletion entry crosses after its
+// durable intent is written and before Project/Session authority is removed. Each subsystem is
+// attempted even when another teardown fails; aggregate rejection retains the intent for recovery.
 class ProjectRuntimeQuiescenceOwner {
   constructor(private readonly options: ProjectRuntimeQuiescenceOptions) {}
 

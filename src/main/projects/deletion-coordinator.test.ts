@@ -87,10 +87,11 @@ describe('ProjectDeletionCoordinator', () => {
     )
   })
 
-  it('awaits runtime invalidation before starting whole-project deletion', async () => {
+  it('persists retry authority before awaiting runtime invalidation', async () => {
     const projects = createProjects()
     const sessions = createSessions()
     const invalidated = createDeferred<void>()
+    const restoreProjectDeletion = vi.fn().mockResolvedValue(undefined)
     const beforeProjectDelete = vi.fn(() => invalidated.promise)
     const coordinator = new ProjectDeletionCoordinator(
       projects,
@@ -99,13 +100,20 @@ describe('ProjectDeletionCoordinator', () => {
       undefined,
       undefined,
       undefined,
-      { beforeProjectDelete }
+      { beforeProjectDelete, restoreProjectDeletion }
     )
 
     const deletion = coordinator.deleteProject('project-1')
     await vi.waitFor(() => expect(beforeProjectDelete).toHaveBeenCalledWith('project-1'))
-    expect(projects.createDeletionIntent).not.toHaveBeenCalled()
+    expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-1')
+    expect(restoreProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(sessions.deleteProjectSessions).not.toHaveBeenCalled()
+    expect(vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]).toBeLessThan(
+      restoreProjectDeletion.mock.invocationCallOrder[0]
+    )
+    expect(restoreProjectDeletion.mock.invocationCallOrder[0]).toBeLessThan(
+      beforeProjectDelete.mock.invocationCallOrder[0]
+    )
 
     invalidated.resolve(undefined)
     await deletion
@@ -114,10 +122,12 @@ describe('ProjectDeletionCoordinator', () => {
     expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
   })
 
-  it('releases the runtime admission fence when durable intent creation fails', async () => {
+  it('does not start runtime teardown when durable intent creation fails', async () => {
     const projects = createProjects()
     projects.createDeletionIntent = vi.fn().mockRejectedValue(new Error('intent unavailable'))
     const abortProjectDeletion = vi.fn()
+    const beforeProjectDelete = vi.fn().mockResolvedValue(undefined)
+    const restoreProjectDeletion = vi.fn().mockResolvedValue(undefined)
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       createSessions(),
@@ -126,19 +136,23 @@ describe('ProjectDeletionCoordinator', () => {
       undefined,
       undefined,
       {
-        beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
+        beforeProjectDelete,
+        restoreProjectDeletion,
         abortProjectDeletion
       }
     )
 
     await expect(coordinator.deleteProject('project-1')).rejects.toThrow('intent unavailable')
 
-    expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(restoreProjectDeletion).not.toHaveBeenCalled()
+    expect(beforeProjectDelete).not.toHaveBeenCalled()
+    expect(abortProjectDeletion).not.toHaveBeenCalled()
   })
 
-  it('aborts partial runtime invalidation when pre-delete quiescence fails', async () => {
+  it('retains the durable intent and deletion barrier when runtime quiescence fails', async () => {
     const projects = createProjects()
     const abortProjectDeletion = vi.fn()
+    const restoreProjectDeletion = vi.fn().mockResolvedValue(undefined)
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       createSessions(),
@@ -148,14 +162,17 @@ describe('ProjectDeletionCoordinator', () => {
       undefined,
       {
         beforeProjectDelete: vi.fn().mockRejectedValue(new Error('runtime cleanup failed')),
+        restoreProjectDeletion,
         abortProjectDeletion
       }
     )
 
     await expect(coordinator.deleteProject('project-1')).rejects.toThrow('runtime cleanup failed')
 
-    expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
-    expect(projects.createDeletionIntent).not.toHaveBeenCalled()
+    expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-1')
+    expect(restoreProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+    expect(abortProjectDeletion).not.toHaveBeenCalled()
   })
 
   it('retains the Project and deletion intent when grant pruning fails, then resumes idempotently', async () => {
@@ -322,7 +339,7 @@ describe('ProjectDeletionCoordinator', () => {
     }
   )
 
-  it('keeps the project row and clears intent when session and index cleanup fails', async () => {
+  it('keeps the project row, intent, and fence when session cleanup fails', async () => {
     const projects = createProjects()
     const sessions = createSessions({
       deleteProjectSessions: vi.fn().mockRejectedValue(new Error('directory busy'))
@@ -344,8 +361,8 @@ describe('ProjectDeletionCoordinator', () => {
     await expect(coordinator.deleteProject('project-1')).rejects.toThrow('directory busy')
 
     expect(projects.delete).not.toHaveBeenCalled()
-    expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
-    expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+    expect(abortProjectDeletion).not.toHaveBeenCalled()
   })
 
   it('keeps an online intent when Session authority committed before a derived failure', async () => {
@@ -369,16 +386,26 @@ describe('ProjectDeletionCoordinator', () => {
     projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1'])
     const sessions = createSessions()
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
+    const restoreProjectDeletion = vi.fn().mockResolvedValue(undefined)
+    const beforeProjectDelete = vi.fn().mockResolvedValue(undefined)
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
       { delete: vi.fn().mockResolvedValue(undefined) },
-      reviews
+      reviews,
+      undefined,
+      undefined,
+      { restoreProjectDeletion, beforeProjectDelete }
     )
 
     await coordinator.recoverPendingDeletions()
 
+    expect(restoreProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(beforeProjectDelete).toHaveBeenCalledWith('project-1')
     expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
+    expect(beforeProjectDelete.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(sessions.deleteProjectSessions).mock.invocationCallOrder[0]
+    )
     expect(projects.delete).toHaveBeenCalledWith('project-1')
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
     expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
@@ -590,25 +617,35 @@ describe('ProjectDeletionCoordinator', () => {
     expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
   })
 
-  it('clears a stale pre-commit recovery intent and continues with later Projects', async () => {
+  it('retains a failed recovery intent before continuing on the next retry', async () => {
     const projects = createProjects()
     projects.listDeletionIntents = vi.fn().mockResolvedValue(['project-1', 'project-2'])
+    let projectOneAttempts = 0
     const sessions = createSessions({
       deleteProjectSessions: vi.fn(async (projectId: string) => {
-        if (projectId === 'project-1') throw new Error('transient session cleanup failure')
+        if (projectId === 'project-1' && projectOneAttempts++ === 0) {
+          throw new Error('transient session cleanup failure')
+        }
         return { status: 'completed' as const }
-      }),
-      getProjectSessionDeletionState: vi.fn().mockResolvedValue('live')
+      })
     })
     const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
       delete: vi.fn().mockResolvedValue(undefined)
     })
 
+    await expect(coordinator.recoverPendingDeletions()).rejects.toThrow(
+      'transient session cleanup failure'
+    )
+
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledOnce()
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+    expect(projects.delete).not.toHaveBeenCalledWith('project-1')
+    expect(projects.delete).not.toHaveBeenCalledWith('project-2')
+
     await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
 
-    expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(2)
+    expect(sessions.deleteProjectSessions).toHaveBeenCalledTimes(3)
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
-    expect(projects.delete).not.toHaveBeenCalledWith('project-1')
     expect(projects.delete).toHaveBeenCalledWith('project-2')
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-2')
   })

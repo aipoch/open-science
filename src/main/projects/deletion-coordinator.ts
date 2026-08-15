@@ -192,42 +192,22 @@ class ProjectDeletionCoordinator {
     }
   }
 
-  // The intent is durable before session/index deletion starts. If that reversible phase fails, the
-  // intent is removed because the project record is still authoritative and visible.
+  // Persist retry authority before any destructive runtime cleanup. Once the intent exists, every
+  // failure remains fail-closed: the Project may still be visible, but admission stays fenced and
+  // recovery replays quiescence before continuing durable deletion.
   private async runDeletion(projectId: string): Promise<void> {
     const project = await this.projects.get(projectId)
     if (!project) return
 
-    try {
-      await this.lifecycle?.beforeProjectDelete(projectId)
-    } catch (error) {
-      this.lifecycle?.abortProjectDeletion?.(projectId)
-      throw error
-    }
-    let retainDeletionBarrier = false
-    try {
-      await this.projects.createDeletionIntent(projectId)
-      retainDeletionBarrier = true
-      try {
-        await this.sessions.deleteProjectSessions(projectId)
-      } catch (error) {
-        try {
-          const state = await this.sessions.getProjectSessionDeletionState(projectId)
-          if (state === 'live' || state === 'absent') {
-            await this.projects.deleteDeletionIntent(projectId)
-            retainDeletionBarrier = false
-          }
-        } catch {
-          // Unknown durable Session state is fail-closed; retain the intent and admission fence.
-        }
-        throw error
-      }
+    await this.projects.createDeletionIntent(projectId)
+    await this.prepareDeletion(projectId)
+    await this.sessions.deleteProjectSessions(projectId)
+    await this.finishDeletion(projectId)
+  }
 
-      await this.finishDeletion(projectId)
-    } catch (error) {
-      if (!retainDeletionBarrier) this.lifecycle?.abortProjectDeletion?.(projectId)
-      throw error
-    }
+  private async prepareDeletion(projectId: string): Promise<void> {
+    await this.lifecycle?.restoreProjectDeletion?.(projectId)
+    await this.lifecycle?.beforeProjectDelete(projectId)
   }
 
   // Replays intents serially so crash recovery follows the same ordering as an online deletion.
@@ -235,39 +215,19 @@ class ProjectDeletionCoordinator {
     const projectIds = await this.projects.listDeletionIntents()
     const retainedProjectIds = new Set<string>()
     for (const projectId of projectIds) {
-      let result: ProjectSessionDeletionResult
-      try {
-        // An absent Project plus an unmarked tombstone identifies a cross-version orphan adoption.
-        // Re-derive its conservative policy from durable state so a crash immediately after intent
-        // creation cannot turn the next retry into authority-creating normal deletion.
-        const requireExistingUploadAuthority =
-          !(await this.projects.get(projectId)) &&
-          (await this.sessions.getProjectSessionDeletionState(projectId)) === 'legacy-committed'
-        if (requireExistingUploadAuthority) {
-          result = await this.sessions.deleteProjectSessions(projectId, {
+      await this.prepareDeletion(projectId)
+      // An absent Project plus an unmarked tombstone identifies a cross-version orphan adoption.
+      // Re-derive its conservative policy from durable state so a crash immediately after intent
+      // creation cannot turn the next retry into authority-creating normal deletion. Any rejection
+      // naturally retains the intent because runtime cleanup may already have removed resources.
+      const requireExistingUploadAuthority =
+        !(await this.projects.get(projectId)) &&
+        (await this.sessions.getProjectSessionDeletionState(projectId)) === 'legacy-committed'
+      const result: ProjectSessionDeletionResult = requireExistingUploadAuthority
+        ? await this.sessions.deleteProjectSessions(projectId, {
             requireExistingUploadAuthority: true
           })
-        } else {
-          result = await this.sessions.deleteProjectSessions(projectId)
-        }
-      } catch (error) {
-        // A visible Project row is insufficient evidence of a pre-commit failure: a crash may occur
-        // after the atomic Session rename but before deleting that row. Clear the intent only when
-        // the durable tombstone positively proves the Session phase never committed. Unknown marker
-        // state and committed state both retain the intent and retry the irreversible tail.
-        let sessionState: ProjectSessionDeletionState
-        try {
-          sessionState = await this.sessions.getProjectSessionDeletionState(projectId)
-        } catch {
-          throw error
-        }
-        if (sessionState === 'live' && (await this.projects.get(projectId))) {
-          await this.projects.deleteDeletionIntent(projectId)
-          this.lifecycle?.abortProjectDeletion?.(projectId)
-          continue
-        }
-        throw error
-      }
+        : await this.sessions.deleteProjectSessions(projectId)
       if (result.status === 'orphan-retained') {
         await this.projects.deleteDeletionIntent(projectId)
         this.lifecycle?.abortProjectDeletion?.(projectId)
@@ -289,6 +249,7 @@ class ProjectDeletionCoordinator {
     for (const projectId of projectIds) {
       if (retainedProjectIds.has(projectId)) continue
       await this.projects.createDeletionIntent(projectId)
+      await this.prepareDeletion(projectId)
       const result = await this.sessions.deleteProjectSessions(projectId, {
         requireExistingUploadAuthority: true
       })
