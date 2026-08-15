@@ -47,12 +47,13 @@ describe('Reviewer resilience', () => {
     })
   })
 
-  it('accepts no more than three checks in one Reviewer result', () => {
-    expect(submitFindingsInputSchema.safeParse({ checks: [check, check, check] }).success).toBe(
-      true
-    )
+  it('accepts no more than five checks in one Reviewer result', () => {
     expect(
-      submitFindingsInputSchema.safeParse({ checks: [check, check, check, check] }).success
+      submitFindingsInputSchema.safeParse({ checks: [check, check, check, check, check] }).success
+    ).toBe(true)
+    expect(
+      submitFindingsInputSchema.safeParse({ checks: [check, check, check, check, check, check] })
+        .success
     ).toBe(false)
   })
 
@@ -95,8 +96,8 @@ describe('Reviewer resilience', () => {
       scope: { turnMessageId: 'turn-1', blocks: [], artifactVersionIds: [] }
     })
 
-    await expect(repository.addChecks(review.id, [check, check, check, check])).rejects.toThrow(
-      'at most 3 checks'
-    )
+    await expect(
+      repository.addChecks(review.id, [check, check, check, check, check, check])
+    ).rejects.toThrow('at most 5 checks')
   })
 })

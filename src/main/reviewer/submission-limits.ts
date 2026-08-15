@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer'
 
 import type { NewCheck } from '../../shared/reviewer'
 
-export const MAX_REVIEW_CHECKS = 3
+export const MAX_REVIEW_CHECKS = 5
 export const MAX_REVIEW_CLAIM_CHARACTERS = 4_096
 export const MAX_REVIEW_EVIDENCE_CHARACTERS = 16_384
 export const MAX_REVIEW_SUBMISSION_BYTES = 256 * 1_024
