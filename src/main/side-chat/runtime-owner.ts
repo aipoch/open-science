@@ -716,6 +716,7 @@ class SideChatRuntimeOwner {
     }
 
     for (const dormant of dormantChats) {
+      this.options.relay.releaseParent(dormant.parentSessionId)
       this.dormantByParent.delete(dormant.parentSessionId)
       this.closeRequestedParents.delete(dormant.parentSessionId)
       this.setParentInteractionsPaused(dormant.parentSessionId, false)
