@@ -412,6 +412,7 @@
   "Could not cancel the setup.": "無法取消該設定流程。",
   "Could not change package-install authorization.": "無法變更套件安裝授權。",
   "Could not change that runtime.": "無法變更該執行環境。",
+  "Could not check the data folder. Try again.": "無法檢查資料夾。請再試一次。",
   "Could not delete project.": "無法刪除專案。",
   "Could not delete session.": "無法刪除會話。",
   "Could not delete the project. Please try again.": "無法刪除專案。請重試。",

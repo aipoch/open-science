@@ -413,6 +413,7 @@
   "Could not cancel the setup.": "无法取消该设置流程。",
   "Could not change package-install authorization.": "无法更改软件包安装授权。",
   "Could not change that runtime.": "无法更改该运行时。",
+  "Could not check the data folder. Try again.": "无法检查数据文件夹。请重试。",
   "Could not delete project.": "无法删除项目。",
   "Could not delete session.": "无法删除会话。",
   "Could not delete the project. Please try again.": "无法删除项目。请重试。",
