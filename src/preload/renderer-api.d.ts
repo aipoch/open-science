@@ -289,6 +289,7 @@ import type {
   ActiveSessionInfo,
   DataRootInspection,
   DataRootValidationResult,
+  DiscardMigratedCopyResult,
   MigrationOutcome,
   MigrationProgress,
   RevealAppStorageResult,
@@ -896,7 +897,7 @@ export interface OpenScienceAPI {
     ): Promise<DataRootValidationResult>
     cancelMigrate(): Promise<void>
     commitAndRelaunch(parent: string): Promise<MigrationOutcome>
-    discardMigratedCopy(parent: string): Promise<void>
+    discardMigratedCopy(parent: string): Promise<DiscardMigratedCopyResult>
     // Marks the one-time legacy-data-move prompt as answered (declined / keep-here) so it's not shown again.
     dismissLegacyMovePrompt(): Promise<void>
     onProgress(listener: AcpListener<MigrationProgress>): RemoveListener

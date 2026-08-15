@@ -24,7 +24,7 @@ const installApi = (overrides: Partial<MockStorageApi> = {}): MockStorageApi => 
     migrate: vi.fn().mockResolvedValue({ ok: true }),
     cancelMigrate: vi.fn().mockResolvedValue(undefined),
     commitAndRelaunch: vi.fn().mockResolvedValue({ ok: true }),
-    discardMigratedCopy: vi.fn().mockResolvedValue(undefined),
+    discardMigratedCopy: vi.fn().mockResolvedValue({ ok: true }),
     onProgress: vi.fn(() => () => {}),
     ...overrides
   }
@@ -192,6 +192,69 @@ describe('StorageMigrationModal', () => {
     expect(api.commitAndRelaunch).not.toHaveBeenCalled()
     // Close happens only after the discard resolves (awaited, with a loading state).
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('keeps the current location usable and warns when copied-data cleanup fails', async () => {
+    const onClose = vi.fn()
+    installApi({
+      discardMigratedCopy: vi.fn().mockResolvedValue({
+        ok: true,
+        cleanupWarning: 'The unused data copy could not be removed.'
+      })
+    })
+
+    await act(async () => {
+      root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={onClose} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Keep current location')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Current location kept')
+    expect(document.body.textContent).toContain('Normal work has resumed')
+    expect(document.body.textContent).toContain('You can delete the copy later')
+
+    clickButton((button) => button.textContent?.trim() === 'Close')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the modal open and retries when discard remains unresolved', async () => {
+    const onClose = vi.fn()
+    const discardMigratedCopy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: 'A migration is already being resolved.'
+      })
+      .mockResolvedValueOnce({ ok: true })
+    installApi({ discardMigratedCopy })
+
+    await act(async () => {
+      root.render(<StorageMigrationModal targetPath="/mnt/data" onClose={onClose} />)
+      await Promise.resolve()
+    })
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Keep current location')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('A migration is already being resolved.')
+    expect(document.body.textContent).toContain('Try again')
+
+    await act(async () => {
+      clickButton((button) => button.textContent?.trim() === 'Try again')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(discardMigratedCopy).toHaveBeenCalledTimes(2)
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('shows a confirm dialog listing active sessions; Cancel aborts without migrating', async () => {

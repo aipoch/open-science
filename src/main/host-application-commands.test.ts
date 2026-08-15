@@ -129,7 +129,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     setDataRootAndRelaunch: vi.fn(async () => ({ ok: true as const })),
     cancelMigrate: vi.fn(() => undefined),
     commitAndRelaunch: vi.fn(async () => ({ ok: true as const })),
-    discardMigratedCopy: vi.fn(async () => undefined),
+    discardMigratedCopy: vi.fn(async () => ({ ok: true as const })),
     dismissLegacyMovePrompt: vi.fn(async () => undefined)
   },
   update: {

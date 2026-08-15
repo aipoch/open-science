@@ -34,6 +34,7 @@ import type {
   ActiveSessionInfo,
   DataRootInspection,
   DataRootValidationResult,
+  DiscardMigratedCopyResult,
   MigrationOutcome,
   RevealAppStorageResult,
   StorageInfo
@@ -239,7 +240,7 @@ const storageCommands = Object.freeze({
   discardMigratedCopy: defineApplicationCommand<
     'storage:discard-migrated-copy',
     readonly [request: StorageParentRequest],
-    void
+    DiscardMigratedCopyResult
   >('storage:discard-migrated-copy'),
   dismissLegacyMovePrompt: defineApplicationCommand<
     'storage:dismiss-legacy-move-prompt',
@@ -361,7 +362,7 @@ type HostApplicationCommandDependencies = Readonly<{
     setDataRootAndRelaunch: (request: StorageRootRequest) => Promise<DataRootValidationResult>
     cancelMigrate: () => void
     commitAndRelaunch: (request: StorageParentRequest) => Promise<MigrationOutcome>
-    discardMigratedCopy: (request: StorageParentRequest) => Promise<void>
+    discardMigratedCopy: (request: StorageParentRequest) => Promise<DiscardMigratedCopyResult>
     dismissLegacyMovePrompt: () => Promise<void>
   }>
   update: UpdateCommandOwner

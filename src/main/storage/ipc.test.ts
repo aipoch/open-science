@@ -786,6 +786,62 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(false)
   })
 
+  it('resolves a staged-copy deletion failure without leaving the write-gate pending', async () => {
+    initDataRoot(dataRoot)
+    const discardStagedCopy = vi.fn().mockRejectedValue(new Error('copy locked'))
+    const runDataRootMigration: NonNullable<FakeDeps['runDataRootMigration']> = async (
+      _deps,
+      _parent,
+      options
+    ) => {
+      await mkdir(target)
+      options.onVerified?.({ token: 'tok-ipc', target })
+      return { ok: true }
+    }
+    const deps = fakeDeps({ discardStagedCopy, runDataRootMigration })
+    registerStorageIpcHandlers(deps)
+
+    await invoke('storage:migrate', { parent: targetParent })
+    expect(isMigrationPending()).toBe(true)
+
+    const outcome = await invoke('storage:discard-migrated-copy', { parent: targetParent })
+
+    expect(outcome).toEqual({
+      ok: true,
+      cleanupWarning: 'The unused data copy could not be removed.'
+    })
+    expect(isMigrationPending()).toBe(false)
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('resolves a staged-copy validation refusal without leaving the write-gate pending', async () => {
+    initDataRoot(dataRoot)
+    const discardStagedCopy = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'Refused: not a completed, matching staged copy.'
+    })
+    const runDataRootMigration: NonNullable<FakeDeps['runDataRootMigration']> = async (
+      _deps,
+      _parent,
+      options
+    ) => {
+      await mkdir(target)
+      options.onVerified?.({ token: 'tok-ipc', target })
+      return { ok: true }
+    }
+    registerStorageIpcHandlers(fakeDeps({ discardStagedCopy, runDataRootMigration }))
+
+    await invoke('storage:migrate', { parent: targetParent })
+    const outcome = await invoke('storage:discard-migrated-copy', { parent: targetParent })
+
+    expect(outcome).toEqual({
+      ok: true,
+      cleanupWarning: 'Refused: not a completed, matching staged copy.'
+    })
+    expect(isMigrationPending()).toBe(false)
+    expect(existsSync(target)).toBe(true)
+  })
+
   it('commit discards the orphan staged copy and lifts the write-gate when the switchover fails', async () => {
     initDataRoot(dataRoot)
     const deps = fakeDeps({

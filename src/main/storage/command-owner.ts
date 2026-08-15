@@ -8,6 +8,7 @@ import { app, dialog, shell } from 'electron'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
+  DiscardMigratedCopyResult,
   MigrationOutcome,
   MigrationProgress,
   RevealAppStorageResult,
@@ -84,6 +85,8 @@ type StorageCommandOwnerDeps = {
   logger?: Logger
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   exportRuntimeLocks?: typeof exportRuntimeLocks
+  discardStagedCopy?: typeof discardStagedCopy
+  runDataRootMigration?: typeof runDataRootMigration
 }
 
 type StorageParentRequest = Readonly<{ parent: string }>
@@ -105,6 +108,8 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   let activeStaged: { token: string; target: string; correlationId: string } | undefined
   let resolutionInProgress = false
   const cleanupRuntimeCache = deps.cleanupRuntimeCache ?? removeMicromambaCacheForRoot
+  const discardStagedCopyImpl = deps.discardStagedCopy ?? discardStagedCopy
+  const runDataRootMigrationImpl = deps.runDataRootMigration ?? runDataRootMigration
   const unsafeLogger = deps.logger ?? createLogger('storage:ipc')
   const emitSafely = (level: keyof Logger, message: string, data?: unknown): void => {
     try {
@@ -246,7 +251,7 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
       // Phase 1 only: copy+verify into the new root. Nothing is committed (no setDataRoot, no
       // delete) — the old root and settings.dataRoot stay intact, so this is fully reversible.
       // Commit happens later, on the user's "Restart now" (storage:commit-and-relaunch).
-      const result = await runDataRootMigration(
+      const result = await runDataRootMigrationImpl(
         {
           currentDataRoot: resolveDataRoot(),
           logger,
@@ -304,32 +309,48 @@ const createStorageCommandOwner = (deps: StorageCommandOwnerDeps) => {
   // current location" on the done stage. Since the copy phase never touched settings.dataRoot or the
   // old root, this just removes the new copy and leaves the app on its current root. discardStagedCopy
   // refuses anything that isn't a marker-confirmed staging copy for the current root, so a misrouted
-  // parent can't delete live data. On a successful discard the write-gate is lifted. Never throws.
-  const discardMigratedCopy = async (request: StorageParentRequest): Promise<void> => {
-    if (activeMigration || resolutionInProgress) {
-      // A copy is still running; discarding would race the writer. Ignore the (stale) request.
+  // parent can't delete live data. Once a matching copy is logically abandoned, the write-gate is
+  // lifted even if physical cleanup fails; the caller gets a warning and the marked copy stays inert.
+  const discardMigratedCopy = async (
+    request: StorageParentRequest
+  ): Promise<DiscardMigratedCopyResult> => {
+    if (activeMigration) {
+      // A copy is still running; discarding would race the writer. Keep the modal open for retry.
       logger.warn('staged data root discard ignored', { reason: 'copy-in-progress' })
-      return
+      return { ok: false, error: 'A migration copy is still in progress.' }
+    }
+    if (resolutionInProgress) {
+      logger.warn('staged data root discard ignored', { reason: 'resolution-in-progress' })
+      return { ok: false, error: 'A migration is already being resolved.' }
     }
     if (!activeStaged || !samePath(activeStaged.target, dataRootForPicked(request.parent))) {
       logger.warn('staged data root discard ignored', { reason: 'no-matching-copy' })
-      return
+      return { ok: false, error: 'No matching staged data copy was found.' }
     }
     const staged = activeStaged
     resolutionInProgress = true
     try {
-      const result = await discardStagedCopy(
+      const result = await discardStagedCopyImpl(
         { currentDataRoot: resolveDataRoot(), expectedToken: staged.token },
         request.parent
       )
       if (result.ok) {
-        clearMigrationPending()
         activeStaged = undefined
-      } else {
-        logger.warn('staged data root discard refused', { reason: 'validation-failed' })
+        clearMigrationPending()
+        return { ok: true }
+      }
+      logger.warn('staged data root discard refused', { reason: 'validation-failed' })
+      activeStaged = undefined
+      clearMigrationPending()
+      return {
+        ok: true,
+        cleanupWarning: result.error ?? 'The unused data copy could not be removed.'
       }
     } catch (err) {
       logger.error('staged data root discard failed', diagnosticErrorFields(err))
+      activeStaged = undefined
+      clearMigrationPending()
+      return { ok: true, cleanupWarning: 'The unused data copy could not be removed.' }
     } finally {
       resolutionInProgress = false
     }

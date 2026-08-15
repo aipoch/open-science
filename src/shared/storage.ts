@@ -59,6 +59,9 @@ export type MigrationOutcome =
   MigrationResult | { ok: false; error: string; switchoverFailed: true }
 
 // Result of validating (or applying) a candidate data root, mirroring main's ValidateResult
+export type DiscardMigratedCopyResult =
+  { ok: true; cleanupWarning?: string } | { ok: false; error: string }
+
 // (src/main/storage/migration-service.ts) without importing main-only code into the renderer.
 export type DataRootValidationResult = { ok: true } | { ok: false; error: string }
 

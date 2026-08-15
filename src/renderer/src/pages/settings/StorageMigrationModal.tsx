@@ -67,6 +67,8 @@ const StorageMigrationModal = ({
   // Discarding the copied-but-uncommitted new root can be slow (it deletes the whole copy), so the
   // done stage shows a loading state and awaits it instead of firing-and-forgetting.
   const [isDiscarding, setIsDiscarding] = useState(false)
+  const [discardError, setDiscardError] = useState<string | null>(null)
+  const [cleanupWarning, setCleanupWarning] = useState(false)
   const [ipcError, setIpcError] = useState(false)
   // Elapsed clock: `startedAt` is stamped at each transition into the migrating stage (event
   // handler / async callback, never an effect body), and `now` is ticked every second. Both are
@@ -191,10 +193,28 @@ const StorageMigrationModal = ({
   // before closing, so a slow delete of a large copy gives feedback and can't race a re-attempt.
   const handleKeepCurrent = (): void => {
     setIsDiscarding(true)
+    setDiscardError(null)
     void window.api.storage
       .discardMigratedCopy(targetPath)
-      .catch(() => {})
-      .finally(() => onCloseRef.current())
+      .then((result) => {
+        if (!mountedRef.current) return
+        if (!result.ok) {
+          setDiscardError(result.error)
+          setIsDiscarding(false)
+          return
+        }
+        if (result.cleanupWarning) {
+          setCleanupWarning(true)
+          setIsDiscarding(false)
+          return
+        }
+        onCloseRef.current()
+      })
+      .catch(() => {
+        if (!mountedRef.current) return
+        setDiscardError(t('Something went wrong. Try again.'))
+        setIsDiscarding(false)
+      })
   }
 
   // The delete phase reports copiedBytes/totalBytes as 0 (there's nothing left to copy), which
@@ -327,7 +347,35 @@ const StorageMigrationModal = ({
             </>
           ) : null}
 
-          {stage === 'done' ? (
+          {stage === 'done' && cleanupWarning ? (
+            <>
+              <div className="flex items-start gap-3">
+                <span
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  aria-hidden="true"
+                >
+                  <TriangleAlert className="size-[18px]" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <Dialog.Title className="text-sm font-semibold text-foreground">
+                    {t('Current location kept')}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {t(
+                      "Open Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later."
+                    )}
+                  </Dialog.Description>
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end">
+                <Button type="button" variant="outline" onClick={onClose}>
+                  {tCommon('Close')}
+                </Button>
+              </div>
+            </>
+          ) : null}
+
+          {stage === 'done' && !cleanupWarning ? (
             <>
               <div className="flex items-start gap-3">
                 <span
@@ -347,20 +395,41 @@ const StorageMigrationModal = ({
                   </Dialog.Description>
                 </div>
               </div>
-              <div className="mt-5 flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={isDiscarding}
-                  onClick={handleKeepCurrent}
+              {discardError ? (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
                 >
-                  {isDiscarding ? t('Discarding…') : t('Keep current location')}
-                </Button>
-                <Button type="button" disabled={isDiscarding} onClick={handleRestart}>
-                  <RefreshCw aria-hidden="true" />
-                  {t('Restart now')}
-                </Button>
-              </div>
+                  {discardError}
+                </p>
+              ) : null}
+              {discardError ? (
+                <div className="mt-5 flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isDiscarding}
+                    onClick={handleKeepCurrent}
+                  >
+                    {t('Try again')}
+                  </Button>
+                </div>
+              ) : (
+                <div className="mt-5 flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isDiscarding}
+                    onClick={handleKeepCurrent}
+                  >
+                    {isDiscarding ? t('Discarding…') : t('Keep current location')}
+                  </Button>
+                  <Button type="button" disabled={isDiscarding} onClick={handleRestart}>
+                    <RefreshCw aria-hidden="true" />
+                    {t('Restart now')}
+                  </Button>
+                </div>
+              )}
             </>
           ) : null}
 
