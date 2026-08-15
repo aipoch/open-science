@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentHomeSkillView, SkillImportPreviewContent } from '../../../../shared/settings'
 import { SkillsPanel } from './SkillsPanel'
+import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -800,6 +801,212 @@ describe('SkillsPanel (sub-views)', () => {
       body: '# Body',
       references: []
     })
+  })
+
+  it('rejects an oversized reference before starting a Base64 read', async () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+    })
+    setValue('Skill name', 'bounded-reference')
+    setValue('Skill body', '# Body')
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('button[aria-controls="skill-advanced-settings"]')
+        ?.click()
+    )
+
+    const input = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Add reference files"]'
+    )
+    const file = new File(['x'], 'too-large.bin')
+    Object.defineProperty(file, 'size', { value: SKILL_IMPORT_LIMITS.maxFileBytes + 1 })
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] })
+    const read = vi.spyOn(FileReader.prototype, 'readAsDataURL')
+
+    await act(async () => {
+      input?.dispatchEvent(new Event('change', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(read).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('too-large.bin')
+    expect(document.body.textContent).toContain('per-file limit')
+    read.mockRestore()
+  })
+
+  it('reads references sequentially while disabling Save and reporting progress', async () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+    })
+    setValue('Skill name', 'sequential-references')
+    setValue('Skill body', '# Body')
+    act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('button[aria-controls="skill-advanced-settings"]')
+        ?.click()
+    )
+
+    const input = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Add reference files"]'
+    )
+    const files = [new File(['a'], 'a.txt'), new File(['b'], 'b.txt')]
+    Object.defineProperty(input, 'files', { configurable: true, value: files })
+
+    const pending: FileReader[] = []
+    const read = vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (
+      this: FileReader
+    ): void {
+      pending.push(this)
+    })
+    const finishRead = (reader: FileReader, value: string): void => {
+      Object.defineProperty(reader, 'result', {
+        configurable: true,
+        value: `data:application/octet-stream;base64,${value}`
+      })
+      reader.onload?.call(reader, new ProgressEvent('load') as ProgressEvent<FileReader>)
+    }
+
+    try {
+      await act(async () => {
+        input?.dispatchEvent(new Event('change', { bubbles: true }))
+        await Promise.resolve()
+      })
+
+      const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Publish'
+      )
+      expect(pending).toHaveLength(1)
+      expect(input?.disabled).toBe(true)
+      expect(publish?.disabled).toBe(true)
+      expect(document.body.textContent).toContain('0 / 2')
+
+      await act(async () => {
+        finishRead(pending[0], 'YQ==')
+        await Promise.resolve()
+      })
+      expect(pending).toHaveLength(2)
+      expect(document.body.textContent).toContain('1 / 2')
+
+      await act(async () => {
+        finishRead(pending[1], 'Yg==')
+        await Promise.resolve()
+      })
+      expect(input?.disabled).toBe(false)
+      expect(publish?.disabled).toBe(false)
+      expect(document.body.textContent).toContain('references/a.txt')
+      expect(document.body.textContent).toContain('references/b.txt')
+    } finally {
+      read.mockRestore()
+    }
+  })
+
+  it('keeps the editor open and shows a Main-process save failure inline', async () => {
+    const createSkill = vi.fn().mockRejectedValue(new Error('Skill package has too many files.'))
+    const onNavigate = vi.fn()
+    useSettingsStore.setState({ createSkill })
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={onNavigate} />)
+    })
+    setValue('Skill name', 'save-failure')
+    setValue('Skill body', '# Body')
+
+    const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Publish'
+    )
+    await act(async () => {
+      publish?.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Skill package has too many files.'
+    )
+    expect(document.body.querySelector('[aria-label="Skill name"]')).not.toBeNull()
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it('shows persisted reference and preserved package file usage in the edit view', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          id: 'personal-mine',
+          name: 'Mine',
+          description: 'Custom',
+          source: 'personal',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true,
+          body: '# Body',
+          references: [{ path: 'guide.md', sizeBytes: 4096 }],
+          packageFiles: [
+            { path: 'SKILL.md', sizeBytes: 128 },
+            { path: '.source.json', sizeBytes: SKILL_IMPORT_LIMITS.maxFileBytes },
+            { path: '.specialist-package.json', sizeBytes: SKILL_IMPORT_LIMITS.maxFileBytes },
+            { path: 'references/guide.md', sizeBytes: 4096 },
+            { path: 'references/guides/deep.md', sizeBytes: 1024 },
+            { path: 'scripts/run.sh', sizeBytes: 2048 }
+          ]
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'edit', id: 'personal-mine' }} onNavigate={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(
+      document.body.querySelector('[aria-label="Skill package usage"]')?.textContent
+    ).toContain('References: 1 / 253')
+    expect(document.body.textContent).toContain('references/guide.md')
+    expect(document.body.textContent).toContain('references/guides/deep.md')
+    expect(document.body.textContent).toContain('scripts/run.sh')
+    expect(document.body.textContent).toContain('4 KB')
+    expect(document.body.textContent).toContain('2 KB')
+    expect(document.body.textContent).not.toContain('.source.json')
+    expect(document.body.textContent).not.toContain('.specialist-package.json')
+  })
+
+  it('includes preserved package files in the total budget before enabling Save', async () => {
+    ;(window as unknown as { api: unknown }).api = {
+      settings: {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          id: 'personal-budgeted',
+          name: 'budgeted',
+          description: 'Custom',
+          source: 'personal',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true,
+          body: '# Body',
+          references: [],
+          packageFiles: [
+            { path: 'SKILL.md', sizeBytes: 128 },
+            { path: 'scripts/large-a.bin', sizeBytes: SKILL_IMPORT_LIMITS.maxFileBytes },
+            { path: 'assets/large-b.bin', sizeBytes: SKILL_IMPORT_LIMITS.maxFileBytes },
+            { path: 'data/large-c.bin', sizeBytes: 30 * 1024 * 1024 }
+          ]
+        })
+      }
+    }
+
+    await act(async () => {
+      root.render(
+        <SkillsPanel view={{ kind: 'edit', id: 'personal-budgeted' }} onNavigate={vi.fn()} />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save'
+    )
+    expect(document.body.textContent).toContain(
+      'The skill package exceeds the 128 MB total size limit.'
+    )
+    expect(document.body.textContent).toContain('scripts/large-a.bin')
+    expect(document.body.textContent).toContain('assets/large-b.bin')
+    expect(save?.disabled).toBe(true)
   })
 
   it('requires the personal skill name to be the immutable lowercase identity', () => {

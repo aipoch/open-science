@@ -1,4 +1,4 @@
-import { readdir, realpath } from 'node:fs/promises'
+import { lstat, readdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -20,6 +20,8 @@ import type {
   PreviewAgentHomeSkillRequest,
   PreviewSkillZipRequest,
   ScanRepoRequest,
+  SkillPackageFileInfo,
+  SkillReferenceInfo,
   ScanRepoResult,
   SetSkillEnabledRequest,
   SetSkillsEnabledRequest,
@@ -377,15 +379,26 @@ class SkillCatalogModule {
     ])
     const skill = skills.find((entry) => entry.id === id)
     if (!skill) throw new Error(`Unknown skill: ${id}`)
-    const { fields, body } = await readSkillFile(skill.sourceDir)
-    return {
-      ...this.toSkillView(skill, new Set(settings.disabledSkillIds ?? [])),
-      body,
-      metadata: Object.fromEntries(
-        Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
-      ),
-      references: await this.listReferences(skill.sourceDir)
+
+    const disabled = new Set(settings.disabledSkillIds ?? [])
+    const readDetail = async (lockedSkill: BundledSkill): Promise<SkillDetailView> => {
+      const packageFiles = await this.listPackageFiles(lockedSkill.sourceDir)
+      const { fields, body } = await readSkillFile(lockedSkill.sourceDir)
+      return {
+        ...this.toSkillView(lockedSkill, disabled),
+        body,
+        metadata: Object.fromEntries(
+          Object.entries(fields).filter(([key]) => key !== 'name' && key !== 'description')
+        ),
+        references: this.referencesFromPackageFiles(packageFiles),
+        packageFiles
+      }
     }
+
+    if (skill.source === 'featured') return readDetail(skill)
+    const detail = await this.userSkills.withSkillReadLock(id, readDetail)
+    if (!detail) throw new Error(`Unknown skill: ${id}`)
+    return detail
   }
 
   async buildSkillExport(id: string): Promise<SkillExportArchive> {
@@ -883,15 +896,38 @@ class SkillCatalogModule {
     return allowed.has(requested) ? join(requested, 'skills') : undefined
   }
 
-  private async listReferences(sourceDir: string): Promise<{ path: string }[]> {
-    try {
-      return (await readdir(join(sourceDir, 'references'), { withFileTypes: true }))
-        .filter((entry) => entry.isFile())
-        .map((entry) => ({ path: entry.name }))
-        .sort((a, b) => a.path.localeCompare(b.path))
-    } catch {
-      return []
+  private async listPackageFiles(sourceDir: string): Promise<SkillPackageFileInfo[]> {
+    const files: SkillPackageFileInfo[] = []
+    const visit = async (directory: string, parentPath: string): Promise<void> => {
+      const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
+      for (const entry of entries) {
+        const path = parentPath ? `${parentPath}/${entry.name}` : entry.name
+        const absolutePath = join(directory, entry.name)
+        if (entry.isDirectory()) {
+          await visit(absolutePath, path)
+        } else if (entry.isFile()) {
+          const metadata = await lstat(absolutePath)
+          if (metadata.isFile()) {
+            files.push({ path, sizeBytes: metadata.size })
+          }
+        }
+      }
     }
+    await visit(sourceDir, '')
+    return files
+  }
+
+  private referencesFromPackageFiles(
+    packageFiles: readonly SkillPackageFileInfo[]
+  ): SkillReferenceInfo[] {
+    const prefix = 'references/'
+    return packageFiles.flatMap((file) => {
+      if (!file.path.startsWith(prefix)) return []
+      const path = file.path.slice(prefix.length)
+      return path.includes('/') ? [] : [{ path, sizeBytes: file.sizeBytes }]
+    })
   }
 
   private toSkillView(skill: BundledSkill, disabled: Set<string>): SkillView {

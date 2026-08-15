@@ -3,11 +3,9 @@ import { join, posix } from 'node:path'
 
 import { marked } from 'marked'
 
-import { SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
+import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '../../shared/skill-import-limits'
 import { frontmatterFieldNames, parseSkillDocument } from './frontmatter'
 import { isUnsafeSkillArchivePath } from './zip-extract'
-
-const APP_OWNED_ROOT_FILES = new Set(['.source.json', '.specialist-package.json'])
 
 const compareText = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0
@@ -111,10 +109,10 @@ export const inspectSkillPackage = async (root: string): Promise<SkillPackageFil
       compareText(left.name, right.name)
     )
     for (const entry of entries) {
-      if (!relativeDirectory && APP_OWNED_ROOT_FILES.has(entry.name)) continue
       const relativePath = relativeDirectory
         ? posix.join(relativeDirectory, entry.name)
         : entry.name
+      if (!isSkillPackageBudgetedPath(relativePath)) continue
       if (isUnsafeSkillArchivePath(relativePath)) {
         throw new SkillPackagePolicyError('unsafePath', relativePath)
       }

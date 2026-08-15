@@ -99,7 +99,7 @@ class UserSkillRepository {
     )
   }
 
-  // Rewrites an existing personal skill's SKILL.md in place.
+  // Replaces an existing personal skill through the shared staged package transaction.
   async updatePersonal(id: string, input: WriteSkillInput): Promise<void> {
     return this.store.updatePersonal(id, input)
   }

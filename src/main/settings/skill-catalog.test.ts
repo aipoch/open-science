@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -495,6 +495,125 @@ describe('SkillCatalogModule', () => {
       /^sha256:[a-f0-9]{64}$/
     )
   })
+
+  it('keeps user detail file reads inside the package read lock', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-detail-lock-'))
+    roots.push(storageRoot)
+    const sourceDir = join(storageRoot, 'skills', 'personal', 'locked-detail')
+    const movedSourceDir = `${sourceDir}-moved`
+    await mkdir(join(sourceDir, 'references'), { recursive: true })
+    await mkdir(join(sourceDir, 'scripts'), { recursive: true })
+    await writeFile(
+      join(sourceDir, 'SKILL.md'),
+      '---\nname: locked-detail\ndescription: Locked detail.\n---\n\nlocked body\n'
+    )
+    await writeFile(join(sourceDir, 'references', 'guide.md'), 'guide')
+    await writeFile(join(sourceDir, 'scripts', 'run.sh'), 'run')
+    await writeFile(join(sourceDir, '.specialist-package.json'), '{}')
+
+    const skill = {
+      id: 'personal-locked-detail',
+      name: 'locked-detail',
+      displayName: 'Locked detail',
+      description: 'Locked detail.',
+      source: 'personal' as const,
+      updatedAt: '2026-08-15T00:00:00.000Z',
+      sourceDir
+    }
+    const withSkillReadLock = vi.fn(
+      async (
+        _id: string,
+        read: (lockedSkill: typeof skill) => Promise<unknown>
+      ): Promise<unknown> => {
+        const result = await read(skill)
+        await rename(sourceDir, movedSourceDir)
+        return result
+      }
+    )
+    const catalog = new SkillCatalogModule({
+      repository: new SettingsRepository(storageRoot),
+      storageRoot,
+      skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
+      userSkills: {
+        list: async () => [skill],
+        withSkillReadLock
+      } as unknown as UserSkillRepository
+    })
+
+    const detail = await catalog.getSkillDetail(skill.id)
+
+    expect(withSkillReadLock).toHaveBeenCalledWith(skill.id, expect.any(Function))
+    expect(detail.packageFiles).toHaveLength(4)
+    expect(detail).toMatchObject({
+      id: skill.id,
+      body: 'locked body\n',
+      references: [{ path: 'guide.md', sizeBytes: 5 }],
+      packageFiles: expect.arrayContaining([
+        { path: '.specialist-package.json', sizeBytes: 2 },
+        { path: 'references/guide.md', sizeBytes: 5 },
+        { path: 'scripts/run.sh', sizeBytes: 3 },
+        { path: 'SKILL.md', sizeBytes: expect.any(Number) }
+      ])
+    })
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'does not follow file or directory links while inventorying a detail snapshot',
+    async () => {
+      const storageRoot = await mkdtemp(join(tmpdir(), 'settings-skill-detail-links-'))
+      roots.push(storageRoot)
+      const sourceDir = join(storageRoot, 'skills', 'personal', 'linked-detail')
+      const outsideDir = join(storageRoot, 'outside')
+      await mkdir(join(sourceDir, 'references'), { recursive: true })
+      await mkdir(outsideDir, { recursive: true })
+      await writeFile(
+        join(sourceDir, 'SKILL.md'),
+        '---\nname: linked-detail\ndescription: Linked detail.\n---\n\nlinked body\n'
+      )
+      await writeFile(join(sourceDir, 'references', 'guide.md'), 'guide')
+      await writeFile(join(outsideDir, 'outside.txt'), 'outside')
+      await symlink(join(outsideDir, 'outside.txt'), join(sourceDir, 'linked-file'))
+      await symlink(outsideDir, join(sourceDir, 'references', 'linked-dir'), 'dir')
+
+      const skill = {
+        id: 'personal-linked-detail',
+        name: 'linked-detail',
+        displayName: 'Linked detail',
+        description: 'Linked detail.',
+        source: 'personal' as const,
+        updatedAt: '2026-08-15T00:00:00.000Z',
+        sourceDir
+      }
+      const withSkillReadLock = async (
+        _id: string,
+        read: (lockedSkill: typeof skill) => Promise<unknown>
+      ): Promise<unknown> => read(skill)
+      const catalog = new SkillCatalogModule({
+        repository: new SettingsRepository(storageRoot),
+        storageRoot,
+        skillRegistry: { list: async () => [] } as unknown as SkillRegistry,
+        userSkills: {
+          list: async () => [skill],
+          withSkillReadLock
+        } as unknown as UserSkillRepository
+      })
+
+      const detail = await catalog.getSkillDetail(skill.id)
+
+      expect(detail.references).toEqual([{ path: 'guide.md', sizeBytes: 5 }])
+      expect(detail.packageFiles).toHaveLength(2)
+      expect(detail.packageFiles).toEqual(
+        expect.arrayContaining([
+          { path: 'references/guide.md', sizeBytes: 5 },
+          { path: 'SKILL.md', sizeBytes: expect.any(Number) }
+        ])
+      )
+      expect(detail.packageFiles.map((file) => file.path)).not.toContain('linked-file')
+      expect(detail.packageFiles.map((file) => file.path)).not.toContain(
+        'references/linked-dir/outside.txt'
+      )
+    }
+  )
 
   it('owns catalog projection, enablement, detail, and personal CRUD', async () => {
     const catalog = await createCatalog()

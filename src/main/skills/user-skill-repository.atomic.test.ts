@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -154,5 +154,68 @@ describe('writeImported swap atomicity', () => {
     // Staging was discarded; nothing partial remains.
     vi.mocked(fsp.rename).mockImplementation((from, to) => realRename(from, to))
     expect(await repo.list()).toEqual([])
+  })
+})
+
+describe('Personal Skill write atomicity', () => {
+  it('keeps the previous package intact when an update fails while writing a reference', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'atomic-personal-'))
+    const repo = new UserSkillRepository(root)
+    const id = await repo.createPersonal({
+      name: 'atomic-update',
+      description: 'original',
+      body: 'original body',
+      references: [
+        { path: 'keep.txt', dataBase64: Buffer.from('original reference').toString('base64') }
+      ]
+    })
+    const packageRoot = join(root, 'skills', 'personal', 'atomic-update')
+    await mkdir(join(packageRoot, 'references', 'write-target'), { recursive: true })
+    await writeFile(join(packageRoot, 'references', 'write-target', 'child.txt'), 'occupied')
+
+    await expect(
+      repo.updatePersonal(id, {
+        name: 'atomic-update',
+        description: 'updated',
+        body: 'updated body',
+        references: [
+          {
+            path: 'write-target',
+            dataBase64: Buffer.from('cannot replace a directory').toString('base64')
+          }
+        ]
+      })
+    ).rejects.toThrow()
+
+    await expect(repo.body(id)).resolves.toBe('original body')
+    await expect(readFile(join(packageRoot, 'references', 'keep.txt'), 'utf8')).resolves.toBe(
+      'original reference'
+    )
+  })
+
+  it('preserves package files and nested references outside the editor surface', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'atomic-personal-files-'))
+    const repo = new UserSkillRepository(root)
+    const id = await repo.createPersonal({
+      name: 'complete-package',
+      description: 'original',
+      body: 'original body'
+    })
+    const packageRoot = join(root, 'skills', 'personal', 'complete-package')
+    const script = join(packageRoot, 'scripts', 'run.js')
+    const nestedReference = join(packageRoot, 'references', 'guides', 'setup.md')
+    await mkdir(join(script, '..'), { recursive: true })
+    await mkdir(join(nestedReference, '..'), { recursive: true })
+    await writeFile(script, 'console.log("preserved")\n')
+    await writeFile(nestedReference, 'preserved reference')
+
+    await repo.updatePersonal(id, {
+      name: 'complete-package',
+      description: 'updated',
+      body: 'updated body',
+      references: []
+    })
+
+    await expect(readFile(script, 'utf8')).resolves.toBe('console.log("preserved")\n')
   })
 })

@@ -1,9 +1,15 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
-import { ChevronDown, FileUp, Upload, X } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { AlertTriangle, ChevronDown, FileUp, Upload, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import type { SkillReference } from '../../../../shared/settings'
+import type { SkillPackageFileInfo, SkillReference } from '../../../../shared/settings'
+import { serializePersonalSkillDocument } from '../../../../shared/personal-skill-document'
+import {
+  isSkillPackageBudgetedPath,
+  SKILL_IMPORT_LIMITS
+} from '../../../../shared/skill-import-limits'
 import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
@@ -13,13 +19,16 @@ import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SettingsIconAction } from './SettingsLayout'
 
+type SkillEditorReference = SkillReference & { sizeBytes?: number }
+
 export type SkillDraft = {
   id?: string
   name: string
   description: string
   body: string
   metadata?: Record<string, string>
-  references?: SkillReference[]
+  references?: SkillEditorReference[]
+  packageFiles?: SkillPackageFileInfo[]
 }
 
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -29,12 +38,99 @@ const SKILL_NAME_MAX_LENGTH = 64
 // `os-` is the app's own materialized prefix, `mcp-` is reserved for MCP-provided skills.
 const RESERVED_SKILL_NAME_PREFIXES = ['os-', 'mcp-']
 
+const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength
+
+const formatBytes = (bytes: number, locale: string): string => {
+  const units = [
+    { size: 1024 * 1024, suffix: 'MB' },
+    { size: 1024, suffix: 'KB' }
+  ]
+  const unit = units.find((candidate) => bytes >= candidate.size)
+  if (!unit) return `${bytes} B`
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(
+    bytes / unit.size
+  )} ${unit.suffix}`
+}
+
+const isEditorManagedPackagePath = (path: string): boolean => {
+  if (path === 'SKILL.md') return true
+  if (!path.startsWith('references/')) return false
+  return !path.slice('references/'.length).includes('/')
+}
+
+const getPreservedPackageFiles = (
+  packageFiles: readonly SkillPackageFileInfo[]
+): SkillPackageFileInfo[] =>
+  packageFiles.filter(
+    (file) => isSkillPackageBudgetedPath(file.path) && !isEditorManagedPackagePath(file.path)
+  )
+
+type SkillBudgetViolation =
+  { kind: 'fileSize'; path: string } | { kind: 'fileCount' } | { kind: 'totalSize' }
+
+type SkillBudgetEvaluation = {
+  totalBytes: number
+  violation: SkillBudgetViolation | null
+}
+
+const evaluateSkillBudget = (
+  documentBytes: number,
+  references: ReadonlyArray<{ path: string; sizeBytes: number }>,
+  preservedFiles: readonly SkillPackageFileInfo[]
+): SkillBudgetEvaluation => {
+  const packageFiles = [
+    { path: 'SKILL.md', sizeBytes: documentBytes },
+    ...references.map((reference) => ({
+      path: `references/${reference.path}`,
+      sizeBytes: reference.sizeBytes
+    })),
+    ...preservedFiles
+  ]
+  const totalBytes = packageFiles.reduce((total, file) => total + file.sizeBytes, 0)
+  let violation: SkillBudgetViolation | null = null
+
+  const oversizedFile = packageFiles.find(
+    (file) => file.sizeBytes > SKILL_IMPORT_LIMITS.maxFileBytes
+  )
+  if (oversizedFile) {
+    violation = { kind: 'fileSize', path: oversizedFile.path }
+  } else if (packageFiles.length > SKILL_IMPORT_LIMITS.maxFiles) {
+    violation = { kind: 'fileCount' }
+  } else if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) {
+    violation = { kind: 'totalSize' }
+  }
+
+  return { totalBytes, violation }
+}
+
+const budgetViolationMessage = (
+  violation: SkillBudgetViolation,
+  t: TFunction,
+  locale: string
+): string => {
+  switch (violation.kind) {
+    case 'fileSize':
+      return t('{{file}} exceeds the {{limit}} per-file limit.', {
+        file: violation.path,
+        limit: formatBytes(SKILL_IMPORT_LIMITS.maxFileBytes, locale)
+      })
+    case 'fileCount':
+      return t('A skill package can contain at most {{limit}} files.', {
+        limit: SKILL_IMPORT_LIMITS.maxFiles
+      })
+    case 'totalSize':
+      return t('The skill package exceeds the {{limit}} total size limit.', {
+        limit: formatBytes(SKILL_IMPORT_LIMITS.maxTotalBytes, locale)
+      })
+  }
+}
+
 // Reads a File as base64 (for binary-safe reference transport to the main process).
 const fileToBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
-    reader.onerror = () => reject(reader.error)
+    reader.onerror = () => reject(reader.error ?? new Error())
     reader.readAsDataURL(file)
   })
 
@@ -44,6 +140,16 @@ type SkillEditorProps = {
   onSave: (draft: SkillDraft) => Promise<void>
 }
 
+const SkillEditorAlert = ({ message }: { message: string }): React.JSX.Element => (
+  <div
+    role="alert"
+    className="mt-2 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+  >
+    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+    <span className="min-w-0 break-words">{message}</span>
+  </div>
+)
+
 // Create/edit form for a personal skill: Identity (name/description) + Content (SKILL.md body).
 // Pasting a full SKILL.md with a frontmatter block auto-fills name/description.
 const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX.Element => {
@@ -51,17 +157,39 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const { t: tCommon } = useTranslation()
   const isCreate = !initial.id
   const skills = useSettingsStore((state) => state.skills)
+  const preservedPackageFiles = useMemo(
+    () => getPreservedPackageFiles(initial.packageFiles ?? []),
+    [initial.packageFiles]
+  )
+  const maxReferenceFiles = Math.max(
+    0,
+    SKILL_IMPORT_LIMITS.maxFiles - 1 - preservedPackageFiles.length
+  )
   const [name, setName] = useState(initial.name)
   const [description, setDescription] = useState(initial.description)
   const [body, setBody] = useState(initial.body)
   const [metadata, setMetadata] = useState(initial.metadata)
   const [frontmatterImportMode, setFrontmatterImportMode] = useState(false)
   const [contentMode, setContentMode] = useState<'write' | 'upload'>('write')
-  const [references, setReferences] = useState<{ path: string; dataBase64?: string }[]>(() =>
-    (initial.references ?? []).map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
+  const [references, setReferences] = useState<SkillEditorReference[]>(() =>
+    (initial.references ?? []).map((ref) => ({
+      path: ref.path,
+      dataBase64: ref.dataBase64,
+      sizeBytes: ref.sizeBytes ?? 0
+    }))
   )
-  const [advancedOpen, setAdvancedOpen] = useState((initial.references?.length ?? 0) > 0)
+  const [advancedOpen, setAdvancedOpen] = useState(
+    (initial.references?.length ?? 0) > 0 || preservedPackageFiles.length > 0
+  )
   const [saving, setSaving] = useState(false)
+  const [addingReferences, setAddingReferences] = useState(false)
+  const [referenceProgress, setReferenceProgress] = useState<{
+    completed: number
+    total: number
+  } | null>(null)
+  const [referenceError, setReferenceError] = useState<string | null>(null)
+  const [contentImportError, setContentImportError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const currentName = name.trim()
 
@@ -92,7 +220,41 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const persistedBody = importedContent?.hasFrontmatter ? importedContent.body : body
   const persistedMetadata = importedContent?.hasFrontmatter ? importedContent.metadata : metadata
   const metadataEntries = Object.entries(persistedMetadata ?? {})
-  const canSave = currentName.length > 0 && persistedBody.trim().length > 0 && !nameError && !saving
+  const documentBytes = useMemo(
+    () =>
+      utf8ByteLength(
+        serializePersonalSkillDocument({
+          name: currentName,
+          description: description.trim(),
+          body: persistedBody,
+          metadata: persistedMetadata
+        })
+      ),
+    [currentName, description, persistedBody, persistedMetadata]
+  )
+  const budgetEvaluation = useMemo(
+    () =>
+      evaluateSkillBudget(
+        documentBytes,
+        references.map((reference) => ({
+          path: reference.path,
+          sizeBytes: reference.sizeBytes ?? 0
+        })),
+        preservedPackageFiles
+      ),
+    [documentBytes, references, preservedPackageFiles]
+  )
+  const { totalBytes } = budgetEvaluation
+  const budgetError = budgetEvaluation.violation
+    ? budgetViolationMessage(budgetEvaluation.violation, t, i18n.language)
+    : null
+  const canSave =
+    currentName.length > 0 &&
+    persistedBody.trim().length > 0 &&
+    !nameError &&
+    !budgetError &&
+    !saving &&
+    !addingReferences
 
   // Plain textarea edits are always literal body content and keep the separately displayed metadata.
   // In import mode the visible frontmatter is authoritative, so removing it clears derived metadata.
@@ -139,38 +301,97 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   }
 
   // Uploads a text/markdown file into the content body, then flips back to the Write editor.
+  const importContentFile = async (file: File): Promise<void> => {
+    setContentImportError(null)
+    if (file.size > SKILL_IMPORT_LIMITS.maxFileBytes) {
+      setContentImportError(
+        t('The selected content file exceeds the {{limit}} per-file limit.', {
+          limit: formatBytes(SKILL_IMPORT_LIMITS.maxFileBytes, i18n.language)
+        })
+      )
+      return
+    }
+
+    try {
+      importContent(await file.text())
+      setContentMode('write')
+    } catch (error) {
+      setContentImportError(
+        error instanceof Error && error.message
+          ? error.message
+          : t('Unable to read the selected content file.')
+      )
+    }
+  }
+
   const uploadContent = (): void => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.md,.markdown,.txt,text/*'
-    input.onchange = async () => {
+    input.onchange = () => {
       const file = input.files?.[0]
-      if (!file) return
-      importContent(await file.text())
-      setContentMode('write')
+      if (file) void importContentFile(file)
     }
     input.click()
   }
 
   // Loads the first dropped text file into the body — the drop counterpart of uploadContent().
   const dropContent = async (files: File[]): Promise<void> => {
-    importContent(await files[0].text())
-    setContentMode('write')
+    const file = files[0]
+    if (file) await importContentFile(file)
   }
 
   // Adds one or more supporting files to the references list (base64-encoded), replacing any
   // existing entry with the same name.
   const addReferences = async (files: File[]): Promise<void> => {
-    const added = await Promise.all(
-      files.map(async (file) => ({
-        path: file.name,
-        dataBase64: await fileToBase64(file)
-      }))
+    if (addingReferences || files.length === 0) return
+
+    setReferenceError(null)
+    const selected = new Map<string, File>()
+    for (const file of files) selected.set(file.name, file)
+    const retained = references.filter((reference) => !selected.has(reference.path))
+    const prospectiveBudget = evaluateSkillBudget(
+      documentBytes,
+      [
+        ...retained.map((reference) => ({
+          path: reference.path,
+          sizeBytes: reference.sizeBytes ?? 0
+        })),
+        ...[...selected.values()].map((file) => ({
+          path: file.name,
+          sizeBytes: file.size
+        }))
+      ],
+      preservedPackageFiles
     )
-    setReferences((prev) => [
-      ...prev.filter((ref) => !added.some((a) => a.path === ref.path)),
-      ...added
-    ])
+    if (prospectiveBudget.violation) {
+      setReferenceError(budgetViolationMessage(prospectiveBudget.violation, t, i18n.language))
+      return
+    }
+
+    setAddingReferences(true)
+    setReferenceProgress({ completed: 0, total: selected.size })
+    try {
+      const added: SkillEditorReference[] = []
+      for (const file of selected.values()) {
+        added.push({
+          path: file.name,
+          sizeBytes: file.size,
+          dataBase64: await fileToBase64(file)
+        })
+        setReferenceProgress({ completed: added.length, total: selected.size })
+      }
+      setReferences([...retained, ...added])
+    } catch (error) {
+      setReferenceError(
+        error instanceof Error && error.message
+          ? error.message
+          : t('Unable to read the selected reference files.')
+      )
+    } finally {
+      setAddingReferences(false)
+      setReferenceProgress(null)
+    }
   }
 
   // Each content area is its own drop zone with an independent overlay state.
@@ -179,12 +400,13 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     onFiles: (files) => void dropContent(files)
   })
   const referenceDrop = useFileDropZone({
-    enabled: true,
+    enabled: !addingReferences,
     onFiles: (files) => void addReferences(files)
   })
 
   const handleSave = async (): Promise<void> => {
     if (!canSave) return
+    setSaveError(null)
     setSaving(true)
     try {
       await onSave({
@@ -195,6 +417,10 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
         metadata: persistedMetadata,
         references: references.map((ref) => ({ path: ref.path, dataBase64: ref.dataBase64 }))
       })
+    } catch (error) {
+      setSaveError(
+        error instanceof Error && error.message ? error.message : t('Unable to save this skill.')
+      )
     } finally {
       setSaving(false)
     }
@@ -337,6 +563,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                 </span>
               </button>
             )}
+            {contentImportError ? <SkillEditorAlert message={contentImportError} /> : null}
           </div>
 
           <div>
@@ -367,8 +594,52 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                   </p>
                 </div>
 
+                <p
+                  aria-label={t('Skill package usage')}
+                  className="mt-2 text-xs text-muted-foreground"
+                >
+                  {t('References: {{count}} / {{limit}}; package: {{size}} / {{total}}', {
+                    count: references.length,
+                    limit: maxReferenceFiles,
+                    size: formatBytes(totalBytes, i18n.language),
+                    total: formatBytes(SKILL_IMPORT_LIMITS.maxTotalBytes, i18n.language)
+                  })}
+                </p>
+                {preservedPackageFiles.length > 0 ? (
+                  <div
+                    aria-label={t('Preserved package files')}
+                    className="mt-3 rounded-lg border border-border bg-muted/20 px-3 py-2"
+                  >
+                    <p className="text-xs font-medium text-foreground">
+                      {t('Preserved package files')} ({preservedPackageFiles.length})
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t('These files stay unchanged when you save in the editor.')}
+                    </p>
+                    <ul className="mt-1 max-h-36 divide-y divide-border overflow-y-auto">
+                      {preservedPackageFiles.map((file) => (
+                        <li key={file.path} className="flex items-center gap-2 py-1.5">
+                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
+                            {file.path}
+                          </span>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {formatBytes(file.sizeBytes, i18n.language)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {referenceError ? <SkillEditorAlert message={referenceError} /> : null}
+                {referenceProgress ? (
+                  <p aria-live="polite" className="mt-2 text-xs text-muted-foreground">
+                    {t('Reading reference files... {{completed}} / {{total}}', referenceProgress)}
+                  </p>
+                ) : null}
+
                 <label
                   {...referenceDrop.dropZoneProps}
+                  aria-busy={addingReferences}
                   className="relative mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-6 py-6 text-center transition-colors motion-reduce:transition-none hover:bg-muted/50 focus-within:ring-3 focus-within:ring-ring/50"
                 >
                   {referenceDrop.isDragging ? (
@@ -378,6 +649,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                     type="file"
                     multiple
                     aria-label={t('Add reference files')}
+                    disabled={addingReferences}
                     className="sr-only"
                     onChange={(event) => void addReferences(Array.from(event.target.files ?? []))}
                   />
@@ -400,12 +672,16 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
                         <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">
                           references/{ref.path}
                         </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {formatBytes(ref.sizeBytes ?? 0, i18n.language)}
+                        </span>
                         <SettingsIconAction
                           label={`Remove ${ref.path}`}
                           icon={X}
-                          onClick={() =>
+                          onClick={() => {
                             setReferences((prev) => prev.filter((item) => item.path !== ref.path))
-                          }
+                            setReferenceError(null)
+                          }}
                           className="size-6"
                           danger
                         />
@@ -416,6 +692,8 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
               </section>
             ) : null}
           </div>
+          {budgetError ? <SkillEditorAlert message={budgetError} /> : null}
+          {saveError ? <SkillEditorAlert message={saveError} /> : null}
         </div>
       </div>
 
@@ -452,7 +730,11 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
           description: detail.description,
           body: detail.body,
           metadata: detail.metadata,
-          references: detail.references.map((ref) => ({ path: ref.path }))
+          references: detail.references.map((ref) => ({
+            path: ref.path,
+            sizeBytes: ref.sizeBytes
+          })),
+          packageFiles: detail.packageFiles
         })
       }
     })

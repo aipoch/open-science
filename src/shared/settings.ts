@@ -884,15 +884,24 @@ export type SkillDetailView = SkillView & {
   body: string
   metadata?: Record<string, string>
   references: SkillReferenceInfo[]
+  // Complete regular-file inventory, with paths relative to the package root.
+  packageFiles: SkillPackageFileInfo[]
 }
 
 export type ExportSkillRequest = { id: string }
 
 export type ExportSkillResult = { saved: boolean }
 
-// A reference file's name (basename under `references/`), without its content.
+// A reference file's name and byte size, without its content.
 export type SkillReferenceInfo = {
   path: string
+  sizeBytes: number
+}
+
+// A regular file in the Skill package, addressed relative to the package root.
+export type SkillPackageFileInfo = {
+  path: string
+  sizeBytes: number
 }
 
 export type SetSkillEnabledRequest = {
@@ -922,7 +931,7 @@ export type CreateSkillRequest = {
   references?: SkillReference[]
 }
 
-// Update an existing personal skill in place.
+// Update an existing personal skill through a staged package replacement.
 export type UpdateSkillRequest = {
   id: string
   description: string

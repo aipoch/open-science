@@ -3777,7 +3777,10 @@ describe('SettingsService: skills', () => {
     })
 
     let detail = await service.getSkillDetail('personal-ref-skill-id')
-    expect(detail.references.map((ref) => ref.path)).toEqual(['drop.py', 'keep.py'])
+    expect(detail.references).toEqual([
+      { path: 'drop.py', sizeBytes: 4 },
+      { path: 'keep.py', sizeBytes: 4 }
+    ])
 
     // Editing keeps one file, drops one, and adds one.
     await service.updateSkill({
@@ -3788,7 +3791,10 @@ describe('SettingsService: skills', () => {
     })
 
     detail = await service.getSkillDetail('personal-ref-skill-id')
-    expect(detail.references.map((ref) => ref.path)).toEqual(['keep.py', 'new.py'])
+    expect(detail.references).toEqual([
+      { path: 'keep.py', sizeBytes: 4 },
+      { path: 'new.py', sizeBytes: 3 }
+    ])
   })
 
   it('force-loads a disabled picked skill for the turn without mutating stored settings', async () => {

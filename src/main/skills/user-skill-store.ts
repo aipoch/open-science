@@ -1,12 +1,20 @@
 import { cp, lstat, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
-import { dump as dumpYaml } from 'js-yaml'
-
 import type { SkillReference, SkillSource } from '../../shared/settings'
+import {
+  frontmatterBlock,
+  serializePersonalSkillDocument
+} from '../../shared/personal-skill-document'
 import { createLogger } from '../logger'
 import type { BundledSkill } from './registry'
 import { readSkillFile } from './skill-files'
+import {
+  decodeBoundedBase64,
+  getBoundedBase64ByteLength,
+  SKILL_IMPORT_LIMITS
+} from './import-limits'
+import { inspectSkillPackage } from './skill-package-inspection'
 import {
   SOURCE_MANIFEST,
   type SkillPackageTransactionOwner
@@ -52,8 +60,7 @@ export const normalizeSkillName = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 64)
 
-export const frontmatterBlock = (fields: Record<string, string>): string =>
-  dumpYaml(fields, { lineWidth: -1 })
+export { frontmatterBlock }
 
 export const parseUserSkillId = (
   id: string
@@ -77,6 +84,41 @@ export type WriteSkillInput = {
 }
 
 type ValidatePackage = (staging: string) => Promise<void>
+type PreparedSkillWrite = {
+  document: string
+  references?: Map<string, SkillReference>
+}
+
+const packageFileSizeError = (): Error => new Error('Skill package contains an oversized file.')
+
+const packageTotalSizeError = (): Error => new Error('Skill package exceeds the total size limit.')
+
+const prepareSkillWrite = (input: WriteSkillInput): PreparedSkillWrite => {
+  const document = serializePersonalSkillDocument(input)
+  const documentBytes = Buffer.byteLength(document, 'utf8')
+  if (documentBytes > SKILL_IMPORT_LIMITS.maxFileBytes) throw packageFileSizeError()
+  if (input.references === undefined) return { document }
+
+  const references = new Map<string, SkillReference>()
+  for (const reference of input.references) {
+    const name = reference.path.split(/[\\/]/).pop() ?? ''
+    if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) continue
+    references.set(name, reference)
+  }
+
+  if (references.size + 1 > SKILL_IMPORT_LIMITS.maxFiles) {
+    throw new Error('Skill package has too many files.')
+  }
+
+  let totalBytes = documentBytes
+  for (const reference of references.values()) {
+    if (reference.dataBase64 === undefined) continue
+    totalBytes += getBoundedBase64ByteLength(reference.dataBase64, SKILL_IMPORT_LIMITS.maxFileBytes)
+    if (totalBytes > SKILL_IMPORT_LIMITS.maxTotalBytes) throw packageTotalSizeError()
+  }
+
+  return { document, references }
+}
 
 // Owns the writable User Skill catalog and Personal Skill lifecycle. Import policy remains in the
 // repository facade, which uses the store's path/catalog primitives inside the same transaction.
@@ -217,15 +259,23 @@ export class UserSkillStore {
     input: WriteSkillInput,
     reservedNames: readonly string[] = []
   ): Promise<string> {
-    return this.transactions.runExclusive(async () => {
-      const name = input.name.trim()
-      assertUsableSkillName(name)
+    const name = input.name.trim()
+    assertUsableSkillName(name)
+    const prepared = prepareSkillWrite({ ...input, name })
+
+    return this.transactions.runRecovered(async () => {
       if (await this.skillNameTaken(name, reservedNames)) {
         throw new Error(`A skill named "${name}" already exists.`)
       }
-      await this.writeSkill('personal', name, { ...input, name })
+
+      const staged = await this.transactions.stage('personal', name, async (staging) => {
+        await mkdir(staging, { recursive: true })
+        await this.writeSkillDirectory(staging, prepared)
+        await inspectSkillPackage(staging)
+      })
+      await this.transactions.promote(staged)
       return `personal-${name}`
-    })
+    }, ['personal'])
   }
 
   async publishPersonalDirectory(
@@ -277,7 +327,27 @@ export class UserSkillStore {
     const parsed = parseUserSkillId(id)
     if (!parsed || parsed.source !== 'personal') throw new Error(`Not a personal skill id: ${id}`)
     const name = parsed.directoryName
-    await this.transactions.runExclusive(() => this.writeSkill('personal', name, input))
+    const prepared = prepareSkillWrite(input)
+
+    await this.transactions.runRecovered(async () => {
+      const live = this.skillDirectory('personal', name)
+      const staged = await this.transactions.stage('personal', name, async (staging) => {
+        await cp(live, staging, {
+          recursive: true,
+          force: false,
+          errorOnExist: true,
+          filter: async (entry) => {
+            if ((await lstat(entry)).isSymbolicLink()) {
+              throw new Error('Refusing to update a Skill containing a symbolic link.')
+            }
+            return true
+          }
+        })
+        await this.writeSkillDirectory(staging, prepared)
+        await inspectSkillPackage(staging)
+      })
+      await this.transactions.promote(staged)
+    }, ['personal'])
   }
 
   async delete(id: string, guard?: (skillId: string) => Promise<void>): Promise<void> {
@@ -332,43 +402,15 @@ export class UserSkillStore {
     return (await this.listDirectoryNames(source)).includes(directoryName)
   }
 
-  private async writeSkill(
-    source: UserSkillSource,
-    directoryName: string,
-    input: WriteSkillInput
+  private async writeSkillDirectory(
+    directory: string,
+    prepared: PreparedSkillWrite
   ): Promise<void> {
-    const dir = this.skillDirectory(source, directoryName)
-    await mkdir(dir, { recursive: true })
+    await writeFile(join(directory, 'SKILL.md'), prepared.document, 'utf8')
 
-    const metadata = Object.fromEntries(
-      Object.entries(input.metadata ?? {}).filter(
-        ([key, value]) =>
-          key.toLowerCase() !== 'name' &&
-          key.toLowerCase() !== 'description' &&
-          /^[A-Za-z0-9_-]+$/.test(key) &&
-          typeof value === 'string'
-      )
-    )
-    const displayName = metadata.displayname
-    delete metadata.displayname
-    const frontmatter = `---\n${frontmatterBlock({
-      name: input.name,
-      description: input.description,
-      ...(displayName ? { displayName } : {}),
-      ...metadata
-    })}---`
-    await writeFile(join(dir, 'SKILL.md'), `${frontmatter}\n\n${input.body.trimStart()}`, 'utf8')
+    if (prepared.references === undefined) return
 
-    if (input.references === undefined) return
-
-    const refsDir = join(dir, 'references')
-    const desired = new Map<string, SkillReference>()
-    for (const reference of input.references) {
-      const name = reference.path.split(/[\\/]/).pop() ?? ''
-      if (!name || !/^[A-Za-z0-9._-]+$/.test(name)) continue
-      desired.set(name, reference)
-    }
-
+    const refsDir = join(directory, 'references')
     let existing: string[] = []
     try {
       existing = await readdir(refsDir)
@@ -376,14 +418,20 @@ export class UserSkillStore {
       existing = []
     }
     for (const name of existing) {
-      if (!desired.has(name)) await rm(join(refsDir, name), { recursive: true, force: true })
+      if (!prepared.references.has(name)) {
+        const target = join(refsDir, name)
+        if ((await lstat(target)).isFile()) await rm(target, { force: true })
+      }
     }
 
-    for (const [name, reference] of desired) {
+    for (const [name, reference] of prepared.references) {
       if (reference.dataBase64 === undefined) continue
       const target = join(refsDir, name)
       await mkdir(dirname(target), { recursive: true })
-      await writeFile(target, Buffer.from(reference.dataBase64, 'base64'))
+      await writeFile(
+        target,
+        decodeBoundedBase64(reference.dataBase64, SKILL_IMPORT_LIMITS.maxFileBytes)
+      )
     }
   }
 }
