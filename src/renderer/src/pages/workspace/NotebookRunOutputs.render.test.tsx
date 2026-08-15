@@ -41,6 +41,14 @@ const render = (outputs: NotebookOutput[], textOverride?: Partial<NotebookRunRec
 }
 
 describe('NotebookRunOutputs', () => {
+  it('shows the truncation notice even when all output was omitted', () => {
+    render([], { truncated: true })
+
+    expect(container.querySelector('[data-testid="notebook-output-truncated"]')?.textContent).toBe(
+      'Output was truncated to keep this Notebook responsive.'
+    )
+  })
+
   it('renders a repl echoed result (display text/plain) that has no stdout', () => {
     render([{ type: 'display', data: { 'text/plain': '{ pmids: [ "1", "2" ] }' } }])
 

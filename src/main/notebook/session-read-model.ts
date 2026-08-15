@@ -20,6 +20,7 @@ import {
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import type { NotebookLaneIdentity } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
+import { NOTEBOOK_RENDERER_RUN_LIMIT } from './content-limits'
 
 type NotebookHandoffContext = {
   activeRunId?: string
@@ -57,6 +58,7 @@ type NotebookSessionReadSource = {
   readonly lane: NotebookLaneIdentity
   snapshot: () => NotebookSessionSnapshot
   kernelStatusEntries: () => Array<[string, NotebookKernelMetadata['lastKnownStatus']]>
+  latestKernelStatus: () => NotebookKernelMetadata['lastKnownStatus'] | undefined
   runtimeBindingEntries: () => Array<[NotebookLanguage, NotebookRuntimeBinding]>
 }
 
@@ -135,7 +137,12 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       lane: session.lane
     })
     const snapshot = session.snapshot()
-    const runs = await this.options.repository.readSessionRuns(session.projectId, session.sessionId)
+    const runWindow = await this.options.repository.readSessionRunWindow(
+      session.projectId,
+      session.sessionId,
+      NOTEBOOK_RENDERER_RUN_LIMIT
+    )
+    const liveKernelStatus = session.latestKernelStatus()
 
     return {
       id: session.id,
@@ -145,13 +152,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       dataRoot: session.dataRoot,
       runtimeRoot: session.runtimeRoot,
       pythonPath: document.kernel.pythonPath,
-      kernelStatus: document.kernel.lastKnownStatus,
+      kernelStatus: liveKernelStatus ?? document.kernel.lastKnownStatus,
       runJsonPath: session.runJsonPath,
-      cells: snapshot.cells.map((cell) => ({ ...cell })),
+      cells: snapshot.cells.slice(-NOTEBOOK_RENDERER_RUN_LIMIT).map((cell) => ({ ...cell })),
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
-      runs: runs.map((run) => this.toPublicRunRecord(run)),
-      recentRuns: runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+      runCount: runWindow.total,
+      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
+      recentRuns: runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       environments: this.environmentStatuses(session),
       runtimeBindings: this.options.runtimeBindings(session)
     }

@@ -21,7 +21,6 @@ import {
   type EnvironmentCaptureTarget
 } from './environment-state-tracker'
 import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import type { NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import { notebookLaneScope } from './lane-identity'
 import type {
@@ -80,7 +79,6 @@ type McpRpcConnectionResolver = (
 
 type NotebookExecutionOwnerOptions = {
   configRoot: string
-  repository: Pick<NotebookRunRepository, 'updateKernelStatus'>
   runTerminalization: NotebookRunTerminalizationOwner
   dataExecutionAdmission: NotebookDataExecutionAdmissionOwner
   environmentStateTracker: Pick<EnvironmentStateTracker, 'prepareRun' | 'captureCompletedRun'>
@@ -91,9 +89,13 @@ type NotebookExecutionOwnerOptions = {
     resolvedInterpreter: NotebookSessionResolvedInterpreter | undefined,
     runtimeRoot: string
   ) => EnvironmentCaptureTarget
-  persistKernelStatus: (
+  setKernelStatus: (
     session: NotebookSessionAggregate,
     status: 'running' | 'idle',
+    processKey: string
+  ) => void
+  persistRecoveredKernelIdle: (
+    session: NotebookSessionAggregate,
     processKey: string
   ) => Promise<void>
   getMcpRpcConnectionResolver: () => McpRpcConnectionResolver | undefined
@@ -194,9 +196,10 @@ class NotebookExecutionOwner {
       )
     }
     const kernelMarkedRunning = admission.rejection === undefined
+    const kernelWasTerminated = session.isKernelTerminated(processKey)
     if (kernelMarkedRunning) {
       session.clearKernelTerminated(processKey)
-      await this.options.persistKernelStatus(session, 'running', processKey)
+      this.options.setKernelStatus(session, 'running', processKey)
     }
     let executedOnLiveKernel = true
     let reachedExecutor = false
@@ -285,7 +288,10 @@ class NotebookExecutionOwner {
       !session.isKernelTerminated(processKey) &&
       (executedOnLiveKernel || (kernelMarkedRunning && !reachedExecutor))
     ) {
-      await this.options.persistKernelStatus(session, 'idle', processKey)
+      this.options.setKernelStatus(session, 'idle', processKey)
+      if (kernelWasTerminated) {
+        await this.options.persistRecoveredKernelIdle(session, processKey)
+      }
     }
     return run
   }
@@ -390,9 +396,12 @@ class NotebookExecutionOwner {
       runtimeRoot: session.runtimeRoot,
       cwd: session.cwd
     })
+    const replWasTerminated =
+      !blockedMutation &&
+      session.kernelStatusEntries().some(([, status]) => status === 'terminated')
     if (!blockedMutation) {
       session.clearKernelTerminated('repl')
-      await this.persistReplStatus(session, 'running')
+      this.setReplStatus(session, 'running')
     }
 
     let executedOnLiveKernel = !blockedMutation
@@ -456,7 +465,10 @@ class NotebookExecutionOwner {
     })
 
     if (executedOnLiveKernel && !session.isKernelTerminated('repl')) {
-      await this.persistReplStatus(session, 'idle')
+      this.setReplStatus(session, 'idle')
+      // A terminated status is durable; clear it once, while ordinary running/idle transitions stay
+      // in memory and do not rewrite the whole run.json document.
+      if (replWasTerminated) await this.options.persistRecoveredKernelIdle(session, 'repl')
     }
 
     return {
@@ -548,6 +560,7 @@ class NotebookExecutionOwner {
           traceback: '',
           cwdAfter: session.cwd,
           outputs,
+          truncated: shellResult.truncated,
           workingFiles,
           exitCode: shellResult.exitCode
         }
@@ -557,21 +570,8 @@ class NotebookExecutionOwner {
     return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode }
   }
 
-  private async persistReplStatus(
-    session: NotebookSessionAggregate,
-    status: 'running' | 'idle'
-  ): Promise<void> {
+  private setReplStatus(session: NotebookSessionAggregate, status: 'running' | 'idle'): void {
     session.setKernelStatus('repl', status)
-    try {
-      await this.options.repository.updateKernelStatus({
-        projectName: session.projectId,
-        sessionId: session.sessionId,
-        lane: session.lane,
-        status
-      })
-    } catch {
-      // Best effort: status persistence must not replace an execution result.
-    }
   }
 }
 

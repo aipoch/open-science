@@ -57,6 +57,7 @@ import {
   writeRReadyMarker
 } from './runtime-paths'
 import type { NotebookShellProcess } from './shell-process'
+import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 
 let storageRoot: string | undefined
 
@@ -271,6 +272,29 @@ describe('notebook runtime service', () => {
 
     await service.shutdownSession('session-1')
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
+  it('rejects oversized streamed code and releases the write lock', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const begin = await service.beginCodeCell({
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+
+    await expect(
+      service.appendCodeCell({
+        sessionId: 'session-1',
+        workspaceCwd: root,
+        cellId: begin.cellId,
+        writeId: begin.writeId,
+        delta: 'x'.repeat(NOTEBOOK_CODE_LIMIT_BYTES + 1)
+      })
+    ).rejects.toThrow(/exceeds/u)
+
+    const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(state.activeWrite).toBeUndefined()
+    expect(state.cells[0]).toMatchObject({ id: begin.cellId, code: '', status: 'idle' })
   })
 
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
@@ -3303,13 +3327,14 @@ describe('notebook runtime service', () => {
     // observe how many runs are concurrently in flight and in what order.
     const holdingService = (
       root: string,
-      onStart: (request: NotebookExecutionRequest, release: () => void) => void
+      onStart: (request: NotebookExecutionRequest, release: () => void) => void,
+      repository = new NotebookRunRepository(root)
     ): NotebookRuntimeService =>
       new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectName: 'default-project',
-        repository: new NotebookRunRepository(root),
+        repository,
         environmentStateTracker: {
           prepareRun: vi.fn().mockResolvedValue({
             fingerprint: 'stable',
@@ -3355,6 +3380,30 @@ describe('notebook runtime service', () => {
       await run
       const settled = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(settled.kernelStatus).toBe('idle')
+    })
+
+    it('keeps ordinary running/idle status in memory without rewriting run.json', async () => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const statusWrite = vi.spyOn(repository, 'updateKernelStatus')
+      let release: (() => void) | undefined
+      const service = holdingService(
+        root,
+        (_request, resolve) => {
+          release = resolve
+        },
+        repository
+      )
+
+      const run = service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+      await vi.waitFor(() => expect(release).toBeDefined())
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
+      ).toBe('running')
+      release?.()
+      await run
+
+      expect(statusWrite).not.toHaveBeenCalled()
     })
 
     it('keeps the kernel idle when the runtime mutation policy rejects before execution', async () => {

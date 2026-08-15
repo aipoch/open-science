@@ -145,6 +145,7 @@ describe('Notebook command workflows', () => {
       kernelStatus: 'idle',
       runJsonPath: '/data/notebooks/session-1/run.json',
       cells: [],
+      runCount: 0,
       runs: [],
       recentRuns: [],
       environments: []

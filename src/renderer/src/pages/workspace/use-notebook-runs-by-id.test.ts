@@ -44,6 +44,7 @@ const makeState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
   kernelStatus: 'idle',
   runJsonPath: reference.runJsonPath,
   cells: [],
+  runCount: runs.length,
   runs,
   recentRuns: runs,
   environments: []
@@ -99,7 +100,7 @@ describe('useNotebookRunsById', () => {
     expect(stopChanged).toHaveBeenCalledOnce()
   })
 
-  it('ignores an older state request that resolves after a newer notebook change', async () => {
+  it('coalesces changes while a state request is in flight and then loads the latest state', async () => {
     let resolveInitial: ((state: NotebookSessionState) => void) | undefined
     let resolveChanged: ((state: NotebookSessionState) => void) | undefined
     vi.mocked(window.api.notebook.state)
@@ -117,13 +118,14 @@ describe('useNotebookRunsById', () => {
 
     await waitFor(() => expect(window.api.notebook.state).toHaveBeenCalledOnce())
     act(() => changedListener?.(reference))
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(1)
+
+    await act(async () => resolveInitial?.(makeState([makeRun('first-run', 'RklSU1Q=')])))
     await waitFor(() => expect(window.api.notebook.state).toHaveBeenCalledTimes(2))
 
     await act(async () => resolveChanged?.(makeState([makeRun('new-run', 'TkVX')])))
     await waitFor(() => expect(result.current.has('new-run')).toBe(true))
-
-    await act(async () => resolveInitial?.(makeState([makeRun('stale-run', 'T0xE')])))
+    expect(result.current.has('first-run')).toBe(false)
     expect(result.current.has('new-run')).toBe(true)
-    expect(result.current.has('stale-run')).toBe(false)
   })
 })

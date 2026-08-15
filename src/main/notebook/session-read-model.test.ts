@@ -70,6 +70,7 @@ const makeSession = (
     lane: createFrameNotebookLane(projectId, sessionId, 'root-frame-session-1'),
     snapshot: () => snapshot,
     kernelStatusEntries: () => snapshot.kernelStatuses.map((entry) => [...entry]),
+    latestKernelStatus: () => snapshot.kernelStatuses.at(-1)?.[1],
     runtimeBindingEntries: () =>
       withRuntimeBinding
         ? [
@@ -192,6 +193,40 @@ describe('NotebookSessionReadModel', () => {
       ],
       runtimeBindings: { python: { runtimeId: 'managed-python' } }
     })
+  })
+
+  it('returns only the most recent 100 runs while reporting the durable total', async () => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = makeSession(storageRoot, {
+      cells: Array.from({ length: 125 }, (_, index) => ({
+        id: `cell-${index}`,
+        language: 'python',
+        code: String(index),
+        status: 'completed'
+      }))
+    })
+    await repository.loadOrCreate({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      workspaceCwd: session.cwd
+    })
+    vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      runs: Array.from({ length: 100 }, (_, index) =>
+        makeRun({ runId: `run-${index + 25}`, cellId: `cell-${index + 25}`, startedAt: index + 25 })
+      ),
+      total: 125
+    })
+
+    const state = await makeReadModel(storageRoot, session, repository).state(session)
+
+    expect(state.runCount).toBe(125)
+    expect(state.runs).toHaveLength(100)
+    expect(state.runs[0]?.runId).toBe('run-25')
+    expect(state.recentRuns).toHaveLength(20)
+    expect(state.cells).toHaveLength(100)
+    expect(state.cells[0]?.id).toBe('cell-25')
   })
 
   it('prefers a live reference and otherwise falls back to normalized durable roots', async () => {

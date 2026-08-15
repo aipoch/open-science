@@ -8,6 +8,7 @@ import type {
 } from '../../shared/notebook'
 import type { NotebookRunRepository } from './repository'
 import { notebookLaneKey, type NotebookLaneIdentity } from './lane-identity'
+import { limitNotebookTerminalContent } from './content-limits'
 
 type NotebookRunIdentity = Readonly<{
   runId: string
@@ -27,6 +28,7 @@ type NotebookRunTerminalResult = {
   traceback: string
   cwdAfter?: string
   outputs: NotebookOutput[]
+  truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
   environmentManifest?: NotebookEnvironmentManifest
   environmentManifestChecksum?: string
@@ -168,33 +170,35 @@ class NotebookRunTerminalizationOwner {
     result: NotebookRunTerminalResult,
     interruptionReason?: NotebookRunRecord['interruptionReason']
   ): NotebookRunRecord {
+    const limitedResult = limitNotebookTerminalContent(result)
     const environmentCapture: NotebookRunEnvironmentCapture =
-      result.environmentCapture ??
+      limitedResult.environmentCapture ??
       (runningRun.kernelKind === 'python' || runningRun.kernelKind === 'r'
         ? { state: 'unavailable', reason: 'environment-capture-failed' }
         : { state: 'unavailable', reason: 'environment-not-supported' })
     const terminalRun: NotebookRunRecord = {
       ...runningRun,
-      status: result.status,
+      status: limitedResult.status,
       endedAt: this.now(),
-      cwdAfter: result.cwdAfter,
+      cwdAfter: limitedResult.cwdAfter,
       text: {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        traceback: result.traceback,
-        plain: outputPlainText(result.stdout, result.stderr)
+        stdout: limitedResult.stdout,
+        stderr: limitedResult.stderr,
+        traceback: limitedResult.traceback,
+        plain: outputPlainText(limitedResult.stdout, limitedResult.stderr)
       },
       // The normalized outputs already include any traceback; appending another error output would
       // make the preview render it twice.
-      outputs: result.outputs,
-      workingFiles: result.workingFiles ?? [],
+      outputs: limitedResult.outputs,
+      workingFiles: limitedResult.workingFiles ?? [],
+      ...(limitedResult.truncated ? { truncated: true } : {}),
       environmentCapture,
       ...(interruptionReason ? { interruptionReason } : {}),
-      ...(environmentCapture.state !== 'unavailable' && result.environmentManifest
-        ? { environmentManifest: result.environmentManifest }
+      ...(environmentCapture.state !== 'unavailable' && limitedResult.environmentManifest
+        ? { environmentManifest: limitedResult.environmentManifest }
         : {}),
-      ...(environmentCapture.state !== 'unavailable' && result.environmentManifestChecksum
-        ? { environmentManifestChecksum: result.environmentManifestChecksum }
+      ...(environmentCapture.state !== 'unavailable' && limitedResult.environmentManifestChecksum
+        ? { environmentManifestChecksum: limitedResult.environmentManifestChecksum }
         : {})
     }
     return terminalRun

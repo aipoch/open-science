@@ -143,6 +143,9 @@ describe('notebook run repository', () => {
       { runId: 'legacy', agentFrameId: undefined },
       { runId: 'child', agentFrameId: 'child-frame-1' }
     ])
+    await expect(
+      repository.readSessionRunWindow('default-project', 'session-1', 1)
+    ).resolves.toEqual({ runs: [expect.objectContaining({ runId: 'child' })], total: 2 })
   })
 
   it('creates run.json under the notebook session workspace with runtime and data roots', async () => {

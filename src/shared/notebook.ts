@@ -432,6 +432,8 @@ export type NotebookSessionState = {
   cells: NotebookCell[]
   activeWrite?: NotebookWriteLock
   activeRunId?: string
+  // Total durable run count across lanes. `runs` is a bounded recent window for renderer safety.
+  runCount: number
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
   // Live per-(kind, env) kernel status view (design D6); empty until the session spawns a kernel.

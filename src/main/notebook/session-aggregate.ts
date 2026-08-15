@@ -59,6 +59,7 @@ export type NotebookSessionExecutionResult = {
   traceback: string
   cwdAfter: string
   outputs: NotebookOutput[]
+  truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
   environmentOverlay?: NotebookLiveEnvironmentOverlay
   environmentCapture?: NotebookRunEnvironmentCapture
@@ -177,6 +178,8 @@ export class NotebookSessionAggregate<
   private mcpRpcConnection: NotebookSessionMcpRpcConnection | undefined
   private readonly terminatedKernels = new Set<string>()
   private readonly kernelStatuses = new Map<string, NotebookKernelMetadata['lastKnownStatus']>()
+  private latestKernelStatusKey: string | undefined
+  private latestKernelStatusValue: NotebookKernelMetadata['lastKnownStatus'] | undefined
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
   private readonly forceStoppedKeys = new Set<string>()
 
@@ -250,6 +253,16 @@ export class NotebookSessionAggregate<
     const cell = this.requireCell(cellId)
     this.assertActiveWrite(writeId, cellId)
     cell.code += delta
+    return cloneCell(cell)
+  }
+
+  abortCellWrite(cellId: string, writeId: string): Readonly<NotebookCell> {
+    const cell = this.requireCell(cellId)
+    this.assertActiveWrite(writeId, cellId)
+    this.activeWriteValue = undefined
+    cell.writeId = undefined
+    cell.code = ''
+    cell.status = 'idle'
     return cloneCell(cell)
   }
 
@@ -355,6 +368,11 @@ export class NotebookSessionAggregate<
 
   clearProcessState(processKey: string): void {
     this.kernelStatuses.delete(processKey)
+    if (this.latestKernelStatusKey === processKey) {
+      const latest = Array.from(this.kernelStatuses.entries()).at(-1)
+      this.latestKernelStatusKey = latest?.[0]
+      this.latestKernelStatusValue = latest?.[1]
+    }
     this.terminatedKernels.delete(processKey)
     this.executionQueues.delete(processKey)
   }
@@ -373,6 +391,12 @@ export class NotebookSessionAggregate<
 
   setKernelStatus(processKey: string, status: NotebookKernelMetadata['lastKnownStatus']): void {
     this.kernelStatuses.set(processKey, status)
+    this.latestKernelStatusKey = processKey
+    this.latestKernelStatusValue = status
+  }
+
+  latestKernelStatus(): NotebookKernelMetadata['lastKnownStatus'] | undefined {
+    return this.latestKernelStatusValue
   }
 
   markKernelTerminated(processKey: string): void {

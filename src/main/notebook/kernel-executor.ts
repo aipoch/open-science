@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync } from 'node:fs'
-import { readFile, rm, unlink } from 'node:fs/promises'
+import { readFile, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { createInterface, type Interface } from 'node:readline'
@@ -34,6 +34,16 @@ import type {
 } from './runtime-service'
 import { TimeoutController } from './timeout-controller'
 import { startWorkingFileObservation, type WorkingFileObservation } from './working-file-observer'
+import {
+  NOTEBOOK_FIGURE_COUNT_LIMIT,
+  NOTEBOOK_FIGURE_COUNT_LIMIT_ENV,
+  NOTEBOOK_FIGURE_LIMIT_BYTES,
+  NOTEBOOK_FIGURE_LIMIT_ENV,
+  NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES,
+  NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV,
+  NOTEBOOK_TEXT_LIMIT_BYTES,
+  NOTEBOOK_TEXT_LIMIT_ENV
+} from './content-limits'
 
 // Driver-internal process kind. 'python'/'r' are the data kernels selected by the agent-facing
 // NotebookLanguage; 'repl' is the control-plane Node kernel reached only via the control path. The
@@ -309,14 +319,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
       const workingFiles = await workingFileObservation.finish()
       workingFileObservation = undefined
 
-      const figures = await this.readFigures(response.figures)
+      const figureResult = await this.readFigures(response.figures)
       const mapped = mapLoopOutputs({
         stdout: response.stdout,
         stderr: response.stderr,
         error: response.error,
         errorLine: response.errorLine,
         result: response.result,
-        figures
+        figures: figureResult.figures
       })
 
       // A soft-timeout interrupt was sent for this run; whatever answered is reported as a timeout,
@@ -338,6 +348,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         outputs: cancelled
           ? mapped.outputs.filter((output) => output.type !== 'error')
           : mapped.outputs,
+        truncated: response.outputTruncated || figureResult.truncated,
         workingFiles,
         environmentOverlay: response.environmentOverlay
       }
@@ -600,6 +611,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
       // App-owned directories the kernel must not read (e.g. materialized skill files).
       OPEN_SCIENCE_PROTECTED_DIRS: (request.protectedDirs ?? []).join(delimiter),
       [KERNEL_FIGURES_DIR_ENV]: figuresDir,
+      [NOTEBOOK_TEXT_LIMIT_ENV]: String(NOTEBOOK_TEXT_LIMIT_BYTES),
+      [NOTEBOOK_FIGURE_LIMIT_ENV]: String(NOTEBOOK_FIGURE_LIMIT_BYTES),
+      [NOTEBOOK_FIGURE_COUNT_LIMIT_ENV]: String(NOTEBOOK_FIGURE_COUNT_LIMIT),
+      [NOTEBOOK_FIGURE_TOTAL_LIMIT_ENV]: String(NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES),
       // Connector RPC endpoint/token reach ONLY the control-plane repl kernel: the python/r data
       // kernels have no host.mcp and no outbound connector access. Gating on kind here is
       // defense-in-depth — even if a data request ever carried these, python/r would never see them.
@@ -751,18 +766,33 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   // Reads each captured figure file, base64-encodes it, and unlinks it. A missing/unreadable file is
   // skipped rather than failing the whole cell.
-  private async readFigures(figures: KernelLoopFigure[]): Promise<MappedFigure[]> {
+  private async readFigures(
+    figures: KernelLoopFigure[]
+  ): Promise<{ figures: MappedFigure[]; truncated: boolean }> {
     const mapped: MappedFigure[] = []
+    let totalBytes = 0
+    let truncated = false
     for (const figure of figures) {
       try {
+        const info = await stat(figure.path)
+        if (
+          mapped.length >= NOTEBOOK_FIGURE_COUNT_LIMIT ||
+          info.size > NOTEBOOK_FIGURE_LIMIT_BYTES ||
+          totalBytes + info.size > NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES
+        ) {
+          truncated = true
+          await unlink(figure.path).catch(() => {})
+          continue
+        }
         const data = await readFile(figure.path)
         mapped.push({ mime: figure.mime, base64: data.toString('base64') })
+        totalBytes += data.byteLength
         await unlink(figure.path).catch(() => {})
       } catch {
         // Skip a figure that vanished or could not be read.
       }
     }
-    return mapped
+    return { figures: mapped, truncated }
   }
 
   // Removes a wedged loop from the routing map after a hard kill so the next execute() respawns it.

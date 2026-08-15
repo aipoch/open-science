@@ -17,6 +17,7 @@ export type KernelLoopResponse = {
   result: string | null
   cwd: string
   figures: KernelLoopFigure[]
+  outputTruncated?: boolean
   environmentOverlay?: NotebookLiveEnvironmentOverlay
 }
 
@@ -118,6 +119,7 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
     result: typeof obj.result === 'string' ? obj.result : null,
     cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
     figures,
+    ...(obj.output_truncated === true ? { outputTruncated: true } : {}),
     ...(environmentOverlay ? { environmentOverlay } : {})
   }
 }

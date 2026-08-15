@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
@@ -209,6 +209,10 @@ const normalizeDocument = (
 class NotebookRunRepository {
   private saveQueue: Promise<void> = Promise.resolve()
   private saveSequence = 0
+  private readonly documentCache = new Map<
+    string,
+    { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
+  >()
 
   constructor(private readonly storageRoot: string) {}
 
@@ -423,6 +427,36 @@ class NotebookRunRepository {
       )
   }
 
+  async readSessionRunWindow(
+    projectName: string,
+    sessionId: string,
+    limit: number
+  ): Promise<{ runs: NotebookRunRecord[]; total: number }> {
+    const documents = await this.readSessionDocuments(projectName, sessionId)
+    const runs: NotebookRunRecord[] = []
+    let total = 0
+    const compareRuns = (left: NotebookRunRecord, right: NotebookRunRecord): number =>
+      left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
+
+    for (const document of documents) {
+      for (const run of document.runs) {
+        total += 1
+        if (limit <= 0) continue
+        let low = 0
+        let high = runs.length
+        while (low < high) {
+          const middle = (low + high) >>> 1
+          if (compareRuns(runs[middle], run) <= 0) low = middle + 1
+          else high = middle
+        }
+        runs.splice(low, 0, run)
+        if (runs.length > limit) runs.shift()
+      }
+    }
+
+    return { runs, total }
+  }
+
   // Loads a history document that must already exist for mutating operations.
   private async loadExisting(
     projectName: string,
@@ -432,12 +466,22 @@ class NotebookRunRepository {
     const safeProjectName = assertSafeNotebookPathSegment(projectName)
     const safeSessionId = assertSafeNotebookPathSegment(sessionId)
     const filePath = getNotebookRunJsonPath(this.storageRoot, safeProjectName, safeSessionId, lane)
+    const fileInfo = await stat(filePath)
+    const cached = this.documentCache.get(filePath)
+    if (
+      cached &&
+      cached.mtimeMs === fileInfo.mtimeMs &&
+      cached.size === fileInfo.size &&
+      cached.ino === fileInfo.ino
+    ) {
+      return cached.document
+    }
     const rawDocument = await readFile(filePath, 'utf8')
     const document = JSON.parse(rawDocument) as NotebookRunDocument
     // Decode before normalization for the same reason as loadOrCreate above.
     const decoded = decodeRunDocumentDataPaths(document, this.storageRoot)
 
-    return normalizeDocument(
+    const normalized = normalizeDocument(
       this.storageRoot,
       {
         projectName: safeProjectName,
@@ -446,6 +490,14 @@ class NotebookRunRepository {
       },
       decoded
     )
+    const currentInfo = await stat(filePath)
+    this.documentCache.set(filePath, {
+      mtimeMs: currentInfo.mtimeMs,
+      size: currentInfo.size,
+      ino: currentInfo.ino,
+      document: normalized
+    })
+    return normalized
   }
 
   // Reads the current document, applies `transform`, and writes back the result -- the read and write
@@ -516,6 +568,13 @@ class NotebookRunRepository {
     const encoded = encodeRunDocumentDataPaths(document, this.storageRoot)
     await writeFile(temporaryPath, `${JSON.stringify(encoded, null, 2)}\n`, 'utf8')
     await rename(temporaryPath, filePath)
+    const fileInfo = await stat(filePath)
+    this.documentCache.set(filePath, {
+      mtimeMs: fileInfo.mtimeMs,
+      size: fileInfo.size,
+      ino: fileInfo.ino,
+      document
+    })
   }
 }
 

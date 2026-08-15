@@ -17,6 +17,29 @@ const { fileURLToPath } = require('node:url')
 // Protocol output line. console is captured into strings during a run (see run()), so writing the
 // JSON here via process.stdout.write cannot be corrupted by user console output.
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
+const OUTPUT_LIMIT_BYTES =
+  Number(process.env.OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES) || 2 * 1024 * 1024
+
+const takeOutput = (budget, value) => {
+  value = String(value)
+  if (budget.remaining <= 0) {
+    if (value) budget.truncated = true
+    return ''
+  }
+  const candidate = value.length > budget.remaining ? value.slice(0, budget.remaining) : value
+  const encoded = Buffer.from(candidate, 'utf8')
+  if (encoded.byteLength <= budget.remaining) {
+    budget.remaining -= encoded.byteLength
+    if (candidate.length < value.length) budget.truncated = true
+    return encoded.toString('utf8')
+  }
+  let end = Math.min(budget.remaining, encoded.byteLength)
+  while (end > 0 && end < encoded.byteLength && (encoded[end] & 0xc0) === 0x80) end -= 1
+  const prefix = encoded.subarray(0, end).toString('utf8')
+  budget.remaining -= Buffer.byteLength(prefix, 'utf8')
+  budget.truncated = true
+  return prefix
+}
 
 // Capture the connector RPC credentials privately, then delete them from process.env BEFORE the
 // sandbox is built. The sandbox exposes `process` (for cwd() etc.), so leaving the token in
@@ -1010,9 +1033,9 @@ function isValidHostCapabilityProjection(value) {
   if (Object.getPrototypeOf(value) !== Object.prototype) return false
 
   const entries = Object.entries(value)
-  const knownEntries = HOST_CAPABILITY_KNOWN_KEYS.filter((name) =>
-    Object.hasOwn(value, name)
-  ).map((name) => [name, value[name]])
+  const knownEntries = HOST_CAPABILITY_KNOWN_KEYS.filter((name) => Object.hasOwn(value, name)).map(
+    (name) => [name, value[name]]
+  )
   const unknownEntries = entries.filter(([name]) => !HOST_CAPABILITY_KNOWN_KEYS.includes(name))
   return (
     entries.length <= HOST_CAPABILITY_MAX_FIELDS &&
@@ -3168,13 +3191,14 @@ function wrapForRun(code) {
 async function run(code) {
   let out = '',
     err = ''
+  const outputBudget = { remaining: OUTPUT_LIMIT_BYTES, truncated: false }
   const origLog = console.log,
     origErr = console.error
   console.log = (...a) => {
-    out += a.map(String).join(' ') + '\n'
+    out += takeOutput(outputBudget, a.map(String).join(' ') + '\n')
   }
   console.error = (...a) => {
-    err += a.map(String).join(' ') + '\n'
+    err += takeOutput(outputBudget, a.map(String).join(' ') + '\n')
   }
   let error = null,
     result = null
@@ -3183,18 +3207,26 @@ async function run(code) {
     if (value !== undefined) {
       // Non-serializable (e.g. circular) echoes fall back to a string so a run never fails on output.
       try {
-        result = typeof value === 'string' ? value : JSON.stringify(value)
+        result = takeOutput(outputBudget, typeof value === 'string' ? value : JSON.stringify(value))
       } catch {
-        result = String(value)
+        result = takeOutput(outputBudget, String(value))
       }
     }
   } catch (e) {
-    error = e && e.stack ? String(e.stack) : String(e)
+    error = takeOutput(outputBudget, e && e.stack ? String(e.stack) : String(e))
   } finally {
     console.log = origLog
     console.error = origErr
   }
-  return { stdout: out, stderr: err, error, result, cwd: process.cwd(), figures: [] }
+  return {
+    stdout: out,
+    stderr: err,
+    error,
+    result,
+    cwd: process.cwd(),
+    figures: [],
+    output_truncated: outputBudget.truncated
+  }
 }
 
 const rl = readline.createInterface({ input: process.stdin })

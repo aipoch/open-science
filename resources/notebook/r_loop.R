@@ -573,6 +573,10 @@ rm(
 )
 
 figures_dir <- Sys.getenv("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
+text_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES", 2 * 1024 * 1024))
+figure_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", 3.5 * 1024 * 1024))
+figure_count_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
+figure_total_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
 con <- file("stdin", "rb")
 
 emit <- function(obj) {
@@ -637,6 +641,10 @@ read_request <- function() {
 
 run <- base::local({
   kernel_figures_dir <- figures_dir
+  output_text_limit <- text_limit_bytes
+  output_figure_limit <- figure_limit_bytes
+  output_figure_count_limit <- figure_count_limit
+  output_figure_total_limit <- figure_total_limit_bytes
   capture_width <- 800L
   capture_height <- 600L
   capture_res <- 96L
@@ -660,6 +668,7 @@ run <- base::local({
     capture_state$recorded_plot_seen <- FALSE
     capture_state$graphics_state_seen <- FALSE
     capture_state$closed <- FALSE
+    capture_state$output_truncated <- FALSE
     capture_state$external_device_capture_keys <- character()
     capture_state$external_capture_keys <- character()
   }
@@ -671,9 +680,15 @@ run <- base::local({
     raw_files <- list.files(pattern_dir, pattern = "^page-\\d+\\.png$", full.names = TRUE)
     files <- capture_page_files(raw_files)
     out <- list()
+    total_bytes <- 0
     for (f in files) {
       info <- file.info(f)
       if (!is.na(info$size) && info$size > 0 && is_png_file(f)) {
+        if (length(out) >= output_figure_count_limit || info$size > output_figure_limit ||
+            total_bytes + info$size > output_figure_total_limit) {
+          capture_state$output_truncated <- TRUE
+          next
+        }
         digest <- content_hash(f)
         if (is.na(digest)) {
           next
@@ -685,6 +700,7 @@ run <- base::local({
         copied <- suppressWarnings(file.copy(f, dest, overwrite = TRUE))
         if (isTRUE(copied)) {
           out[[length(out) + 1L]] <- list(mime = "image/png", path = dest)
+          total_bytes <- total_bytes + info$size
         }
       }
     }
@@ -1128,8 +1144,16 @@ run <- base::local({
     }
     error <- NULL
     error_line <- NA_integer_
-    stdout_text <- ""
-    stdout_text <- paste(utils::capture.output({
+    stdout_path <- tempfile("open-science-r-stdout-")
+    stdout_connection <- file(stdout_path, open = "wb")
+    sink_depth <- sink.number(type = "output")
+    on.exit({
+      while (sink.number(type = "output") > sink_depth) sink(type = "output")
+      suppressWarnings(try(close(stdout_connection), silent = TRUE))
+      unlink(stdout_path, force = TRUE)
+    }, add = TRUE)
+    sink(stdout_connection, type = "output")
+    {
       # keep.source retains per-expression srcrefs so a runtime error can report the 1-based line of the
       # top-level statement that failed (the R equivalent of a Python traceback's last user frame).
       exprs <- tryCatch(parse(text = req$code, keep.source = TRUE), error = function(cnd) cnd)
@@ -1161,7 +1185,36 @@ run <- base::local({
           interrupt = function(cnd) error <<- "interrupted")
         }
       }
-    }), collapse = "\n")
+    }
+    while (sink.number(type = "output") > sink_depth) sink(type = "output")
+    close(stdout_connection)
+    stdout_size <- file.info(stdout_path)$size
+    stdout_file <- file(stdout_path, open = "rb")
+    stdout_raw <- readBin(stdout_file, what = "raw", n = output_text_limit)
+    close(stdout_file)
+    unlink(stdout_path, force = TRUE)
+    stdout_text <- iconv(rawToChar(stdout_raw), from = "UTF-8", to = "UTF-8", sub = "")
+    stdout_text <- sub("\\r?\\n$", "", stdout_text)
+    if (!is.na(stdout_size) && stdout_size > output_text_limit) {
+      capture_state$output_truncated <- TRUE
+    }
+    remaining_text_bytes <- max(0, output_text_limit - length(charToRaw(enc2utf8(stdout_text))))
+    if (!is.null(error)) {
+      error_raw <- charToRaw(enc2utf8(error))
+      if (length(error_raw) > remaining_text_bytes) {
+        error <- if (remaining_text_bytes > 0) {
+          iconv(
+            rawToChar(error_raw[seq_len(remaining_text_bytes)]),
+            from = "UTF-8",
+            to = "UTF-8",
+            sub = ""
+          )
+        } else {
+          ""
+        }
+        capture_state$output_truncated <- TRUE
+      }
+    }
     capture_device_open <- isTRUE(capture_state$active) &&
       !isTRUE(capture_state$closed) &&
       capture_device_is_open(capture_state$dev_id)
@@ -1184,11 +1237,16 @@ run <- base::local({
     list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
          error_line = if (is.na(error_line)) NULL else error_line,
          result = NA, cwd = getwd(), figures = figures,
+         output_truncated = isTRUE(capture_state$output_truncated),
          environment = capture_environment())
   }
 }, envir = base::list2env(
   base::list(
     figures_dir = figures_dir,
+    text_limit_bytes = text_limit_bytes,
+    figure_limit_bytes = figure_limit_bytes,
+    figure_count_limit = figure_count_limit,
+    figure_total_limit_bytes = figure_total_limit_bytes,
     capture_environment = capture_environment,
     assert_no_package_mutation = assert_no_package_mutation
   ),
