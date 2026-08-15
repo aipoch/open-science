@@ -1030,6 +1030,32 @@ describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (rea
     }
   })
 
+  it('keeps the R protocol aligned when user code removes the primary output sink', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-sink-guard-'))
+    const request = baseRequest(cwdDir)
+    await stubEnvR(request.runtimeRoot, DEFAULT_R_ENV)
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: join(__dirname, '../../../resources/notebook/r_loop.R'),
+      platform: 'linux'
+    })
+
+    try {
+      const guarded = await executor.execute({
+        ...request,
+        code: '{ base::sink(NULL); sink(NULL); cat("still captured") }',
+        language: 'r'
+      })
+      expect(guarded.status).toBe('completed')
+      expect(guarded.stdout).toContain('still captured')
+
+      const next = await executor.execute({ ...request, code: '40 + 2', language: 'r' })
+      expect(next.status).toBe('completed')
+      expect(next.stdout).toContain('42')
+    } finally {
+      await executor.shutdown()
+    }
+  })
+
   it('retains an R error after stdout fills the normal output budget', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-diagnostic-reserve-'))
     const request = baseRequest(cwdDir)

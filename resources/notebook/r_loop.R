@@ -640,6 +640,33 @@ read_request <- function() {
   list(req_id = req_id, code = code)
 }
 
+# User code may manage its own output sinks, but it must never pop the kernel-owned capture sink and
+# expose arbitrary output to the JSON-lines protocol. Keep the original primitive in a locked policy
+# closure for trusted setup/cleanup, and let user sink(NULL) calls remove only sinks above the active
+# capture depth.
+output_sink_policy_env <- new.env(parent = baseenv())
+output_sink_policy_env$state <- new.env(parent = emptyenv())
+output_sink_policy_env$state$protected_depth <- 0L
+output_sink_policy_env$kernel_sink <- base::sink
+guarded_output_sink <- function(
+    file = NULL,
+    append = FALSE,
+    type = c("output", "message"),
+    split = FALSE) {
+  type <- match.arg(type)
+  if (is.null(file) && identical(type, "output") &&
+      sink.number(type = "output") <= state$protected_depth) {
+    return(invisible(NULL))
+  }
+  kernel_sink(file = file, append = append, type = type, split = split)
+}
+environment(guarded_output_sink) <- output_sink_policy_env
+assign("guarded_output_sink", guarded_output_sink, output_sink_policy_env)
+lockEnvironment(output_sink_policy_env, bindings = TRUE)
+if (bindingIsLocked("sink", baseenv())) unlockBinding("sink", baseenv())
+assign("sink", output_sink_policy_env$guarded_output_sink, envir = baseenv())
+lockBinding("sink", baseenv())
+
 run <- base::local({
   kernel_figures_dir <- figures_dir
   output_text_limit <- max(0, text_limit_bytes - diagnostic_limit_bytes)
@@ -652,6 +679,8 @@ run <- base::local({
   kernel_png <- grDevices::png
   kernel_dev_off <- grDevices::dev.off
   kernel_plot_new <- graphics::plot.new
+  kernel_sink <- output_sink_policy_env$kernel_sink
+  output_sink_state <- output_sink_policy_env$state
   capture_state <- new.env(parent = emptyenv())
   external_device_owners <- new.env(parent = emptyenv())
   request_state <- new.env(parent = emptyenv())
@@ -1148,12 +1177,14 @@ run <- base::local({
     stdout_path <- tempfile("open-science-r-stdout-")
     stdout_connection <- file(stdout_path, open = "wb")
     sink_depth <- sink.number(type = "output")
+    kernel_sink(stdout_connection, type = "output")
+    output_sink_state$protected_depth <- sink_depth + 1L
     on.exit({
-      while (sink.number(type = "output") > sink_depth) sink(type = "output")
+      output_sink_state$protected_depth <- sink_depth
+      while (sink.number(type = "output") > sink_depth) kernel_sink(type = "output")
       suppressWarnings(try(close(stdout_connection), silent = TRUE))
       unlink(stdout_path, force = TRUE)
     }, add = TRUE)
-    sink(stdout_connection, type = "output")
     {
       # keep.source retains per-expression srcrefs so a runtime error can report the 1-based line of the
       # top-level statement that failed (the R equivalent of a Python traceback's last user frame).
@@ -1187,7 +1218,8 @@ run <- base::local({
         }
       }
     }
-    while (sink.number(type = "output") > sink_depth) sink(type = "output")
+    output_sink_state$protected_depth <- sink_depth
+    while (sink.number(type = "output") > sink_depth) kernel_sink(type = "output")
     close(stdout_connection)
     stdout_size <- file.info(stdout_path)$size
     stdout_file <- file(stdout_path, open = "rb")
@@ -1250,7 +1282,8 @@ run <- base::local({
     figure_count_limit = figure_count_limit,
     figure_total_limit_bytes = figure_total_limit_bytes,
     capture_environment = capture_environment,
-    assert_no_package_mutation = assert_no_package_mutation
+    assert_no_package_mutation = assert_no_package_mutation,
+    output_sink_policy_env = output_sink_policy_env
   ),
   parent = base::baseenv()
 ))
