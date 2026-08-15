@@ -200,6 +200,9 @@ describe('DataRootMissingDialog', () => {
     expect(api.pickDirectory).toHaveBeenCalledTimes(1)
     expect(api.inspectDataRoot).toHaveBeenCalledWith('/mnt/other')
     expect(api.setDataRootAndRelaunch).toHaveBeenCalledWith('/mnt/other', false)
+    const buttons = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+    expect(buttons).toHaveLength(3)
+    expect(buttons.every((button) => button.disabled)).toBe(true)
   })
 
   it('Choose another location on an empty (move) target also applies via setDataRootAndRelaunch', async () => {

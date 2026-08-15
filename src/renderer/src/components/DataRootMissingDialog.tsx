@@ -60,6 +60,7 @@ const DataRootMissingDialog = ({
 
   const handleChooseAnotherLocation = async (): Promise<void> => {
     setOperationError(undefined)
+    let relaunchRequested = false
     try {
       const picked = await window.api.storage.pickDirectory()
       if (!picked) return
@@ -76,12 +77,15 @@ const DataRootMissingDialog = ({
       const result = await window.api.storage.setDataRootAndRelaunch(picked, false)
       if (!result.ok) {
         setOperationError(result.error ?? t('Could not switch to this folder.'))
+        return
       }
-      // On success the app relaunches; nothing left to update here.
+      // app.quit() can return while teardown is still in progress. Keep every action disabled so
+      // the user cannot submit a competing data-root change before the renderer exits.
+      relaunchRequested = true
     } catch {
       setOperationError(t('Could not switch to this folder.'))
     } finally {
-      setIsChoosing(false)
+      if (!relaunchRequested) setIsChoosing(false)
     }
   }
 
