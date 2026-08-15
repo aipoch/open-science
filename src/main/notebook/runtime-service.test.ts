@@ -1188,7 +1188,8 @@ describe('notebook runtime service', () => {
             stderr: '',
             traceback: '',
             cwdAfter: request.cwd,
-            outputs: [{ type: 'stream', name: 'stdout', text: 'from-repl\n' }]
+            outputs: [{ type: 'stream', name: 'stdout', text: 'from-repl\n' }],
+            truncated: true
           }
         },
         shutdown: async () => ({ reaped: true })
@@ -1225,6 +1226,7 @@ describe('notebook runtime service', () => {
     expect(result).toMatchObject({
       status: 'completed',
       stdout: 'from-repl\n',
+      truncated: true,
       outputs: [{ type: 'stream', name: 'stdout', text: 'from-repl\n' }]
     })
 
@@ -2004,7 +2006,8 @@ describe('notebook runtime service', () => {
       const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue({
         stdout: 'partial output',
         stderr: 'command failed',
-        exitCode: 9
+        exitCode: 9,
+        truncated: true
       })
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -2031,7 +2034,8 @@ describe('notebook runtime service', () => {
       expect(result).toEqual({
         stdout: 'partial output',
         stderr: 'command failed',
-        exitCode: 9
+        exitCode: 9,
+        truncated: true
       })
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(state.runs[0]).toMatchObject({

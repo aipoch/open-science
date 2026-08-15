@@ -5,6 +5,7 @@ import {
   NOTEBOOK_FIGURE_COUNT_LIMIT,
   NOTEBOOK_FIGURE_LIMIT_BYTES,
   NOTEBOOK_TEXT_LIMIT_BYTES,
+  assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit,
   limitNotebookTerminalContent,
   limitUtf8
@@ -16,6 +17,15 @@ describe('notebook content limits', () => {
     expect(() => assertNotebookCodeWithinLimit('x'.repeat(NOTEBOOK_CODE_LIMIT_BYTES + 1))).toThrow(
       /exceeds/u
     )
+  })
+
+  it('rejects a streamed append from separate UTF-8 byte lengths', () => {
+    expect(() =>
+      assertNotebookCodeAppendWithinLimit('x'.repeat(NOTEBOOK_CODE_LIMIT_BYTES - 4), '😀')
+    ).not.toThrow()
+    expect(() =>
+      assertNotebookCodeAppendWithinLimit('x'.repeat(NOTEBOOK_CODE_LIMIT_BYTES - 3), '😀')
+    ).toThrow(/exceeds/u)
   })
 
   it('clips UTF-8 only at a complete character boundary', () => {

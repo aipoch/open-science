@@ -40,7 +40,7 @@ import type { TransientViewImage } from './host-view-image-service'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
-  'status' | 'stdout' | 'stderr' | 'traceback' | 'outputs' | 'workingFiles'
+  'status' | 'stdout' | 'stderr' | 'traceback' | 'outputs' | 'truncated' | 'workingFiles'
 > & { viewImages?: readonly TransientViewImage[] }
 
 type NotebookControlCompletionInterceptor = {
@@ -477,6 +477,7 @@ class NotebookExecutionOwner {
       stderr: result.stderr,
       traceback: result.traceback,
       outputs: result.outputs,
+      ...(result.truncated ? { truncated: true } : {}),
       workingFiles: result.workingFiles
     }
   }
@@ -567,7 +568,12 @@ class NotebookExecutionOwner {
       }
     })
 
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode }
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      ...(result.truncated ? { truncated: true } : {})
+    }
   }
 
   private setReplStatus(session: NotebookSessionAggregate, status: 'running' | 'idle'): void {

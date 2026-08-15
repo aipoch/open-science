@@ -543,12 +543,14 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
   const filesOmitted =
     (Array.isArray(record.workingFiles) && record.workingFiles.length > workingFiles.length) ||
     (Array.isArray(record.artifacts) && record.artifacts.length > artifacts.length)
-  const truncated =
+  const resultCompacted =
     stdout.clipped ||
     stderr.clipped ||
     traceback.clipped ||
     compactOutputs.truncated ||
     filesOmitted
+  const captureTruncated = record.truncated === true
+  const truncated = captureTruncated || resultCompacted
 
   return {
     ...pickDefined(record, [
@@ -575,7 +577,11 @@ const compactNotebookExecutionResult = (raw: unknown): unknown => {
     ...(truncated
       ? {
           truncated: true,
-          note: 'Agent-facing result shortened; full output remains in the notebook preview.'
+          note: captureTruncated
+            ? resultCompacted
+              ? 'Notebook output was truncated during capture and shortened again for this agent-facing result.'
+              : 'Notebook output was truncated during capture.'
+            : 'Agent-facing result shortened; full output remains in the notebook preview.'
         }
       : {})
   }
@@ -614,7 +620,8 @@ const compactStateRun = (value: unknown, includeOutputPreview: boolean): unknown
       'environment',
       'startedAt',
       'endedAt',
-      'interruptionReason'
+      'interruptionReason',
+      'truncated'
     ]),
     ...(workingFiles.length ? { workingFiles } : {}),
     ...(outputPreview ? { outputPreview } : {})
@@ -662,7 +669,8 @@ const compactNotebookStateResult = (raw: unknown): unknown => {
     ...(runtimeBindings ? { runtimeBindings } : {}),
     cellCount: Array.isArray(record.cells) ? record.cells.length : 0,
     ...(cells.length ? { cells } : {}),
-    runCount: runs.length || recentSource.length,
+    runCount:
+      typeof record.runCount === 'number' ? record.runCount : runs.length || recentSource.length,
     recentRuns: recentRuns.map((run, index) =>
       compactStateRun(run, index === recentRuns.length - 1)
     ),

@@ -22,6 +22,28 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it('bounds the process-lifetime full-document cache', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+
+    for (let index = 0; index < 9; index += 1) {
+      const sessionId = `session-${index}`
+      await repository.loadOrCreate({
+        projectName: 'default-project',
+        sessionId,
+        workspaceCwd: '/workspace',
+        lane: createRootNotebookLane('default-project', sessionId, `root-frame-${index}`)
+      })
+    }
+
+    const cache = repository as unknown as {
+      documentCache: Map<string, unknown>
+      documentCacheBytes: number
+    }
+    expect(cache.documentCache.size).toBe(8)
+    expect(cache.documentCacheBytes).toBeLessThanOrEqual(32 * 1024 * 1024)
+  })
+
   it('fails closed when a new run write omits its Frame lane', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

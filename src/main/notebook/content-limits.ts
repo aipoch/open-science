@@ -27,13 +27,24 @@ export const limitUtf8 = (value: string, limitBytes: number): LimitedText => {
   return { text: encoded.subarray(0, end).toString('utf8'), truncated: true }
 }
 
-export const assertNotebookCodeWithinLimit = (code: string): void => {
-  const bytes = Buffer.byteLength(code, 'utf8')
+const assertNotebookCodeBytesWithinLimit = (bytes: number): void => {
   if (bytes > NOTEBOOK_CODE_LIMIT_BYTES) {
     throw new Error(
       `Notebook code exceeds the ${NOTEBOOK_CODE_LIMIT_BYTES}-byte limit (${bytes} bytes received).`
     )
   }
+}
+
+export const assertNotebookCodeWithinLimit = (code: string): void => {
+  assertNotebookCodeBytesWithinLimit(Buffer.byteLength(code, 'utf8'))
+}
+
+// Checks a streamed append before concatenation so an oversized delta cannot allocate a second,
+// equally oversized combined string merely to be rejected.
+export const assertNotebookCodeAppendWithinLimit = (code: string, delta: string): void => {
+  assertNotebookCodeBytesWithinLimit(
+    Buffer.byteLength(code, 'utf8') + Buffer.byteLength(delta, 'utf8')
+  )
 }
 
 type NotebookTerminalContent = {

@@ -101,7 +101,10 @@ import {
   type NotebookExecutorLifecycleCallbacks,
   type NotebookSessionLifecycleCallbacks
 } from './session-lifecycle'
-import { assertNotebookCodeWithinLimit } from './content-limits'
+import {
+  assertNotebookCodeAppendWithinLimit,
+  assertNotebookCodeWithinLimit
+} from './content-limits'
 
 // Locale fallback when no explicit locale is injected (see shared/mirror.ts: non-CN locales resolve
 // to public hosts, so this default never silently forces a CN mirror).
@@ -698,7 +701,7 @@ class NotebookRuntimeService {
     const session = await this.sessionLifecycle.ensure(request)
     const current = session.cellView(request.cellId)
     try {
-      assertNotebookCodeWithinLimit(current.code + request.delta)
+      assertNotebookCodeAppendWithinLimit(current.code, request.delta)
     } catch (error) {
       session.abortCellWrite(request.cellId, request.writeId)
       this.sessionLifecycle.notifyChanged(session)

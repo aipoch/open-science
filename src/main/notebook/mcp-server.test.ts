@@ -1069,6 +1069,16 @@ describe('compactNotebookExecutionResult', () => {
     expect(compact.truncated).toBeUndefined()
   })
 
+  it('preserves producer truncation when no additional MCP clipping is needed', () => {
+    const compact = compactNotebookExecutionResult({
+      ...runSummary({ stdout: 'retained prefix' }),
+      truncated: true
+    }) as { truncated?: boolean; note?: string }
+
+    expect(compact.truncated).toBe(true)
+    expect(compact.note).toContain('during capture')
+  })
+
   it('keeps a practical connector trailing result inline', () => {
     const text = 'x'.repeat(7_500)
     const compact = compactNotebookExecutionResult({
@@ -1146,6 +1156,7 @@ describe('compactNotebookStateResult', () => {
       cellId: `cell-${index}`,
       kernelKind: 'python',
       status: 'completed',
+      truncated: index === 19,
       startedAt: index,
       endedAt: index + 1,
       script: 'print(1)'.repeat(10_000),
@@ -1162,6 +1173,7 @@ describe('compactNotebookStateResult', () => {
       kernelStatus: 'idle',
       cwd: '/workspace',
       dataRoot: '/workspace/data',
+      runCount: 125,
       cells: [
         { id: 'cell-19', language: 'python', code: 'x'.repeat(100_000), status: 'completed' }
       ],
@@ -1178,12 +1190,15 @@ describe('compactNotebookStateResult', () => {
     expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
     expect(tokenizer.encode(serialized).length).toBeLessThanOrEqual(2_000)
     expect(parsed).not.toHaveProperty('runs')
-    expect(parsed).toHaveProperty('runCount', 20)
+    expect(parsed).toHaveProperty('runCount', 125)
     expect((parsed.recentRuns as unknown[]).length).toBe(10)
     expect(serialized).not.toContain('print(1)')
     expect(serialized).not.toContain('outputs')
     expect(serialized).not.toContain('code')
     expect(serialized).toContain('output-19')
+    expect(parsed.recentRuns).toEqual(
+      expect.arrayContaining([expect.objectContaining({ runId: 'run-19', truncated: true })])
+    )
   })
 
   it('keeps the latest successful text result available for recovery', () => {

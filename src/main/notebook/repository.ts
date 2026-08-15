@@ -17,6 +17,8 @@ import {
 } from './lane-identity'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+const MAX_DOCUMENT_CACHE_ENTRIES = 8
+const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
 
 type LoadNotebookRunDocumentRequest = {
   projectName: string
@@ -213,6 +215,7 @@ class NotebookRunRepository {
     string,
     { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
   >()
+  private documentCacheBytes = 0
 
   constructor(private readonly storageRoot: string) {}
 
@@ -474,6 +477,9 @@ class NotebookRunRepository {
       cached.size === fileInfo.size &&
       cached.ino === fileInfo.ino
     ) {
+      // Refresh insertion order so the Map also acts as a small LRU.
+      this.documentCache.delete(filePath)
+      this.documentCache.set(filePath, cached)
       return cached.document
     }
     const rawDocument = await readFile(filePath, 'utf8')
@@ -491,7 +497,7 @@ class NotebookRunRepository {
       decoded
     )
     const currentInfo = await stat(filePath)
-    this.documentCache.set(filePath, {
+    this.rememberDocument(filePath, {
       mtimeMs: currentInfo.mtimeMs,
       size: currentInfo.size,
       ino: currentInfo.ino,
@@ -542,6 +548,34 @@ class NotebookRunRepository {
     await operation
   }
 
+  // Retains only a small working set. Large or numerous histories remain readable but are parsed
+  // again instead of pinning complete text and image payloads for the process lifetime.
+  private rememberDocument(
+    filePath: string,
+    entry: { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
+  ): void {
+    const previous = this.documentCache.get(filePath)
+    if (previous) {
+      this.documentCache.delete(filePath)
+      this.documentCacheBytes -= previous.size
+    }
+
+    if (entry.size > MAX_DOCUMENT_CACHE_BYTES) return
+
+    this.documentCache.set(filePath, entry)
+    this.documentCacheBytes += entry.size
+    while (
+      this.documentCache.size > MAX_DOCUMENT_CACHE_ENTRIES ||
+      this.documentCacheBytes > MAX_DOCUMENT_CACHE_BYTES
+    ) {
+      const oldestPath = this.documentCache.keys().next().value
+      if (typeof oldestPath !== 'string') break
+      const oldest = this.documentCache.get(oldestPath)
+      this.documentCache.delete(oldestPath)
+      this.documentCacheBytes -= oldest?.size ?? 0
+    }
+  }
+
   // Writes one document to disk via a temp file + atomic rename. Always invoked from inside the
   // saveQueue chain (mutate() or writeDocument() above), never called directly.
   private async persist(document: NotebookRunDocument): Promise<void> {
@@ -569,7 +603,7 @@ class NotebookRunRepository {
     await writeFile(temporaryPath, `${JSON.stringify(encoded, null, 2)}\n`, 'utf8')
     await rename(temporaryPath, filePath)
     const fileInfo = await stat(filePath)
-    this.documentCache.set(filePath, {
+    this.rememberDocument(filePath, {
       mtimeMs: fileInfo.mtimeMs,
       size: fileInfo.size,
       ino: fileInfo.ino,
