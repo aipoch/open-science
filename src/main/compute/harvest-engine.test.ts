@@ -105,26 +105,30 @@ const makeScpRunner = (failOnCall?: number): ScpRunner & { calls: string[][] } =
     copy: vi.fn((): Promise<ScpResult> =>
       Promise.resolve({ exitCode: 0, stderr: '', timedOut: false })
     ),
-    copyFromRemoteBounded: vi.fn((_target, remotePath, localPath): Promise<BoundedScpResult> => {
-      callCount++
-      calls.push([remotePath, localPath])
-      if (failOnCall !== undefined && callCount === failOnCall) {
-        return Promise.resolve({
-          exitCode: 1,
-          stderr: 'scp: connection refused',
+    copyFromRemoteBounded: vi.fn(
+      async (_target, remotePath, localPath): Promise<BoundedScpResult> => {
+        callCount++
+        calls.push([remotePath, localPath])
+        if (failOnCall !== undefined && callCount === failOnCall) {
+          return {
+            exitCode: 1,
+            stderr: 'scp: connection refused',
+            timedOut: false,
+            bytesWritten: 0,
+            exceeded: false
+          }
+        }
+        await mkdir(dirname(localPath), { recursive: true })
+        await writeFile(localPath, '')
+        return {
+          exitCode: 0,
+          stderr: '',
           timedOut: false,
           bytesWritten: 0,
           exceeded: false
-        })
+        }
       }
-      return Promise.resolve({
-        exitCode: 0,
-        stderr: '',
-        timedOut: false,
-        bytesWritten: 0,
-        exceeded: false
-      })
-    })
+    )
   }
 }
 
@@ -783,5 +787,50 @@ describe('harvestJob - bounded logs and disk reserve', () => {
         reason: 'exceeds_max_file_mb'
       })
     ])
+  })
+
+  it('preserves an existing local output when a retry transfer fails', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })
+    const localPath = join(
+      getJobHarvestDir(storageRoot, job.project_id, job.session_id, job.job_id),
+      'featured',
+      'retry.result'
+    )
+    await mkdir(dirname(localPath), { recursive: true })
+    await writeFile(localPath, 'previous successful harvest')
+    const copyFromRemoteBounded = vi.fn(async (_target, _remotePath, temporaryPath) => {
+      await writeFile(temporaryPath, 'partial retry')
+      return {
+        exitCode: 1,
+        stderr: 'connection reset',
+        timedOut: false,
+        bytesWritten: Buffer.byteLength('partial retry'),
+        exceeded: false
+      }
+    })
+    const scp: ScpRunner = {
+      copy: vi.fn().mockResolvedValue({ exitCode: 0, stderr: '', timedOut: false }),
+      copyFromRemoteBounded
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      sshRunner: makeSshRunner(findOutput([{ path: 'retry.result', size_bytes: 13 }])),
+      scpRunner: scp,
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot,
+      getFreeDiskBytesFn: async () => HARVEST_FREE_DISK_RESERVE_BYTES + 1024 * 1024
+    })
+
+    const temporaryPath = copyFromRemoteBounded.mock.calls[0]?.[2]
+    expect(temporaryPath).not.toBe(localPath)
+    expect(temporaryPath).toMatch(/\.partial$/)
+    await expect(readFile(localPath, 'utf8')).resolves.toBe('previous successful harvest')
+    await expect(readFile(temporaryPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((updates[0]!.data as Record<string, unknown>).harvestError).toContain(
+      'remote copy failed for retry.result'
+    )
   })
 })

@@ -17,7 +17,8 @@
  * The submit_job approval covers the full submit→harvest lifecycle.
  */
 
-import { mkdir, statfs, unlink } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, rename, statfs, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
@@ -505,19 +506,21 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
       return false
     }
 
+    const temporaryPath = `${localPath}.${randomUUID()}.partial`
     try {
       const bytesWritten = await downloadFile(
         scpRunner,
         target,
         remoteWorkdir,
         relativePath,
-        localPath,
+        temporaryPath,
         maxBytes
       )
+      await rename(temporaryPath, localPath)
       remainingBudgetBytes = Math.max(0, remainingBudgetBytes - bytesWritten)
       return true
     } catch (error) {
-      await unlink(localPath).catch(() => undefined)
+      await unlink(temporaryPath).catch(() => undefined)
       const candidate = error as HarvestDownloadLimitError
       if (candidate.limitExceeded) {
         const reason =
