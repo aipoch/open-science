@@ -170,6 +170,7 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
       '-e',
       [
         `const value = {`,
+        `error: ['Invalid package cache; file is missing; Package cache error', String.fromCharCode(39) + 'C:/cache/' + 'p'.repeat(280) + String.fromCharCode(39), 'for ' + String.fromCharCode(39) + 'broken-package-1.0-0.conda' + String.fromCharCode(39)],`,
         `padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}),`,
         `solver_problems: ['unsatisfiable dependency constraints'],`,
         `actions: { LINK: [{ name: 'r-base', version: '4.5.0' }], UNLINK: [] }`,
@@ -191,6 +192,8 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
       },
       diagnostics: ['solver failed']
     })
+    expect(result.maxPathRecoveryEvidence).toMatch(/Invalid package cache/)
+    expect(result.maxPathRecoveryEvidence).toContain('broken-package-1.0-0.conda')
   })
 })
 
@@ -833,7 +836,11 @@ describe('installPackages', () => {
       {
         code: 1,
         stdout: 'original install stdout',
-        stderr: `Invalid package cache, file '${missing}' is missing for '${leaf}.conda'; Package cache error`
+        stderr: 'truncated diagnostic tail',
+        stderrDroppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES,
+        maxPathRecoveryEvidence:
+          `Invalid package cache; file is missing; Package cache error.\n` +
+          `for '${leaf}.conda'\n'${missing}'`
       },
       { code: 1, stdout: 'retry install stdout', stderr: 'retry install failed' }
     ]
@@ -864,6 +871,7 @@ describe('installPackages', () => {
     expect(result.log).toContain('Retry failure after MAX_PATH recovery')
     expect(result.log).toContain('original install stdout')
     expect(result.log).toContain('retry install stdout')
+    expect(result.logTruncation).toEqual({ droppedBytes: INSTALLER_STREAM_LOG_LIMIT_BYTES })
     expect(result.error).toMatch(/short Windows package cache[^]*shorter data location/i)
     expect(result.error).not.toMatch(/LongPathsEnabled|administrator/i)
   })

@@ -111,6 +111,9 @@ export type SpawnResult = {
   // When a bounded stream truncated micromamba --json output, a short-lived parser subprocess
   // reduces the complete temporary capture to only the facts needed for fail-closed decisions.
   structuredCondaResult?: CondaStructuredResult
+  // Bounded recovery-only evidence reduced from the complete capture. It is never merged into the
+  // user-facing log or persisted activity result.
+  maxPathRecoveryEvidence?: string
 }
 export type InstallSpawn = (
   command: string,
@@ -568,6 +571,11 @@ type CondaJsonCapture = {
   stderrStream: ReturnType<typeof createWriteStream>
 }
 
+type CondaJsonCaptureSummary = Pick<
+  SpawnResult,
+  'structuredCondaResult' | 'maxPathRecoveryEvidence'
+>
+
 const CONDA_JSON_SUMMARIZER_SOURCE = String.raw`
 const { readFileSync } = require('node:fs')
 
@@ -632,18 +640,72 @@ const summarize = (value) => {
   }
 }
 
-for (const path of process.argv.slice(1)) {
+const maxPathEvidence = (texts) => {
+  const diagnosticText = texts.join('\n')
+  const hasMissingContext =
+    /invalid package cache/i.test(diagnosticText) &&
+    /(?:is missing|package cache error)/i.test(diagnosticText)
+  const hasRemoveContext =
+    /error when extracting package/i.test(diagnosticText) &&
+    /remove_all[^]*(?:not empty|directory)/i.test(diagnosticText)
+  if (!hasMissingContext && !hasRemoveContext) return undefined
+  const archiveMatch = diagnosticText.match(
+    /(?:for|cache for)\s+[\x27\x22]([^\x27\x22]+\.(?:conda|tar\.bz2))[\x27\x22]/i
+  )
+  const archive = archiveMatch?.[1]
+  const paths = [
+    ...diagnosticText.matchAll(/[\x27\x22]([^\x27\x22\r\n]+)[\x27\x22]/g)
+  ]
+    .map((match) => match[1])
+    .filter((value) => value !== archive && value.length > 240)
+  if (paths.length === 0) return undefined
+  const parts = []
+  if (hasMissingContext) {
+    parts.push('Invalid package cache; file is missing; Package cache error.')
+  }
+  if (hasRemoveContext) {
+    parts.push('Error when extracting package; remove_all: not empty.')
+  }
+  const quote = String.fromCharCode(39)
+  if (archive) parts.push('for ' + quote + archive.slice(0, 4096) + quote)
+  let remaining = 60_000 - parts.join('\n').length
+  for (const path of paths) {
+    const quoted = quote + path.slice(0, 32_768) + quote
+    if (quoted.length > remaining) break
+    parts.push(quoted)
+    remaining -= quoted.length + 1
+  }
+  return parts.join('\n')
+}
+
+const texts = process.argv.slice(1).map((path) => {
   try {
-    const value = JSON.parse(readFileSync(path, 'utf8'))
+    return readFileSync(path, 'utf8')
+  } catch {
+    return ''
+  }
+})
+let structuredCondaResult
+const decodedDiagnosticTexts = []
+for (const text of texts) {
+  try {
+    const value = JSON.parse(text)
     if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      process.stdout.write(JSON.stringify(summarize(value)))
-      process.exit(0)
+      decodedDiagnosticTexts.push(strings(value).join('\n'))
+      structuredCondaResult ??= summarize(value)
     }
   } catch {
     // Try the other captured stream.
   }
 }
-process.exit(2)
+const maxPathRecoveryEvidence = maxPathEvidence([...decodedDiagnosticTexts, ...texts])
+process.stdout.write(
+  JSON.stringify({
+    ...(structuredCondaResult ? { structuredCondaResult } : {}),
+    ...(maxPathRecoveryEvidence ? { maxPathRecoveryEvidence } : {})
+  })
+)
+process.exitCode = 0
 `
 
 const createCondaJsonCapture = (): CondaJsonCapture => {
@@ -687,11 +749,23 @@ const isCondaStructuredResult = (value: unknown): value is CondaStructuredResult
   )
 }
 
+const isCondaJsonCaptureSummary = (value: unknown): value is CondaJsonCaptureSummary => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const candidate = value as CondaJsonCaptureSummary
+  return (
+    (candidate.structuredCondaResult === undefined ||
+      isCondaStructuredResult(candidate.structuredCondaResult)) &&
+    (candidate.maxPathRecoveryEvidence === undefined ||
+      (typeof candidate.maxPathRecoveryEvidence === 'string' &&
+        candidate.maxPathRecoveryEvidence.length <= 60_000))
+  )
+}
+
 const summarizeCondaJsonCapture = (
   capture: CondaJsonCapture
-): Promise<CondaStructuredResult | undefined> =>
+): Promise<CondaJsonCaptureSummary | undefined> =>
   new Promise((resolve) => {
-    const stdout = new InstallerLogTailBuffer(64 * 1024)
+    const stdout = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
     const parser = nodeSpawn(
       process.execPath,
       ['-e', CONDA_JSON_SUMMARIZER_SOURCE, capture.stdoutPath, capture.stderrPath],
@@ -703,7 +777,7 @@ const summarizeCondaJsonCapture = (
     )
     parser.stdout?.on('data', (chunk) => stdout.push(chunk))
     let settled = false
-    const settle = (result?: CondaStructuredResult): void => {
+    const settle = (result?: CondaJsonCaptureSummary): void => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
@@ -727,7 +801,7 @@ const summarizeCondaJsonCapture = (
           return
         }
         const parsed = JSON.parse(snapshot.text) as unknown
-        settle(isCondaStructuredResult(parsed) ? parsed : undefined)
+        settle(isCondaJsonCaptureSummary(parsed) ? parsed : undefined)
       } catch {
         settle()
       }
@@ -737,7 +811,7 @@ const summarizeCondaJsonCapture = (
 const finalizeCondaJsonCapture = async (
   capture: CondaJsonCapture | undefined,
   summarize: boolean
-): Promise<CondaStructuredResult | undefined> => {
+): Promise<CondaJsonCaptureSummary | undefined> => {
   if (!capture) return undefined
   try {
     await Promise.all([finished(capture.stdoutStream), finished(capture.stderrStream)])
@@ -845,7 +919,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
     const result = async (code: number): Promise<SpawnResult> => {
       const stdoutSnapshot = stdout.snapshot()
       const stderrSnapshot = stderr.snapshot()
-      const structuredCondaResult = await finalizeCondaJsonCapture(
+      const condaJsonSummary = await finalizeCondaJsonCapture(
         condaJsonCapture,
         stdoutSnapshot.droppedBytes > 0 || stderrSnapshot.droppedBytes > 0
       )
@@ -859,7 +933,7 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
         ...(stderrSnapshot.droppedBytes > 0
           ? { stderrDroppedBytes: stderrSnapshot.droppedBytes }
           : {}),
-        ...(structuredCondaResult ? { structuredCondaResult } : {})
+        ...(condaJsonSummary ?? {})
       }
     }
     const settle = (code: number): void => {
@@ -1043,7 +1117,9 @@ export async function installPackages(
     )
     if (await stopAfterSpawn?.(result)) return result
     if (result.code === 0) return result
-    const evidence = `${result.stdout}\n${result.stderr}`
+    const evidence = [result.maxPathRecoveryEvidence, result.stdout, result.stderr]
+      .filter(Boolean)
+      .join('\n')
     let recovered = false
     let cleanupError: unknown
     try {
