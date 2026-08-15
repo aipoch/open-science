@@ -160,6 +160,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
       runCount: runWindow.total,
+      latestRunEnvironments: runWindow.latestRunEnvironments,
       runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
       recentRuns: runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
       environments: this.environmentStatuses(session),

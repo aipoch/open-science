@@ -216,12 +216,14 @@ describe('NotebookSessionReadModel', () => {
       runs: Array.from({ length: 100 }, (_, index) =>
         makeRun({ runId: `run-${index + 25}`, cellId: `cell-${index + 25}`, startedAt: index + 25 })
       ),
-      total: 125
+      total: 125,
+      latestRunEnvironments: { python: 'historical-python' }
     })
 
     const state = await makeReadModel(storageRoot, session, repository).state(session)
 
     expect(state.runCount).toBe(125)
+    expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
     expect(state.runs[0]?.runId).toBe('run-25')
     expect(state.recentRuns).toHaveLength(20)
@@ -244,7 +246,8 @@ describe('NotebookSessionReadModel', () => {
         makeRun({ runId: 'run-old', startedAt: 1 }),
         makeRun({ runId: 'run-new', startedAt: 2 })
       ],
-      total: 125
+      total: 125,
+      latestRunEnvironments: {}
     })
 
     const state = await makeReadModel(storageRoot, session, repository).state(session, ['run-old'])

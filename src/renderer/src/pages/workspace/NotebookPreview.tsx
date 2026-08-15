@@ -604,14 +604,6 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             className="h-full min-h-0 overflow-y-auto overscroll-contain"
             data-testid="notebook-cells"
           >
-            {notebookState && notebookState.runCount > notebookState.runs.length ? (
-              <p className="border-b border-border-100 px-3 py-2 text-xs text-text-300">
-                {t('Showing the most recent {{visible}} of {{total}} runs.', {
-                  visible: notebookState.runs.length,
-                  total: notebookState.runCount
-                })}
-              </p>
-            ) : null}
             <div className="divide-y divide-border-100">
               {visibleRuns.map((run, index) => (
                 <NotebookRunCell key={run.runId} run={run} index={index} />

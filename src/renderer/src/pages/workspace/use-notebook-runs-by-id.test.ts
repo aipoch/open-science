@@ -45,6 +45,7 @@ const makeState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
   runJsonPath: reference.runJsonPath,
   cells: [],
   runCount: runs.length,
+  latestRunEnvironments: {},
   runs,
   recentRuns: runs,
   environments: []

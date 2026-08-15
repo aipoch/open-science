@@ -145,7 +145,7 @@ describe('notebook run repository', () => {
     })
     const legacyPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
     const legacyDocument = JSON.parse(await readFile(legacyPath, 'utf8'))
-    legacyDocument.runs = [run('legacy')]
+    legacyDocument.runs = [{ ...run('legacy'), environment: 'historical-python' }]
     await writeFile(legacyPath, JSON.stringify(legacyDocument, null, 2), 'utf8')
     await repository.loadOrCreate({
       projectName: 'default-project',
@@ -167,7 +167,11 @@ describe('notebook run repository', () => {
     ])
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1)
-    ).resolves.toEqual({ runs: [expect.objectContaining({ runId: 'child' })], total: 2 })
+    ).resolves.toEqual({
+      runs: [expect.objectContaining({ runId: 'child' })],
+      total: 2,
+      latestRunEnvironments: { python: 'historical-python' }
+    })
     await expect(
       repository.readSessionRunWindow('default-project', 'session-1', 1, ['legacy'])
     ).resolves.toEqual({
@@ -175,7 +179,8 @@ describe('notebook run repository', () => {
         expect.objectContaining({ runId: 'legacy' }),
         expect.objectContaining({ runId: 'child' })
       ],
-      total: 2
+      total: 2,
+      latestRunEnvironments: { python: 'historical-python' }
     })
   })
 

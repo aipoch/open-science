@@ -435,11 +435,16 @@ class NotebookRunRepository {
     sessionId: string,
     limit: number,
     includeRunIds: readonly string[] = []
-  ): Promise<{ runs: NotebookRunRecord[]; total: number }> {
+  ): Promise<{
+    runs: NotebookRunRecord[]
+    total: number
+    latestRunEnvironments: Partial<Record<'python' | 'r', string>>
+  }> {
     const documents = await this.readSessionDocuments(projectName, sessionId)
     const runs: NotebookRunRecord[] = []
     const requestedRunIds = new Set(includeRunIds)
     const requestedRuns = new Map<string, NotebookRunRecord>()
+    const latestEnvironmentRuns = new Map<'python' | 'r', NotebookRunRecord>()
     let total = 0
     const compareRuns = (left: NotebookRunRecord, right: NotebookRunRecord): number =>
       left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
@@ -448,6 +453,14 @@ class NotebookRunRepository {
       for (const run of document.runs) {
         total += 1
         if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
+        if (
+          (run.kernelKind === 'python' || run.kernelKind === 'r') &&
+          run.environment &&
+          (!latestEnvironmentRuns.has(run.kernelKind) ||
+            compareRuns(latestEnvironmentRuns.get(run.kernelKind)!, run) < 0)
+        ) {
+          latestEnvironmentRuns.set(run.kernelKind, run)
+        }
         if (limit <= 0) continue
         let low = 0
         let high = runs.length
@@ -463,7 +476,13 @@ class NotebookRunRepository {
 
     const mergedRuns = new Map(runs.map((run) => [run.runId, run]))
     for (const run of requestedRuns.values()) mergedRuns.set(run.runId, run)
-    return { runs: [...mergedRuns.values()].sort(compareRuns), total }
+    return {
+      runs: [...mergedRuns.values()].sort(compareRuns),
+      total,
+      latestRunEnvironments: Object.fromEntries(
+        [...latestEnvironmentRuns.entries()].map(([kind, run]) => [kind, run.environment!])
+      )
+    }
   }
 
   // Loads a history document that must already exist for mutating operations.

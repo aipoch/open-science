@@ -1575,7 +1575,6 @@
   "Show log": "顯示日誌",
   "Show more": "展開",
   "Show output": "顯示輸出",
-  "Showing the most recent {{visible}} of {{total}} runs.": "正在顯示最近 {{visible}} 次執行，共 {{total}} 次。",
   "Show relevant {{count}} packages_other": "顯示相關的 {{count}} 個套件",
   "Show rendered HTML": "顯示算繪後的 HTML",
   "Show repositories": "顯示儲存庫",

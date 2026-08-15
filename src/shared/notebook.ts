@@ -434,6 +434,8 @@ export type NotebookSessionState = {
   activeRunId?: string
   // Total durable run count across lanes. `runs` is a bounded recent window for renderer safety.
   runCount: number
+  // Latest durable environment evidence per data kernel, independent of the bounded run window.
+  latestRunEnvironments: Partial<Record<'python' | 'r', string>>
   runs: NotebookRunRecord[]
   recentRuns: NotebookRunRecord[]
   // Live per-(kind, env) kernel status view (design D6); empty until the session spawns a kernel.

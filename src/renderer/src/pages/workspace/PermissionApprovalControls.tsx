@@ -332,6 +332,8 @@ const lookupNotebookEnvironment = async (
         (environment) => environment.kind === kernelKind && environment.environment
       )?.environment
       if (live) return live
+      const latestDurable = state.latestRunEnvironments?.[kernelKind]
+      if (latestDurable) return latestDurable
       for (let i = state.runs.length - 1; i >= 0; i -= 1) {
         const run = state.runs[i]
         const env = run.kernelKind === kernelKind ? run.environment : undefined

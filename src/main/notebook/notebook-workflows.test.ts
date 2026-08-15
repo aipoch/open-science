@@ -146,6 +146,7 @@ describe('Notebook command workflows', () => {
       runJsonPath: '/data/notebooks/session-1/run.json',
       cells: [],
       runCount: 0,
+      latestRunEnvironments: {},
       runs: [],
       recentRuns: [],
       environments: []
