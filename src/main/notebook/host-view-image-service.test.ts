@@ -36,7 +36,10 @@ const catalogItem = (
   contentType: 'image/png',
   sizeBytes: 42,
   sortAtMs: 1,
+  createdAt: '2026-08-01T00:00:00.000Z',
+  sourceCreatedAt: '2026-07-01T00:00:00.000Z',
   rootFrameId: source === 'artifact' ? 'root-frame' : null,
+  agentFrameId: source === 'artifact' ? 'agent-frame' : null,
   ...overrides
 })
 

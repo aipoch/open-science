@@ -127,29 +127,32 @@ export type HostArtifactCatalogItem = {
   contentType?: string
   sizeBytes: number
   sortAtMs: number
-  createdAt?: string
-  sourceCreatedAt?: string
+  createdAt: string
+  sourceCreatedAt: string
   rootFrameId: string | null
-  agentFrameId?: string | null
+  agentFrameId: string | null
 }
 
 export type HostArtifact = {
   id: string
   filename: string
-  content_type?: string
-  size_bytes: number
-  latest_version_id: string
-  checksum?: string
-  session_id: string
-  root_frame_id: string | null
-  is_user_upload: boolean
-  latest_version_created_at: string
+  contentType: string | null
+  sizeBytes: number
+  latestVersionId: string
+  checksum: string | null
+  projectId: string
+  sessionId: string
+  rootFrameId: string | null
+  agentFrameId: string | null
+  isUserUpload: boolean
+  createdAt: string
+  latestVersionCreatedAt: string
 }
 
 export type HostArtifactsResult = {
   count: number
-  project_id: string
+  projectId: string
   truncated: boolean
-  next_cursor?: string
+  nextCursor?: string
   artifacts: HostArtifact[]
 }

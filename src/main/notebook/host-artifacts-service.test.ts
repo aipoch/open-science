@@ -14,7 +14,10 @@ const artifact = (overrides: Partial<HostArtifactCatalogItem> = {}): HostArtifac
   contentType: 'text/csv',
   sizeBytes: 42,
   sortAtMs: Date.parse('2026-08-01T00:00:00.000Z'),
+  createdAt: '2026-08-01T00:00:00.000Z',
+  sourceCreatedAt: '2026-07-01T00:00:00.000Z',
   rootFrameId: 'root-a',
+  agentFrameId: 'frame-a',
   ...overrides
 })
 
@@ -27,7 +30,10 @@ const upload = (overrides: Partial<HostArtifactCatalogItem> = {}): HostArtifactC
     filename: 'report.pdf',
     contentType: 'application/pdf',
     sortAtMs: Date.parse('2026-08-02T00:00:00.000Z'),
+    createdAt: '2026-08-02T00:00:00.000Z',
+    sourceCreatedAt: '2026-07-02T00:00:00.000Z',
     rootFrameId: null,
+    agentFrameId: null,
     ...overrides
   })
 
@@ -58,36 +64,84 @@ const harness = (
 const context = { projectId: 'project-a', sessionId: 'calling-session' }
 
 describe('HostArtifactsService', () => {
-  it('returns the current Project catalog across Sessions with the stable snake_case projection', async () => {
+  it('returns the current Project catalog across Sessions with a fixed camelCase projection', async () => {
     const { service, readHostArtifactCatalog } = harness()
 
     await expect(service.list({}, context)).resolves.toEqual({
       count: 2,
-      project_id: 'project-a',
+      projectId: 'project-a',
       truncated: false,
       artifacts: [
-        expect.objectContaining({
+        {
           id: 'upload-1',
           filename: 'report.pdf',
-          latest_version_id: 'upload-version-1',
-          session_id: 'session-b',
-          root_frame_id: null,
-          is_user_upload: true,
-          latest_version_created_at: '2026-08-02T00:00:00.000Z'
-        }),
-        expect.objectContaining({
+          contentType: 'application/pdf',
+          sizeBytes: 42,
+          latestVersionId: 'upload-version-1',
+          checksum: 'a'.repeat(64),
+          projectId: 'project-a',
+          sessionId: 'session-b',
+          rootFrameId: null,
+          agentFrameId: null,
+          isUserUpload: true,
+          createdAt: '2026-07-02T00:00:00.000Z',
+          latestVersionCreatedAt: '2026-08-02T00:00:00.000Z'
+        },
+        {
           id: 'artifact-1',
-          latest_version_id: 'artifact-version-1',
-          session_id: 'session-a',
-          root_frame_id: 'root-a',
-          is_user_upload: false
-        })
+          filename: 'clinical-genomics.csv',
+          contentType: 'text/csv',
+          sizeBytes: 42,
+          latestVersionId: 'artifact-version-1',
+          checksum: 'a'.repeat(64),
+          projectId: 'project-a',
+          sessionId: 'session-a',
+          rootFrameId: 'root-a',
+          agentFrameId: 'frame-a',
+          isUserUpload: false,
+          createdAt: '2026-07-01T00:00:00.000Z',
+          latestVersionCreatedAt: '2026-08-01T00:00:00.000Z'
+        }
       ]
     })
     expect(readHostArtifactCatalog).toHaveBeenCalledWith({ projectId: 'project-a' })
   })
 
-  it('narrows by Session, filename/exact, content type, and UTC half-open time bounds', async () => {
+  it('narrows by exact producer Frame without expanding a shared root or including Uploads', async () => {
+    const { service } = harness([
+      upload(),
+      artifact({ sourceFileId: 'root', rootFrameId: 'root-a', agentFrameId: 'root-a' }),
+      artifact({
+        sourceFileId: 'child-a',
+        versionId: 'child-a-v1',
+        rootFrameId: 'root-a',
+        agentFrameId: 'child-a'
+      }),
+      artifact({
+        sourceFileId: 'child-b',
+        versionId: 'child-b-v1',
+        rootFrameId: 'root-a',
+        agentFrameId: 'child-b'
+      })
+    ])
+
+    await expect(service.list({ frame_id: 'child-a' }, context)).resolves.toMatchObject({
+      count: 1,
+      artifacts: [{ id: 'child-a', rootFrameId: 'root-a', agentFrameId: 'child-a' }]
+    })
+    await expect(service.list({ frame_id: 'root-a' }, context)).resolves.toMatchObject({
+      count: 1,
+      artifacts: [{ id: 'root', agentFrameId: 'root-a' }]
+    })
+    await expect(service.list({ frame_id: 'historical-producer' }, context)).resolves.toMatchObject(
+      {
+        count: 0,
+        artifacts: []
+      }
+    )
+  })
+
+  it('narrows by filename/exact, MIME prefix, and UTC half-open time bounds', async () => {
     const { service } = harness([
       upload({ filename: 'Final Report.pdf', sortAtMs: Date.parse('2026-08-02T00:00:00Z') }),
       artifact({ filename: 'report.csv', sortAtMs: Date.parse('2026-08-03T00:00:00Z') })
@@ -96,10 +150,9 @@ describe('HostArtifactsService', () => {
     await expect(
       service.list(
         {
-          session_id: 'session-b',
           filename: 'Report',
           exact: false,
-          content_type: 'APPLICATION/PDF',
+          content_type: 'APPLICATION/',
           after: '2026-08-02',
           before: '2026-08-03'
         },
@@ -116,6 +169,47 @@ describe('HostArtifactsService', () => {
     await expect(
       nested.service.list({ filename: 'Final Report.pdf', exact: true }, context)
     ).resolves.toMatchObject({ count: 1 })
+    await expect(service.list({ content_type: 'text/csv' }, context)).resolves.toMatchObject({
+      count: 1,
+      artifacts: [{ contentType: 'text/csv' }]
+    })
+    await expect(service.list({ content_type: ' text/ ' }, context)).resolves.toMatchObject({
+      count: 1,
+      artifacts: [{ contentType: 'text/csv' }]
+    })
+    for (const contentType of ['bogus/', 'text', 'text/csv/']) {
+      await expect(service.list({ content_type: contentType }, context)).rejects.toThrow(
+        'valid MIME type'
+      )
+    }
+  })
+
+  it('matches only the latest producer when one lineage was updated by another Frame', async () => {
+    const historical = artifact({ versionId: 'shared-v1', agentFrameId: 'frame-a' })
+    const latest = artifact({ versionId: 'shared-v2', agentFrameId: 'frame-b' })
+    const readHostArtifactCatalog: HostArtifactCatalog['readHostArtifactCatalog'] = async ({
+      versionId
+    }) => (versionId === historical.versionId ? [historical] : [latest])
+    const service = new HostArtifactsService(
+      { readHostArtifactCatalog },
+      {
+        artifact: { resolveVersionContent: vi.fn() },
+        upload: { resolveManagedUploadPath: vi.fn() }
+      }
+    )
+
+    await expect(service.list({ frame_id: 'frame-a' }, context)).resolves.toMatchObject({
+      count: 0,
+      artifacts: []
+    })
+    await expect(service.list({ frame_id: 'frame-b' }, context)).resolves.toMatchObject({
+      count: 1,
+      artifacts: [{ latestVersionId: 'shared-v2', agentFrameId: 'frame-b' }]
+    })
+    await expect(service.list({ version_id: 'shared-v1' }, context)).resolves.toMatchObject({
+      count: 1,
+      artifacts: [{ latestVersionId: 'shared-v1', agentFrameId: 'frame-a' }]
+    })
   })
 
   it('uses the shared fuzzy score for ordering without exposing scores', async () => {
@@ -138,14 +232,18 @@ describe('HostArtifactsService', () => {
     ])
 
     const first = await service.list({ filename: '.pdf', limit: 2 }, context)
-    expect(first).toMatchObject({ count: 2, truncated: true })
+    expect(first).toMatchObject({ count: 3, truncated: true })
     const second = await service.list(
-      { filename: '.pdf', limit: 2, cursor: first.next_cursor },
+      { filename: '.pdf', limit: 2, cursor: first.nextCursor },
       context
     )
-    expect(second).toMatchObject({ count: 1, truncated: false })
+    expect(second).toMatchObject({ count: 3, truncated: false })
+    expect(second.artifacts).toHaveLength(1)
     await expect(
-      service.list({ filename: 'different', cursor: first.next_cursor }, context)
+      service.list({ filename: 'different', cursor: first.nextCursor }, context)
+    ).rejects.toThrow('cursor does not match')
+    await expect(
+      service.list({ filename: '.pdf', frame_id: 'frame-a', cursor: first.nextCursor }, context)
     ).rejects.toThrow('cursor does not match')
     await expect(service.list({ limit: 0 }, context)).rejects.toThrow('between 1 and 100')
     await expect(service.list({ limit: 101 }, context)).rejects.toThrow('between 1 and 100')
@@ -158,7 +256,7 @@ describe('HostArtifactsService', () => {
       service.list({ version_id: 'artifact-version-1' }, context)
     ).resolves.toMatchObject({
       count: 1,
-      artifacts: [{ latest_version_id: 'artifact-version-1' }]
+      artifacts: [{ latestVersionId: 'artifact-version-1' }]
     })
     expect(readHostArtifactCatalog).toHaveBeenLastCalledWith({
       projectId: 'project-a',
@@ -175,7 +273,10 @@ describe('HostArtifactsService', () => {
       { after: '2026-08-03', before: '2026-08-03' },
       { after: '2026-08-03T10:00:00' },
       { exact: 'yes', filename: 'x' },
-      { session_id: 1 }
+      { frame_id: 1 },
+      { frame_id: '   ' },
+      { session_id: 'session-a' },
+      { sessionId: 'session-a' }
     ]) {
       await expect(service.list(options, context)).rejects.toThrow(/host\.artifacts/u)
     }

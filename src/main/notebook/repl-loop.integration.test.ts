@@ -1736,31 +1736,42 @@ describe('repl_loop local RPC transport', () => {
           parsed.params?.op === 'path'
             ? managedPath
             : {
-                count: 2,
-                project_id: 'project-a',
-                truncated: false,
+                count: 3,
+                projectId: 'project-a',
+                truncated: true,
+                nextCursor: 'next-page',
+                ignoredFutureField: 'not-public',
                 artifacts: [
                   {
                     id: 'artifact-1',
                     filename: 'result.csv',
-                    content_type: 'text/csv',
-                    size_bytes: 12,
-                    latest_version_id: 'artifact-version-1',
+                    contentType: 'text/csv',
+                    sizeBytes: 12,
+                    latestVersionId: 'artifact-version-1',
                     checksum: 'a'.repeat(64),
-                    session_id: 'session-a',
-                    root_frame_id: 'root-1',
-                    is_user_upload: false,
-                    latest_version_created_at: '2026-08-01T00:00:00.000Z'
+                    projectId: 'project-a',
+                    sessionId: 'session-a',
+                    rootFrameId: 'root-1',
+                    agentFrameId: 'frame-1',
+                    isUserUpload: false,
+                    createdAt: '2026-07-31T00:00:00.000Z',
+                    latestVersionCreatedAt: '2026-08-01T00:00:00.000Z',
+                    ignoredFutureField: 'not-public'
                   },
                   {
                     id: 'upload-1',
                     filename: 'report.pdf',
-                    size_bytes: 24,
-                    latest_version_id: 'upload-version-1',
-                    session_id: 'session-b',
-                    root_frame_id: null,
-                    is_user_upload: true,
-                    latest_version_created_at: '2026-08-02T00:00:00.000Z'
+                    contentType: null,
+                    sizeBytes: 24,
+                    latestVersionId: 'upload-version-1',
+                    checksum: null,
+                    projectId: 'project-a',
+                    sessionId: 'session-b',
+                    rootFrameId: null,
+                    agentFrameId: null,
+                    isUserUpload: true,
+                    createdAt: '2026-08-01T00:00:00.000Z',
+                    latestVersionCreatedAt: '2026-08-02T00:00:00.000Z'
                   }
                 ]
               }
@@ -1781,9 +1792,9 @@ describe('repl_loop local RPC transport', () => {
 
     try {
       const projection = await send(
-        "const page = await host.artifacts({ search: 'report', sessionId: 'session-a', contentType: 'text/csv', limit: 2 }); " +
+        "const page = await host.artifacts({ search: 'report', frameId: 'frame-1', contentType: 'text/csv', limit: 2 }); " +
           "await host.artifacts({ versionId: 'artifact-version-1' }); " +
-          'const localPath = await host.artifactPath(page.artifacts[1].latest_version_id); ' +
+          'const localPath = await host.artifactPath(page.artifacts[1].latestVersionId); ' +
           'return JSON.stringify({ page, localPath, pageFrozen: Object.isFrozen(page), ' +
           'artifactsFrozen: Object.isFrozen(page.artifacts), itemFrozen: Object.isFrozen(page.artifacts[0]) })'
       )
@@ -1791,16 +1802,45 @@ describe('repl_loop local RPC transport', () => {
       const projected = JSON.parse(projection.result ?? '{}')
       expect(projected).toMatchObject({
         page: {
-          count: 2,
-          project_id: 'project-a',
-          truncated: false
+          count: 3,
+          projectId: 'project-a',
+          truncated: true,
+          nextCursor: 'next-page'
         },
         localPath: managedPath,
         pageFrozen: true,
         artifactsFrozen: true,
         itemFrozen: true
       })
-      expect(projected.page.artifacts[0].latest_version_id).toBe('artifact-version-1')
+      expect(projected.page.artifacts[0].latestVersionId).toBe('artifact-version-1')
+      expect(Object.keys(projected.page)).toEqual([
+        'count',
+        'projectId',
+        'truncated',
+        'nextCursor',
+        'artifacts'
+      ])
+      expect(Object.keys(projected.page.artifacts[0])).toEqual([
+        'id',
+        'filename',
+        'contentType',
+        'sizeBytes',
+        'latestVersionId',
+        'checksum',
+        'projectId',
+        'sessionId',
+        'rootFrameId',
+        'agentFrameId',
+        'isUserUpload',
+        'createdAt',
+        'latestVersionCreatedAt'
+      ])
+      expect(projected.page.artifacts[1]).toMatchObject({
+        contentType: null,
+        checksum: null,
+        rootFrameId: null,
+        agentFrameId: null
+      })
       expect(requests).toEqual([
         {
           method: 'artifactsCall',
@@ -1808,7 +1848,7 @@ describe('repl_loop local RPC transport', () => {
             op: 'list',
             options: {
               search: 'report',
-              session_id: 'session-a',
+              frame_id: 'frame-1',
               content_type: 'text/csv',
               limit: 2
             }
@@ -1822,13 +1862,15 @@ describe('repl_loop local RPC transport', () => {
       ])
 
       const oldOptions = await send(
-        "const errors = []; for (const [key, value] of [['version_id', 'artifact-version-1'], ['session_id', 'session-a'], ['content_type', 'text/csv']]) { " +
+        "const errors = []; for (const [key, value] of [['sessionId', 'session-a'], ['version_id', 'artifact-version-1'], ['frame_id', 'frame-1'], ['session_id', 'session-a'], ['content_type', 'text/csv']]) { " +
           'try { await host.artifacts({ [key]: value }) } ' +
           "catch (error) { errors.push(error.name + ': ' + error.message) } } " +
           'return JSON.stringify(errors)'
       )
       expect(JSON.parse(oldOptions.result ?? '[]')).toEqual([
+        'TypeError: host.artifacts options unknown option: sessionId',
         'TypeError: host.artifacts options unknown option: version_id',
+        'TypeError: host.artifacts options unknown option: frame_id',
         'TypeError: host.artifacts options unknown option: session_id',
         'TypeError: host.artifacts options unknown option: content_type'
       ])

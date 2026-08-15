@@ -70,20 +70,39 @@ call returns a fresh frozen projection.
 ## Discover managed Project files
 
 When `caps.artifacts === true`, use `await host.artifacts(options)` to list generated Artifacts and
-user Uploads across the current Project. Optional camelCase fields are `versionId`, `sessionId`,
+user Uploads across the current Project. Optional camelCase fields are `versionId`, `frameId`,
 `filename`, `exact`, `search`, `contentType`, `after`, `before`, `cursor`, and `limit` (default 20,
 maximum 100). `versionId` is exclusive; `exact` requires `filename`; `search` and `filename` cannot
-be combined. Bare dates are UTC midnight, `after` is inclusive, and `before` is exclusive.
+be combined. `contentType` accepts an exact MIME type or a top-level prefix such as `text/`. Bare
+dates are UTC midnight, `after` is inclusive, and `before` is exclusive.
 
 ```javascript
 const page = await host.artifacts({ search: 'report', limit: 20 })
 const localPath = page.artifacts[0]
-  ? await host.artifactPath(page.artifacts[0].latest_version_id)
+  ? await host.artifactPath(page.artifacts[0].latestVersionId)
   : undefined
 ```
 
-`sessionId` only narrows the token-owned current Project. There is no Project override or all-
-Projects scope. Results contain metadata and immutable Version identity, never content; use
+`frameId` matches only the exact producer Frame of a generated Artifact's latest Version. It does
+not expand to a root's descendants or the whole Session, and Uploads without trusted Frame
+provenance are excluded while this filter is present. There is no Session or Project override and
+no all-Projects scope. `count` is the total number of matches before cursor pagination; the current
+page size is `artifacts.length`. `nextCursor` is absent on the last page.
+
+```javascript
+{
+  count, projectId, truncated, nextCursor,
+  artifacts: [{
+    id, filename, contentType, sizeBytes, latestVersionId, checksum,
+    projectId, sessionId, rootFrameId, agentFrameId, isUserUpload,
+    createdAt, latestVersionCreatedAt
+  }]
+}
+```
+
+Result and Artifact fields use camelCase. `contentType`, `checksum`, `rootFrameId`, and
+`agentFrameId` are always present and may be `null`. Results contain metadata and immutable Version
+identity, never content; use
 `host.artifactPath(versionId)` to resolve a checksum-validated local absolute path for an exact
 generated Artifact Version or Upload Version, then use the existing file workflow. Version ID
 collisions, missing Versions, cross-Project ownership, and checksum mismatches fail closed.

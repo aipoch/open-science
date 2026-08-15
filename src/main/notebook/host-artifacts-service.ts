@@ -36,7 +36,7 @@ type HostArtifactReadContext = { projectId: string; sessionId: string }
 
 type NormalizedOptions = {
   versionId?: string
-  sessionId?: string
+  frameId?: string
   filename?: string
   exact: boolean
   search?: string
@@ -51,7 +51,7 @@ type Cursor = { version: 1; queryKey: string; offset: number }
 
 const OPTION_KEYS = new Set([
   'version_id',
-  'session_id',
+  'frame_id',
   'filename',
   'exact',
   'search',
@@ -63,6 +63,19 @@ const OPTION_KEYS = new Set([
 ])
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 100
+const VALID_MIME_TOP_LEVELS = new Set([
+  'application',
+  'audio',
+  'chemical',
+  'font',
+  'image',
+  'message',
+  'model',
+  'multipart',
+  'text',
+  'video'
+])
+const MIME_FILTER_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/(?:[a-z0-9][a-z0-9!#$&^_.+-]*)?$/u
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -74,7 +87,7 @@ const optionalString = (
 ): string | undefined => {
   const value = options[key]
   if (value === undefined) return undefined
-  if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > maxLength) {
     throw new Error(
       `host.artifacts ${key} must be a non-empty string of at most ${maxLength} characters.`
     )
@@ -99,6 +112,18 @@ const parseUtcTime = (value: string, key: 'after' | 'before'): number => {
   return parsed
 }
 
+const normalizeContentType = (value: Record<string, unknown>): string | undefined => {
+  const contentType = optionalString(value, 'content_type')?.trim().toLowerCase()
+  if (contentType === undefined) return undefined
+  const topLevel = contentType.split('/', 1)[0]
+  if (!MIME_FILTER_PATTERN.test(contentType) || !VALID_MIME_TOP_LEVELS.has(topLevel)) {
+    throw new Error(
+      'host.artifacts contentType must be a valid MIME type or top-level prefix such as "text/csv" or "image/".'
+    )
+  }
+  return contentType
+}
+
 const normalizeOptions = (value: unknown): NormalizedOptions => {
   if (value === undefined) value = {}
   if (!isRecord(value)) throw new Error('host.artifacts options must be an object.')
@@ -110,10 +135,10 @@ const normalizeOptions = (value: unknown): NormalizedOptions => {
     throw new Error('host.artifacts version_id cannot be combined with other options.')
   }
 
-  const sessionId = optionalString(value, 'session_id', 512)
+  const frameId = optionalString(value, 'frame_id', 512)
   const filename = optionalString(value, 'filename')
   const search = optionalString(value, 'search')
-  const contentType = optionalString(value, 'content_type')
+  const contentType = normalizeContentType(value)
   const after = optionalString(value, 'after', 64)
   const before = optionalString(value, 'before', 64)
   const cursor = optionalString(value, 'cursor', 4096)
@@ -133,7 +158,7 @@ const normalizeOptions = (value: unknown): NormalizedOptions => {
 
   return {
     versionId,
-    sessionId,
+    frameId,
     filename,
     exact,
     search,
@@ -170,15 +195,27 @@ const decodeCursor = (value: string, queryKey: string): Cursor => {
 const toHostArtifact = (item: HostArtifactCatalogItem): HostArtifact => ({
   id: item.sourceFileId,
   filename: item.filename,
-  ...(item.contentType ? { content_type: item.contentType } : {}),
-  size_bytes: item.sizeBytes,
-  latest_version_id: item.versionId,
-  ...(item.checksum ? { checksum: item.checksum } : {}),
-  session_id: item.sessionId,
-  root_frame_id: item.rootFrameId,
-  is_user_upload: item.source === 'upload',
-  latest_version_created_at: new Date(item.sortAtMs).toISOString()
+  contentType: item.contentType ?? null,
+  sizeBytes: item.sizeBytes,
+  latestVersionId: item.versionId,
+  checksum: item.checksum ?? null,
+  projectId: item.projectId,
+  sessionId: item.sessionId,
+  rootFrameId: item.rootFrameId,
+  agentFrameId: item.agentFrameId,
+  isUserUpload: item.source === 'upload',
+  createdAt: item.sourceCreatedAt,
+  latestVersionCreatedAt: item.createdAt
 })
+
+const matchesContentType = (actual: string | undefined, requested: string): boolean => {
+  if (!actual) return false
+  const normalizedActual = actual.toLowerCase()
+  const normalizedRequested = requested.toLowerCase()
+  return normalizedRequested.endsWith('/')
+    ? normalizedActual.startsWith(normalizedRequested)
+    : normalizedActual === normalizedRequested
+}
 
 class HostArtifactsService {
   constructor(
@@ -193,17 +230,19 @@ class HostArtifactsService {
       ...(normalized.versionId ? { versionId: normalized.versionId } : {})
     })
     const ranked = candidates.flatMap((item) => {
-      if (normalized.sessionId && item.sessionId !== normalized.sessionId) return []
+      if (
+        normalized.frameId &&
+        (item.source !== 'artifact' || item.agentFrameId !== normalized.frameId)
+      ) {
+        return []
+      }
       if (normalized.filename) {
         const matches = normalized.exact
           ? basename(item.filename) === normalized.filename
           : item.filename.toLowerCase().includes(normalized.filename.toLowerCase())
         if (!matches) return []
       }
-      if (
-        normalized.contentType &&
-        item.contentType?.toLowerCase() !== normalized.contentType.toLowerCase()
-      ) {
+      if (normalized.contentType && !matchesContentType(item.contentType, normalized.contentType)) {
         return []
       }
       if (normalized.afterMs !== undefined && item.sortAtMs < normalized.afterMs) return []
@@ -226,7 +265,7 @@ class HostArtifactsService {
 
     const queryKey = JSON.stringify({
       projectId: context.projectId,
-      sessionId: normalized.sessionId,
+      frameId: normalized.frameId,
       filename: normalized.filename,
       exact: normalized.exact,
       search: normalized.search,
@@ -241,11 +280,11 @@ class HostArtifactsService {
     const truncated = nextOffset < ranked.length
     const artifacts = page.map(({ item }) => toHostArtifact(item))
     return {
-      count: artifacts.length,
-      project_id: context.projectId,
+      count: ranked.length,
+      projectId: context.projectId,
       truncated,
       ...(truncated
-        ? { next_cursor: encodeCursor({ version: 1, queryKey, offset: nextOffset }) }
+        ? { nextCursor: encodeCursor({ version: 1, queryKey, offset: nextOffset }) }
         : {}),
       artifacts
     }

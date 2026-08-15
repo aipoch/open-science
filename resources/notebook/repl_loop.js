@@ -1352,17 +1352,21 @@ async function hostViewImage(source, options = undefined) {
 const HOST_ARTIFACT_REQUIRED_KEYS = [
   'id',
   'filename',
-  'size_bytes',
-  'latest_version_id',
-  'session_id',
-  'root_frame_id',
-  'is_user_upload',
-  'latest_version_created_at'
+  'contentType',
+  'sizeBytes',
+  'latestVersionId',
+  'checksum',
+  'projectId',
+  'sessionId',
+  'rootFrameId',
+  'agentFrameId',
+  'isUserUpload',
+  'createdAt',
+  'latestVersionCreatedAt'
 ]
-const HOST_ARTIFACT_OPTIONAL_KEYS = ['content_type', 'checksum']
 const HOST_ARTIFACT_INPUT_KEYS = {
   versionId: 'version_id',
-  sessionId: 'session_id',
+  frameId: 'frame_id',
   filename: 'filename',
   exact: 'exact',
   search: 'search',
@@ -1373,37 +1377,34 @@ const HOST_ARTIFACT_INPUT_KEYS = {
   limit: 'limit'
 }
 
-const validatedHostArtifact = (value) => {
+const nullableHostArtifactString = (value) => value === null || typeof value === 'string'
+
+const validatedHostArtifact = (value, projectId) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('host.artifacts returned an invalid Artifact')
   }
   const keys = Object.keys(value)
   if (
     HOST_ARTIFACT_REQUIRED_KEYS.some((key) => !keys.includes(key)) ||
-    keys.some(
-      (key) =>
-        !HOST_ARTIFACT_REQUIRED_KEYS.includes(key) && !HOST_ARTIFACT_OPTIONAL_KEYS.includes(key)
-    ) ||
     typeof value.id !== 'string' ||
     typeof value.filename !== 'string' ||
-    typeof value.size_bytes !== 'number' ||
-    !Number.isSafeInteger(value.size_bytes) ||
-    typeof value.latest_version_id !== 'string' ||
-    typeof value.session_id !== 'string' ||
-    (value.root_frame_id !== null && typeof value.root_frame_id !== 'string') ||
-    typeof value.is_user_upload !== 'boolean' ||
-    typeof value.latest_version_created_at !== 'string' ||
-    (value.content_type !== undefined && typeof value.content_type !== 'string') ||
-    (value.checksum !== undefined && typeof value.checksum !== 'string')
+    !nullableHostArtifactString(value.contentType) ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    value.sizeBytes < 0 ||
+    typeof value.latestVersionId !== 'string' ||
+    !nullableHostArtifactString(value.checksum) ||
+    value.projectId !== projectId ||
+    typeof value.sessionId !== 'string' ||
+    !nullableHostArtifactString(value.rootFrameId) ||
+    !nullableHostArtifactString(value.agentFrameId) ||
+    typeof value.isUserUpload !== 'boolean' ||
+    typeof value.createdAt !== 'string' ||
+    typeof value.latestVersionCreatedAt !== 'string'
   ) {
     throw new Error('host.artifacts returned an invalid Artifact')
   }
   return Object.freeze(
-    Object.fromEntries(
-      [...HOST_ARTIFACT_REQUIRED_KEYS, ...HOST_ARTIFACT_OPTIONAL_KEYS]
-        .filter((key) => value[key] !== undefined)
-        .map((key) => [key, value[key]])
-    )
+    Object.fromEntries(HOST_ARTIFACT_REQUIRED_KEYS.map((key) => [key, value[key]]))
   )
 }
 
@@ -1417,24 +1418,24 @@ async function hostArtifacts(options = {}) {
     typeof result !== 'object' ||
     Array.isArray(result) ||
     !Number.isSafeInteger(result.count) ||
-    typeof result.project_id !== 'string' ||
+    result.count < 0 ||
+    typeof result.projectId !== 'string' ||
     typeof result.truncated !== 'boolean' ||
-    (result.next_cursor !== undefined && typeof result.next_cursor !== 'string') ||
+    (result.nextCursor !== undefined && typeof result.nextCursor !== 'string') ||
     !Array.isArray(result.artifacts) ||
-    result.count !== result.artifacts.length ||
-    result.truncated !== (result.next_cursor !== undefined) ||
-    Object.keys(result).some(
-      (key) => !['count', 'project_id', 'truncated', 'next_cursor', 'artifacts'].includes(key)
-    )
+    result.count < result.artifacts.length ||
+    result.truncated !== (result.nextCursor !== undefined)
   ) {
     throw new Error('host.artifacts returned an invalid result')
   }
-  const artifacts = Object.freeze(result.artifacts.map(validatedHostArtifact))
+  const artifacts = Object.freeze(
+    result.artifacts.map((artifact) => validatedHostArtifact(artifact, result.projectId))
+  )
   return Object.freeze({
     count: result.count,
-    project_id: result.project_id,
+    projectId: result.projectId,
     truncated: result.truncated,
-    ...(result.next_cursor !== undefined ? { next_cursor: result.next_cursor } : {}),
+    ...(result.nextCursor !== undefined ? { nextCursor: result.nextCursor } : {}),
     artifacts
   })
 }

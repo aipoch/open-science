@@ -55,6 +55,9 @@ describe('self-awareness bundled Skill', () => {
       'await host.frames.list(options)',
       'await host.frames.get(frameId, options)',
       'current Project',
+      'producer Frame',
+      'Uploads without trusted Frame',
+      'provenance are excluded',
       'exact full Frame ID',
       'active Branch',
       'private reasoning',
@@ -70,8 +73,13 @@ describe('self-awareness bundled Skill', () => {
       'await host.lineage.graph(versionId)',
       'await host.lineage.get(versionId)',
       '`versionId`',
+      '`frameId`',
       '`sessionId`',
       '`contentType`',
+      'latestVersionId',
+      'agentFrameId',
+      'latestVersionCreatedAt',
+      '`count` is the total number of matches',
       '`maxDepth`',
       '`maxNodes`',
       '`rootsOnly`',
@@ -87,8 +95,9 @@ describe('self-awareness bundled Skill', () => {
       expect(body).toContain(phrase)
     }
     expect(body).not.toMatch(
-      /host\.artifact_path|`(?:version_id|session_id|content_type|max_depth|max_nodes|roots_only|branch_id)`/
+      /host\.artifact_path|`(?:version_id|session_id|content_type|latest_version_id|root_frame_id|agent_frame_id|latest_version_created_at|max_depth|max_nodes|roots_only|branch_id)`/
     )
+    expect(body).not.toMatch(/Optional camelCase fields are[^.]*`sessionId`/)
     expect(body).not.toMatch(/host\.(query|artifact_read)/)
   })
 })
