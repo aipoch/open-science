@@ -1280,26 +1280,6 @@ const createApplicationModules = async (
       }
     }
   )
-  const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
-    async () => {
-      // A retained child Session plan must finish before its parent Project intent can prepare.
-      await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
-      await projectDeletionCoordinator.recoverPendingDeletions()
-    },
-    {
-      onError: (error) =>
-        createLogger('compute-job-deletion').error(
-          'background deletion recovery failed; retry scheduled',
-          diagnosticErrorFields(error)
-        )
-    }
-  )
-  await modules.add(projectDeletionRecovery, (recovery) => ({
-    name: 'project-deletion-recovery',
-    capability: undefined,
-    start: () => recovery.start(),
-    dispose: () => recovery.stop()
-  }))
   // Augment computeService with getEnabledComputeHosts so the RPC server can serve list_compute.
   // Must preserve ComputeService's prototype methods (list/getDetails/submitJob/...) — see the helper.
   const computeServiceWithRegistry = attachEnabledComputeHosts(computeService, hostsRegistry)
@@ -1942,10 +1922,10 @@ const createApplicationModules = async (
     },
     sideChat: sideChatRuntime,
     compute: {
-      reconcileProject: (projectId) => {
+      reconcileProject: async (projectId) => {
         const deletionOwner = computeJobDeletionRef.current
         if (!deletionOwner) throw new Error('Compute Job deletion is not initialized.')
-        return deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
+        await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
       }
     }
   })
@@ -1960,6 +1940,29 @@ const createApplicationModules = async (
   } catch (error) {
     sideChatLog.error('durable Side chat hydration failed', diagnosticErrorFields(error))
   }
+  // Recovery quiesces every runtime owner, so do not start its first attempt until ACP, Delegation,
+  // Notebook, Side Chat, and the composed quiescence boundary are all initialized. The bounded
+  // durable barrier restoration above still runs early enough to block admission during startup.
+  const projectDeletionRecovery = new ProjectDeletionRecoveryLoop(
+    async () => {
+      // A retained child Session plan must finish before its parent Project intent can prepare.
+      await jobDeletionOwner.reconcileOrphanJobs(isComputeJobOwnerLive)
+      await projectDeletionCoordinator.recoverPendingDeletions()
+    },
+    {
+      onError: (error) =>
+        createLogger('compute-job-deletion').error(
+          'background deletion recovery failed; retry scheduled',
+          diagnosticErrorFields(error)
+        )
+    }
+  )
+  await modules.add(projectDeletionRecovery, (recovery) => ({
+    name: 'project-deletion-recovery',
+    capability: undefined,
+    start: () => recovery.start(),
+    dispose: () => recovery.stop()
+  }))
   declareElectronAdapter('side-chat', () =>
     registerSideChatIpcHandlers(sideChatRuntime, {
       loadParentSession: (projectId, sessionId) =>
