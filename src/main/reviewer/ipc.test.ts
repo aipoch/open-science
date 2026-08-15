@@ -152,6 +152,23 @@ describe('reviewer IPC handlers', () => {
     expect(recoverInterruptedReviews).toHaveBeenCalledTimes(1)
   })
 
+  it('retries startup recovery after a failed attempt', async () => {
+    recoverInterruptedReviews
+      .mockRejectedValueOnce(new Error('database unavailable'))
+      .mockResolvedValueOnce(0)
+    const owner = createReviewerCommandOwner({ acpRuntime })
+
+    await expect(
+      owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+    ).rejects.toThrow('database unavailable')
+    expect(getReviewsForSession).not.toHaveBeenCalled()
+    await expect(
+      owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+    ).resolves.toEqual([])
+
+    expect(recoverInterruptedReviews).toHaveBeenCalledTimes(2)
+  })
+
   it('shares one in-flight arbitration owner between direct and IPC commands', async () => {
     let finishRun: (() => void) | undefined
     let backgroundRun: Promise<void> | undefined
