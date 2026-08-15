@@ -16,6 +16,7 @@ import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
+import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { Button } from '@/components/ui/button'
 import { resolveAppShellPresentation } from '@/app-shell-presentation-owner'
 import { HomePage } from '@/pages/home/HomePage'
@@ -39,6 +40,7 @@ import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useQuitPersistenceFlush } from '@/hooks/useQuitPersistenceFlush'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
+import { useWebEventConnection } from '@/hooks/useWebEventConnection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -185,6 +187,9 @@ const AppContent = (): React.JSX.Element | null => {
   const startupView = isSettingsLoaded
     ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
     : undefined
+  const webEventConnectionPhase = useWebEventConnection(
+    startupView === 'app' && isSessionPersistenceHydrated
+  )
   const appShellPresentation = useMemo(
     () =>
       resolveAppShellPresentation({
@@ -194,6 +199,7 @@ const AppContent = (): React.JSX.Element | null => {
         view,
         presentations: {
           closeConfirmation: isCloseConfirmOpen,
+          webEventRecovery: webEventConnectionPhase !== 'live',
           dataRootRecovery: missingDataRoot !== undefined,
           legacyDataMove: legacyMove !== undefined,
           update: isUpdateDialogOpen,
@@ -219,6 +225,7 @@ const AppContent = (): React.JSX.Element | null => {
       legacyMove,
       missingDataRoot,
       startupView,
+      webEventConnectionPhase,
       view
     ]
   )
@@ -623,6 +630,10 @@ const AppContent = (): React.JSX.Element | null => {
         />
         <PermissionUndoSnackbar />
       </div>
+      <WebEventRecoveryDialog
+        active={activePresentation === 'webEventRecovery'}
+        phase={webEventConnectionPhase}
+      />
       <SettingsPage
         ref={settingsPageRef}
         open={activePresentation === 'settings'}

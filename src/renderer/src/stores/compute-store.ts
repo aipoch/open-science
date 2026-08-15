@@ -173,7 +173,11 @@ export const useComputeStore = create<ComputeStore>((set) => ({
 
   // Queues an incoming compute approval request (pushed from main before each SSH call).
   enqueueApproval: (request) => {
-    set((state) => ({ pendingApprovals: [...state.pendingApprovals, request] }))
+    set((state) =>
+      state.pendingApprovals.some(({ id }) => id === request.id)
+        ? state
+        : { pendingApprovals: [...state.pendingApprovals, request] }
+    )
   },
 
   // Sends the user's scoped decision back to main and removes the head request from the queue.

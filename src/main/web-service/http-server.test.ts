@@ -14,7 +14,11 @@ vi.mock('electron', () => ({
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
-import { isWebRpcChannel, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import {
+  isWebRpcChannel,
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_PROTOCOL_VERSION
+} from '../../shared/web-rpc-contract'
 import { ApplicationEventHub } from '../application-events'
 import type { CallerContext } from '../caller-context'
 import {
@@ -472,6 +476,118 @@ describe('startWebHttpServer', () => {
         }
       ])
     })
+    publicSocket.close()
+  })
+
+  it('replays internal renderer events published while the Web client is disconnected', async () => {
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot: '/unused',
+      rpc: {
+        channels: () => [],
+        invoke: vi.fn(),
+        releaseClient: vi.fn(),
+        dispose: vi.fn()
+      },
+      bootstrap: {
+        appName: 'Open Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const bootstrap = (await (
+      await fetch(`${base}/api/bootstrap`, {
+        headers: { authorization: 'Bearer test-token' }
+      })
+    ).json()) as {
+      eventStream: {
+        protocolVersion: number
+        streamId: string
+        latestSequence: number
+      }
+    }
+    expect(bootstrap.eventStream).toMatchObject({
+      protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+      latestSequence: 0
+    })
+
+    const eventSocketUrl = (after: number): string => {
+      const url = new URL(`${base.replace('http:', 'ws:')}/events`)
+      url.searchParams.set('token', 'test-token')
+      url.searchParams.set('client', 'replay-client')
+      url.searchParams.set('eventProtocol', String(WEB_EVENT_STREAM_PROTOCOL_VERSION))
+      url.searchParams.set('stream', bootstrap.eventStream.streamId)
+      url.searchParams.set('after', String(after))
+      return url.toString()
+    }
+
+    const firstSocket = new WebSocket(eventSocketUrl(0))
+    const firstMessage = new Promise<unknown>((resolve) =>
+      firstSocket.once('message', (data) => resolve(JSON.parse(data.toString())))
+    )
+    await new Promise<void>((resolve) => firstSocket.once('open', resolve))
+    await expect(firstMessage).resolves.toMatchObject({ kind: 'ready', latestSequence: 0 })
+    const firstClosed = new Promise<void>((resolve) => firstSocket.once('close', () => resolve()))
+    firstSocket.close()
+    await firstClosed
+
+    applicationEvents.publish('acp:permission-request', {
+      sessionId: 'session-1',
+      requestId: 'permission-1',
+      toolCallId: 'tool-1',
+      title: 'Run command',
+      options: []
+    })
+    applicationEvents.publish('settings:connector-runtime-changed', undefined)
+
+    const replayed: unknown[] = []
+    const secondSocket = new WebSocket(eventSocketUrl(0))
+    secondSocket.on('message', (data) => replayed.push(JSON.parse(data.toString())))
+    await new Promise<void>((resolve) => secondSocket.once('open', resolve))
+    await vi.waitFor(() => expect(replayed).toHaveLength(3))
+    expect(replayed).toEqual([
+      expect.objectContaining({
+        kind: 'event',
+        sequence: 1,
+        channel: 'acp:permission-request',
+        payload: expect.objectContaining({ requestId: 'permission-1' })
+      }),
+      expect.objectContaining({
+        kind: 'event',
+        sequence: 2,
+        channel: 'settings:connector-runtime-changed',
+        payload: null
+      }),
+      expect.objectContaining({ kind: 'ready', latestSequence: 2 })
+    ])
+    secondSocket.close()
+
+    const publicMessages: unknown[] = []
+    const publicSocket = new WebSocket(
+      `${base.replace('http:', 'ws:')}/api/v1/events?token=test-token`
+    )
+    publicSocket.on('message', (data) => publicMessages.push(JSON.parse(data.toString())))
+    await new Promise<void>((resolve) => publicSocket.once('open', resolve))
+    applicationEvents.publish('acp:permission-request', {
+      sessionId: 'session-1',
+      requestId: 'permission-live',
+      toolCallId: 'tool-live',
+      title: 'Run another command',
+      options: []
+    })
+    await vi.waitFor(() => expect(publicMessages).toHaveLength(1))
+    expect(publicMessages).toEqual([
+      expect.objectContaining({
+        type: 'permission.requested',
+        data: expect.objectContaining({ requestId: 'permission-live' })
+      })
+    ])
     publicSocket.close()
   })
 

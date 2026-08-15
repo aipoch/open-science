@@ -9,6 +9,7 @@ import {
 
 const noPresentations = (): AppShellPresentationState => ({
   closeConfirmation: false,
+  webEventRecovery: false,
   dataRootRecovery: false,
   legacyDataMove: false,
   update: false,
@@ -36,6 +37,7 @@ describe('App Shell presentation owner', () => {
   it('selects one presentation from the fixed semantic priority', () => {
     const priority: Array<keyof AppShellPresentationState> = [
       'closeConfirmation',
+      'webEventRecovery',
       'dataRootRecovery',
       'legacyDataMove',
       'update',
@@ -125,6 +127,7 @@ describe('App Shell presentation owner', () => {
     ['computeApproval', { computeApproval: true }, {}, 'consume'],
     ['connectorApproval', { connectorApproval: true }, {}, 'consume'],
     ['skillImportApproval', { skillImportApproval: true }, {}, 'consume'],
+    ['webEventRecovery', { webEventRecovery: true }, {}, 'consume'],
     ['globalSearch', { globalSearch: true }, {}, 'close-global-search'],
     ['settings', { settings: true }, {}, 'close-settings'],
     ['preview', { preview: true }, {}, 'close-preview'],

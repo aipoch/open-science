@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../../shared/compute'
+import type { ComputeApprovalRequest, ComputeHost } from '../../../shared/compute'
 import { createInitialComputeState, useComputeStore } from './compute-store'
 
 const createHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
@@ -164,5 +164,23 @@ describe('compute store — concurrency limit', () => {
 
     expect(concurrencySet).toHaveBeenCalledWith('ssh:biowulf', 20)
     expect(useComputeStore.getState().hosts[0].concurrencyLimit).toBe(20)
+  })
+})
+
+describe('compute store - approval replay', () => {
+  it('deduplicates a replayed approval request by its stable id', () => {
+    const request: ComputeApprovalRequest = {
+      id: 'approval-1',
+      session_id: 'session-1',
+      provider_id: 'ssh:lab',
+      provider_name: 'Lab',
+      shape: 'direct_ssh',
+      intent: 'Run analysis'
+    }
+
+    useComputeStore.getState().enqueueApproval(request)
+    useComputeStore.getState().enqueueApproval(request)
+
+    expect(useComputeStore.getState().pendingApprovals).toEqual([request])
   })
 })

@@ -2547,5 +2547,11 @@
   "Agent is addressing the feedback": "Agent 正在處理意見",
   "Corrections requested": "已要求修正",
   "Handed off to the Agent · response started": "已交給 Agent · 已開始回應",
+  "Connecting to Open Science": "\u6b63\u5728\u9023\u7dda\u81f3 Open Science",
+  "Reconnecting to Open Science": "\u6b63\u5728\u91cd\u65b0\u9023\u7dda\u81f3 Open Science",
+  "Restoring missed updates": "\u6b63\u5728\u9084\u539f\u907a\u6f0f\u7684\u66f4\u65b0",
+  "Reload required": "\u9700\u8981\u91cd\u65b0\u8f09\u5165",
+  "Controls are paused while Open Science restores updates that may have arrived during the interruption.": "Open Science \u6b63\u5728\u9084\u539f\u4e2d\u65b7\u671f\u9593\u53ef\u80fd\u62b5\u9054\u7684\u66f4\u65b0\uff0c\u63a7\u5236\u9805\u5df2\u66ab\u505c\u4f7f\u7528\u3002",
+  "This page can no longer safely recover all updates. Reload to fetch a complete, current view.": "\u6b64\u9801\u9762\u5df2\u7121\u6cd5\u5b89\u5168\u9084\u539f\u6240\u6709\u66f4\u65b0\u3002\u8acb\u91cd\u65b0\u8f09\u5165\u4ee5\u53d6\u5f97\u5b8c\u6574\u7684\u6700\u65b0\u6aa2\u8996\u3002",
   "Reviewer requested corrections": "審查員已要求修正"
 }

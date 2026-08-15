@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
-import { WEB_RPC_ALLOWED_CHANNELS, WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import {
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_ALLOWED_CHANNELS,
+  WEB_RPC_PROTOCOL_VERSION
+} from '../../shared/web-rpc-contract'
+import { WEB_EVENT_CONSUMERS_READY_EVENT } from '../../shared/web-event-connection'
 
 const electronMocks = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
@@ -92,7 +97,10 @@ const loadElectronApi = async (): Promise<ApiRoot> => {
 }
 
 const loadWebApi = async (): Promise<ApiRoot> => {
-  await import('./bootstrap')
+  const bootstrapImport = import('./bootstrap')
+  await vi.waitFor(() => expect((window as unknown as { api?: ApiRoot }).api).toBeDefined())
+  window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
+  await bootstrapImport
   return (window as unknown as { api: ApiRoot }).api
 }
 
@@ -142,7 +150,12 @@ beforeEach(async () => {
             platform: 'test',
             versions: { electron: '1', chrome: '1', node: '1' },
             rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
-            rpcChannels: WEB_RPC_ALLOWED_CHANNELS
+            rpcChannels: WEB_RPC_ALLOWED_CHANNELS,
+            eventStream: {
+              protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+              streamId: 'stream-1',
+              latestSequence: 0
+            }
           }),
           { status: 200, headers: { 'content-type': 'application/json' } }
         )

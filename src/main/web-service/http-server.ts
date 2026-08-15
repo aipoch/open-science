@@ -22,6 +22,7 @@ import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandComposition } from '../application-command-composition'
 import type { ApplicationEventSource } from '../application-events'
 import {
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
   isWebRpcChannel,
   WEB_RPC_PROTOCOL_VERSION,
   webRpcRequestSchema
@@ -32,6 +33,7 @@ import {
   projectPublicTaskProgressEvent,
   projectWebRendererEvent
 } from './application-event-projections'
+import { InternalWebEventStream } from './internal-web-event-stream'
 import { authenticateRequest, persistAuthCookie } from './auth'
 import type { StartTaskRunRequest } from '../../shared/task-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
@@ -438,6 +440,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   const sockets = new Set<WebSocket>()
   const externalSockets = new Map<WebSocket, string | undefined>()
   const publicEventSockets = new Set<WebSocket>()
+  const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
+  const internalEventStream = new InternalWebEventStream()
   const commandClient = createApplicationCommandClient()
   const clientLeases = new ClientLeaseRegistry((clientId) => {
     commandClient.releaseClient('web', clientId)
@@ -483,6 +487,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           ...options.bootstrap,
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcChannels,
+          eventStream: internalEventStream.cursor(),
           restrictedRpcChannels
         })
         return
@@ -676,27 +681,55 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const clientId = url.searchParams.get('client') ?? 'web'
     const lease = clientLeases.acquire(clientId)
-    sockets.add(socket)
-    if (url.pathname === '/api/v1/events') publicEventSockets.add(socket)
     socket.on('close', () => {
       sockets.delete(socket)
       externalSockets.delete(socket)
       publicEventSockets.delete(socket)
+      internalEventSockets.delete(socket)
       lease.release()
     })
+    if (url.pathname === '/api/v1/events') {
+      publicEventSockets.add(socket)
+    } else {
+      const requestedProtocol = url.searchParams.get('eventProtocol')
+      // A page loaded before this server upgrade has no cursor query. Keep it live-only until its
+      // next reload instead of breaking an already-open Web surface.
+      if (requestedProtocol === null) {
+        internalEventSockets.set(socket, 'legacy')
+      } else if (requestedProtocol !== String(WEB_EVENT_STREAM_PROTOCOL_VERSION)) {
+        socket.close(1002, 'Unsupported event stream protocol')
+        return
+      } else {
+        internalEventSockets.set(socket, 'replay')
+        const streamId = url.searchParams.get('stream') ?? ''
+        const afterValue = url.searchParams.get('after')
+        const after = afterValue === null ? Number.NaN : Number(afterValue)
+        for (const message of internalEventStream.resume({ streamId, after })) {
+          socket.send(message)
+        }
+      }
+    }
+    sockets.add(socket)
   })
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
     const internalProjection = projectWebRendererEvent(event)
     const publicProjection = projectPublicTaskEvent(event)
-    const internalMessage = internalProjection ? JSON.stringify(internalProjection) : undefined
+    const legacyInternalMessage = internalProjection
+      ? JSON.stringify(internalProjection)
+      : undefined
+    const replayInternalMessage = internalProjection
+      ? internalEventStream.publish(internalProjection)
+      : undefined
     const publicMessage = publicProjection ? JSON.stringify(publicProjection) : undefined
     for (const socket of sockets) {
       if (socket.readyState !== WebSocket.OPEN) continue
       if (publicEventSockets.has(socket)) {
         if (publicMessage) socket.send(publicMessage)
-      } else if (internalMessage) {
-        socket.send(internalMessage)
+      } else if (internalEventSockets.get(socket) === 'replay') {
+        if (replayInternalMessage) socket.send(replayInternalMessage)
+      } else if (legacyInternalMessage) {
+        socket.send(legacyInternalMessage)
       }
     }
   })

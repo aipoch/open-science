@@ -2,7 +2,15 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { WEB_RPC_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
+import {
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_PROTOCOL_VERSION
+} from '../../shared/web-rpc-contract'
+import {
+  WEB_EVENT_CONNECTION_STATE_EVENT,
+  WEB_EVENT_CONSUMERS_READY_EVENT,
+  WEB_EVENTS_OPEN_EVENT
+} from '../../shared/web-event-connection'
 
 const themeMocks = vi.hoisted(() => ({
   applyTheme: vi.fn(),
@@ -34,6 +42,9 @@ class FakeWebSocket {
     this.listeners.set(name, listeners)
   }
 
+  close(): void {
+    this.emit('close')
+  }
   emit(name: SocketEventName, event: SocketEvent = {}): void {
     for (const listener of this.listeners.get(name) ?? []) listener(event)
   }
@@ -47,14 +58,40 @@ type WebApi = {
 }
 
 const bootstrapPayload = {
+  eventStream: {
+    protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+    streamId: 'stream-1',
+    latestSequence: 0
+  },
   platform: 'test',
   versions: { electron: '1', chrome: '1', node: '1' },
   rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
   rpcChannels: []
 }
 
+const eventFrame = (sequence: number, channel: string, payload: unknown): string =>
+  JSON.stringify({
+    kind: 'event',
+    protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+    streamId: 'stream-1',
+    sequence,
+    channel,
+    payload
+  })
+
+const readyFrame = (latestSequence: number): string =>
+  JSON.stringify({
+    kind: 'ready',
+    protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+    streamId: 'stream-1',
+    latestSequence
+  })
+
 const loadBootstrap = async (): Promise<WebApi> => {
-  await import('./bootstrap')
+  const bootstrapImport = import('./bootstrap')
+  await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined())
+  window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
+  await bootstrapImport
   return (window as unknown as { api: WebApi }).api
 }
 
@@ -122,12 +159,27 @@ describe('Web bootstrap event connection', () => {
     })
   })
 
+  it('waits for renderer consumers before opening the event stream', async () => {
+    const bootstrapImport = import('./bootstrap')
+    await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined())
+
+    expect(FakeWebSocket.instances).toHaveLength(0)
+    window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
+    await bootstrapImport
+    expect(FakeWebSocket.instances).toHaveLength(1)
+  })
+
   it('opens the initial event socket with the stable Web client id', async () => {
     await loadBootstrap()
 
-    expect(FakeWebSocket.instances.map((socket) => socket.url)).toEqual([
-      `ws://${location.host}/events?client=web-client-1`
-    ])
+    const url = new URL(FakeWebSocket.instances[0].url)
+    expect(url.pathname).toBe('/events')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client: 'web-client-1',
+      eventProtocol: String(WEB_EVENT_STREAM_PROTOCOL_VERSION),
+      stream: 'stream-1',
+      after: '0'
+    })
   })
 
   it('reconnects with exponential backoff after consecutive closes', async () => {
@@ -146,12 +198,13 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(3)
   })
 
-  it('resets reconnect backoff after a socket opens', async () => {
+  it('resets reconnect backoff after a socket becomes ready', async () => {
     await loadBootstrap()
 
     FakeWebSocket.instances[0].emit('close')
     await vi.advanceTimersByTimeAsync(1_000)
     FakeWebSocket.instances[1].emit('open')
+    FakeWebSocket.instances[1].emit('message', { data: readyFrame(0) })
     FakeWebSocket.instances[1].emit('close')
 
     await vi.advanceTimersByTimeAsync(999)
@@ -160,18 +213,22 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(3)
   })
 
-  it('signals stores to refresh whenever the event socket opens', async () => {
+  it('signals stores to refresh only after replay reaches the live cursor', async () => {
     const listener = vi.fn()
-    window.addEventListener('open-science:web-events-open', listener)
+    window.addEventListener(WEB_EVENTS_OPEN_EVENT, listener)
     await loadBootstrap()
 
     FakeWebSocket.instances[0].emit('open')
+    expect(listener).not.toHaveBeenCalled()
+    FakeWebSocket.instances[0].emit('message', { data: readyFrame(0) })
+    expect(listener).toHaveBeenCalledTimes(1)
     FakeWebSocket.instances[0].emit('close')
     await vi.advanceTimersByTimeAsync(1_000)
     FakeWebSocket.instances[1].emit('open')
-
+    expect(listener).toHaveBeenCalledTimes(1)
+    FakeWebSocket.instances[1].emit('message', { data: readyFrame(0) })
     expect(listener).toHaveBeenCalledTimes(2)
-    window.removeEventListener('open-science:web-events-open', listener)
+    window.removeEventListener(WEB_EVENTS_OPEN_EVENT, listener)
   })
 
   it('keeps existing event subscriptions active after reconnecting', async () => {
@@ -182,14 +239,39 @@ describe('Web bootstrap event connection', () => {
     FakeWebSocket.instances[0].emit('close')
     await vi.advanceTimersByTimeAsync(1_000)
     FakeWebSocket.instances[1].emit('message', {
-      data: JSON.stringify({
-        protocolVersion: WEB_RPC_PROTOCOL_VERSION,
-        channel: 'project:created',
-        payload: { id: 'project-1' }
-      })
+      data: eventFrame(1, 'project:created', { id: 'project-1' })
     })
 
     expect(listener).toHaveBeenCalledWith({ id: 'project-1' })
     unsubscribe()
+    FakeWebSocket.instances[1].emit('message', { data: readyFrame(1) })
+    FakeWebSocket.instances[1].emit('close')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(new URL(FakeWebSocket.instances[2].url).searchParams.get('after')).toBe('1')
+  })
+
+  it('stops reconnecting and requests a reload when replay cannot satisfy the cursor', async () => {
+    const phases: string[] = []
+    const stateListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    await loadBootstrap()
+
+    FakeWebSocket.instances[0].emit('open')
+    FakeWebSocket.instances[0].emit('message', {
+      data: JSON.stringify({
+        kind: 'resync-required',
+        protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
+        streamId: 'stream-1',
+        latestSequence: 4,
+        reason: 'cursor-expired'
+      })
+    })
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(phases).toContain('reload-required')
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
   })
 })
