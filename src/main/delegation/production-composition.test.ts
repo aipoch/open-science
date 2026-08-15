@@ -2426,7 +2426,7 @@ describe('production delegated-work composition', () => {
       .toBe('accepted')
   })
 
-  it('deletes stable child workspaces after restart without relying on the in-memory work cache', async () => {
+  it('deletes dormant Project workspaces after restart without relying on the in-memory work cache', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-restart-delete-'))
     const harness = await createCompositionHarness(root, 'codex')
     const receipt = await harness.composition.host.delegate(
@@ -2453,9 +2453,7 @@ describe('production delegated-work composition', () => {
       dataRoot: root,
       sessions: {
         commands: harness.commands,
-        readSession: async () => harness.durable(),
-        findSessions: async (sessionId) =>
-          sessionId === harness.session.id ? [harness.durable()] : []
+        readSession: async () => harness.durable()
       },
       resolveInput: async () => {
         throw new Error('no inputs')
@@ -2473,7 +2471,7 @@ describe('production delegated-work composition', () => {
     } as ProductionDelegatedWorkOptions)
 
     expect(receipt.children[0]).toBeDefined()
-    await restarted.root.deleteSession(harness.session.id)
+    await restarted.root.deleteProject(harness.session.projectId)
 
     await expect(access(stableSessionWorkspace)).rejects.toMatchObject({ code: 'ENOENT' })
   })

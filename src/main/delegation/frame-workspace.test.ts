@@ -54,4 +54,37 @@ describe('production delegated Frame workspace', () => {
     expect((await stat(join(first.cwd, 'inputs', '02-report.md'))).mode & 0o222).toBe(0)
     await workspace.deleteSession(session)
   })
+
+  it('deletes every Session workspace owned by one Project without touching another Project', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-project-workspace-'))
+    const input = join(root, 'input.csv')
+    await writeFile(input, 'value\n1\n')
+    const workspaceRoot = join(root, 'workspaces')
+    const workspace = createProductionFrameWorkspace({
+      root: workspaceRoot,
+      resolveInput: async () => ({ path: input })
+    })
+    const first = await workspace.prepare(
+      { projectId: 'project-1', sessionId: 'session-1' },
+      'frame-1',
+      ['upload-version:upload-1']
+    )
+    const second = await workspace.prepare(
+      { projectId: 'project-1', sessionId: 'session-2' },
+      'frame-2',
+      ['upload-version:upload-1']
+    )
+    const other = await workspace.prepare(
+      { projectId: 'project-2', sessionId: 'session-3' },
+      'frame-3',
+      ['upload-version:upload-1']
+    )
+
+    await workspace.deleteProject('project-1')
+
+    await expect(stat(join(workspaceRoot, 'project-1'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(first.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(second.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(other.cwd)).resolves.toBeDefined()
+  })
 })

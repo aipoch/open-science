@@ -17,6 +17,7 @@ type ProductionFrameWorkspace = Readonly<{
   validateInput(identity: string, session: SessionKey): Promise<boolean>
   prepare(session: SessionKey, frameId: string, inputs: readonly string[]): Promise<{ cwd: string }>
   deleteSession(session: SessionKey): Promise<void>
+  deleteProject(projectId: string): Promise<void>
 }>
 
 const safeSegment = (value: string, label: string): string => {
@@ -75,12 +76,10 @@ const makeTreeRemovable = async (path: string): Promise<void> => {
 const createProductionFrameWorkspace = (
   options: ProductionFrameWorkspaceOptions
 ): ProductionFrameWorkspace => {
+  const projectRoot = (projectId: string): string =>
+    join(options.root, safeSegment(projectId, 'Project id'))
   const sessionRoot = (session: SessionKey): string =>
-    join(
-      options.root,
-      safeSegment(session.projectId, 'Project id'),
-      safeSegment(session.sessionId, 'Session id')
-    )
+    join(projectRoot(session.projectId), safeSegment(session.sessionId, 'Session id'))
 
   const resolve = async (
     identity: string,
@@ -136,6 +135,11 @@ const createProductionFrameWorkspace = (
     },
     async deleteSession(session: SessionKey): Promise<void> {
       const root = sessionRoot(session)
+      await makeTreeRemovable(root)
+      await rm(root, { recursive: true, force: true })
+    },
+    async deleteProject(projectId: string): Promise<void> {
+      const root = projectRoot(projectId)
       await makeTreeRemovable(root)
       await rm(root, { recursive: true, force: true })
     }

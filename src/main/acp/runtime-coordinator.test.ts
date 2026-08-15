@@ -358,7 +358,8 @@ describe('AcpRuntimeCoordinator', () => {
       wakeMessages: vi.fn(async () => undefined),
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined)
+      deleteSession: vi.fn(async () => undefined),
+      deleteProject: vi.fn(async () => undefined)
     }
     const permissionEvents: unknown[] = []
     const stateChanges: AcpStateSnapshot[] = []
@@ -443,7 +444,8 @@ describe('AcpRuntimeCoordinator', () => {
       stopActiveBranch,
       stopSession: vi.fn(async () => undefined),
       stopAll: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined)
+      deleteSession: vi.fn(async () => undefined),
+      deleteProject: vi.fn(async () => undefined)
     }
     const coordinator = new AcpRuntimeCoordinator(
       (callbacks) => {

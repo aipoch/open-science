@@ -5,8 +5,7 @@ type ProjectAcpRuntime = {
 }
 
 type ProjectDelegationRuntime = {
-  listActiveSessions(): readonly { projectId: string; sessionId: string }[]
-  deleteSession(sessionId: string): Promise<void>
+  deleteProject(projectId: string): Promise<void>
 }
 
 type ProjectNotebookRuntime = {
@@ -44,15 +43,9 @@ class ProjectRuntimeQuiescenceOwner {
       failures,
       [...acpSessionIds].map((sessionId) => () => this.options.acp.deleteSession(sessionId))
     )
-    // ACP teardown closes the source of new delegated work. Discover children only after that drain
-    // so a child admitted while its root was being cancelled cannot escape the initial snapshot.
-    const delegatedSessionIds = this.projectDelegatedSessionIds(projectId, failures).filter(
-      (sessionId) => !acpSessionIds.has(sessionId)
-    )
-    await this.captureAll(
-      failures,
-      delegatedSessionIds.map((sessionId) => () => this.options.delegation.deleteSession(sessionId))
-    )
+    // ACP teardown closes the source of new delegated work. Delete the authoritative Project
+    // workspace only after that drain so cached, late, and dormant Frame state are covered together.
+    await this.capture(failures, () => this.options.delegation.deleteProject(projectId))
     await this.capture(failures, () => this.options.notebook.shutdownProject(projectId))
     await this.capture(failures, () => this.options.compute.reconcileProject(projectId))
 
@@ -71,22 +64,6 @@ class ProjectRuntimeQuiescenceOwner {
     } catch (error) {
       failures.push(error)
       return new Set()
-    }
-  }
-
-  private projectDelegatedSessionIds(projectId: string, failures: unknown[]): string[] {
-    try {
-      return [
-        ...new Set(
-          this.options.delegation
-            .listActiveSessions()
-            .filter((session) => session.projectId === projectId)
-            .map((session) => session.sessionId)
-        )
-      ]
-    } catch (error) {
-      failures.push(error)
-      return []
     }
   }
 

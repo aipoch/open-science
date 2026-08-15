@@ -1929,12 +1929,7 @@ const createApplicationModules = async (
       deleteSession: (sessionId) => runtime.deleteSession({ sessionId })
     },
     delegation: {
-      listActiveSessions: () =>
-        getActiveDelegatedSessions().map(({ projectName, sessionId }) => ({
-          projectId: projectName,
-          sessionId
-        })),
-      deleteSession: (sessionId) => delegatedWork.root.deleteSession(sessionId)
+      deleteProject: (projectId) => delegatedWork.root.deleteProject(projectId)
     },
     notebook: {
       shutdownProject: (projectId) => notebookService.shutdownProject(projectId)
