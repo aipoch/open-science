@@ -19,6 +19,14 @@ import {
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const MAX_DOCUMENT_CACHE_ENTRIES = 8
 const MAX_DOCUMENT_CACHE_BYTES = 32 * 1024 * 1024
+const MAX_DOCUMENT_READ_ATTEMPTS = 2
+
+type DocumentFileIdentity = { mtimeMs: number; size: number; ino: number }
+
+const sameDocumentFileIdentity = (
+  left: DocumentFileIdentity,
+  right: DocumentFileIdentity
+): boolean => left.mtimeMs === right.mtimeMs && left.size === right.size && left.ino === right.ino
 
 type LoadNotebookRunDocumentRequest = {
   projectName: string
@@ -494,41 +502,47 @@ class NotebookRunRepository {
     const safeProjectName = assertSafeNotebookPathSegment(projectName)
     const safeSessionId = assertSafeNotebookPathSegment(sessionId)
     const filePath = getNotebookRunJsonPath(this.storageRoot, safeProjectName, safeSessionId, lane)
-    const fileInfo = await stat(filePath)
-    const cached = this.documentCache.get(filePath)
-    if (
-      cached &&
-      cached.mtimeMs === fileInfo.mtimeMs &&
-      cached.size === fileInfo.size &&
-      cached.ino === fileInfo.ino
-    ) {
-      // Refresh insertion order so the Map also acts as a small LRU.
-      this.documentCache.delete(filePath)
-      this.documentCache.set(filePath, cached)
-      return cached.document
-    }
-    const rawDocument = await readFile(filePath, 'utf8')
-    const document = JSON.parse(rawDocument) as NotebookRunDocument
-    // Decode before normalization for the same reason as loadOrCreate above.
-    const decoded = decodeRunDocumentDataPaths(document, this.storageRoot)
+    for (let attempt = 0; attempt < MAX_DOCUMENT_READ_ATTEMPTS; attempt += 1) {
+      const fileInfo = await stat(filePath)
+      const cached = this.documentCache.get(filePath)
+      if (cached && sameDocumentFileIdentity(cached, fileInfo)) {
+        // Refresh insertion order so the Map also acts as a small LRU.
+        this.documentCache.delete(filePath)
+        this.documentCache.set(filePath, cached)
+        return cached.document
+      }
+      const rawDocument = await readFile(filePath, 'utf8')
+      const document = JSON.parse(rawDocument) as NotebookRunDocument
+      // Decode before normalization for the same reason as loadOrCreate above.
+      const decoded = decodeRunDocumentDataPaths(document, this.storageRoot)
 
-    const normalized = normalizeDocument(
-      this.storageRoot,
-      {
-        projectName: safeProjectName,
-        sessionId: safeSessionId,
-        lane
-      },
-      decoded
-    )
-    const currentInfo = await stat(filePath)
-    this.rememberDocument(filePath, {
-      mtimeMs: currentInfo.mtimeMs,
-      size: currentInfo.size,
-      ino: currentInfo.ino,
-      document: normalized
-    })
-    return normalized
+      const normalized = normalizeDocument(
+        this.storageRoot,
+        {
+          projectName: safeProjectName,
+          sessionId: safeSessionId,
+          lane
+        },
+        decoded
+      )
+      const currentInfo = await stat(filePath)
+      if (!sameDocumentFileIdentity(fileInfo, currentInfo)) {
+        // An atomic replacement landed between read and stat. Retry once so old bytes can never be
+        // cached under the replacement file's identity; under continuous writes, return this valid
+        // snapshot without caching it and let the next caller observe the latest document.
+        if (attempt + 1 < MAX_DOCUMENT_READ_ATTEMPTS) continue
+        return normalized
+      }
+      this.rememberDocument(filePath, {
+        mtimeMs: currentInfo.mtimeMs,
+        size: currentInfo.size,
+        ino: currentInfo.ino,
+        document: normalized
+      })
+      return normalized
+    }
+
+    throw new Error(`Failed to read notebook document: ${filePath}`)
   }
 
   // Reads the current document, applies `transform`, and writes back the result -- the read and write
