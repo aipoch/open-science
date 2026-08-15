@@ -17,7 +17,7 @@ import {
   type WebEventConnectionPhase
 } from '../../shared/web-event-connection'
 import { installWebRendererContracts } from './api-installer'
-import { initI18n } from '@/i18n'
+import { i18next, initI18n } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import openScienceLogoSvg from '../../main/remote-access/openscience-logo.svg?raw'
@@ -34,8 +34,9 @@ initI18n(initialLocale)
 applyHtmlLang(initialLocale)
 document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
 
-const REMOTE_ACCESS_OFF_MESSAGE =
+const REMOTE_ACCESS_OFF_MESSAGE = i18next.t(
   'Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.'
+)
 
 class RemoteAccessOffError extends Error {}
 
@@ -56,6 +57,8 @@ const setConnectionMessage = (message: string): void => {
   const element = connectionMessage()
   if (element) element.textContent = message
 }
+
+setConnectionMessage(i18next.t('Connecting to remote computer…'))
 
 const connectionLogo = document.getElementById('open-science-connection-logo')
 if (connectionLogo) {
@@ -90,7 +93,12 @@ const fetchBootstrap = async (): Promise<unknown> => {
   let lastError: unknown
   for (let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt += 1) {
     if (attempt > 1) {
-      setConnectionMessage(`Reconnecting to remote computer… (${attempt}/${BOOTSTRAP_ATTEMPTS})`)
+      setConnectionMessage(
+        i18next.t('Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})', {
+          attempt,
+          maxAttempts: BOOTSTRAP_ATTEMPTS
+        })
+      )
       await wait(Math.min(500 * 2 ** (attempt - 2), 5_000))
     }
     const controller = new AbortController()
@@ -131,11 +139,11 @@ const showConnectionFailure = (error: unknown): void => {
     message.textContent =
       error instanceof RemoteAccessOffError
         ? detail
-        : `This computer did not finish responding. ${detail}`
+        : i18next.t('This computer did not finish responding. {{detail}}', { detail })
   }
   const retry = document.createElement('button')
   retry.type = 'button'
-  retry.textContent = 'Try again'
+  retry.textContent = i18next.t('Try again')
   retry.style.cssText =
     'margin-top:18px;border:1px solid #737373;border-radius:8px;background:var(--connection-background);color:var(--connection-foreground);padding:9px 14px;font:inherit;cursor:pointer'
   retry.addEventListener('click', () => window.location.reload())

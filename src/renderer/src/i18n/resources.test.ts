@@ -376,13 +376,14 @@ describe('Trans tag names', () => {
 // Orphan guard
 // ---------------------------------------------------------------------------
 
-// src/. Both the renderer and src/shared are scanned: shared modules have no i18n access, so they
-// carry English copy the renderer resolves through t() (install-source labels, download progress).
-// Leaving shared out is what let ten of these strings look orphaned when their call sites were live.
+// src/. Both renderer entry trees and src/shared are scanned: shared modules have no i18n access, so
+// they carry English copy the renderer resolves through t() (install-source labels, download
+// progress). Leaving either shared or renderer/web out makes live keys look orphaned.
 const SRC_ROOT = join(__dirname, '../../..')
 
 const SCAN_ROOTS = [
   join(SRC_ROOT, 'renderer', 'src'),
+  join(SRC_ROOT, 'renderer', 'web'),
   join(SRC_ROOT, 'shared'),
   join(SRC_ROOT, 'main')
 ]

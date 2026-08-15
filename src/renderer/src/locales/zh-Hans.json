@@ -2565,5 +2565,9 @@
   "Reload required": "需要重新加载",
   "Controls are paused while Open Science restores updates that may have arrived during the interruption.": "Open Science 正在恢复中断期间可能到达的更新，控件已暂时停用。",
   "This page can no longer safely recover all updates. Reload to fetch a complete, current view.": "此页面无法再安全恢复所有更新。请重新加载以获取完整的最新视图。",
-  "Reviewer requested corrections": "审查员已请求更正"
+  "Reviewer requested corrections": "审查员已请求更正",
+  "Connecting to remote computer…": "正在连接远程计算机…",
+  "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "正在重新连接远程计算机…（{{attempt}}/{{maxAttempts}}）",
+  "Remote access is off on the home computer. Re-enable a remote access mode in Open Science, then try again.": "主电脑上的远程访问已关闭。请在 Open Science 中重新启用远程访问模式，然后重试。",
+  "This computer did not finish responding. {{detail}}": "这台电脑未能完成响应。{{detail}}"
 }

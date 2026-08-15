@@ -99,6 +99,14 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.resetModules()
   FakeWebSocket.instances = []
+  document.body.innerHTML = `
+    <div id=open-science-connection-state role=status>
+      <div class=open-science-connection-panel>
+        <span id=open-science-connection-logo></span>
+        <p id=open-science-connection-message>Connecting to remote computer…</p>
+      </div>
+    </div>
+  `
   sessionStorage.clear()
   sessionStorage.setItem('open-science-web-client', 'web-client-1')
   delete (window as unknown as { api?: unknown }).api
@@ -120,10 +128,70 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   sessionStorage.clear()
+  localStorage.clear()
+  document.body.innerHTML = ''
   delete (window as unknown as { api?: unknown }).api
 })
 
 describe('Web bootstrap event connection', () => {
+  // Bootstrap owns this pre-React connection surface, so its copy must use the initialized i18n.
+  it('localizes the initial connection message with the initialized locale', async () => {
+    localStorage.setItem('open-science-language', 'zh-Hans')
+
+    const bootstrapImport = import('./bootstrap')
+    await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined())
+
+    expect(document.getElementById('open-science-connection-message')?.textContent).toBe(
+      '正在连接远程计算机…'
+    )
+    window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
+    await bootstrapImport
+  })
+
+  it('localizes bootstrap reconnect progress with the initialized locale', async () => {
+    localStorage.setItem('open-science-language', 'zh-Hans')
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(
+        new Response(JSON.stringify(bootstrapPayload), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const bootstrapImport = import('./bootstrap')
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(document.getElementById('open-science-connection-message')?.textContent).toBe(
+        '正在重新连接远程计算机…（2/8）'
+      )
+    )
+    await vi.advanceTimersByTimeAsync(500)
+    await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined())
+    window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
+    await bootstrapImport
+  })
+
+  it('localizes bootstrap failure and retry controls with the initialized locale', async () => {
+    localStorage.setItem('open-science-language', 'zh-Hans')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 401 }))
+    )
+
+    await import('./bootstrap')
+
+    expect(document.getElementById('open-science-connection-state')?.getAttribute('role')).toBe(
+      'alert'
+    )
+    expect(document.getElementById('open-science-connection-message')?.textContent).toBe(
+      '主电脑上的远程访问已关闭。请在 Open Science 中重新启用远程访问模式，然后重试。'
+    )
+    expect(document.querySelector('button')?.textContent).toBe('重试')
+  })
+
   it('reconstructs Application Command errors returned by Web RPC', async () => {
     vi.stubGlobal(
       'fetch',
