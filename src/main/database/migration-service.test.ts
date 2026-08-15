@@ -486,8 +486,8 @@ describe('application database migrations', () => {
       INSERT INTO "ProjectPreviewState" (
         "projectId", "panelState", "activeItemId", "items", "updatedAt"
       ) VALUES
-        (${'legacy-project'}, ${'open'}, ${null}, ${'[]'}, ${updatedAt}),
-        (${'orphan-project'}, ${'collapsed'}, ${null}, ${'[]'}, ${updatedAt})
+        (${'legacy-project'}, ${'open'}, NULL, ${'[]'}, ${updatedAt}),
+        (${'orphan-project'}, ${'collapsed'}, NULL, ${'[]'}, ${updatedAt})
     `
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
@@ -519,6 +519,49 @@ describe('application database migrations', () => {
         data: { projectId: 'missing-project', panelState: 'collapsed', items: '[]' }
       })
     ).rejects.toThrow()
+  })
+
+  it('replays preview ownership migration when an adopted FK table contains orphan rows', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-preview-owner-adoption-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'legacy-project', name: 'Preserved' } })
+    await client.projectPreviewState.create({
+      data: { projectId: 'legacy-project', panelState: 'open', items: '[]' }
+    })
+
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
+    await client.$executeRaw`
+      INSERT INTO "ProjectPreviewState" (
+        "projectId", "panelState", "activeItemId", "items", "updatedAt"
+      ) VALUES (
+        ${'orphan-project'}, ${'collapsed'}, NULL, ${'[]'}, ${new Date('2026-01-02T03:04:05Z')}
+      )
+    `
+    await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await client.$executeRawUnsafe('DROP TABLE "_open_science_migrations"')
+
+    await expect(
+      migrateApplicationDatabaseWithManifest(client, MIGRATION_MANIFEST.slice(0, -1))
+    ).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0001_runtime_schema_baseline'
+    })
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: expect.arrayContaining(['0005_project_preview_state_owner_fk'])
+    })
+    await expect(
+      client.$queryRaw<Array<{ projectId: string }>>`
+        SELECT "projectId" FROM "ProjectPreviewState" ORDER BY "projectId"
+      `
+    ).resolves.toEqual([{ projectId: 'legacy-project' }])
+    await expect(
+      client.$queryRawUnsafe<Array<{ table: string }>>(
+        'PRAGMA foreign_key_check("ProjectPreviewState")'
+      )
+    ).resolves.toEqual([])
   })
   it('blocks a database containing a migration from a newer application', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-newer-'))

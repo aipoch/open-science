@@ -24,7 +24,7 @@ INNER JOIN "Project" AS "project" ON "project"."id" = "preview"."projectId"`,
   verifiers: [
     {
       kind: 'foreign-key-exists',
-      version: 1,
+      version: 2,
       table: 'ProjectPreviewState',
       column: 'projectId',
       referencedTable: 'Project',
