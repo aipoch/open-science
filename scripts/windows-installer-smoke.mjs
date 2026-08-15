@@ -322,6 +322,12 @@ const observeChildExit = (child) =>
     child.once('exit', resolveExit)
   })
 
+const observeChildClose = (child) =>
+  new Promise((resolveClose, rejectClose) => {
+    child.once('error', rejectClose)
+    child.once('close', resolveClose)
+  })
+
 const waitForShutdownExit = (
   exit,
   child,
@@ -788,6 +794,17 @@ const launchAndProbe = async ({
   }
 }
 
+const assertDatabaseDowngradeBlocked = ({ becameHealthy, output }) => {
+  if (becameHealthy) {
+    throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output}`)
+  }
+  if (!/database_newer_than_app|newer version of Open Science/i.test(output)) {
+    throw new Error(
+      `Ledger-aware downgrade did not report the expected compatibility error.\n${output}`
+    )
+  }
+}
+
 const launchAndExpectDatabaseBlocked = async ({ installDirectory, env }) => {
   const child = spawn(
     join(installDirectory, APP_EXECUTABLE),
@@ -801,24 +818,26 @@ const launchAndExpectDatabaseBlocked = async ({ installDirectory, env }) => {
   child.stdout?.on('data', (chunk) => (stdout += chunk))
   child.stderr?.on('data', (chunk) => (stderr += chunk))
   const output = () => `${stdout}${stderr ? `\n${stderr}` : ''}`
-  const exit = observeChildExit(child)
-  let exitCode
-  void exit.then((code) => {
-    exitCode = code
-  })
+  const close = observeChildClose(child)
+  let closed = false
+  let closeError
+  void close.then(
+    () => {
+      closed = true
+    },
+    (error) => {
+      closeError = error
+      closed = true
+    }
+  )
 
   try {
-    await waitFor('the ledger-aware downgrade to block', async () =>
-      exitCode === undefined ? undefined : true
-    )
-    if (exitCode === 0) {
-      throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output()}`)
-    }
-    if (!/database_newer_than_app|newer version of Open Science/i.test(output())) {
-      throw new Error(
-        `Ledger-aware downgrade did not report the expected compatibility error.\n${output()}`
-      )
-    }
+    await waitFor('the ledger-aware downgrade to block', async () => (closed ? true : undefined))
+    if (closeError) throw closeError
+    assertDatabaseDowngradeBlocked({
+      becameHealthy: parsePackagedAppEndpoint(output()) !== undefined,
+      output: output()
+    })
   } catch (error) {
     await terminateProcessTree(child)
     throw error
@@ -1102,6 +1121,7 @@ if (invokedAsScript) {
 
 export {
   authenticatePackagedAppEndpoint,
+  assertDatabaseDowngradeBlocked,
   assertPackagedResources,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
@@ -1115,6 +1135,7 @@ export {
   installAndProbe,
   launchAndProbe,
   packagedMainEntryPath,
+  observeChildClose,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,

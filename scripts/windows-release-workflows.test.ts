@@ -312,6 +312,39 @@ describe('post-merge Windows validation', () => {
       'npm ci --ignore-scripts --no-audit --no-fund'
     )
     expect(findStep(upgrade, 'Generate Prisma client').run).toBe('npx prisma generate')
+    const checkout = findStep(upgrade, 'Checkout smoke harness')
+    expect(checkout).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: { 'fetch-depth': 0 }
+    })
+    expect(checkout.with).not.toHaveProperty('ref')
+
+    const released = findStep(upgrade, 'Resolve released revision')
+    expect(released.run).toContain('git rev-parse "$($env:CURRENT_TAG)^{commit}"')
+    expect(released.run).toContain('"sha=$releasedSha"')
+
+    const updaterStep = findStep(upgrade, 'Certify Windows electron-updater differential update')
+    const installerStep = findStep(
+      upgrade,
+      'Drill Windows silent upgrade, process lock, rollback, and restart'
+    )
+    expect(updaterStep).toMatchObject({
+      env: {
+        OPEN_SCIENCE_E2E_STORAGE_ROOT: '${{ runner.temp }}\\open-science-updater-certification'
+      }
+    })
+    expect(installerStep).toMatchObject({
+      env: {
+        OPEN_SCIENCE_E2E_STORAGE_ROOT: '${{ runner.temp }}\\open-science-installer-certification'
+      }
+    })
+    expect(updaterStep.env?.OPEN_SCIENCE_E2E_STORAGE_ROOT).not.toBe(
+      installerStep.env?.OPEN_SCIENCE_E2E_STORAGE_ROOT
+    )
+    expect(findStep(upgrade, 'Record Windows update-drill evidence')).toMatchObject({
+      env: { GITHUB_SHA: '${{ steps.current.outputs.sha }}' }
+    })
+
     const current = findStep(upgrade, 'Download current Windows installer')
     expect(current.run).toContain('gh release download $env:CURRENT_TAG')
     expect(current.run).toContain("--pattern 'latest.yml'")

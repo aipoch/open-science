@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   assertPackagedResources,
+  assertDatabaseDowngradeBlocked,
   authenticatePackagedAppEndpoint,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
@@ -16,6 +17,7 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  observeChildClose,
   packagedMainEntryPath,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
@@ -131,6 +133,33 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     expect(parsePackagedAppEndpoint('[main] app starting')).toBeUndefined()
   })
 
+  it('accepts a blocked database downgrade regardless of process exit status', () => {
+    expect(
+      assertDatabaseDowngradeBlocked({
+        becameHealthy: false,
+        output: '[main] database_newer_than_app'
+      })
+    ).toBeUndefined()
+  })
+
+  it('rejects a database downgrade that became healthy', () => {
+    expect(() =>
+      assertDatabaseDowngradeBlocked({
+        becameHealthy: true,
+        output: '[main] database_newer_than_app'
+      })
+    ).toThrow(/unexpectedly became healthy/)
+  })
+
+  it('requires a compatibility diagnostic for a blocked database downgrade', () => {
+    expect(() =>
+      assertDatabaseDowngradeBlocked({
+        becameHealthy: false,
+        output: '[main] app exited'
+      })
+    ).toThrow(/expected compatibility error/)
+  })
+
   it('accepts only a packaged bootstrap that reports an absolute Windows config root', async () => {
     const configRoot = 'C:\\Users\\runneradmin\\.open-science'
     await expect(
@@ -175,6 +204,25 @@ Open Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
       [`${runnerConfigRoot}\\web-token`, 'utf8'],
       [`${isolatedConfigRoot}\\web-token`, 'utf8']
     ])
+  })
+
+  it('waits for child stdio close after exit before evaluating downgrade output', async () => {
+    const child = new EventEmitter()
+    let output = ''
+    const close = observeChildClose(child)
+    let closed = false
+    void close.then(() => {
+      closed = true
+    })
+
+    child.emit('exit', 0)
+    output += '[main] database_newer_than_app'
+    await Promise.resolve()
+    expect(closed).toBe(false)
+
+    child.emit('close', 0)
+    await expect(close).resolves.toBe(0)
+    expect(output).toContain('database_newer_than_app')
   })
 
   it('gives shutdown its own timeout budget after startup completes', async () => {

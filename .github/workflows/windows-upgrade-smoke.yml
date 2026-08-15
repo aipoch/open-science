@@ -27,16 +27,20 @@ jobs:
     env:
       CURRENT_TAG: ${{ github.event.client_payload.tag || inputs.tag }}
     steps:
-      - name: Checkout released revision
+      - name: Checkout smoke harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-          ref: ${{ env.CURRENT_TAG }}
 
       - name: Resolve released revision
         id: current
         shell: pwsh
-        run: "'sha=' + (git rev-parse HEAD) >> $env:GITHUB_OUTPUT"
+        run: |
+          $releasedSha = git rev-parse "$($env:CURRENT_TAG)^{commit}"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releasedSha)) {
+            exit 1
+          }
+          "sha=$releasedSha" >> $env:GITHUB_OUTPUT
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -81,6 +85,8 @@ jobs:
 
       - name: Certify Windows electron-updater differential update
         id: updater
+        env:
+          OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-updater-certification
         if: steps.previous.outputs.available == 'true'
         continue-on-error: true
         shell: pwsh
@@ -94,6 +100,8 @@ jobs:
 
       - name: Drill Windows silent upgrade, process lock, rollback, and restart
         id: installer
+        env:
+          OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-installer-certification
         if: always() && steps.previous.outputs.available == 'true'
         continue-on-error: true
         shell: pwsh

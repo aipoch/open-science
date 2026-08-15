@@ -204,6 +204,27 @@ describe('release and scheduled workflow topology', () => {
     expect(smokeWorkflow.on).toHaveProperty('workflow_dispatch')
     expect(smokeWorkflow.concurrency?.['cancel-in-progress']).toBe(false)
     expect(smoke['continue-on-error']).toBeUndefined()
+    const checkout = step(smoke, 'Checkout smoke harness')
+    expect(checkout).toMatchObject({
+      uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+      with: { 'fetch-depth': 0 }
+    })
+    expect(checkout.with).not.toHaveProperty('ref')
+    const released = step(smoke, 'Resolve released revision')
+    expect(released.run).toContain('git rev-parse "$($env:CURRENT_TAG)^{commit}"')
+    expect(released.run).toContain('"sha=$releasedSha"')
+    const updaterRoot = step(smoke, 'Certify Windows electron-updater differential update').env
+      ?.OPEN_SCIENCE_E2E_STORAGE_ROOT
+    const installerRoot = step(
+      smoke,
+      'Drill Windows silent upgrade, process lock, rollback, and restart'
+    ).env?.OPEN_SCIENCE_E2E_STORAGE_ROOT
+    expect(updaterRoot).toBe('${{ runner.temp }}\\open-science-updater-certification')
+    expect(installerRoot).toBe('${{ runner.temp }}\\open-science-installer-certification')
+    expect(updaterRoot).not.toBe(installerRoot)
+    expect(step(smoke, 'Record Windows update-drill evidence')).toMatchObject({
+      env: { GITHUB_SHA: '${{ steps.current.outputs.sha }}' }
+    })
     expect(step(smoke, 'Download current Windows installer').run).toContain(
       'gh release download $env:CURRENT_TAG'
     )
