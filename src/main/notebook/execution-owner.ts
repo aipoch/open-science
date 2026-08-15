@@ -196,7 +196,10 @@ class NotebookExecutionOwner {
       )
     }
     const kernelMarkedRunning = admission.rejection === undefined
-    const kernelWasTerminated = session.isKernelTerminated(processKey)
+    const kernelWasTerminated =
+      session.isKernelTerminated(processKey) ||
+      session.kernelStatus(processKey) === 'terminated' ||
+      session.hasDurableKernelTerminationPending()
     if (kernelMarkedRunning) {
       session.clearKernelTerminated(processKey)
       this.options.setKernelStatus(session, 'running', processKey)
@@ -291,6 +294,7 @@ class NotebookExecutionOwner {
       this.options.setKernelStatus(session, 'idle', processKey)
       if (kernelWasTerminated) {
         await this.options.persistRecoveredKernelIdle(session, processKey)
+        session.clearDurableKernelTerminationPending()
       }
     }
     return run

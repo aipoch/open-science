@@ -35,6 +35,8 @@ const renderContent = (props: {
   projectId?: string
   runs: NotebookRunRecord[]
   status: 'loading' | 'error' | 'ready'
+  runCount?: number
+  loadedRunCount?: number
   error?: string
   frameLabels?: Readonly<Record<string, string>>
 }): string =>
@@ -75,6 +77,20 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('error (line 2)')
     expect(html).toContain('OPENALEX_API_KEY present: False')
     expect(html).toContain('ModuleNotFoundError')
+  })
+
+  it('explains when the dialog loads only the recent run window', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [makeRun()],
+      runCount: 125,
+      loadedRunCount: 100,
+      status: 'ready'
+    })
+
+    expect(html).toContain(
+      'This session has 125 runs. This view loads the latest 100; downloads include the complete history.'
+    )
   })
 
   it('renders timeout as a neutral limit instead of an error', () => {

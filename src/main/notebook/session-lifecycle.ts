@@ -125,6 +125,7 @@ class NotebookSessionLifecycleOwner {
           lane
         ),
         executionCount: document.runs.length,
+        initialKernelStatus: document.kernel.lastKnownStatus,
         executor: ownedExecutor.executor,
         executorGeneration: ownedExecutor.generation,
         lane

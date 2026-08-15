@@ -110,6 +110,7 @@ export type NotebookSessionAggregateInit<
   runtimeRoot: string
   runJsonPath: string
   executionCount: number
+  initialKernelStatus?: NotebookKernelMetadata['lastKnownStatus']
   executor: NotebookSessionExecutor<Request, Result>
   executorGeneration: NotebookSessionExecutorGeneration
   lane: NotebookLaneIdentity
@@ -180,6 +181,7 @@ export class NotebookSessionAggregate<
   private readonly kernelStatuses = new Map<string, NotebookKernelMetadata['lastKnownStatus']>()
   private latestKernelStatusKey: string | undefined
   private latestKernelStatusValue: NotebookKernelMetadata['lastKnownStatus'] | undefined
+  private durableKernelTerminationPending: boolean
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
   private readonly forceStoppedKeys = new Set<string>()
 
@@ -195,6 +197,7 @@ export class NotebookSessionAggregate<
     this.lane = init.lane
     notebookLaneScope(this.lane)
     this.executionCountValue = init.executionCount
+    this.durableKernelTerminationPending = init.initialKernelStatus === 'terminated'
     this.executorValue = init.executor
     this.executorGenerationValue = init.executorGeneration
   }
@@ -409,6 +412,14 @@ export class NotebookSessionAggregate<
 
   isKernelTerminated(processKey: string): boolean {
     return this.terminatedKernels.has(processKey)
+  }
+
+  hasDurableKernelTerminationPending(): boolean {
+    return this.durableKernelTerminationPending
+  }
+
+  clearDurableKernelTerminationPending(): void {
+    this.durableKernelTerminationPending = false
   }
 
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined {

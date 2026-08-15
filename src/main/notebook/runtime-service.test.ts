@@ -10,6 +10,7 @@ import type {
   NotebookExecutionResult,
   NotebookExecutorLifecycleCallbacks
 } from './runtime-service'
+import type { NotebookSessionExecutor } from './session-aggregate'
 import {
   NotebookRuntimeService,
   resolveDefaultExecutorOptions,
@@ -3342,6 +3343,60 @@ describe('notebook runtime service', () => {
 
     const afterRespawn = await service.state({ sessionId: 'session-1', workspaceCwd: root })
     expect(afterRespawn.kernelStatus).toBe('idle')
+  })
+
+  it('persists idle after recovering a terminated kernel in a recreated runtime service', async () => {
+    const root = await createStorageRoot()
+    let lifecycle!: NotebookExecutorLifecycleCallbacks
+    const executorFactory = (
+      _sessionId: string,
+      callbacks: NotebookExecutorLifecycleCallbacks
+    ): NotebookSessionExecutor => {
+      lifecycle = callbacks
+      return {
+        execute: async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      }
+    }
+
+    const firstService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    await firstService.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    await lifecycle.onIdleShutdown('python', DEFAULT_PY_ENV)
+
+    const recoveredService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    await recoveredService.execute({ sessionId: 'session-1', workspaceCwd: root, code: '2' })
+
+    const reloadedService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    const reloadedState = await reloadedService.state({
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    expect(reloadedState.kernelStatus).toBe('idle')
   })
 
   it('does not clear a terminated data-kernel status after an unrelated control run', async () => {

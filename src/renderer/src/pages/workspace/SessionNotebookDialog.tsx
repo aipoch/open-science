@@ -114,6 +114,8 @@ type SessionNotebookContentProps = {
   sessionId: string
   projectId?: string
   runs: NotebookRunRecord[]
+  runCount?: number
+  loadedRunCount?: number
   status: SessionNotebookStatus
   error?: string
   frameLabels?: Readonly<Record<string, string>>
@@ -129,6 +131,8 @@ const SessionNotebookContent = ({
   sessionId,
   projectId,
   runs,
+  runCount = runs.length,
+  loadedRunCount = runs.length,
   status,
   error,
   frameLabels = {},
@@ -269,6 +273,17 @@ const SessionNotebookContent = ({
           </p>
         ) : (
           <>
+            {runCount > loadedRunCount ? (
+              <p
+                className="border-b border-border bg-muted px-4 py-2 text-xs text-muted-foreground"
+                role="status"
+              >
+                {t(
+                  'This session has {{total}} runs. This view loads the latest {{loaded}}; downloads include the complete history.',
+                  { loaded: loadedRunCount, total: runCount }
+                )}
+              </p>
+            ) : null}
             <div className="flex max-w-full items-center gap-2 overflow-hidden border-b border-border bg-muted px-3 py-2">
               <label
                 htmlFor={`notebook-frame-filter-${sessionId}`}
@@ -456,6 +471,7 @@ const SessionNotebookDialog = ({
 }: SessionNotebookDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
+  const [runCount, setRunCount] = useState(0)
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
   const dialogSession = useRetainedDialogValue(session)
@@ -474,6 +490,7 @@ const SessionNotebookDialog = ({
       setStatus('loading')
       setError(undefined)
       setRuns([])
+      setRunCount(0)
 
       void loadSessionNotebookData(window.api.notebook, {
         sessionId,
@@ -484,6 +501,7 @@ const SessionNotebookDialog = ({
           if (cancelled) return
 
           setRuns(loaded.runs)
+          setRunCount(loaded.runCount)
           setStatus('ready')
         })
         .catch((loadError: unknown) => {
@@ -526,6 +544,8 @@ const SessionNotebookDialog = ({
               sessionId={dialogSession.id}
               projectId={dialogSession.projectId}
               runs={filterNotebookRunsForSessionBranch(runs, dialogSession)}
+              runCount={runCount}
+              loadedRunCount={runs.length}
               frameLabels={notebookFrameLabels(dialogSession, t)}
               status={status}
               error={error}
