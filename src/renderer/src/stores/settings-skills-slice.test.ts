@@ -185,6 +185,25 @@ describe('settings Skills slice', () => {
     expect(store.getState().skills).toEqual([skill('target')])
   })
 
+  it('does not let an older Skill toggle overwrite a newer bulk snapshot', async () => {
+    let settleOlder!: (skills: SkillView[]) => void
+    vi.mocked(commands.setSkillEnabled).mockReturnValue(
+      new Promise((resolve) => {
+        settleOlder = resolve
+      })
+    )
+    vi.mocked(commands.setSkillsEnabled).mockResolvedValue([skill('target')])
+    store.setState({ skills: [skill('target')] })
+
+    const older = store.getState().setSkillEnabled('target', false)
+    await store.getState().setSkillsEnabled(['target'], true)
+
+    settleOlder([skill('target', false)])
+    await older
+
+    expect(store.getState().skills).toEqual([skill('target')])
+  })
+
   it('reconciles the authoritative catalog after changing Skill enablement in bulk', async () => {
     vi.mocked(commands.setSkillsEnabled).mockResolvedValue([skill('authoritative', false)])
     store.setState({ skills: [skill('target')] })

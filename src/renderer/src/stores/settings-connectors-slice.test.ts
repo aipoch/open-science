@@ -267,6 +267,25 @@ describe('settings Connectors slice', () => {
     expect(store.getState().connectors).toEqual([connector('pubmed')])
   })
 
+  it('does not let an older Connector toggle overwrite a newer authoritative refresh', async () => {
+    let settleOlder!: (result: ConnectorsSnapshot) => void
+    vi.mocked(commands.setConnectorEnabled).mockReturnValue(
+      new Promise((resolve) => {
+        settleOlder = resolve
+      })
+    )
+    vi.mocked(commands.listConnectors).mockResolvedValue(snapshot([connector('pubmed')]))
+    store.setState({ connectors: [connector('pubmed')] })
+
+    const older = store.getState().setConnectorEnabled('pubmed', false)
+    await store.getState().loadConnectors()
+
+    settleOlder(snapshot([connector('pubmed', { enabled: false })]))
+    await older
+
+    expect(store.getState().connectors).toEqual([connector('pubmed')])
+  })
+
   it('returns to the confirmed Connector value when overlapping toggles all fail', async () => {
     let rejectOlder!: (error: Error) => void
     let rejectNewer!: (error: Error) => void

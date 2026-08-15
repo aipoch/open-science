@@ -76,17 +76,18 @@ export const createSettingsSkillsSlice = ({
   getCommands
 }: SettingsSkillsSliceOptions): SettingsSkillsActions => {
   const skillEnabledWrites = createOptimisticBooleanCoordinator()
-  const projectOptimisticEnablement = (skills: SkillView[]): SkillView[] =>
+  const projectOptimisticEnablement = (skills: SkillView[], generation: number): SkillView[] =>
     skills.map((skill) => ({
       ...skill,
-      enabled: skillEnabledWrites.project(skill.id, skill.enabled)
+      enabled: skillEnabledWrites.project(skill.id, skill.enabled, generation)
     }))
   let reconcileGeneration = 0
   const reconcileCatalog = async (command: () => Promise<SkillView[]>): Promise<SkillView[]> => {
     const generation = ++reconcileGeneration
+    const projectionGeneration = skillEnabledWrites.beginProjection()
     const skills = await command()
     if (generation === reconcileGeneration)
-      setState({ skills: projectOptimisticEnablement(skills) })
+      setState({ skills: projectOptimisticEnablement(skills, projectionGeneration) })
     return skills
   }
 
@@ -98,8 +99,10 @@ export const createSettingsSkillsSlice = ({
     command: () => Promise<Result>
   ): Promise<Result> => {
     const generation = ++reconcileGeneration
+    const projectionGeneration = skillEnabledWrites.beginProjection()
     const result = await command()
-    if (generation === reconcileGeneration) setState({ skills: result.skills })
+    if (generation === reconcileGeneration)
+      setState({ skills: projectOptimisticEnablement(result.skills, projectionGeneration) })
     return result
   }
 

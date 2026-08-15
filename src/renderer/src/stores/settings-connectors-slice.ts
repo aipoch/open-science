@@ -86,17 +86,26 @@ export const createSettingsConnectorsSlice = ({
   const connectorAutoAllowKey = (id: string): string => `connector:${id}:autoAllow`
   const customServerEnabledKey = (id: string): string => `custom-server:${id}:enabled`
   const projectOptimisticToggles = (
-    projection: SettingsConnectorsProjection
+    projection: SettingsConnectorsProjection,
+    generation: number
   ): SettingsConnectorsProjection => ({
     ...projection,
     connectors: projection.connectors.map((connector) => ({
       ...connector,
-      enabled: toggleWrites.project(connectorEnabledKey(connector.id), connector.enabled),
-      autoAllow: toggleWrites.project(connectorAutoAllowKey(connector.id), connector.autoAllow)
+      enabled: toggleWrites.project(
+        connectorEnabledKey(connector.id),
+        connector.enabled,
+        generation
+      ),
+      autoAllow: toggleWrites.project(
+        connectorAutoAllowKey(connector.id),
+        connector.autoAllow,
+        generation
+      )
     })),
     customServers: projection.customServers.map((server) => ({
       ...server,
-      enabled: toggleWrites.project(customServerEnabledKey(server.id), server.enabled)
+      enabled: toggleWrites.project(customServerEnabledKey(server.id), server.enabled, generation)
     }))
   })
   let reconcileGeneration = 0
@@ -104,8 +113,10 @@ export const createSettingsConnectorsSlice = ({
     command: () => Promise<SettingsConnectorsProjection>
   ): Promise<SettingsConnectorsProjection> => {
     const generation = ++reconcileGeneration
+    const projectionGeneration = toggleWrites.beginProjection()
     const projection = await command()
-    if (generation === reconcileGeneration) setState(projectOptimisticToggles(projection))
+    if (generation === reconcileGeneration)
+      setState(projectOptimisticToggles(projection, projectionGeneration))
     return projection
   }
   let mutationsInFlight = 0
