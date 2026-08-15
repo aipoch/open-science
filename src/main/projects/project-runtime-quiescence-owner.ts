@@ -12,6 +12,10 @@ type ProjectNotebookRuntime = {
   shutdownProject(projectId: string): Promise<unknown>
 }
 
+type ProjectReviewerRuntime = {
+  quiesceProject(projectId: string): Promise<void>
+}
+
 type ProjectSideChatRuntime = {
   invalidateProject(projectId: string): Promise<void>
 }
@@ -24,6 +28,7 @@ type ProjectRuntimeQuiescenceOptions = {
   acp: ProjectAcpRuntime
   delegation: ProjectDelegationRuntime
   notebook: ProjectNotebookRuntime
+  reviewer: ProjectReviewerRuntime
   sideChat: ProjectSideChatRuntime
   compute: ProjectComputeRuntime
 }
@@ -36,8 +41,12 @@ class ProjectRuntimeQuiescenceOwner {
 
   async quiesceProject(projectId: string): Promise<void> {
     const failures: unknown[] = []
-    const acpSessionIds = this.projectAcpSessionIds(projectId, failures)
 
+    // Reviewer owns fire-and-forget ACP/MCP work and correction loops outside the primary ACP Session
+    // index. Fence and drain it before the first ACP ownership snapshot so it cannot publish a late
+    // reviewer or correction Session while Project teardown is already in progress.
+    await this.capture(failures, () => this.options.reviewer.quiesceProject(projectId))
+    const acpSessionIds = this.projectAcpSessionIds(projectId, failures)
     await this.capture(failures, () => this.options.sideChat.invalidateProject(projectId))
     await this.captureAll(
       failures,
@@ -102,6 +111,7 @@ export type {
   ProjectComputeRuntime,
   ProjectDelegationRuntime,
   ProjectNotebookRuntime,
+  ProjectReviewerRuntime,
   ProjectRuntimeQuiescenceOptions,
   ProjectSideChatRuntime
 }

@@ -402,6 +402,7 @@ class NotebookRuntimeService {
       repository: this.repository,
       sessions: this.sessions,
       runtimeBindings: this.runtimeBindingOwner,
+      waitForRevocationDrains: () => this.environmentOperations.waitForRevocationDrains(),
       executorFactory: options.executorFactory,
       defaultExecutorOptions: resolveDefaultExecutorOptions,
       platform: options.platform,

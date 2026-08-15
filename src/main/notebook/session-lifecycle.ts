@@ -44,6 +44,7 @@ type NotebookSessionLifecycleOptions = {
   repository: NotebookRunRepository
   sessions: NotebookSessionRegistry<RuntimeSession>
   runtimeBindings: NotebookRuntimeBindingOwner
+  waitForRevocationDrains: () => Promise<void>
   executorFactory?: (
     sessionId: string,
     lifecycle: NotebookExecutorLifecycleCallbacks
@@ -276,6 +277,10 @@ class NotebookSessionLifecycleOwner {
     const key = notebookLaneKey(lane)
     await this.options.runtimeBindings.withSessionTeardown(key, async () => {
       await this.options.runtimeBindings.waitForWrites(key)
+      // A non-forced runtime revoke releases its binding write after scheduling kernel termination.
+      // Holding the lane teardown gate while waiting closes both sides of the race: an earlier revoke
+      // must finish before removal, while a later revoke cannot enter until the lane is already gone.
+      await this.options.waitForRevocationDrains()
       await this.options.sessions.remove(lane)
     })
     return { sessionId, status: 'shutdown' }

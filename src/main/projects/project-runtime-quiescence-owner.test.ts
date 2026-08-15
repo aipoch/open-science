@@ -15,12 +15,14 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
       deleteProject: vi.fn().mockResolvedValue(undefined)
     }
     const notebook = { shutdownProject: vi.fn().mockResolvedValue(undefined) }
+    const reviewer = { quiesceProject: vi.fn().mockResolvedValue(undefined) }
     const sideChat = { invalidateProject: vi.fn().mockResolvedValue(undefined) }
     const compute = { reconcileProject: vi.fn().mockResolvedValue(undefined) }
     const owner = new ProjectRuntimeQuiescenceOwner({
       acp,
       delegation,
       notebook,
+      reviewer,
       sideChat,
       compute
     })
@@ -31,6 +33,7 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
     expect(acp.deleteSession).not.toHaveBeenCalledWith('acp-other')
     expect(delegation.deleteProject).toHaveBeenCalledWith('project-1')
     expect(notebook.shutdownProject).toHaveBeenCalledWith('project-1')
+    expect(reviewer.quiesceProject).toHaveBeenCalledWith('project-1')
     expect(sideChat.invalidateProject).toHaveBeenCalledWith('project-1')
     expect(compute.reconcileProject).toHaveBeenCalledWith('project-1')
   })
@@ -45,12 +48,14 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
       deleteProject: vi.fn().mockResolvedValue(undefined)
     }
     const notebook = { shutdownProject: vi.fn().mockResolvedValue(undefined) }
+    const reviewer = { quiesceProject: vi.fn().mockResolvedValue(undefined) }
     const sideChat = { invalidateProject: vi.fn().mockResolvedValue(undefined) }
     const compute = { reconcileProject: vi.fn().mockResolvedValue(undefined) }
     const owner = new ProjectRuntimeQuiescenceOwner({
       acp,
       delegation,
       notebook,
+      reviewer,
       sideChat,
       compute
     })
@@ -61,6 +66,7 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
 
     expect(delegation.deleteProject).toHaveBeenCalledWith('project-1')
     expect(notebook.shutdownProject).toHaveBeenCalledWith('project-1')
+    expect(reviewer.quiesceProject).toHaveBeenCalledWith('project-1')
     expect(sideChat.invalidateProject).toHaveBeenCalledWith('project-1')
     expect(compute.reconcileProject).toHaveBeenCalledWith('project-1')
   })
@@ -84,6 +90,7 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
       },
       delegation,
       notebook: { shutdownProject: vi.fn().mockResolvedValue(undefined) },
+      reviewer: { quiesceProject: vi.fn().mockResolvedValue(undefined) },
       sideChat: { invalidateProject: vi.fn().mockResolvedValue(undefined) },
       compute: { reconcileProject: vi.fn().mockResolvedValue(undefined) }
     })
@@ -114,6 +121,7 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
       },
       delegation,
       notebook,
+      reviewer: { quiesceProject: vi.fn().mockResolvedValue(undefined) },
       sideChat: { invalidateProject: vi.fn().mockResolvedValue(undefined) },
       compute: { reconcileProject: vi.fn().mockResolvedValue(undefined) }
     })
@@ -127,5 +135,35 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
     await quiescing
 
     expect(delegation.deleteProject).toHaveBeenCalledWith('project-1')
+  })
+
+  it('drains Reviewer work before enumerating and deleting ACP sessions', async () => {
+    let releaseReviewer!: () => void
+    const reviewerDrained = new Promise<void>((resolve) => {
+      releaseReviewer = resolve
+    })
+    const acp = {
+      listSessionIds: vi.fn(() => []),
+      liveSessionProjectId: vi.fn(),
+      deleteSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const owner = new ProjectRuntimeQuiescenceOwner({
+      acp,
+      delegation: { deleteProject: vi.fn().mockResolvedValue(undefined) },
+      notebook: { shutdownProject: vi.fn().mockResolvedValue(undefined) },
+      reviewer: { quiesceProject: vi.fn(() => reviewerDrained) },
+      sideChat: { invalidateProject: vi.fn().mockResolvedValue(undefined) },
+      compute: { reconcileProject: vi.fn().mockResolvedValue(undefined) }
+    })
+
+    const quiescing = owner.quiesceProject('project-1')
+    await Promise.resolve()
+
+    expect(acp.listSessionIds).not.toHaveBeenCalled()
+
+    releaseReviewer()
+    await quiescing
+
+    expect(acp.listSessionIds).toHaveBeenCalled()
   })
 })

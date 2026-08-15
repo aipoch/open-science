@@ -158,6 +158,7 @@ import {
   type ReviewerCommandOwner
 } from './reviewer/ipc'
 import { ReviewerModelRuntimeOwner } from './reviewer/model-runtime-owner'
+import { ReviewerProjectRuntimeOwner } from './reviewer/project-runtime-owner'
 import {
   createDefaultReviewRepository,
   createDefaultSessionRepository,
@@ -566,6 +567,7 @@ const createApplicationModules = async (
   const reviewerCommandOwnerRef: { current: ReviewerCommandOwner | undefined } = {
     current: undefined
   }
+  const reviewerProjectRuntime = new ReviewerProjectRuntimeOwner()
   const messageAttributionAuthority = new MainMessageAttributionAuthority()
   const notebookActivityRef: {
     current: { getActiveNotebookSessions(): { projectId: string; sessionId: string }[] } | undefined
@@ -736,6 +738,7 @@ const createApplicationModules = async (
       restoreProjectDeletion: async (projectId) => {
         archiveCoordinator.restoreProjectDeletion(projectId)
         notebookService.beginProjectDeletion(projectId)
+        reviewerProjectRuntime.restoreProjectDeletion(projectId)
         await computeJobDeletionPort.restoreProjectJobDeletion(projectId)
       },
       finalizeProjectDeletion: async (projectId) => {
@@ -746,10 +749,12 @@ const createApplicationModules = async (
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
         notebookService.releaseProjectDeletion(projectId)
+        reviewerProjectRuntime.releaseProjectDeletion(projectId)
       },
       abortProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
         notebookService.releaseProjectDeletion(projectId)
+        reviewerProjectRuntime.releaseProjectDeletion(projectId)
         sideChatOwnerRef.current?.restoreProject(projectId)
       }
     }
@@ -1924,6 +1929,7 @@ const createApplicationModules = async (
     notebook: {
       shutdownProject: (projectId) => notebookService.shutdownProject(projectId)
     },
+    reviewer: reviewerProjectRuntime,
     sideChat: sideChatRuntime,
     compute: {
       reconcileProject: async (projectId) => {
@@ -2677,6 +2683,7 @@ const createApplicationModules = async (
   const reviewerOptions = {
     acpRuntime: runtime,
     modelRuntime: reviewerModelRuntime,
+    projectRuntime: reviewerProjectRuntime,
     mcpEntryPath: mainEntryPath,
     artifactProvenanceRepository,
     withSessionMutation: <Result>(

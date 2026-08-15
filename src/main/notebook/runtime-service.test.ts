@@ -6192,6 +6192,7 @@ describe('v4 runtime bindings & agent tools', () => {
       enablement?: RuntimeEnablement
       executions?: NotebookExecutionRequest[]
       terminations?: string[]
+      terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
       platform?: NodeJS.Platform
       repository?: NotebookRunRepository
       discoverRuntimes?: (language: 'python' | 'r') => Promise<DiscoveredInterpreter[]>
@@ -6240,9 +6241,11 @@ describe('v4 runtime bindings & agent tools', () => {
           }
         },
         shutdown: async () => ({ reaped: true }),
-        terminate: async (kind, env) => {
-          options.terminations?.push(`${kind}:${env}`)
-        }
+        terminate:
+          options.terminate ??
+          (async (kind, env) => {
+            options.terminations?.push(`${kind}:${env}`)
+          })
       })
     })
 
@@ -8400,6 +8403,51 @@ describe('v4 runtime bindings & agent tools', () => {
     // after the in-flight run drains (here already finished), not left to idle-timeout.
     await vi.waitFor(() => expect(terminations).toContain('python:default-python'))
     await service.shutdownAll()
+  })
+
+  it('waits for a deferred runtime-revocation drain before removing the Project lane', async () => {
+    const root = await createStorageRoot()
+    const terminationStarted = createDeferred<void>()
+    const terminationGate = createDeferred<void>()
+    const events: string[] = []
+    const service = bindingService(root, {
+      enablement: { enabled: { [userPyA.envId]: true }, installAuthorized: {} },
+      terminate: async () => {
+        events.push('revocation-started')
+        terminationStarted.resolve(undefined)
+        await terminationGate.promise
+        events.push('revocation-finished')
+      }
+    })
+    const request = {
+      projectName: 'project-1',
+      sessionId: 's',
+      workspaceCwd: root
+    }
+    await service.bindRuntime({
+      ...request,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    await service.execute({ ...request, code: '1', language: 'python' })
+
+    await service.revokeRuntime('python', userPyA.envId)
+    await terminationStarted.promise
+
+    let deletionCompleted = false
+    const deleting = service.shutdownProject('project-1').then(() => {
+      deletionCompleted = true
+      events.push('project-deleted')
+    })
+    await Promise.resolve()
+
+    expect(deletionCompleted).toBe(false)
+    expect(events).toEqual(['revocation-started'])
+
+    terminationGate.resolve(undefined)
+    await deleting
+
+    expect(events).toEqual(['revocation-started', 'revocation-finished', 'project-deleted'])
   })
 
   it('shares one aggregate initialization across concurrent public session reads', async () => {

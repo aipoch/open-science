@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewRunRequest } from '../../shared/reviewer'
 import { REVIEWER_IPC } from '../../shared/reviewer'
 import type { AcpRuntime } from '../acp/runtime'
+import { ReviewerProjectRuntimeOwner } from './project-runtime-owner'
 
 // Distinct roots so a config-vs-data mix-up is unambiguous: artifacts must read from the data root.
 const CONFIG_ROOT = join(tmpdir(), 'open-science-config-root')
@@ -152,6 +153,40 @@ describe('reviewer IPC handlers', () => {
 
     finishRun?.()
     await backgroundRun
+  })
+
+  it('fences new Project reviews and drains an admitted background run during deletion', async () => {
+    let finishRun!: () => void
+    let reviewSignal: AbortSignal | undefined
+    runReview.mockImplementation(
+      (options?: { onStarted?: () => void; fixLoopAbortSignal?: AbortSignal }) => {
+        reviewSignal = options?.fixLoopAbortSignal
+        options?.onStarted?.()
+        return new Promise<void>((resolve) => {
+          finishRun = resolve
+        })
+      }
+    )
+    const projectRuntime = new ReviewerProjectRuntimeOwner()
+    const owner = createReviewerCommandOwner({ acpRuntime, projectRuntime })
+
+    await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+
+    let quiesced = false
+    const quiescing = projectRuntime.quiesceProject('project-1').then(() => {
+      quiesced = true
+    })
+    await vi.waitFor(() => expect(reviewSignal?.aborted).toBe(true))
+
+    expect(quiesced).toBe(false)
+    await expect(
+      owner.run({ ...createRequest(), turnMessageId: 'message-after-fence' })
+    ).rejects.toThrow('Project is being deleted.')
+    expect(runReview).toHaveBeenCalledOnce()
+
+    finishRun()
+    await quiescing
+    expect(quiesced).toBe(true)
   })
 
   it('runs reviews with artifacts rooted at the data root, not the config root', async () => {
