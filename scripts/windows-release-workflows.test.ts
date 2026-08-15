@@ -311,6 +311,7 @@ describe('post-merge Windows validation', () => {
     expect(findStep(upgrade, 'Install dependencies').run).toBe(
       'npm ci --ignore-scripts --no-audit --no-fund'
     )
+    expect(findStep(upgrade, 'Generate Prisma client').run).toBe('npx prisma generate')
     const current = findStep(upgrade, 'Download current Windows installer')
     expect(current.run).toContain('gh release download $env:CURRENT_TAG')
     expect(current.run).toContain("--pattern 'latest.yml'")
