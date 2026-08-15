@@ -3205,6 +3205,42 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(thumbnailReads).toHaveLength(1)
   })
 
+  it('mounts desktop Run Marks from visible human prompts', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'running',
+      activeRun: { promptMessageId: 'prompt-2', startedAt: 1710000000200 },
+      messages: [
+        createMessage({ id: 'prompt-1', content: 'First prompt' }),
+        createMessage({
+          id: 'response-1',
+          role: 'agent',
+          content: 'First response',
+          responseToMessageId: 'prompt-1'
+        }),
+        createMessage({ id: 'prompt-2', content: 'Second prompt' })
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+
+    const rail = container.querySelector<HTMLElement>('nav[aria-label="Run marks"]')
+    expect(rail).not.toBeNull()
+    expect(rail?.className).toContain('hidden')
+    expect(rail?.className).toContain('md:flex')
+    expect(rail?.querySelectorAll('button')).toHaveLength(2)
+    expect(
+      Array.from(rail?.querySelectorAll('button span') ?? []).every((indicator) =>
+        indicator.classList.contains('scale-x-50')
+      )
+    ).toBe(true)
+  })
+
   it('does not leave the active Plan card in the transcript', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const activePlanProjection: ActivePlanProjection = {

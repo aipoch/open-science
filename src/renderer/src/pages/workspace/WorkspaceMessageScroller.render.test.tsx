@@ -13,6 +13,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
 
+vi.mock('./WorkspaceRunMarks', () => ({
+  WorkspaceRunMarks: ({ items }: { items: readonly unknown[] }) => (
+    <div data-testid="workspace-run-marks" data-item-count={items.length} />
+  )
+}))
+
 vi.mock('@/components/streamdown/AgentMarkdown', () => ({
   AgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>,
   PresentedAgentMarkdown: ({ content }: { content: string }) => <div>{content}</div>
@@ -190,6 +196,33 @@ const renderScroller = async (session: ChatSession): Promise<string> => {
     <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
   )
 }
+
+describe('WorkspaceMessageScroller Run Marks render', () => {
+  it('passes the presented conversation to Run Marks', async () => {
+    const oneRun = await renderScroller(
+      createSession({ messages: [createMessage({ id: 'prompt-1', content: 'First prompt' })] })
+    )
+    expect(oneRun).toContain('data-testid="workspace-run-marks"')
+    expect(oneRun).toContain('data-item-count="1"')
+
+    const twoRuns = await renderScroller(
+      createSession({
+        activeRun: { promptMessageId: 'prompt-2', startedAt: 1710000000200 },
+        messages: [
+          createMessage({ id: 'prompt-1', content: 'First prompt' }),
+          createMessage({
+            id: 'response-1',
+            role: 'agent',
+            content: 'First response',
+            responseToMessageId: 'prompt-1'
+          }),
+          createMessage({ id: 'prompt-2', content: 'Second prompt' })
+        ]
+      })
+    )
+    expect(twoRuns).toContain('data-item-count="3"')
+  })
+})
 
 describe('WorkspaceMessageScroller Reviewer Correction lifecycle', () => {
   const correction = createMessage({
