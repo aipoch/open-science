@@ -17,7 +17,7 @@
  * The submit_job approval covers the full submit→harvest lifecycle.
  */
 
-import { mkdir, stat, statfs, unlink } from 'node:fs/promises'
+import { mkdir, statfs, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
@@ -26,8 +26,8 @@ import type { ComputeJobRepository } from './job-repository'
 import type { SshRunner, ResolvedSshTarget } from './ssh-runner'
 import { resolveSshTarget } from './ssh-runner'
 import type { ScpRunner } from './scp-runner'
-import { buildScpArgs, resolveScpBinary, GLOB_CHARS, SHELL_UNSAFE_CHARS } from './scp-runner'
-import { shellSingleQuote } from './scp-runner'
+import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './scp-runner'
+import { quoteRemotePath } from './job-dispatcher'
 import {
   classifyFiles,
   HARVEST_MAX_FILE_MB,
@@ -106,7 +106,7 @@ export const enumerateRemoteFiles = async (
   remoteWorkdir: string
 ): Promise<FileEntry[]> => {
   // Single-quote the workdir path for safe embedding in the SSH command.
-  const quotedWorkdir = shellSingleQuote(remoteWorkdir)
+  const quotedWorkdir = quoteRemotePath(remoteWorkdir)
   const cmd = `find ${quotedWorkdir} -type f -printf '%P\\t%s\\n' 2>/dev/null || true`
 
   const result = await sshRunner.run(target, cmd, {
@@ -179,8 +179,7 @@ const downloadFile = async (
   remoteWorkdir: string,
   relativePath: string,
   localDestPath: string,
-  maxBytes: number,
-  expectedBytes: number
+  maxBytes: number
 ): Promise<number> => {
   const pathError = validateRelativePath(relativePath)
   if (pathError) {
@@ -197,49 +196,28 @@ const downloadFile = async (
 
   await mkdir(dirname(localDestPath), { recursive: true })
 
-  if (scpRunner.copyFromRemoteBounded) {
-    const result = await scpRunner.copyFromRemoteBounded(
-      target,
-      absRemotePath,
-      localDestPath,
-      maxBytes
-    )
-    if (result.exceeded) {
-      const error = new Error(
-        'download exceeded the allowed byte budget for ' + relativePath
-      ) as HarvestDownloadLimitError
-      error.limitExceeded = true
-      throw error
-    }
-    if (result.timedOut) throw new Error('download timed out for ' + relativePath)
-    if (result.exitCode !== 0) {
-      const detail = result.stderr.trim() || 'remote copy exited ' + String(result.exitCode)
-      throw new Error('remote copy failed for ' + relativePath + ': ' + detail)
-    }
-    return result.bytesWritten
+  if (!scpRunner.copyFromRemoteBounded) {
+    throw new Error('bounded remote copy is unavailable')
   }
-
-  const scpBinary = resolveScpBinary()
-  const args = buildScpArgs(target, absRemotePath, localDestPath)
-  const result = await scpRunner.copy(scpBinary, args)
-
-  if (result.timedOut) throw new Error('scp timed out for ' + relativePath)
-  if (result.exitCode !== 0) {
-    const detail = result.stderr.trim() || 'scp exited ' + String(result.exitCode)
-    throw new Error('scp failed for ' + relativePath + ': ' + detail)
-  }
-
-  const bytesWritten = await stat(localDestPath)
-    .then((entry) => entry.size)
-    .catch(() => Math.min(expectedBytes, maxBytes))
-  if (bytesWritten > maxBytes) {
+  const result = await scpRunner.copyFromRemoteBounded(
+    target,
+    absRemotePath,
+    localDestPath,
+    maxBytes
+  )
+  if (result.exceeded) {
     const error = new Error(
       'download exceeded the allowed byte budget for ' + relativePath
     ) as HarvestDownloadLimitError
     error.limitExceeded = true
     throw error
   }
-  return bytesWritten
+  if (result.timedOut) throw new Error('download timed out for ' + relativePath)
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || 'remote copy exited ' + String(result.exitCode)
+    throw new Error('remote copy failed for ' + relativePath + ': ' + detail)
+  }
+  return result.bytesWritten
 }
 
 // ---------------------------------------------------------------------------
@@ -534,8 +512,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
         remoteWorkdir,
         relativePath,
         localPath,
-        maxBytes,
-        expectedBytes
+        maxBytes
       )
       remainingBudgetBytes = Math.max(0, remainingBudgetBytes - bytesWritten)
       return true

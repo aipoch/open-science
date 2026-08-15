@@ -28,9 +28,12 @@ import type { ResolvedSshTarget } from './ssh-runner'
 // Hoisted execFile double — drives SystemScpRunner's child event lifecycle.
 // ---------------------------------------------------------------------------
 
-const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }))
+const { execFileMock, spawnMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+  spawnMock: vi.fn()
+}))
 
-vi.mock('node:child_process', () => ({ execFile: execFileMock }))
+vi.mock('node:child_process', () => ({ execFile: execFileMock, spawn: spawnMock }))
 
 // Controllable ChildProcess double matching execFile's surface used by
 // SystemScpRunner: stderr is an EventEmitter, kill() records the signal.
@@ -476,10 +479,12 @@ describe('SystemScpRunner', () => {
   beforeEach(() => {
     runner = new SystemScpRunner()
     execFileMock.mockReset()
+    spawnMock.mockReset()
   })
 
   afterEach(() => {
     execFileMock.mockReset()
+    spawnMock.mockReset()
     vi.useRealTimers()
   })
 
@@ -488,14 +493,19 @@ describe('SystemScpRunner', () => {
     const localPath = join(dir, 'bounded.bin')
     try {
       const child = new FakeChild()
-      execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+      spawnMock.mockReturnValueOnce(child as unknown as ReturnType<typeof spawnMock>)
       const target: ResolvedSshTarget = {
         sshBinary: '/usr/bin/ssh',
         host: 'cluster',
         extraArgs: []
       }
 
-      const promise = runner.copyFromRemoteBounded(target, '/remote/growing.log', localPath, 3)
+      const promise = runner.copyFromRemoteBounded(
+        target,
+        '~/.openscience/jobs/job-1/growing.log',
+        localPath,
+        3
+      )
       child.stdout.emit('data', Buffer.from('abcd'))
       child.stdout.emit('end')
       child.emit('close', null)
@@ -504,10 +514,10 @@ describe('SystemScpRunner', () => {
       expect(result).toMatchObject({ bytesWritten: 3, exceeded: true })
       expect(child.kill).toHaveBeenCalledWith('SIGTERM')
       await expect(readFile(localPath, 'utf8')).resolves.toBe('abc')
-      expect(execFileMock).toHaveBeenCalledWith(
+      expect(spawnMock).toHaveBeenCalledWith(
         '/usr/bin/ssh',
-        ['cluster', "head -c 4 -- '/remote/growing.log'"],
-        { timeout: 0, encoding: 'buffer' }
+        ['cluster', "head -c 4 -- ~/'.openscience/jobs/job-1/growing.log'"],
+        { stdio: ['ignore', 'pipe', 'pipe'] }
       )
     } finally {
       await rm(dir, { recursive: true, force: true })

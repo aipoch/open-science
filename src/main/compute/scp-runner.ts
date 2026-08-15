@@ -2,7 +2,7 @@
 // Reuses resolveSshTarget for connection config + ControlMaster mux.
 // This module never handles credentials — all key material stays in the OS ssh-agent.
 
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createWriteStream, existsSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { platform } from 'node:os'
@@ -31,6 +31,12 @@ export const SHELL_UNSAFE_CHARS = /[$`;|&<>()"'\x00-\x1f\x7f]/
 // Inside single quotes the shell performs no expansion at all; the only character needing special
 // handling is the single quote itself, closed and re-opened via the '\'' idiom.
 export const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
+
+const shellRemotePath = (value: string): string => {
+  if (value === '~') return '~'
+  if (value.startsWith('~/')) return `~/${shellSingleQuote(value.slice(2))}`
+  return shellSingleQuote(value)
+}
 
 // 2 GiB in bytes — hard upper limit for os-downloads destination.
 export const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
@@ -200,7 +206,7 @@ export class SystemScpRunner implements ScpRunner {
   ): Promise<BoundedScpResult> {
     const boundedBytes = Math.max(0, Math.floor(maxBytes))
     const remoteCommand =
-      'head -c ' + String(boundedBytes + 1) + ' -- ' + shellSingleQuote(remotePath)
+      'head -c ' + String(boundedBytes + 1) + ' -- ' + shellRemotePath(remotePath)
 
     return new Promise((resolve) => {
       const stderrChunks: Buffer[] = []
@@ -213,9 +219,8 @@ export class SystemScpRunner implements ScpRunner {
       let exitCode: number | null = null
       let outputError: string | undefined
 
-      const child = execFile(target.sshBinary, [...target.extraArgs, target.host, remoteCommand], {
-        timeout: 0,
-        encoding: 'buffer'
+      const child = spawn(target.sshBinary, [...target.extraArgs, target.host, remoteCommand], {
+        stdio: ['ignore', 'pipe', 'pipe']
       })
       const output = createWriteStream(localPath, { flags: 'w' })
 
