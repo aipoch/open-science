@@ -1,5 +1,6 @@
 import type {
   ComputeApprovalDecision,
+  ComputeSessionOwner,
   CreateComputeHostRequest,
   DeleteComputeHostRequest,
   DetailsAuthor
@@ -52,11 +53,11 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   // Session-level concurrency control (Phase 3c, issue 04).
   ipcMainHandle(
     'compute:session:set-concurrency-limit',
-    (_event, sessionId: string, limit: number) =>
-      handlers.setSessionConcurrencyLimit(sessionId, limit)
+    (_event, owner: ComputeSessionOwner, limit: number) =>
+      handlers.setSessionConcurrencyLimit(owner, limit)
   )
-  ipcMainHandle('compute:session:status', (_event, sessionId: string) =>
-    handlers.getSessionConcurrencyStatus(sessionId)
+  ipcMainHandle('compute:session:status', (_event, owner: ComputeSessionOwner) =>
+    handlers.getSessionConcurrencyStatus(owner)
   )
   // Lists a remote directory (browse experience, issue 05).
   ipcMainHandle('compute:list-dir', async (_event, providerId: string, path: string) => {
@@ -103,15 +104,17 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
   ipcMainHandle(
     COMPUTE_JOBS_LIST_CHANNEL,
-    (_event, filter: { sessionId: string; status?: string[] }) => handlers.jobsList(filter)
+    (_event, filter: ComputeSessionOwner & { status?: string[] }) => handlers.jobsList(filter)
   )
   // Returns jobs pending analysis turn (notifiedAt set, notificationConsumedAt null — issue 05).
-  ipcMainHandle('compute:jobs:pending-notification', (_event, sessionId: string) =>
-    handlers.jobsPendingNotification(sessionId)
+  ipcMainHandle('compute:jobs:pending-notification', (_event, owner: ComputeSessionOwner) =>
+    handlers.jobsPendingNotification(owner)
   )
   // Marks job ids as notification-consumed (analysis turn done — issue 05).
-  ipcMainHandle('compute:jobs:mark-consumed', (_event, sessionId: string, jobIds: string[]) =>
-    handlers.jobsMarkConsumed(sessionId, jobIds)
+  ipcMainHandle(
+    'compute:jobs:mark-consumed',
+    (_event, owner: ComputeSessionOwner, jobIds: string[]) =>
+      handlers.jobsMarkConsumed(owner, jobIds)
   )
 
   // Per-session enabled Compute Hosts. Main commits Session authority before updating the runtime

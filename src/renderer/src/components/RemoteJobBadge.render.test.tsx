@@ -17,6 +17,7 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
   display_name: 'biowulf',
   shape: 'direct_ssh',
   session_id: 'sess-test',
+  project_id: 'project-a',
   status: 'running',
   intent: 'Salary analysis — EDA',
   created_at: Date.now() - 60_000,
@@ -62,7 +63,7 @@ describe('formatDuration', () => {
 describe('RemoteJobBadge — 0 running', () => {
   it('renders nothing when there are no running jobs', () => {
     act(() => {
-      root.render(<RemoteJobBadge sessionId="sess-test" />)
+      root.render(<RemoteJobBadge projectId="project-a" sessionId="sess-test" />)
     })
     expect(container.firstChild).toBeNull()
   })
@@ -72,7 +73,7 @@ describe('RemoteJobBadge — 0 running', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'j2', status: 'failed' }))
 
     act(() => {
-      root.render(<RemoteJobBadge sessionId="sess-test" />)
+      root.render(<RemoteJobBadge projectId="project-a" sessionId="sess-test" />)
     })
 
     expect(container.textContent).toContain('2 jobs')
@@ -93,7 +94,7 @@ describe('RemoteJobBadge — N running', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'job-2', status: 'running' }))
 
     act(() => {
-      root.render(<RemoteJobBadge sessionId="sess-test" />)
+      root.render(<RemoteJobBadge projectId="project-a" sessionId="sess-test" />)
     })
 
     expect(container.textContent).toContain('2 running')
@@ -105,7 +106,7 @@ describe('RemoteJobBadge — N running', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ job_id: 'j3', status: 'success' }))
 
     act(() => {
-      root.render(<RemoteJobBadge sessionId="sess-test" />)
+      root.render(<RemoteJobBadge projectId="project-a" sessionId="sess-test" />)
     })
 
     // Should count both running and submitted as "running"
@@ -118,7 +119,7 @@ describe('RemoteJobBadge — N running', () => {
       .applyUpdate(makeJob({ session_id: 'sess-other', status: 'running' }))
 
     act(() => {
-      root.render(<RemoteJobBadge sessionId="sess-test" />)
+      root.render(<RemoteJobBadge projectId="project-a" sessionId="sess-test" />)
     })
 
     expect(container.firstChild).toBeNull()
@@ -128,7 +129,7 @@ describe('RemoteJobBadge — N running', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ status: 'running' }))
 
     act(() => {
-      root.render(<RemoteJobBadge sessionId="sess-test" />)
+      root.render(<RemoteJobBadge projectId="project-a" sessionId="sess-test" />)
     })
 
     const btn = container.querySelector('button')
@@ -142,7 +143,9 @@ describe('RemoteJobBadge — click interaction', () => {
     useSessionJobStore.getState().applyUpdate(makeJob({ status: 'running' }))
 
     act(() => {
-      root.render(<RemoteJobBadge sessionId="sess-test" onOpenJobList={handleOpen} />)
+      root.render(
+        <RemoteJobBadge projectId="project-a" sessionId="sess-test" onOpenJobList={handleOpen} />
+      )
     })
 
     const btn = container.querySelector('button')

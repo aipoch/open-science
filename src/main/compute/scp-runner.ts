@@ -3,7 +3,7 @@
 // This module never handles credentials — all key material stays in the OS ssh-agent.
 
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { createWriteStream, existsSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { platform } from 'node:os'
 import { join } from 'node:path'
@@ -139,9 +139,21 @@ export type ScpResult = {
   timedOut: boolean
 }
 
+export type BoundedScpResult = ScpResult & {
+  bytesWritten: number
+  exceeded: boolean
+}
+
 // Injectable scp runner interface for testability. The real implementation spawns system scp.
 export interface ScpRunner {
   copy(scpBinary: string, args: string[], timeoutMs?: number): Promise<ScpResult>
+  copyFromRemoteBounded?(
+    target: ResolvedSshTarget,
+    remotePath: string,
+    localPath: string,
+    maxBytes: number,
+    timeoutMs?: number
+  ): Promise<BoundedScpResult>
 }
 
 // Production scp runner: spawns the system scp binary. No credentials are passed — key material
@@ -175,6 +187,108 @@ export class SystemScpRunner implements ScpRunner {
       child.on('error', (err) => {
         clearTimeout(timer)
         resolve({ exitCode: null, stderr: err.message, timedOut })
+      })
+    })
+  }
+
+  async copyFromRemoteBounded(
+    target: ResolvedSshTarget,
+    remotePath: string,
+    localPath: string,
+    maxBytes: number,
+    timeoutMs = SCP_TIMEOUT_MS
+  ): Promise<BoundedScpResult> {
+    const boundedBytes = Math.max(0, Math.floor(maxBytes))
+    const remoteCommand =
+      'head -c ' + String(boundedBytes + 1) + ' -- ' + shellSingleQuote(remotePath)
+
+    return new Promise((resolve) => {
+      const stderrChunks: Buffer[] = []
+      let bytesWritten = 0
+      let exceeded = false
+      let timedOut = false
+      let processClosed = false
+      let outputClosed = false
+      let settled = false
+      let exitCode: number | null = null
+      let outputError: string | undefined
+
+      const child = execFile(target.sshBinary, [...target.extraArgs, target.host, remoteCommand], {
+        timeout: 0,
+        encoding: 'buffer'
+      })
+      const output = createWriteStream(localPath, { flags: 'w' })
+
+      const finish = (): void => {
+        if (settled || !processClosed || !outputClosed) return
+        settled = true
+        resolve({
+          exitCode,
+          stderr: outputError ?? Buffer.concat(stderrChunks).toString('utf8'),
+          timedOut,
+          bytesWritten,
+          exceeded
+        })
+      }
+
+      const closeOutput = (): void => {
+        if (!output.destroyed && !output.writableEnded) output.end()
+      }
+
+      const timer = setTimeout(() => {
+        timedOut = true
+        child.kill('SIGTERM')
+      }, timeoutMs)
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        if (exceeded) return
+        const remaining = Math.max(0, boundedBytes - bytesWritten)
+        const accepted = chunk.subarray(0, remaining)
+        if (accepted.length > 0) {
+          bytesWritten += accepted.length
+          if (!output.write(accepted)) {
+            child.stdout?.pause()
+            output.once('drain', () => child.stdout?.resume())
+          }
+        }
+        if (chunk.length > remaining) {
+          exceeded = true
+          child.kill('SIGTERM')
+        }
+      })
+
+      child.stdout?.on('end', closeOutput)
+      child.stderr?.on('data', (chunk: Buffer) => {
+        if (stderrChunks.reduce((sum, current) => sum + current.length, 0) < 8 * 1024) {
+          stderrChunks.push(chunk)
+        }
+      })
+
+      output.on('error', (error) => {
+        outputError = error.message
+        outputClosed = true
+        child.kill('SIGTERM')
+        finish()
+      })
+      output.on('close', () => {
+        outputClosed = true
+        finish()
+      })
+
+      child.on('close', (code) => {
+        clearTimeout(timer)
+        exitCode = code
+        processClosed = true
+        closeOutput()
+        finish()
+      })
+
+      child.on('error', (error) => {
+        clearTimeout(timer)
+        outputError = error.message
+        processClosed = true
+        closeOutput()
+        finish()
       })
     })
   }

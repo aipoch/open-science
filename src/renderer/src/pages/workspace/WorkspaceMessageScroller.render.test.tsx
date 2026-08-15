@@ -2243,6 +2243,7 @@ describe('WorkspaceToolDetailsRow expanded rendering', () => {
 const createJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
   job_id: 'job-1',
   session_id: 'session-1',
+  project_id: 'project-a',
   provider_id: 'provider-1',
   intent: 'run analysis',
   status: 'success',

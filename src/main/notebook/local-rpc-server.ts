@@ -132,8 +132,11 @@ type NotebookLocalRpcServerOptions = {
     // Returns the provider ids of compute hosts enabled for the given session (issue 06).
     getEnabledComputeHosts(sessionId: string): string[]
     // Session-level concurrency control (Phase 3c, issue 05).
-    setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void>
-    getSessionConcurrencyStatus(sessionId: string): Promise<{
+    setSessionConcurrencyLimit(
+      owner: { projectId: string; sessionId: string },
+      limit: number
+    ): Promise<void>
+    getSessionConcurrencyStatus(owner: { projectId: string; sessionId: string }): Promise<{
       session_limit: number | null
       active_count: number
       queued_count: number
@@ -1215,8 +1218,8 @@ class NotebookLocalRpcServer {
     const callerRole = sessionBinding.delegatedWorkRole ?? 'main'
     const hasDelegatedIdentity = Boolean(
       sessionBinding.projectId &&
-        sessionBinding.agentFrameId &&
-        (callerRole !== 'delegate' || sessionBinding.delegatedWorkAttemptId)
+      sessionBinding.agentFrameId &&
+      (callerRole !== 'delegate' || sessionBinding.delegatedWorkAttemptId)
     )
     const hasDelegatedOrigin = sessionBinding.delegatedNotebook
       ? Boolean(sessionBinding.delegatedNotebook.provenanceContext.promptMessageId)
@@ -2002,14 +2005,14 @@ class NotebookLocalRpcServer {
       // the limit enter 'queued' state and auto-dispatch when slots free up.
       if (op === 'set_concurrency_limit') {
         const limit = typeof params.limit === 'number' ? params.limit : 0
-        return this.computeService.setSessionConcurrencyLimit(sessionId, limit)
+        return this.computeService.setSessionConcurrencyLimit({ projectId, sessionId }, limit)
       }
 
       // op='concurrency_status' — query session concurrency status (Phase 3c, issue 05).
       // Returns session_limit (user-set or null), active_count (non-terminal jobs in session),
       // queued_count (queued jobs in session), and provider_ceilings (per-provider hard limits).
       if (op === 'concurrency_status') {
-        return this.computeService.getSessionConcurrencyStatus(sessionId)
+        return this.computeService.getSessionConcurrencyStatus({ projectId, sessionId })
       }
 
       throw new Error(`Unknown computeCall op: ${op}`)

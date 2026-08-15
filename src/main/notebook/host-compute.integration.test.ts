@@ -59,7 +59,7 @@ const baseRequest = (
     mcpRpcEndpoint: string
     mcpRpcToken: string
     sessionId: string
-    projectName: string
+    projectId: string
   }>
 ): Parameters<NotebookKernelExecutor['execute']>[0] => ({
   code: '',
@@ -104,7 +104,7 @@ gate('repl kernel host.compute', () => {
         mcpRpcEndpoint: stub.endpoint,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
-        projectName: 'proj-x'
+        projectId: 'proj-x'
       })
     )
     await exec.shutdown()
@@ -131,7 +131,7 @@ gate('repl kernel host.compute', () => {
         mcpRpcEndpoint: stub.endpoint,
         mcpRpcToken: 'tok',
         sessionId: 'session-7',
-        projectName: 'proj-x'
+        projectId: 'proj-x'
       })
     )
     await exec.shutdown()
@@ -168,6 +168,31 @@ gate('repl kernel host.compute', () => {
       { op: 'job_result', job_id: 'job-1' },
       { op: 'set_concurrency_limit', session_id: 'session-7', limit: 2 }
     ])
+  })
+
+  it('rejects harvest limits above the application hard ceilings before RPC', async () => {
+    const stub = await startStub()
+    const exec = makeExecutor()
+    const result = await exec.execute(
+      baseRequest({
+        code:
+          "const c = host.compute.create('ssh:x'); const errors = []; " +
+          'for (const harvest of [{ maxFileMb: 101 }, { maxTotalMb: 501 }]) { ' +
+          "try { await c.submitJob('i', 'c', { harvest }) } catch (error) { errors.push(error.message) } } " +
+          'console.log(JSON.stringify(errors))',
+        mcpRpcEndpoint: stub.endpoint,
+        mcpRpcToken: 'tok'
+      })
+    )
+    await exec.shutdown()
+    stub.close()
+
+    expect(result.status).toBe('completed')
+    expect(JSON.parse(result.stdout.trim())).toEqual([
+      'host.compute.submitJob harvest.maxFileMb must be a finite number between 0 and 100 MiB.',
+      'host.compute.submitJob harvest.maxTotalMb must be a finite number between 0 and 500 MiB.'
+    ])
+    expect(stub.received()).toEqual([])
   })
 
   it('rejects every old compute input key before RPC', async () => {

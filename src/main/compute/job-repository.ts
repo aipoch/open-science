@@ -1,5 +1,5 @@
 import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
-import type { ComputeJob, ComputeJobStatus } from '../../shared/compute'
+import type { ComputeJob, ComputeJobStatus, ComputeSessionOwner } from '../../shared/compute'
 
 // Only ComputeJob persistence and a transaction wrapper are needed.
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
@@ -10,10 +10,7 @@ export type ComputeJobOwner = Readonly<{
   sessionId?: string
 }>
 
-export type ComputeJobSessionOwner = Readonly<{
-  projectId: string
-  sessionId: string
-}>
+export type ComputeJobSessionOwner = ComputeSessionOwner
 
 const ownerWhere = (owner: ComputeJobOwner): { projectId: string; sessionId?: string } => ({
   projectId: owner.projectId,
@@ -307,11 +304,11 @@ export class ComputeJobRepository {
   }
 
   // Returns all jobs for a session, newest-first. Optionally filtered by status values.
-  async findBySession(sessionId: string, statuses?: string[]): Promise<ComputeJob[]> {
+  async findBySession(owner: ComputeJobSessionOwner, statuses?: string[]): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
       where: {
-        sessionId,
+        ...ownerWhere(owner),
         ...(statuses && statuses.length > 0 ? { status: { in: statuses } } : {})
       },
       orderBy: { createdAt: 'desc' }
@@ -331,11 +328,11 @@ export class ComputeJobRepository {
   // Returns jobs for a session that have been notified (notifiedAt set) but not yet consumed
   // (notificationConsumedAt null). Used by the renderer at session load time to find jobs that
   // need an analysis turn (issue 05: restart recovery path).
-  async findPendingNotifications(sessionId: string): Promise<ComputeJob[]> {
+  async findPendingNotifications(owner: ComputeJobSessionOwner): Promise<ComputeJob[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
       where: {
-        sessionId,
+        ...ownerWhere(owner),
         notifiedAt: { not: null },
         notificationConsumedAt: null
       },
@@ -346,15 +343,38 @@ export class ComputeJobRepository {
 
   // Marks a batch of jobs as notification-consumed by setting notificationConsumedAt to now.
   // Idempotent — already-consumed jobs are unaffected by the where clause.
-  async markNotificationsConsumed(jobIds: string[]): Promise<void> {
+  async markNotificationsConsumed(
+    owner: ComputeJobSessionOwner,
+    jobIds: readonly string[]
+  ): Promise<void> {
     if (jobIds.length === 0) return
     const client = await this.getClient()
-    await client.computeJob.updateMany({
-      where: {
-        id: { in: jobIds },
-        notificationConsumedAt: null
-      },
-      data: { notificationConsumedAt: new Date() }
+    const distinctJobIds = [...new Set(jobIds)]
+    await client.$transaction(async (transaction) => {
+      const rows = await transaction.computeJob.findMany({
+        where: { id: { in: distinctJobIds } },
+        select: { id: true, projectId: true, sessionId: true, notifiedAt: true }
+      })
+      const allOwnedNotifications =
+        rows.length === distinctJobIds.length &&
+        rows.every(
+          (row) =>
+            row.projectId === owner.projectId &&
+            row.sessionId === owner.sessionId &&
+            row.notifiedAt !== null
+        )
+      if (!allOwnedNotifications) {
+        throw new Error('Cannot consume compute notifications outside the requested owner.')
+      }
+      await transaction.computeJob.updateMany({
+        where: {
+          ...ownerWhere(owner),
+          id: { in: distinctJobIds },
+          notifiedAt: { not: null },
+          notificationConsumedAt: null
+        },
+        data: { notificationConsumedAt: new Date() }
+      })
     })
   }
 
@@ -372,11 +392,11 @@ export class ComputeJobRepository {
 
   // Counts non-terminal jobs (queued, submitted, running) across all providers for a given session.
   // Used by ConcurrencyManager to enforce session limits.
-  async countNonTerminalBySession(sessionId: string): Promise<number> {
+  async countNonTerminalBySession(owner: ComputeJobSessionOwner): Promise<number> {
     const client = await this.getClient()
     return await client.computeJob.count({
       where: {
-        sessionId,
+        ...ownerWhere(owner),
         status: { in: ['queued', 'submitted', 'running'] }
       }
     })
@@ -384,11 +404,11 @@ export class ComputeJobRepository {
 
   // Counts active jobs (submitted, running) excluding queued, for a given session.
   // Used by ConcurrencyManager to check if a new job should queue or dispatch immediately.
-  async countActiveBySession(sessionId: string): Promise<number> {
+  async countActiveBySession(owner: ComputeJobSessionOwner): Promise<number> {
     const client = await this.getClient()
     return await client.computeJob.count({
       where: {
-        sessionId,
+        ...ownerWhere(owner),
         status: { in: ['submitted', 'running'] }
       }
     })

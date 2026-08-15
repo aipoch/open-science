@@ -364,18 +364,21 @@ describe('compute handlers — jobsList', () => {
       '/tmp/test-storage'
     )
 
-    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+    const result = await handlers.jobsList({ projectId: 'proj-1', sessionId: 'sess-1' })
 
     expect(result).toHaveLength(1)
     expect(result[0]!.job_id).toBe('job-1')
     expect(result[0]!.display_name).toBe('Biowulf HPC')
     expect(result[0]!.session_id).toBe('sess-1')
-    expect(findBySession).toHaveBeenCalledWith('sess-1', undefined)
+    expect(findBySession).toHaveBeenCalledWith(
+      { projectId: 'proj-1', sessionId: 'sess-1' },
+      undefined
+    )
   })
 
   it('returns empty array when no jobRepository is injected', async () => {
     const handlers = createComputeHandlers(mockRepository({}))
-    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+    const result = await handlers.jobsList({ projectId: 'proj-1', sessionId: 'sess-1' })
     expect(result).toHaveLength(0)
   })
 
@@ -394,7 +397,7 @@ describe('compute handlers — jobsList', () => {
       '/tmp/test-storage'
     )
 
-    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+    const result = await handlers.jobsList({ projectId: 'proj-1', sessionId: 'sess-1' })
     expect(result[0]!.display_name).toBe('ssh:biowulf')
   })
 })
@@ -771,8 +774,14 @@ describe('session concurrency control handlers', () => {
     const service = mockService({ setSessionConcurrencyLimit })
     const handlers = createComputeHandlers(mockRepository({}), undefined, service)
 
-    await handlers.setSessionConcurrencyLimit('session-123', 5)
-    expect(setSessionConcurrencyLimit).toHaveBeenCalledWith('session-123', 5)
+    await handlers.setSessionConcurrencyLimit(
+      { projectId: 'project-123', sessionId: 'session-123' },
+      5
+    )
+    expect(setSessionConcurrencyLimit).toHaveBeenCalledWith(
+      { projectId: 'project-123', sessionId: 'session-123' },
+      5
+    )
   })
 
   it('getSessionConcurrencyStatus delegates to ComputeService', async () => {
@@ -786,8 +795,14 @@ describe('session concurrency control handlers', () => {
     const service = mockService({ getSessionConcurrencyStatus })
     const handlers = createComputeHandlers(mockRepository({}), undefined, service)
 
-    const result = await handlers.getSessionConcurrencyStatus('session-123')
-    expect(getSessionConcurrencyStatus).toHaveBeenCalledWith('session-123')
+    const result = await handlers.getSessionConcurrencyStatus({
+      projectId: 'project-123',
+      sessionId: 'session-123'
+    })
+    expect(getSessionConcurrencyStatus).toHaveBeenCalledWith({
+      projectId: 'project-123',
+      sessionId: 'session-123'
+    })
     expect(result).toEqual(status)
   })
 
@@ -806,7 +821,10 @@ describe('session concurrency control handlers', () => {
     const service = mockService({ getSessionConcurrencyStatus })
     const handlers = createComputeHandlers(mockRepository({ list }), undefined, service)
 
-    const result = await handlers.getSessionConcurrencyStatus('session-123')
+    const result = await handlers.getSessionConcurrencyStatus({
+      projectId: 'project-123',
+      sessionId: 'session-123'
+    })
     expect(result.provider_ceilings['ssh:host-a']).toBe(20)
     expect(result.provider_ceilings['ssh:host-b']).toBe(10)
   })
@@ -1136,6 +1154,7 @@ describe('createJobUpdatedBroadcaster', () => {
       display_name: 'Biowulf HPC',
       shape: 'direct_ssh',
       session_id: 'sess-1',
+      project_id: 'proj-1',
       status: 'running',
       intent: 'analysis',
       created_at: 0,
@@ -1209,9 +1228,16 @@ describe('compute handlers — jobsList status filter and storageRoot fallback',
       '/tmp/test-storage'
     )
 
-    await handlers.jobsList({ sessionId: 'sess-1', status: ['success', 'failed'] })
+    await handlers.jobsList({
+      projectId: 'proj-1',
+      sessionId: 'sess-1',
+      status: ['success', 'failed']
+    })
 
-    expect(findBySession).toHaveBeenCalledWith('sess-1', ['success', 'failed'])
+    expect(findBySession).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'sess-1' }, [
+      'success',
+      'failed'
+    ])
   })
 
   it('returns an empty array when storageRoot is not provided to createComputeHandlers', async () => {
@@ -1230,7 +1256,7 @@ describe('compute handlers — jobsList status filter and storageRoot fallback',
       // no storageRoot
     )
 
-    const result = await handlers.jobsList({ sessionId: 'sess-1' })
+    const result = await handlers.jobsList({ projectId: 'proj-1', sessionId: 'sess-1' })
 
     expect(result).toEqual([])
     expect(findBySession).not.toHaveBeenCalled()
@@ -1302,9 +1328,15 @@ describe('compute handlers — jobsPendingNotification', () => {
       storageRoot
     )
 
-    const result = await handlers.jobsPendingNotification('sess-1')
+    const result = await handlers.jobsPendingNotification({
+      projectId: 'proj-1',
+      sessionId: 'sess-1'
+    })
 
-    expect(findPendingNotifications).toHaveBeenCalledWith('sess-1')
+    expect(findPendingNotifications).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      sessionId: 'sess-1'
+    })
     expect(result).toHaveLength(1)
     expect(result[0]!.job_id).toBe('job-pending')
     expect(result[0]!.display_name).toBe('Biowulf HPC')
@@ -1314,7 +1346,10 @@ describe('compute handlers — jobsPendingNotification', () => {
 
   it('returns an empty array when no jobRepository is injected', async () => {
     const handlers = createComputeHandlers(mockRepository({}))
-    const result = await handlers.jobsPendingNotification('sess-1')
+    const result = await handlers.jobsPendingNotification({
+      projectId: 'proj-1',
+      sessionId: 'sess-1'
+    })
     expect(result).toEqual([])
   })
 
@@ -1329,7 +1364,10 @@ describe('compute handlers — jobsPendingNotification', () => {
       mockJobRepo({ findPendingNotifications })
     )
 
-    const result = await handlers.jobsPendingNotification('sess-1')
+    const result = await handlers.jobsPendingNotification({
+      projectId: 'proj-1',
+      sessionId: 'sess-1'
+    })
     expect(result).toEqual([])
     expect(findPendingNotifications).not.toHaveBeenCalled()
   })
@@ -1349,7 +1387,10 @@ describe('compute handlers — jobsPendingNotification', () => {
       storageRoot
     )
 
-    const result = await handlers.jobsPendingNotification('sess-1')
+    const result = await handlers.jobsPendingNotification({
+      projectId: 'proj-1',
+      sessionId: 'sess-1'
+    })
     expect(result[0]!.display_name).toBe('ssh:biowulf')
   })
 })
@@ -1370,15 +1411,24 @@ describe('compute handlers — jobsMarkConsumed', () => {
       mockJobRepo({ markNotificationsConsumed })
     )
 
-    await handlers.jobsMarkConsumed('sess-1', ['job-a', 'job-b', 'job-c'])
+    await handlers.jobsMarkConsumed({ projectId: 'proj-1', sessionId: 'sess-1' }, [
+      'job-a',
+      'job-b',
+      'job-c'
+    ])
 
-    expect(markNotificationsConsumed).toHaveBeenCalledWith(['job-a', 'job-b', 'job-c'])
+    expect(markNotificationsConsumed).toHaveBeenCalledWith(
+      { projectId: 'proj-1', sessionId: 'sess-1' },
+      ['job-a', 'job-b', 'job-c']
+    )
   })
 
   it('is a no-op when no jobRepository is injected (defensive)', async () => {
     const handlers = createComputeHandlers(mockRepository({}))
     // The sessionId is ignored without a repository — guard against any accidental propagation.
-    await expect(handlers.jobsMarkConsumed('sess-1', ['job-a'])).resolves.toBeUndefined()
+    await expect(
+      handlers.jobsMarkConsumed({ projectId: 'proj-1', sessionId: 'sess-1' }, ['job-a'])
+    ).resolves.toBeUndefined()
   })
 
   it('propagates repository errors so callers can retry', async () => {
@@ -1392,7 +1442,9 @@ describe('compute handlers — jobsMarkConsumed', () => {
       mockJobRepo({ markNotificationsConsumed })
     )
 
-    await expect(handlers.jobsMarkConsumed('sess-1', ['job-a'])).rejects.toThrow(/db write failed/)
+    await expect(
+      handlers.jobsMarkConsumed({ projectId: 'proj-1', sessionId: 'sess-1' }, ['job-a'])
+    ).rejects.toThrow(/db write failed/)
   })
 })
 

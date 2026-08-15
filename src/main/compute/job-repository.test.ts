@@ -459,7 +459,7 @@ describe('ComputeJob schema migration (integration)', () => {
     await mkJob('job-other-session', 'sess-2')
     await repo.update('job-other-session', { notifiedAt: new Date('2026-01-01') })
 
-    const pending = await repo.findPendingNotifications('sess-1')
+    const pending = await repo.findPendingNotifications({ projectId: 'p1', sessionId: 'sess-1' })
     expect(pending).toHaveLength(1)
     expect(pending[0]!.job_id).toBe('job-notified-unconsumed')
   })
@@ -486,18 +486,20 @@ describe('ComputeJob schema migration (integration)', () => {
     await repo.update('job-to-consume', { notifiedAt: new Date() })
 
     // First call sets the timestamp.
-    await repo.markNotificationsConsumed(['job-to-consume'])
+    await repo.markNotificationsConsumed({ projectId: 'p1', sessionId: 's1' }, ['job-to-consume'])
     const after = await repo.get('job-to-consume')
     expect(after!.notification_consumed_at).toBeGreaterThan(0)
 
     // Second call is idempotent (no error, no change to timestamp).
     const ts1 = after!.notification_consumed_at!
-    await repo.markNotificationsConsumed(['job-to-consume'])
+    await repo.markNotificationsConsumed({ projectId: 'p1', sessionId: 's1' }, ['job-to-consume'])
     const after2 = await repo.get('job-to-consume')
     expect(after2!.notification_consumed_at).toBe(ts1)
 
     // Empty array is a no-op.
-    await expect(repo.markNotificationsConsumed([])).resolves.toBeUndefined()
+    await expect(
+      repo.markNotificationsConsumed({ projectId: 'p1', sessionId: 's1' }, [])
+    ).resolves.toBeUndefined()
   })
 
   it('countNonTerminalByProvider counts active jobs across all sessions', async () => {
@@ -632,15 +634,15 @@ describe('ComputeJob schema migration (integration)', () => {
     })
 
     // Count for session-1 should be 2 (job-1 running + job-2 submitted)
-    const count = await repo.countNonTerminalBySession('session-1')
+    const count = await repo.countNonTerminalBySession({ projectId: 'p1', sessionId: 'session-1' })
     expect(count).toBe(2)
 
     // Count for session-2 should be 1
-    const countB = await repo.countNonTerminalBySession('session-2')
+    const countB = await repo.countNonTerminalBySession({ projectId: 'p1', sessionId: 'session-2' })
     expect(countB).toBe(1)
 
     // Count for non-existent session should be 0
-    const countC = await repo.countNonTerminalBySession('session-3')
+    const countC = await repo.countNonTerminalBySession({ projectId: 'p1', sessionId: 'session-3' })
     expect(countC).toBe(0)
   })
 
@@ -849,12 +851,63 @@ describe('ComputeJob schema migration (integration)', () => {
       /being deleted/i
     )
     expect(await repo.get('owned-job')).toBeNull()
-    expect(await repo.findPendingNotifications('session-1')).toEqual([])
+    expect(await repo.findPendingNotifications(owner)).toEqual([])
     expect(await repo.get('survivor')).not.toBeNull()
 
     await repo.abortOwnerDeletion(owner)
     await expect(create('retry-job', 'project-1', 'session-1')).resolves.toMatchObject({
       job_id: 'retry-job'
     })
+  })
+})
+
+describe('ComputeJobRepository - compound session ownership', () => {
+  it('isolates identical session ids across projects and rejects foreign consumption atomically', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-owner-collision-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = new ComputeJobRepository(() => Promise.resolve(client))
+    const ownerA = { projectId: 'project-a', sessionId: 'shared-session' }
+    const ownerB = { projectId: 'project-b', sessionId: 'shared-session' }
+
+    await repo.create({
+      id: 'job-a',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      ...ownerA,
+      intent: 'project a',
+      command: 'echo a',
+      commandHash: 'a'
+    })
+    await repo.update('job-a', { notifiedAt: new Date('2026-01-01') })
+    await repo.create({
+      id: 'job-b',
+      providerId: 'ssh:test',
+      shape: 'direct_ssh',
+      ...ownerB,
+      intent: 'project b',
+      command: 'echo b',
+      commandHash: 'b'
+    })
+    await repo.update('job-b', { notifiedAt: new Date('2026-01-01') })
+
+    expect((await repo.findBySession(ownerA)).map((job) => job.job_id)).toEqual(['job-a'])
+    expect((await repo.findBySession(ownerB)).map((job) => job.job_id)).toEqual(['job-b'])
+    expect((await repo.findPendingNotifications(ownerA)).map((job) => job.job_id)).toEqual([
+      'job-a'
+    ])
+    expect(await repo.countNonTerminalBySession(ownerA)).toBe(1)
+    expect(await repo.countActiveBySession(ownerA)).toBe(1)
+
+    await expect(repo.markNotificationsConsumed(ownerA, ['job-a', 'job-b'])).rejects.toThrow(
+      /outside the requested owner/i
+    )
+    expect((await repo.get('job-a'))?.notification_consumed_at).toBeUndefined()
+    expect((await repo.get('job-b'))?.notification_consumed_at).toBeUndefined()
+
+    await repo.markNotificationsConsumed(ownerA, ['job-a'])
+    expect((await repo.get('job-a'))?.notification_consumed_at).toBeGreaterThan(0)
+    expect((await repo.get('job-b'))?.notification_consumed_at).toBeUndefined()
   })
 })

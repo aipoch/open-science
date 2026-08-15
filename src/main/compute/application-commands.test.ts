@@ -154,15 +154,15 @@ describe('Compute application commands', () => {
       computeApplicationCommands.approvalReplay,
       invocation(['approval-1'])
     )
-    const filter = { sessionId: 'session-1', status: ['done'] }
+    const filter = { projectId: 'project-1', sessionId: 'session-1', status: ['done'] }
     await router.dispatcher.invoke(computeApplicationCommands.jobsList, invocation([filter]))
     await router.dispatcher.invoke(
       computeApplicationCommands.jobsPendingNotification,
-      invocation(['session-1'])
+      invocation([{ projectId: 'project-1', sessionId: 'session-1' }])
     )
     await router.dispatcher.invoke(
       computeApplicationCommands.jobsMarkConsumed,
-      invocation(['session-1', ['job-1']])
+      invocation([{ projectId: 'project-1', sessionId: 'session-1' }, ['job-1']])
     )
     await router.dispatcher.invoke(
       computeApplicationCommands.enabledHostsGet,
@@ -197,7 +197,10 @@ describe('Compute application commands', () => {
     expect(dependencies.compute.approvalRespond).toHaveBeenCalledWith('approval-1', 'once')
     expect(dependencies.compute.approvalReplay).toHaveBeenCalledWith('approval-1')
     expect(dependencies.compute.jobsList).toHaveBeenCalledWith(filter)
-    expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
+    expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith(
+      { projectId: 'project-1', sessionId: 'session-1' },
+      ['job-1']
+    )
     expect(dependencies.enabledHosts.set).toHaveBeenCalledWith('session-1', ['ssh:cluster'])
     expect(enabledHostsResult).toEqual(session)
     expect(dependencies.events.publish).toHaveBeenCalledWith('session:updated', {

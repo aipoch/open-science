@@ -3007,6 +3007,24 @@ const hostCompute = {
                 maxFileMb: 'max_file_mb',
                 maxTotalMb: 'max_total_mb'
               })
+        const assertHarvestLimit = (field, value, maximum) => {
+          if (
+            value !== undefined &&
+            (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > maximum)
+          ) {
+            throw new TypeError(
+              'host.compute.submitJob harvest.' +
+                field +
+                ' must be a finite number between 0 and ' +
+                maximum +
+                ' MiB.'
+            )
+          }
+        }
+        if (harvest !== undefined) {
+          assertHarvestLimit('maxFileMb', harvest.max_file_mb, 100)
+          assertHarvestLimit('maxTotalMb', harvest.max_total_mb, 500)
+        }
         return computeRpc({
           op: 'submit_job',
           provider_id: providerId,

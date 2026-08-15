@@ -17,7 +17,7 @@
  * The submit_job approval covers the full submit→harvest lifecycle.
  */
 
-import { mkdir } from 'node:fs/promises'
+import { mkdir, stat, statfs, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import type { ComputeJob, JobSummary } from '../../shared/compute'
@@ -30,6 +30,8 @@ import { buildScpArgs, resolveScpBinary, GLOB_CHARS, SHELL_UNSAFE_CHARS } from '
 import { shellSingleQuote } from './scp-runner'
 import {
   classifyFiles,
+  HARVEST_MAX_FILE_MB,
+  normalizeHarvestConfig,
   type FileEntry,
   type OutputDeclaration,
   type HarvestConfig
@@ -38,6 +40,29 @@ import { getNotebookSessionRoot } from '../notebook/repository'
 import { buildComputeDonePayload } from './job-notifier'
 import { withDataRootWrite } from '../storage/migration-state'
 
+const MIB_BYTES = 1024 * 1024
+export const HARVEST_FREE_DISK_RESERVE_BYTES = 2 * 1024 * MIB_BYTES
+
+const getFreeDiskBytes = async (path: string): Promise<number> => {
+  const stats = await statfs(path)
+  return Number(stats.bavail) * Number(stats.bsize)
+}
+
+// Serialize harvests so concurrent jobs cannot spend the same free-space reservation.
+let harvestBudgetTail: Promise<void> = Promise.resolve()
+const withHarvestBudgetLock = async <Result>(operation: () => Promise<Result>): Promise<Result> => {
+  const previous = harvestBudgetTail
+  let release!: () => void
+  harvestBudgetTail = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+  }
+}
 // ---------------------------------------------------------------------------
 // Public path helper
 // ---------------------------------------------------------------------------
@@ -141,46 +166,80 @@ const validateRelativePath = (path: string): string | undefined => {
   return undefined
 }
 
+type HarvestDownloadLimitError = Error & { limitExceeded?: boolean }
+
 /**
  * Downloads a single file from the remote workdir to a local destination.
- * Creates parent directories as needed.
- * Throws on validation error or scp failure.
+ * Production uses a bounded SSH stream so a file that grows after enumeration cannot exceed
+ * the application-owned byte budget. Test runners without that capability retain the SCP seam.
  */
 const downloadFile = async (
   scpRunner: ScpRunner,
   target: ResolvedSshTarget,
   remoteWorkdir: string,
   relativePath: string,
-  localDestPath: string
-): Promise<void> => {
+  localDestPath: string,
+  maxBytes: number,
+  expectedBytes: number
+): Promise<number> => {
   const pathError = validateRelativePath(relativePath)
   if (pathError) {
-    throw new Error(`Rejected remote path "${relativePath}": ${pathError}`)
+    throw new Error('Rejected remote path "' + relativePath + '": ' + pathError)
   }
 
-  const absRemotePath = `${remoteWorkdir}/${relativePath}`
+  const absRemotePath = remoteWorkdir + '/' + relativePath
 
-  // Also validate the full absolute path for shell safety (workdir is system-generated but
-  // consistency with enumeration path handling — see line 83 shellSingleQuote usage).
   if (SHELL_UNSAFE_CHARS.test(absRemotePath)) {
-    throw new Error(`Rejected absolute remote path "${absRemotePath}": shell-unsafe characters`)
+    throw new Error(
+      'Rejected absolute remote path "' + absRemotePath + '": shell-unsafe characters'
+    )
   }
 
-  // Ensure parent directory exists.
   await mkdir(dirname(localDestPath), { recursive: true })
+
+  if (scpRunner.copyFromRemoteBounded) {
+    const result = await scpRunner.copyFromRemoteBounded(
+      target,
+      absRemotePath,
+      localDestPath,
+      maxBytes
+    )
+    if (result.exceeded) {
+      const error = new Error(
+        'download exceeded the allowed byte budget for ' + relativePath
+      ) as HarvestDownloadLimitError
+      error.limitExceeded = true
+      throw error
+    }
+    if (result.timedOut) throw new Error('download timed out for ' + relativePath)
+    if (result.exitCode !== 0) {
+      const detail = result.stderr.trim() || 'remote copy exited ' + String(result.exitCode)
+      throw new Error('remote copy failed for ' + relativePath + ': ' + detail)
+    }
+    return result.bytesWritten
+  }
 
   const scpBinary = resolveScpBinary()
   const args = buildScpArgs(target, absRemotePath, localDestPath)
   const result = await scpRunner.copy(scpBinary, args)
 
-  if (result.timedOut) {
-    throw new Error(`scp timed out for ${relativePath}`)
+  if (result.timedOut) throw new Error('scp timed out for ' + relativePath)
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || 'scp exited ' + String(result.exitCode)
+    throw new Error('scp failed for ' + relativePath + ': ' + detail)
   }
 
-  if (result.exitCode !== 0) {
-    const detail = result.stderr.trim() || `scp exited ${result.exitCode}`
-    throw new Error(`scp failed for ${relativePath}: ${detail}`)
+  const bytesWritten = await stat(localDestPath)
+    .then((entry) => entry.size)
+    .catch(() => Math.min(expectedBytes, maxBytes))
+  if (bytesWritten > maxBytes) {
+    const error = new Error(
+      'download exceeded the allowed byte budget for ' + relativePath
+    ) as HarvestDownloadLimitError
+    error.limitExceeded = true
+    throw error
   }
+  return bytesWritten
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +254,8 @@ export type HarvestDeps = {
   storageRoot: string
   /** Override resolveSshTarget for tests (defaults to real implementation). */
   resolveSshTargetFn?: typeof resolveSshTarget
+  /** Override free-space discovery for deterministic tests. */
+  getFreeDiskBytesFn?: (path: string) => Promise<number>
   /**
    * Broadcast hook for the compute_done notification (issue 06).
    * Called after harvestedAt is written. Defaults to the production broadcastJobUpdated.
@@ -242,10 +303,11 @@ const buildLeftOnRemoteUri = (
  * previous harvest (re-downloads files, re-writes DB fields).
  */
 export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
-  // A harvest writes into the relocatable session workspace. Keep one writer lease across the
-  // entire operation so a data-root move cannot copy one subset of outputs then let later files
-  // land in the old root before commit.
-  return await withDataRootWrite(async () => harvestJobUnchecked(job, deps))
+  // Serialize before acquiring the data-root writer lease so queued harvests do not unnecessarily
+  // delay a storage migration. The active harvest keeps its lease through every download.
+  return await withHarvestBudgetLock(async () =>
+    withDataRootWrite(async () => harvestJobUnchecked(job, deps))
+  )
 }
 
 const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
@@ -307,6 +369,7 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
         job_id: updatedJob.job_id,
         provider_id: updatedJob.provider_id,
         display_name: displayName,
+        project_id: updatedJob.project_id,
         shape: updatedJob.shape,
         session_id: updatedJob.session_id,
         status: updatedJob.status,
@@ -402,31 +465,95 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
     }
   }
 
-  const classification = classifyFiles(remoteFiles, outputs, harvestConfig, stagedInputs)
+  const normalizedHarvestConfig = normalizeHarvestConfig(harvestConfig)
+  let freeDiskBytes: number
+  try {
+    freeDiskBytes = await (deps.getFreeDiskBytesFn ?? getFreeDiskBytes)(harvestDir)
+    if (!Number.isFinite(freeDiskBytes) || freeDiskBytes < 0) {
+      throw new Error('free-space query returned an invalid value')
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await finalizeAndReturn(`free-space check failed: ${msg}`, '[]')
+    return
+  }
+  const diskBudgetMb = Math.max(0, (freeDiskBytes - HARVEST_FREE_DISK_RESERVE_BYTES) / MIB_BYTES)
+  const effectiveHarvestConfig: HarvestConfig = {
+    ...normalizedHarvestConfig,
+    max_total_mb: Math.min(normalizedHarvestConfig.max_total_mb ?? 0, diskBudgetMb)
+  }
+  const classification = classifyFiles(remoteFiles, outputs, effectiveHarvestConfig, stagedInputs)
+  const remoteSizeByPath = new Map(remoteFiles.map((entry) => [entry.path, entry.size_bytes]))
+  let remainingBudgetBytes = Math.floor((effectiveHarvestConfig.max_total_mb ?? 0) * MIB_BYTES)
 
   // ── 5. Download files ───────────────────────────────────────────────────────
   const errors: string[] = []
 
   // Helper: download one file, recording errors without throwing.
-  const safeDownload = async (relativePath: string, localPath: string): Promise<boolean> => {
-    try {
-      await downloadFile(scpRunner, target, remoteWorkdir, relativePath, localPath)
-      return true
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      errors.push(msg)
-      return false
-    }
+  const recordLimit = (
+    relativePath: string,
+    sizeBytes: number,
+    reason: 'exceeds_max_file_mb' | 'exceeds_max_total_mb'
+  ): void => {
+    if (classification.left_on_remote.some((entry) => entry.path === relativePath)) return
+    classification.left_on_remote.push({
+      path: relativePath,
+      size_mb: sizeBytes / MIB_BYTES,
+      reason
+    })
   }
 
-  // Download stdout and stderr to harvest root (if present in listing).
-  const stdoutInListing = remoteFiles.some((f) => f.path === 'stdout')
-  const stderrInListing = remoteFiles.some((f) => f.path === 'stderr')
-  if (stdoutInListing) {
-    await safeDownload('stdout', join(harvestDir, 'stdout'))
-  }
-  if (stderrInListing) {
-    await safeDownload('stderr', join(harvestDir, 'stderr'))
+  const safeDownload = async (relativePath: string, localPath: string): Promise<boolean> => {
+    const expectedBytes = remoteSizeByPath.get(relativePath) ?? 0
+    let currentFreeBytes: number
+    try {
+      currentFreeBytes = await (deps.getFreeDiskBytesFn ?? getFreeDiskBytes)(harvestDir)
+      if (!Number.isFinite(currentFreeBytes) || currentFreeBytes < 0) {
+        throw new Error('free-space query returned an invalid value')
+      }
+    } catch (error) {
+      errors.push('free-space check failed: ' + String(error))
+      return false
+    }
+    const diskAvailableBytes = Math.max(
+      0,
+      Math.floor(currentFreeBytes - HARVEST_FREE_DISK_RESERVE_BYTES)
+    )
+    const maxBytes = Math.max(
+      0,
+      Math.min(HARVEST_MAX_FILE_MB * MIB_BYTES, remainingBudgetBytes, diskAvailableBytes)
+    )
+    if (expectedBytes > maxBytes) {
+      recordLimit(relativePath, expectedBytes, 'exceeds_max_total_mb')
+      return false
+    }
+
+    try {
+      const bytesWritten = await downloadFile(
+        scpRunner,
+        target,
+        remoteWorkdir,
+        relativePath,
+        localPath,
+        maxBytes,
+        expectedBytes
+      )
+      remainingBudgetBytes = Math.max(0, remainingBudgetBytes - bytesWritten)
+      return true
+    } catch (error) {
+      await unlink(localPath).catch(() => undefined)
+      const candidate = error as HarvestDownloadLimitError
+      if (candidate.limitExceeded) {
+        const reason =
+          maxBytes >= HARVEST_MAX_FILE_MB * MIB_BYTES
+            ? 'exceeds_max_file_mb'
+            : 'exceeds_max_total_mb'
+        recordLimit(relativePath, Math.max(expectedBytes, maxBytes + 1), reason)
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      errors.push(message)
+      return false
+    }
   }
 
   // Download featured files.
@@ -444,6 +571,11 @@ const harvestJobUnchecked = async (job: ComputeJob, deps: HarvestDeps): Promise<
   }
 
   // ── 6. Build left_on_remote JSON and finalize ────────────────────────────────
+  // Download full logs last; bounded tails remain available when the budget excludes them.
+  for (const relativePath of classification.logs) {
+    await safeDownload(relativePath, join(harvestDir, relativePath))
+  }
+
   const leftOnRemote = classification.left_on_remote.map((entry) => ({
     uri: buildLeftOnRemoteUri(host.sshAlias, remoteWorkdir, entry.path),
     size_mb: entry.size_mb,

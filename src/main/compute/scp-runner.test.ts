@@ -2,7 +2,7 @@
 // (driven via a fake execFile so no real scp is invoked).
 
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -35,6 +35,7 @@ vi.mock('node:child_process', () => ({ execFile: execFileMock }))
 // Controllable ChildProcess double matching execFile's surface used by
 // SystemScpRunner: stderr is an EventEmitter, kill() records the signal.
 class FakeChild extends EventEmitter {
+  stdout = new EventEmitter()
   stderr = new EventEmitter()
   kill = vi.fn(() => true)
 }
@@ -480,6 +481,37 @@ describe('SystemScpRunner', () => {
   afterEach(() => {
     execFileMock.mockReset()
     vi.useRealTimers()
+  })
+
+  it('writes at most maxBytes and terminates a remote file that grows past the limit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'scp-bounded-test-'))
+    const localPath = join(dir, 'bounded.bin')
+    try {
+      const child = new FakeChild()
+      execFileMock.mockReturnValueOnce(child as unknown as ReturnType<typeof execFileMock>)
+      const target: ResolvedSshTarget = {
+        sshBinary: '/usr/bin/ssh',
+        host: 'cluster',
+        extraArgs: []
+      }
+
+      const promise = runner.copyFromRemoteBounded(target, '/remote/growing.log', localPath, 3)
+      child.stdout.emit('data', Buffer.from('abcd'))
+      child.stdout.emit('end')
+      child.emit('close', null)
+
+      const result = await promise
+      expect(result).toMatchObject({ bytesWritten: 3, exceeded: true })
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+      await expect(readFile(localPath, 'utf8')).resolves.toBe('abc')
+      expect(execFileMock).toHaveBeenCalledWith(
+        '/usr/bin/ssh',
+        ['cluster', "head -c 4 -- '/remote/growing.log'"],
+        { timeout: 0, encoding: 'buffer' }
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('returns exitCode 0 and the captured stderr on a clean child close', async () => {

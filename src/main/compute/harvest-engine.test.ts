@@ -22,7 +22,7 @@ import type { SshRunner } from './ssh-runner'
 import type { ScpRunner, ScpResult } from './scp-runner'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import { getJobHarvestDir, harvestJob } from './harvest-engine'
+import { HARVEST_FREE_DISK_RESERVE_BYTES, getJobHarvestDir, harvestJob } from './harvest-engine'
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 
 // ---------------------------------------------------------------------------
@@ -612,5 +612,128 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
     })
 
     // No crash — just silent, no broadcast
+  })
+})
+
+describe('harvestJob - bounded logs and disk reserve', () => {
+  it('leaves oversized stdout and stderr remote under the configured budget', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({
+      harvest_config: JSON.stringify({ max_file_mb: 1, max_total_mb: 1 })
+    })
+    const scp = makeScpRunner()
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      sshRunner: makeSshRunner(
+        findOutput([
+          { path: 'stdout', size_bytes: 2 * 1024 * 1024 },
+          { path: 'stderr', size_bytes: 2 * 1024 * 1024 }
+        ])
+      ),
+      scpRunner: scp,
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot,
+      getFreeDiskBytesFn: async () => HARVEST_FREE_DISK_RESERVE_BYTES + 100 * 1024 * 1024
+    })
+
+    expect(scp.calls).toEqual([])
+    const finalUpdate = updates[0]!.data as Record<string, unknown>
+    const leftOnRemote = JSON.parse(finalUpdate.leftOnRemote as string) as Array<{
+      uri: string
+      reason: string
+    }>
+    expect(leftOnRemote).toEqual([
+      expect.objectContaining({
+        uri: expect.stringContaining('/stdout'),
+        reason: 'exceeds_max_file_mb'
+      }),
+      expect.objectContaining({
+        uri: expect.stringContaining('/stderr'),
+        reason: 'exceeds_max_file_mb'
+      })
+    ])
+  })
+
+  it('uses free space above the reserve as the effective total budget', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({
+      output_manifest: JSON.stringify(['*.result']),
+      harvest_config: JSON.stringify({ max_file_mb: 100, max_total_mb: 500 })
+    })
+    const scp = makeScpRunner()
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      sshRunner: makeSshRunner(
+        findOutput([
+          { path: 'stdout', size_bytes: 60 * 1024 * 1024 },
+          { path: 'run.result', size_bytes: 60 * 1024 * 1024 }
+        ])
+      ),
+      scpRunner: scp,
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot,
+      getFreeDiskBytesFn: async () => HARVEST_FREE_DISK_RESERVE_BYTES + 100 * 1024 * 1024
+    })
+
+    expect(scp.calls).toHaveLength(1)
+    expect(scp.calls[0]?.join(' ')).toContain('run.result')
+    const finalUpdate = updates[0]!.data as Record<string, unknown>
+    const leftOnRemote = JSON.parse(finalUpdate.leftOnRemote as string) as Array<{
+      uri: string
+      reason: string
+    }>
+    expect(leftOnRemote).toEqual([
+      expect.objectContaining({
+        uri: expect.stringContaining('/stdout'),
+        reason: 'exceeds_max_total_mb'
+      })
+    ])
+  })
+  it('bounds the actual transfer when a file grows after remote enumeration', async () => {
+    const storageRoot = await mkTmp()
+    const job = makeJob({
+      output_manifest: JSON.stringify(['*.result']),
+      harvest_config: JSON.stringify({ max_file_mb: 100, max_total_mb: 500 })
+    })
+    const copyFromRemoteBounded = vi.fn().mockResolvedValue({
+      exitCode: null,
+      stderr: '',
+      timedOut: false,
+      bytesWritten: 100 * 1024 * 1024,
+      exceeded: true
+    })
+    const scp: ScpRunner = {
+      copy: vi.fn().mockResolvedValue({ exitCode: 0, stderr: '', timedOut: false }),
+      copyFromRemoteBounded
+    }
+    const { repo: jobRepo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      sshRunner: makeSshRunner(findOutput([{ path: 'growing.result', size_bytes: 1 }])),
+      scpRunner: scp,
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: jobRepo,
+      storageRoot,
+      getFreeDiskBytesFn: async () => HARVEST_FREE_DISK_RESERVE_BYTES + 1024 * 1024 * 1024
+    })
+
+    expect(copyFromRemoteBounded).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.stringContaining('/growing.result'),
+      expect.any(String),
+      100 * 1024 * 1024
+    )
+    const finalUpdate = updates[0]!.data as Record<string, unknown>
+    expect(finalUpdate.harvestError).toContain('download exceeded the allowed byte budget')
+    expect(JSON.parse(finalUpdate.leftOnRemote as string)).toEqual([
+      expect.objectContaining({
+        uri: expect.stringContaining('/growing.result'),
+        reason: 'exceeds_max_file_mb'
+      })
+    ])
   })
 })

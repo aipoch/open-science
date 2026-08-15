@@ -27,6 +27,7 @@ const makeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
   display_name: 'biowulf',
   shape: 'direct_ssh',
   session_id: 'sess-1',
+  project_id: 'project-a',
   status: 'running',
   intent: 'Run EDA',
   created_at: Date.now(),

@@ -17,6 +17,7 @@ import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher
 import type { StagedInputEntry } from './job-dispatcher'
 import type { ComputeJobRepository } from './job-repository'
 import { getJobHarvestDir } from './harvest-engine'
+import { validateHarvestConfig } from './harvest-classifier'
 import type { ComputeHostRepository } from './repository'
 import type { ScpRunner } from './scp-runner'
 import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './scp-runner'
@@ -162,6 +163,16 @@ export class ComputeJobWorkflowOwner {
       throw new Error('ComputeJobRepository is required to call submitJob.')
     }
 
+    if (options.harvestConfig !== undefined) {
+      let harvestConfig: unknown
+      try {
+        harvestConfig = JSON.parse(options.harvestConfig)
+      } catch {
+        throw new Error('harvest must be valid JSON.')
+      }
+      validateHarvestConfig(harvestConfig)
+    }
+
     const host = await this.hostRepository.get(providerId)
     if (!host) {
       throw new Error(`No compute host found with provider id "${providerId}".`)
@@ -222,6 +233,7 @@ export class ComputeJobWorkflowOwner {
     if (this.concurrencyManager) {
       const preview = await this.concurrencyManager.enqueue({
         jobId,
+        projectId: context.projectId,
         sessionId: context.sessionId,
         providerId
       })
@@ -300,7 +312,7 @@ export class ComputeJobWorkflowOwner {
     try {
       if (this.concurrencyManager) {
         const admitted = await this.concurrencyManager.admit(
-          { sessionId: context.sessionId, providerId },
+          { projectId: context.projectId, sessionId: context.sessionId, providerId },
           createRow
         )
         if (admitted === 'queue_full') throw queueFullError()
@@ -381,7 +393,10 @@ export class ComputeJobWorkflowOwner {
     return jobResultWithFiles(job, featuredFiles, hiddenFiles, leftOnRemote)
   }
 
-  async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
+  async setSessionConcurrencyLimit(
+    owner: { projectId: string; sessionId: string },
+    limit: number
+  ): Promise<void> {
     if (!this.concurrencyManager) {
       throw new Error('ConcurrencyManager is required to set session concurrency limit.')
     }
@@ -390,14 +405,17 @@ export class ComputeJobWorkflowOwner {
         `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
       )
     }
-    this.concurrencyManager.setSessionLimit(sessionId, limit)
+    this.concurrencyManager.setSessionLimit(owner, limit)
   }
 
-  async getSessionConcurrencyStatus(sessionId: string): Promise<SessionStatus> {
+  async getSessionConcurrencyStatus(owner: {
+    projectId: string
+    sessionId: string
+  }): Promise<SessionStatus> {
     if (!this.concurrencyManager) {
       throw new Error('ConcurrencyManager is required to get session concurrency status.')
     }
-    const status = await this.concurrencyManager.getStatus(sessionId)
+    const status = await this.concurrencyManager.getStatus(owner)
     for (const host of await this.hostRepository.list()) {
       if (!(host.providerId in status.provider_ceilings)) {
         status.provider_ceilings[host.providerId] = host.concurrencyLimit ?? 10

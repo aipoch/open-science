@@ -374,10 +374,14 @@ const WorkspaceMessageScrollerImpl = ({
   // Hydrate the job store when the active session changes
   useEffect(() => {
     // Guard against test environments where window.api.compute may not be available
-    if (currentSessionId && typeof window.api?.compute?.jobsList === 'function') {
-      void hydrateJobs(currentSessionId)
+    if (
+      currentProjectId &&
+      currentSessionId &&
+      typeof window.api?.compute?.jobsList === 'function'
+    ) {
+      void hydrateJobs({ projectId: currentProjectId, sessionId: currentSessionId })
     }
-  }, [currentSessionId, hydrateJobs])
+  }, [currentProjectId, currentSessionId, hydrateJobs])
 
   // Job detail modal state
   const [modalOpen, setModalOpen] = useState(false)

@@ -154,17 +154,13 @@ describe('classifyFiles — max_file_mb threshold', () => {
 
 describe('classifyFiles — max_total_mb threshold', () => {
   it('stops downloading when cumulative total exceeds max_total_mb and marks remainder', () => {
-    // Three files: 200 MB each. max_file_mb = 250 (each file ok individually),
-    // max_total_mb = 500. First two sum to 400 MB (ok), third would push to 600 MB (over).
-    const files: FileEntry[] = [
-      file('a.csv', mb(200)),
-      file('b.csv', mb(200)),
-      file('c.csv', mb(200)) // would push total to 600
-    ]
+    // Three files: 40 MiB each. max_file_mb = 100 (each file passes),
+    // max_total_mb = 100. The first two total 80 MiB; the third would push it to 120 MiB.
+    const files: FileEntry[] = [file('a.csv', mb(40)), file('b.csv', mb(40)), file('c.csv', mb(40))]
     const outputs: OutputDeclaration[] = [{ glob: '*.csv', visibility: 'featured' }]
-    const result = classifyFiles(files, outputs, { max_file_mb: 250, max_total_mb: 500 }, new Set())
+    const result = classifyFiles(files, outputs, { max_file_mb: 100, max_total_mb: 100 }, new Set())
 
-    // a and b are downloaded
+    // a and b fit within the 100 MiB total budget.
     expect(result.featured).toContain('a.csv')
     expect(result.featured).toContain('b.csv')
     // c is left on remote
@@ -174,17 +170,17 @@ describe('classifyFiles — max_total_mb threshold', () => {
   })
 
   it('preserves order when applying max_total_mb cutoff', () => {
-    // max_file_mb = 400 so each individual file passes the per-file check.
-    // max_total_mb = 500: first (300 MB) fits, second would push to 600 MB — over.
+    // max_file_mb = 100 so each individual file passes the per-file check.
+    // max_total_mb = 100: first (60 MiB) fits, second would push to 120 MiB — over.
     const files: FileEntry[] = [
-      file('first.csv', mb(300)),
-      file('second.csv', mb(300)),
-      file('third.csv', mb(100))
+      file('first.csv', mb(60)),
+      file('second.csv', mb(60)),
+      file('third.csv', mb(20))
     ]
     const outputs: OutputDeclaration[] = [{ glob: '*.csv', visibility: 'hidden' }]
-    const result = classifyFiles(files, outputs, { max_file_mb: 400, max_total_mb: 500 }, new Set())
+    const result = classifyFiles(files, outputs, { max_file_mb: 100, max_total_mb: 100 }, new Set())
 
-    // first: 300 (ok), second: would push to 600 (over), third: also over
+    // first fits; once the second crosses the total limit, it and subsequent files remain remote.
     expect(result.hidden).toEqual(['first.csv'])
     expect(result.left_on_remote.map((e) => e.path)).toEqual(['second.csv', 'third.csv'])
     expect(result.left_on_remote[0]!.reason).toBe('exceeds_max_total_mb')
@@ -293,5 +289,36 @@ describe('classifyFiles — combined e2e scenario', () => {
     )
     expect(result.excluded).toContain('command.sh')
     expect(result.excluded).toContain('input.fa')
+  })
+})
+
+describe('classifyFiles - application safety limits', () => {
+  it('does not let persisted model limits exceed the application maxima', () => {
+    const result = classifyFiles(
+      [file('huge.bin', mb(10 * 1024))],
+      ['*.bin'],
+      { max_file_mb: 20 * 1024, max_total_mb: 20 * 1024 },
+      new Set()
+    )
+
+    expect(result.to_download).toEqual([])
+    expect(result.left_on_remote).toEqual([
+      expect.objectContaining({ path: 'huge.bin', reason: 'exceeds_max_file_mb' })
+    ])
+  })
+
+  it('prioritizes declared outputs over full logs within one shared budget', () => {
+    const result = classifyFiles(
+      [file('stdout', mb(60)), file('result.csv', mb(60))],
+      ['*.csv'],
+      { max_file_mb: 100, max_total_mb: 100 },
+      new Set()
+    )
+
+    expect(result.featured).toEqual(['result.csv'])
+    expect(result.logs).toEqual([])
+    expect(result.left_on_remote).toEqual([
+      expect.objectContaining({ path: 'stdout', reason: 'exceeds_max_total_mb' })
+    ])
   })
 })

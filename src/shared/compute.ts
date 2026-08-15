@@ -226,6 +226,11 @@ export type ComputeJobErrorCode =
   | 'timeout'
   | 'process_vanished'
 
+export type ComputeSessionOwner = Readonly<{
+  projectId: string
+  sessionId: string
+}>
+
 // Lightweight job summary returned by the renderer IPC `compute:jobs:list` and broadcast via
 // `compute:job-updated`. Contains the fields the UI needs for badge + job feed display. The host
 // display_name is denormalized here so the renderer never needs a separate host lookup.
@@ -240,6 +245,8 @@ export type JobSummary = {
   shape: string
   // Session the job was submitted in — needed for the renderer store to filter by active session.
   session_id: string
+  // Project is part of the durable session identity and is required for global broadcasts.
+  project_id: string
   status: ComputeJobStatus
   intent: string
   created_at: number

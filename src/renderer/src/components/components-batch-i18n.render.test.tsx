@@ -40,6 +40,7 @@ const jobDefaults = {
   provider_id: 'p1',
   shape: 'cpu-small',
   session_id: 's1',
+  project_id: 'project-a',
   started_at: undefined,
   finished_at: undefined,
   exit_code: undefined,

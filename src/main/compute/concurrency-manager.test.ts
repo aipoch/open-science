@@ -66,15 +66,23 @@ describe('ConcurrencyManager', () => {
 
   describe('setSessionLimit', () => {
     it('stores session limit in memory', () => {
-      manager.setSessionLimit('session-1', 5)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 5)
       // Verify via getStatus
-      expect(manager['sessionLimits'].get('session-1')).toBe(5)
+      expect(manager['sessionLimits'].get(JSON.stringify(['project-1', 'session-1']))).toBe(5)
     })
 
     it('updates existing session limit', () => {
-      manager.setSessionLimit('session-1', 3)
-      manager.setSessionLimit('session-1', 7)
-      expect(manager['sessionLimits'].get('session-1')).toBe(7)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 3)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 7)
+      expect(manager['sessionLimits'].get(JSON.stringify(['project-1', 'session-1']))).toBe(7)
+    })
+
+    it('keeps the same session id in different projects independent', () => {
+      manager.setSessionLimit({ projectId: 'project-a', sessionId: 'shared' }, 2)
+      manager.setSessionLimit({ projectId: 'project-b', sessionId: 'shared' }, 7)
+
+      expect(manager['sessionLimits'].get(JSON.stringify(['project-a', 'shared']))).toBe(2)
+      expect(manager['sessionLimits'].get(JSON.stringify(['project-b', 'shared']))).toBe(7)
     })
   })
 
@@ -83,6 +91,7 @@ describe('ConcurrencyManager', () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -96,6 +105,7 @@ describe('ConcurrencyManager', () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(150)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -107,7 +117,7 @@ describe('ConcurrencyManager', () => {
 
   describe('enqueue - session limit check', () => {
     it('returns should_queue when session limit reached', async () => {
-      manager.setSessionLimit('session-1', 2)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 2)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
@@ -116,17 +126,21 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
       })
 
       expect(result).toBe('should_queue')
-      expect(jobRepo.countActiveBySession).toHaveBeenCalledWith('session-1')
+      expect(jobRepo.countActiveBySession).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
     })
 
     it('returns can_dispatch when under session limit', async () => {
-      manager.setSessionLimit('session-1', 5)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 5)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(2)
@@ -135,6 +149,7 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -152,6 +167,7 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -171,6 +187,7 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -189,6 +206,7 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -206,6 +224,7 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -217,7 +236,7 @@ describe('ConcurrencyManager', () => {
 
   describe('enqueue - combined limits', () => {
     it('requires both session limit and provider ceiling to be satisfied', async () => {
-      manager.setSessionLimit('session-1', 5)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 5)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2) // under session limit
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(10) // at provider ceiling
@@ -226,6 +245,7 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
 
       const result = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -292,6 +312,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -299,6 +320,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-2',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 2000,
           status: 'queued'
@@ -318,11 +340,12 @@ describe('ConcurrencyManager', () => {
     })
 
     it('re-checks both session limit and provider ceiling', async () => {
-      manager.setSessionLimit('session-1', 2)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 2)
       const queuedJobs: ComputeJob[] = [
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -337,17 +360,21 @@ describe('ConcurrencyManager', () => {
       } as ComputeHost)
       await manager.onJobCompleted()
 
-      expect(jobRepo.countActiveBySession).toHaveBeenCalledWith('session-1')
+      expect(jobRepo.countActiveBySession).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'session-1'
+      })
       expect(jobRepo.countActiveByProvider).toHaveBeenCalledWith('ssh:cluster-a')
       expect(dispatchJob).toHaveBeenCalledWith('job-1', expect.any(Function))
     })
 
     it('skips jobs that still violate session limit', async () => {
-      manager.setSessionLimit('session-1', 2)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 2)
       const queuedJobs: ComputeJob[] = [
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -372,6 +399,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -392,11 +420,12 @@ describe('ConcurrencyManager', () => {
     })
 
     it('dispatches multiple jobs if both limits allow', async () => {
-      manager.setSessionLimit('session-1', 10)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 10)
       const queuedJobs: ComputeJob[] = [
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -404,6 +433,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-2',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 2000,
           status: 'queued'
@@ -429,6 +459,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -448,7 +479,7 @@ describe('ConcurrencyManager', () => {
 
   describe('getStatus', () => {
     it('returns accurate session status', async () => {
-      manager.setSessionLimit('session-1', 5)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 5)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(3)
       vi.mocked(jobRepo.findBySession).mockResolvedValue([
         { provider_id: 'ssh:cluster-a', status: 'queued' } as ComputeJob,
@@ -458,7 +489,7 @@ describe('ConcurrencyManager', () => {
         .mockResolvedValueOnce({ concurrencyLimit: 10 } as ComputeHost)
         .mockResolvedValueOnce({ concurrencyLimit: 20 } as ComputeHost)
 
-      const status = await manager.getStatus('session-1')
+      const status = await manager.getStatus({ projectId: 'project-1', sessionId: 'session-1' })
 
       expect(status.session_limit).toBe(5)
       expect(status.active_count).toBe(3)
@@ -473,7 +504,7 @@ describe('ConcurrencyManager', () => {
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(0)
       vi.mocked(jobRepo.findBySession).mockResolvedValue([])
 
-      const status = await manager.getStatus('session-1')
+      const status = await manager.getStatus({ projectId: 'project-1', sessionId: 'session-1' })
 
       expect(status.session_limit).toBeNull()
       expect(status.active_count).toBe(0)
@@ -489,7 +520,7 @@ describe('ConcurrencyManager', () => {
         concurrencyLimit: undefined
       } as ComputeHost)
 
-      const status = await manager.getStatus('session-1')
+      const status = await manager.getStatus({ projectId: 'project-1', sessionId: 'session-1' })
 
       expect(status.provider_ceilings).toEqual({
         'ssh:cluster-a': 10
@@ -499,8 +530,8 @@ describe('ConcurrencyManager', () => {
 
   describe('multi-session scenarios', () => {
     it('enforces session limits independently', async () => {
-      manager.setSessionLimit('session-1', 2)
-      manager.setSessionLimit('session-2', 3)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-1' }, 2)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 'session-2' }, 3)
 
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(1)
@@ -511,6 +542,7 @@ describe('ConcurrencyManager', () => {
       // Session 1 at limit
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       const result1 = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -520,6 +552,7 @@ describe('ConcurrencyManager', () => {
       // Session 2 under limit
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       const result2 = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-2',
         sessionId: 'session-2',
         providerId: 'ssh:cluster-a'
@@ -539,6 +572,7 @@ describe('ConcurrencyManager', () => {
         concurrencyLimit: 10
       } as ComputeHost)
       const result1 = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-1',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-a'
@@ -551,6 +585,7 @@ describe('ConcurrencyManager', () => {
         concurrencyLimit: 20
       } as ComputeHost)
       const result2 = await manager.enqueue({
+        projectId: 'project-1',
         jobId: 'job-2',
         sessionId: 'session-1',
         providerId: 'ssh:cluster-b'
@@ -564,6 +599,7 @@ describe('ConcurrencyManager', () => {
       const queuedJob = {
         job_id: 'job-1',
         session_id: 'session-1',
+        project_id: 'project-1',
         provider_id: 'ssh:cluster-a',
         created_at: 1000,
         status: 'queued'
@@ -600,6 +636,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -636,6 +673,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -643,6 +681,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-2',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 2000,
           status: 'queued'
@@ -679,6 +718,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'job-1',
           session_id: 'session-1',
+          project_id: 'project-1',
           provider_id: 'ssh:cluster-a',
           created_at: 1000,
           status: 'queued'
@@ -718,21 +758,27 @@ describe('ConcurrencyManager', () => {
       vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
       const commit = vi.fn().mockResolvedValue(undefined)
 
-      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+      const result = await manager.admit(
+        { projectId: 'project-1', sessionId: 's1', providerId: 'p1' },
+        commit
+      )
 
       expect(result).toBe('submitted')
       expect(commit).toHaveBeenCalledWith('submitted')
     })
 
     it('calls commit with queued when session limit is reached', async () => {
-      manager.setSessionLimit('s1', 2)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 's1' }, 2)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(jobRepo.countActiveBySession).mockResolvedValue(2)
       vi.mocked(jobRepo.countActiveByProvider).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 10 } as ComputeHost)
       const commit = vi.fn().mockResolvedValue(undefined)
 
-      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+      const result = await manager.admit(
+        { projectId: 'project-1', sessionId: 's1', providerId: 'p1' },
+        commit
+      )
 
       expect(result).toBe('queued')
       expect(commit).toHaveBeenCalledWith('queued')
@@ -742,7 +788,10 @@ describe('ConcurrencyManager', () => {
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(100)
       const commit = vi.fn().mockResolvedValue(undefined)
 
-      const result = await manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+      const result = await manager.admit(
+        { projectId: 'project-1', sessionId: 's1', providerId: 'p1' },
+        commit
+      )
 
       expect(result).toBe('queue_full')
       expect(commit).not.toHaveBeenCalled()
@@ -751,7 +800,7 @@ describe('ConcurrencyManager', () => {
     it('serializes concurrent admits so both cannot pass the same slot', async () => {
       // Two concurrent calls see activeByProvider=0 individually, but admit serializes them so
       // the second sees activeByProvider=1 (as committed by the first).
-      manager.setSessionLimit('s1', 10)
+      manager.setSessionLimit({ projectId: 'project-1', sessionId: 's1' }, 10)
       vi.mocked(jobRepo.countQueuedJobs).mockResolvedValue(0)
       vi.mocked(hostRepo.get).mockResolvedValue({ concurrencyLimit: 1 } as ComputeHost)
 
@@ -765,8 +814,8 @@ describe('ConcurrencyManager', () => {
       })
 
       const [r1, r2] = await Promise.all([
-        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit),
-        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit)
+        manager.admit({ projectId: 'project-1', sessionId: 's1', providerId: 'p1' }, commit),
+        manager.admit({ projectId: 'project-1', sessionId: 's1', providerId: 'p1' }, commit)
       ])
 
       // First wins the slot, second sees the committed count and queues
@@ -795,6 +844,7 @@ describe('ConcurrencyManager', () => {
         {
           job_id: 'queued-1',
           session_id: 's1',
+          project_id: 'project-1',
           provider_id: 'p1',
           created_at: 1000,
           status: 'queued'
@@ -817,7 +867,7 @@ describe('ConcurrencyManager', () => {
       })
 
       const [admitResult] = await Promise.all([
-        manager.admit({ sessionId: 's1', providerId: 'p1' }, commit),
+        manager.admit({ projectId: 'project-1', sessionId: 's1', providerId: 'p1' }, commit),
         manager.onJobCompleted()
       ])
 
