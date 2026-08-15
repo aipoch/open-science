@@ -372,6 +372,104 @@ it('rejects ACP response mutations before runtime work when Session admission is
   expect(responseRuntime.revokePermissionGrant).not.toHaveBeenCalled()
 })
 
+it('rejects forged and unknown ACP response authority before Session admission', () => {
+  const admitted: string[] = []
+  const withSessionAvailableById = <Result>(
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> => {
+    admitted.push(sessionId)
+    return operation()
+  }
+  const responseRuntime = {
+    getSnapshot: vi.fn(() => ({
+      status: 'idle',
+      cwd: '/workspace',
+      sessionIds: ['permission-session', 'elicitation-session', 'forged-session'],
+      events: [],
+      pendingPermissions: [
+        {
+          requestId: 'permission-1',
+          sessionId: 'permission-session',
+          toolCallId: 'tool-1',
+          title: 'Use a tool',
+          options: []
+        }
+      ],
+      pendingElicitations: [
+        {
+          requestId: 'question-1',
+          sessionId: 'elicitation-session',
+          toolCallId: 'tool-2',
+          message: 'Choose',
+          fields: []
+        }
+      ],
+      permissionProfiles: {},
+      permissionGrants: {},
+      promptInFlight: false,
+      promptInFlightSessionIds: [],
+      contextUsageBySession: {}
+    })),
+    respondToPermission: vi.fn(),
+    respondToElicitation: vi.fn()
+  }
+  const respondDelegatedQuestion = vi.fn()
+  installAcpIpcHandlers(responseRuntime as never, {} as never, respondDelegatedQuestion, {
+    withSessionAvailableById
+  })
+
+  expect(() =>
+    handlers.get('acp:respond-permission')?.(undefined, {
+      requestId: 'permission-1',
+      optionId: 'allow-once',
+      restored: { projectId: 'forged-project', sessionId: 'forged-session' }
+    })
+  ).toThrow('Permission response Session does not match the pending request.')
+  expect(() =>
+    handlers.get('acp:respond-elicitation')?.(undefined, {
+      requestId: 'question-1',
+      action: 'decline',
+      request: {
+        requestId: 'question-1',
+        sessionId: 'forged-session',
+        toolCallId: 'tool-2',
+        message: 'Choose',
+        fields: []
+      }
+    })
+  ).toThrow('Structured input response Session does not match the pending request.')
+  expect(() =>
+    handlers.get('acp:respond-elicitation')?.(undefined, {
+      requestId: 'question-1',
+      action: 'accept',
+      delegatedQuestion: {
+        projectId: 'forged-project',
+        sessionId: 'forged-session',
+        action: 'confirm',
+        answers: []
+      }
+    })
+  ).toThrow('Structured input response Session does not match the pending request.')
+  expect(() =>
+    handlers.get('acp:respond-permission')?.(undefined, {
+      requestId: 'unknown-permission',
+      optionId: 'allow-once'
+    })
+  ).toThrow('Unknown permission request.')
+  expect(() =>
+    handlers.get('acp:respond-elicitation')?.(undefined, {
+      requestId: 'unknown-question',
+      action: 'decline'
+    })
+  ).toThrow('Unknown structured input request.')
+
+  expect(admitted).toEqual([])
+  expect(responseRuntime.respondToPermission).not.toHaveBeenCalled()
+  expect(responseRuntime.respondToElicitation).not.toHaveBeenCalled()
+  expect(respondDelegatedQuestion).not.toHaveBeenCalled()
+})
+
 describe('ACP module transport seam', () => {
   it('holds archive admission until Save as skill is accepted without awaiting turn completion', async () => {
     const session = materializeSessionConversationGraph({

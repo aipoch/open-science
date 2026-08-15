@@ -520,12 +520,20 @@ describe('ACP application commands', () => {
     const runtime: AcpApplicationCommandDependencies['runtime'] = {
       ...base.runtime,
       getSnapshot: vi.fn(() => responseSnapshot),
-      respondToPermission: vi.fn(async () => {
-        expect(admittedSessionId).toBe('permission-session')
+      respondToPermission: vi.fn(async (response) => {
+        expect(admittedSessionId).toBe(
+          response.requestId === 'restored-permission'
+            ? 'restored-permission-session'
+            : 'permission-session'
+        )
         return responseSnapshot
       }),
-      respondToElicitation: vi.fn(async () => {
-        expect(admittedSessionId).toBe('elicitation-session')
+      respondToElicitation: vi.fn(async (response) => {
+        expect(admittedSessionId).toBe(
+          response.requestId === 'restored-question'
+            ? 'restored-elicitation-session'
+            : 'elicitation-session'
+        )
         return responseSnapshot
       }),
       respondSessionPlan: vi.fn(async () => {
@@ -569,6 +577,35 @@ describe('ACP application commands', () => {
       invocation([{ requestId: 'question-1', action: 'decline' }])
     )
     await router.dispatcher.invoke(
+      acpCommands.respondPermission,
+      invocation([
+        {
+          requestId: 'restored-permission',
+          optionId: 'allow-once',
+          restored: {
+            projectId: 'project-1',
+            sessionId: 'restored-permission-session'
+          }
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
+      acpCommands.respondElicitation,
+      invocation([
+        {
+          requestId: 'restored-question',
+          action: 'decline',
+          request: {
+            requestId: 'restored-question',
+            sessionId: 'restored-elicitation-session',
+            toolCallId: 'tool-restored',
+            message: 'Choose again',
+            fields: []
+          }
+        }
+      ])
+    )
+    await router.dispatcher.invoke(
       acpCommands.respondElicitation,
       invocation([
         {
@@ -605,12 +642,132 @@ describe('ACP application commands', () => {
     expect(admitted).toEqual([
       'permission-session',
       'elicitation-session',
+      'restored-permission-session',
+      'restored-elicitation-session',
       'delegated-session',
       'plan-session',
       'profile-session',
       'profile-session'
     ])
     expect(respondDelegatedQuestion).toHaveBeenCalledOnce()
+  })
+
+  it('rejects forged and unknown ACP response authority before Session admission', async () => {
+    const responseSnapshot: AcpStateSnapshot = {
+      ...snapshot,
+      sessionIds: ['permission-session', 'elicitation-session', 'forged-session'],
+      pendingPermissions: [
+        {
+          requestId: 'permission-1',
+          sessionId: 'permission-session',
+          toolCallId: 'tool-1',
+          title: 'Use a tool',
+          options: []
+        }
+      ],
+      pendingElicitations: [
+        {
+          requestId: 'question-1',
+          sessionId: 'elicitation-session',
+          toolCallId: 'tool-2',
+          message: 'Choose',
+          fields: []
+        }
+      ]
+    }
+    const base = createDependencies()
+    const admitted: string[] = []
+    const withSessionAvailableById = <Result>(
+      sessionId: string,
+      operation: () => Promise<Result>
+    ): Promise<Result> => {
+      admitted.push(sessionId)
+      return operation()
+    }
+    const respondDelegatedQuestion = vi.fn(async () => undefined)
+    const dependencies: AcpApplicationCommandDependencies = {
+      ...base,
+      runtime: {
+        ...base.runtime,
+        getSnapshot: vi.fn(() => responseSnapshot)
+      },
+      archiveAvailability: {
+        withSessionAvailable: async <Result>(
+          _projectId: string,
+          _sessionId: string,
+          operation: () => Promise<Result>
+        ): Promise<Result> => operation(),
+        withSessionAvailableById
+      },
+      respondDelegatedQuestion
+    }
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPermission,
+        invocation([
+          {
+            requestId: 'permission-1',
+            optionId: 'allow-once',
+            restored: { projectId: 'forged-project', sessionId: 'forged-session' }
+          }
+        ])
+      )
+    ).rejects.toThrow('Permission response Session does not match the pending request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([
+          {
+            requestId: 'question-1',
+            action: 'decline',
+            request: {
+              requestId: 'question-1',
+              sessionId: 'forged-session',
+              toolCallId: 'tool-2',
+              message: 'Choose',
+              fields: []
+            }
+          }
+        ])
+      )
+    ).rejects.toThrow('Structured input response Session does not match the pending request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([
+          {
+            requestId: 'question-1',
+            action: 'accept',
+            delegatedQuestion: {
+              projectId: 'forged-project',
+              sessionId: 'forged-session',
+              action: 'confirm',
+              answers: []
+            }
+          }
+        ])
+      )
+    ).rejects.toThrow('Structured input response Session does not match the pending request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPermission,
+        invocation([{ requestId: 'unknown-permission', optionId: 'allow-once' }])
+      )
+    ).rejects.toThrow('Unknown permission request.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondElicitation,
+        invocation([{ requestId: 'unknown-question', action: 'decline' }])
+      )
+    ).rejects.toThrow('Unknown structured input request.')
+
+    expect(admitted).toEqual([])
+    expect(dependencies.runtime.respondToPermission).not.toHaveBeenCalled()
+    expect(dependencies.runtime.respondToElicitation).not.toHaveBeenCalled()
+    expect(respondDelegatedQuestion).not.toHaveBeenCalled()
   })
 
   it('exposes Plan projection reads to the same current human callers on Electron and Web', async () => {

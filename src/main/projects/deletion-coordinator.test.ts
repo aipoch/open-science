@@ -90,7 +90,7 @@ describe('ProjectDeletionCoordinator', () => {
     )
   })
 
-  it('persists retry authority before awaiting runtime invalidation', async () => {
+  it('installs the deletion fence before committing retry authority and starting teardown', async () => {
     const projects = createProjects()
     const sessions = createSessions()
     const invalidated = createDeferred<void>()
@@ -111,10 +111,10 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.createDeletionIntent).toHaveBeenCalledWith('project-1')
     expect(restoreProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(sessions.deleteProjectSessions).not.toHaveBeenCalled()
-    expect(vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]).toBeLessThan(
-      restoreProjectDeletion.mock.invocationCallOrder[0]
-    )
     expect(restoreProjectDeletion.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]
+    )
+    expect(vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]).toBeLessThan(
       beforeProjectDelete.mock.invocationCallOrder[0]
     )
 
@@ -125,7 +125,7 @@ describe('ProjectDeletionCoordinator', () => {
     expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
   })
 
-  it('does not start runtime teardown when durable intent creation fails', async () => {
+  it('releases the deletion fence without starting teardown when intent creation fails', async () => {
     const projects = createProjects()
     projects.createDeletionIntent = vi.fn().mockRejectedValue(new Error('intent unavailable'))
     const abortProjectDeletion = vi.fn()
@@ -147,9 +147,12 @@ describe('ProjectDeletionCoordinator', () => {
 
     await expect(coordinator.deleteProject('project-1')).rejects.toThrow('intent unavailable')
 
-    expect(restoreProjectDeletion).not.toHaveBeenCalled()
+    expect(restoreProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(beforeProjectDelete).not.toHaveBeenCalled()
-    expect(abortProjectDeletion).not.toHaveBeenCalled()
+    expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(restoreProjectDeletion.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]
+    )
   })
 
   it('retains the durable intent and deletion barrier when runtime quiescence fails', async () => {

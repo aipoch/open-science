@@ -23,6 +23,10 @@ import type {
 } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { AcpHandlerWorkflows } from './handler-workflows'
+import {
+  resolveElicitationResponseSessionId,
+  resolvePermissionResponseSessionId
+} from './response-session-admission'
 import { installAgentShutdownGuard } from './shutdown-guard'
 
 type AcpIpcSessionAdmission = {
@@ -31,25 +35,6 @@ type AcpIpcSessionAdmission = {
     operation: () => Promise<Result>
   ): Promise<Result>
 }
-
-const permissionResponseSessionId = (
-  runtime: AcpRuntimeCoordinator,
-  response: AcpPermissionResponse
-): string | undefined =>
-  response.restored?.sessionId ??
-  runtime
-    .getSnapshot()
-    .pendingPermissions.find((request) => request.requestId === response.requestId)?.sessionId
-
-const elicitationResponseSessionId = (
-  runtime: AcpRuntimeCoordinator,
-  response: ElicitationResponse
-): string | undefined =>
-  response.delegatedQuestion?.sessionId ??
-  response.request?.sessionId ??
-  runtime
-    .getSnapshot()
-    .pendingElicitations?.find((request) => request.requestId === response.requestId)?.sessionId
 
 const withResponseAdmission = <Result>(
   sessionAdmission: AcpIpcSessionAdmission,
@@ -119,8 +104,10 @@ const registerAcpIpcHandlerSet = (
     return runtime.deleteSession(request)
   })
   ipcMainHandle('acp:respond-permission', (_event, response: AcpPermissionResponse) =>
-    withResponseAdmission(sessionAdmission, permissionResponseSessionId(runtime, response), () =>
-      runtime.respondToPermission(response)
+    withResponseAdmission(
+      sessionAdmission,
+      resolvePermissionResponseSessionId(runtime.getSnapshot(), response),
+      () => runtime.respondToPermission(response)
     )
   )
   ipcMainHandle('acp:get-plan-projection', (_event, projectId: string, sessionId: string) =>
@@ -136,7 +123,7 @@ const registerAcpIpcHandlerSet = (
   ipcMainHandle('acp:respond-elicitation', (_event, response: ElicitationResponse) => {
     return withResponseAdmission(
       sessionAdmission,
-      elicitationResponseSessionId(runtime, response),
+      resolveElicitationResponseSessionId(runtime.getSnapshot(), response),
       () => {
         if (response.delegatedQuestion) {
           if (!respondDelegatedQuestion) {

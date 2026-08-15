@@ -23,6 +23,10 @@ import {
 } from '../application-command-router'
 import { canSatisfyHumanApproval } from '../caller-context'
 import type { AcpHandlerWorkflows } from './handler-workflows'
+import {
+  resolveElicitationResponseSessionId,
+  resolvePermissionResponseSessionId
+} from './response-session-admission'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 
@@ -172,25 +176,6 @@ type AcpApplicationCommandDependencies = Readonly<{
   ) => Promise<void>
 }>
 
-const permissionResponseSessionId = (
-  runtime: Pick<AcpApplicationCommandRuntime, 'getSnapshot'>,
-  response: AcpPermissionResponse
-): string | undefined =>
-  response.restored?.sessionId ??
-  runtime
-    .getSnapshot()
-    .pendingPermissions.find((request) => request.requestId === response.requestId)?.sessionId
-
-const elicitationResponseSessionId = (
-  runtime: Pick<AcpApplicationCommandRuntime, 'getSnapshot'>,
-  response: ElicitationResponse
-): string | undefined =>
-  response.delegatedQuestion?.sessionId ??
-  response.request?.sessionId ??
-  runtime
-    .getSnapshot()
-    .pendingElicitations?.find((request) => request.requestId === response.requestId)?.sessionId
-
 const withResponseAdmission = <Result>(
   archiveAvailability: AcpApplicationCommandDependencies['archiveAvailability'],
   sessionId: string | undefined,
@@ -262,7 +247,7 @@ const registerAcpCommands = (
         }
         const response = invocation.args[0]
         const sessionId = dependencies.archiveAvailability
-          ? permissionResponseSessionId(dependencies.runtime, response)
+          ? resolvePermissionResponseSessionId(dependencies.runtime.getSnapshot(), response)
           : undefined
         return withResponseAdmission(dependencies.archiveAvailability, sessionId, () =>
           dependencies.runtime.respondToPermission(response)
@@ -274,7 +259,7 @@ const registerAcpCommands = (
         }
         const response = invocation.args[0]
         const sessionId = dependencies.archiveAvailability
-          ? elicitationResponseSessionId(dependencies.runtime, response)
+          ? resolveElicitationResponseSessionId(dependencies.runtime.getSnapshot(), response)
           : undefined
         return withResponseAdmission(dependencies.archiveAvailability, sessionId, () => {
           if (response.delegatedQuestion) {

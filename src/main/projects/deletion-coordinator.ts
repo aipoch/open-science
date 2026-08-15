@@ -193,17 +193,28 @@ class ProjectDeletionCoordinator {
     }
   }
 
-  // Persist retry authority before any destructive runtime cleanup. Once the intent exists, every
-  // failure remains fail-closed: the Project may still be visible, but admission stays fenced and
-  // recovery replays quiescence before continuing durable deletion.
+  // Install the non-destructive admission fence before committing deletion intent, then persist
+  // retry authority before any destructive runtime cleanup. Once the intent exists, every failure
+  // remains fail-closed: the Project may still be visible, but recovery retains the fence and replays
+  // quiescence before continuing durable deletion.
   private async runDeletion(projectId: string): Promise<void> {
     const project = await this.projects.get(projectId)
     if (!project) return
 
-    await this.projects.createDeletionIntent(projectId)
-    await this.prepareDeletion(projectId)
+    await this.createDeletionIntentWithFence(projectId)
+    await this.lifecycle?.beforeProjectDelete(projectId)
     await this.sessions.deleteProjectSessions(projectId)
     await this.finishDeletion(projectId)
+  }
+
+  private async createDeletionIntentWithFence(projectId: string): Promise<void> {
+    try {
+      await this.lifecycle?.restoreProjectDeletion?.(projectId)
+      await this.projects.createDeletionIntent(projectId)
+    } catch (error) {
+      this.lifecycle?.abortProjectDeletion?.(projectId)
+      throw error
+    }
   }
 
   private async prepareDeletion(projectId: string): Promise<void> {
@@ -249,8 +260,8 @@ class ProjectDeletionCoordinator {
     const projectIds = await this.sessions.listLegacyProjectSessionTombstones()
     for (const projectId of projectIds) {
       if (retainedProjectIds.has(projectId)) continue
-      await this.projects.createDeletionIntent(projectId)
-      await this.prepareDeletion(projectId)
+      await this.createDeletionIntentWithFence(projectId)
+      await this.lifecycle?.beforeProjectDelete(projectId)
       const result = await this.sessions.deleteProjectSessions(projectId, {
         requireExistingUploadAuthority: true
       })
