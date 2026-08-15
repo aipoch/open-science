@@ -934,7 +934,12 @@ class NotebookRuntimeService {
   // env — a pip/conda/CRAN install can never overlap a cell mid-import (§5, G2/D5). Installs into
   // DIFFERENT envs proceed concurrently (the lock is keyed by resolved env name, not language).
   async managePackages(request: InstallRequest): Promise<InstallResult> {
-    return this.packageOperations.manage(request)
+    const manage = (): Promise<InstallResult> => this.packageOperations.manage(request)
+    if (request.projectId === undefined && request.projectName === undefined) return manage()
+
+    // Project admission is keyed only by project identity. InstallRequest intentionally keeps the
+    // session fields optional because settings and repair flows can manage a global environment.
+    return this.sessionLifecycle.runProjectOperation(request as NotebookSessionRequest, manage)
   }
 
   // Named-environment management (design D2), delegating to the injected provisioner-backed manager.

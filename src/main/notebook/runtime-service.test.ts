@@ -462,6 +462,81 @@ describe('notebook runtime service', () => {
     expect(shutdown).toHaveBeenCalledOnce()
   })
 
+  it('drains an admitted Project-scoped package install before shutdown completes', async () => {
+    const root = await createStorageRoot()
+    const installGate = createDeferred<InstallResultForTest>()
+    const installPackagesImpl = vi.fn(() => installGate.promise)
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      installPackagesImpl
+    })
+
+    const installing = service.managePackages({
+      projectId: 'project-1',
+      language: 'python',
+      packages: ['numpy']
+    })
+    await vi.waitFor(() => expect(installPackagesImpl).toHaveBeenCalledOnce())
+
+    let shutdownCompleted = false
+    const deleting = service.shutdownProject('project-1').then(() => {
+      shutdownCompleted = true
+    })
+    await Promise.resolve()
+
+    expect(shutdownCompleted).toBe(false)
+
+    installGate.resolve({
+      ok: true,
+      needsRestart: false,
+      log: 'installed',
+      method: 'pip'
+    })
+    await installing
+    await deleting
+
+    expect(shutdownCompleted).toBe(true)
+  })
+
+  it('rejects new Project-scoped installs during deletion without blocking global installs', async () => {
+    const root = await createStorageRoot()
+    const installPackagesImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      needsRestart: false,
+      log: 'installed',
+      method: 'pip'
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      installPackagesImpl
+    })
+
+    service.beginProjectDeletion('project-1')
+    await expect(
+      service.managePackages({
+        projectId: 'project-1',
+        language: 'python',
+        packages: ['numpy']
+      })
+    ).rejects.toThrow('Project is being deleted.')
+    expect(installPackagesImpl).not.toHaveBeenCalled()
+
+    await expect(
+      service.managePackages({ language: 'python', packages: ['numpy'] })
+    ).resolves.toMatchObject({ ok: true })
+    expect(installPackagesImpl).toHaveBeenCalledOnce()
+
+    service.releaseProjectDeletion('project-1')
+  })
+
   it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
