@@ -840,9 +840,8 @@ class NotebookRuntimeService {
     // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
     // is cleared. Snapshot the keys before teardown drops them from kernelStatuses.
     const envKeys = session.kernelProcessKeys()
-    const statusKeys = envKeys.length > 0 ? envKeys : [`python:${DEFAULT_PY_ENV}`]
 
-    statusKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
+    envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
     await this.repository.updateKernelStatus({
       projectName: session.projectId,
       sessionId: session.sessionId,
@@ -855,7 +854,7 @@ class NotebookRuntimeService {
       await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
       this.environmentOperations.clearRestartRecommendations(envKeys)
     } finally {
-      statusKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
+      envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
       await this.repository.updateKernelStatus({
         projectName: session.projectId,
         sessionId: session.sessionId,

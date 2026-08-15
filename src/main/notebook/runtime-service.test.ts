@@ -3004,6 +3004,44 @@ describe('notebook runtime service', () => {
     expect(settled.kernelStatus).toBe('idle')
   })
 
+  it('does not create a live environment entry when restarting before any kernel spawned', async () => {
+    const root = await createStorageRoot()
+    let releaseRestart: (() => void) | undefined
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true }),
+        restart: () =>
+          new Promise<void>((resolve) => {
+            releaseRestart = resolve
+          })
+      })
+    })
+
+    const restarting = service.restart({ sessionId: 'session-1', workspaceCwd: root })
+    await vi.waitFor(() => expect(releaseRestart).toBeDefined())
+
+    const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+    expect(midFlight.kernelStatus).toBe('restarting')
+    expect(midFlight.environments).toEqual([])
+
+    releaseRestart?.()
+    const settled = await restarting
+    expect(settled.kernelStatus).toBe('idle')
+    expect(settled.environments).toEqual([])
+  })
+
   it('keeps the executor callback current across an in-place restart', async () => {
     const root = await createStorageRoot()
     const { service, lifecycles, changedSessions } = lifecycleCallbackHarness(root, {
