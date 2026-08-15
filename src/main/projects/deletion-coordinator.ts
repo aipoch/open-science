@@ -45,7 +45,7 @@ type ProjectDeletionLifecycle = {
   restoreProjectDeletion?(projectId: string): Promise<void>
   finalizeProjectDeletion?(projectId: string): Promise<void>
   completeProjectDeletion?(projectId: string): void
-  abortProjectDeletion?(projectId: string): void
+  abortProjectDeletion?(projectId: string): Promise<void> | void
 }
 
 type ProjectDeletionRecoveryLoopOptions = {
@@ -212,7 +212,7 @@ class ProjectDeletionCoordinator {
       await this.lifecycle?.restoreProjectDeletion?.(projectId)
       await this.projects.createDeletionIntent(projectId)
     } catch (error) {
-      this.lifecycle?.abortProjectDeletion?.(projectId)
+      await this.lifecycle?.abortProjectDeletion?.(projectId)
       throw error
     }
   }
@@ -242,7 +242,7 @@ class ProjectDeletionCoordinator {
         : await this.sessions.deleteProjectSessions(projectId)
       if (result.status === 'orphan-retained') {
         await this.projects.deleteDeletionIntent(projectId)
-        this.lifecycle?.abortProjectDeletion?.(projectId)
+        await this.lifecycle?.abortProjectDeletion?.(projectId)
         retainedProjectIds.add(projectId)
         continue
       }
@@ -267,7 +267,7 @@ class ProjectDeletionCoordinator {
       })
       if (result.status === 'orphan-retained') {
         await this.projects.deleteDeletionIntent(projectId)
-        this.lifecycle?.abortProjectDeletion?.(projectId)
+        await this.lifecycle?.abortProjectDeletion?.(projectId)
         continue
       }
       await this.finishDeletion(projectId)

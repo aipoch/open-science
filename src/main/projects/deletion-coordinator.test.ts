@@ -128,7 +128,8 @@ describe('ProjectDeletionCoordinator', () => {
   it('releases the deletion fence without starting teardown when intent creation fails', async () => {
     const projects = createProjects()
     projects.createDeletionIntent = vi.fn().mockRejectedValue(new Error('intent unavailable'))
-    const abortProjectDeletion = vi.fn()
+    const aborted = createDeferred<void>()
+    const abortProjectDeletion = vi.fn(() => aborted.promise)
     const beforeProjectDelete = vi.fn().mockResolvedValue(undefined)
     const restoreProjectDeletion = vi.fn().mockResolvedValue(undefined)
     const coordinator = new ProjectDeletionCoordinator(
@@ -145,14 +146,29 @@ describe('ProjectDeletionCoordinator', () => {
       }
     )
 
-    await expect(coordinator.deleteProject('project-1')).rejects.toThrow('intent unavailable')
+    const deletion = coordinator.deleteProject('project-1')
+    let deletionSettled = false
+    void deletion.then(
+      () => {
+        deletionSettled = true
+      },
+      () => {
+        deletionSettled = true
+      }
+    )
+
+    await vi.waitFor(() => expect(abortProjectDeletion).toHaveBeenCalledWith('project-1'))
+    await Promise.resolve()
 
     expect(restoreProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(beforeProjectDelete).not.toHaveBeenCalled()
-    expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(deletionSettled).toBe(false)
     expect(restoreProjectDeletion.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(projects.createDeletionIntent).mock.invocationCallOrder[0]
     )
+
+    aborted.resolve(undefined)
+    await expect(deletion).rejects.toThrow('intent unavailable')
   })
 
   it('retains the durable intent and deletion barrier when runtime quiescence fails', async () => {

@@ -751,11 +751,12 @@ const createApplicationModules = async (
         notebookService.releaseProjectDeletion(projectId)
         reviewerProjectRuntime.releaseProjectDeletion(projectId)
       },
-      abortProjectDeletion: (projectId) => {
+      abortProjectDeletion: async (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
         notebookService.releaseProjectDeletion(projectId)
         reviewerProjectRuntime.releaseProjectDeletion(projectId)
         sideChatOwnerRef.current?.restoreProject(projectId)
+        await computeJobDeletionPort.abortProjectJobDeletion(projectId)
       }
     }
   )
