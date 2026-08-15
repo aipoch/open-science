@@ -78,6 +78,8 @@ const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstance
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
   private readonly announcedAgentLaneKeys = new Set<string>()
+  private readonly deletingProjectIds = new Set<string>()
+  private readonly pendingEnsuresByProject = new Map<string, Set<Promise<RuntimeSession>>>()
 
   constructor(private readonly options: NotebookSessionLifecycleOptions) {}
 
@@ -99,8 +101,14 @@ class NotebookSessionLifecycleOwner {
 
   ensure(request: NotebookSessionRequest): Promise<RuntimeSession> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    try {
+      this.assertProjectAvailable(projectId)
+    } catch (error) {
+      return Promise.reject(error)
+    }
     const lane = this.laneForRequest(request)
-    return this.options.sessions.getOrCreate(lane, async () => {
+    const ensuring = this.options.sessions.getOrCreate(lane, async () => {
+      this.assertProjectAvailable(projectId)
       let document = await this.options.repository.loadOrCreate({
         projectName: projectId,
         sessionId: request.sessionId,
@@ -139,6 +147,7 @@ class NotebookSessionLifecycleOwner {
 
       try {
         await this.options.runtimeBindings.reload(session, document.runtimeBindings)
+        this.assertProjectAvailable(projectId)
         return session
       } catch (error) {
         await session.shutdownExecutor().catch(() => undefined)
@@ -150,6 +159,19 @@ class NotebookSessionLifecycleOwner {
         throw error
       }
     })
+    const pending =
+      this.pendingEnsuresByProject.get(projectId) ?? new Set<Promise<RuntimeSession>>()
+    pending.add(ensuring)
+    this.pendingEnsuresByProject.set(projectId, pending)
+    void ensuring
+      .finally(() => {
+        pending.delete(ensuring)
+        if (pending.size === 0 && this.pendingEnsuresByProject.get(projectId) === pending) {
+          this.pendingEnsuresByProject.delete(projectId)
+        }
+      })
+      .catch(() => undefined)
+    return ensuring
   }
 
   createExecutor(lane: NotebookLaneIdentity): NotebookSessionOwnedExecutor {
@@ -184,6 +206,8 @@ class NotebookSessionLifecycleOwner {
   }
 
   async shutdownProject(projectId: string): Promise<void> {
+    this.beginProjectDeletion(projectId)
+    await Promise.allSettled(this.pendingEnsuresByProject.get(projectId) ?? [])
     const lanes = Array.from(this.options.sessions.values())
       .filter((session) => session.projectId === projectId)
       .map((session) => session.lane)
@@ -196,6 +220,14 @@ class NotebookSessionLifecycleOwner {
     }
   }
 
+  beginProjectDeletion(projectId: string): void {
+    this.deletingProjectIds.add(projectId)
+  }
+
+  releaseProjectDeletion(projectId: string): void {
+    this.deletingProjectIds.delete(projectId)
+  }
+
   private async shutdownLane(
     lane: NotebookLaneIdentity
   ): Promise<{ sessionId: string; status: 'shutdown' }> {
@@ -206,6 +238,12 @@ class NotebookSessionLifecycleOwner {
       await this.options.sessions.remove(lane)
     })
     return { sessionId, status: 'shutdown' }
+  }
+
+  private assertProjectAvailable(projectId: string): void {
+    if (this.deletingProjectIds.has(projectId)) {
+      throw new Error('Project is being deleted.')
+    }
   }
 
   shutdownAll(): Promise<{ reaped: boolean }> {

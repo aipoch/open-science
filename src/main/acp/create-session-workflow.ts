@@ -14,7 +14,10 @@ type DataRootWrite = <Result>(write: () => Promise<Result>) => Promise<Result>
 type AcpCreateSessionWorkflowDependencies = {
   workspaces: ManagedSessionWorkspaceCapability
   withDataRootWrite: DataRootWrite
-  assertProjectAvailable(projectId: string | undefined): Promise<void>
+  withProjectAvailable<Result>(
+    projectId: string | undefined,
+    operation: () => Promise<Result>
+  ): Promise<Result>
 }
 
 type AcpCreateSessionWorkflow = {
@@ -33,22 +36,26 @@ const createAcpCreateSessionWorkflow = (
 
   return {
     async create(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse> {
-      await dependencies.assertProjectAvailable?.(request.projectName)
-      const explicitCwd = request.cwd?.trim()
-      if (explicitCwd) {
-        return sessions.createSession({ ...request, cwd: explicitCwd })
-      }
-
-      return runDataRootWrite(async () => {
-        const workspace = await workspaces.acquire()
-        try {
-          const response = await sessions.createSession({ ...request, cwd: workspace.cwd })
-          workspace.commit()
-          return response
-        } finally {
-          await workspace.release()
+      const createAvailableSession = async (): Promise<AcpCreateSessionResponse> => {
+        const explicitCwd = request.cwd?.trim()
+        if (explicitCwd) {
+          return sessions.createSession({ ...request, cwd: explicitCwd })
         }
-      })
+
+        return runDataRootWrite(async () => {
+          const workspace = await workspaces.acquire()
+          try {
+            const response = await sessions.createSession({ ...request, cwd: workspace.cwd })
+            workspace.commit()
+            return response
+          } finally {
+            await workspace.release()
+          }
+        })
+      }
+      return dependencies.withProjectAvailable
+        ? dependencies.withProjectAvailable(request.projectName, createAvailableSession)
+        : createAvailableSession()
     }
   }
 }

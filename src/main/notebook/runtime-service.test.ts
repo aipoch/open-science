@@ -323,6 +323,42 @@ describe('notebook runtime service', () => {
     expect(shutdowns[2]).not.toHaveBeenCalled()
   })
 
+  it('blocks new Project lanes and drains a pending lane creation before deletion snapshots', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const load = repository.loadOrCreate.bind(repository)
+    const loading = createDeferred<void>()
+    vi.spyOn(repository, 'loadOrCreate').mockImplementation(async (request) => {
+      await loading.promise
+      return load(request)
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      environmentStateTracker: verifiedPackageMutationTracker()
+    })
+    const request = {
+      projectName: 'project-1',
+      sessionId: 'session-pending',
+      workspaceCwd: '/workspace'
+    }
+
+    const pending = service.state(request)
+    await vi.waitFor(() => expect(repository.loadOrCreate).toHaveBeenCalledOnce())
+    const deleting = service.shutdownProject('project-1')
+    loading.resolve(undefined)
+
+    await expect(pending).rejects.toThrow('Project is being deleted.')
+    await expect(deleting).resolves.toBeUndefined()
+    await expect(service.state(request)).rejects.toThrow('Project is being deleted.')
+
+    service.releaseProjectDeletion('project-1')
+    await expect(service.state(request)).resolves.toMatchObject({ sessionId: 'session-pending' })
+    await service.shutdown(request)
+  })
+
   it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)

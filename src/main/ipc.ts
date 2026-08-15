@@ -728,10 +728,29 @@ const createApplicationModules = async (
       beforeProjectDelete: async (projectId) => {
         const owner = projectRuntimeQuiescenceRef.current
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
-        await owner.quiesceProject(projectId)
+        await archiveCoordinator.withProjectDeletion(projectId, async () => {
+          notebookService.beginProjectDeletion(projectId)
+          try {
+            await owner.quiesceProject(projectId)
+          } catch (error) {
+            notebookService.releaseProjectDeletion(projectId)
+            throw error
+          }
+        })
       },
-      restoreProjectDeletion: (projectId) =>
-        computeJobDeletionPort.restoreProjectJobDeletion(projectId)
+      restoreProjectDeletion: async (projectId) => {
+        archiveCoordinator.restoreProjectDeletion(projectId)
+        notebookService.beginProjectDeletion(projectId)
+        await computeJobDeletionPort.restoreProjectJobDeletion(projectId)
+      },
+      completeProjectDeletion: (projectId) => {
+        archiveCoordinator.releaseProjectDeletion(projectId)
+        notebookService.releaseProjectDeletion(projectId)
+      },
+      abortProjectDeletion: (projectId) => {
+        archiveCoordinator.releaseProjectDeletion(projectId)
+        notebookService.releaseProjectDeletion(projectId)
+      }
     }
   )
   const detectArchiveBlockingSessions = (): ReturnType<typeof detectActiveSessions> =>
@@ -1957,6 +1976,9 @@ const createApplicationModules = async (
       throw new Error('Close Side chat before sending a message to Main.')
     }
   })
+  runtime.setPromptDispatchAdmissionGuard((sessionId, dispatch) =>
+    archiveCoordinator.withSessionDeletionAdmissionById(sessionId, dispatch)
+  )
   const codeReconstructionLog = createLogger('artifacts:code-reconstruction')
   const codeReconstructionRunner = await modules.add(
     {
@@ -1988,7 +2010,8 @@ const createApplicationModules = async (
     runner: codeReconstructionRunner
   })
   const createSessionWorkflow = createAcpCreateSessionWorkflow(runtime, {
-    assertProjectAvailable: (projectId) => archiveCoordinator.assertProjectAvailable(projectId)
+    withProjectAvailable: (projectId, operation) =>
+      archiveCoordinator.withProjectAvailable(projectId, operation)
   })
   const acpHandlerWorkflows = createAcpHandlerWorkflows(
     runtime,

@@ -112,6 +112,11 @@ type RootAdmissionLease = {
   release: () => void
 }
 
+type PromptAdmissionGuard = <Result>(
+  sessionId: string,
+  dispatch: () => Promise<Result>
+) => Promise<Result>
+
 // Keeps each framework generation in its own AcpRuntime. Framework changes preserve active turns, then
 // retire their runtime so every later turn resumes through the newly selected framework.
 class AcpRuntimeCoordinator {
@@ -143,6 +148,7 @@ class AcpRuntimeCoordinator {
   private readonly rootAdmissionTails = new Map<string, Promise<void>>()
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
+  private promptDispatchAdmissionGuard?: PromptAdmissionGuard
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
@@ -633,6 +639,10 @@ class AcpRuntimeCoordinator {
     this.promptAdmissionGuard = guard
   }
 
+  setPromptDispatchAdmissionGuard(guard: PromptAdmissionGuard): void {
+    this.promptDispatchAdmissionGuard = guard
+  }
+
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
     return this.sendObservedPrompt(request)
   }
@@ -780,6 +790,28 @@ class AcpRuntimeCoordinator {
   }
 
   private dispatchPrompt(
+    request: AcpPromptRequest,
+    acceptance: PromptAcceptance | undefined,
+    operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',
+    pinnedRuntime?: AcpRuntime,
+    retainAsLatestUserPrompt = operation === 'sendPrompt',
+    attribution?: MessageAttribution
+  ): ReturnType<AcpRuntime['sendPrompt']> {
+    const dispatch = (): ReturnType<AcpRuntime['sendPrompt']> =>
+      this.dispatchAdmittedPrompt(
+        request,
+        acceptance,
+        operation,
+        pinnedRuntime,
+        retainAsLatestUserPrompt,
+        attribution
+      )
+    return this.promptDispatchAdmissionGuard
+      ? this.promptDispatchAdmissionGuard(request.sessionId, dispatch)
+      : dispatch()
+  }
+
+  private dispatchAdmittedPrompt(
     request: AcpPromptRequest,
     acceptance: PromptAcceptance | undefined,
     operation: 'sendPrompt' | 'sendAppContinuation' | 'sendApplicationPrompt',

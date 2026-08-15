@@ -70,4 +70,32 @@ describe('ProjectRuntimeQuiescenceOwner', () => {
     expect(sideChat.invalidateProject).toHaveBeenCalledWith('project-1')
     expect(compute.reconcileProject).toHaveBeenCalledWith('project-1')
   })
+
+  it('discovers Delegation again after ACP teardown closes the root admission source', async () => {
+    let acpStopped = false
+    const delegation = {
+      listActiveSessions: vi.fn(() =>
+        acpStopped ? [{ projectId: 'project-1', sessionId: 'late-child' }] : []
+      ),
+      deleteSession: vi.fn().mockResolvedValue(undefined)
+    }
+    const owner = new ProjectRuntimeQuiescenceOwner({
+      acp: {
+        listSessionIds: () => ['root-session'],
+        liveSessionProjectId: () => 'project-1',
+        deleteSession: vi.fn(async () => {
+          acpStopped = true
+        })
+      },
+      delegation,
+      notebook: { shutdownProject: vi.fn().mockResolvedValue(undefined) },
+      sideChat: { invalidateProject: vi.fn().mockResolvedValue(undefined) },
+      compute: { reconcileProject: vi.fn().mockResolvedValue(undefined) }
+    })
+
+    await owner.quiesceProject('project-1')
+
+    expect(delegation.listActiveSessions).toHaveBeenCalledOnce()
+    expect(delegation.deleteSession).toHaveBeenCalledWith('late-child')
+  })
 })

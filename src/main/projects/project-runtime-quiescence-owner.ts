@@ -38,14 +38,16 @@ class ProjectRuntimeQuiescenceOwner {
   async quiesceProject(projectId: string): Promise<void> {
     const failures: unknown[] = []
     const acpSessionIds = this.projectAcpSessionIds(projectId, failures)
-    const delegatedSessionIds = this.projectDelegatedSessionIds(projectId, failures).filter(
-      (sessionId) => !acpSessionIds.has(sessionId)
-    )
 
     await this.capture(failures, () => this.options.sideChat.invalidateProject(projectId))
     await this.captureAll(
       failures,
       [...acpSessionIds].map((sessionId) => () => this.options.acp.deleteSession(sessionId))
+    )
+    // ACP teardown closes the source of new delegated work. Discover children only after that drain
+    // so a child admitted while its root was being cancelled cannot escape the initial snapshot.
+    const delegatedSessionIds = this.projectDelegatedSessionIds(projectId, failures).filter(
+      (sessionId) => !acpSessionIds.has(sessionId)
     )
     await this.captureAll(
       failures,

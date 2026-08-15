@@ -43,6 +43,8 @@ type ProjectPermissionGrantDeletion = {
 type ProjectDeletionLifecycle = {
   beforeProjectDelete(projectId: string): Promise<void>
   restoreProjectDeletion?(projectId: string): Promise<void>
+  completeProjectDeletion?(projectId: string): void
+  abortProjectDeletion?(projectId: string): void
 }
 
 type ProjectDeletionRecoveryLoopOptions = {
@@ -197,22 +199,30 @@ class ProjectDeletionCoordinator {
     if (!project) return
 
     await this.lifecycle?.beforeProjectDelete(projectId)
-    await this.projects.createDeletionIntent(projectId)
+    let retainDeletionBarrier = false
     try {
-      await this.sessions.deleteProjectSessions(projectId)
-    } catch (error) {
+      await this.projects.createDeletionIntent(projectId)
+      retainDeletionBarrier = true
       try {
-        const state = await this.sessions.getProjectSessionDeletionState(projectId)
-        if (state === 'live' || state === 'absent') {
-          await this.projects.deleteDeletionIntent(projectId)
+        await this.sessions.deleteProjectSessions(projectId)
+      } catch (error) {
+        try {
+          const state = await this.sessions.getProjectSessionDeletionState(projectId)
+          if (state === 'live' || state === 'absent') {
+            await this.projects.deleteDeletionIntent(projectId)
+            retainDeletionBarrier = false
+          }
+        } catch {
+          // Unknown durable Session state is fail-closed; retain the intent and admission fence.
         }
-      } catch {
-        // Unknown durable Session state is fail-closed; retain the intent for recovery.
+        throw error
       }
+
+      await this.finishDeletion(projectId)
+    } catch (error) {
+      if (!retainDeletionBarrier) this.lifecycle?.abortProjectDeletion?.(projectId)
       throw error
     }
-
-    await this.finishDeletion(projectId)
   }
 
   // Replays intents serially so crash recovery follows the same ordering as an online deletion.
@@ -248,12 +258,14 @@ class ProjectDeletionCoordinator {
         }
         if (sessionState === 'live' && (await this.projects.get(projectId))) {
           await this.projects.deleteDeletionIntent(projectId)
+          this.lifecycle?.abortProjectDeletion?.(projectId)
           continue
         }
         throw error
       }
       if (result.status === 'orphan-retained') {
         await this.projects.deleteDeletionIntent(projectId)
+        this.lifecycle?.abortProjectDeletion?.(projectId)
         retainedProjectIds.add(projectId)
         continue
       }
@@ -277,6 +289,7 @@ class ProjectDeletionCoordinator {
       })
       if (result.status === 'orphan-retained') {
         await this.projects.deleteDeletionIntent(projectId)
+        this.lifecycle?.abortProjectDeletion?.(projectId)
         continue
       }
       await this.finishDeletion(projectId)
@@ -326,6 +339,7 @@ class ProjectDeletionCoordinator {
 
     // Keep the intent until all derived and tombstone cleanup has completed.
     await this.projects.deleteDeletionIntent(projectId)
+    this.lifecycle?.completeProjectDeletion?.(projectId)
   }
 }
 

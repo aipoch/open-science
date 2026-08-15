@@ -64,6 +64,41 @@ const createHarness = (
 }
 
 describe('ACP create-Session workflow', () => {
+  it('holds Project admission through Session publication', async () => {
+    const created = createDeferred<AcpCreateSessionResponse>()
+    let admissionActive = false
+    const createSession = vi.fn(async () => {
+      expect(admissionActive).toBe(true)
+      return created.promise
+    })
+    const withProjectAvailable = async <Result>(
+      projectId: string | undefined,
+      operation: () => Promise<Result>
+    ): Promise<Result> => {
+      expect(projectId).toBe('project-1')
+      admissionActive = true
+      try {
+        return await operation()
+      } finally {
+        admissionActive = false
+      }
+    }
+    const workflow = createAcpCreateSessionWorkflow({ createSession }, { withProjectAvailable })
+
+    const pending = workflow.create({
+      cwd: '/workspace',
+      projectName: 'project-1',
+      permissionProfile: 'ask'
+    })
+    await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce())
+    expect(admissionActive).toBe(true)
+
+    created.resolve({ sessionId: 'session-1', cwd: '/workspace' })
+    await pending
+
+    expect(admissionActive).toBe(false)
+  })
+
   it('trims and uses an explicit workspace without acquiring managed storage', async () => {
     const harness = createHarness()
     const request = {
@@ -125,3 +160,14 @@ describe('ACP create-Session workflow', () => {
     }
   )
 })
+
+const createDeferred = <Value>(): {
+  promise: Promise<Value>
+  resolve: (value: Value) => void
+} => {
+  let resolve!: (value: Value) => void
+  const promise = new Promise<Value>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
+}
