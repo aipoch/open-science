@@ -412,6 +412,10 @@ const PreviewFilePanel = ({
           tooltipClassName={isFullScreenOpen ? 'z-[70]' : undefined}
           onClose={isFullScreenOpen ? closeFullScreen : () => onClose(item.id)}
           onOpenFullScreen={isFullScreenOpen ? undefined : openFullScreen}
+          // The floating surface covers the conversation panel, so a View in context navigation
+          // must collapse it for the switched session to become visible. The inline panel keeps
+          // its place in the workbench and needs no exit.
+          onViewInContextNavigate={isFullScreenOpen ? closeFullScreen : undefined}
           provenanceEntry={isFullScreenOpen ? 'trailing' : 'menu'}
         />
       </section>
