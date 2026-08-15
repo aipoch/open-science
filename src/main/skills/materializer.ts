@@ -5,6 +5,7 @@ import { createLogger } from '../logger'
 import { COMPUTE_SKILL_ID, preserveComputeHostProjection } from '../compute/skill-doc'
 import type { BundledSkill } from './registry'
 import { hasCanonicalSkillDocumentName, normalizeSkillDocumentName } from './skill-document-name'
+import { isUsableSkillName } from './skill-name'
 
 const log = createLogger('skills')
 
@@ -16,6 +17,9 @@ const OS_SKILL_PREFIX = 'os-'
 // unchanged skills are skipped instead of recopied on every spawn. Not a skill dir, so the Claude
 // Skill loader ignores it.
 const VERSION_MANIFEST = '.os-versions.json'
+
+type SkillDirectoryLayout = 'app-owned' | 'agent-facing'
+type SkillMaterializationOptions = Readonly<{ directoryLayout?: SkillDirectoryLayout }>
 
 // A matching content fingerprint is not enough for projections created before canonical Skill
 // names were enforced. Validate the generated copy before taking the fast path so only an obsolete
@@ -84,7 +88,6 @@ async function injectComputeNotice(target: string): Promise<void> {
 // POSIX-enforced only — on Windows a read-only directory does not enforce write-containment.
 async function chmodTree(dir: string, mode: 'readonly' | 'writable'): Promise<void> {
   const dirMode = mode === 'readonly' ? 0o555 : 0o755
-  const fileMode = mode === 'readonly' ? 0o444 : 0o644
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
@@ -99,6 +102,9 @@ async function chmodTree(dir: string, mode: 'readonly' | 'writable'): Promise<vo
       await chmodTree(child, mode)
     } else {
       try {
+        const executable = ((await lstat(child)).mode & 0o111) !== 0
+        const fileMode =
+          mode === 'readonly' ? (executable ? 0o555 : 0o444) : executable ? 0o755 : 0o644
         await chmod(child, fileMode)
       } catch (error) {
         log.warn('failed to chmod skill file', { child, error })
@@ -114,14 +120,27 @@ async function chmodTree(dir: string, mode: 'readonly' | 'writable'): Promise<vo
 
 // Writes an enabled skill set into a framework's config dir. One implementation per agent framework.
 interface SkillMaterializer {
-  sync(configDir: string, enabled: BundledSkill[]): Promise<void>
+  sync(
+    configDir: string,
+    enabled: BundledSkill[],
+    options?: SkillMaterializationOptions
+  ): Promise<void>
 }
 
 // Materializes bundled skills into `<configDir>/skills/os-<id>/` for Claude Code. The target state is
 // exactly the enabled set: enabled skills are copied when new or when their version changed, and os-
 // dirs not in the set are removed. Directories without the os- prefix are never touched.
 class ClaudeCodeSkillMaterializer implements SkillMaterializer {
-  async sync(configDir: string, enabled: BundledSkill[]): Promise<void> {
+  async sync(
+    configDir: string,
+    enabled: BundledSkill[],
+    options: SkillMaterializationOptions = {}
+  ): Promise<void> {
+    if (options.directoryLayout === 'agent-facing') {
+      await this.syncAgentFacing(configDir, enabled)
+      return
+    }
+
     const skillsDir = join(configDir, 'skills')
     await mkdir(skillsDir, { recursive: true })
 
@@ -177,34 +196,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
           skill.id === COMPUTE_SKILL_ID
             ? await readFile(join(target, 'SKILL.md'), 'utf8').catch(() => undefined)
             : undefined
-        // Restore write bits before removal in case a prior sync left the dir read-only.
-        await chmodTree(target, 'writable')
-        await rm(target, { recursive: true, force: true })
-        await cp(skill.sourceDir, target, {
-          recursive: true,
-          force: true,
-          filter: async (entry) => {
-            if ((await lstat(entry)).isSymbolicLink()) {
-              throw new Error(`Refusing to materialize a Skill containing a symbolic link.`)
-            }
-            return true
-          }
-        })
-        await normalizeSkillDocumentName(join(target, 'SKILL.md'), skill.name)
-        if (priorComputeDocument !== undefined) {
-          const current = await readFile(join(target, 'SKILL.md'), 'utf8')
-          await writeFile(
-            join(target, 'SKILL.md'),
-            preserveComputeHostProjection(current, priorComputeDocument),
-            'utf8'
-          )
-        }
-        // Skills whose model tooling needs a compute backend this app lacks get an up-front notice so
-        // the agent reports cleanly instead of failing through the model commands. Done before the
-        // read-only chmod, which would otherwise block the rewrite.
-        if (requiresCompute(skill)) await injectComputeNotice(target)
-        // Loaded skills are read-only so the agent cannot write generated files into them.
-        await chmodTree(target, 'readonly')
+        await this.copySkill(target, skill, priorComputeDocument)
         versions[name] = version
       } catch (error) {
         await rm(target, { recursive: true, force: true }).catch(() => undefined)
@@ -221,6 +213,77 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
     }
 
     await this.writeVersions(skillsDir, versions)
+  }
+
+  // Claude discovers Skills from additional workspace roots without a plugin namespace when they
+  // live under `<root>/.claude/skills/<frontmatter-name>`. This projection is built only inside a
+  // fresh content-addressed staging root, so it needs neither app-owned `os-*` directory identities
+  // nor a version manifest. Keeping both out of the tree prevents those implementation details from
+  // appearing in Claude's Skill tool names or base-directory context.
+  private async syncAgentFacing(configDir: string, enabled: BundledSkill[]): Promise<void> {
+    const skillsDir = join(configDir, 'skills')
+    await mkdir(skillsDir, { recursive: true })
+    if ((await readdir(skillsDir)).length !== 0) {
+      throw new Error('Agent-facing Skill projection must be materialized into an empty directory.')
+    }
+
+    const names = new Set<string>()
+    for (const skill of enabled) {
+      if (!isUsableSkillName(skill.name)) {
+        throw new Error(`Refusing to project an unsafe Agent-facing Skill name: ${skill.name}`)
+      }
+      if (names.has(skill.name)) {
+        throw new Error(`Refusing to project duplicate Agent-facing Skill name: ${skill.name}`)
+      }
+      names.add(skill.name)
+
+      const target = join(skillsDir, skill.name)
+      try {
+        await this.copySkill(target, skill)
+      } catch (error) {
+        await rm(target, { recursive: true, force: true }).catch(() => undefined)
+        log.warn('failed to materialize Agent-facing Skill', {
+          id: skill.id,
+          name: skill.name,
+          error
+        })
+      }
+    }
+  }
+
+  private async copySkill(
+    target: string,
+    skill: BundledSkill,
+    priorComputeDocument?: string
+  ): Promise<void> {
+    // Restore write bits before removal in case a prior sync left the dir read-only.
+    await chmodTree(target, 'writable')
+    await rm(target, { recursive: true, force: true })
+    await cp(skill.sourceDir, target, {
+      recursive: true,
+      force: true,
+      filter: async (entry) => {
+        if ((await lstat(entry)).isSymbolicLink()) {
+          throw new Error(`Refusing to materialize a Skill containing a symbolic link.`)
+        }
+        return true
+      }
+    })
+    await normalizeSkillDocumentName(join(target, 'SKILL.md'), skill.name)
+    if (priorComputeDocument !== undefined) {
+      const current = await readFile(join(target, 'SKILL.md'), 'utf8')
+      await writeFile(
+        join(target, 'SKILL.md'),
+        preserveComputeHostProjection(current, priorComputeDocument),
+        'utf8'
+      )
+    }
+    // Skills whose model tooling needs a compute backend this app lacks get an up-front notice so
+    // the agent reports cleanly instead of failing through the model commands. Done before the
+    // read-only chmod, which would otherwise block the rewrite.
+    if (requiresCompute(skill)) await injectComputeNotice(target)
+    // Loaded skills are read-only so the agent cannot write generated files into them.
+    await chmodTree(target, 'readonly')
   }
 
   // Reads the version manifest, returning an empty map when absent or corrupt.
@@ -251,4 +314,4 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 }
 
 export { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX }
-export type { SkillMaterializer }
+export type { SkillDirectoryLayout, SkillMaterializationOptions, SkillMaterializer }

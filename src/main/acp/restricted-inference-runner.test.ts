@@ -11,7 +11,13 @@ import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import {
+  LOAD_SKILL_TOOL_CALLABLE_NAME,
+  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
+} from '../skills/runtime-mcp-server'
+import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type { AcpRuntimeOptions } from './runtime'
+import { prepareRestrictedBackend } from './restricted-runtime-profile'
 import {
   RestrictedInferenceError,
   RestrictedInferenceRunner,
@@ -136,6 +142,63 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it('removes the Claude Skill projection and loader from restricted Session setup', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-inference-'))
+    const projectionRoot = '/runtime-support/agent-skills/claude/revision'
+    const prepared = await prepareRestrictedBackend(
+      backend(claudeCodeFramework, {
+        sessionOptions: {
+          additionalDirectories: [projectionRoot, '/preserved-directory'],
+          sandbox: {
+            filesystem: {
+              allowRead: [projectionRoot, '/preserved-read'],
+              denyWrite: [projectionRoot, '/preserved-write'],
+              denyRead: ['/restricted-secret']
+            },
+            network: { allowUnixSockets: ['/preserved.sock'] }
+          },
+          [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+            command: '/app/open-science',
+            entryPath: '/app/main.js',
+            root: projectionRoot
+          }
+        }
+      }),
+      temporaryRoot,
+      {
+        agentName: 'restricted-fixture',
+        description: 'Synthetic restricted inference fixture.',
+        systemPrompt: 'Do not use tools.',
+        openCodePermissions: { '*': 'deny' }
+      }
+    )
+    const presentation = new AcpSessionPresentationPolicy().buildSessionSetup({
+      framework: prepared.framework,
+      tooling: { artifacts: false, notebook: false, skillImport: false },
+      sessionOptions: prepared.sessionOptions,
+      backendSystemPromptAppends: prepared.systemPromptAppends
+    })
+    const claudeOptions = (
+      presentation.metaArg._meta?.claudeCode as { options?: Record<string, unknown> } | undefined
+    )?.options
+
+    expect(prepared.sessionOptions).not.toHaveProperty(OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION)
+    expect(prepared.sessionOptions?.additionalDirectories).toEqual(['/preserved-directory'])
+    expect(prepared.sessionOptions?.sandbox).toEqual({
+      filesystem: {
+        allowRead: ['/preserved-read'],
+        denyWrite: ['/preserved-write'],
+        denyRead: ['/restricted-secret']
+      },
+      network: { allowUnixSockets: ['/preserved.sock'] }
+    })
+    expect(claudeOptions?.mcpServers).toBeUndefined()
+    expect(claudeOptions?.toolAliases).toBeUndefined()
+    expect(claudeOptions?.allowedTools).toBeUndefined()
+    expect(JSON.stringify(claudeOptions)).not.toContain(projectionRoot)
+    expect(JSON.stringify(claudeOptions)).not.toContain(LOAD_SKILL_TOOL_CALLABLE_NAME)
+  })
+
   it('fails closed only for native Codex subscription targets', async () => {
     const { runner } = await makeRunner(backend(claudeCodeFramework))
 

@@ -1068,6 +1068,21 @@ class AcpRuntimeCoordinator {
     await retiring.requestRetirement()
   }
 
+  async requestSkillsReloadForFramework(frameworkId: AgentFrameworkId): Promise<void> {
+    const active = this.activeRuntime
+    if (!active) return
+
+    // A framework-scoped derived asset must not rotate an unrelated backend generation. An empty
+    // generation has no session holding stale assets; its first Session will provision from the
+    // current source of truth without an explicit reload.
+    const ownsFrameworkSession = active
+      .getSnapshot()
+      .sessionIds.some((sessionId) => active.isSessionUsingFramework(sessionId, frameworkId))
+    if (!ownsFrameworkSession) return
+
+    await this.requestSkillsReload()
+  }
+
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
     // The settings layer resolved this value against the currently selected model. Retiring
     // generations stay pinned to their own provider/model and therefore must not receive a value

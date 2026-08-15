@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, posix } from 'node:path'
 
@@ -24,6 +24,7 @@ vi.mock('electron', () => ({
 const { AgentRuntimeManager } = await import('./agent-runtime-manager')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
+const { connectorSkillSourceDir } = await import('../connectors/provision')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
 
@@ -85,16 +86,25 @@ describe('AgentRuntimeManager', () => {
   let inventory: RuntimeInventory
   let managedAdapterPath: string
   let managedCodexPath: string
-  let provisionClaudeConfig: ReturnType<typeof vi.fn>
   let manager: InstanceType<typeof AgentRuntimeManager>
+
+  const makeTreeWritable = async (root: string): Promise<void> => {
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+    await chmod(root, 0o755).catch(() => undefined)
+    await Promise.all(
+      entries.map((entry) =>
+        entry.isDirectory()
+          ? makeTreeWritable(join(root, entry.name))
+          : chmod(join(root, entry.name), 0o644).catch(() => undefined)
+      )
+    )
+  }
 
   const createManager = (
     overrides: Partial<ManagerOptions> = {}
   ): InstanceType<typeof AgentRuntimeManager> => {
-    provisionClaudeConfig = vi.fn().mockResolvedValue(undefined)
     const skills = {
-      materializeSkills: vi.fn().mockResolvedValue(undefined),
-      provisionClaudeConfig
+      materializeSkills: vi.fn().mockResolvedValue(undefined)
     } as unknown as SkillCatalogModule
     const connectors = {
       getConnectors: vi.fn().mockResolvedValue(undefined),
@@ -138,6 +148,7 @@ describe('AgentRuntimeManager', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks()
+    await makeTreeWritable(storageRoot)
     await rm(storageRoot, { recursive: true, force: true })
   })
 
@@ -391,12 +402,27 @@ describe('AgentRuntimeManager', () => {
     expect((await repository.getSettings()).opencodePath).toBeUndefined()
   })
 
-  it('provisions the runtime and preserves the shared versus isolated Claude probe contracts', async () => {
+  it('mounts the Skill projection for shared, isolated, and custom Claude probes', async () => {
     const executeClaudeProbe = vi.fn().mockResolvedValue(undefined)
     manager = createManager({ executeClaudeProbe })
     const executablePath = join(storageRoot, 'bin', 'claude')
     await repository.setClaudeInfo({ resolvedPath: executablePath, version: '2.1.0' })
     const settings = await repository.getSettings()
+    const configDir = getAppClaudeConfigDir(storageRoot)
+    const projectionRoot = join(
+      storageRoot,
+      'runtime-support',
+      'agent-skills',
+      'claude',
+      'v1',
+      'revision-1'
+    )
+    const provisionRuntime = vi.spyOn(manager, 'provisionClaudeRuntimeConfig').mockResolvedValue({
+      privateProfileDir: configDir,
+      settingsPath: join(configDir, 'settings.json'),
+      privateSettings: {},
+      skillProjection: { root: projectionRoot, revision: 'revision-1' }
+    })
 
     await expect(
       manager.runClaudeSubscriptionProbe(
@@ -410,14 +436,24 @@ describe('AgentRuntimeManager', () => {
         settings
       )
     ).resolves.toEqual({ ok: true, category: 'ok' })
+    await expect(
+      manager.runClaudeSubscriptionProbe(
+        {
+          type: 'custom',
+          model: 'custom-model',
+          baseUrl: 'https://gateway.example/v1',
+          key: 'api-key'
+        },
+        settings
+      )
+    ).resolves.toEqual({ ok: true, category: 'ok' })
 
-    const configDir = getAppClaudeConfigDir(storageRoot)
-    expect(provisionClaudeConfig).toHaveBeenCalledTimes(2)
+    expect(provisionRuntime).toHaveBeenCalledTimes(3)
     expect(executeClaudeProbe).toHaveBeenNthCalledWith(
       1,
       executablePath,
       expect.objectContaining({ CLAUDE_CONFIG_DIR: join(storageRoot, 'user-claude') }),
-      ['--settings', join(configDir, 'settings.json'), '--plugin-dir', configDir]
+      ['--settings', join(configDir, 'settings.json'), '--add-dir', projectionRoot]
     )
     expect(executeClaudeProbe).toHaveBeenNthCalledWith(
       2,
@@ -425,7 +461,18 @@ describe('AgentRuntimeManager', () => {
       expect.objectContaining({
         CLAUDE_CONFIG_DIR: configDir,
         CLAUDE_CODE_OAUTH_TOKEN: 'setup-token'
-      })
+      }),
+      ['--add-dir', projectionRoot]
+    )
+    expect(executeClaudeProbe).toHaveBeenNthCalledWith(
+      3,
+      executablePath,
+      expect.objectContaining({
+        CLAUDE_CONFIG_DIR: configDir,
+        ANTHROPIC_BASE_URL: 'https://gateway.example',
+        ANTHROPIC_AUTH_TOKEN: 'api-key'
+      }),
+      ['--add-dir', projectionRoot]
     )
   })
 
@@ -436,17 +483,22 @@ describe('AgentRuntimeManager', () => {
     const agentRoot = join(storageRoot, 'codex')
 
     await manager.materializeAgentSkills(settings, agentRoot, new Set())
-    await manager.provisionClaudeRuntimeConfig(settings)
+    const claudeRuntime = await manager.provisionClaudeRuntimeConfig(settings)
 
-    expect(syncComputeSkillDocument).toHaveBeenCalledWith(join(agentRoot, 'skills'))
-    expect(syncComputeSkillDocument).toHaveBeenCalledWith(
-      join(getAppClaudeConfigDir(storageRoot), 'skills')
+    expect(syncComputeSkillDocument).toHaveBeenCalledWith(join(agentRoot, 'skills'), 'app-owned')
+    const stagedClaudeCall = vi.mocked(syncComputeSkillDocument).mock.calls[1]
+    const stagedClaudeSkillsDir = stagedClaudeCall?.[0]
+    expect(stagedClaudeSkillsDir).toContain(
+      join(storageRoot, 'runtime-support', 'agent-skills', 'claude', 'v1', '.staging-')
     )
+    expect(stagedClaudeSkillsDir).toMatch(/[\\/]skills$/)
+    expect(stagedClaudeCall?.[1]).toBe('agent-facing')
+    expect(claudeRuntime.skillProjection.root).not.toContain('.staging-')
   })
 
   it('synchronizes provisioned custom Connector docs into isolated agent Skill roots', async () => {
     const customSkillName = 'mcp-xt'
-    const sourceDir = join(getAppClaudeConfigDir(storageRoot), 'skills', customSkillName)
+    const sourceDir = join(connectorSkillSourceDir(storageRoot), customSkillName)
     await mkdir(sourceDir, { recursive: true })
     await writeFile(
       join(sourceDir, 'SKILL.md'),
@@ -509,6 +561,16 @@ describe('AgentRuntimeManager', () => {
     'classifies an isolated Claude $name without mutating provider state',
     async ({ error, result }) => {
       manager = createManager({ executeClaudeProbe: vi.fn().mockRejectedValue(error) })
+      const configDir = getAppClaudeConfigDir(storageRoot)
+      vi.spyOn(manager, 'provisionClaudeRuntimeConfig').mockResolvedValue({
+        privateProfileDir: configDir,
+        settingsPath: join(configDir, 'settings.json'),
+        privateSettings: {},
+        skillProjection: {
+          root: join(storageRoot, 'runtime-support', 'agent-skills', 'claude', 'v1', 'revision-1'),
+          revision: 'revision-1'
+        }
+      })
       await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
 
       await expect(

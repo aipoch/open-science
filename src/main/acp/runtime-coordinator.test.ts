@@ -209,6 +209,8 @@ const createFakeRuntime = (options: {
     hasLiveSession: (projectId: string, sessionId: string) =>
       snapshot.sessionIds.includes(sessionId) && sessionProjects.get(sessionId) === projectId,
     liveSessionProjectId: (sessionId: string) => sessionProjects.get(sessionId),
+    isSessionUsingFramework: (sessionId: string, frameworkId: string) =>
+      snapshot.sessionIds.includes(sessionId) && options.frameworkId === frameworkId,
     getActiveArtifactRunIds: () => [],
     connect,
     createSession,
@@ -1647,6 +1649,36 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestRetirement).toHaveBeenCalledOnce()
     expect(created[1].applyReasoningEffortChange).not.toHaveBeenCalled()
     expect(created[2].applyReasoningEffortChange).toHaveBeenCalledWith('high')
+  })
+
+  it('reloads Skills only when the active generation owns the requested framework', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: created.length === 0 ? 'codex' : 'claude-code',
+        sessionIds: [`session-${created.length + 1}`],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+
+    await coordinator.createSession()
+    await coordinator.requestSkillsReloadForFramework('claude-code')
+
+    expect(created).toHaveLength(1)
+    expect(created[0].requestRetirement).not.toHaveBeenCalled()
+
+    await coordinator.requestSkillsReloadForFramework('codex')
+
+    expect(created[0].requestRetirement).toHaveBeenCalledOnce()
+    expect(created).toHaveLength(1)
+
+    await coordinator.createSession()
+    await coordinator.requestSkillsReloadForFramework('claude-code')
+
+    expect(created).toHaveLength(2)
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
   })
 
   it('routes a model hot-switch only to the active runtime generation', async () => {

@@ -727,8 +727,8 @@ describe('SkillCatalogModule', () => {
       const opencodeRoot = join(storageRoot, 'opencode', 'config', 'opencode')
       const codexRoot = join(storageRoot, 'codex')
 
-      // Claude Code receives the package through its settings/plugin provisioning boundary.
-      await catalog.provisionClaudeConfig(claudeRoot, [])
+      // Claude Code receives the package through its external read-only projection boundary.
+      await catalog.materializeSkills(claudeRoot, [])
       await expect(
         readFile(join(claudeRoot, 'skills', projectedDirectory, 'SKILL.md'), 'utf8')
       ).resolves.toContain('name: route-skill')

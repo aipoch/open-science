@@ -9442,7 +9442,7 @@ describe('ACP runtime session management', () => {
     const fakeAgent = startFakeAgent(process, ['remote-session-1'], { supportsResume: true })
     const sessionOptions = {
       settings: '/app/claude/settings.json',
-      plugins: [{ type: 'local', path: '/app/claude', skipMcpDiscovery: true }]
+      plugins: [{ type: 'local', path: '/app/claude' }]
     }
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',

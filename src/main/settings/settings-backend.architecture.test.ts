@@ -736,7 +736,7 @@ describe('Settings backend ownership architecture', () => {
     expect(computeIpc).toContain('legacyComputeGrants.addComputeGrant(grant)')
     const mainIpc = readSource(resolve(projectRoot, 'src/main/ipc.ts'))
     expect(mainIpc).toContain(
-      'capability: new SettingsService({\n      repository: settingsRepository,\n      applyNetworkProxy:'
+      'capability: new SettingsService({\n      repository: settingsRepository,\n      skillRuntimeMcpEntryPath: mainEntryPath,\n      applyNetworkProxy:'
     )
     expect(mainIpc).toContain('permissionGrantRegistry,\n    settingsRepository')
   })

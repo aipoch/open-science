@@ -206,12 +206,17 @@ describe('compute handlers', () => {
     expect(del).toHaveBeenCalledWith('ssh:biowulf')
   })
 
-  it('refreshes the canonical Compute Skill after host create and delete', async () => {
+  it('refreshes mutable Compute Skills and requests a runtime reload after host create and delete', async () => {
     const create = vi.fn(() => Promise.resolve(sampleHost()))
     const del = vi.fn(() => Promise.resolve())
     const syncComputeSkill = vi.fn(() => Promise.resolve())
+    const requestSkillRuntimeReload = vi.fn()
     const handlers = createComputeHandlers(
-      mockRepository({ create, delete: del }),
+      mockRepository({
+        get: vi.fn(() => Promise.resolve(null)),
+        create,
+        delete: del
+      }),
       undefined,
       undefined,
       undefined,
@@ -222,13 +227,20 @@ describe('compute handlers', () => {
       undefined,
       undefined,
       undefined,
-      syncComputeSkill
+      syncComputeSkill,
+      {
+        pruneSessionEnabledHosts: vi.fn((_providerId, afterPrune) =>
+          afterPrune ? afterPrune() : Promise.resolve()
+        ),
+        requestSkillRuntimeReload
+      }
     )
 
     await handlers.create({ sshAlias: 'biowulf' })
     await handlers.delete('ssh:biowulf')
 
     expect(syncComputeSkill).toHaveBeenCalledTimes(2)
+    expect(requestSkillRuntimeReload).toHaveBeenCalledTimes(2)
   })
 
   it('sshConfigAliases uses the injected alias lister', async () => {
@@ -238,7 +250,85 @@ describe('compute handlers', () => {
     await expect(handlers.sshConfigAliases()).resolves.toEqual(['biowulf', 'lab-gpu'])
   })
 
-  it('probe delegates to the injected ComputeService', async () => {
+  it.each([
+    {
+      name: 'connected',
+      probeResult: {
+        ok: true as const,
+        probedAt: '2026-01-01T00:00:00Z',
+        exitCode: 0,
+        errorTail: null,
+        cpus: 64,
+        detectedScheduler: 'slurm' as const
+      }
+    },
+    {
+      name: 'unreachable',
+      probeResult: {
+        ok: false as const,
+        probedAt: '2026-01-01T00:00:00Z',
+        exitCode: 255,
+        errorTail: 'Connection failed'
+      }
+    }
+  ])('refreshes Compute Skills after a persisted $name probe result', async ({ probeResult }) => {
+    const probe = vi.fn(() => Promise.resolve(probeResult))
+    const syncComputeSkill = vi.fn(() => Promise.resolve())
+    const requestSkillRuntimeReload = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ probe }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      syncComputeSkill,
+      {
+        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve()),
+        requestSkillRuntimeReload
+      }
+    )
+
+    await expect(handlers.probe('ssh:biowulf')).resolves.toEqual(probeResult)
+    expect(probe).toHaveBeenCalledWith('ssh:biowulf')
+    expect(syncComputeSkill).toHaveBeenCalledOnce()
+    expect(requestSkillRuntimeReload).toHaveBeenCalledOnce()
+  })
+
+  it('keeps Skill state unchanged when probe rejects before a persisted result', async () => {
+    const probe = vi.fn(() => Promise.reject(new Error('No compute host found')))
+    const syncComputeSkill = vi.fn(() => Promise.resolve())
+    const requestSkillRuntimeReload = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ probe }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      syncComputeSkill,
+      {
+        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve()),
+        requestSkillRuntimeReload
+      }
+    )
+
+    await expect(handlers.probe('ssh:missing')).rejects.toThrow('No compute host found')
+    expect(syncComputeSkill).not.toHaveBeenCalled()
+    expect(requestSkillRuntimeReload).not.toHaveBeenCalled()
+  })
+
+  it('returns a committed probe result when mutable Skill sync fails', async () => {
     const probeResult = {
       ok: true,
       probedAt: '2026-01-01T00:00:00Z',
@@ -248,12 +338,30 @@ describe('compute handlers', () => {
       detectedScheduler: 'slurm' as const
     }
     const probe = vi.fn(() => Promise.resolve(probeResult))
-    const handlers = createComputeHandlers(mockRepository({}), undefined, mockService({ probe }))
+    const syncComputeSkill = vi.fn(() => Promise.reject(new Error('projection unavailable')))
+    const requestSkillRuntimeReload = vi.fn()
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ probe }),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      syncComputeSkill,
+      {
+        pruneSessionEnabledHosts: vi.fn(() => Promise.resolve()),
+        requestSkillRuntimeReload
+      }
+    )
 
     const result = await handlers.probe('ssh:biowulf')
-    expect(probe).toHaveBeenCalledWith('ssh:biowulf')
     expect(result.ok).toBe(true)
-    expect(result.cpus).toBe(64)
+    expect(requestSkillRuntimeReload).toHaveBeenCalledOnce()
   })
 
   it('listDir delegates to the injected ComputeService', async () => {

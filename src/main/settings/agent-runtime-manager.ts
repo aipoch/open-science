@@ -27,6 +27,7 @@ import {
 } from '../agent-framework'
 import type { AgentConfigFile } from '../agent-framework/types'
 import {
+  connectorSkillSourceDir,
   syncConnectorSkillDocs,
   syncMaterializedCustomServerSkillDocs
 } from '../connectors/provision'
@@ -34,6 +35,7 @@ import { ComputeHostRepository } from '../compute/repository'
 import { createLogger } from '../logger'
 import { getProjectDbClient } from '../projects/prisma-client'
 import { hasCanonicalComputeSkillDoc, syncComputeSkillDoc } from '../compute/skill-doc'
+import type { SkillDirectoryLayout } from '../skills/materializer'
 import { writeAgentConfigFiles } from './agent-config-files'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import {
@@ -50,6 +52,8 @@ import {
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
+import { provisionAppClaudePrivateProfile } from './claude-config-provision'
+import { provisionClaudeRuntime, type ClaudeRuntimeAssets } from './claude-runtime-provisioner'
 import {
   DEFAULT_REGISTRIES,
   installManagedClaude,
@@ -79,7 +83,7 @@ import { runEnvironmentCheck } from './environment-check'
 import { computePreflight } from './preflight'
 import { isEncryptionAvailable } from './crypto'
 import { augmentedPathEnv } from './shell-path'
-import { buildProviderEnv, getAppClaudeConfigDir, type ResolvedProvider } from './provider-env'
+import { buildProviderEnv, type ResolvedProvider } from './provider-env'
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 import type { ProviderAccountsModule } from './provider-accounts'
 import type { SettingsRepository } from './repository'
@@ -227,7 +231,10 @@ export type AgentRuntimeManagerOptions = {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
-  syncComputeSkillDocument?: (skillsDir: string) => Promise<void>
+  syncComputeSkillDocument?: (
+    skillsDir: string,
+    directoryLayout?: SkillDirectoryLayout
+  ) => Promise<void>
 }
 
 // Owns host runtime discovery, installation, executable preparation, and runtime-specific filesystem
@@ -255,7 +262,10 @@ export class AgentRuntimeManager {
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
   private readonly resolveProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
-  private readonly syncComputeSkillDocument: (skillsDir: string) => Promise<void>
+  private readonly syncComputeSkillDocument: (
+    skillsDir: string,
+    directoryLayout?: SkillDirectoryLayout
+  ) => Promise<void>
 
   constructor(options: AgentRuntimeManagerOptions) {
     this.repository = options.repository
@@ -302,12 +312,12 @@ export class AgentRuntimeManager {
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
     this.syncComputeSkillDocument =
       options.syncComputeSkillDocument ??
-      (async (skillsDir) => {
-        if (!(await hasCanonicalComputeSkillDoc(skillsDir))) return
+      (async (skillsDir, directoryLayout = 'app-owned') => {
+        if (!(await hasCanonicalComputeSkillDoc(skillsDir, directoryLayout))) return
         const hosts = await new ComputeHostRepository(() =>
           getProjectDbClient(this.storageRoot)
         ).list()
-        await syncComputeSkillDoc(skillsDir, hosts)
+        await syncComputeSkillDoc(skillsDir, hosts, directoryLayout)
       })
   }
 
@@ -610,19 +620,44 @@ export class AgentRuntimeManager {
     configRoot: string,
     forcedSkillIds: ReadonlySet<string>
   ): Promise<string[]> {
-    await this.skills.materializeSkills(configRoot, settings.disabledSkillIds ?? [], forcedSkillIds)
-    const bundledIds = this.connectors.enabledConnectorIds(settings.connectors)
-    await syncConnectorSkillDocs(join(configRoot, 'skills'), bundledIds)
+    return this.materializeSkillProjection(
+      settings,
+      configRoot,
+      forcedSkillIds,
+      this.connectors.enabledConnectorIds(settings.connectors)
+    )
+  }
+
+  private async materializeSkillProjection(
+    settings: StoredSettings,
+    configRoot: string,
+    forcedSkillIds: ReadonlySet<string>,
+    bundledConnectorIds: string[],
+    options: Readonly<{ directoryLayout?: SkillDirectoryLayout }> = {}
+  ): Promise<string[]> {
+    await this.skills.materializeSkills(
+      configRoot,
+      settings.disabledSkillIds ?? [],
+      forcedSkillIds,
+      options
+    )
+    await syncConnectorSkillDocs(join(configRoot, 'skills'), bundledConnectorIds)
     const customSkillSync = await syncMaterializedCustomServerSkillDocs(
-      join(getAppClaudeConfigDir(this.storageRoot), 'skills'),
+      connectorSkillSourceDir(this.storageRoot),
       join(configRoot, 'skills'),
       this.connectors.materializedCustomSkillNames()
     )
     for (const failure of customSkillSync.failures) {
       log.warn('Failed to materialize custom Connector Skill doc', failure)
     }
-    await this.syncComputeSkillDocument(join(configRoot, 'skills'))
-    return [...bundledIds.map((id) => `mcp-${id}`), ...customSkillSync.materializedSkillNames]
+    await this.syncComputeSkillDocument(
+      join(configRoot, 'skills'),
+      options.directoryLayout ?? 'app-owned'
+    )
+    return [
+      ...bundledConnectorIds.map((id) => `mcp-${id}`),
+      ...customSkillSync.materializedSkillNames
+    ]
   }
 
   async materializeAgentConfigFiles(files: AgentConfigFile[] | undefined): Promise<void> {
@@ -633,19 +668,23 @@ export class AgentRuntimeManager {
     settings: StoredSettings,
     forcedSkillIds: ReadonlySet<string> = new Set(),
     modelConfig?: ClaudeRuntimeModelConfig | null
-  ): Promise<string> {
-    const configDir = getAppClaudeConfigDir(this.storageRoot)
-    const disabledSkillIds = (settings.disabledSkillIds ?? []).filter(
-      (id) => !forcedSkillIds.has(id)
-    )
-    await this.skills.provisionClaudeConfig(configDir, disabledSkillIds, modelConfig)
-    const connectors = await this.connectors.getConnectors()
-    await syncConnectorSkillDocs(
-      join(configDir, 'skills'),
-      this.connectors.enabledConnectorIds(connectors)
-    )
-    await this.syncComputeSkillDocument(join(configDir, 'skills'))
-    return configDir
+  ): Promise<ClaudeRuntimeAssets> {
+    return provisionClaudeRuntime({
+      storageRoot: this.storageRoot,
+      provisionPrivateProfile: (privateProfileDir) =>
+        provisionAppClaudePrivateProfile(privateProfileDir, modelConfig),
+      materializeProjection: async (projectionRoot) => {
+        const claudeProjectConfigRoot = join(projectionRoot, '.claude')
+        const connectors = await this.connectors.getConnectors()
+        await this.materializeSkillProjection(
+          settings,
+          claudeProjectConfigRoot,
+          forcedSkillIds,
+          this.connectors.enabledConnectorIds(connectors),
+          { directoryLayout: 'agent-facing' }
+        )
+      }
+    })
   }
 
   async resolveClaudeExecutable(storedPath: string | undefined): Promise<string> {
@@ -705,7 +744,7 @@ export class AgentRuntimeManager {
       }
     }
 
-    const appConfigDir = await this.provisionClaudeRuntimeConfig(settings)
+    const runtimeConfig = await this.provisionClaudeRuntimeConfig(settings)
     const envOverrides = buildProviderEnv(provider, {
       storageRoot: this.storageRoot,
       claudeExecutablePath: executablePath,
@@ -717,12 +756,15 @@ export class AgentRuntimeManager {
       if (provider.type === 'claude-shared') {
         await this.executeClaudeProbe(executablePath, env, [
           '--settings',
-          join(appConfigDir, 'settings.json'),
-          '--plugin-dir',
-          appConfigDir
+          runtimeConfig.settingsPath,
+          '--add-dir',
+          runtimeConfig.skillProjection.root
         ])
       } else {
-        await this.executeClaudeProbe(executablePath, env)
+        await this.executeClaudeProbe(executablePath, env, [
+          '--add-dir',
+          runtimeConfig.skillProjection.root
+        ])
       }
       return { ok: true, category: 'ok' }
     } catch (error) {

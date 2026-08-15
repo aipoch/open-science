@@ -21,6 +21,7 @@ import {
 } from './skill-package-transaction-owner'
 import { readSpecialistPackageSkillMetadata } from './specialist-package-adapter'
 import type { UserSkillCompatibilityIndex } from './user-skill-compatibility-index'
+import { SAFE_SKILL_NAME, SKILL_NAME_MAX_LENGTH, assertUsableSkillName } from './skill-name'
 
 const log = createLogger('skills')
 
@@ -33,34 +34,14 @@ export type UserSkillSource = (typeof USER_SOURCES)[number]
 
 export const SAFE_SKILL_DIRECTORY_NAME = /^[a-z0-9-]+$/
 
-export const SAFE_SKILL_NAME = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/
-const SKILL_NAME_MAX_LENGTH = 64
-const RESERVED_SKILL_NAME_PREFIXES = ['os-', 'mcp-'] as const
-
-export const isReservedSkillName = (name: string): boolean =>
-  RESERVED_SKILL_NAME_PREFIXES.some((prefix) => name.startsWith(prefix))
-
-export const isUsableSkillName = (name: string): boolean =>
-  SAFE_SKILL_NAME.test(name) && !isReservedSkillName(name)
-
-export const assertUsableSkillName = (name: string): void => {
-  if (!name) throw new Error('Skill name is required.')
-  if (!SAFE_SKILL_NAME.test(name) || name.length > SKILL_NAME_MAX_LENGTH) {
-    throw new Error('Skill name must use up to 64 lowercase letters, numbers, and single hyphens.')
-  }
-  if (!isUsableSkillName(name)) {
-    throw new Error(`Skill name may not start with ${RESERVED_SKILL_NAME_PREFIXES.join(' or ')}.`)
-  }
-}
-
-export const normalizeSkillName = (name: string): string =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64)
-
 export { frontmatterBlock }
+export {
+  SAFE_SKILL_NAME,
+  assertUsableSkillName,
+  isReservedSkillName,
+  isUsableSkillName,
+  normalizeSkillName
+} from './skill-name'
 
 export const parseUserSkillId = (
   id: string

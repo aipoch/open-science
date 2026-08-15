@@ -43,7 +43,11 @@ import {
   type FetchLike
 } from '../skills/github-import'
 import { decodeBoundedBase64, SKILL_IMPORT_LIMITS } from '../skills/import-limits'
-import { ClaudeCodeSkillMaterializer, OS_SKILL_PREFIX } from '../skills/materializer'
+import {
+  ClaudeCodeSkillMaterializer,
+  OS_SKILL_PREFIX,
+  type SkillMaterializationOptions
+} from '../skills/materializer'
 import { netFetch } from '../skills/net-fetch'
 import { SkillRegistry, type BundledSkill } from '../skills/registry'
 import { readSkillFile } from '../skills/skill-files'
@@ -54,10 +58,6 @@ import {
   isReservedSkillName
 } from '../skills/user-skill-repository'
 import { createLogger } from '../logger'
-import {
-  provisionAppClaudeConfigDir,
-  type ClaudeRuntimeModelConfig
-} from './claude-config-provision'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'
@@ -860,31 +860,17 @@ class SkillCatalogModule {
   async materializeSkills(
     configRoot: string,
     disabledIds: readonly string[],
-    forcedIds: ReadonlySet<string> = new Set()
+    forcedIds: ReadonlySet<string> = new Set(),
+    options: SkillMaterializationOptions = {}
   ): Promise<void> {
     const disabled = new Set(disabledIds.filter((id) => !forcedIds.has(id)))
     await new ClaudeCodeSkillMaterializer().sync(
       configRoot,
       (await this.catalog()).filter(
         (skill) => skill.exposure === 'internal' || !disabled.has(skill.id)
-      )
+      ),
+      options
     )
-  }
-
-  async provisionClaudeConfig(
-    configDir: string,
-    disabledSkillIds: string[],
-    modelConfig?: ClaudeRuntimeModelConfig | null
-  ): Promise<void> {
-    const skills = await this.catalog()
-    const internalIds = new Set(
-      skills.filter((skill) => skill.exposure === 'internal').map((skill) => skill.id)
-    )
-    await provisionAppClaudeConfigDir(configDir, {
-      skills,
-      disabledSkillIds: disabledSkillIds.filter((id) => !internalIds.has(id)),
-      ...(modelConfig === undefined ? {} : { modelConfig })
-    })
   }
 
   private allowedCodexSkillsRoot(codexHome: string): string | undefined {

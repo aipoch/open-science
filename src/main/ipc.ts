@@ -66,6 +66,7 @@ import { isCustomMcpServerRouteSafe, toCustomMcpConfig } from './connectors/cust
 import { createMoleculePreviewHandler } from './connectors/molecule-preview'
 import { ALL_CONNECTOR_IDS } from './connectors/registry'
 import { ConnectorRuntimeSettingsProjection } from './connectors/runtime-settings-projection'
+import { connectorSkillSourceDir } from './connectors/provision'
 import { ConnectorService } from './connectors/service'
 import { registerFileSaveHandlers } from './file-save'
 import { ImmutableInputAuthority } from './immutable-input-authority'
@@ -199,7 +200,6 @@ import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './set
 import { registerLocalFsIpcHandlers } from './local-fs/ipc'
 import { GrantedLocalRootsRepository } from './local-fs/granted-roots-repository'
 import { LocalFsService } from './local-fs/service'
-import { getAppClaudeConfigDir } from './settings/provider-env'
 import { SettingsService } from './settings/service'
 import { SettingsRepository } from './settings/repository'
 import { NetworkProxyRuntime } from './settings/network-proxy-runtime'
@@ -392,6 +392,7 @@ const createApplicationModules = async (
   const settingsService = await modules.add(undefined, () => ({
     capability: new SettingsService({
       repository: settingsRepository,
+      skillRuntimeMcpEntryPath: mainEntryPath,
       applyNetworkProxy: (settings) => networkProxyRuntime.apply(settings).then(() => undefined),
       resolveCodexProxyEnvironment: () =>
         Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
@@ -1116,7 +1117,7 @@ const createApplicationModules = async (
   })
   const connectorRuntimeSettings = new ConnectorRuntimeSettingsProjection({
     readConnectors: () => settingsService.getConnectors(),
-    skillsDir: join(getAppClaudeConfigDir(resolveStorageRoot()), 'skills'),
+    skillsDir: connectorSkillSourceDir(resolveStorageRoot()),
     mcpClientManager,
     notifyStatusChanged: () => broadcastToRenderers('settings:connector-runtime-changed', undefined)
   })
@@ -1226,6 +1227,8 @@ const createApplicationModules = async (
     permissionGrantRegistry,
     settingsRepository,
     {
+      requestSkillRuntimeReload: () =>
+        void runtimeRef.current?.requestSkillsReloadForFramework('claude-code'),
       pruneSessionEnabledHosts: async (providerId, afterPrune) => {
         if (!sessionEnabledComputeHostsOwnerRef.current) {
           throw new Error('Session enabled Compute Host ownership is not initialized.')

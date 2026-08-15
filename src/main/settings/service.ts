@@ -125,6 +125,8 @@ export type UninstallResult = {
 export type SettingsServiceOptions = {
   repository?: SettingsRepository
   storageRoot?: string
+  // Packaged main entry reused as the isolated stdio Skill runtime MCP child.
+  skillRuntimeMcpEntryPath?: string
   log?: Logger
   detectDeps?: ClaudeDetectDeps
   opencodeDetectDeps?: OpencodeDetectDeps
@@ -256,7 +258,8 @@ class SettingsService {
       runtime: this.runtimeManager,
       connectors: this.connectors,
       storageRoot: this.storageRoot,
-      userClaudeDir: this.userClaudeDir
+      userClaudeDir: this.userClaudeDir,
+      skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? ''
     })
     this.subagentModels = createSubagentModels(
       this.repository,

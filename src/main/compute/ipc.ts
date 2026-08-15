@@ -19,7 +19,6 @@ import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs
 import { getProjectDbClient } from '../projects/prisma-client'
 import { createLogger, errorLogFields } from '../logger'
 import { resolveDataRoot, resolveStorageRoot } from '../storage-root'
-import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { opencodeConfigDir } from '../agent-framework/opencode'
@@ -182,6 +181,7 @@ type ComputeHandlers = {
 
 type ComputeHostLifecycle = Readonly<{
   pruneSessionEnabledHosts(providerId: string, afterPrune?: () => Promise<void>): Promise<void>
+  requestSkillRuntimeReload?: () => void
 }>
 
 // Adapts a repository into thin handlers.
@@ -323,7 +323,11 @@ const createComputeHandlers = (
           }
         }
         const host = await repository.create(request)
-        await syncComputeSkillDocument?.()
+        try {
+          await syncComputeSkillDocument?.()
+        } finally {
+          hostLifecycle?.requestSkillRuntimeReload?.()
+        }
         return host
       }),
     delete: (providerId) =>
@@ -357,13 +361,28 @@ const createComputeHandlers = (
             await syncComputeSkillDocument?.()
           } catch (error) {
             log.warn('compute skill sync after host deletion failed', errorLogFields(error))
+          } finally {
+            hostLifecycle?.requestSkillRuntimeReload?.()
           }
         } finally {
           broker.completeProviderInvalidation(providerId)
         }
       }),
     sshConfigAliases: () => listSshAliases(),
-    probe: (providerId) => service.probe(providerId),
+    probe: async (providerId) => {
+      // Probe failures such as an unreachable host are persisted ProbeResult values, not rejected
+      // operations. Refresh derived Skill state only after the owner has returned from its commit;
+      // an exception before that point keeps the existing projection and runtime generation intact.
+      const result = await service.probe(providerId)
+      try {
+        await syncComputeSkillDocument?.()
+      } catch (error) {
+        log.warn('compute skill sync after host probe failed', errorLogFields(error))
+      } finally {
+        hostLifecycle?.requestSkillRuntimeReload?.()
+      }
+      return result
+    },
     detailsGet: (providerId) => service.getDetails(providerId),
     detailsSave: (providerId, text, oldText, author) =>
       service.replaceDetails(providerId, { text, oldText, author }),
@@ -426,7 +445,6 @@ const syncCurrentComputeSkillDocuments = async (
   repository: ComputeHostRepository
 ): Promise<void> => {
   const skillsDirs = [
-    join(getAppClaudeConfigDir(storageRoot), 'skills'),
     join(opencodeConfigDir(storageRoot), 'skills'),
     join(codexStorageDir(storageRoot), 'skills'),
     join(codexSubscriptionStorageDir(storageRoot), 'skills')

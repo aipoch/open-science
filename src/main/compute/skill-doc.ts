@@ -2,6 +2,7 @@ import { chmod, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type { ComputeHost } from '../../shared/compute'
+import type { SkillDirectoryLayout } from '../skills/materializer'
 
 const COMPUTE_SKILL_ID = 'remote-compute-ssh'
 const COMPUTE_SKILL_DIRECTORY = `os-${COMPUTE_SKILL_ID}`
@@ -64,9 +65,13 @@ const preserveComputeHostProjection = (document: string, priorDocument: string):
 // is intentionally nothing to create or expose.
 const syncComputeSkillDoc = async (
   skillsDir: string,
-  hosts: readonly ComputeHost[]
+  hosts: readonly ComputeHost[],
+  directoryLayout: SkillDirectoryLayout = 'app-owned'
 ): Promise<void> => {
-  const directory = join(skillsDir, COMPUTE_SKILL_DIRECTORY)
+  const directory = join(
+    skillsDir,
+    directoryLayout === 'agent-facing' ? COMPUTE_SKILL_ID : COMPUTE_SKILL_DIRECTORY
+  )
   const file = join(directory, 'SKILL.md')
   let document: string
   try {
@@ -98,8 +103,18 @@ const syncComputeSkillDoc = async (
   }
 }
 
-const hasCanonicalComputeSkillDoc = async (skillsDir: string): Promise<boolean> =>
-  readFile(join(skillsDir, COMPUTE_SKILL_DIRECTORY, 'SKILL.md'), 'utf8')
+const hasCanonicalComputeSkillDoc = async (
+  skillsDir: string,
+  directoryLayout: SkillDirectoryLayout = 'app-owned'
+): Promise<boolean> =>
+  readFile(
+    join(
+      skillsDir,
+      directoryLayout === 'agent-facing' ? COMPUTE_SKILL_ID : COMPUTE_SKILL_DIRECTORY,
+      'SKILL.md'
+    ),
+    'utf8'
+  )
     .then(() => true)
     .catch(() => false)
 

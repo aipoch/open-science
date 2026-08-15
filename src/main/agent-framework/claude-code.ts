@@ -18,6 +18,12 @@ import type {
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
 import { renderAppMcpToolReferences } from './app-mcp-names'
+import {
+  LOAD_SKILL_TOOL_CALLABLE_NAME,
+  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
+  SKILL_RUNTIME_MCP_SERVER_NAME,
+  createSkillRuntimeMcpServerConfig
+} from '../skills/runtime-mcp-server'
 
 // Select Claude Code's complete built-in tool set explicitly instead of relying on
 // claude-agent-acp's current fallback. This keeps WebFetch/WebSearch available if the adapter's
@@ -86,7 +92,40 @@ export const claudeCodeFramework: AgentFramework = {
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
     // settingSources:['user'] excludes workspace settings that could override the active provider.
     // Shared mode adds app-owned settings/plugins at the SDK flag layer via sessionOptions.
-    const sessionOptions = ctx.sessionOptions ?? {}
+    const sessionOptions = { ...(ctx.sessionOptions ?? {}) }
+    const skillRuntime = recordValue(sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION])
+    delete sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]
+    const skillRuntimeEnabled =
+      ctx.skillRuntimeScope !== undefined &&
+      (ctx.skillRuntimeScope === 'all' || ctx.skillRuntimeScope.length > 0) &&
+      typeof skillRuntime.root === 'string' &&
+      typeof skillRuntime.command === 'string' &&
+      typeof skillRuntime.entryPath === 'string'
+    const mcpServers = skillRuntimeEnabled
+      ? {
+          ...recordValue(sessionOptions.mcpServers),
+          [SKILL_RUNTIME_MCP_SERVER_NAME]: createSkillRuntimeMcpServerConfig({
+            command: skillRuntime.command as string,
+            entryPath: skillRuntime.entryPath as string,
+            root: skillRuntime.root as string,
+            ...(ctx.skillRuntimeScope !== 'all' ? { allowedNames: ctx.skillRuntimeScope } : {})
+          })
+        }
+      : sessionOptions.mcpServers
+    const toolAliases = skillRuntimeEnabled
+      ? {
+          ...recordValue(sessionOptions.toolAliases),
+          Skill: LOAD_SKILL_TOOL_CALLABLE_NAME
+        }
+      : sessionOptions.toolAliases
+    const allowedTools = skillRuntimeEnabled
+      ? [
+          ...new Set([
+            ...stringArrayValue(sessionOptions.allowedTools),
+            LOAD_SKILL_TOOL_CALLABLE_NAME
+          ])
+        ]
+      : sessionOptions.allowedTools
     const disallowedTools = Object.freeze([
       ...new Set([
         ...stringArrayValue(sessionOptions.disallowedTools),
@@ -113,6 +152,9 @@ export const claudeCodeFramework: AgentFramework = {
           tools: CLAUDE_CODE_BUILTIN_TOOLS,
           settingSources: ['user'],
           ...sessionOptions,
+          ...(mcpServers !== undefined ? { mcpServers } : {}),
+          ...(toolAliases !== undefined ? { toolAliases } : {}),
+          ...(allowedTools !== undefined ? { allowedTools } : {}),
           disallowedTools,
           managedSettings,
           env,

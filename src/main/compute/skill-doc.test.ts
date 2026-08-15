@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ComputeHost } from '../../shared/compute'
-import { COMPUTE_SKILL_DIRECTORY, syncComputeSkillDoc } from './skill-doc'
+import { COMPUTE_SKILL_DIRECTORY, COMPUTE_SKILL_ID, syncComputeSkillDoc } from './skill-doc'
 
 const roots: string[] = []
 
@@ -37,10 +37,13 @@ const sampleHost = (overrides: Partial<ComputeHost> = {}): ComputeHost => ({
   ...overrides
 })
 
-const writeCanonicalDocument = async (skillsDir: string): Promise<void> => {
-  await mkdir(join(skillsDir, COMPUTE_SKILL_DIRECTORY), { recursive: true })
+const writeCanonicalDocument = async (
+  skillsDir: string,
+  directoryName = COMPUTE_SKILL_DIRECTORY
+): Promise<void> => {
+  await mkdir(join(skillsDir, directoryName), { recursive: true })
   await writeFile(
-    join(skillsDir, COMPUTE_SKILL_DIRECTORY, 'SKILL.md'),
+    join(skillsDir, directoryName, 'SKILL.md'),
     [
       '---',
       'name: remote-compute-ssh',
@@ -118,6 +121,20 @@ describe('syncComputeSkillDoc', () => {
     expect(doc).toContain('connected')
     expect(doc).toContain('## API reference')
     expect(await readdir(skillsDir)).toEqual([COMPUTE_SKILL_DIRECTORY])
+  })
+
+  it('updates the canonical Agent-facing Compute Skill without an os- directory marker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'compute-skill-doc-agent-facing-'))
+    roots.push(root)
+    const skillsDir = join(root, 'skills')
+    await writeCanonicalDocument(skillsDir, COMPUTE_SKILL_ID)
+
+    await syncComputeSkillDoc(skillsDir, [sampleHost()], 'agent-facing')
+
+    const doc = await readFile(join(skillsDir, COMPUTE_SKILL_ID, 'SKILL.md'), 'utf8')
+    expect(doc).toContain('ssh:biowulf')
+    expect(doc).toContain('connected')
+    expect(await readdir(skillsDir)).toEqual([COMPUTE_SKILL_ID])
   })
 
   it('replaces stale host data when a host is deleted', async () => {
