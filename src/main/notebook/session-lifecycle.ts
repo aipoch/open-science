@@ -183,6 +183,19 @@ class NotebookSessionLifecycleOwner {
     return this.shutdownLane(this.rootLane(sessionId))
   }
 
+  async shutdownProject(projectId: string): Promise<void> {
+    const lanes = Array.from(this.options.sessions.values())
+      .filter((session) => session.projectId === projectId)
+      .map((session) => session.lane)
+    const results = await Promise.allSettled(lanes.map((lane) => this.shutdownLane(lane)))
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Notebook Project cleanup failed: ' + projectId)
+    }
+  }
+
   private async shutdownLane(
     lane: NotebookLaneIdentity
   ): Promise<{ sessionId: string; status: 'shutdown' }> {

@@ -137,13 +137,6 @@ const ArchivedPanel = ({ view, onNavigate }: ArchivedPanelProps): React.JSX.Elem
     setBusyKey(`project:${project.id}`)
     setProjectDeleteError(undefined)
     void (async () => {
-      const state = await window.api.acp.getState()
-      const liveIds = new Set(state.sessionIds)
-      for (const session of sessions) {
-        if (session.projectId === project.id && liveIds.has(session.id)) {
-          await window.api.acp.deleteSession({ sessionId: session.id })
-        }
-      }
       await deleteProject(project.id)
       useSessionStore.getState().removeSessionsForProject(project.id)
       useArchiveUndoStore.getState().dismissProject(project.id)

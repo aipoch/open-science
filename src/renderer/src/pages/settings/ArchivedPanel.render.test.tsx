@@ -37,6 +37,7 @@ describe('ArchivedPanel', () => {
   let container: HTMLDivElement
   let root: Root
   const updateArchive = vi.fn()
+  const deleteProject = vi.fn()
   const deleteSession = vi.fn()
 
   beforeEach(() => {
@@ -44,6 +45,7 @@ describe('ArchivedPanel', () => {
     document.body.appendChild(container)
     root = createRoot(container)
     updateArchive.mockReset().mockResolvedValue({ ...session, archivedAt: undefined })
+    deleteProject.mockReset().mockResolvedValue(undefined)
     deleteSession.mockReset().mockResolvedValue(undefined)
     window.api = {
       sessions: { updateArchive, deleteSession },
@@ -52,7 +54,8 @@ describe('ArchivedPanel', () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [project],
-      isLoaded: true
+      isLoaded: true,
+      deleteProject
     })
     useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
     useArchiveUndoStore.setState({ notices: [], restoringKey: undefined })
@@ -157,5 +160,39 @@ describe('ArchivedPanel', () => {
     dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
 
     expect(dialog?.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('delegates archived Project runtime cleanup to the main deletion coordinator', async () => {
+    const archivedProject = { ...project, archivedAt: 2 }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [archivedProject],
+      isLoaded: true,
+      deleteProject
+    })
+    const onNavigate = vi.fn()
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'project', projectId: archivedProject.id }}
+          onNavigate={onNavigate}
+        />
+      )
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    await act(async () => openDelete?.click())
+    const dialog = document.body.querySelector<HTMLElement>('[role=alertdialog]')
+    const confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    expect(deleteProject).toHaveBeenCalledWith(project.id)
+    expect(window.api.acp.getState).not.toHaveBeenCalled()
+    expect(window.api.acp.deleteSession).not.toHaveBeenCalled()
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
   })
 })

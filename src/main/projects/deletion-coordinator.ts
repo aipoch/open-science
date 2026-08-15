@@ -298,12 +298,22 @@ class ProjectDeletionCoordinator {
       ?.finalizeOwnerDeletion?.({ kind: 'project', projectId })
       .catch(() => undefined)
 
-    // Preview state is derived UI state; a cleanup failure must not resurrect deleted chat data.
-    await this.preview.delete(projectId).catch(() => undefined)
-
-    // Reviews are derived project data. Keeping this after the project/session commit makes normal
-    // deletion and crash recovery remove the same orphan rows without risking review loss on failure.
-    await this.reviews?.deleteReviewsForProject(projectId).catch(() => undefined)
+    // Preview and Review rows have no Project FK cascade. Attempt both independent tails, then retain
+    // the durable intent on any failure so startup or an explicit retry can finish their cleanup.
+    const reviews = this.reviews
+    const derivedCleanup = [
+      () => this.preview.delete(projectId),
+      ...(reviews ? [() => reviews.deleteReviewsForProject(projectId)] : [])
+    ]
+    const derivedResults = await Promise.allSettled(
+      derivedCleanup.map((cleanup) => Promise.resolve().then(cleanup))
+    )
+    const derivedFailures = derivedResults.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (derivedFailures.length > 0) {
+      throw new AggregateError(derivedFailures, 'Project derived cleanup failed: ' + projectId)
+    }
 
     // Session deletion retains provenance, but Project deletion is terminal. This tail is replayed
     // from the durable intent after a crash, so both SQLite rows and immutable bytes are eventually

@@ -176,6 +176,7 @@ import {
   ProjectDeletionCoordinator,
   ProjectDeletionRecoveryLoop
 } from './projects/deletion-coordinator'
+import { ProjectRuntimeQuiescenceOwner } from './projects/project-runtime-quiescence-owner'
 import { getProjectDbClient } from './projects/prisma-client'
 import { seedDefaultPermissionGrants } from './permission-grants/defaults'
 import { createPermissionGrantRegistry } from './permission-grants/registry'
@@ -610,6 +611,7 @@ const createApplicationModules = async (
       ): Promise<void>
     }
   } = {}
+  const projectRuntimeQuiescenceRef: { current?: ProjectRuntimeQuiescenceOwner } = {}
   const computeJobDeletionPort = {
     restoreProjectJobDeletion: (projectId: string): Promise<void> => {
       if (!computeJobDeletionRef.current) {
@@ -724,10 +726,9 @@ const createApplicationModules = async (
     permissionGrantRegistry,
     {
       beforeProjectDelete: async (projectId) => {
-        await sideChatOwnerRef.current?.invalidateProject(projectId)
-        const deletionOwner = computeJobDeletionRef.current
-        if (!deletionOwner) throw new Error('Compute Job deletion is not initialized.')
-        await deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
+        const owner = projectRuntimeQuiescenceRef.current
+        if (!owner) throw new Error('Project runtime cleanup is not initialized.')
+        await owner.quiesceProject(projectId)
       },
       restoreProjectDeletion: (projectId) =>
         computeJobDeletionPort.restoreProjectJobDeletion(projectId)
@@ -1902,6 +1903,32 @@ const createApplicationModules = async (
     }
   )
   sideChatOwnerRef.current = sideChatRuntime
+  projectRuntimeQuiescenceRef.current = new ProjectRuntimeQuiescenceOwner({
+    acp: {
+      listSessionIds: () => runtime.getSnapshot().sessionIds,
+      liveSessionProjectId: (sessionId) => runtime.liveSessionProjectId(sessionId),
+      deleteSession: (sessionId) => runtime.deleteSession({ sessionId })
+    },
+    delegation: {
+      listActiveSessions: () =>
+        getActiveDelegatedSessions().map(({ projectName, sessionId }) => ({
+          projectId: projectName,
+          sessionId
+        })),
+      deleteSession: (sessionId) => delegatedWork.root.deleteSession(sessionId)
+    },
+    notebook: {
+      shutdownProject: (projectId) => notebookService.shutdownProject(projectId)
+    },
+    sideChat: sideChatRuntime,
+    compute: {
+      reconcileProject: (projectId) => {
+        const deletionOwner = computeJobDeletionRef.current
+        if (!deletionOwner) throw new Error('Compute Job deletion is not initialized.')
+        return deletionOwner.reconcileProjectOrphanJobs(projectId, isComputeJobOwnerLive)
+      }
+    }
+  })
   try {
     const persistedSideChats = await sessionPersistenceCoordinator.loadPersistedSideChats()
     sideChatRuntime.hydrate(persistedSideChats.sideChats)

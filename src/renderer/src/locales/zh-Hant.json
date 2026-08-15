@@ -505,6 +505,7 @@
   "Delete project?": "刪除專案？",
   "Delete {{name}}": "刪除 {{name}}",
   "Delete “{{name}}”?": "刪除「{{name}}」？",
+  "Deleting this project will stop its running tasks and notebooks.": "刪除此專案將停止其正在執行的任務和 Notebook。",
   "Deleting…": "刪除中…",
   "Deny": "拒絕",
   "Dependency impact": "相依影響",

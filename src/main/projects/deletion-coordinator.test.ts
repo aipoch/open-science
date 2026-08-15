@@ -178,6 +178,85 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
   })
 
+  it.each([
+    {
+      name: 'Preview',
+      previewFailures: [new Error('preview unavailable'), undefined],
+      reviewFailures: [undefined, undefined]
+    },
+    {
+      name: 'Review',
+      previewFailures: [undefined, undefined],
+      reviewFailures: [new Error('review unavailable'), undefined]
+    }
+  ])(
+    'retains the deletion intent when $name cleanup fails after the Project hard delete',
+    async ({ previewFailures, reviewFailures }) => {
+      let projectExists = true
+      let intentExists = false
+      const projects = createProjects()
+      projects.get = vi.fn(async () => (projectExists ? project : null))
+      projects.delete = vi.fn(async () => {
+        projectExists = false
+      })
+      projects.createDeletionIntent = vi.fn(async () => {
+        intentExists = true
+      })
+      projects.deleteDeletionIntent = vi.fn(async () => {
+        intentExists = false
+      })
+      projects.listDeletionIntents = vi.fn(async () => (intentExists ? ['project-1'] : []))
+      const sessions = createSessions()
+      const preview = {
+        delete: vi
+          .fn()
+          .mockImplementationOnce(async () => {
+            if (previewFailures[0]) throw previewFailures[0]
+          })
+          .mockImplementationOnce(async () => {
+            if (previewFailures[1]) throw previewFailures[1]
+          })
+      }
+      const reviews = {
+        deleteReviewsForProject: vi
+          .fn()
+          .mockImplementationOnce(async () => {
+            if (reviewFailures[0]) throw reviewFailures[0]
+          })
+          .mockImplementationOnce(async () => {
+            if (reviewFailures[1]) throw reviewFailures[1]
+          })
+      }
+      const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
+      const coordinator = new ProjectDeletionCoordinator(
+        projects,
+        sessions,
+        preview,
+        reviews,
+        provenance
+      )
+
+      await expect(coordinator.deleteProject('project-1')).rejects.toThrow(
+        'Project derived cleanup failed: project-1'
+      )
+
+      expect(projectExists).toBe(false)
+      expect(intentExists).toBe(true)
+      expect(preview.delete).toHaveBeenCalledOnce()
+      expect(reviews.deleteReviewsForProject).toHaveBeenCalledOnce()
+      expect(provenance.deleteProjectProvenance).not.toHaveBeenCalled()
+      expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
+
+      await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
+
+      expect(preview.delete).toHaveBeenCalledTimes(2)
+      expect(reviews.deleteReviewsForProject).toHaveBeenCalledTimes(2)
+      expect(provenance.deleteProjectProvenance).toHaveBeenCalledWith('project-1')
+      expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledWith('project-1')
+      expect(intentExists).toBe(false)
+    }
+  )
+
   it('keeps the project row and clears intent when session and index cleanup fails', async () => {
     const projects = createProjects()
     const sessions = createSessions({

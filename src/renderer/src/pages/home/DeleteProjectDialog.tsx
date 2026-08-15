@@ -104,7 +104,8 @@ const DeleteProjectDialog = ({
                     {
                       name: dialogProject?.name
                     }
-                  )}
+                  )}{' '}
+              {t('Deleting this project will stop its running tasks and notebooks.')}
             </AlertDialog.Description>
             {error ? (
               <p className="mt-4 text-sm text-danger-000" role="alert">

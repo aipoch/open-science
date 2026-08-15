@@ -931,6 +931,10 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.shutdownSession(sessionId)
   }
 
+  async shutdownProject(projectId: string): Promise<void> {
+    return this.sessionLifecycle.shutdownProject(projectId)
+  }
+
   // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight. Run at
   // app startup and refresh guarded startup blocks before new writes. For each journalled op: if a child
   // MIGHT still be running, BLOCK its target and leave the entry (recovery never signals the orphan);

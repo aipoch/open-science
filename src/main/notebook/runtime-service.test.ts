@@ -253,6 +253,76 @@ describe('notebook runtime service', () => {
     )
   })
 
+  it('shuts down every idle root and Frame lane owned by one Project', async () => {
+    const root = await createStorageRoot()
+    const shutdowns = [vi.fn(), vi.fn(), vi.fn()]
+    let executorIndex = 0
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      executorFactory: () => {
+        const shutdown = shutdowns[executorIndex++]
+        return {
+          execute: async (request) => ({
+            status: 'completed' as const,
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: async () => {
+            shutdown()
+            return { reaped: true }
+          }
+        }
+      }
+    })
+    const rootContext = {
+      rootFrameId: 'root-frame-session-1',
+      agentFrameId: 'root-frame-session-1',
+      messageBranchId: 'branch-root',
+      runtimeSegmentId: 'runtime-root',
+      promptMessageId: 'message-root'
+    }
+    const childContext = {
+      ...rootContext,
+      agentFrameId: 'child-frame-1',
+      messageBranchId: 'branch-child',
+      runtimeSegmentId: 'runtime-child',
+      promptMessageId: 'message-child'
+    }
+    await service.execute({
+      projectName: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'root_value = 1',
+      provenanceContext: rootContext
+    })
+    await service.execute({
+      projectName: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace',
+      code: 'child_value = 2',
+      provenanceContext: childContext
+    })
+    await service.execute({
+      projectName: 'project-2',
+      sessionId: 'session-2',
+      workspaceCwd: '/workspace',
+      code: 'other_value = 3'
+    })
+
+    await service.shutdownProject('project-1')
+
+    expect(shutdowns[0]).toHaveBeenCalledOnce()
+    expect(shutdowns[1]).toHaveBeenCalledOnce()
+    expect(shutdowns[2]).not.toHaveBeenCalled()
+  })
+
   it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
