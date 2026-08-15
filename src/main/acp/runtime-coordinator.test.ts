@@ -1662,8 +1662,8 @@ describe('AcpRuntimeCoordinator', () => {
       return fake.runtime
     })
 
-    const activeSession = await coordinator.createSession()
-    const idleSession = await coordinator.createSession()
+    const activeSession = await coordinator.createSession({ projectName: 'other-project' })
+    const idleSession = await coordinator.createSession({ projectName: 'deleting-project' })
     created[0].emitState({
       promptInFlight: true,
       promptInFlightSessionIds: [activeSession.sessionId]
@@ -1672,6 +1672,11 @@ describe('AcpRuntimeCoordinator', () => {
     const reloadRequest = coordinator.requestSkillsReload()
 
     expect(coordinator.getSnapshot().sessionIds).toEqual([activeSession.sessionId])
+    expect(coordinator.getOwnedSessionIds()).toEqual([
+      activeSession.sessionId,
+      idleSession.sessionId
+    ])
+    expect(coordinator.liveSessionProjectId(idleSession.sessionId)).toBe('deleting-project')
     await expect(
       coordinator.sendPrompt({ sessionId: idleSession.sessionId, text: 'stale turn' })
     ).rejects.toThrow('resume')

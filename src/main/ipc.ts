@@ -1924,7 +1924,7 @@ const createApplicationModules = async (
   sideChatOwnerRef.current = sideChatRuntime
   projectRuntimeQuiescenceRef.current = new ProjectRuntimeQuiescenceOwner({
     acp: {
-      listSessionIds: () => runtime.getSnapshot().sessionIds,
+      listSessionIds: () => runtime.getOwnedSessionIds(),
       liveSessionProjectId: (sessionId) => runtime.liveSessionProjectId(sessionId),
       deleteSession: (sessionId) => runtime.deleteSession({ sessionId })
     },

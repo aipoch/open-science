@@ -279,6 +279,12 @@ class AcpRuntimeCoordinator {
     }
   }
 
+  // Renderer aggregation intentionally hides idle sessions from retired generations. Destructive
+  // lifecycle operations need the coordinator's complete ownership set instead.
+  getOwnedSessionIds(): string[] {
+    return Array.from(this.sessionRuntimes.keys())
+  }
+
   captureSessionBackend(sessionId: string): ReturnType<AcpRuntime['captureBackend']> | undefined {
     return this.findRuntimeForSession(sessionId)?.captureBackend()
   }
