@@ -3439,6 +3439,64 @@ describe('notebook runtime service', () => {
     expect(statusWrite).not.toHaveBeenCalled()
   })
 
+  it('persists idle after recovering a terminated repl in a recreated runtime service', async () => {
+    const root = await createStorageRoot()
+    let lifecycle!: NotebookExecutorLifecycleCallbacks
+    const executorFactory = (
+      _sessionId: string,
+      callbacks: NotebookExecutorLifecycleCallbacks
+    ): NotebookSessionExecutor => {
+      lifecycle = callbacks
+      return {
+        execute: async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      }
+    }
+
+    const firstService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    await firstService.executeControl({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
+    await lifecycle.onIdleShutdown('repl', undefined)
+
+    const recoveredService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    await recoveredService.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '2'
+    })
+
+    const reloadedService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    const reloadedState = await reloadedService.state({
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    expect(reloadedState.kernelStatus).toBe('idle')
+  })
+
   describe('lifecycle & concurrency (G2/G3/G4/G5)', () => {
     // Executor double that holds each run open until released, recording every start so a test can
     // observe how many runs are concurrently in flight and in what order.

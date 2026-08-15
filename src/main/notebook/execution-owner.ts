@@ -400,7 +400,10 @@ class NotebookExecutionOwner {
       runtimeRoot: session.runtimeRoot,
       cwd: session.cwd
     })
-    const replWasTerminated = !blockedMutation && session.kernelStatus('repl') === 'terminated'
+    const replWasTerminated =
+      !blockedMutation &&
+      (session.kernelStatus('repl') === 'terminated' ||
+        session.hasDurableKernelTerminationPending())
     if (!blockedMutation) {
       session.clearKernelTerminated('repl')
       this.setReplStatus(session, 'running')
@@ -470,7 +473,10 @@ class NotebookExecutionOwner {
       this.setReplStatus(session, 'idle')
       // A terminated status is durable; clear it once, while ordinary running/idle transitions stay
       // in memory and do not rewrite the whole run.json document.
-      if (replWasTerminated) await this.options.persistRecoveredKernelIdle(session, 'repl')
+      if (replWasTerminated) {
+        await this.options.persistRecoveredKernelIdle(session, 'repl')
+        session.clearDurableKernelTerminationPending()
+      }
     }
 
     return {
