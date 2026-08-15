@@ -305,7 +305,8 @@ class ProjectFilesQueryOwner {
             sizeBytes: toSafeCount(artifactVersion.sizeBytes, 'host Artifact size'),
             sortAtMs: artifactVersion.createdAt.getTime(),
             createdAt: artifactVersion.createdAt.toISOString(),
-            sourceCreatedAt: artifactVersion.artifact.createdAt.toISOString(),
+            sourceCreatedAt: artifactVersion.createdAt.toISOString(),
+            sourceFileCreatedAt: artifactVersion.artifact.createdAt.toISOString(),
             rootFrameId: artifactVersion.rootFrameId,
             agentFrameId: artifactVersion.agentFrameId
           }
@@ -328,7 +329,10 @@ class ProjectFilesQueryOwner {
               sizeBytes: toSafeCount(uploadVersion.sizeBytes, 'host Upload size'),
               sortAtMs: uploadTime.getTime(),
               createdAt: uploadTime.toISOString(),
-              sourceCreatedAt: uploadVersion.uploadFile.createdAt.toISOString(),
+              ...(uploadVersion.createdAt
+                ? { sourceCreatedAt: uploadVersion.createdAt.toISOString() }
+                : {}),
+              sourceFileCreatedAt: uploadVersion.uploadFile.createdAt.toISOString(),
               rootFrameId: null,
               agentFrameId: null
             }
@@ -395,7 +399,8 @@ class ProjectFilesQueryOwner {
               rootFrameId: version.rootFrameId,
               agentFrameId: version.agentFrameId,
               createdAt: version.createdAt.toISOString(),
-              sourceCreatedAt: version.artifact.createdAt.toISOString()
+              sourceCreatedAt: version.createdAt.toISOString(),
+              sourceFileCreatedAt: version.artifact.createdAt.toISOString()
             }
           ] as const
       )
@@ -407,7 +412,8 @@ class ProjectFilesQueryOwner {
             version.id,
             {
               createdAt: (version.createdAt ?? version.registeredAt).toISOString(),
-              sourceCreatedAt: version.uploadFile.createdAt.toISOString()
+              ...(version.createdAt ? { sourceCreatedAt: version.createdAt.toISOString() } : {}),
+              sourceFileCreatedAt: version.uploadFile.createdAt.toISOString()
             }
           ] as const
       )
@@ -418,7 +424,8 @@ class ProjectFilesQueryOwner {
       const artifact =
         row.source === 'artifact' ? artifactMetadata.get(row.sourceVersionId) : undefined
       const upload = row.source === 'upload' ? uploadMetadata.get(row.sourceVersionId) : undefined
-      if (row.source === 'artifact' ? !artifact : !upload) return []
+      const metadata = artifact ?? upload
+      if (!metadata) return []
       return [
         {
           source: row.source as 'artifact' | 'upload',
@@ -431,8 +438,9 @@ class ProjectFilesQueryOwner {
           contentType: row.mimeType ?? undefined,
           sizeBytes: toSafeCount(row.sizeBytes, 'host managed file size'),
           sortAtMs: toSafeCount(row.sortAtMs, 'host managed file sort time'),
-          createdAt: artifact?.createdAt ?? upload!.createdAt,
-          sourceCreatedAt: artifact?.sourceCreatedAt ?? upload!.sourceCreatedAt,
+          createdAt: metadata.createdAt,
+          ...(metadata.sourceCreatedAt ? { sourceCreatedAt: metadata.sourceCreatedAt } : {}),
+          sourceFileCreatedAt: metadata.sourceFileCreatedAt,
           rootFrameId: artifact?.rootFrameId ?? null,
           agentFrameId: artifact?.agentFrameId ?? null
         }

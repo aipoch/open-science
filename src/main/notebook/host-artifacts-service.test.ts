@@ -15,7 +15,8 @@ const artifact = (overrides: Partial<HostArtifactCatalogItem> = {}): HostArtifac
   sizeBytes: 42,
   sortAtMs: Date.parse('2026-08-01T00:00:00.000Z'),
   createdAt: '2026-08-01T00:00:00.000Z',
-  sourceCreatedAt: '2026-07-01T00:00:00.000Z',
+  sourceCreatedAt: '2026-08-01T00:00:00.000Z',
+  sourceFileCreatedAt: '2026-07-01T00:00:00.000Z',
   rootFrameId: 'root-a',
   agentFrameId: 'frame-a',
   ...overrides
@@ -31,7 +32,8 @@ const upload = (overrides: Partial<HostArtifactCatalogItem> = {}): HostArtifactC
     contentType: 'application/pdf',
     sortAtMs: Date.parse('2026-08-02T00:00:00.000Z'),
     createdAt: '2026-08-02T00:00:00.000Z',
-    sourceCreatedAt: '2026-07-02T00:00:00.000Z',
+    sourceCreatedAt: '2026-08-02T00:00:00.000Z',
+    sourceFileCreatedAt: '2026-07-02T00:00:00.000Z',
     rootFrameId: null,
     agentFrameId: null,
     ...overrides
@@ -280,6 +282,14 @@ describe('HostArtifactsService', () => {
     ]) {
       await expect(service.list(options, context)).rejects.toThrow(/host\.artifacts/u)
     }
+  })
+
+  it('fails closed when the Catalog omits source file creation metadata', async () => {
+    const { service } = harness([artifact({ sourceFileCreatedAt: undefined })])
+
+    await expect(service.list({}, context)).rejects.toThrow(
+      'Host Artifact source file metadata is incomplete'
+    )
   })
 
   it('resolves Artifact and Upload Versions through their existing checksum-validating resolvers', async () => {

@@ -127,8 +127,12 @@ export type HostArtifactCatalogItem = {
   contentType?: string
   sizeBytes: number
   sortAtMs: number
+  // Selected Version creation/registration time. Lineage nodes compare this with core provenance.
   createdAt: string
-  sourceCreatedAt: string
+  // Input Version time captured in dependency provenance; legacy Uploads may not have one.
+  sourceCreatedAt?: string
+  // Parent ArtifactLineage/UploadFile creation time for the Host Artifacts public projection.
+  sourceFileCreatedAt?: string
   rootFrameId: string | null
   agentFrameId: string | null
 }

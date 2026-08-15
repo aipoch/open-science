@@ -192,21 +192,26 @@ const decodeCursor = (value: string, queryKey: string): Cursor => {
   return cursor as Cursor
 }
 
-const toHostArtifact = (item: HostArtifactCatalogItem): HostArtifact => ({
-  id: item.sourceFileId,
-  filename: item.filename,
-  contentType: item.contentType ?? null,
-  sizeBytes: item.sizeBytes,
-  latestVersionId: item.versionId,
-  checksum: item.checksum ?? null,
-  projectId: item.projectId,
-  sessionId: item.sessionId,
-  rootFrameId: item.rootFrameId,
-  agentFrameId: item.agentFrameId,
-  isUserUpload: item.source === 'upload',
-  createdAt: item.sourceCreatedAt,
-  latestVersionCreatedAt: item.createdAt
-})
+const toHostArtifact = (item: HostArtifactCatalogItem): HostArtifact => {
+  if (!item.sourceFileCreatedAt) {
+    throw new Error(`Host Artifact source file metadata is incomplete: ${item.versionId}`)
+  }
+  return {
+    id: item.sourceFileId,
+    filename: item.filename,
+    contentType: item.contentType ?? null,
+    sizeBytes: item.sizeBytes,
+    latestVersionId: item.versionId,
+    checksum: item.checksum ?? null,
+    projectId: item.projectId,
+    sessionId: item.sessionId,
+    rootFrameId: item.rootFrameId,
+    agentFrameId: item.agentFrameId,
+    isUserUpload: item.source === 'upload',
+    createdAt: item.sourceFileCreatedAt,
+    latestVersionCreatedAt: item.createdAt
+  }
+}
 
 const matchesContentType = (actual: string | undefined, requested: string): boolean => {
   if (!actual) return false

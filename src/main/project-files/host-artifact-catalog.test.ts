@@ -175,7 +175,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         source: 'upload',
         sourceFileId: 'upload-a',
         createdAt: '2026-08-03T00:00:00.000Z',
-        sourceCreatedAt: '2026-07-02T00:00:00.000Z',
+        sourceCreatedAt: '2026-08-03T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-02T00:00:00.000Z',
         rootFrameId: null,
         agentFrameId: null
       }),
@@ -183,7 +184,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         source: 'artifact',
         sourceFileId: 'artifact-a',
         createdAt: '2026-08-01T00:00:00.000Z',
-        sourceCreatedAt: '2026-07-01T00:00:00.000Z',
+        sourceCreatedAt: '2026-08-01T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-01T00:00:00.000Z',
         rootFrameId: 'root-artifact-version-a',
         agentFrameId: 'agent-frame'
       })
@@ -203,7 +205,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         versionId: 'history-v1',
         versionNumber: 1,
         createdAt: '2026-08-01T00:00:00.000Z',
-        sourceCreatedAt: '2026-07-01T00:00:00.000Z',
+        sourceCreatedAt: '2026-08-01T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-01T00:00:00.000Z',
         rootFrameId: 'root-history-v1',
         agentFrameId: 'agent-frame'
       })
@@ -227,9 +230,10 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
       expect.objectContaining({
         versionId: 'upload-null-created-at-v1',
         createdAt: '2026-08-04T00:00:00.000Z',
-        sourceCreatedAt: '2026-07-02T00:00:00.000Z'
+        sourceFileCreatedAt: '2026-07-02T00:00:00.000Z'
       })
     ])
+    expect(nullableUpload[0]).not.toHaveProperty('sourceCreatedAt')
 
     await createArtifactVersion('project-a', 'session-a', 'collision-artifact', 'collision')
     await createUploadVersion('project-a', 'session-b', 'collision-upload', 'collision')
@@ -279,7 +283,8 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
         rootFrameId: 'shared-root',
         agentFrameId: 'frame-b',
         createdAt: '2026-08-02T00:00:00.000Z',
-        sourceCreatedAt: '2026-07-01T00:00:00.000Z'
+        sourceCreatedAt: '2026-08-02T00:00:00.000Z',
+        sourceFileCreatedAt: '2026-07-01T00:00:00.000Z'
       })
     ])
     await expect(
