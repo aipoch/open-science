@@ -9,6 +9,7 @@ import {
 import { spawn as nodeSpawn } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Transform, type TransformCallback } from 'node:stream'
 import { finished } from 'node:stream/promises'
 
 import { PROD_SESSION_DIR_NAME } from '../session-persistence/repository'
@@ -508,6 +509,7 @@ const condaFallbackIsAuthorized = (classification: CondaFailureClassification): 
   (classification.reason === 'package-not-found' || classification.reason === 'solver-failed')
 
 export const INSTALLER_STREAM_LOG_LIMIT_BYTES = 512 * 1024
+export const CONDA_JSON_CAPTURE_LIMIT_BYTES = 32 * 1024 * 1024
 
 // Fixed-capacity byte ring retaining the newest installer output. Byte accounting happens before
 // UTF-8 decoding so the reported discard count is exact even when a process splits a code point
@@ -567,8 +569,11 @@ type CondaJsonCapture = {
   directory: string
   stdoutPath: string
   stderrPath: string
+  stdoutLimiter: Transform
+  stderrLimiter: Transform
   stdoutStream: ReturnType<typeof createWriteStream>
   stderrStream: ReturnType<typeof createWriteStream>
+  state: { truncated: boolean }
 }
 
 type CondaJsonCaptureSummary = Pick<
@@ -708,22 +713,52 @@ process.stdout.write(
 process.exitCode = 0
 `
 
+const createCondaJsonCaptureLimiter = (state: { truncated: boolean }): Transform => {
+  let writtenBytes = 0
+  return new Transform({
+    transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback) {
+      const retainedBytes = Math.min(
+        chunk.length,
+        Math.max(0, CONDA_JSON_CAPTURE_LIMIT_BYTES - writtenBytes)
+      )
+      writtenBytes += retainedBytes
+      if (retainedBytes < chunk.length) state.truncated = true
+      callback(null, retainedBytes > 0 ? chunk.subarray(0, retainedBytes) : undefined)
+    }
+  })
+}
+
 const createCondaJsonCapture = (): CondaJsonCapture => {
   const directory = mkdtempSync(join(tmpdir(), 'open-science-conda-json-'))
   const stdoutPath = join(directory, 'stdout.json')
   const stderrPath = join(directory, 'stderr.json')
+  const state = { truncated: false }
+  const stdoutLimiter = createCondaJsonCaptureLimiter(state)
+  const stderrLimiter = createCondaJsonCaptureLimiter(state)
   const stdoutStream = createWriteStream(stdoutPath, { mode: 0o600 })
   const stderrStream = createWriteStream(stderrPath, { mode: 0o600 })
   // Keep late disk errors from becoming unhandled events; finished() below observes the failure and
-  // makes the structured decision fail closed.
-  stdoutStream.on('error', () => {})
-  stderrStream.on('error', () => {})
+  // makes the structured decision fail closed. Drain the limiter after a disk error so capture
+  // failure cannot stall the installer child.
+  stdoutStream.on('error', () => {
+    stdoutLimiter.unpipe(stdoutStream)
+    stdoutLimiter.resume()
+  })
+  stderrStream.on('error', () => {
+    stderrLimiter.unpipe(stderrStream)
+    stderrLimiter.resume()
+  })
+  stdoutLimiter.pipe(stdoutStream)
+  stderrLimiter.pipe(stderrStream)
   return {
     directory,
     stdoutPath,
     stderrPath,
+    stdoutLimiter,
+    stderrLimiter,
     stdoutStream,
-    stderrStream
+    stderrStream,
+    state
   }
 }
 
@@ -815,7 +850,9 @@ const finalizeCondaJsonCapture = async (
   if (!capture) return undefined
   try {
     await Promise.all([finished(capture.stdoutStream), finished(capture.stderrStream)])
-    return summarize ? await summarizeCondaJsonCapture(capture) : undefined
+    return summarize && !capture.state.truncated
+      ? await summarizeCondaJsonCapture(capture)
+      : undefined
   } catch {
     return undefined
   } finally {
@@ -829,8 +866,8 @@ const finalizeCondaJsonCapture = async (
 
 const discardCondaJsonCapture = async (capture: CondaJsonCapture | undefined): Promise<void> => {
   if (!capture) return
-  capture.stdoutStream.end()
-  capture.stderrStream.end()
+  capture.stdoutLimiter.end()
+  capture.stderrLimiter.end()
   await finalizeCondaJsonCapture(capture, false)
 }
 
@@ -912,8 +949,10 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
       stderr.push(chunk)
     })
     if (condaJsonCapture) {
-      child.stdout?.pipe(condaJsonCapture.stdoutStream)
-      child.stderr?.pipe(condaJsonCapture.stderrStream)
+      if (child.stdout) child.stdout.pipe(condaJsonCapture.stdoutLimiter)
+      else condaJsonCapture.stdoutLimiter.end()
+      if (child.stderr) child.stderr.pipe(condaJsonCapture.stderrLimiter)
+      else condaJsonCapture.stderrLimiter.end()
     }
     let settled = false
     const result = async (code: number): Promise<SpawnResult> => {
@@ -944,10 +983,10 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
     child.on('error', (error) => {
       stderr.push(String(error))
       if (condaJsonCapture) {
-        child.stdout?.unpipe(condaJsonCapture.stdoutStream)
-        child.stderr?.unpipe(condaJsonCapture.stderrStream)
-        condaJsonCapture.stdoutStream.end()
-        condaJsonCapture.stderrStream.end()
+        child.stdout?.unpipe(condaJsonCapture.stdoutLimiter)
+        child.stderr?.unpipe(condaJsonCapture.stderrLimiter)
+        condaJsonCapture.stdoutLimiter.end()
+        condaJsonCapture.stderrLimiter.end()
       }
       settle(1)
     })

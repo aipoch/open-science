@@ -13,6 +13,7 @@ vi.mock('./micromamba', async (importActual) => ({
 }))
 
 import {
+  CONDA_JSON_CAPTURE_LIMIT_BYTES,
   defaultSpawn,
   INSTALLER_STREAM_LOG_LIMIT_BYTES,
   installPackages,
@@ -194,6 +195,24 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
     })
     expect(result.maxPathRecoveryEvidence).toMatch(/Invalid package cache/)
     expect(result.maxPathRecoveryEvidence).toContain('broken-package-1.0-0.conda')
+  })
+
+  it('fails closed when micromamba JSON exceeds the bounded temporary capture', async () => {
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `const value = { padding: 'x'.repeat(${CONDA_JSON_CAPTURE_LIMIT_BYTES}), actions: { LINK: [{ name: 'r-base', version: '4.5.0' }], UNLINK: [] } };`,
+        `process.stdout.write(JSON.stringify(value));`
+      ].join(''),
+      '--',
+      '--json'
+    ])
+
+    expect(result.code).toBe(0)
+    expect(result.stdoutDroppedBytes).toBeGreaterThan(0)
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(result.structuredCondaResult).toBeUndefined()
+    expect(result.maxPathRecoveryEvidence).toBeUndefined()
   })
 })
 
