@@ -161,7 +161,7 @@ const SessionNotebookContent = ({
   const historySummaryRequests = useRef(new Set<string>())
   const mounted = useRef(true)
   const shortId = sessionId.slice(0, 8)
-  const frameOptions = createNotebookFrameFilterOptions(runs, frameLabels, historySummaries)
+  const frameOptions = createNotebookFrameFilterOptions(runs, frameLabels, historySummaries, true)
   const effectiveFrameFilter = frameOptions.some((option) => option.value === frameFilter)
     ? frameFilter
     : (frameOptions.find((option) => (option.count ?? 0) > 0)?.value ?? frameOptions[0]?.value)
@@ -330,7 +330,7 @@ const SessionNotebookContent = ({
           <p className="px-5 py-16 text-center text-sm text-danger-000">
             {error ?? t('Failed to load notebook.')}
           </p>
-        ) : runs.length === 0 ? (
+        ) : runCount === 0 ? (
           <p className="px-5 py-16 text-center text-sm text-muted-foreground">
             {t('No execution records for this session.')}
           </p>

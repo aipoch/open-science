@@ -60,6 +60,24 @@ describe('SessionNotebookContent', () => {
     expect(html).toContain('border-t border-border-300/90')
   })
 
+  it('keeps Agent history discovery available when branch filtering removes the recent window', () => {
+    const html = renderContent({
+      sessionId: 's1',
+      runs: [],
+      runCount: 12,
+      loadedRunCount: 0,
+      status: 'ready',
+      frameLabels: {
+        'root-frame-s1': 'Main Agent',
+        'frame-old': 'Older analysis'
+      }
+    })
+
+    expect(html).not.toContain('No execution records for this session.')
+    expect(html).toContain('aria-label="Filter notebook runs by Agent"')
+    expect(html).toContain('Main Agent')
+  })
+
   it('renders one cell per run with a derived error badge and split output', () => {
     const failing = makeRun({
       status: 'failed',
@@ -233,6 +251,23 @@ describe('Session Notebook producer projection', () => {
         'frame-two': 'Sensitivity check',
         'frame-old': 'Older analysis'
       })
+    ).toEqual([
+      { value: 'frame:root-frame-s1', label: 'Main agent', count: 1 },
+      { value: 'frame:frame-one', label: 'Evidence check', count: 1 },
+      { value: 'frame:frame-two', label: 'Sensitivity check', count: 1 }
+    ])
+    expect(
+      createNotebookFrameFilterOptions(
+        attributedRuns,
+        {
+          'root-frame-s1': 'Main agent',
+          'frame-one': 'Evidence check',
+          'frame-two': 'Sensitivity check',
+          'frame-old': 'Older analysis'
+        },
+        new Map(),
+        true
+      )
     ).toEqual([
       { value: 'frame:root-frame-s1', label: 'Main agent', count: 1 },
       { value: 'frame:frame-one', label: 'Evidence check', count: 1 },

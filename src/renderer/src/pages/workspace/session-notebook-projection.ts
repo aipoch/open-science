@@ -13,24 +13,25 @@ type NotebookFrameFilterOption = Readonly<{
 const createNotebookFrameFilterOptions = (
   runs: readonly NotebookRunRecord[],
   frameLabels: Readonly<Record<string, string>> = {},
-  historySummaries: ReadonlyMap<string, NotebookRunHistorySummary> = new Map()
+  historySummaries: ReadonlyMap<string, NotebookRunHistorySummary> = new Map(),
+  includeUnloaded = false
 ): NotebookFrameFilterOption[] => {
   const counts = new Map<string, number>()
   for (const run of runs) {
     if (run.agentFrameId) counts.set(run.agentFrameId, (counts.get(run.agentFrameId) ?? 0) + 1)
   }
-  return Object.entries(frameLabels).map(([agentFrameId, label]) => {
+  return Object.entries(frameLabels).flatMap(([agentFrameId, label]) => {
     const recentCount = counts.get(agentFrameId)
     const historyCount = historySummaries.get(agentFrameId)?.runCount
-    return {
-      value: `frame:${agentFrameId}` as const,
-      label,
-      ...(historyCount !== undefined
-        ? { count: historyCount }
-        : recentCount !== undefined
-          ? { count: recentCount }
-          : {})
-    }
+    const count = historyCount ?? recentCount
+    if (count === undefined && !includeUnloaded) return []
+    return [
+      {
+        value: `frame:${agentFrameId}` as const,
+        label,
+        ...(count !== undefined ? { count } : {})
+      }
+    ]
   })
 }
 
