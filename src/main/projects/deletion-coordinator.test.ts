@@ -44,6 +44,7 @@ describe('ProjectDeletionCoordinator', () => {
       prune: vi.fn().mockResolvedValue([]),
       finalizeOwnerDeletion: vi.fn().mockResolvedValue(undefined)
     }
+    const finalizeProjectDeletion = vi.fn().mockResolvedValue(undefined)
     const completeProjectDeletion = vi.fn()
     const abortProjectDeletion = vi.fn()
     const coordinator = new ProjectDeletionCoordinator(
@@ -55,6 +56,7 @@ describe('ProjectDeletionCoordinator', () => {
       permissionGrants,
       {
         beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
+        finalizeProjectDeletion,
         completeProjectDeletion,
         abortProjectDeletion
       }
@@ -77,6 +79,7 @@ describe('ProjectDeletionCoordinator', () => {
       kind: 'project',
       projectId: 'project-1'
     })
+    expect(finalizeProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
     expect(abortProjectDeletion).not.toHaveBeenCalled()
     expect(vi.mocked(permissionGrants.prune).mock.invocationCallOrder[0]).toBeLessThan(
@@ -714,6 +717,58 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
   })
 
+  it('retains the intent, tombstone, and fences when final runtime cleanup fails', async () => {
+    let projectExists = true
+    let intentExists = false
+    const projects = createProjects()
+    projects.get = vi.fn(async () => (projectExists ? project : null))
+    projects.delete = vi.fn(async () => {
+      projectExists = false
+    })
+    projects.createDeletionIntent = vi.fn(async () => {
+      intentExists = true
+    })
+    projects.deleteDeletionIntent = vi.fn(async () => {
+      intentExists = false
+    })
+    projects.listDeletionIntents = vi.fn(async () => (intentExists ? ['project-1'] : []))
+    const sessions = createSessions()
+    const cleanupFailure = new Error('side chat profile busy')
+    const finalizeProjectDeletion = vi
+      .fn()
+      .mockRejectedValueOnce(cleanupFailure)
+      .mockResolvedValueOnce(undefined)
+    const completeProjectDeletion = vi.fn()
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      undefined,
+      undefined,
+      {
+        beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
+        finalizeProjectDeletion,
+        completeProjectDeletion
+      }
+    )
+
+    await expect(coordinator.deleteProject('project-1')).rejects.toBe(cleanupFailure)
+
+    expect(projectExists).toBe(false)
+    expect(intentExists).toBe(true)
+    expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
+    expect(projects.deleteDeletionIntent).not.toHaveBeenCalled()
+    expect(completeProjectDeletion).not.toHaveBeenCalled()
+
+    await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
+
+    expect(finalizeProjectDeletion).toHaveBeenCalledTimes(2)
+    expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledWith('project-1')
+    expect(intentExists).toBe(false)
+    expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
+  })
+
   it('keeps the recovery intent until derived project cleanup has finished', async () => {
     const order: string[] = []
     const projects = createProjects()
@@ -745,12 +800,31 @@ describe('ProjectDeletionCoordinator', () => {
         deleteProjectProvenance: vi.fn(async () => {
           order.push('provenance')
         })
+      },
+      undefined,
+      {
+        beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
+        finalizeProjectDeletion: vi.fn(async () => {
+          order.push('finalize')
+        }),
+        completeProjectDeletion: vi.fn(() => {
+          order.push('complete')
+        })
       }
     )
 
     await coordinator.deleteProject('project-1')
 
-    expect(order).toEqual(['project', 'preview', 'reviews', 'provenance', 'tombstone', 'intent'])
+    expect(order).toEqual([
+      'project',
+      'preview',
+      'reviews',
+      'provenance',
+      'finalize',
+      'tombstone',
+      'intent',
+      'complete'
+    ])
   })
 
   it('reuses a successful recovery gate for later operations', async () => {

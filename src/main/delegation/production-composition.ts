@@ -255,7 +255,11 @@ const createProductionDelegatedWorkComposition = (
         .map(([, work]) => work)
     )
   const worksForProject = async (projectId: string): Promise<ScopedWork[]> =>
-    (await Promise.all([...works.values()])).filter(({ key }) => key.projectId === projectId)
+    Promise.all(
+      [...works.entries()]
+        .filter(([identity]) => identity.startsWith(`${projectId}\u0000`))
+        .map(([, work]) => work)
+    )
 
   const host: ProductionDelegatedWorkComposition['host'] = Object.freeze({
     async delegate(caller, request, delegateOptions) {

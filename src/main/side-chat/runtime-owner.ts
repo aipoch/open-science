@@ -699,15 +699,26 @@ class SideChatRuntimeOwner {
     }
   }
 
-  completeProjectDeletion(projectId: string): void {
-    for (const dormant of [...this.dormantByParent.values()]) {
-      if (dormant.projectId !== projectId) continue
+  async completeProjectDeletion(projectId: string): Promise<void> {
+    const dormantChats = [...this.dormantByParent.values()].filter(
+      (dormant) => dormant.projectId === projectId
+    )
+    const cleanupResults = await Promise.allSettled(
+      dormantChats.map((dormant) =>
+        rm(join(this.root, dormant.sideChat.id), { recursive: true, force: true })
+      )
+    )
+    const cleanupFailures = cleanupResults.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(cleanupFailures, `Side chat Project cleanup failed: ${projectId}`)
+    }
+
+    for (const dormant of dormantChats) {
       this.dormantByParent.delete(dormant.parentSessionId)
       this.closeRequestedParents.delete(dormant.parentSessionId)
       this.setParentInteractionsPaused(dormant.parentSessionId, false)
-      void rm(join(this.root, dormant.sideChat.id), { recursive: true, force: true }).catch(
-        () => undefined
-      )
     }
   }
 

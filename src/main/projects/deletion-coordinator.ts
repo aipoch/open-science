@@ -43,6 +43,7 @@ type ProjectPermissionGrantDeletion = {
 type ProjectDeletionLifecycle = {
   beforeProjectDelete(projectId: string): Promise<void>
   restoreProjectDeletion?(projectId: string): Promise<void>
+  finalizeProjectDeletion?(projectId: string): Promise<void>
   completeProjectDeletion?(projectId: string): void
   abortProjectDeletion?(projectId: string): void
 }
@@ -298,6 +299,11 @@ class ProjectDeletionCoordinator {
     // from the durable intent after a crash, so both SQLite rows and immutable bytes are eventually
     // removed even if the Project row is already gone.
     await this.provenance?.deleteProjectProvenance(projectId)
+
+    // Fallible runtime/profile cleanup must finish while the existing intent and Session tombstone
+    // still provide retry authority. The completion callback below is reserved for releasing the
+    // in-memory fences only after both durable markers have been removed.
+    await this.lifecycle?.finalizeProjectDeletion?.(projectId)
 
     // The marked Session tombstone is the durable phase boundary. Remove it only after every Project
     // tail has completed, and keep the intent if physical cleanup fails so recovery retries it.

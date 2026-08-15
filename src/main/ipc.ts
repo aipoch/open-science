@@ -738,10 +738,14 @@ const createApplicationModules = async (
         notebookService.beginProjectDeletion(projectId)
         await computeJobDeletionPort.restoreProjectJobDeletion(projectId)
       },
+      finalizeProjectDeletion: async (projectId) => {
+        const owner = sideChatOwnerRef.current
+        if (!owner) throw new Error('Side chat runtime cleanup is not initialized.')
+        await owner.completeProjectDeletion(projectId)
+      },
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
         notebookService.releaseProjectDeletion(projectId)
-        sideChatOwnerRef.current?.completeProjectDeletion(projectId)
       },
       abortProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)

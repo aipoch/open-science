@@ -2552,6 +2552,35 @@ describe('production delegated-work composition', () => {
     expect(harness.composition.root.pendingPermissions()).toEqual([])
   })
 
+  it('does not await pending work initialization owned by another Project', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-project-isolation-'))
+    const forSession = vi.fn(async () => new Promise<never>(() => undefined))
+    const harness = await createCompositionHarness(
+      root,
+      'codex',
+      undefined,
+      undefined,
+      {},
+      [],
+      undefined,
+      { forSession } as never
+    )
+    const unrelatedSession = {
+      ...structuredClone(harness.durable()),
+      id: 'session-other-project',
+      projectId: 'project-2'
+    }
+    harness.replaceDurable(unrelatedSession)
+
+    void harness.composition.host.readAgentFrame(
+      { projectId: unrelatedSession.projectId, sessionId: unrelatedSession.id },
+      unrelatedSession.conversationGraph!.rootFrameId
+    )
+    await vi.waitFor(() => expect(forSession).toHaveBeenCalledOnce())
+
+    await expect(harness.composition.root.deleteProject('project-1')).resolves.toBeUndefined()
+  })
+
   it('keeps a Turn fence when cancellation precedes scoped-work creation', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-prework-fence-'))
     const harness = await createCompositionHarness(root, 'codex')

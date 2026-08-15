@@ -778,10 +778,52 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     expect(captureTarget).toHaveBeenCalledOnce()
 
     await owner.invalidateProject('project-deleted')
-    owner.completeProjectDeletion('project-deleted')
+    await owner.completeProjectDeletion('project-deleted')
     owner.restoreProject('project-deleted')
     expect(owner.list().chats).toEqual([
       expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
+    ])
+  })
+
+  it('retains dormant Side chats when Project profile cleanup fails', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-project-cleanup-'))
+    const owner = new SideChatRuntimeOwner({
+      appVersion: '0.11.0',
+      configRoot: temporaryRoot,
+      captureTarget: vi.fn(),
+      resolveTarget: vi.fn(),
+      relay: createRelayOwner(),
+      persistence: createPersistence(),
+      onEvent: vi.fn()
+    })
+    owner.hydrate([
+      {
+        projectId: 'project-deleted',
+        parentSessionId: 'parent-deleted',
+        sideChat: {
+          version: 1,
+          id: 'side-chat-\u0000-invalid',
+          lifecycle: 'open',
+          frameworkId: 'claude-code',
+          historyPreamble: '',
+          entries: [],
+          createdAt: 10,
+          updatedAt: 20
+        }
+      }
+    ])
+    await owner.invalidateProject('project-deleted')
+
+    await expect(owner.completeProjectDeletion('project-deleted')).rejects.toThrow(
+      'Side chat Project cleanup failed: project-deleted'
+    )
+
+    owner.restoreProject('project-deleted')
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({
+        parentSessionId: 'parent-deleted',
+        projectId: 'project-deleted'
+      })
     ])
   })
 
