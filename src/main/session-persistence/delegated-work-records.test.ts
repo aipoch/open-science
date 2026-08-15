@@ -73,7 +73,7 @@ const createHarness = (
       status: 'found' as const,
       session: structuredClone(durable)
     })),
-    findSessionProjectIds: vi.fn(async () => ({ projectIds: [], isComplete: true })),
+    assertSessionIdentityOwnership: vi.fn(async () => undefined),
     saveSession: vi.fn(async (session) => {
       durable = structuredClone(session)
     }),

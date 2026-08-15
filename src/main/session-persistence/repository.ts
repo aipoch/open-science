@@ -275,15 +275,17 @@ class SessionRepository {
     return quarantine.exists ? { status: 'unreadable' } : { status: 'missing' }
   }
 
-  // Resolves durable Session identity from directory/file authority without parsing JSON. This lets
+  // Verifies durable Session identity from directory/file authority without parsing JSON. This lets
   // an incomplete hydration catalog distinguish a corrupt Session file from a genuinely unused id.
-  async findSessionProjectIds(
-    sessionIdValue: string
-  ): Promise<{ projectIds: string[]; isComplete: boolean }> {
+  async assertSessionIdentityOwnership(
+    sessionIdValue: string,
+    expectedProjectIdValue: string
+  ): Promise<void> {
     const sessionId = assertSafeSegment(sessionIdValue)
+    const expectedProjectId = assertSafeSegment(expectedProjectIdValue)
     const fileName = `${sessionId}.json`
     const projectDirectories = await this.listDirectoryNames(this.sessionsDir)
-    const projectIds: string[] = []
+    let belongsToAnotherProject = false
     let isComplete = projectDirectories.isComplete
 
     for (const projectIdValue of projectDirectories.names) {
@@ -299,14 +301,20 @@ class SessionRepository {
       })
       isComplete &&= sessionFiles.isComplete
       if (
-        sessionFiles.names.includes(fileName) ||
-        sessionFiles.quarantinedPrimaryFileNames.includes(fileName)
+        projectId !== expectedProjectId &&
+        (sessionFiles.names.includes(fileName) ||
+          sessionFiles.quarantinedPrimaryFileNames.includes(fileName))
       ) {
-        projectIds.push(projectId)
+        belongsToAnotherProject = true
       }
     }
 
-    return { projectIds, isComplete }
+    if (!isComplete) {
+      throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
+    }
+    if (belongsToAnotherProject) {
+      throw new Error('Cannot save a Session id that is already owned by another Project.')
+    }
   }
 
   // Reports whether the live sessions tree was fully scanned so DB reconciliation never acts on a

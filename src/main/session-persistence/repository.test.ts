@@ -1448,6 +1448,18 @@ describe('session persistence repository (per-session files)', () => {
     expect(sessions[0]).toMatchObject({ id: 'session-1', projectId: 'project-a' })
   })
 
+  it('accepts unused or same-Project durable Session identity ownership', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+
+    await expect(
+      repository.assertSessionIdentityOwnership('unused-session', 'project-a')
+    ).resolves.toBeUndefined()
+    await repository.saveSession(createSession({ id: 'session-1', projectId: 'project-a' }))
+    await expect(
+      repository.assertSessionIdentityOwnership('session-1', 'project-a')
+    ).resolves.toBeUndefined()
+  })
+
   it('omits every cross-project duplicate Session id without modifying durable files', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     await repository.saveSession(createSession({ id: 'duplicate-session', projectId: 'project-a' }))
@@ -1481,9 +1493,9 @@ describe('session persistence repository (per-session files)', () => {
     await expect(
       readFile(join(storageRoot!, 'sessions', 'project-b', 'duplicate-session.json'), 'utf8')
     ).resolves.toContain('duplicate-session')
-    const ownership = await repository.findSessionProjectIds('duplicate-session')
-    expect(new Set(ownership.projectIds)).toEqual(new Set(['project-a', 'project-b']))
-    expect(ownership.isComplete).toBe(true)
+    await expect(
+      repository.assertSessionIdentityOwnership('duplicate-session', 'project-a')
+    ).rejects.toThrow(/Session id.*another Project/)
   })
 
   it('does not hydrate a valid Session whose id also has an unreadable cross-Project file', async () => {
@@ -1514,6 +1526,21 @@ describe('session persistence repository (per-session files)', () => {
         }
       ])
     )
+    await expect(
+      repository.assertSessionIdentityOwnership('duplicate-session', 'project-a')
+    ).rejects.toThrow(/Session id.*another Project/)
+  })
+
+  it('rejects ownership checks when the durable Session catalog is unreadable', async () => {
+    const repository = new SessionRepository(await createStorageRoot(), {
+      readDirectoryEntries: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+    })
+
+    await expect(
+      repository.assertSessionIdentityOwnership('session-1', 'project-a')
+    ).rejects.toThrow(/global identity ownership is unreadable/)
   })
 
   it('keeps session data in ~/.open-science under the user home directory by default', () => {

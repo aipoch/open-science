@@ -98,7 +98,7 @@ type SessionMutationRepository = {
     | { status: 'missing' }
     | { status: 'unreadable' }
   >
-  findSessionProjectIds(sessionId: string): Promise<{ projectIds: string[]; isComplete: boolean }>
+  assertSessionIdentityOwnership(sessionId: string, expectedProjectId: string): Promise<void>
   saveSession(session: PersistedChatSession): Promise<void>
   saveCommittedProjectSession(session: PersistedChatSession): Promise<void>
   deleteSession(projectId: string, sessionId: string): Promise<void>
@@ -152,7 +152,7 @@ const emitRecoverableDiagnostic = (
   }
 }
 
-const assertSessionIdentityProject = async (
+const assertSessionIdentityOwnership = async (
   repository: SessionMutationRepository,
   stateOwner: Pick<SessionPersistenceStateOwner, 'metadataSnapshot'>,
   session: Pick<PersistedChatSession, 'id' | 'projectId'>
@@ -164,13 +164,7 @@ const assertSessionIdentityProject = async (
   }
   if (metadata.isComplete) return
 
-  const ownership = await repository.findSessionProjectIds(session.id)
-  if (!ownership.isComplete) {
-    throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
-  }
-  if (ownership.projectIds.some((projectId) => projectId !== session.projectId)) {
-    throw new Error('Cannot save a Session id that is already owned by another Project.')
-  }
+  await repository.assertSessionIdentityOwnership(session.id, session.projectId)
 }
 
 // Serializes authoritative session JSON and derived file-index mutations through one queue. This is
@@ -703,7 +697,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     options: SaveSessionOptions = {}
   ): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
-      await assertSessionIdentityProject(this.repository, this.stateOwner, session)
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
       return this.stateOwner.saveSession(session, options)
     })
   }
@@ -715,7 +709,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     specialistId: string | undefined
   ): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
-      await assertSessionIdentityProject(this.repository, this.stateOwner, session)
+      await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
       return this.stateOwner.saveSession(
         { ...session, specialistId },
         { conflictRebaseFields: ['specialistId'] }

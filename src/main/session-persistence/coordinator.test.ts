@@ -941,18 +941,19 @@ describe('SessionPersistenceCoordinator', () => {
     expect(repository.saveSession).not.toHaveBeenCalled()
   })
 
-  it('checks durable ownership when an incomplete catalog omitted duplicate Session ids', async () => {
-    const findSessionProjectIds = vi.fn().mockResolvedValue({
-      projectIds: ['project-a', 'project-b'],
-      isComplete: true
-    })
+  it('delegates durable ownership verification when an incomplete catalog omitted a Session', async () => {
+    const assertSessionIdentityOwnership = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('Cannot save a Session id that is already owned by another Project.')
+      )
     const repository = createSessionRepository({
       loadAllWithDiagnostics: vi.fn().mockResolvedValue({
         result: { sessions: [], manifest: { version: 1 } },
         isComplete: false,
         warnings: []
       }),
-      findSessionProjectIds
+      assertSessionIdentityOwnership
     })
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
     await coordinator.loadAll()
@@ -960,7 +961,7 @@ describe('SessionPersistenceCoordinator', () => {
     await expect(
       coordinator.saveSession(createSession({ id: 'session-1', projectId: 'project-c' }))
     ).rejects.toThrow(/Session id.*another Project/)
-    expect(findSessionProjectIds).toHaveBeenCalledWith('session-1')
+    expect(assertSessionIdentityOwnership).toHaveBeenCalledWith('session-1', 'project-c')
     expect(repository.loadSessionWithDiagnostics).not.toHaveBeenCalled()
     expect(repository.saveSession).not.toHaveBeenCalled()
   })
@@ -5086,7 +5087,7 @@ const createSessionRepository = (
     isComplete: true
   }),
   loadSessionWithDiagnostics: vi.fn().mockResolvedValue({ status: 'missing' }),
-  findSessionProjectIds: vi.fn().mockResolvedValue({ projectIds: [], isComplete: true }),
+  assertSessionIdentityOwnership: vi.fn().mockResolvedValue(undefined),
   saveSession: vi.fn().mockResolvedValue(undefined),
   saveCommittedProjectSession: vi.fn().mockResolvedValue(undefined),
   deleteSession: vi.fn().mockResolvedValue(undefined),
