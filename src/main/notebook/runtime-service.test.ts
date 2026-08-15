@@ -6146,6 +6146,63 @@ describe('v4 runtime bindings & agent tools', () => {
     expect(executions.at(-1)?.resolvedInterpreter?.command).toBe(userPyB.interpreterPath)
   })
 
+  it('clears exact persisted terminations when intentionally switching or revoking a runtime', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const seedTerminatedDefault = async (sessionId: string): Promise<void> => {
+      const lane = createRootNotebookLane('default-project', sessionId, `root-frame-${sessionId}`)
+      await repository.loadOrCreate({
+        projectName: 'default-project',
+        sessionId,
+        workspaceCwd: root,
+        lane
+      })
+      await repository.markKernelTerminated({
+        projectName: 'default-project',
+        sessionId,
+        lane,
+        kernelInstance: { kind: 'python', environment: DEFAULT_PY_ENV }
+      })
+    }
+    await seedTerminatedDefault('switch-session')
+    await seedTerminatedDefault('revoke-session')
+
+    const service = bindingService(root, {
+      repository,
+      enablement: {
+        enabled: { [userPyA.envId]: true, [userPyB.envId]: true },
+        installAuthorized: {}
+      }
+    })
+
+    await service.bindRuntime({
+      sessionId: 'switch-session',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    await service.switchRuntime({
+      sessionId: 'switch-session',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyB.envId
+    })
+
+    await service.bindRuntime({
+      sessionId: 'revoke-session',
+      workspaceCwd: root,
+      language: 'python',
+      runtimeId: userPyA.envId
+    })
+    await service.revokeRuntime('python', userPyA.envId, { force: true })
+
+    for (const sessionId of ['switch-session', 'revoke-session']) {
+      const persisted = await repository.findExisting('default-project', sessionId)
+      expect(persisted?.kernel).toMatchObject({ lastKnownStatus: 'idle' })
+      expect(persisted?.kernel.terminatedKernelInstances).toBeUndefined()
+    }
+  })
+
   it('preserves a switched and revoked binding across a replacement session generation', async () => {
     const root = await createStorageRoot()
     const discovered = [managedPy, userPyA, userPyB]

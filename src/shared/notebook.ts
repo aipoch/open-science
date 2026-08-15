@@ -414,7 +414,8 @@ export type NotebookWriteLock = {
 // entry per (kind, env) process the session has spawned, keyed by the executor's ProcessKey
 // (`${kind}:${env}` for python/r, `repl` for the control kernel). The coarse `kernelStatus` on the
 // session state stays the DEFAULT env's status for backward compat; this array is the per-env view.
-// In-memory only for now — persisting it into run.json is a separate later task (T8).
+// Live statuses remain in-memory; exact terminated instances are also restored from run.json so a
+// relaunch can identify which environment needs recovery without persisting the full live-status map.
 export type NotebookEnvironmentStatus = {
   processKey: string
   kind: 'python' | 'r' | 'repl'

@@ -263,6 +263,20 @@ class NotebookSessionLifecycleOwner {
     }
   }
 
+  async clearPersistedKernelTermination(
+    session: RuntimeSession,
+    processKey: string
+  ): Promise<void> {
+    if (!session.hasDurableKernelTermination(processKey)) return
+    await this.options.repository.clearKernelTermination({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      kernelInstance: kernelInstanceForProcessKey(processKey)
+    })
+    session.clearDurableKernelTermination(processKey)
+  }
+
   async projectKernelIdleShutdown(
     lane: NotebookLaneIdentity,
     kind?: KernelProcessKind,

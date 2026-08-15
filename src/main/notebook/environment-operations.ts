@@ -74,6 +74,10 @@ type NotebookEnvironmentOperationsOptions = {
   recovery: NotebookRecoveryCoordinator
   bindings: EnvironmentOperationBindingOwner
   sessions: () => Iterable<EnvironmentOperationSession>
+  clearKernelTermination: (
+    session: EnvironmentOperationSession,
+    processKey: string
+  ) => Promise<void>
   notifyChanged: (session: EnvironmentOperationSession) => void
   logger?: RuntimeDiagnosticLogger
   now?: () => number
@@ -260,6 +264,7 @@ export class NotebookEnvironmentOperations {
               session.markForceStopped(revokedProcessKey)
             }
             await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
+            await this.options.clearKernelTermination(session, revokedProcessKey)
             session.clearProcessState(revokedProcessKey)
             this.options.notifyChanged(session)
             continue
@@ -269,6 +274,7 @@ export class NotebookEnvironmentOperations {
             try {
               await session.drainExecution(revokedProcessKey)
               await session.terminateExecutor(language === 'r' ? 'r' : 'python', environment)
+              await this.options.clearKernelTermination(session, revokedProcessKey)
               session.clearProcessState(revokedProcessKey)
               this.options.notifyChanged(session)
             } catch (error) {

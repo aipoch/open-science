@@ -379,6 +379,11 @@ class NotebookRuntimeService {
       recovery: this.recoveryCoordinator,
       bindings: this.runtimeBindingOwner,
       sessions: () => this.sessions.values(),
+      clearKernelTermination: (session, processKey) =>
+        this.sessionLifecycle.clearPersistedKernelTermination(
+          session as RuntimeSession,
+          processKey
+        ),
       notifyChanged: (session) => this.sessionLifecycle.notifyChanged(session as RuntimeSession),
       logger: this.runtimeLogger
     })
@@ -612,7 +617,7 @@ class NotebookRuntimeService {
             const oldEnv = this.resolveRunEnv(session, request.language)
             const kind = request.language === 'r' ? 'r' : 'python'
             await session.terminateExecutor(kind, oldEnv)
-            this.tearDownLanguageBinding(session, request.language, oldEnv)
+            await this.tearDownLanguageBinding(session, request.language, oldEnv)
           }
         )
         this.sessionLifecycle.notifyChanged(session)
@@ -645,12 +650,13 @@ class NotebookRuntimeService {
   // Clears the state of ONE (language, env) runtime after its kernel was torn down on switch: drops its
   // live status, terminated flag, and execution-queue tail so the rebound runtime starts clean. Only
   // the given env's process key is affected; the other language and other envs are untouched.
-  private tearDownLanguageBinding(
+  private async tearDownLanguageBinding(
     session: RuntimeSession,
     language: NotebookLanguage,
     env: string
-  ): void {
+  ): Promise<void> {
     const processKey = dataProcessKey(language, env)
+    await this.sessionLifecycle.clearPersistedKernelTermination(session, processKey)
     session.clearProcessState(processKey)
   }
 

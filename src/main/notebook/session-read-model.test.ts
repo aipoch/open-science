@@ -69,8 +69,8 @@ const makeSession = (
     runJsonPath: snapshot.runJsonPath,
     lane: createFrameNotebookLane(projectId, sessionId, 'root-frame-session-1'),
     snapshot: () => snapshot,
+    kernelStatus: (processKey) => snapshot.kernelStatuses.find(([key]) => key === processKey)?.[1],
     kernelStatusEntries: () => snapshot.kernelStatuses.map((entry) => [...entry]),
-    latestKernelStatus: () => snapshot.kernelStatuses.at(-1)?.[1],
     runtimeBindingEntries: () =>
       withRuntimeBinding
         ? [
@@ -193,6 +193,49 @@ describe('NotebookSessionReadModel', () => {
       ],
       runtimeBindings: { python: { runtimeId: 'managed-python' } }
     })
+  })
+
+  it('keeps coarse status on default Python and projects persisted named terminations', async () => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = makeSession(storageRoot, {
+      kernelStatuses: [
+        ['python:default-python', 'idle'],
+        ['r:analysis', 'running']
+      ]
+    })
+    await repository.loadOrCreate({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      workspaceCwd: session.cwd
+    })
+    await repository.markKernelTerminated({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      kernelInstance: { kind: 'r', environment: 'analysis' }
+    })
+
+    const state = await makeReadModel(storageRoot, session, repository).state(session)
+
+    expect(state.kernelStatus).toBe('idle')
+    expect(state.environments).toEqual([
+      {
+        processKey: 'python:default-python',
+        kind: 'python',
+        environment: 'default-python',
+        status: 'idle',
+        restartRecommended: false
+      },
+      {
+        processKey: 'r:analysis',
+        kind: 'r',
+        environment: 'analysis',
+        status: 'terminated',
+        restartRecommended: true
+      }
+    ])
   })
 
   it('returns only the most recent 100 runs while reporting the durable total', async () => {
