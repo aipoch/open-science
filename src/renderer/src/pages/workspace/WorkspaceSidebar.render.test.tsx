@@ -118,6 +118,16 @@ describe('WorkspaceSidebar accessible render', () => {
     expect(html).toContain('aria-label="Messages, no unread messages"')
   })
 
+  it('places Settings before notifications in the footer controls', async () => {
+    const html = await renderSidebar([createSession({ id: 'session-a' })])
+    const settingsIndex = html.indexOf('aria-label="Settings"')
+    const notificationsIndex = html.indexOf('aria-label="Messages, no unread messages"')
+
+    expect(settingsIndex).toBeGreaterThanOrEqual(0)
+    expect(notificationsIndex).toBeGreaterThanOrEqual(0)
+    expect(settingsIndex).toBeLessThan(notificationsIndex)
+  })
+
   it('softens the session list behind the footer controls', async () => {
     const html = await renderSidebar([createSession({ id: 'session-a' })])
 

@@ -656,12 +656,6 @@ const WorkspaceSidebarView = ({
             />
             <UpdateCapsule variant="session" className="mb-1.5" />
             <div className="flex items-center gap-1 pb-2">
-              <NotificationBell
-                side="top"
-                align="start"
-                className="size-8 rounded-md"
-                onOpen={mobileMode ? onMobileClose : undefined}
-              />
               <button
                 type="button"
                 onClick={onOpenSettings}
@@ -673,6 +667,12 @@ const WorkspaceSidebarView = ({
               >
                 <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
               </button>
+              <NotificationBell
+                side="top"
+                align="start"
+                className="size-8 rounded-md"
+                onOpen={mobileMode ? onMobileClose : undefined}
+              />
               <GitHubStarBadge />
               <NetworkStatusIndicator variant="icon" />
             </div>
