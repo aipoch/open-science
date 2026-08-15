@@ -1,4 +1,4 @@
-import { ShieldAlert } from 'lucide-react'
+import { AlertTriangle, ShieldAlert } from 'lucide-react'
 import { Dialog } from 'radix-ui'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -40,6 +40,8 @@ export function ConnectorApprovalDialog({
   const customServers = useSettingsStore((state) => state.customServers)
   const respondApproval = useSettingsStore((state) => state.respondApproval)
   const [pendingBroadScope, setPendingBroadScope] = useState<BroadPermissionScope>()
+  const [responding, setResponding] = useState(false)
+  const [responseError, setResponseError] = useState(false)
 
   if (!request) return null
   const availableScopes = request.availableScopes ?? ['once']
@@ -49,26 +51,35 @@ export function ConnectorApprovalDialog({
     customServers.find((s) => s.name === request.connector)?.name ??
     request.connector
 
+  const submitResponse = (decision: 'once' | 'session' | 'project' | 'global' | 'deny'): void => {
+    if (responding) return
+    setResponding(true)
+    setResponseError(false)
+    void respondApproval(request.id, decision)
+      .catch(() => setResponseError(true))
+      .finally(() => setResponding(false))
+  }
   const allow = (scope: 'once' | 'session' | 'project' | 'global'): void => {
     if (scope === 'project' || scope === 'global') {
       setPendingBroadScope(scope)
       return
     }
-    void respondApproval(request.id, scope)
+    submitResponse(scope)
   }
   const confirmBroadScope = (): void => {
     if (!pendingBroadScope) return
     const scope = pendingBroadScope
     setPendingBroadScope(undefined)
-    void respondApproval(request.id, scope)
+    submitResponse(scope)
   }
-  const deny = (): void => void respondApproval(request.id, 'deny')
+  const deny = (): void => submitResponse('deny')
 
   return (
     <Dialog.Root open={active}>
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
+          aria-busy={responding}
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
@@ -108,28 +119,52 @@ export function ConnectorApprovalDialog({
                 </span>
               </div>
             </div>
+            {responseError ? (
+              <div
+                role="alert"
+                className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
+              >
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>{t('Could not submit this approval. Try again.')}</span>
+              </div>
+            ) : null}
           </div>
 
           <div className={cn(dialogFooterClassName, 'flex-wrap')}>
-            <Button type="button" variant="destructive" onClick={deny}>
+            <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>
             {availableScopes.includes('session') ? (
-              <Button type="button" variant="outline" onClick={() => allow('session')}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={responding}
+                onClick={() => allow('session')}
+              >
                 {t('This session')}
               </Button>
             ) : null}
             {availableScopes.includes('project') ? (
-              <Button type="button" variant="outline" onClick={() => allow('project')}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={responding}
+                onClick={() => allow('project')}
+              >
                 {t('This project')}
               </Button>
             ) : null}
             {availableScopes.includes('global') ? (
-              <Button type="button" variant="outline" onClick={() => allow('global')}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={responding}
+                onClick={() => allow('global')}
+              >
                 {t('Global')}
               </Button>
             ) : null}
-            <Button type="button" onClick={() => allow('once')}>
+            <Button type="button" disabled={responding} onClick={() => allow('once')}>
               {t('Allow once')}
             </Button>
           </div>

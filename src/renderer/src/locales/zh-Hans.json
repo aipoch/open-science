@@ -460,6 +460,7 @@
   "Could not sign in to Codex.": "无法登录 Codex。",
   "Could not sign out of Claude.": "无法退出 Claude。",
   "Could not sign out of Codex.": "无法退出 Codex。",
+  "Could not submit this approval. Try again.": "无法提交此批准。请重试。",
   "Could not switch to this folder.": "无法切换到该文件夹。",
   "Could not switch to {{name}}": "无法切换到 {{name}}",
   "Could not test the provider connection.": "无法测试模型服务商连接。",

@@ -429,7 +429,9 @@ const SkillsPanel = ({
                         <SettingsToggle
                           enabled={skill.enabled}
                           aria-label={t('Toggle {{name}}', { name: skill.displayName })}
-                          onToggle={() => void setSkillEnabled(skill.id, !skill.enabled)}
+                          onToggle={() =>
+                            void setSkillEnabled(skill.id, !skill.enabled).catch(() => undefined)
+                          }
                         />
                       </li>
                     ))}

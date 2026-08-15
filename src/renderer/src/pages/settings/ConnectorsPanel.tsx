@@ -299,7 +299,11 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                   <SettingsToggle
                     enabled={connector.enabled}
                     aria-label={connector.displayName}
-                    onToggle={() => void setConnectorEnabled(connector.id, !connector.enabled)}
+                    onToggle={() =>
+                      void setConnectorEnabled(connector.id, !connector.enabled).catch(
+                        () => undefined
+                      )
+                    }
                   />
                 </li>
               ))}
@@ -617,7 +621,9 @@ export function ConnectorsPanel({ onNavigate }: ConnectorsPanelProps): React.JSX
                         }
                         onToggle={() => {
                           if (requiresSignInBeforeEnable(server)) return
-                          void setCustomServerEnabled(server.id, !server.enabled)
+                          void setCustomServerEnabled(server.id, !server.enabled).catch(
+                            () => undefined
+                          )
                         }}
                       />
                     </li>

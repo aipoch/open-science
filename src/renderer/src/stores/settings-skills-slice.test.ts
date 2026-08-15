@@ -149,13 +149,40 @@ describe('settings Skills slice', () => {
     expect(store.getState().skills).toEqual([skill('authoritative', false)])
   })
 
-  it('propagates a toggle failure without rolling back the existing optimistic behavior', async () => {
+  it('rolls back an optimistic toggle when main rejects it', async () => {
     vi.mocked(commands.setSkillEnabled).mockRejectedValue(new Error('toggle failed'))
     store.setState({ skills: [skill('target')] })
 
     await expect(store.getState().setSkillEnabled('target', false)).rejects.toThrow('toggle failed')
 
-    expect(store.getState().skills).toEqual([skill('target', false)])
+    expect(store.getState().skills).toEqual([skill('target')])
+  })
+
+  it('does not let an older rejected Skill toggle overwrite a newer success', async () => {
+    let rejectOlder!: (error: Error) => void
+    let settleNewer!: (skills: SkillView[]) => void
+    vi.mocked(commands.setSkillEnabled)
+      .mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectOlder = reject
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          settleNewer = resolve
+        })
+      )
+    store.setState({ skills: [skill('target')] })
+
+    const older = store.getState().setSkillEnabled('target', false)
+    const newer = store.getState().setSkillEnabled('target', true)
+
+    settleNewer([skill('target')])
+    await newer
+    rejectOlder(new Error('older toggle failed'))
+    await expect(older).rejects.toThrow('older toggle failed')
+
+    expect(store.getState().skills).toEqual([skill('target')])
   })
 
   it('reconciles the authoritative catalog after changing Skill enablement in bulk', async () => {

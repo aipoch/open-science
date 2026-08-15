@@ -104,7 +104,7 @@ const ConnectorDetailView = ({
         <SettingsToggle
           enabled={enabled}
           aria-label={t('Toggle {{name}}', { name: detail.displayName })}
-          onToggle={() => void setConnectorEnabled(id, !enabled)}
+          onToggle={() => void setConnectorEnabled(id, !enabled).catch(() => undefined)}
         />
       </div>
 
@@ -127,7 +127,7 @@ const ConnectorDetailView = ({
         <SettingsToggle
           enabled={autoAllow}
           aria-label={t('Skip approvals for {{name}}', { name: id })}
-          onToggle={() => void setConnectorAutoAllow(id, !autoAllow)}
+          onToggle={() => void setConnectorAutoAllow(id, !autoAllow).catch(() => undefined)}
         />
       </div>
 

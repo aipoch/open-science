@@ -1363,7 +1363,7 @@ describe('settings store: connectors slice', () => {
     expect(useSettingsStore.getState().connectors[0].enabled).toBe(false)
   })
 
-  it('keeps the optimistic connector value when main rejects the write', async () => {
+  it('rolls back the optimistic Connector value when main rejects the write', async () => {
     useSettingsStore.setState({ connectors: [connectorView('pubmed', true)] })
     api.setConnectorEnabled.mockRejectedValue(new Error('IPC unavailable'))
 
@@ -1371,7 +1371,7 @@ describe('settings store: connectors slice', () => {
       'IPC unavailable'
     )
 
-    expect(useSettingsStore.getState().connectors[0].enabled).toBe(false)
+    expect(useSettingsStore.getState().connectors[0].enabled).toBe(true)
   })
 
   it('setNcbiCredentials reconciles the ncbi credential state', async () => {

@@ -459,6 +459,7 @@
   "Could not sign in to Codex.": "無法登入 Codex。",
   "Could not sign out of Claude.": "無法登出 Claude。",
   "Could not sign out of Codex.": "無法登出 Codex。",
+  "Could not submit this approval. Try again.": "無法提交此核准。請重試。",
   "Could not switch to this folder.": "無法切換到該資料夾。",
   "Could not switch to {{name}}": "無法切換到 {{name}}",
   "Could not test the provider connection.": "無法測試模型服務商連線。",

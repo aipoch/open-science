@@ -227,4 +227,49 @@ describe('ConnectorApprovalDialog', () => {
     act(() => button('Deny')?.click())
     expect(useSettingsStore.getState().respondApproval).toHaveBeenCalledWith('r1', 'deny')
   })
+
+  it('disables decisions while submitting and keeps a failed response retryable', async () => {
+    let rejectResponse!: (error: Error) => void
+    const respondApproval = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise<void>((_, reject) => {
+          rejectResponse = reject
+        })
+      )
+      .mockResolvedValueOnce(undefined)
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'r1',
+          connector: 'biomart',
+          method: 'get_data',
+          argsPreview: '{}',
+          availableScopes: ['once', 'session']
+        }
+      ],
+      respondApproval
+    })
+    act(() => root.render(<ConnectorApprovalDialog />))
+
+    act(() => button('Allow once')?.click())
+
+    expect(button('Deny')?.disabled).toBe(true)
+    expect(button('This session')?.disabled).toBe(true)
+    expect(button('Allow once')?.disabled).toBe(true)
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-busy')).toBe('true')
+
+    await act(async () => {
+      rejectResponse(new Error('IPC unavailable'))
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not submit this approval. Try again.'
+    )
+    expect(button('Allow once')?.disabled).toBe(false)
+
+    act(() => button('Allow once')?.click())
+    expect(respondApproval).toHaveBeenCalledTimes(2)
+  })
 })

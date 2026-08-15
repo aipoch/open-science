@@ -95,7 +95,7 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
         <SettingsToggle
           enabled={enabled}
           aria-label={t('Toggle {{name}}', { name })}
-          onToggle={() => void setSkillEnabled(skillId, !enabled)}
+          onToggle={() => void setSkillEnabled(skillId, !enabled).catch(() => undefined)}
         />
       </div>
 
