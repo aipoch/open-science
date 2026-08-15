@@ -760,6 +760,29 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       })
     ).rejects.toThrow('parent Project is unavailable')
     expect(captureTarget).not.toHaveBeenCalled()
+
+    owner.restoreProject('project-deleted')
+
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({ parentSessionId: 'parent-deleted', projectId: 'project-deleted' }),
+      expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
+    ])
+    captureTarget.mockRejectedValueOnce(new Error('backend unavailable'))
+    await expect(
+      owner.start({
+        parentSessionId: 'another-parent',
+        projectId: 'project-deleted',
+        text: 'Available after rollback'
+      })
+    ).rejects.toThrow('backend unavailable')
+    expect(captureTarget).toHaveBeenCalledOnce()
+
+    await owner.invalidateProject('project-deleted')
+    owner.completeProjectDeletion('project-deleted')
+    owner.restoreProject('project-deleted')
+    expect(owner.list().chats).toEqual([
+      expect.objectContaining({ parentSessionId: 'parent-kept', projectId: 'project-kept' })
+    ])
   })
 
   it('publishes a terminal lifecycle event and keeps a disconnected runtime dormant', async () => {

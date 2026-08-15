@@ -136,6 +136,28 @@ describe('ProjectDeletionCoordinator', () => {
     expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
   })
 
+  it('aborts partial runtime invalidation when pre-delete quiescence fails', async () => {
+    const projects = createProjects()
+    const abortProjectDeletion = vi.fn()
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      createSessions(),
+      { delete: vi.fn().mockResolvedValue(undefined) },
+      undefined,
+      undefined,
+      undefined,
+      {
+        beforeProjectDelete: vi.fn().mockRejectedValue(new Error('runtime cleanup failed')),
+        abortProjectDeletion
+      }
+    )
+
+    await expect(coordinator.deleteProject('project-1')).rejects.toThrow('runtime cleanup failed')
+
+    expect(abortProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(projects.createDeletionIntent).not.toHaveBeenCalled()
+  })
+
   it('retains the Project and deletion intent when grant pruning fails, then resumes idempotently', async () => {
     let projectExists = true
     let intentExists = false

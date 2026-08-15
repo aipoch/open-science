@@ -746,10 +746,12 @@ const createApplicationModules = async (
       completeProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
         notebookService.releaseProjectDeletion(projectId)
+        sideChatOwnerRef.current?.completeProjectDeletion(projectId)
       },
       abortProjectDeletion: (projectId) => {
         archiveCoordinator.releaseProjectDeletion(projectId)
         notebookService.releaseProjectDeletion(projectId)
+        sideChatOwnerRef.current?.restoreProject(projectId)
       }
     }
   )

@@ -580,8 +580,10 @@ class NotebookRuntimeService {
     runtimes: NotebookRuntimeListing[]
     bindings: NotebookRuntimeBindings
   }> {
-    const session = await this.sessionLifecycle.ensure(request)
-    return this.runtimeBindingOwner.list(session)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
+      return this.runtimeBindingOwner.list(session)
+    })
   }
 
   // notebook_bind_runtime: the FIRST binding of a language for the session. Refuses a disabled/unknown
@@ -589,12 +591,14 @@ class NotebookRuntimeService {
   async bindRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    return this.runtimeBindingOwner.runWrite(
-      notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
-      async () => {
-        const session = await this.sessionLifecycle.ensure(request)
-        return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
-      }
+    return this.sessionLifecycle.runProjectOperation(request, () =>
+      this.runtimeBindingOwner.runWrite(
+        notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
+        async () => {
+          const session = await this.sessionLifecycle.ensure(request)
+          return this.runtimeBindingOwner.bind(session, request.language, request.runtimeId)
+        }
+      )
     )
   }
 
@@ -603,26 +607,28 @@ class NotebookRuntimeService {
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
   ): Promise<{ bound: NotebookRuntimeBinding; bindings: NotebookRuntimeBindings }> {
-    return this.runtimeBindingOwner.runWrite(
-      notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
-      async () => {
-        const session = await this.sessionLifecycle.ensure(request)
-        const result = await this.runtimeBindingOwner.switch(
-          session,
-          request.language,
-          request.runtimeId,
-          async () => {
-            // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
-            // new runtime starts fresh and two same-language interpreters never coexist.
-            const oldEnv = this.resolveRunEnv(session, request.language)
-            const kind = request.language === 'r' ? 'r' : 'python'
-            await session.terminateExecutor(kind, oldEnv)
-            await this.tearDownLanguageBinding(session, request.language, oldEnv)
-          }
-        )
-        this.sessionLifecycle.notifyChanged(session)
-        return result
-      }
+    return this.sessionLifecycle.runProjectOperation(request, () =>
+      this.runtimeBindingOwner.runWrite(
+        notebookLaneKey(this.sessionLifecycle.laneForRequest(request)),
+        async () => {
+          const session = await this.sessionLifecycle.ensure(request)
+          const result = await this.runtimeBindingOwner.switch(
+            session,
+            request.language,
+            request.runtimeId,
+            async () => {
+              // PHYSICALLY tear down the CURRENT runtime's kernel for this language BEFORE rebinding, so the
+              // new runtime starts fresh and two same-language interpreters never coexist.
+              const oldEnv = this.resolveRunEnv(session, request.language)
+              const kind = request.language === 'r' ? 'r' : 'python'
+              await session.terminateExecutor(kind, oldEnv)
+              await this.tearDownLanguageBinding(session, request.language, oldEnv)
+            }
+          )
+          this.sessionLifecycle.notifyChanged(session)
+          return result
+        }
+      )
     )
   }
 
@@ -684,22 +690,24 @@ class NotebookRuntimeService {
     writeId: string
     status: NotebookCell['status']
   }> {
-    const session = await this.sessionLifecycle.ensure(request)
-    const cellId = request.cellId ?? `cell-${randomUUID()}`
-    const writeId = `write-${randomUUID()}`
-    const source = request.source ?? 'agent'
-    const cell = session.beginCellWrite({
-      cellId,
-      language: request.language ?? 'python',
-      writeId,
-      source,
-      startedAt: Date.now()
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
+      const cellId = request.cellId ?? `cell-${randomUUID()}`
+      const writeId = `write-${randomUUID()}`
+      const source = request.source ?? 'agent'
+      const cell = session.beginCellWrite({
+        cellId,
+        language: request.language ?? 'python',
+        writeId,
+        source,
+        startedAt: Date.now()
+      })
+
+      this.sessionLifecycle.notifyAvailable(session, source)
+      this.sessionLifecycle.notifyChanged(session)
+
+      return { sessionId: session.sessionId, cellId, writeId, status: cell.status }
     })
-
-    this.sessionLifecycle.notifyAvailable(session, source)
-    this.sessionLifecycle.notifyChanged(session)
-
-    return { sessionId: session.sessionId, cellId, writeId, status: cell.status }
   }
 
   // Appends raw code text to the locked cell and streams the change to the preview.
@@ -709,24 +717,26 @@ class NotebookRuntimeService {
     writeId: string
     receivedBytes: number
   }> {
-    const session = await this.sessionLifecycle.ensure(request)
-    const current = session.cellView(request.cellId)
-    try {
-      assertNotebookCodeAppendWithinLimit(current.code, request.delta)
-    } catch (error) {
-      session.abortCellWrite(request.cellId, request.writeId)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
+      const current = session.cellView(request.cellId)
+      try {
+        assertNotebookCodeAppendWithinLimit(current.code, request.delta)
+      } catch (error) {
+        session.abortCellWrite(request.cellId, request.writeId)
+        this.sessionLifecycle.notifyChanged(session)
+        throw error
+      }
+      const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
       this.sessionLifecycle.notifyChanged(session)
-      throw error
-    }
-    const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
-    this.sessionLifecycle.notifyChanged(session)
 
-    return {
-      sessionId: session.sessionId,
-      cellId: cell.id,
-      writeId: request.writeId,
-      receivedBytes: Buffer.byteLength(cell.code, 'utf8')
-    }
+      return {
+        sessionId: session.sessionId,
+        cellId: cell.id,
+        writeId: request.writeId,
+        receivedBytes: Buffer.byteLength(cell.code, 'utf8')
+      }
+    })
   }
 
   // Releases a write lock so the completed cell can be run by the same shared interpreter.
@@ -736,11 +746,13 @@ class NotebookRuntimeService {
     code: string
     status: NotebookCell['status']
   }> {
-    const session = await this.sessionLifecycle.ensure(request)
-    const cell = session.finishCellWrite(request.cellId, request.writeId)
-    this.sessionLifecycle.notifyChanged(session)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
+      const cell = session.finishCellWrite(request.cellId, request.writeId)
+      this.sessionLifecycle.notifyChanged(session)
 
-    return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
+      return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
+    })
   }
 
   // Compatibility facade: Session lookup and public summary projection stay here; lifecycle is owned.
@@ -748,9 +760,11 @@ class NotebookRuntimeService {
     request: RunNotebookCellRequest,
     signal?: AbortSignal
   ): Promise<NotebookRunSummary> {
-    const session = await this.sessionLifecycle.ensure(request)
-    const run = await this.executionOwner.executeDataCell(session, request, signal)
-    return this.sessionReadModel.toRunSummary(session, run)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
+      const run = await this.executionOwner.executeDataCell(session, request, signal)
+      return this.sessionReadModel.toRunSummary(session, run)
+    })
   }
 
   // Convenience path used by the terminal and MCP to write a temporary cell and run it.
@@ -785,17 +799,21 @@ class NotebookRuntimeService {
   // Compatibility facade for the control-plane REPL. Admission, capability lifetime, dispatch,
   // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(request: ExecuteNotebookControlRequest): Promise<NotebookControlResult> {
-    assertNotebookCodeWithinLimit(request.code)
-    const session = await this.sessionLifecycle.ensure(request)
-    return this.executionOwner.executeControl(session, request)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      assertNotebookCodeWithinLimit(request.code)
+      const session = await this.sessionLifecycle.ensure(request)
+      return this.executionOwner.executeControl(session, request)
+    })
   }
 
   // Compatibility facade for stateless shell execution. The owner deliberately admits calls without
   // a per-Session queue while the repository continues to serialize durable run writes.
   async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
-    assertNotebookCodeWithinLimit(request.command)
-    const session = await this.sessionLifecycle.ensure(request)
-    return this.executionOwner.executeShell(session, request)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      assertNotebookCodeWithinLimit(request.command)
+      const session = await this.sessionLifecycle.ensure(request)
+      return this.executionOwner.executeShell(session, request)
+    })
   }
 
   // Read-only handoff projection for a fresh Agent context. A missing aggregate means Notebook was
@@ -809,25 +827,27 @@ class NotebookRuntimeService {
   async state(
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    const requestedRunIds = request.runIds ?? []
-    if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
-      throw new Error(
-        `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
-      )
-    }
-    if (
-      request.historySummaryFrameId !== undefined &&
-      Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
-        NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
-    ) {
-      throw new Error(
-        `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
-      )
-    }
-    const runIds = [...new Set(requestedRunIds)]
-    const session = await this.sessionLifecycle.ensure(request)
-    await this.runTerminalization.reconcilePending(session)
-    return this.sessionReadModel.state(session, runIds, request.historySummaryFrameId)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const requestedRunIds = request.runIds ?? []
+      if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
+        throw new Error(
+          `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
+        )
+      }
+      if (
+        request.historySummaryFrameId !== undefined &&
+        Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
+          NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
+      ) {
+        throw new Error(
+          `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
+        )
+      }
+      const runIds = [...new Set(requestedRunIds)]
+      const session = await this.sessionLifecycle.ensure(request)
+      await this.runTerminalization.reconcilePending(session)
+      return this.sessionReadModel.state(session, runIds, request.historySummaryFrameId)
+    })
   }
 
   // Resolves the durable reference for a session, preferring the live runtime session but falling
@@ -861,37 +881,40 @@ class NotebookRuntimeService {
   // and lazily respawns its loops) and only shuts down + recreates for executors that don't support it.
   // Reports 'restarting' for the duration and settles back to 'idle' once the fresh process is ready.
   async restart(request: NotebookSessionRequest): Promise<NotebookSessionState> {
-    const session = await this.sessionLifecycle.ensure(request)
+    return this.sessionLifecycle.runProjectOperation(request, async () => {
+      const session = await this.sessionLifecycle.ensure(request)
 
-    // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
-    // is cleared. Snapshot the keys before teardown drops them from kernelStatuses.
-    const envKeys = session.kernelProcessKeys()
+      // A restart respawns fresh loops, so any pending R-restart recommendation for this session's envs
+      // is cleared. Snapshot the keys before teardown drops them from kernelStatuses.
+      const envKeys = session.kernelProcessKeys()
 
-    envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
-    await this.repository.clearKernelTerminations({
-      projectName: session.projectId,
-      sessionId: session.sessionId,
-      lane: session.lane,
-      status: 'restarting'
-    })
-    session.clearAllDurableKernelTerminations()
-    this.sessionLifecycle.notifyChanged(session)
-
-    try {
-      await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
-      this.environmentOperations.clearRestartRecommendations(envKeys)
-    } finally {
-      envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
-      await this.repository.updateKernelStatus({
+      envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
+      await this.repository.clearKernelTerminations({
         projectName: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
-        status: 'idle'
+        status: 'restarting'
       })
-    }
-    this.sessionLifecycle.notifyChanged(session)
+      session.clearAllDurableKernelTerminations()
+      this.sessionLifecycle.notifyChanged(session)
 
-    return this.state(request)
+      try {
+        await session.restartExecutor(() => this.sessionLifecycle.createExecutor(session.lane))
+        this.environmentOperations.clearRestartRecommendations(envKeys)
+      } finally {
+        envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
+        await this.repository.updateKernelStatus({
+          projectName: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          status: 'idle'
+        })
+      }
+      this.sessionLifecycle.notifyChanged(session)
+
+      await this.runTerminalization.reconcilePending(session)
+      return this.sessionReadModel.state(session)
+    })
   }
 
   // Reads installed package metadata from the app-managed runtime bound to this session. The shared
@@ -899,7 +922,9 @@ class NotebookRuntimeService {
   // ordinary notebook runs to proceed. External runtimes are rejected because inventory capture must
   // execute their interpreter; notebookExecute provides the explicit execution approval for that case.
   async inspectPackages(request: InspectPackagesRequest): Promise<InspectPackagesResult> {
-    return this.packageOperations.inspect(request)
+    return this.sessionLifecycle.runProjectOperation(request, () =>
+      this.packageOperations.inspect(request)
+    )
   }
 
   // Installs packages into the shared global environments (never inside a session/kernel). Resolves

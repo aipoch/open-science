@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -93,4 +93,35 @@ describe('production delegated Frame workspace', () => {
       await workspace.deleteProject('project-2')
     }
   })
+
+  it.runIf(process.platform !== 'win32')(
+    'does not follow workspace symlinks while restoring delete permissions',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'delegated-project-workspace-symlink-'))
+      const workspaceRoot = join(root, 'workspaces')
+      const externalRoot = join(root, 'external-owned')
+      const externalFile = join(externalRoot, 'protected.txt')
+      await mkdir(join(workspaceRoot, 'project-1'), { recursive: true })
+      await mkdir(externalRoot)
+      await writeFile(externalFile, 'keep permissions')
+      await chmod(externalRoot, 0o500)
+      await chmod(externalFile, 0o400)
+      await symlink(externalRoot, join(workspaceRoot, 'project-1', 'external-link'), 'dir')
+      const workspace = createProductionFrameWorkspace({
+        root: workspaceRoot,
+        resolveInput: async () => ({ path: externalFile })
+      })
+
+      try {
+        await workspace.deleteProject('project-1')
+
+        expect((await stat(externalRoot)).mode & 0o777).toBe(0o500)
+        expect((await stat(externalFile)).mode & 0o777).toBe(0o400)
+        await expect(readFile(externalFile, 'utf8')).resolves.toBe('keep permissions')
+      } finally {
+        await chmod(externalRoot, 0o700)
+        await chmod(externalFile, 0o600)
+      }
+    }
+  )
 })

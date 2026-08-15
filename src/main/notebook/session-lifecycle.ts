@@ -80,6 +80,7 @@ class NotebookSessionLifecycleOwner {
   private readonly announcedAgentLaneKeys = new Set<string>()
   private readonly deletingProjectIds = new Set<string>()
   private readonly pendingEnsuresByProject = new Map<string, Set<Promise<RuntimeSession>>>()
+  private readonly pendingOperationsByProject = new Map<string, Set<Promise<unknown>>>()
 
   constructor(private readonly options: NotebookSessionLifecycleOptions) {}
 
@@ -174,6 +175,43 @@ class NotebookSessionLifecycleOwner {
     return ensuring
   }
 
+  runProjectOperation<Result>(
+    request: NotebookSessionRequest,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    const projectId = resolveProjectId(request, this.options.defaultProjectId)
+    try {
+      this.assertProjectAvailable(projectId)
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    let resolveRunning!: (value: Result | PromiseLike<Result>) => void
+    let rejectRunning!: (reason?: unknown) => void
+    const running = new Promise<Result>((resolve, reject) => {
+      resolveRunning = resolve
+      rejectRunning = reject
+    })
+    const pending = this.pendingOperationsByProject.get(projectId) ?? new Set<Promise<unknown>>()
+    pending.add(running)
+    this.pendingOperationsByProject.set(projectId, pending)
+    // Register before invoking the operation so a synchronous teardown can observe the lease, while
+    // preserving the existing guarantee that callers start work before the method returns.
+    try {
+      void operation().then(resolveRunning, rejectRunning)
+    } catch (error) {
+      rejectRunning(error)
+    }
+    void running
+      .finally(() => {
+        pending.delete(running)
+        if (pending.size === 0 && this.pendingOperationsByProject.get(projectId) === pending) {
+          this.pendingOperationsByProject.delete(projectId)
+        }
+      })
+      .catch(() => undefined)
+    return running
+  }
+
   createExecutor(lane: NotebookLaneIdentity): NotebookSessionOwnedExecutor {
     const { sessionId } = notebookLaneScope(lane)
     const generation = Symbol(`notebook-executor:${notebookLaneKey(lane)}`)
@@ -207,7 +245,10 @@ class NotebookSessionLifecycleOwner {
 
   async shutdownProject(projectId: string): Promise<void> {
     this.beginProjectDeletion(projectId)
-    await Promise.allSettled(this.pendingEnsuresByProject.get(projectId) ?? [])
+    await Promise.allSettled([
+      ...(this.pendingEnsuresByProject.get(projectId) ?? []),
+      ...(this.pendingOperationsByProject.get(projectId) ?? [])
+    ])
     const lanes = Array.from(this.options.sessions.values())
       .filter((session) => session.projectId === projectId)
       .map((session) => session.lane)

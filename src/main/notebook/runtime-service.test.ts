@@ -359,6 +359,109 @@ describe('notebook runtime service', () => {
     await service.shutdown(request)
   })
 
+  it('drains an admitted restart before shutting down the Project lane', async () => {
+    const root = await createStorageRoot()
+    const restartGate = createDeferred<void>()
+    const events: string[] = []
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => {
+          events.push('shutdown')
+          return { reaped: true }
+        },
+        restart: async () => {
+          events.push('restart-started')
+          await restartGate.promise
+          events.push('restart-finished')
+        }
+      })
+    })
+    const request = {
+      projectName: 'project-1',
+      sessionId: 'session-restarting',
+      workspaceCwd: root
+    }
+    await service.execute({ ...request, code: '1' })
+
+    const restarting = service.restart(request)
+    await vi.waitFor(() => expect(events).toContain('restart-started'))
+    const deleting = service.shutdownProject('project-1')
+    await Promise.resolve()
+
+    expect(events).not.toContain('shutdown')
+    await expect(service.state(request)).rejects.toThrow('Project is being deleted.')
+
+    restartGate.resolve(undefined)
+    await restarting
+    await deleting
+
+    expect(events).toEqual(['restart-started', 'restart-finished', 'shutdown'])
+  })
+
+  it('drains an admitted execution before shutting down the Project lane', async () => {
+    const root = await createStorageRoot()
+    const executionGate = createDeferred<NotebookExecutionResult>()
+    const execute = vi.fn(() => executionGate.promise)
+    const shutdown = vi.fn(async () => ({ reaped: true }))
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      executorFactory: () => ({ execute, shutdown })
+    })
+    const request = {
+      projectName: 'project-1',
+      sessionId: 'session-executing',
+      workspaceCwd: root
+    }
+    const begin = await service.beginCodeCell(request)
+    await service.appendCodeCell({
+      ...request,
+      cellId: begin.cellId,
+      writeId: begin.writeId,
+      delta: '1'
+    })
+    await service.finishCodeCell({
+      ...request,
+      cellId: begin.cellId,
+      writeId: begin.writeId
+    })
+
+    const running = service.runCell({ ...request, cellId: begin.cellId })
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce())
+    const deleting = service.shutdownProject('project-1')
+    await Promise.resolve()
+
+    expect(shutdown).not.toHaveBeenCalled()
+    executionGate.resolve({
+      status: 'completed',
+      stdout: '',
+      stderr: '',
+      traceback: '',
+      cwdAfter: root,
+      outputs: []
+    })
+    await running
+    await deleting
+
+    expect(shutdown).toHaveBeenCalledOnce()
+  })
+
   it('peeks only actionable in-memory handoff state without creating or reloading a Session', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)

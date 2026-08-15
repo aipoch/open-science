@@ -336,11 +336,21 @@ class SideChatRuntimeOwner {
       revision: this.revision,
       chats: [
         ...[...this.startingByParent.values()]
-          .filter((starting) => !this.activeByParent.has(starting.parentSessionId))
+          .filter(
+            (starting) =>
+              !this.invalidatedProjects.has(starting.projectId) &&
+              !this.activeByParent.has(starting.parentSessionId)
+          )
           .map((starting) => this.snapshotStarting(starting)),
-        ...[...this.activeByParent.values()].map((active) => this.snapshotActive(active)),
+        ...[...this.activeByParent.values()]
+          .filter((active) => !this.invalidatedProjects.has(active.projectId))
+          .map((active) => this.snapshotActive(active)),
         ...[...this.dormantByParent.values()]
-          .filter((dormant) => !this.activeByParent.has(dormant.parentSessionId))
+          .filter(
+            (dormant) =>
+              !this.invalidatedProjects.has(dormant.projectId) &&
+              !this.activeByParent.has(dormant.parentSessionId)
+          )
           .map((dormant) => this.snapshotDormant(dormant))
       ]
     }
@@ -489,7 +499,11 @@ class SideChatRuntimeOwner {
       this.activeByParent.set(request.parentSessionId, activeChat)
       this.touch(activeChat)
       if (this.closeRequestedParents.delete(request.parentSessionId)) {
-        await this.closeActive(activeChat)
+        if (this.invalidatedProjects.has(request.projectId)) {
+          await this.suspendActive(activeChat, 'interrupted')
+        } else {
+          await this.closeActive(activeChat)
+        }
         throw new Error('Side chat closed before startup completed.')
       }
       await this.dispatch({
@@ -645,17 +659,56 @@ class SideChatRuntimeOwner {
 
   async invalidateProject(projectId: string): Promise<void> {
     this.invalidatedProjects.add(projectId)
-    const parentSessionIds = new Set<string>()
-    for (const starting of this.startingByParent.values()) {
-      if (starting.projectId === projectId) parentSessionIds.add(starting.parentSessionId)
+    const starting = [...this.startingByParent.values()].filter(
+      (candidate) => candidate.projectId === projectId
+    )
+    const activating = [...this.dormantByParent.values()].filter(
+      (candidate) => candidate.projectId === projectId && candidate.activating
+    )
+    for (const candidate of [...starting, ...activating]) {
+      this.closeRequestedParents.add(candidate.parentSessionId)
     }
-    for (const active of this.activeByParent.values()) {
-      if (active.projectId === projectId) parentSessionIds.add(active.parentSessionId)
+    const operations = [
+      ...[...this.activeByParent.values()]
+        .filter((active) => active.projectId === projectId)
+        .map((active) => this.suspendActive(active, 'interrupted')),
+      ...starting.map((candidate) => candidate.done.promise),
+      ...activating.map((candidate) =>
+        candidate.activating!.then(
+          () => undefined,
+          () => undefined
+        )
+      )
+    ]
+    const results = await Promise.allSettled(operations)
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : []
+    )
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `Side chat Project invalidation failed: ${projectId}`)
     }
+  }
+
+  restoreProject(projectId: string): void {
+    if (!this.invalidatedProjects.delete(projectId)) return
     for (const dormant of this.dormantByParent.values()) {
-      if (dormant.projectId === projectId) parentSessionIds.add(dormant.parentSessionId)
+      if (dormant.projectId !== projectId) continue
+      dormant.revision = ++this.revision
+      this.closeRequestedParents.delete(dormant.parentSessionId)
+      this.setParentInteractionsPaused(dormant.parentSessionId, true)
     }
-    await this.invalidateParents([...parentSessionIds])
+  }
+
+  completeProjectDeletion(projectId: string): void {
+    for (const dormant of [...this.dormantByParent.values()]) {
+      if (dormant.projectId !== projectId) continue
+      this.dormantByParent.delete(dormant.parentSessionId)
+      this.closeRequestedParents.delete(dormant.parentSessionId)
+      this.setParentInteractionsPaused(dormant.parentSessionId, false)
+      void rm(join(this.root, dormant.sideChat.id), { recursive: true, force: true }).catch(
+        () => undefined
+      )
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -920,7 +973,11 @@ class SideChatRuntimeOwner {
       this.activeByParent.set(dormant.parentSessionId, activeChat)
       this.touch(activeChat)
       if (this.closeRequestedParents.delete(dormant.parentSessionId)) {
-        await this.closeActive(activeChat)
+        if (this.invalidatedProjects.has(dormant.projectId)) {
+          await this.suspendActive(activeChat, 'interrupted')
+        } else {
+          await this.closeActive(activeChat)
+        }
         throw new Error('Side chat closed while reconnecting.')
       }
       await this.persistActive(activeChat, 'open')
@@ -1371,7 +1428,10 @@ class SideChatRuntimeOwner {
   private async destroyActive(active: ActiveSideChat): Promise<void> {
     await this.flushQueuedPersistence(active)
     await active.persistTail.catch(() => undefined)
-    if (!this.invalidatedParents.has(active.parentSessionId)) {
+    if (
+      !this.invalidatedParents.has(active.parentSessionId) &&
+      !this.invalidatedProjects.has(active.projectId)
+    ) {
       await this.options.persistence.clear({
         projectId: active.projectId,
         parentSessionId: active.parentSessionId,
@@ -1398,7 +1458,10 @@ class SideChatRuntimeOwner {
     if (existing) return existing
     dormant.revision = ++this.revision
     const closing = (async (): Promise<void> => {
-      if (!this.invalidatedParents.has(dormant.parentSessionId)) {
+      if (
+        !this.invalidatedParents.has(dormant.parentSessionId) &&
+        !this.invalidatedProjects.has(dormant.projectId)
+      ) {
         await this.options.persistence.clear({
           projectId: dormant.projectId,
           parentSessionId: dormant.parentSessionId,

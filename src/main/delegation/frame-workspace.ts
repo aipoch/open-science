@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, copyFile, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
@@ -63,8 +63,11 @@ const assertVersionIdentityScope = (identity: string, session: SessionKey): void
 }
 
 const makeTreeRemovable = async (path: string): Promise<void> => {
-  const entry = await stat(path).catch(() => undefined)
+  const entry = await lstat(path).catch(() => undefined)
   if (!entry) return
+  // chmod and traversal must never follow a workspace symlink into caller-owned data. The parent
+  // directory is made writable, which is sufficient for rm to unlink this leaf.
+  if (entry.isSymbolicLink()) return
   if (!entry.isDirectory()) {
     await chmod(path, 0o644)
     return

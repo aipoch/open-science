@@ -198,7 +198,12 @@ class ProjectDeletionCoordinator {
     const project = await this.projects.get(projectId)
     if (!project) return
 
-    await this.lifecycle?.beforeProjectDelete(projectId)
+    try {
+      await this.lifecycle?.beforeProjectDelete(projectId)
+    } catch (error) {
+      this.lifecycle?.abortProjectDeletion?.(projectId)
+      throw error
+    }
     let retainDeletionBarrier = false
     try {
       await this.projects.createDeletionIntent(projectId)
