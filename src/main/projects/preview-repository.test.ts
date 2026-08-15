@@ -51,6 +51,23 @@ afterEach(async () => {
 })
 
 describe('preview state repository (integration)', () => {
+  it('rejects a late save after its project has been deleted', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    await repository.save('project-a', createState())
+    await client.project.delete({ where: { id: 'project-a' } })
+
+    await expect(repository.save('project-a', createState())).rejects.toThrow()
+    await expect(repository.get('project-a')).resolves.toBeNull()
+  })
+
   it('round-trips per-project preview state and deletes it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
 
@@ -58,6 +75,7 @@ describe('preview state repository (integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
 
@@ -93,6 +111,7 @@ describe('preview state repository (integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
 
     const repository = new PreviewStateRepository(() => Promise.resolve(client))
     const absolutePath = join(DATA_ROOT, 'artifacts/p/s/m/plot.png')
@@ -132,6 +151,7 @@ describe('preview state repository (integration)', () => {
     disconnect = () => client.$disconnect()
 
     await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
 
     const state = createState()
     await client.projectPreviewState.create({

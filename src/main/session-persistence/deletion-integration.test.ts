@@ -214,7 +214,6 @@ describe('managed-file deletion integration', () => {
     const projectDeletion = new ProjectDeletionCoordinator(
       projects,
       coordinator,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       provenance
     )
@@ -262,7 +261,6 @@ describe('managed-file deletion integration', () => {
     const projectDeletion = new ProjectDeletionCoordinator(
       projects,
       coordinator,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       new ArtifactProvenanceRepository({
         storageRoot,
@@ -344,7 +342,6 @@ describe('managed-file deletion integration', () => {
     const projectDeletion = new ProjectDeletionCoordinator(
       projects,
       coordinator,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       new ArtifactProvenanceRepository({
         storageRoot,
@@ -404,7 +401,6 @@ describe('managed-file deletion integration', () => {
     const projectDeletion = new ProjectDeletionCoordinator(
       projects,
       coordinator,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       new ArtifactProvenanceRepository({
         storageRoot,
@@ -442,7 +438,6 @@ describe('managed-file deletion integration', () => {
     const projectDeletion = new ProjectDeletionCoordinator(
       projects,
       failingSessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       new ArtifactProvenanceRepository({
         storageRoot,

@@ -40,7 +40,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "panelState" TEXT NOT NULL,
     "activeItemId" TEXT,
     "items" TEXT NOT NULL DEFAULT '[]',
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ProjectPreviewState_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );`,
   `CREATE TABLE IF NOT EXISTS "UnreadTaskSession" (
     "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,

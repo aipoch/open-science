@@ -17,6 +17,7 @@ import { runtimeSchemaBaselineMigration } from './migrations/0001-runtime-schema
 import { projectAgentContextMigration } from './migrations/0002-project-agent-context'
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
 import { reviewAssessmentSnapshotsMigration } from './migrations/0004-review-assessment-snapshots'
+import { projectPreviewStateOwnerFkMigration } from './migrations/0005-project-preview-state-owner-fk'
 
 type MigrationVerifierDescriptor =
   | {
@@ -34,6 +35,16 @@ type MigrationVerifierDescriptor =
       version: 1
       table: string
       column: string
+    }
+  | {
+      kind: 'foreign-key-exists'
+      version: 1
+      table: string
+      column: string
+      referencedTable: string
+      referencedColumn: string
+      onDelete: string
+      onUpdate: string
     }
 
 type MigrationVerifiers = readonly [MigrationVerifierDescriptor, ...MigrationVerifierDescriptor[]]
@@ -56,6 +67,17 @@ const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): stri
       return `table-exists:v${verifier.version}:${lengthPrefixedChecksumText(verifier.table)}`
     case 'column-exists':
       return `column-exists:v${verifier.version}:${lengthPrefixedChecksumText(verifier.table)}${lengthPrefixedChecksumText(verifier.column)}`
+    case 'foreign-key-exists':
+      return `foreign-key-exists:v${verifier.version}:${[
+        verifier.table,
+        verifier.column,
+        verifier.referencedTable,
+        verifier.referencedColumn,
+        verifier.onDelete,
+        verifier.onUpdate
+      ]
+        .map(lengthPrefixedChecksumText)
+        .join('')}`
   }
 }
 
@@ -101,6 +123,11 @@ const REVIEW_ASSESSMENT_SNAPSHOTS_CHECKSUM = checksumMigrationPayload(
   reviewAssessmentSnapshotsMigration.statements,
   reviewAssessmentSnapshotsMigration.verifiers
 )
+const PROJECT_PREVIEW_STATE_OWNER_FK_CHECKSUM = checksumMigrationPayload(
+  projectPreviewStateOwnerFkMigration.id,
+  projectPreviewStateOwnerFkMigration.statements,
+  projectPreviewStateOwnerFkMigration.verifiers
+)
 const MIGRATION_MANIFEST = [
   {
     ...runtimeSchemaBaselineMigration,
@@ -125,6 +152,12 @@ const MIGRATION_MANIFEST = [
     checksum: REVIEW_ASSESSMENT_SNAPSHOTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...projectPreviewStateOwnerFkMigration,
+    checksum: PROJECT_PREVIEW_STATE_OWNER_FK_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -141,6 +174,13 @@ type LedgerRow = { id: string; checksum: string }
 type SqliteForeignKeyStateRow = { foreign_keys: bigint | number }
 type SqliteDatabaseListRow = { name: string; file: string }
 type SqliteIntegrityCheckRow = { integrity_check: string }
+type SqliteForeignKeyListRow = {
+  table: string
+  from: string
+  to: string
+  on_delete: string
+  on_update: string
+}
 type SqliteSchemaObjectRow = { type: string; name: string; tableName: string; sql: string | null }
 type SqliteDifferenceRow = { different: bigint | number }
 type DatabaseMigrationErrorCode = DatabaseStartupErrorCode
@@ -235,6 +275,27 @@ const runMigrationVerifiers = async (
         if (!columns.some((column) => column.name === verifier.column)) {
           throw new Error(
             `Migration verification found missing column ${verifier.table}.${verifier.column}.`
+          )
+        }
+        break
+      }
+      case 'foreign-key-exists': {
+        const quotedTable = `"${verifier.table.replaceAll('"', '""')}"`
+        const foreignKeys = await migrationSqlExecutor.query<SqliteForeignKeyListRow[]>(
+          client,
+          `PRAGMA foreign_key_list(${quotedTable})`
+        )
+        const exists = foreignKeys.some(
+          (foreignKey) =>
+            foreignKey.from === verifier.column &&
+            foreignKey.table === verifier.referencedTable &&
+            foreignKey.to === verifier.referencedColumn &&
+            foreignKey.on_delete.toUpperCase() === verifier.onDelete.toUpperCase() &&
+            foreignKey.on_update.toUpperCase() === verifier.onUpdate.toUpperCase()
+        )
+        if (!exists) {
+          throw new Error(
+            `Migration verification found missing foreign key ${verifier.table}.${verifier.column} -> ${verifier.referencedTable}.${verifier.referencedColumn}.`
           )
         }
         break

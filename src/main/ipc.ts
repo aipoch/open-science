@@ -723,7 +723,6 @@ const createApplicationModules = async (
   const projectDeletionCoordinator = new ProjectDeletionCoordinator(
     projectRepository,
     sessionPersistenceCoordinator,
-    previewStateRepository,
     reviewRepository,
     artifactProvenanceRepository,
     permissionGrantRegistry,

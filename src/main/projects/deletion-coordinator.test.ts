@@ -25,19 +25,16 @@ const project = {
 describe('ProjectDeletionCoordinator', () => {
   it('rejects deletion recovery while a data-root migration is pending', async () => {
     const projects = createProjects()
-    const coordinator = new ProjectDeletionCoordinator(projects, createSessions(), {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, createSessions())
     beginMigration()
 
     await expect(coordinator.recoverPendingDeletions()).rejects.toThrow(/moving your data/i)
     expect(projects.listDeletionIntents).not.toHaveBeenCalled()
   })
 
-  it('deletes the project row, sessions, index, and preview state', async () => {
+  it('deletes the project row, sessions, index, reviews, and provenance', async () => {
     const projects = createProjects()
     const sessions = createSessions()
-    const preview = { delete: vi.fn().mockResolvedValue(undefined) }
     const reviews = { deleteReviewsForProject: vi.fn().mockResolvedValue(undefined) }
     const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
     const permissionGrants = {
@@ -50,7 +47,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      preview,
       reviews,
       provenance,
       permissionGrants,
@@ -68,7 +64,6 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.delete).toHaveBeenCalledWith('project-1')
     expect(sessions.deleteProjectSessions).toHaveBeenCalledWith('project-1')
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
-    expect(preview.delete).toHaveBeenCalledWith('project-1')
     expect(reviews.deleteReviewsForProject).toHaveBeenCalledWith('project-1')
     expect(provenance.deleteProjectProvenance).toHaveBeenCalledWith('project-1')
     expect(permissionGrants.prune).toHaveBeenCalledWith({
@@ -99,7 +94,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       undefined,
@@ -135,7 +129,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       createSessions(),
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       undefined,
@@ -178,7 +171,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       createSessions(),
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       undefined,
@@ -222,7 +214,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       permissionGrants
@@ -257,7 +248,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       permissionGrants
@@ -270,96 +260,70 @@ describe('ProjectDeletionCoordinator', () => {
     expect(projects.deleteDeletionIntent).toHaveBeenCalledWith('project-1')
   })
 
-  it.each([
-    {
-      name: 'Preview',
-      previewFailures: [new Error('preview unavailable'), undefined],
-      reviewFailures: [undefined, undefined]
-    },
-    {
-      name: 'Review',
-      previewFailures: [undefined, undefined],
-      reviewFailures: [new Error('review unavailable'), undefined]
+  it('retains the deletion intent when Review cleanup fails after the Project hard delete', async () => {
+    const reviewFailures = [new Error('review unavailable'), undefined]
+    let projectExists = true
+    let intentExists = false
+    const projects = createProjects()
+    projects.get = vi.fn(async () => (projectExists ? project : null))
+    projects.delete = vi.fn(async () => {
+      projectExists = false
+    })
+    projects.createDeletionIntent = vi.fn(async () => {
+      intentExists = true
+    })
+    projects.deleteDeletionIntent = vi.fn(async () => {
+      intentExists = false
+    })
+    projects.listDeletionIntents = vi.fn(async () => (intentExists ? ['project-1'] : []))
+    const sessions = createSessions()
+    const reviews = {
+      deleteReviewsForProject: vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          if (reviewFailures[0]) throw reviewFailures[0]
+        })
+        .mockImplementationOnce(async () => {
+          if (reviewFailures[1]) throw reviewFailures[1]
+        })
     }
-  ])(
-    'retains the deletion intent when $name cleanup fails after the Project hard delete',
-    async ({ previewFailures, reviewFailures }) => {
-      let projectExists = true
-      let intentExists = false
-      const projects = createProjects()
-      projects.get = vi.fn(async () => (projectExists ? project : null))
-      projects.delete = vi.fn(async () => {
-        projectExists = false
-      })
-      projects.createDeletionIntent = vi.fn(async () => {
-        intentExists = true
-      })
-      projects.deleteDeletionIntent = vi.fn(async () => {
-        intentExists = false
-      })
-      projects.listDeletionIntents = vi.fn(async () => (intentExists ? ['project-1'] : []))
-      const sessions = createSessions()
-      const preview = {
-        delete: vi
-          .fn()
-          .mockImplementationOnce(async () => {
-            if (previewFailures[0]) throw previewFailures[0]
-          })
-          .mockImplementationOnce(async () => {
-            if (previewFailures[1]) throw previewFailures[1]
-          })
+    const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
+    const completeProjectDeletion = vi.fn()
+    const abortProjectDeletion = vi.fn()
+    const coordinator = new ProjectDeletionCoordinator(
+      projects,
+      sessions,
+      reviews,
+      provenance,
+      undefined,
+      {
+        beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
+        completeProjectDeletion,
+        abortProjectDeletion
       }
-      const reviews = {
-        deleteReviewsForProject: vi
-          .fn()
-          .mockImplementationOnce(async () => {
-            if (reviewFailures[0]) throw reviewFailures[0]
-          })
-          .mockImplementationOnce(async () => {
-            if (reviewFailures[1]) throw reviewFailures[1]
-          })
-      }
-      const provenance = { deleteProjectProvenance: vi.fn().mockResolvedValue(undefined) }
-      const completeProjectDeletion = vi.fn()
-      const abortProjectDeletion = vi.fn()
-      const coordinator = new ProjectDeletionCoordinator(
-        projects,
-        sessions,
-        preview,
-        reviews,
-        provenance,
-        undefined,
-        {
-          beforeProjectDelete: vi.fn().mockResolvedValue(undefined),
-          completeProjectDeletion,
-          abortProjectDeletion
-        }
-      )
+    )
 
-      await expect(coordinator.deleteProject('project-1')).rejects.toThrow(
-        'Project derived cleanup failed: project-1'
-      )
+    await expect(coordinator.deleteProject('project-1')).rejects.toThrow(
+      'Project derived cleanup failed: project-1'
+    )
 
-      expect(projectExists).toBe(false)
-      expect(intentExists).toBe(true)
-      expect(preview.delete).toHaveBeenCalledOnce()
-      expect(reviews.deleteReviewsForProject).toHaveBeenCalledOnce()
-      expect(provenance.deleteProjectProvenance).not.toHaveBeenCalled()
-      expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
-      expect(completeProjectDeletion).not.toHaveBeenCalled()
-      expect(abortProjectDeletion).not.toHaveBeenCalled()
+    expect(projectExists).toBe(false)
+    expect(intentExists).toBe(true)
+    expect(reviews.deleteReviewsForProject).toHaveBeenCalledOnce()
+    expect(provenance.deleteProjectProvenance).not.toHaveBeenCalled()
+    expect(sessions.completeProjectSessionDeletion).not.toHaveBeenCalled()
+    expect(completeProjectDeletion).not.toHaveBeenCalled()
+    expect(abortProjectDeletion).not.toHaveBeenCalled()
 
-      await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
+    await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
 
-      expect(preview.delete).toHaveBeenCalledTimes(2)
-      expect(reviews.deleteReviewsForProject).toHaveBeenCalledTimes(2)
-      expect(provenance.deleteProjectProvenance).toHaveBeenCalledWith('project-1')
-      expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledWith('project-1')
-      expect(intentExists).toBe(false)
-      expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
-      expect(abortProjectDeletion).not.toHaveBeenCalled()
-    }
-  )
+    expect(reviews.deleteReviewsForProject).toHaveBeenCalledTimes(2)
+    expect(provenance.deleteProjectProvenance).toHaveBeenCalledWith('project-1')
+    expect(sessions.completeProjectSessionDeletion).toHaveBeenCalledWith('project-1')
+    expect(intentExists).toBe(false)
+    expect(completeProjectDeletion).toHaveBeenCalledWith('project-1')
+    expect(abortProjectDeletion).not.toHaveBeenCalled()
+  })
 
   it('keeps the project row, intent, and fence when session cleanup fails', async () => {
     const projects = createProjects()
@@ -370,7 +334,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       undefined,
@@ -393,9 +356,7 @@ describe('ProjectDeletionCoordinator', () => {
       deleteProjectSessions: vi.fn().mockRejectedValue(new Error('index unavailable')),
       getProjectSessionDeletionState: vi.fn().mockResolvedValue('prepared')
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.deleteProject('project-1')).rejects.toThrow('index unavailable')
 
@@ -413,7 +374,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       reviews,
       undefined,
       undefined,
@@ -446,7 +406,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       undefined,
@@ -538,13 +497,7 @@ describe('ProjectDeletionCoordinator', () => {
         order.push('provenance-removed')
       })
     }
-    const coordinator = new ProjectDeletionCoordinator(
-      projects,
-      sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
-      undefined,
-      provenance
-    )
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions, undefined, provenance)
 
     await coordinator.recoverPendingDeletions()
 
@@ -564,9 +517,7 @@ describe('ProjectDeletionCoordinator', () => {
       listLegacyProjectSessionTombstones: vi.fn().mockResolvedValue(['project-old']),
       deleteProjectSessions: vi.fn().mockRejectedValue(new Error('index temporarily unavailable'))
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.recoverPendingDeletions()).rejects.toThrow(
       'index temporarily unavailable'
@@ -587,9 +538,7 @@ describe('ProjectDeletionCoordinator', () => {
         reason: 'missing-upload-authority'
       })
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
 
@@ -605,9 +554,7 @@ describe('ProjectDeletionCoordinator', () => {
     const sessions = createSessions({
       getProjectSessionDeletionState: vi.fn().mockResolvedValue('legacy-committed')
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await coordinator.recoverPendingDeletions()
 
@@ -628,9 +575,7 @@ describe('ProjectDeletionCoordinator', () => {
         reason: 'missing-upload-authority'
       })
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.recoverPendingDeletions()).resolves.toBeUndefined()
 
@@ -651,9 +596,7 @@ describe('ProjectDeletionCoordinator', () => {
         return { status: 'completed' as const }
       })
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.recoverPendingDeletions()).rejects.toThrow(
       'transient session cleanup failure'
@@ -679,9 +622,7 @@ describe('ProjectDeletionCoordinator', () => {
       deleteProjectSessions: vi.fn().mockRejectedValue(new Error('tail cleanup unavailable')),
       getProjectSessionDeletionState: vi.fn().mockResolvedValue('prepared')
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.recoverPendingDeletions()).rejects.toThrow('tail cleanup unavailable')
 
@@ -696,9 +637,7 @@ describe('ProjectDeletionCoordinator', () => {
       deleteProjectSessions: vi.fn().mockRejectedValue(replayFailure),
       getProjectSessionDeletionState: vi.fn().mockRejectedValue(new Error('marker unreadable'))
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.recoverPendingDeletions()).rejects.toBe(replayFailure)
 
@@ -712,9 +651,7 @@ describe('ProjectDeletionCoordinator', () => {
       deleteProjectSessions: vi.fn().mockRejectedValue(new Error('session replay failed')),
       getProjectSessionDeletionState: vi.fn().mockResolvedValue('absent')
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.recoverPendingDeletions()).rejects.toThrow('session replay failed')
 
@@ -726,9 +663,7 @@ describe('ProjectDeletionCoordinator', () => {
     const sessions = createSessions({
       completeProjectSessionDeletion: vi.fn().mockRejectedValue(new Error('tombstone busy'))
     })
-    const coordinator = new ProjectDeletionCoordinator(projects, sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, sessions)
 
     await expect(coordinator.deleteProject('project-1')).rejects.toThrow('tombstone busy')
 
@@ -761,7 +696,6 @@ describe('ProjectDeletionCoordinator', () => {
     const coordinator = new ProjectDeletionCoordinator(
       projects,
       sessions,
-      { delete: vi.fn().mockResolvedValue(undefined) },
       undefined,
       undefined,
       undefined,
@@ -806,11 +740,6 @@ describe('ProjectDeletionCoordinator', () => {
       projects,
       sessions,
       {
-        delete: vi.fn(async () => {
-          order.push('preview')
-        })
-      },
-      {
         deleteReviewsForProject: vi.fn(async () => {
           order.push('reviews')
         })
@@ -836,7 +765,6 @@ describe('ProjectDeletionCoordinator', () => {
 
     expect(order).toEqual([
       'project',
-      'preview',
       'reviews',
       'provenance',
       'finalize',
@@ -848,9 +776,7 @@ describe('ProjectDeletionCoordinator', () => {
 
   it('reuses a successful recovery gate for later operations', async () => {
     const projects = createProjects()
-    const coordinator = new ProjectDeletionCoordinator(projects, createSessions(), {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(projects, createSessions())
 
     await coordinator.recoverPendingDeletions()
     await coordinator.recoverPendingDeletions()
@@ -867,8 +793,7 @@ describe('ProjectDeletionCoordinator', () => {
           await deletionGate.promise
           return { status: 'completed' as const }
         })
-      }),
-      { delete: vi.fn().mockResolvedValue(undefined) }
+      })
     )
     await coordinator.recoverPendingDeletions()
 
@@ -895,9 +820,7 @@ describe('ProjectDeletionCoordinator', () => {
         return { status: 'completed' as const }
       })
     })
-    const coordinator = new ProjectDeletionCoordinator(createProjects(), sessions, {
-      delete: vi.fn().mockResolvedValue(undefined)
-    })
+    const coordinator = new ProjectDeletionCoordinator(createProjects(), sessions)
     await coordinator.recoverPendingDeletions()
 
     const firstDeletion = coordinator.deleteProject('project-1')

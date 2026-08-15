@@ -30,6 +30,7 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   permissionGrants PermissionGrant[]
+  previewState     ProjectPreviewState?
 }
 
 model PermissionGrant {
@@ -65,6 +66,7 @@ model ProjectPreviewState {
   activeItemId String?
   items        String   @default("[]")
   updatedAt    DateTime @updatedAt
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 // Legacy unread-task rows retained only as the source for the message-center startup migration.

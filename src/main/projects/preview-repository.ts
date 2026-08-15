@@ -9,7 +9,7 @@ import { decodeDataPath, encodeDataPath } from '../storage/data-path'
 
 // Only the preview-state delegate is needed; typing to this subset keeps the repository unit-testable
 // with a lightweight mock instead of a real (engine-backed) PrismaClient.
-type PreviewStateClient = Pick<PrismaClient, 'projectPreviewState'>
+type PreviewStateClient = Pick<PrismaClient, 'project' | 'projectPreviewState'>
 
 // Parses the JSON items column defensively; a corrupt value degrades to an empty preview state.
 const parseItems = (items: string): unknown => {
@@ -65,10 +65,19 @@ class PreviewStateRepository {
     }
     const client = await this.getClient()
 
-    await client.projectPreviewState.upsert({
-      where: { projectId },
-      create: { projectId, ...data },
-      update: data
+    // Writing through the parent makes Project liveness validation and the child upsert atomic.
+    // If this write wins first, a later Project delete cascades it; if deletion wins first, update
+    // rejects instead of recreating an orphan Preview row.
+    await client.project.update({
+      where: { id: projectId },
+      data: {
+        previewState: {
+          upsert: {
+            create: data,
+            update: data
+          }
+        }
+      }
     })
   }
 

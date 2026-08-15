@@ -679,8 +679,20 @@ const verifyRuntimeSchemaTarget = async (
       )
     }
     const expectedForeignKeys = expectedTable.foreignKeys.map(foreignKeyKey).sort()
+    // A pre-ledger database can already contain a released suffix FK. Require every baseline FK,
+    // allow only FKs present in the current generated target, and keep exact current verification.
+    const knownForeignKeyTable =
+      (exact ? expectedTable : CURRENT_TARGET_TABLES.get(tableName)) ?? expectedTable
+    const knownForeignKeys = new Set(knownForeignKeyTable.foreignKeys.map(foreignKeyKey))
     const parsedForeignKeys = actualTable.foreignKeys.map(foreignKeyKey).sort()
-    if (parsedForeignKeys.join('\n') !== expectedForeignKeys.join('\n')) {
+    const parsedForeignKeySet = new Set(parsedForeignKeys)
+    const missingForeignKeys = expectedForeignKeys.filter(
+      (foreignKey) => !parsedForeignKeySet.has(foreignKey)
+    )
+    const unknownForeignKeys = parsedForeignKeys.filter(
+      (foreignKey) => !knownForeignKeys.has(foreignKey)
+    )
+    if (missingForeignKeys.length > 0 || unknownForeignKeys.length > 0) {
       throw new DatabaseValidationError(
         `Database baseline verification found incompatible foreign-key definitions for ${tableName}.`,
         {
@@ -702,15 +714,30 @@ const verifyRuntimeSchemaTarget = async (
           `${row.from}|${row.table}|${row.to}|${row.on_delete.toUpperCase()}|${row.on_update.toUpperCase()}`
       )
       .sort()
+    const pragmaForeignKeyKey = (
+      foreignKey: TargetForeignKey,
+      column: string,
+      index: number
+    ): string =>
+      `${column}|${foreignKey.targetTable}|${foreignKey.targetColumns[index]}|${foreignKey.onDelete}|${foreignKey.onUpdate}`
     const targetPragmaForeignKeys = expectedTable.foreignKeys
       .flatMap((foreignKey) =>
-        foreignKey.columns.map(
-          (column, index) =>
-            `${column}|${foreignKey.targetTable}|${foreignKey.targetColumns[index]}|${foreignKey.onDelete}|${foreignKey.onUpdate}`
-        )
+        foreignKey.columns.map((column, index) => pragmaForeignKeyKey(foreignKey, column, index))
       )
       .sort()
-    if (pragmaForeignKeys.join('\n') !== targetPragmaForeignKeys.join('\n')) {
+    const knownPragmaForeignKeys = new Set(
+      knownForeignKeyTable.foreignKeys.flatMap((foreignKey) =>
+        foreignKey.columns.map((column, index) => pragmaForeignKeyKey(foreignKey, column, index))
+      )
+    )
+    const pragmaForeignKeySet = new Set(pragmaForeignKeys)
+    const missingPragmaForeignKeys = targetPragmaForeignKeys.filter(
+      (foreignKey) => !pragmaForeignKeySet.has(foreignKey)
+    )
+    const unknownPragmaForeignKeys = pragmaForeignKeys.filter(
+      (foreignKey) => !knownPragmaForeignKeys.has(foreignKey)
+    )
+    if (missingPragmaForeignKeys.length > 0 || unknownPragmaForeignKeys.length > 0) {
       throw new DatabaseValidationError(
         `Database baseline verification found incompatible foreign-key metadata for ${tableName}.`,
         {

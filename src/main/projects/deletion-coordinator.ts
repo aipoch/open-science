@@ -23,10 +23,6 @@ type ProjectSessionDeletion = {
   listLegacyProjectSessionTombstones(): Promise<string[]>
 }
 
-type PreviewDeletion = {
-  delete(projectId: string): Promise<void>
-}
-
 type ProjectReviewDeletion = {
   deleteReviewsForProject(projectId: string): Promise<void>
 }
@@ -122,7 +118,6 @@ class ProjectDeletionCoordinator {
   constructor(
     private readonly projects: ProjectDeletionRepository,
     private readonly sessions: ProjectSessionDeletion,
-    private readonly preview: PreviewDeletion,
     private readonly reviews?: ProjectReviewDeletion,
     private readonly provenance?: ProjectProvenanceDeletion,
     private readonly permissionGrants?: ProjectPermissionGrantDeletion,
@@ -289,21 +284,12 @@ class ProjectDeletionCoordinator {
       ?.finalizeOwnerDeletion?.({ kind: 'project', projectId })
       .catch(() => undefined)
 
-    // Preview and Review rows have no Project FK cascade. Attempt both independent tails, then retain
-    // the durable intent on any failure so startup or an explicit retry can finish their cleanup.
-    const reviews = this.reviews
-    const derivedCleanup = [
-      () => this.preview.delete(projectId),
-      ...(reviews ? [() => reviews.deleteReviewsForProject(projectId)] : [])
-    ]
-    const derivedResults = await Promise.allSettled(
-      derivedCleanup.map((cleanup) => Promise.resolve().then(cleanup))
-    )
-    const derivedFailures = derivedResults.flatMap((result) =>
-      result.status === 'rejected' ? [result.reason] : []
-    )
-    if (derivedFailures.length > 0) {
-      throw new AggregateError(derivedFailures, 'Project derived cleanup failed: ' + projectId)
+    // Review rows still have no Project FK cascade. Retain the durable intent on failure so startup
+    // or an explicit retry can finish their cleanup; Preview rows are removed by the Project cascade.
+    try {
+      await this.reviews?.deleteReviewsForProject(projectId)
+    } catch (error) {
+      throw new AggregateError([error], 'Project derived cleanup failed: ' + projectId)
     }
 
     // Session deletion retains provenance, but Project deletion is terminal. This tail is replayed
@@ -328,7 +314,6 @@ class ProjectDeletionCoordinator {
 
 export { ProjectDeletionCoordinator, ProjectDeletionRecoveryLoop }
 export type {
-  PreviewDeletion,
   ProjectDeletionRecoveryLoopOptions,
   ProjectDeletionRepository,
   ProjectReviewDeletion,
