@@ -657,6 +657,23 @@ describe('manage_packages tool', () => {
     )
   })
 
+  it('preserves bounded installer-log truncation metadata in the compact result', () => {
+    expect(
+      compactManagePackagesResult({
+        ok: true,
+        needsRestart: false,
+        method: 'pip',
+        log: 'latest retained output',
+        logTruncation: { droppedBytes: 524_321 }
+      })
+    ).toEqual({
+      ok: true,
+      needsRestart: false,
+      method: 'pip',
+      logTruncation: { droppedBytes: 524_321 }
+    })
+  })
+
   it('has no per-call environment param — installs target the session-bound runtime (v4)', () => {
     // The env is the session's bound runtime, not a per-call argument, so the schema has no
     // `environment` key and strips it if passed.

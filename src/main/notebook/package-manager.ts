@@ -66,6 +66,9 @@ export type InstallResult = {
   ok: boolean
   needsRestart: boolean
   log: string
+  // Present when the bounded installer stdout/stderr collectors discarded older bytes. The count is
+  // aggregated across every command whose retained output contributes to `log`.
+  logTruncation?: { droppedBytes: number }
   method?: 'conda' | 'pip' | 'cran'
   attempts?: NotebookPackageInstallerAttempt[]
   fallbackUsed?: boolean
@@ -82,7 +85,13 @@ export type InstallResult = {
 }
 
 // One spawned install command's outcome; injected so tests never launch micromamba/pip/R.
-export type SpawnResult = { code: number; stdout: string; stderr: string }
+export type SpawnResult = {
+  code: number
+  stdout: string
+  stderr: string
+  stdoutDroppedBytes?: number
+  stderrDroppedBytes?: number
+}
 export type InstallSpawn = (
   command: string,
   args: string[],
@@ -350,6 +359,7 @@ const executeCondaWithRBaseProtection = async (options: {
         ok: false,
         needsRestart: false,
         log: [mergeLog(preflight), planError].filter(Boolean).join('\n'),
+        ...installLogTruncation(preflight),
         method: 'conda',
         attempts: [
           {
@@ -385,6 +395,7 @@ const executeCondaWithRBaseProtection = async (options: {
         ok: false,
         needsRestart: false,
         log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+        ...installLogTruncation(preflight, conda),
         method: 'conda',
         attempts: [installerAttempt(0, 'conda', options.packages, conda)],
         fallbackUsed: false,
@@ -472,6 +483,62 @@ const condaFallbackIsAuthorized = (classification: CondaFailureClassification): 
   classification.mutationRisk === 'none' &&
   (classification.reason === 'package-not-found' || classification.reason === 'solver-failed')
 
+export const INSTALLER_STREAM_LOG_LIMIT_BYTES = 512 * 1024
+
+// Fixed-capacity byte ring retaining the newest installer output. Byte accounting happens before
+// UTF-8 decoding so the reported discard count is exact even when a process splits a code point
+// across chunks.
+class InstallerLogTailBuffer {
+  private readonly buffer: Buffer
+  private start = 0
+  private length = 0
+  private droppedBytes = 0
+
+  constructor(private readonly capacity: number) {
+    this.buffer = Buffer.allocUnsafe(capacity)
+  }
+
+  push(value: unknown): void {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8')
+    if (chunk.length === 0) return
+
+    if (chunk.length >= this.capacity) {
+      this.addDroppedBytes(this.length + chunk.length - this.capacity)
+      chunk.copy(this.buffer, 0, chunk.length - this.capacity)
+      this.start = 0
+      this.length = this.capacity
+      return
+    }
+
+    const overflow = Math.max(0, this.length + chunk.length - this.capacity)
+    if (overflow > 0) {
+      this.start = (this.start + overflow) % this.capacity
+      this.length -= overflow
+      this.addDroppedBytes(overflow)
+    }
+
+    const writeStart = (this.start + this.length) % this.capacity
+    const firstLength = Math.min(chunk.length, this.capacity - writeStart)
+    chunk.copy(this.buffer, writeStart, 0, firstLength)
+    if (firstLength < chunk.length) chunk.copy(this.buffer, 0, firstLength)
+    this.length += chunk.length
+  }
+
+  snapshot(): { text: string; droppedBytes: number } {
+    if (this.length === 0) return { text: '', droppedBytes: this.droppedBytes }
+    const firstLength = Math.min(this.length, this.capacity - this.start)
+    const bytes = Buffer.allocUnsafe(this.length)
+    this.buffer.copy(bytes, 0, this.start, this.start + firstLength)
+    if (firstLength < this.length)
+      this.buffer.copy(bytes, firstLength, 0, this.length - firstLength)
+    return { text: bytes.toString('utf8'), droppedBytes: this.droppedBytes }
+  }
+
+  private addDroppedBytes(count: number): void {
+    this.droppedBytes = Math.min(Number.MAX_SAFE_INTEGER, this.droppedBytes + count)
+  }
+}
+
 // Real spawn wrapper collecting stdout/stderr and the exit code; replaced by an injected spawn in tests.
 // Exported so its fail-closed spawn-intent / kill-on-record-failure branches are directly testable.
 export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBeforeSpawn) =>
@@ -516,21 +583,75 @@ export const defaultSpawn: InstallSpawn = (command, args, env, onChild, onBefore
         return
       }
     }
-    let stdout = ''
-    let stderr = ''
+    const stdout = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    const stderr = new InstallerLogTailBuffer(INSTALLER_STREAM_LOG_LIMIT_BYTES)
     child.stdout?.on('data', (chunk) => {
-      stdout += String(chunk)
+      stdout.push(chunk)
     })
     child.stderr?.on('data', (chunk) => {
-      stderr += String(chunk)
+      stderr.push(chunk)
     })
-    child.on('error', (error) => resolve({ code: 1, stdout, stderr: `${stderr}${String(error)}` }))
-    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }))
+    let settled = false
+    const result = (code: number): SpawnResult => {
+      const stdoutSnapshot = stdout.snapshot()
+      const stderrSnapshot = stderr.snapshot()
+      return {
+        code,
+        stdout: stdoutSnapshot.text,
+        stderr: stderrSnapshot.text,
+        ...(stdoutSnapshot.droppedBytes > 0
+          ? { stdoutDroppedBytes: stdoutSnapshot.droppedBytes }
+          : {}),
+        ...(stderrSnapshot.droppedBytes > 0
+          ? { stderrDroppedBytes: stderrSnapshot.droppedBytes }
+          : {})
+      }
+    }
+    const settle = (code: number): void => {
+      if (settled) return
+      settled = true
+      resolve(result(code))
+    }
+    child.on('error', (error) => {
+      stderr.push(String(error))
+      settle(1)
+    })
+    child.on('close', (code) => settle(code ?? 1))
   })
 
 // Flattens one command's output into a single log string for the agent to read as install facts.
 const mergeLog = (result: SpawnResult): string =>
   [result.stdout, result.stderr].filter((part) => part.length > 0).join('\n')
+
+const spawnLogTruncation = (
+  ...results: Array<SpawnResult | undefined>
+): Pick<SpawnResult, 'stdoutDroppedBytes' | 'stderrDroppedBytes'> => {
+  const sum = (field: 'stdoutDroppedBytes' | 'stderrDroppedBytes'): number =>
+    results.reduce(
+      (total, result) => Math.min(Number.MAX_SAFE_INTEGER, total + (result?.[field] ?? 0)),
+      0
+    )
+  const stdoutDroppedBytes = sum('stdoutDroppedBytes')
+  const stderrDroppedBytes = sum('stderrDroppedBytes')
+  return {
+    ...(stdoutDroppedBytes > 0 ? { stdoutDroppedBytes } : {}),
+    ...(stderrDroppedBytes > 0 ? { stderrDroppedBytes } : {})
+  }
+}
+
+const installLogTruncation = (
+  ...results: Array<SpawnResult | undefined>
+): Pick<InstallResult, 'logTruncation'> => {
+  const droppedBytes = results.reduce(
+    (total, result) =>
+      Math.min(
+        Number.MAX_SAFE_INTEGER,
+        total + (result?.stdoutDroppedBytes ?? 0) + (result?.stderrDroppedBytes ?? 0)
+      ),
+    0
+  )
+  return droppedBytes > 0 ? { logTruncation: { droppedBytes } } : {}
+}
 
 const condaFailureMessage = (action: 'install' | 'remove', result: SpawnResult): string =>
   /Retry failure after MAX_PATH recovery/i.test(mergeLog(result))
@@ -695,6 +816,7 @@ export async function installPackages(
     if (await stopAfterSpawn?.(retry)) {
       return {
         ...retry,
+        ...spawnLogTruncation(result, retry),
         stdout:
           `Original failure before MAX_PATH recovery (stdout):\n${result.stdout}\n` +
           `Retry result after MAX_PATH recovery (stdout):\n${retry.stdout}`,
@@ -706,6 +828,7 @@ export async function installPackages(
     if (retry.code === 0) return retry
     return {
       ...retry,
+      ...spawnLogTruncation(result, retry),
       stdout:
         `Original failure before MAX_PATH recovery (stdout):\n${result.stdout}\n` +
         `Retry failure after MAX_PATH recovery (stdout):\n${retry.stdout}`,
@@ -744,6 +867,7 @@ export async function installPackages(
       ok: result.code === 0,
       needsRestart: false,
       log: mergeLog(result),
+      ...installLogTruncation(result),
       method: 'pip',
       attempts: [installerAttempt(0, 'pip', req.packages, result)],
       fallbackUsed: false,
@@ -816,6 +940,7 @@ export async function installPackages(
         ok: result.code === 0,
         needsRestart: false,
         log: mergeLog(result),
+        ...installLogTruncation(result),
         method: 'pip',
         attempts: [installerAttempt(0, 'pip', req.packages, result)],
         fallbackUsed: false,
@@ -879,6 +1004,7 @@ export async function installPackages(
         ok: true,
         needsRestart: false,
         log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
+        ...installLogTruncation(preflight, result),
         method: 'conda',
         attempts: [installerAttempt(0, 'conda', req.packages, result)],
         fallbackUsed: false,
@@ -900,6 +1026,7 @@ export async function installPackages(
         log: [preflight ? mergeLog(preflight) : '', mergeLog(result), mergeLog(fallback)]
           .filter(Boolean)
           .join('\n'),
+        ...installLogTruncation(preflight, result, fallback),
         method: 'pip',
         attempts: [condaAttempt, installerAttempt(1, 'pip', req.packages, fallback)],
         fallbackUsed: true,
@@ -911,6 +1038,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, result),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -971,6 +1099,7 @@ export async function installPackages(
       log: [approvedPlan ? mergeLog(approvedPlan) : '', condaLog, mergeLog(fallback)]
         .filter(Boolean)
         .join('\n'),
+      ...installLogTruncation(approvedPlan, conda, fallback),
       method: 'cran',
       attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
       fallbackUsed: true,
@@ -1006,6 +1135,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: mergeLog(preflight),
+      ...installLogTruncation(preflight),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -1019,12 +1149,14 @@ export async function installPackages(
     const rejectedPlan: SpawnResult = {
       code: 1,
       stdout: preflight.stdout,
-      stderr: [preflight.stderr, planError].filter(Boolean).join('\n')
+      stderr: [preflight.stderr, planError].filter(Boolean).join('\n'),
+      ...spawnLogTruncation(preflight)
     }
     return {
       ok: false,
       needsRestart: false,
       log: mergeLog(rejectedPlan),
+      ...installLogTruncation(rejectedPlan),
       method: 'conda',
       attempts: [
         {
@@ -1070,6 +1202,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1086,6 +1219,7 @@ export async function installPackages(
       ok: true,
       needsRestart: true,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1101,6 +1235,7 @@ export async function installPackages(
       ok: false,
       needsRestart: false,
       log: condaLog,
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -1154,6 +1289,7 @@ async function uninstallPackages(
         ok: result.code === 0,
         needsRestart: false,
         log: mergeLog(result),
+        ...installLogTruncation(result),
         method: 'pip',
         attempts: [installerAttempt(0, 'pip', req.packages, result)],
         fallbackUsed: false,
@@ -1218,6 +1354,7 @@ async function uninstallPackages(
       ok: result.code === 0,
       needsRestart: false,
       log: [preflight ? mergeLog(preflight) : '', mergeLog(result)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, result),
       method: 'conda',
       attempts: [
         installerAttempt(
@@ -1294,6 +1431,7 @@ async function uninstallPackages(
       ok,
       needsRestart: ok,
       log: `${condaLog}\n${mergeLog(fallback)}`,
+      ...installLogTruncation(approvedPlan, condaResult, fallback),
       method: 'cran',
       attempts: [condaAttempt, installerAttempt(1, 'r-install-packages', req.packages, fallback)],
       fallbackUsed: true,
@@ -1317,6 +1455,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: mergeLog(preflight),
+      ...installLogTruncation(preflight),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,
@@ -1330,6 +1469,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: [mergeLog(preflight), planError].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight),
       method: 'conda',
       attempts: [
         {
@@ -1367,6 +1507,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1383,6 +1524,7 @@ async function uninstallPackages(
       ok: true,
       needsRestart: true,
       log: [mergeLog(preflight), mergeLog(conda)].filter(Boolean).join('\n'),
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [installerAttempt(0, 'conda', condaPkgs, conda)],
       fallbackUsed: false,
@@ -1400,6 +1542,7 @@ async function uninstallPackages(
       ok: false,
       needsRestart: false,
       log: condaLog,
+      ...installLogTruncation(preflight, conda),
       method: 'conda',
       attempts: [condaAttempt],
       fallbackUsed: false,

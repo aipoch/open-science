@@ -2559,6 +2559,7 @@
   "Notebook restart": "Notebook 重新啟動",
   "Notebook shutdown": "Notebook 關閉",
   "restart needed": "需要重新啟動",
+  "log truncated ({{size}} dropped)": "日誌已截斷（已捨棄 {{size}}）",
   "Agent SDK": "Agent SDK",
   "Web Fetch": "網頁擷取",
   "Subagent workspaces": "子 Agent 工作區",

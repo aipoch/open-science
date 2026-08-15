@@ -956,6 +956,13 @@ const compactManageEnvironmentsResult = (raw: unknown, input: unknown = {}): unk
 const compactManagePackagesResult = (raw: unknown): unknown => {
   if (typeof raw !== 'object' || raw === null) return raw
   const result = raw as Record<string, unknown>
+  const logTruncation = asRecord(result.logTruncation)
+  const droppedLogBytes =
+    logTruncation &&
+    Number.isSafeInteger(logTruncation.droppedBytes) &&
+    Number(logTruncation.droppedBytes) > 0
+      ? Number(logTruncation.droppedBytes)
+      : undefined
   const packageChanges = Array.isArray(result.packageChanges)
     ? result.packageChanges.slice(0, MAX_PACKAGE_RESULTS).flatMap((change) => {
         const item = asRecord(change)
@@ -978,6 +985,7 @@ const compactManagePackagesResult = (raw: unknown): unknown => {
     needsRestart: result.needsRestart,
     ...(result.method !== undefined ? { method: result.method } : {}),
     ...(result.fallbackUsed !== undefined ? { fallbackUsed: result.fallbackUsed } : {}),
+    ...(droppedLogBytes !== undefined ? { logTruncation: { droppedBytes: droppedLogBytes } } : {}),
     ...(packageChanges !== undefined ? { packageChanges } : {}),
     ...(Array.isArray(result.packageChanges) &&
     result.packageChanges.length > (packageChanges?.length ?? 0)

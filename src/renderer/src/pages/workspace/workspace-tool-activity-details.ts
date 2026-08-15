@@ -874,13 +874,23 @@ const buildManagePackagesDetails = (
   const needsRestart = result.needsRestart === true
   const prefix = typeof result.prefix === 'string' ? trimDetail(result.prefix) : undefined
   const log = typeof result.log === 'string' ? cleanInstallLog(result.log) : ''
+  const logTruncation = isRecord(result.logTruncation) ? result.logTruncation : undefined
+  const droppedLogBytes =
+    logTruncation &&
+    Number.isSafeInteger(logTruncation.droppedBytes) &&
+    Number(logTruncation.droppedBytes) > 0
+      ? Number(logTruncation.droppedBytes)
+      : undefined
   const error = typeof result.error === 'string' ? trimDetail(result.error) : undefined
   const packageChanges = Array.isArray(result.packageChanges)
     ? result.packageChanges.map(formatPackageChange).filter((change): change is string => !!change)
     : []
   const metaLabel = [
     ok === false ? t('failed') : method,
-    needsRestart ? t('restart needed') : undefined
+    needsRestart ? t('restart needed') : undefined,
+    droppedLogBytes !== undefined
+      ? t('log truncated ({{size}} dropped)', { size: formatByteSize(droppedLogBytes) })
+      : undefined
   ]
     .filter(Boolean)
     .join(' · ')

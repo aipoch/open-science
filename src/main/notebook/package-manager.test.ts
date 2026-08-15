@@ -14,6 +14,7 @@ vi.mock('./micromamba', async (importActual) => ({
 
 import {
   defaultSpawn,
+  INSTALLER_STREAM_LOG_LIMIT_BYTES,
   installPackages,
   type InstallSpawn,
   type SpawnResult
@@ -139,9 +140,51 @@ describe('defaultSpawn (fail-closed spawn hooks)', () => {
     expect(killedPid).toBeGreaterThan(0)
     await vi.waitFor(() => expect(() => process.kill(killedPid as number, 0)).toThrow())
   })
+
+  it('retains bounded stdout/stderr tails and reports the exact discarded byte counts', async () => {
+    const stdoutPrefix = 'stdout-old\n'
+    const stdoutTail = '\nstdout-tail'
+    const stderrPrefix = 'stderr-old\n'
+    const stderrTail = '\nstderr-tail'
+    const result = await defaultSpawn(process.execPath, [
+      '-e',
+      [
+        `process.stdout.write(${JSON.stringify(stdoutPrefix)} + 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}) + ${JSON.stringify(stdoutTail)});`,
+        `process.stderr.write(${JSON.stringify(stderrPrefix)} + 'y'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}) + ${JSON.stringify(stderrTail)});`
+      ].join('')
+    ])
+
+    expect(result.code).toBe(0)
+    expect(Buffer.byteLength(result.stdout, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(Buffer.byteLength(result.stderr, 'utf8')).toBe(INSTALLER_STREAM_LOG_LIMIT_BYTES)
+    expect(result.stdout).not.toContain(stdoutPrefix)
+    expect(result.stderr).not.toContain(stderrPrefix)
+    expect(result.stdout.endsWith(stdoutTail)).toBe(true)
+    expect(result.stderr.endsWith(stderrTail)).toBe(true)
+    expect(result.stdoutDroppedBytes).toBe(Buffer.byteLength(stdoutPrefix + stdoutTail, 'utf8'))
+    expect(result.stderrDroppedBytes).toBe(Buffer.byteLength(stderrPrefix + stderrTail, 'utf8'))
+  })
 })
 
 describe('installPackages', () => {
+  it('aggregates discarded stream bytes into structured install-log truncation metadata', async () => {
+    const truncated: SpawnResult = {
+      code: 0,
+      stdout: 'latest output',
+      stderr: 'latest warning',
+      stdoutDroppedBytes: 23,
+      stderrDroppedBytes: 19
+    }
+    const { spawn } = scriptedSpawn([truncated])
+    const result = await installPackages(
+      { language: 'python', packages: ['numpy'], usePip: true },
+      { spawn, ...base }
+    )
+
+    expect(result.log).toContain('latest output')
+    expect(result.logTruncation).toEqual({ droppedBytes: 42 })
+  })
+
   it('forwards the installer child PID through onChild (for crash-recovery journaling)', async () => {
     // A spawn that reports a pid via its 4th (onChild) argument, as the real defaultSpawn does.
     const spawn: InstallSpawn = async (_command, _args, _env, onChild) => {
