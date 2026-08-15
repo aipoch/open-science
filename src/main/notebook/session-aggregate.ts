@@ -1,6 +1,7 @@
 import type {
   NotebookCell,
   NotebookEnvironmentManifest,
+  NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookLanguage,
   NotebookLiveEnvironmentOverlay,
@@ -111,6 +112,7 @@ export type NotebookSessionAggregateInit<
   runJsonPath: string
   executionCount: number
   initialKernelStatus?: NotebookKernelMetadata['lastKnownStatus']
+  initialTerminatedKernelInstances?: readonly NotebookKernelInstanceIdentity[]
   executor: NotebookSessionExecutor<Request, Result>
   executorGeneration: NotebookSessionExecutorGeneration
   lane: NotebookLaneIdentity
@@ -181,7 +183,8 @@ export class NotebookSessionAggregate<
   private readonly kernelStatuses = new Map<string, NotebookKernelMetadata['lastKnownStatus']>()
   private latestKernelStatusKey: string | undefined
   private latestKernelStatusValue: NotebookKernelMetadata['lastKnownStatus'] | undefined
-  private durableKernelTerminationPending: boolean
+  private readonly durableTerminatedKernelKeys = new Set<string>()
+  private durableUnknownKernelTermination: boolean
   private readonly runtimeBindings = new Map<NotebookLanguage, NotebookSessionRuntimeBinding>()
   private readonly forceStoppedKeys = new Set<string>()
 
@@ -197,7 +200,14 @@ export class NotebookSessionAggregate<
     this.lane = init.lane
     notebookLaneScope(this.lane)
     this.executionCountValue = init.executionCount
-    this.durableKernelTerminationPending = init.initialKernelStatus === 'terminated'
+    for (const instance of init.initialTerminatedKernelInstances ?? []) {
+      this.durableTerminatedKernelKeys.add(
+        instance.kind === 'repl' ? 'repl' : `${instance.kind}:${instance.environment}`
+      )
+    }
+    this.durableUnknownKernelTermination =
+      init.initialKernelStatus === 'terminated' &&
+      init.initialTerminatedKernelInstances === undefined
     this.executorValue = init.executor
     this.executorGenerationValue = init.executorGeneration
   }
@@ -414,12 +424,25 @@ export class NotebookSessionAggregate<
     return this.terminatedKernels.has(processKey)
   }
 
-  hasDurableKernelTerminationPending(): boolean {
-    return this.durableKernelTerminationPending
+  hasDurableKernelTermination(processKey: string): boolean {
+    return this.durableTerminatedKernelKeys.has(processKey)
   }
 
-  clearDurableKernelTerminationPending(): void {
-    this.durableKernelTerminationPending = false
+  markDurableKernelTermination(processKey: string): void {
+    this.durableTerminatedKernelKeys.add(processKey)
+  }
+
+  clearDurableKernelTermination(processKey: string): void {
+    this.durableTerminatedKernelKeys.delete(processKey)
+  }
+
+  hasUnknownDurableKernelTermination(): boolean {
+    return this.durableUnknownKernelTermination
+  }
+
+  clearAllDurableKernelTerminations(): void {
+    this.durableTerminatedKernelKeys.clear()
+    this.durableUnknownKernelTermination = false
   }
 
   runtimeBinding(language: NotebookLanguage): NotebookSessionRuntimeBinding | undefined {

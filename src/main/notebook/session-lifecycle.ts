@@ -1,4 +1,5 @@
 import type {
+  NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookRunSource,
   NotebookSessionReference,
@@ -65,10 +66,14 @@ const processKeyFor = (kind: KernelProcessKind | undefined, env: string | undefi
   return `${resolvedKind}:${resolvedEnv}`
 }
 
-const persistsToRunJson = (processKey: string): boolean =>
-  processKey === 'repl' ||
-  processKey === `python:${DEFAULT_PY_ENV}` ||
-  processKey === `r:${DEFAULT_R_ENV}`
+const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstanceIdentity => {
+  if (processKey === 'repl') return { kind: 'repl' }
+  const separator = processKey.indexOf(':')
+  return {
+    kind: processKey.slice(0, separator) === 'r' ? 'r' : 'python',
+    environment: processKey.slice(separator + 1)
+  }
+}
 
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
@@ -126,6 +131,7 @@ class NotebookSessionLifecycleOwner {
         ),
         executionCount: document.runs.length,
         initialKernelStatus: document.kernel.lastKnownStatus,
+        initialTerminatedKernelInstances: document.kernel.terminatedKernelInstances,
         executor: ownedExecutor.executor,
         executorGeneration: ownedExecutor.generation,
         lane
@@ -222,14 +228,36 @@ class NotebookSessionLifecycleOwner {
     processKey: string
   ): Promise<void> {
     session.setKernelStatus(processKey, status)
-    if (!persistsToRunJson(processKey)) return
+    const kernelInstance = kernelInstanceForProcessKey(processKey)
     try {
-      await this.options.repository.updateKernelStatus({
-        projectName: session.projectId,
-        sessionId: session.sessionId,
-        lane: session.lane,
-        status
-      })
+      if (status === 'terminated') {
+        // A legacy coarse terminated status has unknown ownership. Keep it conservative until an
+        // explicit restart instead of replacing the ambiguity with a partial known-instance set.
+        if (session.hasUnknownDurableKernelTermination()) return
+        await this.options.repository.markKernelTerminated({
+          projectName: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          kernelInstance
+        })
+        session.markDurableKernelTermination(processKey)
+      } else if (status === 'idle') {
+        if (!session.hasDurableKernelTermination(processKey)) return
+        await this.options.repository.clearKernelTermination({
+          projectName: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          kernelInstance
+        })
+        session.clearDurableKernelTermination(processKey)
+      } else {
+        await this.options.repository.updateKernelStatus({
+          projectName: session.projectId,
+          sessionId: session.sessionId,
+          lane: session.lane,
+          status
+        })
+      }
     } catch {
       return
     }

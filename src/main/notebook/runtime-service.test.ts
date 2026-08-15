@@ -3216,7 +3216,10 @@ describe('notebook runtime service', () => {
         restartRecommended: false
       }
     ])
-    expect(await readFile(restarted.runJsonPath, 'utf8')).toBe(runJsonBefore)
+    expect(JSON.parse(await readFile(restarted.runJsonPath, 'utf8')).kernel).toMatchObject({
+      lastKnownStatus: 'terminated',
+      terminatedKernelInstances: [{ kind: 'python', environment: 'analysis' }]
+    })
     expect(changedSessions).toHaveLength(changedCountBefore + 1)
   })
 
@@ -3294,12 +3297,12 @@ describe('notebook runtime service', () => {
     const persistenceGate = new Promise<void>((resolve) => {
       releasePersistence = resolve
     })
-    const updateKernelStatus = repository.updateKernelStatus.bind(repository)
+    const markKernelTerminated = repository.markKernelTerminated.bind(repository)
     const updateSpy = vi
-      .spyOn(repository, 'updateKernelStatus')
+      .spyOn(repository, 'markKernelTerminated')
       .mockImplementation(async (request) => {
         await persistenceGate
-        return updateKernelStatus(request)
+        return markKernelTerminated(request)
       })
     const changedCountBefore = changedSessions.length
 
@@ -3454,6 +3457,73 @@ describe('notebook runtime service', () => {
     expect(statusWrite).not.toHaveBeenCalled()
   })
 
+  it('does not durably recover a terminated data kernel through an unrelated control run after relaunch', async () => {
+    const root = await createStorageRoot()
+    let lifecycle!: NotebookExecutorLifecycleCallbacks
+    const executorFactory = (
+      _sessionId: string,
+      callbacks: NotebookExecutorLifecycleCallbacks
+    ): NotebookSessionExecutor => {
+      lifecycle = callbacks
+      return {
+        execute: async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        }),
+        shutdown: async () => ({ reaped: true })
+      }
+    }
+
+    const firstService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    await firstService.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1'
+    })
+    const runJsonPath = (await firstService.state({ sessionId: 'session-1', workspaceCwd: root }))
+      .runJsonPath
+    await lifecycle.onIdleShutdown('python', DEFAULT_PY_ENV)
+
+    const recoveredService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    await recoveredService.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '2'
+    })
+
+    const persisted = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    expect(persisted.kernel).toMatchObject({
+      lastKnownStatus: 'terminated',
+      terminatedKernelInstances: [{ kind: 'python', environment: DEFAULT_PY_ENV }]
+    })
+    const reloadedService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    expect(
+      (await reloadedService.state({ sessionId: 'session-1', workspaceCwd: root })).kernelStatus
+    ).toBe('terminated')
+  })
+
   it('persists idle after recovering a terminated repl in a recreated runtime service', async () => {
     const root = await createStorageRoot()
     let lifecycle!: NotebookExecutorLifecycleCallbacks
@@ -3510,6 +3580,66 @@ describe('notebook runtime service', () => {
       workspaceCwd: root
     })
     expect(reloadedState.kernelStatus).toBe('idle')
+  })
+
+  it('keeps a legacy coarse terminated status until an explicit restart', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const executorFactory = (): NotebookSessionExecutor => ({
+      execute: async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: '',
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }),
+      shutdown: async () => ({ reaped: true })
+    })
+    const firstService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository,
+      executorFactory
+    })
+    await firstService.execute({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1'
+    })
+    const runJsonPath = (await firstService.state({ sessionId: 'session-1', workspaceCwd: root }))
+      .runJsonPath
+    await repository.updateKernelStatus({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      status: 'terminated'
+    })
+
+    const recoveredService = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory
+    })
+    await recoveredService.executeControl({
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '2'
+    })
+    expect(JSON.parse(await readFile(runJsonPath, 'utf8')).kernel).toMatchObject({
+      lastKnownStatus: 'terminated'
+    })
+    expect(
+      JSON.parse(await readFile(runJsonPath, 'utf8')).kernel.terminatedKernelInstances
+    ).toBeUndefined()
+
+    await recoveredService.restart({ sessionId: 'session-1', workspaceCwd: root })
+    expect(JSON.parse(await readFile(runJsonPath, 'utf8')).kernel).toMatchObject({
+      lastKnownStatus: 'idle'
+    })
   })
 
   describe('lifecycle & concurrency (G2/G3/G4/G5)', () => {

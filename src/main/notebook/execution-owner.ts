@@ -199,7 +199,7 @@ class NotebookExecutionOwner {
     const kernelWasTerminated =
       session.isKernelTerminated(processKey) ||
       session.kernelStatus(processKey) === 'terminated' ||
-      session.hasDurableKernelTerminationPending()
+      session.hasDurableKernelTermination(processKey)
     if (kernelMarkedRunning) {
       session.clearKernelTerminated(processKey)
       this.options.setKernelStatus(session, 'running', processKey)
@@ -294,7 +294,6 @@ class NotebookExecutionOwner {
       this.options.setKernelStatus(session, 'idle', processKey)
       if (kernelWasTerminated) {
         await this.options.persistRecoveredKernelIdle(session, processKey)
-        session.clearDurableKernelTerminationPending()
       }
     }
     return run
@@ -402,8 +401,7 @@ class NotebookExecutionOwner {
     })
     const replWasTerminated =
       !blockedMutation &&
-      (session.kernelStatus('repl') === 'terminated' ||
-        session.hasDurableKernelTerminationPending())
+      (session.kernelStatus('repl') === 'terminated' || session.hasDurableKernelTermination('repl'))
     if (!blockedMutation) {
       session.clearKernelTerminated('repl')
       this.setReplStatus(session, 'running')
@@ -475,7 +473,6 @@ class NotebookExecutionOwner {
       // in memory and do not rewrite the whole run.json document.
       if (replWasTerminated) {
         await this.options.persistRecoveredKernelIdle(session, 'repl')
-        session.clearDurableKernelTerminationPending()
       }
     }
 

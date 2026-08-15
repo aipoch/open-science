@@ -308,7 +308,16 @@ export type NotebookKernelMetadata = {
   runtimeRoot: string
   lastKnownStatus:
     'idle' | 'starting' | 'running' | 'error' | 'shutdown' | 'restarting' | 'terminated'
+  // Exact persistent kernel instances known to have terminated while the app was alive. Optional
+  // keeps existing run.json documents readable; an old coarse `terminated` without this field has
+  // unknown ownership and is cleared only by an explicit restart.
+  terminatedKernelInstances?: NotebookKernelInstanceIdentity[]
 }
+
+// Durable identity of one persistent notebook kernel. This deliberately stores domain fields rather
+// than the executor's `${kind}:${environment}` routing string or an unstable operating-system PID.
+export type NotebookKernelInstanceIdentity =
+  { kind: 'python' | 'r'; environment: string } | { kind: 'repl' }
 
 // Stores one durable notebook execution, including code, output, and generated-file references.
 export type NotebookRunRecord = {

@@ -862,12 +862,13 @@ class NotebookRuntimeService {
     const envKeys = session.kernelProcessKeys()
 
     envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
-    await this.repository.updateKernelStatus({
+    await this.repository.clearKernelTerminations({
       projectName: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       status: 'restarting'
     })
+    session.clearAllDurableKernelTerminations()
     this.sessionLifecycle.notifyChanged(session)
 
     try {

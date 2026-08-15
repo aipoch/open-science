@@ -150,6 +150,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       historySummaryFrameId
     )
     const liveKernelStatus = session.latestKernelStatus()
+    const durableKernelTerminated = document.kernel.lastKnownStatus === 'terminated'
 
     return {
       id: session.id,
@@ -159,7 +160,12 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       dataRoot: session.dataRoot,
       runtimeRoot: session.runtimeRoot,
       pythonPath: document.kernel.pythonPath,
-      kernelStatus: liveKernelStatus ?? document.kernel.lastKnownStatus,
+      // A durable termination remains coarse-visible until every recorded kernel instance recovers
+      // (or an explicit restart clears legacy unknown ownership). A later unrelated live status must
+      // not hide that persisted fact in the current process.
+      kernelStatus: durableKernelTerminated
+        ? 'terminated'
+        : (liveKernelStatus ?? document.kernel.lastKnownStatus),
       runJsonPath: session.runJsonPath,
       cells: sparseRunRead
         ? []

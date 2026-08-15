@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
   NotebookKernelMetadata,
+  NotebookKernelInstanceIdentity,
   NotebookRunDocument,
   NotebookRunHistorySummary,
   NotebookRunRecord,
@@ -53,6 +54,10 @@ type UpdateKernelStatusRequest = {
   sessionId: string
   status: NotebookKernelMetadata['lastKnownStatus']
   lane: NotebookLaneIdentity
+}
+
+type UpdateKernelTerminationRequest = Omit<UpdateKernelStatusRequest, 'status'> & {
+  kernelInstance: NotebookKernelInstanceIdentity
 }
 
 type NormalizeNotebookRunDocumentRequest = Omit<
@@ -169,6 +174,46 @@ const normalizeRun = (sessionRoot: string, run: NotebookRunRecord): NotebookRunR
   inputFiles: (run.inputFiles ?? []).map((input) => ({ ...input }))
 })
 
+const kernelInstanceIdentityKey = (instance: NotebookKernelInstanceIdentity): string =>
+  instance.kind === 'repl' ? 'repl' : `${instance.kind}:${instance.environment}`
+
+const sameKernelInstance = (
+  left: NotebookKernelInstanceIdentity,
+  right: NotebookKernelInstanceIdentity
+): boolean => kernelInstanceIdentityKey(left) === kernelInstanceIdentityKey(right)
+
+const normalizeTerminatedKernelInstances = (
+  value: unknown
+): NotebookKernelInstanceIdentity[] | undefined => {
+  if (!Array.isArray(value)) return undefined
+  const instances = new Map<string, NotebookKernelInstanceIdentity>()
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || !('kind' in candidate)) continue
+    if (candidate.kind === 'repl') {
+      instances.set('repl', { kind: 'repl' })
+      continue
+    }
+    if (
+      (candidate.kind === 'python' || candidate.kind === 'r') &&
+      'environment' in candidate &&
+      typeof candidate.environment === 'string' &&
+      candidate.environment.length > 0
+    ) {
+      const instance = { kind: candidate.kind, environment: candidate.environment }
+      instances.set(kernelInstanceIdentityKey(instance), instance)
+    }
+  }
+  return instances.size > 0 ? [...instances.values()] : undefined
+}
+
+const withoutTerminatedKernelInstances = (
+  kernel: NotebookKernelMetadata
+): NotebookKernelMetadata => {
+  const next = { ...kernel }
+  delete next.terminatedKernelInstances
+  return next
+}
+
 const ownRun = (lane: NotebookLaneIdentity, run: NotebookRunRecord): NotebookRunRecord => {
   const { agentFrameId } = notebookLaneScope(lane)
   if (run.agentFrameId && run.agentFrameId !== agentFrameId) {
@@ -192,6 +237,9 @@ const normalizeDocument = (
     sessionId,
     request.lane
   )
+  const terminatedKernelInstances = normalizeTerminatedKernelInstances(
+    document.kernel?.terminatedKernelInstances
+  )
 
   return {
     ...document,
@@ -204,12 +252,15 @@ const normalizeDocument = (
     notebookSessionRoot,
     dataRoot: getNotebookDataRoot(storageRoot, storageProjectId, sessionId, request.lane),
     kernel: {
-      ...document.kernel,
+      ...withoutTerminatedKernelInstances(document.kernel),
       language: 'python',
       pythonPath: request.pythonPath ?? document.kernel?.pythonPath,
       kernelName: request.kernelName ?? document.kernel?.kernelName ?? 'python3',
       runtimeRoot: getRuntimeRoot(storageRoot),
-      lastKnownStatus: document.kernel?.lastKnownStatus ?? 'idle'
+      lastKnownStatus: terminatedKernelInstances
+        ? 'terminated'
+        : (document.kernel?.lastKnownStatus ?? 'idle'),
+      ...(terminatedKernelInstances ? { terminatedKernelInstances } : {})
     },
     runs: (document.runs ?? []).map((run) => normalizeRun(notebookSessionRoot, run)),
     updatedAt: document.updatedAt ?? Date.now()
@@ -306,6 +357,68 @@ class NotebookRunRepository {
     return this.mutate(request.projectName, request.sessionId, request.lane, (document) => ({
       ...document,
       kernel: { ...document.kernel, lastKnownStatus: request.status },
+      updatedAt: Date.now()
+    }))
+  }
+
+  async markKernelTerminated(
+    request: UpdateKernelTerminationRequest
+  ): Promise<NotebookRunDocument> {
+    return this.mutate(request.projectName, request.sessionId, request.lane, (document) => {
+      const terminatedKernelInstances = document.kernel.terminatedKernelInstances ?? []
+      const alreadyTerminated = terminatedKernelInstances.some((instance) =>
+        sameKernelInstance(instance, request.kernelInstance)
+      )
+      return {
+        ...document,
+        kernel: {
+          ...document.kernel,
+          lastKnownStatus: 'terminated',
+          terminatedKernelInstances: alreadyTerminated
+            ? terminatedKernelInstances
+            : [...terminatedKernelInstances, request.kernelInstance]
+        },
+        updatedAt: Date.now()
+      }
+    })
+  }
+
+  async clearKernelTermination(
+    request: UpdateKernelTerminationRequest
+  ): Promise<NotebookRunDocument> {
+    return this.mutate(request.projectName, request.sessionId, request.lane, (document) => {
+      const current = document.kernel.terminatedKernelInstances
+      if (!current?.some((instance) => sameKernelInstance(instance, request.kernelInstance))) {
+        return document
+      }
+      const remaining = current.filter(
+        (instance) => !sameKernelInstance(instance, request.kernelInstance)
+      )
+      return {
+        ...document,
+        kernel:
+          remaining.length > 0
+            ? {
+                ...document.kernel,
+                lastKnownStatus: 'terminated',
+                terminatedKernelInstances: remaining
+              }
+            : {
+                ...withoutTerminatedKernelInstances(document.kernel),
+                lastKnownStatus: 'idle'
+              },
+        updatedAt: Date.now()
+      }
+    })
+  }
+
+  async clearKernelTerminations(request: UpdateKernelStatusRequest): Promise<NotebookRunDocument> {
+    return this.mutate(request.projectName, request.sessionId, request.lane, (document) => ({
+      ...document,
+      kernel: {
+        ...withoutTerminatedKernelInstances(document.kernel),
+        lastKnownStatus: request.status
+      },
       updatedAt: Date.now()
     }))
   }

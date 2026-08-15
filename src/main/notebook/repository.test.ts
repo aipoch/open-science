@@ -407,17 +407,18 @@ describe('notebook run repository', () => {
   it('persists an updated kernel lifecycle status without touching run history', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
 
     await repository.loadOrCreate({
       projectName: 'default-project',
       sessionId: 'session-1',
-      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      lane,
       workspaceCwd: '/workspace'
     })
     await repository.appendRun({
       projectName: 'default-project',
       sessionId: 'session-1',
-      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      lane,
       run: {
         runId: 'run-1',
         cellId: 'cell-1',
@@ -437,19 +438,92 @@ describe('notebook run repository', () => {
     const restarting = await repository.updateKernelStatus({
       projectName: 'default-project',
       sessionId: 'session-1',
-      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      lane,
       status: 'restarting'
     })
     expect(restarting.kernel.lastKnownStatus).toBe('restarting')
     expect(restarting.runs).toHaveLength(1) // run history untouched
 
-    const terminated = await repository.updateKernelStatus({
+    const pythonTerminated = await repository.markKernelTerminated({
       projectName: 'default-project',
       sessionId: 'session-1',
-      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
-      status: 'terminated'
+      lane,
+      kernelInstance: { kind: 'python', environment: 'analysis' }
     })
-    expect(terminated.kernel.lastKnownStatus).toBe('terminated')
+    expect(pythonTerminated.kernel).toMatchObject({
+      lastKnownStatus: 'terminated',
+      terminatedKernelInstances: [{ kind: 'python', environment: 'analysis' }]
+    })
+
+    await repository.markKernelTerminated({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      kernelInstance: { kind: 'python', environment: 'analysis' }
+    })
+    await repository.markKernelTerminated({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      kernelInstance: { kind: 'python', environment: 'default-python' }
+    })
+    const bothTerminated = await repository.markKernelTerminated({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      kernelInstance: { kind: 'r', environment: 'default-r' }
+    })
+    expect(bothTerminated.kernel.terminatedKernelInstances).toEqual([
+      { kind: 'python', environment: 'analysis' },
+      { kind: 'python', environment: 'default-python' },
+      { kind: 'r', environment: 'default-r' }
+    ])
+
+    const rStillTerminated = await repository.clearKernelTermination({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      kernelInstance: { kind: 'python', environment: 'analysis' }
+    })
+    expect(rStillTerminated.kernel).toMatchObject({
+      lastKnownStatus: 'terminated',
+      terminatedKernelInstances: [
+        { kind: 'python', environment: 'default-python' },
+        { kind: 'r', environment: 'default-r' }
+      ]
+    })
+
+    await repository.clearKernelTermination({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      kernelInstance: { kind: 'python', environment: 'default-python' }
+    })
+
+    const recovered = await repository.clearKernelTermination({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      kernelInstance: { kind: 'r', environment: 'default-r' }
+    })
+    expect(recovered.kernel.lastKnownStatus).toBe('idle')
+    expect(recovered.kernel.terminatedKernelInstances).toBeUndefined()
+    expect(recovered.runs).toHaveLength(1)
+
+    await repository.markKernelTerminated({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      kernelInstance: { kind: 'repl' }
+    })
+    const restartingClean = await repository.clearKernelTerminations({
+      projectName: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      status: 'restarting'
+    })
+    expect(restartingClean.kernel.lastKnownStatus).toBe('restarting')
+    expect(restartingClean.kernel.terminatedKernelInstances).toBeUndefined()
   })
 
   it('defaults a legacy run record missing kernelKind to python when loaded from disk', async () => {
