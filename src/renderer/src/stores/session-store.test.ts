@@ -4503,7 +4503,7 @@ describe('session store public contract', () => {
       'src/renderer/src/stores/archive-undo-store.ts',
       'src/renderer/src/stores/navigation-store.ts'
     ])
-  }, 10_000)
+  })
 
   it('hydrates newest-first while preserving manifest and explicit selection semantics', () => {
     const older: PersistedChatSession = {
