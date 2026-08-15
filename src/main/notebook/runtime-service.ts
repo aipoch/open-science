@@ -761,9 +761,13 @@ class NotebookRuntimeService {
     request: RunNotebookCellRequest,
     signal?: AbortSignal
   ): Promise<NotebookRunSummary> {
-    return this.sessionLifecycle.runProjectOperation(request, async () => {
+    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
-      const run = await this.executionOwner.executeDataCell(session, request, signal)
+      const run = await this.executionOwner.executeDataCell(
+        session,
+        request,
+        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+      )
       return this.sessionReadModel.toRunSummary(session, run)
     })
   }
@@ -800,20 +804,20 @@ class NotebookRuntimeService {
   // Compatibility facade for the control-plane REPL. Admission, capability lifetime, dispatch,
   // terminalization, and completion interception belong to NotebookExecutionOwner.
   async executeControl(request: ExecuteNotebookControlRequest): Promise<NotebookControlResult> {
-    return this.sessionLifecycle.runProjectOperation(request, async () => {
+    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.code)
       const session = await this.sessionLifecycle.ensure(request)
-      return this.executionOwner.executeControl(session, request)
+      return this.executionOwner.executeControl(session, request, deletionSignal)
     })
   }
 
   // Compatibility facade for stateless shell execution. The owner deliberately admits calls without
   // a per-Session queue while the repository continues to serialize durable run writes.
   async executeShell(request: ExecuteShellRequest): Promise<NotebookShellResult> {
-    return this.sessionLifecycle.runProjectOperation(request, async () => {
+    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.command)
       const session = await this.sessionLifecycle.ensure(request)
-      return this.executionOwner.executeShell(session, request)
+      return this.executionOwner.executeShell(session, request, deletionSignal)
     })
   }
 

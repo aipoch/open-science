@@ -82,6 +82,7 @@ class NotebookSessionLifecycleOwner {
   private readonly deletingProjectIds = new Set<string>()
   private readonly pendingEnsuresByProject = new Map<string, Set<Promise<RuntimeSession>>>()
   private readonly pendingOperationsByProject = new Map<string, Set<Promise<unknown>>>()
+  private readonly operationAbortControllersByProject = new Map<string, Set<AbortController>>()
 
   constructor(private readonly options: NotebookSessionLifecycleOptions) {}
 
@@ -178,7 +179,7 @@ class NotebookSessionLifecycleOwner {
 
   runProjectOperation<Result>(
     request: NotebookSessionRequest,
-    operation: () => Promise<Result>
+    operation: (deletionSignal: AbortSignal) => Promise<Result>
   ): Promise<Result> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     try {
@@ -186,6 +187,11 @@ class NotebookSessionLifecycleOwner {
     } catch (error) {
       return Promise.reject(error)
     }
+    const controller = new AbortController()
+    const controllers =
+      this.operationAbortControllersByProject.get(projectId) ?? new Set<AbortController>()
+    controllers.add(controller)
+    this.operationAbortControllersByProject.set(projectId, controllers)
     let resolveRunning!: (value: Result | PromiseLike<Result>) => void
     let rejectRunning!: (reason?: unknown) => void
     const running = new Promise<Result>((resolve, reject) => {
@@ -198,12 +204,19 @@ class NotebookSessionLifecycleOwner {
     // Register before invoking the operation so a synchronous teardown can observe the lease, while
     // preserving the existing guarantee that callers start work before the method returns.
     try {
-      void operation().then(resolveRunning, rejectRunning)
+      void operation(controller.signal).then(resolveRunning, rejectRunning)
     } catch (error) {
       rejectRunning(error)
     }
     void running
       .finally(() => {
+        controllers.delete(controller)
+        if (
+          controllers.size === 0 &&
+          this.operationAbortControllersByProject.get(projectId) === controllers
+        ) {
+          this.operationAbortControllersByProject.delete(projectId)
+        }
         pending.delete(running)
         if (pending.size === 0 && this.pendingOperationsByProject.get(projectId) === pending) {
           this.pendingOperationsByProject.delete(projectId)
@@ -264,6 +277,10 @@ class NotebookSessionLifecycleOwner {
 
   beginProjectDeletion(projectId: string): void {
     this.deletingProjectIds.add(projectId)
+    const reason = new Error('Project is being deleted.')
+    for (const controller of this.operationAbortControllersByProject.get(projectId) ?? []) {
+      controller.abort(reason)
+    }
   }
 
   releaseProjectDeletion(projectId: string): void {

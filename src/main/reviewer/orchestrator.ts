@@ -98,8 +98,8 @@ export type RunReviewOptions = {
   // Called when the fix loop ends (all pass, cap reached, or aborted). Used to unlock the session
   // composer in the renderer.
   onFixLoopEnd?: () => void
-  // AbortSignal to stop the fix loop early (e.g. when the user presses cancel). When aborted,
-  // the loop exits at the next round boundary without further [Auditor] injections.
+  // AbortSignal for the admitted Review chain. It stops an active initial Reviewer session and also
+  // makes the fix loop exit at the next round boundary without further [Auditor] injections.
   fixLoopAbortSignal?: AbortSignal
   // How long the fix loop waits for the correction turn to reach durable session storage. The main
   // agent can finish before the renderer's persistence queue flushes, so a single immediate read races.
@@ -168,7 +168,8 @@ const runReviewWithSession = async (
     onReviewUpdate,
     onStarted,
     reviewerTimeoutMs,
-    reviewerMaxUpdates
+    reviewerMaxUpdates,
+    abortSignal: fixLoopAbortSignal
   })
   const finalReview = assessment.review
   if (finalReview.lifecycle === 'error') return finalReview

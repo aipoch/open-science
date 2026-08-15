@@ -207,14 +207,19 @@ describe('notebook shell process behavior', () => {
   })
 
   describe.runIf(process.platform !== 'win32')('process results', () => {
-    const execute = (command: string, timeoutMs = 5_000): ReturnType<typeof runShellCommand> =>
+    const execute = (
+      command: string,
+      timeoutMs = 5_000,
+      signal?: AbortSignal
+    ): ReturnType<typeof runShellCommand> =>
       runShellCommand({
         command,
         cwd: process.cwd(),
         handoffDir: process.cwd(),
         runtimeRoot: join(process.cwd(), '.open-science-test-runtime'),
         platform: 'linux',
-        timeoutMs
+        timeoutMs,
+        signal
       })
 
     it('preserves stdout, stderr, and a non-zero exit code as one ordinary result', async () => {
@@ -244,6 +249,18 @@ describe('notebook shell process behavior', () => {
         stdout: '',
         stderr: 'before timeout\nShell command timed out after 50ms and was killed.',
         exitCode: null
+      })
+    })
+
+    it('does not spawn work for an already-aborted shell request', async () => {
+      const controller = new AbortController()
+      controller.abort()
+
+      await expect(execute('echo should-not-run', 5_000, controller.signal)).resolves.toEqual({
+        stdout: '',
+        stderr: 'Shell command was cancelled.',
+        exitCode: null,
+        cancelled: true
       })
     })
   })

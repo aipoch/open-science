@@ -300,7 +300,8 @@ class NotebookExecutionOwner {
   }
   async executeControl(
     session: NotebookSessionAggregate,
-    request: ExecuteNotebookControlRequest
+    request: ExecuteNotebookControlRequest,
+    signal?: AbortSignal
   ): Promise<NotebookControlResult> {
     const { runId: controlInvocationId, sequence: controlInvocationGeneration } =
       this.options.runTerminalization.allocateRunIdentity()
@@ -309,7 +310,8 @@ class NotebookExecutionOwner {
         session,
         request,
         controlInvocationId,
-        controlInvocationGeneration
+        controlInvocationGeneration,
+        signal
       )
     )
 
@@ -365,7 +367,8 @@ class NotebookExecutionOwner {
     session: NotebookSessionAggregate,
     request: ExecuteNotebookControlRequest,
     runId: string,
-    controlInvocationGeneration: number
+    controlInvocationGeneration: number,
+    signal?: AbortSignal
   ): Promise<NotebookControlResult> {
     this.options.notifyAvailable(session, 'agent')
     const runningRun: NotebookRunRecord = {
@@ -451,6 +454,7 @@ class NotebookExecutionOwner {
                   runtimeRoot: session.runtimeRoot,
                   protectedDirs: [getAppClaudeConfigDir(this.options.configRoot)],
                   timeoutMs: request.timeoutMs,
+                  signal,
                   mcpRpcEndpoint: mcpRpc?.endpoint,
                   mcpRpcSocketPath: mcpRpc?.socketPath,
                   mcpRpcToken: mcpRpc?.token,
@@ -489,7 +493,8 @@ class NotebookExecutionOwner {
 
   async executeShell(
     session: NotebookSessionAggregate,
-    request: ExecuteShellRequest
+    request: ExecuteShellRequest,
+    signal?: AbortSignal
   ): Promise<NotebookShellResult> {
     const { runId } = this.options.runTerminalization.allocateRunIdentity()
     const runningRun: NotebookRunRecord = {
@@ -539,13 +544,15 @@ class NotebookExecutionOwner {
                 cwd: session.cwd,
                 handoffDir: join(session.notebookSessionRoot, 'handoff'),
                 runtimeRoot: session.runtimeRoot,
-                timeoutMs: request.timeoutMs
+                timeoutMs: request.timeoutMs,
+                signal
               })
         ).finally(async () => {
           workingFiles = await workingFileObservation.finish()
         })
-        const status: NotebookRunStatus =
-          shellResult.exitCode === 0
+        const status: NotebookRunStatus = shellResult.cancelled
+          ? 'cancelled'
+          : shellResult.exitCode === 0
             ? 'completed'
             : shellResult.exitCode === null
               ? 'timeout'

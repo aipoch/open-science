@@ -28,6 +28,20 @@ describe('driveReviewerToStop', () => {
     )
   })
 
+  it('stops waiting when the admitted Review chain is aborted', async () => {
+    const session = { nextUpdate: (): Promise<FakeUpdate> => new Promise<FakeUpdate>(() => {}) }
+    const controller = new AbortController()
+
+    const driving = driveReviewerToStop(session, {
+      timeoutMs: 5000,
+      maxUpdates: 100,
+      signal: controller.signal
+    })
+    controller.abort()
+
+    await expect(driving).rejects.toThrow('reviewer session was aborted before stopping')
+  })
+
   it('throws once the update cap is exceeded (fast-looping reviewer that never stops)', async () => {
     // Always resolves a non-stop discrete update immediately — would loop forever without the cap.
     const session = {

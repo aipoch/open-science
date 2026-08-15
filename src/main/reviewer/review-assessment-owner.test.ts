@@ -20,6 +20,7 @@ const harness = vi.hoisted(() => ({
   submission: undefined as NewCheck[] | undefined,
   submit: undefined as ((checks: NewCheck[]) => Promise<void>) | undefined,
   promptError: undefined as Error | undefined,
+  nextUpdate: undefined as (() => Promise<{ kind: string; stopReason?: string }>) | undefined,
   disposeError: undefined as Error | undefined,
   stopError: undefined as Error | undefined,
   bridgeScoped: undefined as boolean | undefined
@@ -200,7 +201,7 @@ const runtime = (contextModel?: string, sessionModel?: string): AcpRuntime =>
             outsideMutation('acp:prompt')
             if (harness.promptError) throw harness.promptError
           },
-          nextUpdate: async () => ({ kind: 'stop', stopReason: 'end_turn' })
+          nextUpdate: harness.nextUpdate ?? (async () => ({ kind: 'stop', stopReason: 'end_turn' }))
         }
       }
     },
@@ -246,6 +247,7 @@ describe('review assessment owner', () => {
     harness.submission = [{ status: 'pass', claim: 'Pass', evidence: 'Verified' }]
     harness.submit = undefined
     harness.promptError = undefined
+    harness.nextUpdate = undefined
     harness.disposeError = undefined
     harness.stopError = undefined
     harness.bridgeScoped = undefined
@@ -300,6 +302,29 @@ describe('review assessment owner', () => {
     expect(updates).toContainEqual(
       expect.objectContaining({ lifecycle: 'running', model: 'actual-runtime-model' })
     )
+  })
+
+  it('aborts an active initial Reviewer session and persists its existing error lifecycle', async () => {
+    harness.submission = undefined
+    harness.nextUpdate = () => new Promise(() => {})
+    const reviewRepository = makeRepository()
+    const controller = new AbortController()
+
+    const assessment = runReviewAssessment({
+      ...commonOptions(reviewRepository),
+      mode: 'initial',
+      abortSignal: controller.signal
+    })
+    await vi.waitFor(() => expect(harness.events).toContain('acp:prompt'))
+    controller.abort()
+
+    const result = await assessment
+    expect(result.review).toMatchObject({
+      lifecycle: 'error',
+      errorMessage: 'reviewer session was aborted before stopping'
+    })
+    expect(harness.events).toContain('acp:dispose')
+    expect(harness.events).toContain('mcp:stop')
   })
 
   it('records the selected session model instead of the context tokenization model', async () => {

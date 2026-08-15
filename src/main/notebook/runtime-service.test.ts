@@ -411,10 +411,28 @@ describe('notebook runtime service', () => {
     expect(events).toEqual(['restart-started', 'restart-finished', 'shutdown'])
   })
 
-  it('drains an admitted execution before shutting down the Project lane', async () => {
+  it('cancels an admitted execution before shutting down the Project lane', async () => {
     const root = await createStorageRoot()
-    const executionGate = createDeferred<NotebookExecutionResult>()
-    const execute = vi.fn(() => executionGate.promise)
+    let executionSignal: AbortSignal | undefined
+    const execute = vi.fn(
+      (request: NotebookExecutionRequest) =>
+        new Promise<NotebookExecutionResult>((resolve) => {
+          executionSignal = request.signal
+          request.signal?.addEventListener(
+            'abort',
+            () =>
+              resolve({
+                status: 'cancelled',
+                stdout: '',
+                stderr: 'cancelled',
+                traceback: '',
+                cwdAfter: request.cwd,
+                outputs: []
+              }),
+            { once: true }
+          )
+        })
+    )
     const shutdown = vi.fn(async () => ({ reaped: true }))
     const service = new NotebookRuntimeService({
       configRoot: root,
@@ -445,21 +463,88 @@ describe('notebook runtime service', () => {
     const running = service.runCell({ ...request, cellId: begin.cellId })
     await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce())
     const deleting = service.shutdownProject('project-1')
-    await Promise.resolve()
+    await vi.waitFor(() => expect(executionSignal?.aborted).toBe(true))
 
-    expect(shutdown).not.toHaveBeenCalled()
-    executionGate.resolve({
-      status: 'completed',
-      stdout: '',
-      stderr: '',
-      traceback: '',
-      cwdAfter: root,
-      outputs: []
-    })
-    await running
+    await expect(running).resolves.toMatchObject({ status: 'cancelled' })
     await deleting
 
     expect(shutdown).toHaveBeenCalledOnce()
+  })
+
+  it('cancels admitted control and shell executions before Project shutdown completes', async () => {
+    const root = await createStorageRoot()
+    let controlSignal: AbortSignal | undefined
+    let shellSignal: AbortSignal | undefined
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectName: 'default-project',
+      repository: new NotebookRunRepository(root),
+      environmentStateTracker: verifiedPackageMutationTracker(),
+      executorFactory: () => ({
+        execute: (request) =>
+          new Promise<NotebookExecutionResult>((resolve) => {
+            controlSignal = request.signal
+            request.signal?.addEventListener(
+              'abort',
+              () =>
+                resolve({
+                  status: 'cancelled',
+                  stdout: '',
+                  stderr: 'cancelled',
+                  traceback: '',
+                  cwdAfter: request.cwd,
+                  outputs: []
+                }),
+              { once: true }
+            )
+          }),
+        shutdown: async () => ({ reaped: true })
+      }),
+      shellProcess: {
+        execute: (request) =>
+          new Promise((resolve) => {
+            shellSignal = request.signal
+            request.signal?.addEventListener(
+              'abort',
+              () =>
+                resolve({
+                  stdout: '',
+                  stderr: 'Shell command was cancelled.',
+                  exitCode: null,
+                  cancelled: true
+                }),
+              { once: true }
+            )
+          })
+      }
+    })
+    const scope = { projectName: 'project-1', workspaceCwd: root }
+
+    const control = service.executeControl({ ...scope, sessionId: 'control-session', code: '1' })
+    const shell = service.executeShell({
+      ...scope,
+      sessionId: 'shell-session',
+      command: 'long-running-command'
+    })
+    await vi.waitFor(() => {
+      expect(controlSignal).toBeInstanceOf(AbortSignal)
+      expect(shellSignal).toBeInstanceOf(AbortSignal)
+    })
+
+    const deleting = service.shutdownProject('project-1')
+    await vi.waitFor(() => {
+      expect(controlSignal?.aborted).toBe(true)
+      expect(shellSignal?.aborted).toBe(true)
+    })
+
+    await expect(control).resolves.toMatchObject({ status: 'cancelled' })
+    await expect(shell).resolves.toEqual({
+      stdout: '',
+      stderr: 'Shell command was cancelled.',
+      exitCode: null
+    })
+    await expect(deleting).resolves.toBeUndefined()
   })
 
   it('drains an admitted Project-scoped package install before shutdown completes', async () => {
@@ -889,8 +974,10 @@ describe('notebook runtime service', () => {
     )
     const execution = await executionStarted.promise
 
-    expect(execution.signal).toBe(cancellation.signal)
+    expect(execution.signal).toBeInstanceOf(AbortSignal)
+    expect(execution.signal?.aborted).toBe(false)
     cancellation.abort()
+    expect(execution.signal?.aborted).toBe(true)
 
     await expect(run).resolves.toMatchObject({ status: 'cancelled' })
     await expect(
@@ -2347,7 +2434,8 @@ describe('notebook runtime service', () => {
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
         handoffDir: join(root, 'notebooks', 'default-project', 'session-1', 'handoff'),
         runtimeRoot: getRuntimeRoot(root),
-        timeoutMs: 321
+        timeoutMs: 321,
+        signal: expect.any(AbortSignal)
       })
       expect(result).toEqual({
         stdout: 'partial output',

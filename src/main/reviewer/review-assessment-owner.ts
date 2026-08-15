@@ -46,6 +46,7 @@ type CommonAssessmentOptions = {
   onReviewUpdate?: (review: ReviewWithChecks) => void
   reviewerTimeoutMs: number
   reviewerMaxUpdates: number
+  abortSignal?: AbortSignal
 }
 
 type InitialAssessmentOptions = CommonAssessmentOptions & {
@@ -145,7 +146,8 @@ export const runReviewAssessment = async (
     model,
     onReviewUpdate,
     reviewerTimeoutMs,
-    reviewerMaxUpdates
+    reviewerMaxUpdates,
+    abortSignal
   } = options
   const trackedChecks = options.mode === 'tracked' ? options.trackedChecks : []
 
@@ -237,7 +239,7 @@ export const runReviewAssessment = async (
     reviewerSession.prompt([{ type: 'text', text: reviewerPromptText }])
     const stopReason = await driveReviewerToStop(
       reviewerSession,
-      { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates },
+      { timeoutMs: reviewerTimeoutMs, maxUpdates: reviewerMaxUpdates, signal: abortSignal },
       { onUpdate: (entry) => capturedLog.push(entry) }
     )
     if (options.mode === 'initial') {
