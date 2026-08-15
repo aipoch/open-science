@@ -123,6 +123,11 @@ export const hardenWindowsCacheAclWithIcacls = (path: string): void => {
   const currentSid = currentWindowsUserSid()
   execFileSync(
     resolveWindowsSystemExecutable('icacls.exe'),
+    [path, '/setowner', `*${currentSid}`],
+    { encoding: 'utf8', windowsHide: true }
+  )
+  execFileSync(
+    resolveWindowsSystemExecutable('icacls.exe'),
     [
       path,
       '/inheritance:r',
