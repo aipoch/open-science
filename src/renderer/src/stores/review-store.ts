@@ -8,6 +8,7 @@ import type { ReviewWithChecks, ReviewUpdateEvent } from '../../../shared/review
 type ReviewStoreData = {
   // Map from projectId + sessionId to that session's reviews (newest first).
   reviewsBySession: Record<string, ReviewWithChecks[]>
+  loadErrorsBySession: Record<string, string>
 }
 
 type ReviewStore = ReviewStoreData & {
@@ -73,7 +74,8 @@ const mergeLoadedReviews = (
 }
 
 export const createInitialReviewState = (): ReviewStoreData => ({
-  reviewsBySession: {}
+  reviewsBySession: {},
+  loadErrorsBySession: {}
 })
 
 // Session ids with a load in flight, so repeated focus events don't launch overlapping loads. Kept
@@ -93,6 +95,15 @@ export const selectProjectSessionReviews = (
 ): ReviewWithChecks[] => {
   if (!sessionId) return EMPTY_REVIEWS
   return reviewsBySession[reviewSessionKey(projectId ?? '', sessionId)] ?? EMPTY_REVIEWS
+}
+
+export const selectProjectSessionReviewLoadError = (
+  loadErrorsBySession: Record<string, string>,
+  projectId: string | undefined,
+  sessionId: string | undefined
+): string | undefined => {
+  if (!sessionId) return undefined
+  return loadErrorsBySession[reviewSessionKey(projectId ?? '', sessionId)]
 }
 
 export const selectReviewRunsForMessage = (
@@ -138,14 +149,26 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
         appSessionId: sessionId
       })) as ReviewWithChecks[]
       // Merge (not replace): a slow load must not overwrite a newer review a push delivered meanwhile.
+      set((state) => {
+        const loadErrorsBySession = { ...state.loadErrorsBySession }
+        delete loadErrorsBySession[key]
+        return {
+          reviewsBySession: {
+            ...state.reviewsBySession,
+            [key]: mergeLoadedReviews(state.reviewsBySession[key] ?? [], reviews)
+          },
+          loadErrorsBySession
+        }
+      })
+    } catch (error) {
+      console.error('Failed to load review history:', error)
+      const message = error instanceof Error ? error.message : String(error)
       set((state) => ({
-        reviewsBySession: {
-          ...state.reviewsBySession,
-          [key]: mergeLoadedReviews(state.reviewsBySession[key] ?? [], reviews)
+        loadErrorsBySession: {
+          ...state.loadErrorsBySession,
+          [key]: message
         }
       }))
-    } catch {
-      // Silently ignore load errors — the card will just not appear until next push event.
     } finally {
       loadsInFlight.delete(key)
     }

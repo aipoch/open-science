@@ -4,6 +4,7 @@ import type { ReviewCheck, ReviewWithChecks, TurnScope } from '../../../shared/r
 import {
   createInitialReviewState,
   selectReviewRunsForMessage,
+  selectProjectSessionReviewLoadError,
   useReviewStore
 } from './review-store'
 
@@ -194,14 +195,37 @@ describe('review store', () => {
     vi.unstubAllGlobals()
   })
 
-  it('swallows load errors and leaves the session without reviews', async () => {
-    const getForSession = vi.fn().mockRejectedValue(new Error('db down'))
+  it('records load errors, preserves cached reviews, and clears the error after retry', async () => {
+    const cached = makeReview({ id: 'cached-1' })
+    useReviewStore.getState().handleReviewUpdate({ review: cached })
+    const getForSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('db down'))
+      .mockResolvedValueOnce([cached])
     vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     await expect(
       useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
     ).resolves.toBeUndefined()
-    expect(useReviewStore.getState().getReviewsForSession('session-1')).toEqual([])
+    const failedState = useReviewStore.getState()
+    expect(failedState.getReviewsForSession('session-1').map((review) => review.id)).toEqual([
+      'cached-1'
+    ])
+    expect(
+      selectProjectSessionReviewLoadError(failedState.loadErrorsBySession, 'project-1', 'session-1')
+    ).toBe('db down')
+    expect(consoleError).toHaveBeenCalledWith('Failed to load review history:', expect.any(Error))
+
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+    expect(
+      selectProjectSessionReviewLoadError(
+        useReviewStore.getState().loadErrorsBySession,
+        'project-1',
+        'session-1'
+      )
+    ).toBeUndefined()
+    consoleError.mockRestore()
     vi.unstubAllGlobals()
   })
 

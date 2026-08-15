@@ -429,6 +429,7 @@
   "Could not load project artifacts.": "无法加载项目产物。",
   "Could not load project files": "无法加载项目文件",
   "Could not load projects: {{error}}": "无法加载项目：{{error}}",
+  "Could not load review history.": "无法加载审查历史。",
   "Could not mark as read. Try again.": "无法标记为已读。请重试。",
   "Could not mark this completed session as read. Try again.": "无法将此已完成的会话标记为已读。请重试。",
   "Could not open the log file.": "无法打开日志文件。",

@@ -13,6 +13,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ToolActivityDetails } from './workspace-tool-activity-details'
 
+const reviewStoreMock = vi.hoisted(() => ({ loadError: undefined as string | undefined }))
+
 vi.mock('./WorkspaceRunMarks', () => ({
   WorkspaceRunMarks: ({ items }: { items: readonly unknown[] }) => (
     <div data-testid="workspace-run-marks" data-item-count={items.length} />
@@ -98,6 +100,7 @@ vi.mock('@/stores/preview-workbench-store', () => ({
 
 vi.mock('@/stores/review-store', () => ({
   selectProjectSessionReviews: () => [],
+  selectProjectSessionReviewLoadError: () => reviewStoreMock.loadError,
   selectReviewRunsForMessage: () => [],
   useReviewStore: (
     selector: (state: {
@@ -221,6 +224,22 @@ describe('WorkspaceMessageScroller Run Marks render', () => {
       })
     )
     expect(twoRuns).toContain('data-item-count="3"')
+  })
+})
+
+describe('WorkspaceMessageScroller Reviewer load error', () => {
+  it('renders an alert with a retry action', async () => {
+    reviewStoreMock.loadError = 'db down'
+    let html: string
+    try {
+      html = await renderScroller(createSession())
+    } finally {
+      reviewStoreMock.loadError = undefined
+    }
+
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Could not load review history.')
+    expect(html).toContain('Retry')
   })
 })
 

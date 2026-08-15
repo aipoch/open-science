@@ -42,12 +42,14 @@ vi.mock('./orchestrator', () => ({
 // invoke it directly and observe which storageRoot the thunk was constructed against.
 const reviewRepositoryThunks: Array<() => unknown> = []
 const getReviewsForSession = vi.fn().mockResolvedValue([])
+const recoverInterruptedReviews = vi.fn().mockResolvedValue(0)
 vi.mock('./repository', () => ({
   ReviewRepository: class {
     constructor(thunk: () => unknown) {
       reviewRepositoryThunks.push(thunk)
     }
     getReviewsForSession = getReviewsForSession
+    recoverInterruptedReviews = recoverInterruptedReviews
     getReviewsForProjectSession = getReviewsForSession
   }
 }))
@@ -123,6 +125,8 @@ beforeEach(() => {
   // Default: the requested session exists, so triggerReview proceeds to runReview.
   sessionLoadOne.mockResolvedValue({ id: 'session-1' })
   getReviewsForSession.mockReset()
+  recoverInterruptedReviews.mockReset()
+  recoverInterruptedReviews.mockResolvedValue(0)
   // Default: no prior review for the turn, so the auto-idempotency check lets the run proceed.
   getReviewsForSession.mockResolvedValue([])
 })
@@ -130,6 +134,24 @@ beforeEach(() => {
 afterEach(() => clearMigrationPending())
 
 describe('reviewer IPC handlers', () => {
+  it('waits for startup recovery before exposing persisted reviews', async () => {
+    let finishRecovery!: (count: number) => void
+    recoverInterruptedReviews.mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          finishRecovery = resolve
+        })
+    )
+    const owner = createReviewerCommandOwner({ acpRuntime })
+    const pendingRead = owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+
+    await Promise.resolve()
+    expect(getReviewsForSession).not.toHaveBeenCalled()
+    finishRecovery(1)
+    await expect(pendingRead).resolves.toEqual([])
+    expect(recoverInterruptedReviews).toHaveBeenCalledTimes(1)
+  })
+
   it('shares one in-flight arbitration owner between direct and IPC commands', async () => {
     let finishRun: (() => void) | undefined
     let backgroundRun: Promise<void> | undefined

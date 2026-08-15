@@ -112,6 +112,16 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   const storageRoot = options.storageRoot ?? resolveStorageRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
   const reviewRepository = createDefaultReviewRepository(storageRoot, dataRoot)
+  const startupRecovery = reviewRepository.recoverInterruptedReviews().then((count) => {
+    if (count > 0) {
+      log.warn('recovered interrupted reviews during startup', { count })
+    }
+  })
+  void startupRecovery.catch((error: unknown) => {
+    log.error('review startup recovery failed', {
+      error: error instanceof Error ? error.message : String(error)
+    })
+  })
   const sessionRepository = new SessionRepository(storageRoot)
   const artifactProvenanceRepository =
     options.artifactProvenanceRepository ??
@@ -136,6 +146,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
   // does not present a stale verdict as current.
   const getForSession = async (request: ReviewSessionRequest): Promise<ReviewWithChecks[]> => {
+    await startupRecovery
     const reviews = await reviewRepository.getReviewsForProjectSession(
       request.projectId,
       request.appSessionId
@@ -195,6 +206,13 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'already-in-flight' })
     }
     inFlightReviewKeys.add(inFlightKey)
+
+    try {
+      await startupRecovery
+    } catch (error) {
+      inFlightReviewKeys.delete(inFlightKey)
+      throw error
+    }
 
     // Atomic per-turn idempotency for auto-review. The in-flight key (reserved synchronously above)
     // serializes concurrent starts; this DB check — running while we hold that key — covers the other

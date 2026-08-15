@@ -22,6 +22,10 @@ import type {
   UpdateReviewPatch
 } from '../../shared/reviewer'
 import { loadReviewSubmissionProjection, toReviewCheck } from './review-submission-read-model'
+import { assertReviewSubmissionWithinLimits } from './submission-limits'
+
+const REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE =
+  'Review was interrupted because Open Science exited before it completed.'
 
 // Legacy alias for callers still using FindingSeverity (now CheckStatus).
 type FindingSeverity = CheckStatus
@@ -179,6 +183,19 @@ class ReviewRepository {
     private readonly options: ReviewRepositoryOptions = {}
   ) {}
 
+  async recoverInterruptedReviews(): Promise<number> {
+    const client = await this.getClient()
+    const result = await client.review.updateMany({
+      where: { lifecycle: 'running' },
+      data: {
+        lifecycle: 'error',
+        outcome: null,
+        errorMessage: REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE
+      }
+    })
+    return result.count
+  }
+
   // Inserts a new review, defaulting a fresh audit to the 'running' lifecycle with no outcome yet.
   async createReview(input: CreateReviewInput): Promise<Review> {
     const client = await this.getClient()
@@ -304,6 +321,7 @@ class ReviewRepository {
   // Appends checks under a review, defaulting resolution to 'open' and preserving caller sort order.
   async addChecks(reviewId: string, checks: NewCheck[]): Promise<void> {
     if (checks.length === 0) return
+    assertReviewSubmissionWithinLimits(checks)
 
     const client = await this.getClient()
 
@@ -352,6 +370,7 @@ class ReviewRepository {
     if (input.checks.length === 0) {
       throw new Error('A completed Review submission requires at least one explicit check.')
     }
+    assertReviewSubmissionWithinLimits(input.checks)
     const trackedFindingIds = input.checks.flatMap((check) =>
       check.sourceFindingId ? [check.sourceFindingId] : []
     )
@@ -835,7 +854,7 @@ class ReviewRepository {
   }
 }
 
-export { ReviewRepository, toReview }
+export { REVIEW_INTERRUPTED_ON_STARTUP_MESSAGE, ReviewRepository, toReview }
 export type { ReviewClient, ReviewClientProvider, ReviewRepositoryOptions, FindingSeverity }
 
 // Legacy exports kept for callers that still reference toFinding.
