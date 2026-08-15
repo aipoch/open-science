@@ -4494,6 +4494,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/visible-project-sessions.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-controller.ts',
       'src/renderer/src/pages/workspace/workspace-conversation-items.ts',
+      'src/renderer/src/pages/workspace/workspace-run-marks.ts',
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',
