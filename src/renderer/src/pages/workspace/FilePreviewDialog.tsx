@@ -115,6 +115,9 @@ const FilePreviewDialog = ({ item, onClose }: FilePreviewDialogProps): React.JSX
                   item={dialogItem}
                   onClose={onClose}
                   provenanceEntry="trailing"
+                  // The modal overlays the conversation panel, so a View in context navigation must
+                  // also close the dialog for the switched session to become visible.
+                  onViewInContextNavigate={onClose}
                   tooltipClassName="z-[70]"
                 />
               ) : null}

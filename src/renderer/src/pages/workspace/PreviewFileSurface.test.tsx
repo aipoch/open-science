@@ -8,6 +8,8 @@ import {
   type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { useProjectStore } from '@/stores/project-store'
 import {
   createInitialSessionState,
   type ChatSession,
@@ -553,5 +555,205 @@ describe('PreviewFileSurface local file header', () => {
     expect(document.body.querySelector('[role="menu"]')?.textContent).not.toContain(
       'Save as artifact'
     )
+  })
+})
+
+const originSession: ChatSession = {
+  id: 'session-1',
+  projectId: 'project-1',
+  title: 'Sine',
+  cwd: '/workspace',
+  status: 'idle',
+  messages: [],
+  artifacts: [],
+  filesRevision: 1,
+  createdAt: 1,
+  updatedAt: 1
+}
+
+const otherSession: ChatSession = {
+  ...originSession,
+  id: 'session-2',
+  title: 'Other',
+  updatedAt: 2
+}
+
+const seedWorkspaceStores = (): void => {
+  useProjectStore.setState({
+    projects: [
+      {
+        id: 'project-1',
+        name: 'Project One',
+        description: '',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    isLoaded: true
+  })
+  useSessionStore.setState({
+    sessions: [originSession, otherSession],
+    selectedSessionId: 'session-2'
+  })
+  useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-1' })
+}
+
+describe('PreviewFileSurface View in context entry', () => {
+  it('switches the conversation to the artifact origin session from the panel menu', async () => {
+    seedWorkspaceStores()
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+    await clickMenuItem('View in context')
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+  })
+
+  it('does not offer View in context for uploaded inputs', async () => {
+    seedWorkspaceStores()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, id: 'upload-1', artifactId: undefined, source: 'upload' }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[aria-label^="File actions for"]')).toBeNull()
+  })
+
+  it('hides View in context but keeps Provenance when the origin session is deleted', async () => {
+    seedWorkspaceStores()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'deleted', deletedAt: '2026-08-01' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Provenance')
+    expect(menu?.textContent).not.toContain('View in context')
+  })
+
+  it('lets the lineage report of a deleted origin session override the stale item snapshot', async () => {
+    seedWorkspaceStores()
+    // The preview tab still carries its creation-time snapshot; the refetched lineage is the
+    // authority once it resolves with the post-deletion state.
+    window.api.artifacts.getLineage = vi.fn().mockResolvedValue({
+      artifactId: 'artifact-1',
+      filename: 'sin.png',
+      originSession: { sessionId: 'session-1', state: 'deleted', title: 'Sine' },
+      versions: [descriptor, secondDescriptor]
+    })
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, originSession: { state: 'active' } }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Provenance')
+    expect(menu?.textContent).not.toContain('View in context')
+  })
+
+  it('does not notify View in context consumers when the guard rejects the navigation', async () => {
+    seedWorkspaceStores()
+    // The origin session vanished after render (deleted mid-flight): the guard must reject the
+    // open, and the full-screen dialog must stay open on the un-navigated surface.
+    useSessionStore.setState({ sessions: [otherSession], selectedSessionId: 'session-2' })
+    const onViewInContextNavigate = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={item}
+          provenanceEntry="trailing"
+          onViewInContextNavigate={onViewInContextNavigate}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click(container.querySelector('[aria-label="View in context for sin.png"]'))
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-2')
+    expect(onViewInContextNavigate).not.toHaveBeenCalled()
+  })
+
+  it('keeps View in context visible but inert when the origin session is archived', async () => {
+    seedWorkspaceStores()
+    useSessionStore.setState({
+      sessions: [{ ...originSession, archivedAt: 5 }, otherSession],
+      selectedSessionId: 'session-2'
+    })
+
+    await act(async () => {
+      root.render(<PreviewFileSurface item={item} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+    const menuItem = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (element) => element.textContent?.includes('View in context')
+    )
+    expect(menuItem?.getAttribute('aria-disabled')).toBe('true')
+    // The reason reads inline, matching the disabled-item precedent in AgentInstallSourceMenu.
+    expect(menuItem?.textContent).toContain('Source conversation is archived')
+
+    await click(menuItem ?? null)
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-2')
+  })
+
+  it('navigates and notifies from the full-screen trailing entry', async () => {
+    seedWorkspaceStores()
+    const onViewInContextNavigate = vi.fn()
+
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={item}
+          provenanceEntry="trailing"
+          onViewInContextNavigate={onViewInContextNavigate}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await click(container.querySelector('[aria-label="View in context for sin.png"]'))
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+    expect(onViewInContextNavigate).toHaveBeenCalledOnce()
   })
 })

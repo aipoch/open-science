@@ -1,4 +1,12 @@
-import { ChevronLeft, ChevronRight, GitBranch, Maximize2, MoreHorizontal, X } from 'lucide-react'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  GitBranch,
+  Maximize2,
+  MoreHorizontal,
+  X
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -6,12 +14,14 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 
@@ -33,6 +43,9 @@ type PreviewFileSurfaceProps = {
   onClose: () => void
   onOpenFullScreen?: () => void
   onOpenProvenance?: () => void
+  // Notified after the View in context action navigates to the artifact's origin session; the
+  // full-screen dialog uses this to exit so the switched conversation is actually visible.
+  onViewInContextNavigate?: () => void
   onReload?: () => void
   provenanceEntry?: 'menu' | 'leading' | 'trailing'
 }
@@ -69,6 +82,47 @@ const PreviewProvenanceButton = ({
   )
 }
 
+const PreviewViewInContextButton = ({
+  item,
+  onViewInContext,
+  disabled,
+  tooltipClassName
+}: {
+  item: PreviewFileItem
+  onViewInContext: () => void
+  disabled: boolean
+  tooltipClassName?: string
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {/* A disabled button swallows pointer events, so the trigger spans it to keep the
+              archived-session hint hoverable. */}
+          <span className="inline-flex">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="text-text-100 hover:text-text-000"
+              disabled={disabled}
+              aria-label={t('View in context for {{title}}', { title: item.title })}
+              onClick={onViewInContext}
+            >
+              <Eye aria-hidden="true" />
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className={tooltipClassName}>
+          {disabled ? t('Source conversation is archived') : t('View in context')}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 // The optional callback makes the maximize action available only in the compact workbench panel;
 // the dialog reuses this header without exposing a nested full-screen action.
 const PreviewFileHeader = ({
@@ -76,6 +130,8 @@ const PreviewFileHeader = ({
   onClose,
   onOpenFullScreen,
   onOpenProvenance,
+  onViewInContext,
+  viewInContextDisabled,
   onReload,
   provenanceEntry = 'menu',
   tooltipClassName
@@ -88,7 +144,11 @@ const PreviewFileHeader = ({
   | 'onReload'
   | 'provenanceEntry'
   | 'tooltipClassName'
->): React.JSX.Element => {
+> & {
+  // Undefined hides the entry; disabled keeps it visible with the archived-session hint.
+  onViewInContext?: () => void
+  viewInContextDisabled?: boolean
+}): React.JSX.Element => {
   const { t } = useTranslation()
 
   return (
@@ -147,6 +207,14 @@ const PreviewFileHeader = ({
               tooltipClassName={tooltipClassName}
             />
           ) : null}
+          {onViewInContext && provenanceEntry === 'trailing' ? (
+            <PreviewViewInContextButton
+              item={item}
+              onViewInContext={onViewInContext}
+              disabled={viewInContextDisabled ?? false}
+              tooltipClassName={tooltipClassName}
+            />
+          ) : null}
           <ManagedFileDownloadButton
             source={item.source ?? 'artifact'}
             path={item.path}
@@ -179,6 +247,16 @@ const PreviewFileHeader = ({
                   <GitBranch className="mr-2 size-4" aria-hidden="true" />
                   {t('Provenance')}
                 </DropdownMenuItem>
+                {onViewInContext ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem disabled={viewInContextDisabled} onSelect={onViewInContext}>
+                      <Eye className="mr-2 size-4" aria-hidden="true" />
+                      {t('View in context')}
+                      {viewInContextDisabled ? ` (${t('Source conversation is archived')})` : ''}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}
@@ -291,6 +369,7 @@ const PreviewFileSurface = ({
   tooltipClassName,
   onClose,
   onOpenFullScreen,
+  onViewInContextNavigate,
   provenanceEntry = 'menu'
 }: PreviewFileSurfaceProps): React.JSX.Element => {
   const [provenanceTarget, setProvenanceTarget] = useState<string>()
@@ -396,6 +475,32 @@ const PreviewFileSurface = ({
     )
   }
 
+  // View in context needs the same managed-artifact identity as Provenance, plus a live origin
+  // session. Deletion is terminal, so either signal hides the entry: the refetched lineage or the
+  // item's creation-time originSession snapshot (the lineage may not have refetched yet).
+  const originSessionDeleted =
+    lineage?.originSession.state === 'deleted' || previewItem.originSession?.state === 'deleted'
+  const canViewInContext =
+    previewItem.source !== 'upload' &&
+    previewItem.artifactId !== undefined &&
+    projectId !== undefined &&
+    !originSessionDeleted
+  // Archive is reversible, so the entry stays visible but inert rather than disappearing.
+  const originSessionArchived = useSessionStore(
+    (state) =>
+      state.sessions.find((session) => session.id === previewItem.sessionId)?.archivedAt !==
+      undefined
+  )
+  const viewInContext = (): void => {
+    if (!projectId) return
+    const opened = useNavigationStore
+      .getState()
+      .openSession(projectId, previewItem.sessionId, 'user')
+    // A guard rejection (session vanished mid-flight) must not close the full-screen dialog on a
+    // navigation that never happened.
+    if (opened) onViewInContextNavigate?.()
+  }
+
   return (
     <div className="flex size-full min-h-0 flex-col overflow-hidden">
       <PreviewFileHeader
@@ -409,6 +514,8 @@ const PreviewFileSurface = ({
             ? () => setProvenanceTarget(surfaceKey)
             : undefined
         }
+        onViewInContext={canViewInContext ? viewInContext : undefined}
+        viewInContextDisabled={originSessionArchived}
         tooltipClassName={tooltipClassName}
       />
       {!showProvenance && lineage ? (

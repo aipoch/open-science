@@ -45,7 +45,7 @@ type NavigationStore = {
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
   openProject: (projectId: string, origin: NavigationOrigin) => void
-  openSession: (projectId: string, sessionId: string, origin: NavigationOrigin) => void
+  openSession: (projectId: string, sessionId: string, origin: NavigationOrigin) => boolean
   // Opens a session knowing only its id (e.g. a desktop-notification click); a no-op when the
   // session no longer exists or hasn't loaded yet.
   openSessionById: (sessionId: string, origin: NavigationOrigin) => void
@@ -147,9 +147,11 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
     )
   },
 
-  // Opens a specific session inside its project's workspace.
+  // Opens a specific session inside its project's workspace. Returns whether navigation happened,
+  // so callers that chain side effects (e.g. closing a modal over the conversation panel) can skip
+  // them when the guard rejects a vanished or archived session.
   openSession: (projectId, sessionId, origin) => {
-    if (!isActiveSession(projectId, sessionId)) return
+    if (!isActiveSession(projectId, sessionId)) return false
     useSessionStore.getState().selectSession(sessionId)
 
     if (origin === 'user') recordLastOpenedProject(projectId)
@@ -157,6 +159,7 @@ export const useNavigationStore = create<NavigationStore>((set) => ({
     set((state) =>
       navigationState(state, origin, { view: 'workspace', activeProjectId: projectId })
     )
+    return true
   },
 
   // Resolves the session's project from the session store, then navigates exactly like
