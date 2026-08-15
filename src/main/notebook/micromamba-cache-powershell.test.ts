@@ -35,4 +35,43 @@ describe('Windows micromamba cache PowerShell invocation', () => {
       expect(executable).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
     }
   })
+
+  it('falls back to the system ACL tool when PowerShell execution is denied', () => {
+    childProcessMocks.execFileSync.mockImplementationOnce(() => {
+      throw Object.assign(new Error('spawnSync powershell.exe EPERM'), { code: 'EPERM' })
+    })
+    childProcessMocks.execFileSync.mockReturnValueOnce('CONTOSO\\alice,S-1-5-21-1000\r\n')
+
+    expect(hardenWindowsCacheAcl('D:\\osp-cache')).toBe(true)
+
+    expect(childProcessMocks.execFileSync).toHaveBeenCalledTimes(3)
+    expect(childProcessMocks.execFileSync).toHaveBeenNthCalledWith(
+      2,
+      'C:\\Windows\\System32\\whoami.exe',
+      ['/user', '/fo', 'csv', '/nh'],
+      { encoding: 'utf8', windowsHide: true }
+    )
+    expect(childProcessMocks.execFileSync).toHaveBeenNthCalledWith(
+      3,
+      'C:\\Windows\\System32\\icacls.exe',
+      [
+        'D:\\osp-cache',
+        '/inheritance:r',
+        '/grant:r',
+        '*S-1-5-21-1000:(OI)(CI)F',
+        '*S-1-5-18:(OI)(CI)F',
+        '*S-1-5-32-544:(OI)(CI)F'
+      ],
+      { encoding: 'utf8', windowsHide: true }
+    )
+  })
+
+  it('does not hide PowerShell script failures behind the fallback', () => {
+    childProcessMocks.execFileSync.mockImplementationOnce(() => {
+      throw Object.assign(new Error('PowerShell command failed'), { code: 'UNKNOWN' })
+    })
+
+    expect(() => hardenWindowsCacheAcl('D:\\osp-cache')).toThrow('PowerShell command failed')
+    expect(childProcessMocks.execFileSync).toHaveBeenCalledOnce()
+  })
 })
