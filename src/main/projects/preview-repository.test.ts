@@ -68,6 +68,26 @@ describe('preview state repository (integration)', () => {
     await expect(repository.get('project-a')).resolves.toBeNull()
   })
 
+  it('does not update the owning Project timestamp when saving preview state', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
+
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+
+    await migrateApplicationDatabase(client)
+    const updatedAt = new Date('2026-01-02T03:04:05Z')
+    await client.project.create({
+      data: { id: 'project-a', name: 'Project A', updatedAt }
+    })
+
+    const repository = new PreviewStateRepository(() => Promise.resolve(client))
+    await repository.save('project-a', createState())
+
+    await expect(
+      client.project.findUniqueOrThrow({ where: { id: 'project-a' } })
+    ).resolves.toMatchObject({ updatedAt })
+  })
+
   it('round-trips per-project preview state and deletes it', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-preview-'))
 
