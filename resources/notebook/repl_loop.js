@@ -19,6 +19,7 @@ const { fileURLToPath } = require('node:url')
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\n')
 const OUTPUT_LIMIT_BYTES =
   Number(process.env.OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES) || 2 * 1024 * 1024
+const DIAGNOSTIC_LIMIT_BYTES = Math.min(16 * 1024, Math.max(0, OUTPUT_LIMIT_BYTES))
 
 const takeOutput = (budget, value) => {
   value = String(value)
@@ -39,6 +40,28 @@ const takeOutput = (budget, value) => {
   budget.remaining -= Buffer.byteLength(prefix, 'utf8')
   budget.truncated = true
   return prefix
+}
+
+const takeOutputTail = (budget, value) => {
+  value = String(value)
+  if (budget.remaining <= 0) {
+    if (value) budget.truncated = true
+    return ''
+  }
+  const candidate =
+    value.length > budget.remaining ? value.slice(value.length - budget.remaining) : value
+  const encoded = Buffer.from(candidate, 'utf8')
+  if (encoded.byteLength <= budget.remaining) {
+    budget.remaining -= encoded.byteLength
+    if (candidate.length < value.length) budget.truncated = true
+    return encoded.toString('utf8')
+  }
+  let start = encoded.byteLength - budget.remaining
+  while (start < encoded.byteLength && (encoded[start] & 0xc0) === 0x80) start += 1
+  const suffix = encoded.subarray(start).toString('utf8')
+  budget.remaining -= Buffer.byteLength(suffix, 'utf8')
+  budget.truncated = true
+  return suffix
 }
 
 // Capture the connector RPC credentials privately, then delete them from process.env BEFORE the
@@ -3191,7 +3214,11 @@ function wrapForRun(code) {
 async function run(code) {
   let out = '',
     err = ''
-  const outputBudget = { remaining: OUTPUT_LIMIT_BYTES, truncated: false }
+  const outputBudget = {
+    remaining: OUTPUT_LIMIT_BYTES - DIAGNOSTIC_LIMIT_BYTES,
+    truncated: false
+  }
+  const diagnosticBudget = { remaining: DIAGNOSTIC_LIMIT_BYTES, truncated: false }
   const origLog = console.log,
     origErr = console.error
   console.log = (...a) => {
@@ -3213,7 +3240,7 @@ async function run(code) {
       }
     }
   } catch (e) {
-    error = takeOutput(outputBudget, e && e.stack ? String(e.stack) : String(e))
+    error = takeOutputTail(diagnosticBudget, e && e.stack ? String(e.stack) : String(e))
   } finally {
     console.log = origLog
     console.error = origErr
@@ -3225,7 +3252,7 @@ async function run(code) {
     result,
     cwd: process.cwd(),
     figures: [],
-    output_truncated: outputBudget.truncated
+    output_truncated: outputBudget.truncated || diagnosticBudget.truncated
   }
 }
 

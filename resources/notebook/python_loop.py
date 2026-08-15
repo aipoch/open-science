@@ -14,14 +14,15 @@ import traceback
 _protocol_out = os.fdopen(os.dup(1), "w", buffering=1)
 _figures_dir = os.environ.get("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
 _text_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES", 2 * 1024 * 1024))
+_diagnostic_limit = min(16 * 1024, max(0, _text_limit))
 _figure_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", int(3.5 * 1024 * 1024)))
 _figure_count_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
 _figure_total_limit = int(os.environ.get("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
 
 
 class _OutputBudget:
-    def __init__(self):
-        self.remaining = _text_limit
+    def __init__(self, limit=_text_limit):
+        self.remaining = max(0, limit)
         self.truncated = False
 
     def take(self, value):
@@ -42,6 +43,25 @@ class _OutputBudget:
         self.remaining -= len(prefix.encode("utf-8"))
         self.truncated = True
         return prefix
+
+    def take_tail(self, value):
+        value = str(value)
+        if self.remaining <= 0:
+            self.truncated = self.truncated or bool(value)
+            return ""
+        # Traceback exception names/messages live at the end. Bound the temporary encoding by first
+        # taking at most `remaining` characters, then keep a valid UTF-8 suffix within the byte cap.
+        candidate = value[-self.remaining:] if len(value) > self.remaining else value
+        data = candidate.encode("utf-8", errors="replace")
+        if len(data) <= self.remaining:
+            self.remaining -= len(data)
+            if len(candidate) < len(value):
+                self.truncated = True
+            return data.decode("utf-8")
+        suffix = data[-self.remaining:].decode("utf-8", errors="ignore")
+        self.remaining -= len(suffix.encode("utf-8"))
+        self.truncated = True
+        return suffix
 
 
 class _BudgetTextIO(io.TextIOBase):
@@ -477,7 +497,8 @@ def _capture_environment():
 # evals that expression so its repr echoes like a REPL. KeyboardInterrupt (from a SIGINT timeout) is
 # caught so the process survives and the driver can map the reply to a timeout.
 def _run(code):
-    output_budget = _OutputBudget()
+    output_budget = _OutputBudget(_text_limit - _diagnostic_limit)
+    diagnostic_budget = _OutputBudget(_diagnostic_limit)
     out, err = _BudgetTextIO(output_budget), _BudgetTextIO(output_budget)
     old_out, old_err = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
@@ -496,19 +517,19 @@ def _run(code):
             if value is not None:
                 result = output_budget.take(repr(value))
     except KeyboardInterrupt:
-        error = output_budget.take("KeyboardInterrupt\n" + traceback.format_exc())
+        error = diagnostic_budget.take_tail("KeyboardInterrupt\n" + traceback.format_exc())
     except SystemExit:
         # A cell calling sys.exit()/exit() raises SystemExit (a BaseException, not Exception). Report
         # it as a normal cell error so the kernel survives instead of the process exiting.
-        error = output_budget.take(traceback.format_exc())
+        error = diagnostic_budget.take_tail(traceback.format_exc())
     except Exception:
-        error = output_budget.take(traceback.format_exc())
+        error = diagnostic_budget.take_tail(traceback.format_exc())
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     figures, figures_truncated = _capture_figures()
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "error": error,
             "result": result, "cwd": os.getcwd(), "figures": figures,
-            "output_truncated": output_budget.truncated or figures_truncated,
+            "output_truncated": output_budget.truncated or diagnostic_budget.truncated or figures_truncated,
             "environment": _capture_environment()}
 
 

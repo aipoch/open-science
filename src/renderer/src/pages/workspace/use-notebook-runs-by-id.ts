@@ -10,10 +10,11 @@ type NotebookRunSnapshot = {
 
 const EMPTY_RUNS_BY_ID: ReadonlyMap<string, NotebookRunRecord> = new Map()
 
-// Loads the bounded recent full-run window only into this mounted renderer. Transcript activities retain just runId,
-// so image payloads never become session messages, agent context, or replay preamble content.
+// Keeps the recent full-run window in this mounted renderer, then hydrates only historical runIds
+// referenced by the mounted transcript. Image payloads never enter session messages or agent context.
 const useNotebookRunsById = (
-  reference: NotebookSessionReference | undefined
+  reference: NotebookSessionReference | undefined,
+  referencedRunIds: readonly string[] = []
 ): ReadonlyMap<string, NotebookRunRecord> => {
   const [snapshot, setSnapshot] = useState<NotebookRunSnapshot>({
     runsById: EMPTY_RUNS_BY_ID
@@ -21,6 +22,7 @@ const useNotebookRunsById = (
   const sessionId = reference?.sessionId
   const projectId = reference ? resolveProjectId(reference) : undefined
   const workspaceCwd = reference?.workspaceCwd
+  const referencedRunIdsKey = JSON.stringify([...new Set(referencedRunIds)].sort())
 
   useEffect(() => {
     if (!sessionId || !projectId || workspaceCwd === undefined) {
@@ -30,6 +32,9 @@ const useNotebookRunsById = (
     let active = true
     let loading = false
     let reloadQueued = false
+    const requestedRunIds = JSON.parse(referencedRunIdsKey) as string[]
+    const historicalRunsById = new Map<string, NotebookRunRecord>()
+    const attemptedRunIds = new Set<string>()
     const load = async (): Promise<void> => {
       if (loading) {
         reloadQueued = true
@@ -42,9 +47,27 @@ const useNotebookRunsById = (
           const state = await window.api.notebook.state({ sessionId, projectId, workspaceCwd })
 
           if (!active) return
+          const recentRunsById = new Map(state.runs.map((run) => [run.runId, run]))
+          const missingRunIds = requestedRunIds.filter(
+            (runId) => !recentRunsById.has(runId) && !attemptedRunIds.has(runId)
+          )
+          if (missingRunIds.length > 0) {
+            const targetedState = await window.api.notebook.state({
+              sessionId,
+              projectId,
+              workspaceCwd,
+              runIds: missingRunIds
+            })
+            if (!active) return
+            for (const runId of missingRunIds) attemptedRunIds.add(runId)
+            const missingRunIdSet = new Set(missingRunIds)
+            for (const run of targetedState.runs) {
+              if (missingRunIdSet.has(run.runId)) historicalRunsById.set(run.runId, run)
+            }
+          }
           setSnapshot({
             sessionId,
-            runsById: new Map(state.runs.map((run) => [run.runId, run]))
+            runsById: new Map([...historicalRunsById, ...recentRunsById])
           })
         } catch (error) {
           if (!active) return
@@ -64,7 +87,7 @@ const useNotebookRunsById = (
       active = false
       stopChanged()
     }
-  }, [projectId, sessionId, workspaceCwd])
+  }, [projectId, referencedRunIdsKey, sessionId, workspaceCwd])
 
   return snapshot.sessionId === sessionId ? snapshot.runsById : EMPTY_RUNS_BY_ID
 }

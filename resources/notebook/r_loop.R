@@ -574,6 +574,7 @@ rm(
 
 figures_dir <- Sys.getenv("OPEN_SCIENCE_KERNEL_FIGURES_DIR", "")
 text_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES", 2 * 1024 * 1024))
+diagnostic_limit_bytes <- min(16 * 1024, max(0, text_limit_bytes))
 figure_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_LIMIT_BYTES", 3.5 * 1024 * 1024))
 figure_count_limit <- as.integer(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_COUNT_LIMIT", 12))
 figure_total_limit_bytes <- as.numeric(Sys.getenv("OPEN_SCIENCE_NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES", 8 * 1024 * 1024))
@@ -641,7 +642,7 @@ read_request <- function() {
 
 run <- base::local({
   kernel_figures_dir <- figures_dir
-  output_text_limit <- text_limit_bytes
+  output_text_limit <- max(0, text_limit_bytes - diagnostic_limit_bytes)
   output_figure_limit <- figure_limit_bytes
   output_figure_count_limit <- figure_count_limit
   output_figure_total_limit <- figure_total_limit_bytes
@@ -1198,7 +1199,7 @@ run <- base::local({
     if (!is.na(stdout_size) && stdout_size > output_text_limit) {
       capture_state$output_truncated <- TRUE
     }
-    remaining_text_bytes <- max(0, output_text_limit - length(charToRaw(enc2utf8(stdout_text))))
+    remaining_text_bytes <- diagnostic_limit_bytes
     if (!is.null(error)) {
       error_raw <- charToRaw(enc2utf8(error))
       if (length(error_raw) > remaining_text_bytes) {
@@ -1244,6 +1245,7 @@ run <- base::local({
   base::list(
     figures_dir = figures_dir,
     text_limit_bytes = text_limit_bytes,
+    diagnostic_limit_bytes = diagnostic_limit_bytes,
     figure_limit_bytes = figure_limit_bytes,
     figure_count_limit = figure_count_limit,
     figure_total_limit_bytes = figure_total_limit_bytes,

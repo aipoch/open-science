@@ -81,6 +81,7 @@ import type { NotebookSessionReference } from '../../../../shared/notebook'
 import { useNotebookRunsById } from './use-notebook-runs-by-id'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceSubagentMessageRow } from './WorkspaceSubagentMessageRow'
+import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 
 type WorkspaceMessageScrollerProps = {
   activeSession: ChatSession | undefined
@@ -357,7 +358,6 @@ const WorkspaceMessageScrollerImpl = ({
     ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
     : undefined
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
-  const notebookRunsById = useNotebookRunsById(notebookReference)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
   // The whole-window find bar is an Electron overlay owned by main; the Workspace only needs to tell
   // main it is mounted and searchable so Cmd/Ctrl+F is intercepted (and re-arm UNREADY on unmount).
@@ -446,6 +446,23 @@ const WorkspaceMessageScrollerImpl = ({
     () => groupConversationItems(rawConversationItems, activeSession?.activityGroups),
     [activeSession?.activityGroups, rawConversationItems]
   )
+  const referencedNotebookRunIds = useMemo(
+    () =>
+      conversationItems.flatMap((item) => {
+        const activities =
+          item.type === 'activity-group'
+            ? item.activities
+            : item.type === 'activity'
+              ? [item.activity]
+              : []
+        return activities.flatMap((activity) => {
+          const runId = getNotebookRunIdFromActivity(activity)
+          return runId ? [runId] : []
+        })
+      }),
+    [conversationItems]
+  )
+  const notebookRunsById = useNotebookRunsById(notebookReference, referencedNotebookRunIds)
   const [visibleMessageSnapshot, setVisibleMessageSnapshot] = useState<VisibleMessageSnapshot>(
     () => ({ scopeId: undefined, messageIds: new Set() })
   )

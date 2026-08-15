@@ -478,6 +478,12 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
   inputRunLeaseId?: string
 }
 
+// A normal state read returns the latest renderer window. Transcript hydration may additionally
+// request immutable historical Runs by id without changing or widening that default window.
+export type NotebookSessionStateRequest = NotebookSessionRequest & {
+  runIds?: string[]
+}
+
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the
 // answer is the tab itself; for repl/bash tabs it is the most recent data kernel that was
 // active when the control run executed. Returns undefined when no data run has ever occurred.

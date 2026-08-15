@@ -8,13 +8,14 @@ import type {
   ExportNotebookKernelRequest,
   FinishNotebookCodeCellRequest,
   NotebookSessionRequest,
+  NotebookSessionStateRequest,
   RunNotebookCellRequest
 } from '../../shared/notebook'
 import type { NotebookCommandWorkflows } from './notebook-workflows'
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.
 const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
-  ipcMainHandle('notebook:state', (_event, request: NotebookSessionRequest) =>
+  ipcMainHandle('notebook:state', (_event, request: NotebookSessionStateRequest) =>
     handlers.state(request)
   )
   ipcMainHandle('notebook:reference', (_event, request: NotebookSessionRequest) =>

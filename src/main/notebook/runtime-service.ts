@@ -18,6 +18,7 @@ import type {
   NotebookLanguage,
   NotebookRunSummary,
   NotebookSessionRequest,
+  NotebookSessionStateRequest,
   NotebookSessionReference,
   NotebookSessionState,
   RunNotebookCellRequest
@@ -796,11 +797,11 @@ class NotebookRuntimeService {
 
   // Returns current live state plus the bounded recent run window used by renderer consumers.
   async state(
-    request: NotebookSessionRequest
+    request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const session = await this.sessionLifecycle.ensure(request)
     await this.runTerminalization.reconcilePending(session)
-    return this.sessionReadModel.state(session)
+    return this.sessionReadModel.state(session, request.runIds)
   }
 
   // Resolves the durable reference for a session, preferring the live runtime session but falling

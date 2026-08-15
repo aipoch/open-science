@@ -128,7 +128,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   }
 
   async state(
-    session: Session
+    session: Session,
+    includeRunIds: readonly string[] = []
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.options.repository.loadOrCreate({
       projectName: session.projectId,
@@ -140,7 +141,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     const runWindow = await this.options.repository.readSessionRunWindow(
       session.projectId,
       session.sessionId,
-      NOTEBOOK_RENDERER_RUN_LIMIT
+      NOTEBOOK_RENDERER_RUN_LIMIT,
+      includeRunIds
     )
     const liveKernelStatus = session.latestKernelStatus()
 

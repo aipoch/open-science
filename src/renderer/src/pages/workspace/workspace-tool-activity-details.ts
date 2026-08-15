@@ -713,6 +713,11 @@ const getNotebookOutput = (summary: Record<string, unknown> | undefined): string
   return parts.length > 0 ? parts.join('\n') : undefined
 }
 
+const getNotebookRunIdFromActivity = (activity: ToolActivity): string | undefined => {
+  const summary = parseNotebookRunSummary(activity)
+  return summary && typeof summary.runId === 'string' ? trimDetail(summary.runId) : undefined
+}
+
 // Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
 // kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
 const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
@@ -744,8 +749,7 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
   return {
     displayName,
     metaLabel: status,
-    notebookRunId:
-      summary && typeof summary.runId === 'string' ? trimDetail(summary.runId) : undefined,
+    notebookRunId: getNotebookRunIdFromActivity(activity),
     sections
   }
 }
@@ -1021,6 +1025,7 @@ const buildToolActivityDetails = (
 
 export {
   buildToolActivityDetails,
+  getNotebookRunIdFromActivity,
   getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,

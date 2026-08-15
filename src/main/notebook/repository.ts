@@ -433,10 +433,13 @@ class NotebookRunRepository {
   async readSessionRunWindow(
     projectName: string,
     sessionId: string,
-    limit: number
+    limit: number,
+    includeRunIds: readonly string[] = []
   ): Promise<{ runs: NotebookRunRecord[]; total: number }> {
     const documents = await this.readSessionDocuments(projectName, sessionId)
     const runs: NotebookRunRecord[] = []
+    const requestedRunIds = new Set(includeRunIds)
+    const requestedRuns = new Map<string, NotebookRunRecord>()
     let total = 0
     const compareRuns = (left: NotebookRunRecord, right: NotebookRunRecord): number =>
       left.startedAt - right.startedAt || left.runId.localeCompare(right.runId)
@@ -444,6 +447,7 @@ class NotebookRunRepository {
     for (const document of documents) {
       for (const run of document.runs) {
         total += 1
+        if (requestedRunIds.has(run.runId)) requestedRuns.set(run.runId, run)
         if (limit <= 0) continue
         let low = 0
         let high = runs.length
@@ -457,7 +461,9 @@ class NotebookRunRepository {
       }
     }
 
-    return { runs, total }
+    const mergedRuns = new Map(runs.map((run) => [run.runId, run]))
+    for (const run of requestedRuns.values()) mergedRuns.set(run.runId, run)
+    return { runs: [...mergedRuns.values()].sort(compareRuns), total }
   }
 
   // Loads a history document that must already exist for mutating operations.

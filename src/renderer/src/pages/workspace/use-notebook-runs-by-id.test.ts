@@ -128,4 +128,28 @@ describe('useNotebookRunsById', () => {
     expect(result.current.has('first-run')).toBe(false)
     expect(result.current.has('new-run')).toBe(true)
   })
+
+  it('hydrates transcript-referenced runs outside the recent state window only once', async () => {
+    vi.mocked(window.api.notebook.state)
+      .mockResolvedValueOnce(makeState([makeRun('recent-run', 'UkVDRU5U')]))
+      .mockResolvedValueOnce(
+        makeState([makeRun('old-run', 'T0xE'), makeRun('recent-run', 'UkVDRU5U')])
+      )
+      .mockResolvedValueOnce(makeState([makeRun('new-run', 'TkVX')]))
+
+    const { result } = renderHook(() => useNotebookRunsById(reference, ['old-run']))
+
+    await waitFor(() => expect(result.current.get('old-run')).toBeDefined())
+    expect(window.api.notebook.state).toHaveBeenNthCalledWith(2, {
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      workspaceCwd: '/workspace',
+      runIds: ['old-run']
+    })
+
+    await act(async () => changedListener?.(reference))
+    await waitFor(() => expect(result.current.get('new-run')).toBeDefined())
+    expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
+    expect(result.current.get('old-run')).toBeDefined()
+  })
 })

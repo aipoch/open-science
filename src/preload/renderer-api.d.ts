@@ -138,6 +138,7 @@ import type {
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookSessionRequest,
+  NotebookSessionStateRequest,
   NotebookSessionState,
   RunNotebookCellRequest
 } from '../shared/notebook'
@@ -797,7 +798,7 @@ export interface OpenScienceAPI {
     removeGrantedRoot(request: RemoveGrantedLocalRootRequest): Promise<GrantedLocalRoot[]>
   }
   notebook: {
-    state(request: NotebookSessionRequest): Promise<NotebookSessionState>
+    state(request: NotebookSessionStateRequest): Promise<NotebookSessionState>
     readInputPreview(request: ReadArtifactPreviewRequest): Promise<ArtifactPreviewResult>
     getReference(request: NotebookSessionRequest): Promise<NotebookSessionReference | null>
     beginCodeCell(request: BeginNotebookCodeCellRequest): Promise<{

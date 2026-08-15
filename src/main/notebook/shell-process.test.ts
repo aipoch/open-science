@@ -11,6 +11,7 @@ import {
   runShellCommand,
   terminateShellOnTimeout
 } from './shell-process'
+import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -222,6 +223,20 @@ describe('notebook shell process behavior', () => {
         stderr: 'warning',
         exitCode: 7
       })
+    })
+
+    it('reserves stderr capacity after stdout reaches its capture limit', async () => {
+      const script = `process.stdout.write('x'.repeat(${NOTEBOOK_TEXT_LIMIT_BYTES + 1024})); process.stderr.write('diagnostic survives'); process.exitCode = 7`
+      const result = await execute(
+        `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`
+      )
+
+      expect(result.exitCode).toBe(7)
+      expect(result.stderr).toContain('diagnostic survives')
+      expect(
+        Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)
+      ).toBeLessThanOrEqual(NOTEBOOK_TEXT_LIMIT_BYTES)
+      expect(result.truncated).toBe(true)
     })
 
     it('classifies a timeout with a null exit code and appends its diagnostic after stderr', async () => {

@@ -229,6 +229,31 @@ describe('NotebookSessionReadModel', () => {
     expect(state.cells[0]?.id).toBe('cell-25')
   })
 
+  it('adds explicitly requested historical runs without widening the default window', async () => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = makeSession(storageRoot)
+    await repository.loadOrCreate({
+      projectName: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      workspaceCwd: session.cwd
+    })
+    const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      runs: [
+        makeRun({ runId: 'run-old', startedAt: 1 }),
+        makeRun({ runId: 'run-new', startedAt: 2 })
+      ],
+      total: 125
+    })
+
+    const state = await makeReadModel(storageRoot, session, repository).state(session, ['run-old'])
+
+    expect(readWindow).toHaveBeenCalledWith(session.projectId, session.sessionId, 100, ['run-old'])
+    expect(state.runs.map((run) => run.runId)).toEqual(['run-old', 'run-new'])
+    expect(state.runCount).toBe(125)
+  })
+
   it('prefers a live reference and otherwise falls back to normalized durable roots', async () => {
     const storageRoot = await createRoot()
     const repository = new NotebookRunRepository(storageRoot)
