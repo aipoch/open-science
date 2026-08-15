@@ -748,6 +748,14 @@ const createCondaJsonCapture = (): CondaJsonCapture => {
     stderrLimiter.unpipe(stderrStream)
     stderrLimiter.resume()
   })
+  stdoutLimiter.on('error', (error) => {
+    state.truncated = true
+    stdoutStream.destroy(error)
+  })
+  stderrLimiter.on('error', (error) => {
+    state.truncated = true
+    stderrStream.destroy(error)
+  })
   stdoutLimiter.pipe(stdoutStream)
   stderrLimiter.pipe(stderrStream)
   return {
