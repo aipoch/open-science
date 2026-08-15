@@ -41,7 +41,7 @@ export function ConnectorApprovalDialog({
   const respondApproval = useSettingsStore((state) => state.respondApproval)
   const [pendingBroadScope, setPendingBroadScope] = useState<BroadPermissionScope>()
   const [responding, setResponding] = useState(false)
-  const [responseError, setResponseError] = useState(false)
+  const [responseErrorRequestId, setResponseErrorRequestId] = useState<string>()
 
   if (!request) return null
   const availableScopes = request.availableScopes ?? ['once']
@@ -53,10 +53,11 @@ export function ConnectorApprovalDialog({
 
   const submitResponse = (decision: 'once' | 'session' | 'project' | 'global' | 'deny'): void => {
     if (responding) return
+    const requestId = request.id
     setResponding(true)
-    setResponseError(false)
-    void respondApproval(request.id, decision)
-      .catch(() => setResponseError(true))
+    setResponseErrorRequestId(undefined)
+    void respondApproval(requestId, decision)
+      .catch(() => setResponseErrorRequestId(requestId))
       .finally(() => setResponding(false))
   }
   const allow = (scope: 'once' | 'session' | 'project' | 'global'): void => {
@@ -119,7 +120,7 @@ export function ConnectorApprovalDialog({
                 </span>
               </div>
             </div>
-            {responseError ? (
+            {responseErrorRequestId === request.id ? (
               <div
                 role="alert"
                 className="mt-3 flex items-start gap-2 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-xs text-danger-000"
