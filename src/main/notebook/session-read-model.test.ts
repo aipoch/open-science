@@ -270,6 +270,7 @@ describe('NotebookSessionReadModel', () => {
       session.sessionId,
       100,
       [],
+      undefined,
       undefined
     )
     expect(state.runCount).toBe(125)
@@ -297,6 +298,10 @@ describe('NotebookSessionReadModel', () => {
       kernelCounts: { python: 3, r: 2, repl: 1, bash: 1 },
       latestDataKernel: 'r' as const
     }
+    const branchRunFilter = {
+      rootFrameId: 'root-frame-session-1',
+      visibleMessageBranchIds: ['branch-parent', 'branch-active']
+    }
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
       runs: [],
       total: 125,
@@ -307,7 +312,8 @@ describe('NotebookSessionReadModel', () => {
     const state = await makeReadModel(storageRoot, session, repository).state(
       session,
       [],
-      'frame-child'
+      'frame-child',
+      branchRunFilter
     )
 
     expect(readWindow).toHaveBeenCalledWith(
@@ -315,7 +321,8 @@ describe('NotebookSessionReadModel', () => {
       session.sessionId,
       0,
       [],
-      'frame-child'
+      'frame-child',
+      branchRunFilter
     )
     expect(state.historySummary).toEqual(historySummary)
     expect(state.runs).toEqual([])
@@ -346,6 +353,7 @@ describe('NotebookSessionReadModel', () => {
       session.sessionId,
       0,
       ['run-old'],
+      undefined,
       undefined
     )
     expect(state.runs.map((run) => run.runId)).toEqual(['run-old'])

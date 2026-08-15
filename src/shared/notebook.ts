@@ -365,6 +365,23 @@ export type NotebookRunRecord = {
   interruptionReason?: 'app-terminated' | 'execution-error'
 }
 
+// Non-persisted projection applied while reading one session's durable history. Runs owned by
+// delegated Frames remain visible; only root-Frame Runs attributed to another message Branch are
+// excluded. Legacy Runs without a messageBranchId remain visible because their ownership is unknown.
+export type NotebookRunBranchFilter = {
+  rootFrameId: string
+  visibleMessageBranchIds: string[]
+}
+
+export const notebookRunMatchesBranchFilter = (
+  run: NotebookRunRecord,
+  filter: NotebookRunBranchFilter | undefined
+): boolean =>
+  !filter ||
+  !run.messageBranchId ||
+  (run.agentFrameId !== undefined && run.agentFrameId !== filter.rootFrameId) ||
+  filter.visibleMessageBranchIds.includes(run.messageBranchId)
+
 // The complete JSON document persisted at each notebook session's run.json path.
 export type NotebookRunDocument = ProjectIdScope & {
   version: 1
@@ -505,10 +522,13 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
 // request immutable historical Runs by id without changing or widening that default window.
 export const NOTEBOOK_STATE_TARGET_RUN_LIMIT = 20
 export const NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES = 1_024
+export const NOTEBOOK_STATE_BRANCH_FILTER_ID_LIMIT_BYTES = 1_024
+export const NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT = 256
 
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
   runIds?: string[]
   historySummaryFrameId?: string
+  branchRunFilter?: NotebookRunBranchFilter
 }
 
 // Resolves the data kernel ('python' or 'r') that owns a given tab. For python/r tabs the

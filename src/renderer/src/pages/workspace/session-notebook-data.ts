@@ -32,7 +32,7 @@ const loadSessionNotebookRuns = async (
 
 const loadSessionNotebookData = async (
   api: NotebookLoaderApi,
-  request: NotebookSessionRequest
+  request: NotebookSessionStateRequest
 ): Promise<{ runs: NotebookRunRecord[]; runCount: number }> => {
   const reference = await api.getReference(request)
   if (!reference) return { runs: [], runCount: 0 }

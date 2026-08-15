@@ -47,15 +47,24 @@ describe('loadSessionNotebookRuns', () => {
 
   it('returns the durable run total alongside the bounded renderer window', async () => {
     const run = makeRun()
+    const state = vi.fn().mockResolvedValue({ runs: [run], runCount: 125 })
+    const branchRequest = {
+      ...request,
+      branchRunFilter: {
+        rootFrameId: 'root-frame-s1',
+        visibleMessageBranchIds: ['branch-parent', 'branch-active']
+      }
+    }
 
     await expect(
       loadSessionNotebookData(
         {
           getReference: vi.fn().mockResolvedValue({ sessionId: 's1' }),
-          state: vi.fn().mockResolvedValue({ runs: [run], runCount: 125 })
+          state
         },
-        request
+        branchRequest
       )
     ).resolves.toEqual({ runs: [run], runCount: 125 })
+    expect(state).toHaveBeenCalledWith(branchRequest)
   })
 })

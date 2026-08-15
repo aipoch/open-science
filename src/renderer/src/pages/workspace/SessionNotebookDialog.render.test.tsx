@@ -7,6 +7,7 @@ import { SessionNotebookContent } from './SessionNotebookDialog'
 import {
   createNotebookFrameFilterOptions,
   filterNotebookRunsForSessionBranch,
+  notebookBranchRunFilter,
   notebookFrameLabels,
   projectNotebookRunsForFrame
 } from './session-notebook-projection'
@@ -330,7 +331,7 @@ describe('Session Notebook producer projection', () => {
   it('keeps child evidence while applying active-Branch filtering only to root and legacy Runs', () => {
     const session = {
       messages: [{ id: 'active-root-message' }],
-      conversationGraph: { rootFrameId: 'root-frame-s1' }
+      conversationGraph: { rootFrameId: 'root-frame-s1', frames: [], branches: [] }
     }
     const runs = [
       makeRun({
@@ -354,6 +355,46 @@ describe('Session Notebook producer projection', () => {
     expect(
       filterNotebookRunsForSessionBranch(runs, session as never).map((run) => run.runId)
     ).toEqual(['active-root', 'child'])
+  })
+
+  it('uses persisted Branch attribution for root Runs while preserving delegated and legacy Runs', () => {
+    const session = {
+      messages: [],
+      conversationGraph: {
+        rootFrameId: 'root-frame-s1',
+        frames: [
+          { id: 'root-frame-s1', kind: 'root', activeBranchId: 'branch-active' },
+          { id: 'frame-child', kind: 'delegate', activeBranchId: 'branch-child' }
+        ],
+        branches: [
+          { id: 'branch-parent', agentFrameId: 'root-frame-s1' },
+          {
+            id: 'branch-active',
+            agentFrameId: 'root-frame-s1',
+            parentBranchId: 'branch-parent'
+          }
+        ]
+      }
+    }
+    const runs = [
+      makeRun({ runId: 'parent-root', messageBranchId: 'branch-parent' }),
+      makeRun({ runId: 'active-root', messageBranchId: 'branch-active' }),
+      makeRun({ runId: 'inactive-root', messageBranchId: 'branch-inactive' }),
+      makeRun({
+        runId: 'child',
+        agentFrameId: 'frame-child',
+        messageBranchId: 'branch-child'
+      }),
+      makeRun({ runId: 'legacy', messageBranchId: undefined, promptMessageId: undefined })
+    ]
+
+    expect(notebookBranchRunFilter(session as never)).toEqual({
+      rootFrameId: 'root-frame-s1',
+      visibleMessageBranchIds: ['branch-active', 'branch-parent']
+    })
+    expect(
+      filterNotebookRunsForSessionBranch(runs, session as never).map((run) => run.runId)
+    ).toEqual(['parent-root', 'active-root', 'child', 'legacy'])
   })
 })
 

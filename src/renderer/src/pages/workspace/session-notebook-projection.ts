@@ -1,6 +1,14 @@
 import type { TFunction } from 'i18next'
 
-import type { NotebookRunHistorySummary, NotebookRunRecord } from '../../../../shared/notebook'
+import {
+  NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT,
+  notebookRunMatchesBranchFilter
+} from '../../../../shared/notebook'
+import type {
+  NotebookRunBranchFilter,
+  NotebookRunHistorySummary,
+  NotebookRunRecord
+} from '../../../../shared/notebook'
 import type { ChatSession } from '@/stores/session-store'
 
 type NotebookFrameFilterValue = `frame:${string}`
@@ -46,17 +54,51 @@ const projectNotebookRunsForFrame = (
 const notebookFrameFilterForExport = (filter: NotebookFrameFilterValue): string =>
   filter.slice('frame:'.length)
 
+const notebookBranchRunFilter = (
+  session: Pick<ChatSession, 'conversationGraph'>
+): NotebookRunBranchFilter | undefined => {
+  const graph = session.conversationGraph
+  if (!graph) return undefined
+  const rootFrame = graph.frames.find((frame) => frame.id === graph.rootFrameId)
+  const branchesById = new Map(graph.branches.map((branch) => [branch.id, branch]))
+  let branch = rootFrame ? branchesById.get(rootFrame.activeBranchId) : undefined
+  const visibleMessageBranchIds: string[] = []
+  const seen = new Set<string>()
+
+  while (branch) {
+    if (
+      branch.agentFrameId !== graph.rootFrameId ||
+      seen.has(branch.id) ||
+      visibleMessageBranchIds.length >= NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT
+    ) {
+      return undefined
+    }
+    seen.add(branch.id)
+    visibleMessageBranchIds.push(branch.id)
+    if (!branch.parentBranchId) break
+    branch = branchesById.get(branch.parentBranchId)
+    if (!branch) return undefined
+  }
+
+  return visibleMessageBranchIds.length > 0
+    ? { rootFrameId: graph.rootFrameId, visibleMessageBranchIds }
+    : undefined
+}
+
 const filterNotebookRunsForSessionBranch = (
   runs: NotebookRunRecord[],
   session: ChatSession
 ): NotebookRunRecord[] => {
   const activeMessageIds = new Set(session.messages.map((message) => message.id))
   const rootFrameId = session.conversationGraph?.rootFrameId
+  const branchRunFilter = notebookBranchRunFilter(session)
   return runs.filter(
     (run) =>
-      !run.promptMessageId ||
-      (run.agentFrameId !== undefined && run.agentFrameId !== rootFrameId) ||
-      activeMessageIds.has(run.promptMessageId)
+      notebookRunMatchesBranchFilter(run, branchRunFilter) &&
+      (run.messageBranchId !== undefined ||
+        !run.promptMessageId ||
+        (run.agentFrameId !== undefined && run.agentFrameId !== rootFrameId) ||
+        activeMessageIds.has(run.promptMessageId))
   )
 }
 
@@ -77,6 +119,7 @@ const notebookFrameLabels = (session: ChatSession, t: TFunction): Record<string,
 export {
   createNotebookFrameFilterOptions,
   filterNotebookRunsForSessionBranch,
+  notebookBranchRunFilter,
   notebookFrameFilterForExport,
   notebookFrameLabels,
   projectNotebookRunsForFrame

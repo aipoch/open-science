@@ -37,6 +37,8 @@ import type {
 } from './package-manager'
 import type { EnvironmentInfo } from '../../shared/notebook-env'
 import {
+  NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT,
+  NOTEBOOK_STATE_BRANCH_FILTER_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
   type NotebookEnvironmentManifest,
@@ -328,6 +330,41 @@ describe('notebook runtime service', () => {
         historySummaryFrameId: 'x'.repeat(NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES + 1)
       })
     ).rejects.toThrow(/history summary Frame ID must not exceed 1024 UTF-8 bytes/u)
+    expect(service.peekHandoffContext('session-1')).toBeUndefined()
+  })
+
+  it('rejects malformed or oversized Branch filters before creating a session', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+
+    await expect(
+      service.state({
+        ...request,
+        branchRunFilter: { rootFrameId: '', visibleMessageBranchIds: ['branch-active'] }
+      })
+    ).rejects.toThrow(/Branch filter must contain 1-256 IDs/u)
+    await expect(
+      service.state({
+        ...request,
+        branchRunFilter: {
+          rootFrameId: 'root-frame-session-1',
+          visibleMessageBranchIds: ['x'.repeat(NOTEBOOK_STATE_BRANCH_FILTER_ID_LIMIT_BYTES + 1)]
+        }
+      })
+    ).rejects.toThrow(/no larger than 1024 UTF-8 bytes/u)
+    await expect(
+      service.state({
+        ...request,
+        branchRunFilter: {
+          rootFrameId: 'root-frame-session-1',
+          visibleMessageBranchIds: Array.from(
+            { length: NOTEBOOK_STATE_BRANCH_FILTER_BRANCH_LIMIT + 1 },
+            (_, index) => `branch-${index}`
+          )
+        }
+      })
+    ).rejects.toThrow(/Branch filter must contain 1-256 IDs/u)
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 

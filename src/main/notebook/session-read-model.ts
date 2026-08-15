@@ -4,6 +4,7 @@ import type {
   NotebookKernelInstanceIdentity,
   NotebookKernelMetadata,
   NotebookLanguage,
+  NotebookRunBranchFilter,
   NotebookRunRecord,
   NotebookRunSummary,
   NotebookSessionReference,
@@ -137,7 +138,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   async state(
     session: Session,
     includeRunIds: readonly string[] = [],
-    historySummaryFrameId?: string
+    historySummaryFrameId?: string,
+    branchRunFilter?: NotebookRunBranchFilter
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.options.repository.loadOrCreate({
       projectName: session.projectId,
@@ -154,7 +156,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       session.sessionId,
       sparseRunRead ? 0 : NOTEBOOK_RENDERER_RUN_LIMIT,
       includeRunIds,
-      historySummaryFrameId
+      historySummaryFrameId,
+      branchRunFilter
     )
     const terminatedKernelInstances = document.kernel.terminatedKernelInstances
     const defaultKernelTerminated = terminatedKernelInstances?.some(

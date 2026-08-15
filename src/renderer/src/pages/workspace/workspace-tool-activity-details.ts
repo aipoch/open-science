@@ -2,6 +2,7 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import type { ToolActivity } from '@/stores/session-store'
+import type { NotebookRunStatus } from '../../../../shared/notebook'
 import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 
@@ -718,6 +719,33 @@ const getNotebookRunIdFromActivity = (activity: ToolActivity): string | undefine
   return summary && typeof summary.runId === 'string' ? trimDetail(summary.runId) : undefined
 }
 
+const NOTEBOOK_RUN_STATUSES = new Set<NotebookRunStatus>([
+  'queued',
+  'running',
+  'completed',
+  'failed',
+  'timeout',
+  'interrupted',
+  'cancelled'
+])
+
+// Restores execution truth for transcript rows outside the hydrated Run window. The app-owned
+// invocation identity and compact Run result must both be present; otherwise callers stay
+// fail-closed instead of trusting an outer ACP observer's status.
+const getNotebookRunStatusFromActivity = (
+  activity: ToolActivity
+): NotebookRunStatus | undefined => {
+  if (!activity.executionInvocationId) return undefined
+  const summary = parseNotebookRunSummary(activity)
+  if (!summary || typeof summary.runId !== 'string' || typeof summary.status !== 'string') {
+    return undefined
+  }
+
+  return NOTEBOOK_RUN_STATUSES.has(summary.status as NotebookRunStatus)
+    ? (summary.status as NotebookRunStatus)
+    : undefined
+}
+
 // Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
 // kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
 const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
@@ -1026,6 +1054,7 @@ const buildToolActivityDetails = (
 export {
   buildToolActivityDetails,
   getNotebookRunIdFromActivity,
+  getNotebookRunStatusFromActivity,
   getLoadedSkillName,
   getToolDisplayName,
   isEditActivity,

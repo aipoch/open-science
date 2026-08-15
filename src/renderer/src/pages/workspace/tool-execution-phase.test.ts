@@ -156,4 +156,37 @@ describe('getToolExecutionPhase', () => {
       )
     ).toBe(phase)
   })
+
+  it.each([
+    ['failed', 'failed'],
+    ['timeout', 'limit-reached'],
+    ['interrupted', 'interrupted'],
+    ['cancelled', 'cancelled'],
+    ['completed', 'completed']
+  ] as const)(
+    'restores the compact historical Run terminal status %s outside the hydrated window',
+    (status, phase) => {
+      const historicalActivity = activity({
+        status: 'completed',
+        executionInvocationId: 'invocation-old',
+        toolContent: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: JSON.stringify({ runId: 'run-old', status })
+            }
+          }
+        ]
+      })
+
+      expect(getToolExecutionPhase(historicalActivity, undefined)).toBe(phase)
+      expect(
+        getToolExecutionPhase(
+          { ...historicalActivity, executionInvocationId: undefined },
+          undefined
+        )
+      ).toBe('prepared')
+    }
+  )
 })
