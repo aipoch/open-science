@@ -4,15 +4,8 @@
  * contrast: project token contract
  */
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import {
-  type CSSProperties,
-  type RefObject,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import { type CSSProperties, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import type { GroupedConversationItem } from './workspace-tool-activity-groups'
@@ -27,17 +20,24 @@ import {
 
 type WorkspaceRunMarksProps = {
   items: readonly GroupedConversationItem[]
-  viewportRef: RefObject<HTMLDivElement | null>
+  viewport: HTMLDivElement | null
 }
 
-const RUN_MARK_HOVER_DELAY_MS = 800
+const RUN_MARK_HOVER_DELAY_MS = 200
+const RUN_MARK_INLINE_OFFSET_PX = 8
 const RUN_MARK_TOP_OFFSET_PX = 8
-const RUN_MARK_ROW_SIZE_PX = 24
+const RUN_MARK_ROW_SIZE_PX = 10
 const RUN_MARK_MAX_RAIL_HEIGHT_PX = 480
+
+type RunMarkRailPosition = {
+  left?: number
+  right?: number
+  top: number
+}
 
 const WorkspaceRunMarks = ({
   items,
-  viewportRef
+  viewport
 }: WorkspaceRunMarksProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const marks = useMemo(() => createRunMarks(items), [items])
@@ -46,16 +46,40 @@ const WorkspaceRunMarks = ({
   const [availableMessageIds, setAvailableMessageIds] = useState<Set<string>>(
     () => new Set(marks.map((mark) => mark.id))
   )
+  const [railPosition, setRailPosition] = useState<RunMarkRailPosition | null>(null)
   const animationFrameRef = useRef<number | undefined>(undefined)
+  const layoutAnimationFrameRef = useRef<number | undefined>(undefined)
 
   const updateCurrentIndex = useCallback((): void => {
-    const viewport = viewportRef.current
     if (!viewport || marks.length === 0) return
     setCurrentIndex(resolveCurrentRunMarkIndex(viewport, marks))
-  }, [marks, viewportRef])
+  }, [marks, viewport])
+
+  const updateRailPosition = useCallback((): void => {
+    if (!viewport) return
+
+    const panel = viewport.closest<HTMLElement>('section[data-session-id]')
+    const panelRect = (panel ?? viewport).getBoundingClientRect()
+    const viewportRect = viewport.getBoundingClientRect()
+    const top = panelRect.top + panelRect.height / 2
+    const isRtl = window.getComputedStyle(viewport).direction === 'rtl'
+    const nextPosition: RunMarkRailPosition = isRtl
+      ? { right: window.innerWidth - viewportRect.right - RUN_MARK_INLINE_OFFSET_PX, top }
+      : { left: viewportRect.left - RUN_MARK_INLINE_OFFSET_PX, top }
+
+    setRailPosition((current) => {
+      if (
+        current?.left === nextPosition.left &&
+        current?.right === nextPosition.right &&
+        current?.top === nextPosition.top
+      ) {
+        return current
+      }
+      return nextPosition
+    })
+  }, [viewport])
 
   useLayoutEffect(() => {
-    const viewport = viewportRef.current
     if (!viewport) return
 
     const renderedMessageIds = new Set(
@@ -63,10 +87,13 @@ const WorkspaceRunMarks = ({
         element.dataset.messageId ? [element.dataset.messageId] : []
       )
     )
+    // The rendered transcript is the source of truth for whether a projected mark is navigable.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAvailableMessageIds(
       new Set(marks.flatMap((mark) => (renderedMessageIds.has(mark.id) ? [mark.id] : [])))
     )
     updateCurrentIndex()
+    updateRailPosition()
 
     const scheduleCurrentIndexUpdate = (): void => {
       if (animationFrameRef.current !== undefined) return
@@ -75,21 +102,39 @@ const WorkspaceRunMarks = ({
         updateCurrentIndex()
       })
     }
+    const scheduleLayoutUpdate = (): void => {
+      if (layoutAnimationFrameRef.current !== undefined) return
+      layoutAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        layoutAnimationFrameRef.current = undefined
+        updateCurrentIndex()
+        updateRailPosition()
+      })
+    }
     viewport.addEventListener('scroll', scheduleCurrentIndexUpdate, { passive: true })
-    window.addEventListener('resize', scheduleCurrentIndexUpdate)
+    window.addEventListener('resize', scheduleLayoutUpdate)
+
+    const panel = viewport.closest<HTMLElement>('section[data-session-id]')
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleLayoutUpdate)
+    resizeObserver?.observe(viewport)
+    if (panel && panel !== viewport) resizeObserver?.observe(panel)
 
     return () => {
       viewport.removeEventListener('scroll', scheduleCurrentIndexUpdate)
-      window.removeEventListener('resize', scheduleCurrentIndexUpdate)
+      window.removeEventListener('resize', scheduleLayoutUpdate)
+      resizeObserver?.disconnect()
       if (animationFrameRef.current !== undefined) {
         window.cancelAnimationFrame(animationFrameRef.current)
         animationFrameRef.current = undefined
       }
+      if (layoutAnimationFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(layoutAnimationFrameRef.current)
+        layoutAnimationFrameRef.current = undefined
+      }
     }
-  }, [marks, updateCurrentIndex, viewportRef])
+  }, [marks, updateCurrentIndex, updateRailPosition, viewport])
 
   const scrollToRun = (mark: RunMark, index: number): void => {
-    const viewport = viewportRef.current
     if (!viewport) return
     const target = findMessageTarget(viewport, mark.id)
     if (!target) return
@@ -106,11 +151,12 @@ const WorkspaceRunMarks = ({
     setCurrentIndex(index)
   }
 
-  if (marks.length < 2) return null
+  if (marks.length < 2 || !railPosition || typeof document === 'undefined') return null
 
   const railStyle: CSSProperties = {
-    height: `min(${Math.min(marks.length * RUN_MARK_ROW_SIZE_PX, RUN_MARK_MAX_RAIL_HEIGHT_PX)}px, 100%)`,
-    gridTemplateRows: `repeat(${marks.length}, minmax(0, 1fr))`
+    gridTemplateRows: `repeat(${marks.length}, minmax(0, 1fr))`,
+    height: `${Math.min(marks.length * RUN_MARK_ROW_SIZE_PX, RUN_MARK_MAX_RAIL_HEIGHT_PX)}px`,
+    maxHeight: 'calc(100vh - 6rem)'
   }
   const previewFallback = {
     attachment: t('Attachment'),
@@ -118,11 +164,12 @@ const WorkspaceRunMarks = ({
     image: t('Image')
   }
 
-  return (
+  return createPortal(
     <TooltipProvider delayDuration={RUN_MARK_HOVER_DELAY_MS} skipDelayDuration={0}>
       <nav
         aria-label={t('Run marks')}
-        className="pointer-events-none absolute inset-y-6 start-0 z-20 hidden w-6 items-center md:flex"
+        className="pointer-events-none fixed z-20 hidden w-6 -translate-y-1/2 md:block"
+        style={railPosition}
       >
         <ol className="pointer-events-auto grid w-full" style={railStyle}>
           {marks.map((mark, index) => {
@@ -169,22 +216,16 @@ const WorkspaceRunMarks = ({
                     align="center"
                     sideOffset={8}
                     collisionPadding={12}
-                    className="w-[min(24rem,calc(100vw-3rem))] rounded-xl border border-border-200 bg-bg-000 p-0 text-left text-text-000 shadow-dialog"
+                    className="w-[min(24rem,calc(100vw-3rem))] rounded-xl border border-border-200 bg-bg-000 p-0 text-left text-text-000 shadow-dialog ease-[cubic-bezier(0.16,1,0.3,1)] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=instant-open]:animate-in data-[state=instant-open]:fade-in-0 data-[state=closed]:duration-100 data-[state=delayed-open]:duration-150 data-[state=instant-open]:duration-100 motion-reduce:animate-none"
                   >
-                    <div className="grid gap-3 p-3.5">
-                      <section className="grid min-w-0 gap-1">
-                        <h2 className="text-xs font-semibold text-text-100">{t('You')}</h2>
-                        <p className="line-clamp-4 min-w-0 whitespace-pre-wrap break-words text-[13px] leading-5">
-                          {userPreview}
-                        </p>
-                      </section>
+                    <div className="grid gap-1.5 p-3.5">
+                      <p className="min-w-0 truncate text-[13px] font-semibold leading-5 text-text-000">
+                        {userPreview}
+                      </p>
                       {agentPreview ? (
-                        <section className="grid min-w-0 gap-1 border-t border-border-200 pt-3">
-                          <h2 className="text-xs font-semibold text-text-100">{t('Agent')}</h2>
-                          <p className="line-clamp-4 min-w-0 whitespace-pre-wrap break-words text-[13px] leading-5 text-text-100">
-                            {agentPreview}
-                          </p>
-                        </section>
+                        <p className="line-clamp-2 min-w-0 break-words text-[13px] leading-5 text-text-200">
+                          {agentPreview}
+                        </p>
                       ) : null}
                     </div>
                   </TooltipContent>
@@ -194,7 +235,8 @@ const WorkspaceRunMarks = ({
           })}
         </ol>
       </nav>
-    </TooltipProvider>
+    </TooltipProvider>,
+    document.body
   )
 }
 

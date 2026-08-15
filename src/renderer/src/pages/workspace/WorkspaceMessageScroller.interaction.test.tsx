@@ -3229,14 +3229,14 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     })
 
-    const rail = container.querySelector<HTMLElement>('nav[aria-label="Run marks"]')
+    const rail = document.body.querySelector<HTMLElement>('nav[aria-label="Run marks"]')
     expect(rail).not.toBeNull()
     expect(rail?.className).toContain('hidden')
-    expect(rail?.className).toContain('md:flex')
+    expect(rail?.className).toContain('md:block')
     expect(rail?.querySelectorAll('button')).toHaveLength(2)
     expect(
       Array.from(rail?.querySelectorAll('button span') ?? []).every((indicator) =>
-        indicator.classList.contains('scale-x-50')
+        indicator.classList.contains('scale-x-[0.4]')
       )
     ).toBe(true)
   })

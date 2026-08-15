@@ -523,12 +523,14 @@ colors communicate a successful or failed probe/migration result.
   scroller's left gutter. One mark belongs to the visible user Message that admitted the Run; model
   Turns inside that Run do not create marks. At rest, every mark is the same short gray segment.
   Pointer hover or keyboard focus emphasizes one mark and tapers nearby segments by distance; the
-  current Run remains available through `aria-current` without a persistent visual highlight.
+  segments use a compact 10px pitch, and the rail stays fixed at the conversation panel midpoint so
+  bottom approval or permission surfaces do not shift it. The current Run remains available through
+  `aria-current` without a persistent visual highlight.
   Activating a mark scrolls that Message to the top with reduced-motion support. The preview shows
-  the user Message plus the first visible Agent Message explicitly linked through
-  `responseToMessageId`; historical Agent Messages without that link are not inferred and leave the
-  preview user-only. Hidden control Messages never appear in the rail or preview. Do not render the
-  rail below `md`.
+  the user Message as a dark single-line excerpt plus up to two muted lines from the first visible
+  Agent Message explicitly linked through `responseToMessageId`; historical Agent Messages without
+  that link are not inferred and leave the preview user-only. Hidden control Messages never appear
+  in the rail or preview. Do not render the rail below `md`.
 - User bubble: `ml-auto max-w-[90%] md:max-w-[min(85%,56rem)] rounded-2xl bg-bg-300 px-3.5 py-2 md:px-4 md:py-2.5 text-sm md:text-[15px] text-message-user-text`.
 - Assistant wrapper: `w-full max-w-[56rem] text-sm md:text-[15px] leading-relaxed text-text-000`.
 - Message metadata uses `text-[11px] text-text-000/70 tabular-nums` below the content so timestamps and elapsed status meet WCAG contrast on workspace surfaces. The visible timestamp format is fixed to English `MMM D, h:mm AM/PM`: User Messages show `Sent ...`, completed Agent Messages show `Completed ...`, and failed Agent Messages show `Failed ...`. Terminal timestamps are persisted separately from mutable record update times. Agent footers keep terminal time, elapsed time, and `Usage` on one line without a separator (`Completed ... Elapsed 2m 5s Usage`). `Usage` uses a dashed underline and reveals a compact Context-window-style popover on pointer hover or keyboard focus. The popover has a proportional color bar above its token rows and a divided `Total` row below them. When an adapter reports a reliable agentic model-turn count, show `1 turn` or `N turns` as smaller muted text aligned to the right of the popover title; omit it rather than estimating when unavailable. Show Input, Cache, and Output when only aggregate cache data is available; split Cache into Cache read and Cache write, with distinct colors and bar segments, only when the agent reports both categories. The displayed categories are mutually exclusive and `Total` is their sum.

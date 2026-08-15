@@ -346,11 +346,18 @@ const WorkspaceMessageScrollerImpl = ({
     !activeSession.compacting
   )
   const messageScrollerViewportRef = useRef<HTMLDivElement | null>(null)
+  const [messageScrollerViewport, setMessageScrollerViewport] = useState<HTMLDivElement | null>(
+    null
+  )
   const messageScrollerContentRef = useRef<HTMLDivElement | null>(null)
   const scrollToFirstMessageButtonRef = useRef<HTMLButtonElement | null>(null)
   const previousMessageScrollerScrollTopRef = useRef(0)
   const scrollToFirstMessageHideTimeoutRef = useRef<number | undefined>(undefined)
   const [scrollThresholdAllowsFirstMessage, setScrollThresholdAllowsFirstMessage] = useState(false)
+  const handleMessageScrollerViewportRef = useCallback((node: HTMLDivElement | null): void => {
+    messageScrollerViewportRef.current = node
+    setMessageScrollerViewport(node)
+  }, [])
   const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
     (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
   )
@@ -943,14 +950,14 @@ const WorkspaceMessageScrollerImpl = ({
         <MessageScroller className="relative min-h-0 flex-1 bg-bg-10">
           <WorkspaceRunMarks
             items={presentedConversationItems}
-            viewportRef={messageScrollerViewportRef}
+            viewport={messageScrollerViewport}
           />
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
           />
           <MessageScrollerViewport
-            ref={messageScrollerViewportRef}
+            ref={handleMessageScrollerViewportRef}
             aria-label={t('Conversation')}
             onScroll={handleMessageScrollerScroll}
           >

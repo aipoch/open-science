@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { createRef } from 'react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatMessage } from '@/stores/session-store'
@@ -39,15 +38,15 @@ const createMessageItem = (
   }
 }
 
-const createRect = (top: number): DOMRect =>
+const createRect = (top: number, height = 40, left = 0, width = 800): DOMRect =>
   ({
-    bottom: top + 40,
-    height: 40,
-    left: 0,
-    right: 800,
+    bottom: top + height,
+    height,
+    left,
+    right: left + width,
     top,
-    width: 800,
-    x: 0,
+    width,
+    x: left,
     y: top,
     toJSON: () => ({})
   }) as DOMRect
@@ -183,6 +182,7 @@ describe('WorkspaceRunMarks projection', () => {
 
 describe('WorkspaceRunMarks interaction', () => {
   let viewport: HTMLDivElement
+  let panel: HTMLElement | undefined
 
   beforeEach(() => {
     viewport = document.createElement('div')
@@ -211,12 +211,12 @@ describe('WorkspaceRunMarks interaction', () => {
   afterEach(() => {
     cleanup()
     viewport.remove()
+    panel?.remove()
+    panel = undefined
     vi.unstubAllGlobals()
   })
 
   it('renders only for multiple runs and exposes native keyboard controls', () => {
-    const viewportRef = createRef<HTMLDivElement>()
-    viewportRef.current = viewport
     appendMessageTarget(viewport, 'prompt-1', 120)
     appendMessageTarget(viewport, 'prompt-2', 600)
     const items = [
@@ -224,12 +224,10 @@ describe('WorkspaceRunMarks interaction', () => {
       createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1)
     ]
 
-    const { rerender } = render(
-      <WorkspaceRunMarks items={items.slice(0, 1)} viewportRef={viewportRef} />
-    )
+    const { rerender } = render(<WorkspaceRunMarks items={items.slice(0, 1)} viewport={viewport} />)
     expect(screen.queryByRole('navigation', { name: 'Run marks' })).toBeNull()
 
-    rerender(<WorkspaceRunMarks items={items} viewportRef={viewportRef} />)
+    rerender(<WorkspaceRunMarks items={items} viewport={viewport} />)
     const buttons = screen.getAllByRole('button', { name: /Go to run/u })
     expect(buttons).toHaveLength(2)
     expect(buttons[0]?.getAttribute('aria-current')).toBe('location')
@@ -238,18 +236,18 @@ describe('WorkspaceRunMarks interaction', () => {
   })
 
   it('keeps every mark short and gray until hover, then tapers away from the highlighted mark', () => {
-    const viewportRef = createRef<HTMLDivElement>()
-    viewportRef.current = viewport
     const items = [0, 1, 2, 3, 4].map((index) => {
       const messageId = `prompt-${index}`
       appendMessageTarget(viewport, messageId, 120 + index * 100)
       return createMessageItem({ id: messageId, content: `Prompt ${index}` }, index)
     })
-    render(<WorkspaceRunMarks items={items} viewportRef={viewportRef} />)
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
 
     const buttons = screen.getAllByRole('button', { name: /Go to run/u })
     const indicators = buttons.map((button) => button.querySelector('span'))
-    expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-50'))).toBe(true)
+    expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
+      true
+    )
     expect(indicators.every((indicator) => indicator?.className.includes('bg-text-300/60'))).toBe(
       true
     )
@@ -257,22 +255,75 @@ describe('WorkspaceRunMarks interaction', () => {
     fireEvent.pointerEnter(buttons[2]!)
     expect(indicators[2]?.classList.contains('scale-x-100')).toBe(true)
     expect(indicators[2]?.classList.contains('bg-text-000')).toBe(true)
-    expect(indicators[1]?.classList.contains('scale-x-[0.85]')).toBe(true)
-    expect(indicators[0]?.classList.contains('scale-x-[0.7]')).toBe(true)
-    expect(indicators[4]?.classList.contains('scale-x-[0.7]')).toBe(true)
+    expect(indicators[1]?.classList.contains('scale-x-[0.7]')).toBe(true)
+    expect(indicators[0]?.classList.contains('scale-x-[0.55]')).toBe(true)
+    expect(indicators[4]?.classList.contains('scale-x-[0.55]')).toBe(true)
 
     fireEvent.pointerLeave(buttons[2]!)
-    expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-50'))).toBe(true)
+    expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
+      true
+    )
+  })
+
+  it('keeps a compact rail fixed to the conversation panel when the scroller is squeezed', async () => {
+    let notifyResize: (() => void) | undefined
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+
+        observe(): void {
+          notifyResize = () => this.callback([], this as unknown as ResizeObserver)
+        }
+
+        disconnect(): void {
+          /* Test observer has no resources to release. */
+        }
+        unobserve(): void {
+          /* Test observer tracks one shared callback only. */
+        }
+      }
+    )
+
+    panel = document.createElement('section')
+    panel.dataset.sessionId = 'session-1'
+    panel.getBoundingClientRect = () => createRect(40, 800, 200, 1_000)
+    panel.append(viewport)
+    document.body.append(panel)
+
+    let viewportHeight = 520
+    viewport.getBoundingClientRect = () => createRect(80, viewportHeight, 216, 968)
+    const items = [0, 1, 2, 3, 4].map((index) => {
+      const messageId = `prompt-${index}`
+      appendMessageTarget(viewport, messageId, 120 + index * 100)
+      return createMessageItem({ id: messageId, content: `Prompt ${index}` }, index)
+    })
+
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
+
+    const rail = screen.getByRole('navigation', { name: 'Run marks' })
+    const list = rail.querySelector('ol')
+    expect(rail.className).toContain('fixed')
+    expect(rail.style.left).toBe('208px')
+    expect(rail.style.top).toBe('440px')
+    expect(list?.style.height).toBe('50px')
+    expect(list?.style.maxHeight).toBe('calc(100vh - 6rem)')
+
+    viewportHeight = 240
+    await act(async () => {
+      notifyResize?.()
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+    })
+
+    expect(rail.style.top).toBe('440px')
   })
 
   it('shows the user message and first explicitly linked Agent message on keyboard focus', async () => {
-    const viewportRef = createRef<HTMLDivElement>()
-    viewportRef.current = viewport
     appendMessageTarget(viewport, 'prompt-1', 120)
     appendMessageTarget(viewport, 'prompt-2', 600)
     render(
       <WorkspaceRunMarks
-        viewportRef={viewportRef}
+        viewport={viewport}
         items={[
           createMessageItem({ id: 'prompt-1', content: 'Only the user preview' }, 0),
           createMessageItem({ id: 'prompt-2', content: 'Question with response' }, 1),
@@ -293,11 +344,15 @@ describe('WorkspaceRunMarks interaction', () => {
     const tooltip = await screen.findByRole('tooltip')
     expect(tooltip.textContent).toContain('Question with response')
     expect(tooltip.textContent).toContain('First visible Agent response')
+    const previewLines = tooltip.querySelectorAll('p')
+    expect(previewLines[0]?.classList.contains('truncate')).toBe(true)
+    expect(previewLines[0]?.classList.contains('font-semibold')).toBe(true)
+    expect(previewLines[0]?.classList.contains('text-text-000')).toBe(true)
+    expect(previewLines[1]?.classList.contains('line-clamp-2')).toBe(true)
+    expect(previewLines[1]?.classList.contains('text-text-200')).toBe(true)
   })
 
   it('scrolls to the selected run with a clamped offset', () => {
-    const viewportRef = createRef<HTMLDivElement>()
-    viewportRef.current = viewport
     appendMessageTarget(viewport, 'prompt-1', 120)
     appendMessageTarget(viewport, 'prompt-2', 1_100)
     const scrollTo = vi.fn()
@@ -305,7 +360,7 @@ describe('WorkspaceRunMarks interaction', () => {
 
     render(
       <WorkspaceRunMarks
-        viewportRef={viewportRef}
+        viewport={viewport}
         items={[
           createMessageItem({ id: 'prompt-1', content: 'First prompt' }, 0),
           createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1)

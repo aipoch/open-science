@@ -80,16 +80,16 @@ const runMarkIndicatorClassName = (highlightedIndex: number | null, markIndex: n
   const distance = highlightedIndex === null ? undefined : Math.abs(highlightedIndex - markIndex)
 
   return cn(
-    'block h-0.5 w-4 origin-left rounded-full transition-[transform,background-color] duration-150 group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
+    'block h-0.5 w-5 origin-left rounded-full transition-[transform,background-color] duration-100 ease-[cubic-bezier(0.16,1,0.3,1)] group-active/run-mark:translate-x-px motion-reduce:transition-none rtl:origin-right',
     distance === 0
       ? 'scale-x-100 bg-text-000'
       : distance === 1
-        ? 'scale-x-[0.85] bg-text-200'
+        ? 'scale-x-[0.7] bg-text-200'
         : distance === 2
-          ? 'scale-x-[0.7] bg-text-300/80'
+          ? 'scale-x-[0.55] bg-text-300/80'
           : distance === 3
-            ? 'scale-x-[0.6] bg-text-300/70'
-            : 'scale-x-50 bg-text-300/60'
+            ? 'scale-x-[0.48] bg-text-300/70'
+            : 'scale-x-[0.4] bg-text-300/60'
   )
 }
 
