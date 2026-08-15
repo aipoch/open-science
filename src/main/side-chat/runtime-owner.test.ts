@@ -1880,10 +1880,16 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     )
   })
 
-  it('keeps a Side chat retryable when durable close cleanup fails', async () => {
+  it('drains a failed in-flight close before Project invalidation and keeps it retryable', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-retry-'))
     const persistence = createPersistence()
-    persistence.clear.mockRejectedValueOnce(new Error('Session file is busy'))
+    const clearStarted = deferred<void>()
+    const failClear = deferred<void>()
+    persistence.clear.mockImplementationOnce(async () => {
+      clearStarted.resolve()
+      await failClear.promise
+      throw new Error('Session file is busy')
+    })
     const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
@@ -1915,10 +1921,18 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       text: 'Hello'
     })
 
-    await expect(owner.close({ sideSessionId: started.sideSessionId })).rejects.toThrow(
-      'Session file is busy'
+    const closeFailure = expect(
+      owner.close({ sideSessionId: started.sideSessionId })
+    ).rejects.toThrow('Session file is busy')
+    await clearStarted.promise
+    const invalidationFailure = expect(owner.invalidateProject('project-1')).rejects.toThrow(
+      'Side chat Project invalidation failed: project-1'
     )
+    failClear.resolve()
+
+    await Promise.all([closeFailure, invalidationFailure])
     expect(deleteSession).not.toHaveBeenCalled()
+    owner.restoreProject('project-1')
     expect(owner.list().chats).toContainEqual(
       expect.objectContaining({ sideSessionId: started.sideSessionId })
     )

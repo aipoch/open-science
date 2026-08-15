@@ -1396,6 +1396,8 @@ class SideChatRuntimeOwner {
     active: ActiveSideChat,
     lifecycle: PersistedSideChat['lifecycle'] = active.turn ? 'interrupted' : 'open'
   ): Promise<void> {
+    const existing = this.closingByParent.get(active.parentSessionId)
+    if (existing) return existing
     if (active.closing || this.activeByParent.get(active.parentSessionId) !== active) return
     active.closing = true
     active.turnAccepted?.reject(new Error('Side chat runtime stopped.'))
