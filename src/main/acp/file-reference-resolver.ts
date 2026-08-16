@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs'
 import { copyFile, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -7,6 +8,7 @@ import type { FileReference } from '../../shared/artifacts'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isPathWithin } from '../../shared/local-fs'
+import { MAX_UPLOAD_FILE_BYTES } from '../../shared/uploads'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { createLogger, errorLogFields } from '../logger'
@@ -51,34 +53,51 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
   private generation = 0
   private readonly sessionGenerations = new Map<string, number>()
   private readonly directoriesBySession = new Map<string, Set<string>>()
+  private readonly bytesBySession = new Map<string, number>()
+  private readonly pendingRemovalDirectories = new Set<string>()
 
-  async materialize(sessionId: string, sourcePath: string): Promise<string> {
+  constructor(private readonly maxSessionBytes = MAX_UPLOAD_FILE_BYTES) {}
+
+  async materialize(sessionId: string, sourcePath: string, sourceSize: number): Promise<string> {
     const generation = this.generation
     const sessionGeneration = this.sessionGenerations.get(sessionId) ?? 0
-    const directory = await mkdtemp(join(tmpdir(), 'open-science-linked-ro-'))
-    if (!this.isCurrent(sessionId, generation, sessionGeneration)) {
-      this.removeDirectory(directory)
-      throw new Error('Read-only linked-folder projection was superseded.')
+    const reservedBytes = this.bytesBySession.get(sessionId) ?? 0
+    if (sourceSize > this.maxSessionBytes || reservedBytes + sourceSize > this.maxSessionBytes) {
+      throw new Error('Read-only linked-folder snapshots exceed the Session storage limit.')
     }
+    this.bytesBySession.set(sessionId, reservedBytes + sourceSize)
 
-    let directories = this.directoriesBySession.get(sessionId)
-    if (!directories) {
-      directories = new Set()
-      this.directoriesBySession.set(sessionId, directories)
-    }
-    directories.add(directory)
-
-    const snapshotPath = join(directory, basename(sourcePath))
+    let directory: string | undefined
     try {
+      directory = await mkdtemp(join(tmpdir(), 'open-science-linked-ro-'))
+      if (!this.isCurrent(sessionId, generation, sessionGeneration)) {
+        throw new Error('Read-only linked-folder projection was superseded.')
+      }
+      let directories = this.directoriesBySession.get(sessionId)
+      if (!directories) {
+        directories = new Set()
+        this.directoriesBySession.set(sessionId, directories)
+      }
+      directories.add(directory)
+
+      const snapshotPath = join(directory, basename(sourcePath))
       await copyFile(sourcePath, snapshotPath)
       if (!this.isCurrent(sessionId, generation, sessionGeneration)) {
         throw new Error('Read-only linked-folder projection was superseded.')
       }
       return snapshotPath
     } catch (error) {
-      directories.delete(directory)
-      if (directories.size === 0) this.directoriesBySession.delete(sessionId)
-      this.removeDirectory(directory)
+      const current = this.isCurrent(sessionId, generation, sessionGeneration)
+      if (current) {
+        this.releaseReservation(sessionId, sourceSize)
+      }
+      if (directory) {
+        const directories = this.directoriesBySession.get(sessionId)
+        directories?.delete(directory)
+        if (directories?.size === 0) this.directoriesBySession.delete(sessionId)
+        if (current) this.removeDirectory(directory)
+        else this.removeDirectorySynchronously(directory)
+      }
       throw error
     }
   }
@@ -87,6 +106,7 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
     this.sessionGenerations.set(sessionId, (this.sessionGenerations.get(sessionId) ?? 0) + 1)
     const directories = this.directoriesBySession.get(sessionId)
     this.directoriesBySession.delete(sessionId)
+    this.bytesBySession.delete(sessionId)
     if (directories) {
       for (const directory of directories) this.removeDirectory(directory)
     }
@@ -95,9 +115,14 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
   clear(): void {
     this.generation += 1
     this.sessionGenerations.clear()
-    const directories = [...this.directoriesBySession.values()].flatMap((value) => [...value])
+    const directories = new Set([
+      ...[...this.directoriesBySession.values()].flatMap((value) => [...value]),
+      ...this.pendingRemovalDirectories
+    ])
     this.directoriesBySession.clear()
-    for (const directory of directories) this.removeDirectory(directory)
+    this.bytesBySession.clear()
+    this.pendingRemovalDirectories.clear()
+    for (const directory of directories) this.removeDirectorySynchronously(directory)
   }
 
   private isCurrent(sessionId: string, generation: number, sessionGeneration: number): boolean {
@@ -108,9 +133,26 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
   }
 
   private removeDirectory(directory: string): void {
-    void rm(directory, { recursive: true, force: true }).catch((error) => {
+    this.pendingRemovalDirectories.add(directory)
+    void rm(directory, { recursive: true, force: true })
+      .catch((error) => {
+        log.warn('read-only linked-folder projection cleanup failed', errorLogFields(error))
+      })
+      .finally(() => this.pendingRemovalDirectories.delete(directory))
+  }
+
+  private removeDirectorySynchronously(directory: string): void {
+    try {
+      rmSync(directory, { recursive: true, force: true })
+    } catch (error) {
       log.warn('read-only linked-folder projection cleanup failed', errorLogFields(error))
-    })
+    }
+  }
+
+  private releaseReservation(sessionId: string, size: number): void {
+    const next = Math.max(0, (this.bytesBySession.get(sessionId) ?? 0) - size)
+    if (next === 0) this.bytesBySession.delete(sessionId)
+    else this.bytesBySession.set(sessionId, next)
   }
 }
 
@@ -155,6 +197,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
   uploads?: UploadRepository
   artifacts?: ArtifactRepository
   artifactVersions?: Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
+  readOnlyProjectionMaxSessionBytes?: number
   // Resolves a granted local root id and current access level (settings-backed). Absent ⇒
   // linked-folder references stay unavailable, matching the pre-grant behavior.
   grantedRoots?: {
@@ -163,7 +206,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
 }): FileReferenceResolver => {
   const adapters: FileReferenceAdapter[] = []
   const readOnlyProjection = dependencies.grantedRoots
-    ? new ReadOnlyLinkedFileProjection()
+    ? new ReadOnlyLinkedFileProjection(dependencies.readOnlyProjectionMaxSessionBytes)
     : undefined
 
   if (dependencies.uploads) {
@@ -250,10 +293,12 @@ export const createManagedFileReferenceResolver = (dependencies: {
         if (!isPathWithin(resolvedFile, resolvedRoot)) {
           throw new Error('Linked-folder reference escapes the granted folder.')
         }
+        const fileInfo = await stat(resolvedFile)
+        if (!fileInfo.isFile()) throw new Error('Referenced path is not a file.')
         return {
           absolutePath:
             root.access === 'ro'
-              ? await readOnlyProjection!.materialize(sessionId, resolvedFile)
+              ? await readOnlyProjection!.materialize(sessionId, resolvedFile, fileInfo.size)
               : resolvedFile,
           name: reference.name,
           mimeType: reference.mimeType,

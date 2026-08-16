@@ -127,10 +127,10 @@ describe('AcpConnectionCloseWorkflow', () => {
       'capabilities',
       'sessions',
       'detach',
-      'prompt-content',
       'projection-clear',
       'routes',
       'select',
+      'prompt-content',
       'closed',
       'backend:2',
       'publication-cancel'
@@ -207,7 +207,16 @@ describe('AcpConnectionCloseWorkflow', () => {
     workflow.shutdown()
 
     expect(state.clearPlanInteractions).toHaveBeenCalledOnce()
+    expect(state.clearPromptContent).toHaveBeenCalledOnce()
     expect(state.cancelPendingStatePublication).toHaveBeenCalledOnce()
+  })
+
+  it('clears prompt snapshots after recovering a failed deferred disconnect', async () => {
+    const { workflow, state } = createWorkflow()
+
+    workflow.recoverFailedDeferredDisconnect()
+
+    await vi.waitFor(() => expect(state.clearPromptContent).toHaveBeenCalledOnce())
   })
 
   it('clears usage before deferring provider reconnect and delegates intent ownership', async () => {

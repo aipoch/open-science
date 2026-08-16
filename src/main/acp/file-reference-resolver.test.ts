@@ -245,6 +245,57 @@ describe('managed file reference resolver', () => {
     })
   })
 
+  it('removes every read-only snapshot synchronously during terminal cleanup', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    await writeFile(join(root, 'study.csv'), 'data\n')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) }
+    })
+    const resolved = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1' },
+      {
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'study.csv'
+      }
+    )
+
+    resolver.clear()
+
+    await expect(stat(resolved.absolutePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('bounds cumulative read-only snapshot storage for a Session', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    await writeFile(join(root, 'first.txt'), '123')
+    await writeFile(join(root, 'second.txt'), '456')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
+      readOnlyProjectionMaxSessionBytes: 5
+    })
+    const context = { projectId: 'default-project', sessionId: 'session-1' }
+    await resolver.resolve(context, {
+      id: 'linked-1',
+      name: 'first.txt',
+      source: 'linked-folder',
+      rootId: 'root-1',
+      relativePath: 'first.txt'
+    })
+
+    await expect(
+      resolver.resolve(context, {
+        id: 'linked-2',
+        name: 'second.txt',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'second.txt'
+      })
+    ).rejects.toThrow(/Session storage limit/i)
+    resolver.clear()
+  })
+
   it('rejects a linked-folder reference with an unknown root id', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const resolver = createManagedFileReferenceResolver({
