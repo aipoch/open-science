@@ -76,6 +76,7 @@ type WorkspaceConversationControllerOptions = {
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
   actionability: SessionActionabilityProjection | undefined
+  hasPendingPermissionRequest: (sessionId: string) => boolean
   newConversationAutoReviewEnabled: boolean
   newConversationEnabledComputeHosts: string[]
   composer: ConversationComposer
@@ -152,7 +153,6 @@ const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean
     (!docIsEmpty(composer.view.doc) || composer.view.attachments.length > 0) &&
     !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&
     !options.saveAsSkillInFlightSessionIds.includes(activeSession.id) &&
-    !options.hasBlockingRootPermissionRequest &&
     !activeSession.fixLoopActive &&
     !activeSession.conversationGraphSyncBlocked &&
     !activeSession.compacting &&
@@ -235,6 +235,7 @@ const useWorkspaceConversationController = (
         current.session.lifecycle.canStartSend()
       )
     },
+    hasPendingPermissionRequest: options.hasPendingPermissionRequest,
     abortFixLoop: options.abortFixLoop,
     getSession: options.getSession,
     subscribeSessionChanges: options.subscribeSessionChanges
@@ -366,7 +367,13 @@ const useWorkspaceConversationController = (
       revise: (messageId, doc): void => {
         const current = optionsRef.current
         const sessionId = current.activeSession?.id
-        if (!sessionId || !canRevise(current) || docIsEmpty(doc)) return
+        if (
+          !sessionId ||
+          messageQueue.lifecycle.blocksImmediateSend(sessionId) ||
+          !canRevise(current) ||
+          docIsEmpty(doc)
+        )
+          return
         void current.runtime.resendEditedMessage(sessionId, messageId, {
           text: docToText(doc),
           parts: doc.nodes,
@@ -426,18 +433,17 @@ const useWorkspaceConversationController = (
     }
   })
 
-  const submitImmediately =
-    !(
-      options.activeSession &&
-      messageQueue.lifecycle.blocksImmediateSend(options.activeSession.id)
-    ) && canSubmitImmediately(options)
+  const queueBlocksActiveSession = Boolean(
+    options.activeSession && messageQueue.lifecycle.blocksImmediateSend(options.activeSession.id)
+  )
+  const submitImmediately = !queueBlocksActiveSession && canSubmitImmediately(options)
   const queueDraft = canQueueDraft(options)
 
   return {
     availability: {
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
-      revise: canRevise(options),
+      revise: !queueBlocksActiveSession && canRevise(options),
       resume: options.isPersistenceReady && !options.sideChatOpen,
       branch: canBranch(options)
     },

@@ -1751,8 +1751,15 @@ describe('workspace agent message sending', () => {
     })
   })
 
-  it('reports an appended prompt as not admitted when attachment finalization fails', async () => {
+  it('does not append a prompt when attachment finalization fails', async () => {
     const attachment = createAttachment()
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Existing prompt',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
     vi.stubGlobal('window', {
       api: {
         uploads: {
@@ -1776,11 +1783,12 @@ describe('workspace agent message sending', () => {
       projectId: 'project-1'
     })
 
-    expect(result).toMatchObject({ admitted: false })
+    expect(result).toBeUndefined()
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'error',
-      error: 'attachment finalization failed'
+      error: 'attachment finalization failed',
+      messages: [expect.objectContaining({ content: 'Existing prompt' })]
     })
   })
 

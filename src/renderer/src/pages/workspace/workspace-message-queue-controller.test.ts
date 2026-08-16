@@ -86,6 +86,7 @@ const options = (
   },
   isBarrierInFlight: vi.fn(() => false),
   isSpecialistReady: vi.fn(() => true),
+  hasPendingPermissionRequest: vi.fn(() => false),
   abortFixLoop: vi.fn(async () => undefined),
   getSession: () => activeSession,
   subscribeSessionChanges: () => () => undefined,
@@ -270,16 +271,12 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
   })
 
-  it('retains a queued prompt when runtime admission fails after append', async () => {
+  it('retains a queued prompt when runtime admission fails', async () => {
     const idle = session('idle')
     const input = options(idle, {
       runtime: {
         cancelRun: vi.fn(async () => undefined),
-        sendMessage: vi.fn(async () => ({
-          sessionId: idle.id,
-          messageId: 'message-appended',
-          admitted: false
-        }))
+        sendMessage: vi.fn(async () => undefined)
       }
     })
     const hook = renderController(input)
@@ -294,6 +291,24 @@ describe('workspace message queue controller', () => {
         error: { kind: 'send' }
       })
     )
+  })
+
+  it('pauses dispatch while a permission request is pending', async () => {
+    const idle = session('idle')
+    let permissionPending = true
+    const input = options(idle, {
+      hasPendingPermissionRequest: () => permissionPending
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.lifecycle.enqueue({ ...admission('wait'), session: idle }))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+
+    permissionPending = false
+    hook.rerender(options(idle, { ...input, hasPendingPermissionRequest: () => permissionPending }))
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
   })
 
   it('pauses dispatch until the captured Specialist is ready', async () => {

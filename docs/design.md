@@ -580,10 +580,11 @@ colors communicate a successful or failed probe/migration result.
   to settle, then sends it. Cancellation or admission failures keep the row and show a recoverable
   inline error.
 - Queued messages are transient and Session-scoped. They are not persisted across renderer restart.
-  Bind each item to its admission Message Branch and block branch switching while that Session has
-  queued work so a later dispatch cannot silently retarget it. Keep the Permission Profile selector
-  and other Agent controls read-only until that queue is empty so every item retains its captured
-  authorization level and Specialist binding.
+  Bind each item to its admission Message Branch and block branch switching or inline message edits
+  while that Session has queued work so a later dispatch cannot silently retarget it. Pause queue
+  dispatch while a visible root or delegated Permission request is pending. Keep the Permission
+  Profile selector and other Agent controls read-only until that queue is empty so every item retains
+  its captured authorization level and Specialist binding.
 - Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
   approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
   any still-pending Permission approval instead of interrupting the Side Chat in progress.

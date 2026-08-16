@@ -67,6 +67,7 @@ type WorkspaceMessageQueueControllerOptions = {
   runtime: Pick<WorkspaceAgentRuntime, 'sendMessage' | 'cancelRun'>
   isBarrierInFlight: (sessionId: string) => boolean
   isSpecialistReady: (sessionId: string) => boolean
+  hasPendingPermissionRequest: (sessionId: string) => boolean
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
@@ -116,6 +117,7 @@ const queueSessionIsSendable = (
   !options.promptInFlightSessionIds.includes(session.id) &&
   !options.sendPreparationInFlightSessionIds.includes(session.id) &&
   !options.saveAsSkillInFlightSessionIds.includes(session.id) &&
+  !options.hasPendingPermissionRequest(session.id) &&
   !session.fixLoopActive &&
   !session.conversationGraphSyncBlocked &&
   !session.compacting &&
@@ -238,7 +240,7 @@ const useWorkspaceMessageQueueController = (
             forcedSkillIds: item.forcedSkillIds,
             specialistId: item.specialistId
           })
-          if (!result || result.admitted === false) {
+          if (!result) {
             throw new Error('The queued message was not admitted.')
           }
           const latest = itemsFor(sessionId)

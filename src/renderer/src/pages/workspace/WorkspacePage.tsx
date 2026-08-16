@@ -476,6 +476,16 @@ const WorkspacePage = ({
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
     actionability: activeSessionActionability,
+    hasPendingPermissionRequest: (sessionId) => {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      return getVisiblePermissionRequests(
+        pendingPermissions,
+        sessionId,
+        session?.conversationGraph
+      ).length > 0
+    },
     newConversationAutoReviewEnabled,
     newConversationEnabledComputeHosts,
     composer,

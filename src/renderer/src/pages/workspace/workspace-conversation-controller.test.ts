@@ -93,6 +93,7 @@ const options = (
     sendPreparationInFlightSessionIds: [],
     saveAsSkillInFlightSessionIds: [],
     actionability: projectSessionActionability(activeSession),
+    hasPendingPermissionRequest: vi.fn(() => false),
     newConversationAutoReviewEnabled: false,
     newConversationEnabledComputeHosts: [],
     composer: {
@@ -435,7 +436,7 @@ describe('workspace conversation controller', () => {
     )
   })
 
-  it('blocks an immediate submit while the queued head is being admitted', async () => {
+  it('blocks immediate submit and revision while the queued head is being admitted', async () => {
     let currentSession = runningSession()
     let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
     const admission = new Promise<{ sessionId: string; messageId: string }>((resolve) => {
@@ -460,9 +461,11 @@ describe('workspace conversation controller', () => {
     })
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
 
-    expect(hook.result.current.availability.submit).toBe(false)
+    expect(hook.result.current.availability).toMatchObject({ submit: false, revise: false })
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    act(() => hook.result.current.actions.revise('message-user-a', textDoc('changed')))
     expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+    expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
 
     await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'queued-message' }))
   })
