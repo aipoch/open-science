@@ -71,7 +71,7 @@ const DEFAULT_IDLE_MS = 0
 const DEFAULT_CANCELLATION_GRACE_MS = 2_000
 // Queued behind an interrupted R request before its queue is released. The sleep gives a SIGINT that
 // raced with the original response an interruptible, side-effect-free request to land in.
-const R_INTERRUPT_PROBE_CODE = 'Sys.sleep(0.05)'
+const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
 
 // Real scheduler: unref'd so a pending idle timer alone never keeps the process alive.
 const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
@@ -777,7 +777,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
     if (pending.interruptProbeReqId !== response.reqId) return
     pending.interruptProbeReqId = undefined
-    pending.interruptAcknowledged ||= response.interruptAck === true
+    // An interrupted probe explicitly acknowledges a late SIGINT. A successful probe also
+    // acknowledges it: the unmaskable base sleep held an interrupt checkpoint open after the
+    // original request, so returning normally proves the original request already consumed SIGINT
+    // (including when user code caught the interrupt itself).
+    pending.interruptAcknowledged ||= response.interruptAck === true || response.error === null
     if (!pending.interruptAcknowledged) {
       this.queueRInterruptProbe(proc, pending)
       return
@@ -800,8 +804,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   // R may emit the cancelled request's ordinary response before the OS-delivered SIGINT reaches an
   // interrupt checkpoint. Pre-queue a private probe while the original request is still pending, and
-  // retain queue ownership until either request explicitly acknowledges the interrupt. If neither
-  // does, the existing cancellation/hard-timeout grace drops the process tree.
+  // retain queue ownership until either request explicitly acknowledges the interrupt or the trusted
+  // probe completes its interruptible delay. If neither happens, the existing cancellation/hard-
+  // timeout grace drops the process tree.
   private queueRInterruptProbe(proc: ProcState, pending: PendingRequest): void {
     if (proc.pending !== pending || pending.interruptProbeReqId !== undefined) return
     const reqId = randomUUID()

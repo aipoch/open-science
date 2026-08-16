@@ -568,6 +568,9 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       await expect(
         executor.execute({ ...request, code: '__SET_NAMESPACE__' })
       ).resolves.toMatchObject({ status: 'completed' })
+      await expect(
+        executor.execute({ ...request, code: '__MASK_SYS_SLEEP__' })
+      ).resolves.toMatchObject({ status: 'completed' })
       const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
       const killSpy = vi.spyOn(child, 'kill').mockImplementation(() => true)
       const cancellation = new AbortController()
@@ -586,6 +589,44 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       const first = await executor.execute({ ...request, code: '__CHECK_NAMESPACE__' })
       const second = await executor.execute({ ...request, code: '__CHECK_NAMESPACE__' })
       expect([first.status, second.status]).toEqual(['completed', 'completed'])
+      expect(procFor(executor, 'r')?.child).toBe(child)
+    } finally {
+      await executor.shutdown()
+    }
+  }, 15_000)
+
+  it('accepts a successful R interrupt probe after user code catches the interrupt', async () => {
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-kernel-r-caught-interrupt-'))
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: FIXTURE,
+      platform: 'linux'
+    })
+    const request = {
+      ...baseRequest(cwdDir),
+      language: 'r' as const,
+      resolvedInterpreter: { command: python3 as string }
+    }
+    try {
+      await expect(
+        executor.execute({ ...request, code: '__SET_NAMESPACE__' })
+      ).resolves.toMatchObject({ status: 'completed' })
+      const child = procFor(executor, 'r')?.child as ChildProcessWithoutNullStreams
+      const killSpy = vi.spyOn(child, 'kill').mockImplementation(() => true)
+      const cancellation = new AbortController()
+      const cancelled = executor.execute({
+        ...request,
+        code: '__CANCEL_CAUGHT_INTERRUPT__',
+        signal: cancellation.signal
+      })
+      await vi.waitFor(() => expect(procFor(executor, 'r')?.pending).toBeDefined())
+
+      cancellation.abort()
+
+      await expect(cancelled).resolves.toMatchObject({ status: 'cancelled' })
+      expect(killSpy).toHaveBeenCalledWith('SIGINT')
+      await expect(
+        executor.execute({ ...request, code: '__CHECK_NAMESPACE__' })
+      ).resolves.toMatchObject({ status: 'completed' })
       expect(procFor(executor, 'r')?.child).toBe(child)
     } finally {
       await executor.shutdown()

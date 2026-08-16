@@ -6,6 +6,8 @@
 #   __IGNORE_SIGINT__  ignore SIGINT entirely and sleep, forcing the driver's hard SIGKILL path
 #   __CANCEL_RESPONSE_BEFORE_ACK__  reply before a simulated late interrupt reaches the next request
 #   __SET_NAMESPACE__ / __CHECK_NAMESPACE__  prove process-local state survives a cancellation probe
+#   __MASK_SYS_SLEEP__  simulate user code masking Sys.sleep in the persistent R namespace
+#   __CANCEL_CAUGHT_INTERRUPT__  simulate user code catching SIGINT before the outer R handler
 #   __FIGURE__         write a real 1x1 PNG into the figures dir and reference it in the response
 #   __WRITE_FILE__      write an output file into the kernel working directory
 #   __OVERWRITE_FILE__  replace a pre-existing output in the kernel working directory
@@ -65,6 +67,7 @@ def _respond(req_id, code, error=None, interrupt_ack=False):
 def main():
     late_interrupt_pending = False
     namespace_value = None
+    sys_sleep_masked = False
     stream = sys.stdin.buffer
     while True:
         line = stream.readline()
@@ -87,6 +90,9 @@ def main():
         code = request.get("code", "")
         req_id = request.get("req_id")
         if late_interrupt_pending:
+            if code == "Sys.sleep(0.05)" and sys_sleep_masked:
+                _respond(req_id, code, error="user-masked Sys.sleep was invoked")
+                continue
             late_interrupt_pending = False
             _respond(req_id, code, error="interrupted", interrupt_ack=True)
             continue
@@ -99,8 +105,14 @@ def main():
             _respond(req_id, code)
             late_interrupt_pending = True
             continue
+        if code == "__CANCEL_CAUGHT_INTERRUPT__":
+            time.sleep(0.1)
+            _respond(req_id, code)
+            continue
         if code == "__SET_NAMESPACE__":
             namespace_value = 41
+        if code == "__MASK_SYS_SLEEP__":
+            sys_sleep_masked = True
         if code == "__CHECK_NAMESPACE__" and namespace_value != 41:
             _respond(req_id, code, error="namespace was not preserved")
             continue
