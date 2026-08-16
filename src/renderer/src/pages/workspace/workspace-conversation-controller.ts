@@ -237,7 +237,10 @@ const useWorkspaceConversationController = (
       const { activeSession, composer, session, runtime } = current
       if (mode === 'retry-reconfigure' && !session.actions.beginReconfigureRetry()) return
       const queueDraft = mode === 'continue' && canQueueDraft(current)
-      if (!queueDraft && !canSubmitImmediately(current)) return
+      const queueBlocksImmediateSend = Boolean(
+        activeSession && messageQueue.lifecycle.blocksImmediateSend(activeSession.id)
+      )
+      if (!queueDraft && (queueBlocksImmediateSend || !canSubmitImmediately(current))) return
 
       const branchInNewSession = mode === 'branch'
       if (branchInNewSession && !activeSession) return
@@ -416,7 +419,11 @@ const useWorkspaceConversationController = (
     }
   })
 
-  const submitImmediately = canSubmitImmediately(options)
+  const submitImmediately =
+    !(
+      options.activeSession &&
+      messageQueue.lifecycle.blocksImmediateSend(options.activeSession.id)
+    ) && canSubmitImmediately(options)
   const queueDraft = canQueueDraft(options)
 
   return {

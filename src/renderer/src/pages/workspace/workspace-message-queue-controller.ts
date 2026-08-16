@@ -80,6 +80,7 @@ type WorkspaceMessageQueueController = {
   }
   lifecycle: {
     enqueue: (admission: MessageQueueAdmission) => boolean
+    blocksImmediateSend: (sessionId: string) => boolean
   }
 }
 
@@ -253,6 +254,19 @@ const useWorkspaceMessageQueueController = (
     const sessionId = optionsRef.current.activeSession?.id
     return sessionId ? { sessionId, items: itemsFor(sessionId) } : undefined
   }, [itemsFor])
+  const blocksImmediateSend = useCallback(
+    (sessionId: string): boolean => {
+      const activeDispatch = dispatchBySessionRef.current.get(sessionId)
+      return (
+        itemsFor(sessionId).length > 0 ||
+        Boolean(
+          activeDispatch &&
+          !(activeDispatch.settled && optionsRef.current.getSession(sessionId)?.status === 'error')
+        )
+      )
+    },
+    [itemsFor]
+  )
 
   const enqueue = useCallback(
     ({ session, snapshot, ...intent }: MessageQueueAdmission): boolean => {
@@ -406,7 +420,7 @@ const useWorkspaceMessageQueueController = (
     ? (queueSnapshot.get(options.activeSession.id) ?? [])
     : []
   return {
-    lifecycle: { enqueue },
+    lifecycle: { enqueue, blocksImmediateSend },
     actions: { move, moveTo, remove, edit, sendNow },
     items: activeItems.map(({ id, text, attachmentCount, phase, error }) => ({
       id,

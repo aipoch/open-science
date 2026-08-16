@@ -404,6 +404,38 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
+  it('blocks an immediate submit while the queued head is being admitted', async () => {
+    let currentSession = runningSession()
+    let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
+    const admission = new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const input = options({
+      activeSession: currentSession,
+      promptInFlightSessionIds: [currentSession.id],
+      getSession: () => currentSession
+    })
+    input.runtime.sendMessage = vi.fn(() => admission)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    currentSession = { ...currentSession, status: 'idle' }
+    hook.rerender({
+      ...input,
+      activeSession: currentSession,
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession
+    })
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(hook.result.current.availability.submit).toBe(false)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+
+    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'queued-message' }))
+  })
+
   it('blocks submit and revision while Save as skill owns prompt admission', () => {
     const input = options({ saveAsSkillInFlightSessionIds: ['session-a'] })
     const hook = renderController(input)
