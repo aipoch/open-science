@@ -229,7 +229,6 @@ describe('notebook run repository', () => {
       notebookSessionRoot: join(root, 'notebooks', 'default-project', 'session-1'),
       dataRoot: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
       kernel: {
-        language: 'python',
         pythonPath: '/usr/bin/python3',
         kernelName: 'python3',
         runtimeRoot: join(root, 'runtime'),

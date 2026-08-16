@@ -302,7 +302,6 @@ export type NotebookWorkingFile = {
 // and internal to the executor, and a kernel-level failure currently surfaces as a run-level 'failed'
 // status rather than a distinct kernel state.
 export type NotebookKernelMetadata = {
-  language: 'python'
   pythonPath?: string
   kernelName: string
   runtimeRoot: string

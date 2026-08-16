@@ -32,7 +32,6 @@ const makeDocument = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   notebookSessionRoot: '/data/notebooks/default-project/session-123',
   dataRoot: '/data/notebooks/default-project/session-123/data',
   kernel: {
-    language: 'python',
     kernelName: 'python3',
     runtimeRoot: '/data/runtime',
     lastKnownStatus: 'idle'
@@ -311,7 +310,6 @@ describe('runDocumentToIpynbByKernel pre-data control run attribution', () => {
     notebookSessionRoot: '/data/notebooks/default-project/session-123',
     dataRoot: '/data/notebooks/default-project/session-123/data',
     kernel: {
-      language: 'python',
       kernelName: 'python3',
       runtimeRoot: '/data/runtime',
       lastKnownStatus: 'idle'

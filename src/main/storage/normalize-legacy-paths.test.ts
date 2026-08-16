@@ -50,7 +50,6 @@ const buildLegacyRunDocument = (root: string, projectId: string): NotebookRunDoc
     notebookSessionRoot: sessionRoot,
     dataRoot: join(sessionRoot, 'data'),
     kernel: {
-      language: 'python',
       kernelName: 'python3',
       runtimeRoot: join(root, 'runtime'),
       lastKnownStatus: 'idle'

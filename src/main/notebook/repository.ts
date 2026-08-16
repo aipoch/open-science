@@ -243,10 +243,19 @@ const normalizeTerminatedKernelInstances = (
   return instances.size > 0 ? [...instances.values()] : undefined
 }
 
+const canonicalKernelMetadata = (kernel: NotebookKernelMetadata): NotebookKernelMetadata => {
+  // `language: 'python'` predates multi-kernel documents. It was never read and cannot represent a
+  // history containing Python, R, REPL, and Bash runs, so accept it from old run.json files but never
+  // return or persist it as canonical metadata.
+  const next = { ...kernel } as NotebookKernelMetadata & { language?: unknown }
+  delete next.language
+  return next
+}
+
 const withoutTerminatedKernelInstances = (
   kernel: NotebookKernelMetadata
 ): NotebookKernelMetadata => {
-  const next = { ...kernel }
+  const next = canonicalKernelMetadata(kernel)
   delete next.terminatedKernelInstances
   return next
 }
@@ -290,7 +299,6 @@ const normalizeDocument = (
     dataRoot: getNotebookDataRoot(storageRoot, storageProjectId, sessionId, request.lane),
     kernel: {
       ...withoutTerminatedKernelInstances(document.kernel),
-      language: 'python',
       pythonPath: request.pythonPath ?? document.kernel?.pythonPath,
       kernelName: request.kernelName ?? document.kernel?.kernelName ?? 'python3',
       runtimeRoot: getRuntimeRoot(storageRoot),
@@ -345,7 +353,6 @@ class NotebookRunRepository {
         notebookSessionRoot: '',
         dataRoot: '',
         kernel: {
-          language: 'python',
           pythonPath: request.pythonPath,
           kernelName: request.kernelName ?? 'python3',
           runtimeRoot: '',

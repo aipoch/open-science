@@ -12,7 +12,6 @@ const document: NotebookRunDocument = {
   notebookSessionRoot: '/storage/notebooks/default-project/12345678-abcd',
   dataRoot: '/storage/notebooks/default-project/12345678-abcd/data',
   kernel: {
-    language: 'python',
     kernelName: 'python3',
     runtimeRoot: '/storage/runtime',
     lastKnownStatus: 'idle'

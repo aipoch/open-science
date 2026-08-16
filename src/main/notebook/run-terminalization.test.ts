@@ -48,7 +48,6 @@ const documentWith = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   notebookSessionRoot: session.notebookSessionRoot,
   dataRoot: session.dataRoot,
   kernel: {
-    language: 'python',
     kernelName: 'python3',
     runtimeRoot: '/storage/runtime',
     lastKnownStatus: 'running'

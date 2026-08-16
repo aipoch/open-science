@@ -15,7 +15,6 @@ const buildDocument = (): NotebookRunDocument => ({
   notebookSessionRoot: `${ROOT}/notebooks/default-project/session-1`,
   dataRoot: `${ROOT}/notebooks/default-project/session-1/data`,
   kernel: {
-    language: 'python',
     kernelName: 'python3',
     runtimeRoot: `${ROOT}/runtime`,
     lastKnownStatus: 'idle'
