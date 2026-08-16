@@ -133,6 +133,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
 
   const items = useSpecialistStore((s) => s.items)
   const isLoaded = useSpecialistStore((s) => s.isLoaded)
+  const loadError = useSpecialistStore((s) => s.loadError)
   const load = useSpecialistStore((s) => s.load)
   const setEnabled = useSpecialistStore((s) => s.setEnabled)
   const createSpecialist = useSpecialistStore((s) => s.create)
@@ -1189,9 +1190,30 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         </DropdownMenu>
       </div>
 
-      {!isLoaded ? (
+      {loadError ? (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-danger-000/30 bg-danger-000/10 px-3 py-2 text-sm text-danger-000"
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <p>{t('Open Science could not load Specialists. Retry to continue.')}</p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => void load()}
+          >
+            {t('Retry')}
+          </Button>
+        </div>
+      ) : null}
+
+      {!isLoaded && !loadError ? (
         <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
-      ) : (
+      ) : isLoaded ? (
         <div className="flex flex-col gap-6">
           {/* Custom specialists group */}
           {filter !== 'builtin' ? (
@@ -1415,7 +1437,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             </div>
           ) : null}
         </div>
-      )}
+      ) : null}
 
       {/* Delete confirmation dialog */}
       <AlertDialog.Root

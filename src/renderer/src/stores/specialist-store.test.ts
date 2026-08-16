@@ -13,6 +13,7 @@ beforeEach(() => {
   useSpecialistStore.setState({
     items: [],
     isLoaded: false,
+    loadError: undefined,
     packagePreview: undefined,
     exportPreview: undefined
   })
@@ -24,6 +25,79 @@ describe('specialist store catalog', () => {
 
     await expect(useSpecialistStore.getState().load()).resolves.toBeUndefined()
     expect(useSpecialistStore.getState()).toMatchObject({ items: [], isLoaded: true })
+  })
+
+  it('surfaces an initial load failure and recovers when the catalog is retried', async () => {
+    const items = [{ kind: 'reviewer' as const, id: 'reviewer' }]
+    const list = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('specialist database unavailable'))
+      .mockResolvedValueOnce(items)
+    setSpecialistApi({ list })
+
+    await expect(useSpecialistStore.getState().load()).rejects.toThrow(
+      'specialist database unavailable'
+    )
+    expect(useSpecialistStore.getState()).toMatchObject({
+      items: [],
+      isLoaded: false,
+      loadError: 'Open Science could not load Specialists. Retry to continue.'
+    })
+
+    await expect(useSpecialistStore.getState().load()).resolves.toBeUndefined()
+    expect(useSpecialistStore.getState()).toMatchObject({
+      items,
+      isLoaded: true,
+      loadError: undefined
+    })
+  })
+
+  it('keeps the latest overlapping catalog refresh authoritative', async () => {
+    let resolveFirst: ((items: [{ kind: 'reviewer'; id: string }]) => void) | undefined
+    let resolveSecond: ((items: [{ kind: 'reviewer'; id: string }]) => void) | undefined
+    setSpecialistApi({
+      list: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<[{ kind: 'reviewer'; id: string }]>((resolve) => (resolveFirst = resolve))
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<[{ kind: 'reviewer'; id: string }]>((resolve) => (resolveSecond = resolve))
+        )
+    })
+
+    const firstLoad = useSpecialistStore.getState().load()
+    const secondLoad = useSpecialistStore.getState().load()
+    resolveSecond?.([{ kind: 'reviewer', id: 'new-catalog' }])
+    await secondLoad
+    resolveFirst?.([{ kind: 'reviewer', id: 'stale-catalog' }])
+    await firstLoad
+
+    expect(useSpecialistStore.getState().items).toEqual([{ kind: 'reviewer', id: 'new-catalog' }])
+  })
+
+  it('prevents a pre-mutation load from overwriting the mutation refresh', async () => {
+    let resolveInitial: ((items: [{ kind: 'reviewer'; id: string }]) => void) | undefined
+    const refreshedItems = [{ kind: 'reviewer' as const, id: 'after-mutation' }]
+    setSpecialistApi({
+      list: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<[{ kind: 'reviewer'; id: string }]>((resolve) => (resolveInitial = resolve))
+        )
+        .mockResolvedValueOnce(refreshedItems),
+      setEnabled: vi.fn().mockResolvedValue(undefined)
+    })
+
+    const initialLoad = useSpecialistStore.getState().load()
+    await useSpecialistStore.getState().setEnabled('researcher', true)
+    resolveInitial?.([{ kind: 'reviewer', id: 'before-mutation' }])
+    await initialLoad
+
+    expect(useSpecialistStore.getState().items).toEqual(refreshedItems)
   })
 })
 

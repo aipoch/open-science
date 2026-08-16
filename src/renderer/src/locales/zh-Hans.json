@@ -1094,6 +1094,7 @@
   "Open Open Science from the signed-in mobile app with two-step verification.": "从已登录的移动应用使用两步验证打开 Open Science。",
   "Open Provenance for {{title}}": "打开 {{title}} 的 Provenance",
   "Open Science confirms its core requirements before your first research session.": "Open Science 会在你的第一次研究会话前确认其核心依赖。",
+  "Open Science could not load Specialists. Retry to continue.": "Open Science 无法加载 Specialist。请重试。",
   "Open Science couldn't remove the unused copy. Normal work has resumed. You can delete the copy later.": "Open Science 无法删除未使用的副本。正常工作已恢复，你可以稍后删除该副本。",
   "Open Science couldn't start": "Open Science 无法启动",
   "Open Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically.": "Open Science 正在停止后台任务，并将关闭以完成安装。更新可能需要一些时间，请勿在此期间重新打开应用。更新完成后应用会自动重新打开。",

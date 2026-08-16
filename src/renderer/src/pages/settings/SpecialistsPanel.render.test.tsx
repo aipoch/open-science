@@ -140,6 +140,33 @@ describe('SpecialistsPanel', () => {
     }
   })
 
+  it('replaces a failed initial load with an actionable retry', async () => {
+    const list = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('specialist database unavailable'))
+      .mockResolvedValueOnce(specialistItems)
+    window.api.specialist.list = list
+    useSpecialistStore.setState({ items: [], isLoaded: false })
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    expect(document.body.textContent).toContain(
+      'Open Science could not load Specialists. Retry to continue.'
+    )
+    expect(document.body.textContent).not.toContain('Loading…')
+
+    const retry = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry'
+    )
+    expect(retry).toBeDefined()
+    await act(async () => fireEvent.click(retry!))
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('RNA Reviewer'))
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
   // Shared preview fixture: builtin + owned selected by default, referenced skill unchecked.
   const exportPreviewFixture = (
     overrides: Partial<{
