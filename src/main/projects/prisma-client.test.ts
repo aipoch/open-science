@@ -108,7 +108,8 @@ describe('project prisma client (integration)', () => {
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
         '0006_database_domain_constraints',
-        '0007_notification_attention_metadata'
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints'
       ]
     })
 
@@ -1018,7 +1019,8 @@ describe('project prisma client (integration)', () => {
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
         '0006_database_domain_constraints',
-        '0007_notification_attention_metadata'
+        '0007_notification_attention_metadata',
+        '0008_database_json_constraints'
       ]
     })
 
