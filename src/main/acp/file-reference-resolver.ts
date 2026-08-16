@@ -1,13 +1,18 @@
-import { realpath, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { copyFile, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { FileReference } from '../../shared/artifacts'
 import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isPathWithin } from '../../shared/local-fs'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { createLogger, errorLogFields } from '../logger'
 import type { UploadRepository } from '../uploads/repository'
+
+const log = createLogger('acp-file-reference-resolver')
 
 export type FileReferenceContext = {
   projectId: string
@@ -33,10 +38,89 @@ export type FileReferenceAdapter = {
   ): Promise<Omit<ResolvedFileReference, 'uri' | 'size'>>
 }
 
+type FileReferenceResolverLifecycle = {
+  resetSession: (sessionId: string) => void
+  clear: () => void
+}
+
+// A read-only grant must not hand an Agent the user's source path. Each reference therefore gets a
+// private snapshot under the OS temporary directory. The Agent may mutate that disposable snapshot,
+// but the original remains outside the capability conveyed by the prompt. Random per-reference
+// directories also keep asynchronous cleanup from racing a replacement Session with the same id.
+class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
+  private generation = 0
+  private readonly sessionGenerations = new Map<string, number>()
+  private readonly directoriesBySession = new Map<string, Set<string>>()
+
+  async materialize(sessionId: string, sourcePath: string): Promise<string> {
+    const generation = this.generation
+    const sessionGeneration = this.sessionGenerations.get(sessionId) ?? 0
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-linked-ro-'))
+    if (!this.isCurrent(sessionId, generation, sessionGeneration)) {
+      this.removeDirectory(directory)
+      throw new Error('Read-only linked-folder projection was superseded.')
+    }
+
+    let directories = this.directoriesBySession.get(sessionId)
+    if (!directories) {
+      directories = new Set()
+      this.directoriesBySession.set(sessionId, directories)
+    }
+    directories.add(directory)
+
+    const snapshotPath = join(directory, basename(sourcePath))
+    try {
+      await copyFile(sourcePath, snapshotPath)
+      if (!this.isCurrent(sessionId, generation, sessionGeneration)) {
+        throw new Error('Read-only linked-folder projection was superseded.')
+      }
+      return snapshotPath
+    } catch (error) {
+      directories.delete(directory)
+      if (directories.size === 0) this.directoriesBySession.delete(sessionId)
+      this.removeDirectory(directory)
+      throw error
+    }
+  }
+
+  resetSession(sessionId: string): void {
+    this.sessionGenerations.set(sessionId, (this.sessionGenerations.get(sessionId) ?? 0) + 1)
+    const directories = this.directoriesBySession.get(sessionId)
+    this.directoriesBySession.delete(sessionId)
+    if (directories) {
+      for (const directory of directories) this.removeDirectory(directory)
+    }
+  }
+
+  clear(): void {
+    this.generation += 1
+    this.sessionGenerations.clear()
+    const directories = [...this.directoriesBySession.values()].flatMap((value) => [...value])
+    this.directoriesBySession.clear()
+    for (const directory of directories) this.removeDirectory(directory)
+  }
+
+  private isCurrent(sessionId: string, generation: number, sessionGeneration: number): boolean {
+    return (
+      this.generation === generation &&
+      (this.sessionGenerations.get(sessionId) ?? 0) === sessionGeneration
+    )
+  }
+
+  private removeDirectory(directory: string): void {
+    void rm(directory, { recursive: true, force: true }).catch((error) => {
+      log.warn('read-only linked-folder projection cleanup failed', errorLogFields(error))
+    })
+  }
+}
+
 export class FileReferenceResolver {
   private readonly adapters = new Map<FileReference['source'], FileReferenceAdapter>()
 
-  constructor(adapters: FileReferenceAdapter[]) {
+  constructor(
+    adapters: FileReferenceAdapter[],
+    private readonly lifecycle?: FileReferenceResolverLifecycle
+  ) {
     for (const adapter of adapters) this.adapters.set(adapter.source, adapter)
   }
 
@@ -57,19 +141,30 @@ export class FileReferenceResolver {
       size: fileInfo.size
     }
   }
+
+  resetSession(sessionId: string): void {
+    this.lifecycle?.resetSession(sessionId)
+  }
+
+  clear(): void {
+    this.lifecycle?.clear()
+  }
 }
 
 export const createManagedFileReferenceResolver = (dependencies: {
   uploads?: UploadRepository
   artifacts?: ArtifactRepository
   artifactVersions?: Partial<Pick<ArtifactProvenanceRepository, 'resolveVersionContent'>>
-  // Resolves a granted local root id to its absolute path (settings-backed). Absent ⇒
+  // Resolves a granted local root id and current access level (settings-backed). Absent ⇒
   // linked-folder references stay unavailable, matching the pre-grant behavior.
   grantedRoots?: {
-    resolveRootPath: (rootId: string) => Promise<string | undefined>
+    resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
 }): FileReferenceResolver => {
   const adapters: FileReferenceAdapter[] = []
+  const readOnlyProjection = dependencies.grantedRoots
+    ? new ReadOnlyLinkedFileProjection()
+    : undefined
 
   if (dependencies.uploads) {
     adapters.push({
@@ -139,24 +234,27 @@ export const createManagedFileReferenceResolver = (dependencies: {
   if (dependencies.grantedRoots) {
     adapters.push({
       source: 'linked-folder',
-      resolve: async (_context, reference) => {
+      resolve: async ({ sessionId }, reference) => {
         if (reference.source !== 'linked-folder') {
           throw new Error('Invalid linked-folder reference.')
         }
-        const rootPath = await dependencies.grantedRoots!.resolveRootPath(reference.rootId)
-        if (!rootPath) throw new Error(`Unknown granted folder root: ${reference.rootId}`)
+        const root = await dependencies.grantedRoots!.resolveRoot(reference.rootId)
+        if (!root) throw new Error(`Unknown granted folder root: ${reference.rootId}`)
         // The join is only lexical — the confinement proof is the realpath comparison below:
         // canonicalizing both sides catches '..' segments AND symlinks that point outside the
         // granted root, so neither can be used to escape it.
         const [resolvedRoot, resolvedFile] = await Promise.all([
-          realpath(rootPath),
-          realpath(join(rootPath, reference.relativePath))
+          realpath(root.path),
+          realpath(join(root.path, reference.relativePath))
         ])
         if (!isPathWithin(resolvedFile, resolvedRoot)) {
           throw new Error('Linked-folder reference escapes the granted folder.')
         }
         return {
-          absolutePath: resolvedFile,
+          absolutePath:
+            root.access === 'ro'
+              ? await readOnlyProjection!.materialize(sessionId, resolvedFile)
+              : resolvedFile,
           name: reference.name,
           mimeType: reference.mimeType,
           allowSkillImportReference: false
@@ -165,5 +263,5 @@ export const createManagedFileReferenceResolver = (dependencies: {
     })
   }
 
-  return new FileReferenceResolver(adapters)
+  return new FileReferenceResolver(adapters, readOnlyProjection)
 }

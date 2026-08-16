@@ -255,9 +255,9 @@ const createAcpRuntime = ({
         ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
         grantedRoots: grantedRootsRepository
           ? {
-              // Read fresh per resolution so a just-removed root stops resolving immediately.
-              resolveRootPath: async (rootId) =>
-                (await grantedRootsRepository.list()).find((root) => root.id === rootId)?.path
+              // Read fresh so revocation and access changes govern every subsequent resolution.
+              resolveRoot: async (rootId) =>
+                (await grantedRootsRepository.list()).find((root) => root.id === rootId)
             }
           : undefined,
         notebook: {

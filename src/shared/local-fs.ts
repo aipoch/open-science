@@ -54,7 +54,8 @@ export type GrantedLocalRoot = {
   path: string
   // Display label: basename of the granted path.
   name: string
-  // Persistence/display only this iteration — no write enforcement reads this yet.
+  // The Agent input resolver snapshots files from read-only roots and exposes source paths only for
+  // read/write roots.
   access: GrantedLocalRootAccess
 }
 

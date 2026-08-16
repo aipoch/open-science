@@ -31,6 +31,7 @@ import {
   type AcpSetPermissionProfileRequest,
   type AcpStateSnapshot
 } from '../../shared/acp'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { type AgentFrameworkId } from '../../shared/settings'
 import type { MessageAttribution } from '../../shared/session-persistence'
 import {
@@ -167,11 +168,11 @@ type AcpRuntimeOptions = {
   }) => Promise<ResolvedAgentBackend> | ResolvedAgentBackend
   artifacts?: AcpRuntimeArtifactOptions
   uploads?: AcpRuntimeUploadOptions
-  // Resolves a granted local root id to its absolute path (backed by the GrantedLocalRoot table),
-  // enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references stay
-  // unavailable.
+  // Resolves a granted local root and its current access level (backed by the GrantedLocalRoot
+  // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
+  // stay unavailable.
   grantedRoots?: {
-    resolveRootPath: (rootId: string) => Promise<string | undefined>
+    resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
   }
   notebook?: AcpRuntimeNotebookOptions
   skillImport?: AcpRuntimeSkillImportOptions

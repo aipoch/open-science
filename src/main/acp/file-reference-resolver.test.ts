@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -190,7 +190,10 @@ describe('managed file reference resolver', () => {
     await mkdir(join(root, 'data'))
     await writeFile(join(root, 'data', 'study.csv'), 'id,value\n1,2\n')
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async (rootId) => (rootId === 'root-1' ? root : undefined) }
+      grantedRoots: {
+        resolveRoot: async (rootId) =>
+          rootId === 'root-1' ? { path: root!, access: 'rw' } : undefined
+      }
     })
 
     const resolved = await resolver.resolve(
@@ -214,10 +217,38 @@ describe('managed file reference resolver', () => {
     expect(resolved.uri).toMatch(/^file:/u)
   })
 
+  it('does not expose a read-only linked-folder source path to the Agent', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    const sourcePath = join(root, 'study.csv')
+    await writeFile(sourcePath, 'id,value\n1,2\n')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) }
+    })
+
+    const resolved = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1' },
+      {
+        id: 'linked-1',
+        name: 'study.csv',
+        source: 'linked-folder',
+        rootId: 'root-1',
+        relativePath: 'study.csv',
+        mimeType: 'text/csv'
+      }
+    )
+
+    expect(resolved.absolutePath).not.toBe(await realpath(sourcePath))
+    expect(await readFile(resolved.absolutePath, 'utf8')).toBe('id,value\n1,2\n')
+    resolver.resetSession('session-1')
+    await vi.waitFor(async () => {
+      await expect(stat(resolved.absolutePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+  })
+
   it('rejects a linked-folder reference with an unknown root id', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async () => undefined }
+      grantedRoots: { resolveRoot: async () => undefined }
     })
 
     await expect(
@@ -240,7 +271,7 @@ describe('managed file reference resolver', () => {
     await mkdir(granted)
     await writeFile(join(root, 'secret.txt'), 'outside\n')
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async () => granted }
+      grantedRoots: { resolveRoot: async () => ({ path: granted, access: 'ro' }) }
     })
 
     await expect(
@@ -264,7 +295,7 @@ describe('managed file reference resolver', () => {
     await writeFile(join(root, 'secret.txt'), 'outside\n')
     await symlink(join(root, 'secret.txt'), join(granted, 'leak.txt'))
     const resolver = createManagedFileReferenceResolver({
-      grantedRoots: { resolveRootPath: async () => granted }
+      grantedRoots: { resolveRoot: async () => ({ path: granted, access: 'ro' }) }
     })
 
     await expect(

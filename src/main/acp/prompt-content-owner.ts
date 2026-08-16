@@ -229,10 +229,12 @@ class AcpPromptContentOwner {
   }
 
   resetSession(sessionId: string): void {
+    this.options.fileReferenceResolver.resetSession(sessionId)
     this.sessionInlineImageBytes.delete(sessionId)
   }
 
   clear(): void {
+    this.options.fileReferenceResolver.clear()
     this.sessionInlineImageBytes.clear()
   }
 
