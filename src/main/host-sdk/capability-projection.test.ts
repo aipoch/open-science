@@ -17,6 +17,7 @@ const allServices = {
   artifacts: true,
   lineage: true,
   frames: true,
+  sessions: true,
   llm: true,
   currentModel: true,
   listModels: true,
@@ -46,7 +47,7 @@ const project = (
   })
 
 describe('Host capability projection', () => {
-  it('owns the complete 19-key project-native catalog', () => {
+  it('owns the complete 20-key project-native catalog', () => {
     expect(HOST_CAPABILITY_KEYS).toEqual([
       'mcp',
       'compute',
@@ -55,6 +56,7 @@ describe('Host capability projection', () => {
       'artifacts',
       'lineage',
       'frames',
+      'sessions',
       'llm',
       'currentModel',
       'listModels',
@@ -82,6 +84,7 @@ describe('Host capability projection', () => {
       submitOutput: false
     })
     expect(project({ callerRole: 'delegate' })).toMatchObject({
+      sessions: false,
       delegate: false,
       children: false,
       collect: false,
@@ -100,6 +103,18 @@ describe('Host capability projection', () => {
       messageReceipt: false,
       resolveMessage: false,
       submitOutput: false
+    })
+  })
+
+  it('advertises Session diagnostics only through the Main control route', () => {
+    expect(project()).toMatchObject({ sessions: true })
+    expect(project({ callerRole: 'delegate' })).toMatchObject({ sessions: false })
+    expect(project({ isControl: false })).toMatchObject({ sessions: false })
+    expect(project({ allowsMethod: (method) => method !== 'sessionsCall' })).toMatchObject({
+      sessions: false
+    })
+    expect(project({ services: { ...allServices, sessions: false } })).toMatchObject({
+      sessions: false
     })
   })
 

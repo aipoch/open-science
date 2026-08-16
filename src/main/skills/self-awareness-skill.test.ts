@@ -23,13 +23,13 @@ describe('self-awareness bundled Skill', () => {
     expect(skill?.description).toMatch(/JavaScript control REPL/i)
   })
 
-  it('documents the shipped 19-key JavaScript contract and read limits', async () => {
+  it('documents the shipped 20-key JavaScript contract and read limits', async () => {
     const body = await new SkillRegistry(skillsRoot).body('self-awareness')
 
     for (const phrase of [
       'repl_execute',
       'await host.capabilities()',
-      '19 known boolean keys',
+      '20 known boolean keys',
       '`mcp`',
       '`compute`',
       '`agents`',
@@ -37,6 +37,7 @@ describe('self-awareness bundled Skill', () => {
       '`artifacts`',
       '`lineage`',
       '`frames`',
+      '`sessions`',
       '`llm`',
       '`currentModel`',
       '`listModels`',
@@ -52,6 +53,8 @@ describe('self-awareness bundled Skill', () => {
       '`host.mcp(server, method, args?)`',
       '`host.artifacts(options?)`',
       '`host.artifactPath(versionId)`',
+      '`host.sessions.list(options?)`',
+      '`host.sessions.inspect(sessionId)`',
       '`host.llm(request, options?)`',
       '`host.currentModel()`',
       '`host.listModels()`',
@@ -59,10 +62,13 @@ describe('self-awareness bundled Skill', () => {
       'caps.compute === true',
       'caps.artifacts === true',
       'caps.frames === true',
+      'caps.sessions === true',
       'await host.artifacts(options)',
       'await host.artifactPath',
       'await host.frames.list(options)',
       'await host.frames.get(frameId, options)',
+      'await host.sessions.list(options)',
+      'await host.sessions.inspect(sessionId)',
       'current Project',
       'producer Frame',
       'Uploads without trusted Frame',
@@ -98,6 +104,7 @@ describe('self-awareness bundled Skill', () => {
       '`maxNodes`',
       '`rootsOnly`',
       '`branchId`',
+      '`activeConversation`',
       'graph discovery',
       'session-bound control token',
       'another Session',

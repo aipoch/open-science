@@ -204,6 +204,16 @@ type NotebookLocalRpcServerOptions = {
       context: { projectId: string; sessionId: string }
     ): Promise<unknown>
   }
+  hostSessions?: {
+    list(
+      options: unknown,
+      context: { projectId: string; sessionId: string; callerRole: 'main' }
+    ): Promise<unknown>
+    inspect(
+      sessionId: unknown,
+      context: { projectId: string; sessionId: string; callerRole: 'main' }
+    ): Promise<unknown>
+  }
   // host.agents control-plane SDK (issue 02): exposes the Specialist/catalog surface to the
   // JavaScript control-plane REPL via the extensible dispatcher. Never routed through host.mcp();
   // carries the trusted calling session identity captured outside the sandbox so switch()
@@ -353,6 +363,7 @@ const CONTROL_RPC_METHODS = new Set([
   'artifactsCall',
   'lineageCall',
   'framesCall',
+  'sessionsCall',
   'mcpCall',
   'computeCall',
   'agentsCall',
@@ -446,6 +457,7 @@ class NotebookLocalRpcServer {
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
   private readonly hostLineage: NotebookLocalRpcServerOptions['hostLineage']
   private readonly hostFrames: NotebookLocalRpcServerOptions['hostFrames']
+  private readonly hostSessions: NotebookLocalRpcServerOptions['hostSessions']
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
   private readonly delegatedWorkService: NotebookLocalRpcServerOptions['delegatedWorkService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
@@ -496,6 +508,7 @@ class NotebookLocalRpcServer {
     this.hostArtifacts = options.hostArtifacts
     this.hostLineage = options.hostLineage
     this.hostFrames = options.hostFrames
+    this.hostSessions = options.hostSessions
     this.agentsService = options.agentsService
     this.delegatedWorkService = options.delegatedWorkService
     this.skillsService = options.skillsService
@@ -1286,6 +1299,7 @@ class NotebookLocalRpcServer {
         artifacts: Boolean(this.hostArtifacts),
         lineage: Boolean(this.hostLineage),
         frames: Boolean(this.hostFrames),
+        sessions: Boolean(this.hostSessions),
         llm: Boolean(this.hostModel) && (await this.hostModel!.isLlmAvailable()),
         currentModel:
           Boolean(this.hostModel) &&
@@ -1404,6 +1418,15 @@ class NotebookLocalRpcServer {
           }
           if (method === 'framesCall' && !sessionBinding.isControl) {
             throw new RpcHttpError(403, 'host.frames requires a control-plane REPL capability.')
+          }
+          if (
+            method === 'sessionsCall' &&
+            (!sessionBinding.isControl || sessionBinding.delegatedWorkRole === 'delegate')
+          ) {
+            throw new RpcHttpError(
+              403,
+              'host.sessions requires a Main control-plane REPL capability.'
+            )
           }
           if (
             (method === 'llmCall' ||
@@ -1867,6 +1890,19 @@ class NotebookLocalRpcServer {
       if (params.op === 'list') return this.hostFrames.list(params.options, context)
       if (params.op === 'get') return this.hostFrames.get(params.frame_id, params.options, context)
       throw new Error('Unknown host Frame operation.')
+    }
+
+    if (method === 'sessionsCall') {
+      if (!this.hostSessions) throw new Error('Host Session diagnostics are not configured.')
+      const projectId = typeof params.projectId === 'string' ? params.projectId : ''
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      if (!projectId || !sessionId) {
+        throw new Error('Host Session diagnostics require a session-bound Project scope.')
+      }
+      const context = { projectId, sessionId, callerRole: 'main' as const }
+      if (params.op === 'list') return this.hostSessions.list(params.options, context)
+      if (params.op === 'inspect') return this.hostSessions.inspect(params.session_id, context)
+      throw new Error('Unknown host Session operation.')
     }
 
     if (method === 'llmCall') {

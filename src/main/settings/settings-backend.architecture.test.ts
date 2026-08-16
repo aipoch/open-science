@@ -641,6 +641,7 @@ describe('Settings backend ownership architecture', () => {
       'artifactsCall',
       'lineageCall',
       'framesCall',
+      'sessionsCall',
       'mcpCall',
       'computeCall',
       'agentsCall',

@@ -137,6 +137,7 @@ import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
 import { HostFramesService } from './notebook/host-frames-service'
+import { HostSessionsService } from './notebook/host-sessions-service'
 import { HostModelService } from './notebook/host-model-service'
 import { HostViewImageService } from './notebook/host-view-image-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
@@ -1710,6 +1711,17 @@ const createApplicationModules = async (
             mode: 'read-only'
           })
       }),
+      hostSessions: new HostSessionsService(
+        {
+          readProject: (projectId) =>
+            sessionRepository.loadProjectWithDiagnostics(projectId, { mode: 'read-only' }),
+          readSession: (projectId, sessionId) =>
+            sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+              mode: 'read-only'
+            })
+        },
+        { getSnapshot: () => runtimeRef.current?.getSnapshot() }
+      ),
       inputRegistry: notebookInputRegistry,
       agentsService,
       delegatedWorkService: delegatedWork.host,

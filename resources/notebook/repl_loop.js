@@ -1039,6 +1039,7 @@ const HOST_CAPABILITY_KNOWN_KEYS = Object.freeze([
   'artifacts',
   'lineage',
   'frames',
+  'sessions',
   'llm',
   'currentModel',
   'listModels',
@@ -1744,6 +1745,131 @@ const validatedHostRuntimeSegment = (value) => {
     throw new Error('host.frames.get returned an invalid runtime segment')
   }
   return frozenProjection(value, [...required, ...optional])
+}
+
+const HOST_SESSION_CONNECTION_STATUSES = ['idle', 'connecting', 'connected', 'error', 'closed']
+const HOST_SESSION_OBSERVATION_KINDS = [
+  'system',
+  'message',
+  'thought',
+  'tool',
+  'plan',
+  'permission',
+  'artifact',
+  'compaction',
+  'error',
+  'stop',
+  'raw'
+]
+const HOST_SESSION_OBSERVATION_LEVELS = ['info', 'warning', 'error']
+
+const validatedHostSessionRuntime = (value) => {
+  const required = [
+    'attached',
+    'prompt_in_flight',
+    'agent_prompt_in_flight',
+    'permission_pending',
+    'user_input_pending'
+  ]
+  const optional = ['connection_status']
+  if (
+    !exactObject(value, required, optional) ||
+    required.some((key) => typeof value[key] !== 'boolean') ||
+    (value.connection_status !== undefined &&
+      !HOST_SESSION_CONNECTION_STATUSES.includes(value.connection_status))
+  ) {
+    throw new Error('host.sessions returned an invalid runtime projection')
+  }
+  return Object.freeze({
+    attached: value.attached,
+    ...(value.connection_status !== undefined ? { connectionStatus: value.connection_status } : {}),
+    promptInFlight: value.prompt_in_flight,
+    agentPromptInFlight: value.agent_prompt_in_flight,
+    permissionPending: value.permission_pending,
+    userInputPending: value.user_input_pending
+  })
+}
+
+const validatedHostSessionConversation = (value) => {
+  const keys = ['frame_id', 'branch_id', 'message_count']
+  if (
+    !exactObject(value, keys) ||
+    !hostFrameString(value.frame_id) ||
+    !hostFrameString(value.branch_id) ||
+    !hostFrameCount(value.message_count)
+  ) {
+    throw new Error('host.sessions returned an invalid active conversation')
+  }
+  return Object.freeze({
+    frameId: value.frame_id,
+    branchId: value.branch_id,
+    messageCount: value.message_count
+  })
+}
+
+const validatedHostSessionObservation = (value) => {
+  const required = ['timestamp', 'kind', 'level']
+  const optional = ['status', 'title']
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.timestamp) ||
+    !HOST_SESSION_OBSERVATION_KINDS.includes(value.kind) ||
+    !HOST_SESSION_OBSERVATION_LEVELS.includes(value.level) ||
+    !hostFrameOptionalString(value.status) ||
+    !hostFrameOptionalString(value.title)
+  ) {
+    throw new Error('host.sessions returned an invalid latest observation')
+  }
+  return Object.freeze({
+    timestamp: value.timestamp,
+    kind: value.kind,
+    level: value.level,
+    ...(value.status !== undefined ? { status: value.status } : {}),
+    ...(value.title !== undefined ? { title: value.title } : {})
+  })
+}
+
+const validatedHostSession = (value) => {
+  const required = ['session_id', 'title', 'status', 'created_at', 'updated_at', 'runtime']
+  const optional = [
+    'archived_at',
+    'active_run_started_at',
+    'active_conversation',
+    'latest_observation'
+  ]
+  if (
+    !exactObject(value, required, optional) ||
+    !hostFrameString(value.session_id) ||
+    !hostFrameString(value.title) ||
+    !HOST_SESSION_STATUSES.includes(value.status) ||
+    !hostFrameString(value.created_at) ||
+    !hostFrameString(value.updated_at) ||
+    !hostFrameOptionalString(value.archived_at) ||
+    !hostFrameOptionalString(value.active_run_started_at) ||
+    !value.runtime ||
+    typeof value.runtime !== 'object' ||
+    Array.isArray(value.runtime)
+  ) {
+    throw new Error('host.sessions returned an invalid Session')
+  }
+  return Object.freeze({
+    sessionId: value.session_id,
+    title: value.title,
+    status: value.status,
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+    ...(value.archived_at !== undefined ? { archivedAt: value.archived_at } : {}),
+    ...(value.active_run_started_at !== undefined
+      ? { activeRunStartedAt: value.active_run_started_at }
+      : {}),
+    runtime: validatedHostSessionRuntime(value.runtime),
+    ...(value.active_conversation !== undefined
+      ? { activeConversation: validatedHostSessionConversation(value.active_conversation) }
+      : {}),
+    ...(value.latest_observation !== undefined
+      ? { latestObservation: validatedHostSessionObservation(value.latest_observation) }
+      : {})
+  })
 }
 
 async function framesRpc(op, params) {
@@ -2513,6 +2639,63 @@ async function hostFramesGet(frameId, options = {}) {
 
 const hostFrames = Object.freeze({ list: hostFramesList, get: hostFramesGet })
 
+const sessionsRpc = async (op, params) => {
+  if (!RPC_ENDPOINT) throw new Error(`host.sessions.${op} is unavailable: RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method: 'sessionsCall', params: { op, ...params } })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    throw new Error(`host.sessions.${op}: ${body.error || 'HTTP ' + res.status}`)
+  }
+  return body.result
+}
+
+async function hostSessionsList(options = {}) {
+  if (arguments.length > 1) {
+    throw new TypeError('host.sessions.list accepts at most one options object')
+  }
+  const result = await sessionsRpc('list', {
+    options: remappedHostObject(options, 'host.sessions.list options', {
+      archived: 'archived',
+      search: 'search',
+      limit: 'limit',
+      cursor: 'cursor'
+    })
+  })
+  const required = ['total_count', 'sessions']
+  const optional = ['next_cursor']
+  if (
+    !exactObject(result, required, optional) ||
+    !hostFrameCount(result.total_count) ||
+    !Array.isArray(result.sessions) ||
+    result.total_count < result.sessions.length ||
+    !hostFrameOptionalString(result.next_cursor)
+  ) {
+    throw new Error('host.sessions.list returned an invalid result')
+  }
+  return Object.freeze({
+    totalCount: result.total_count,
+    ...(result.next_cursor !== undefined ? { nextCursor: result.next_cursor } : {}),
+    sessions: Object.freeze(result.sessions.map(validatedHostSession))
+  })
+}
+
+async function hostSessionsInspect(sessionId) {
+  if (arguments.length !== 1) {
+    throw new TypeError('host.sessions.inspect accepts one sessionId')
+  }
+  return validatedHostSession(
+    await sessionsRpc('inspect', {
+      session_id: sessionId
+    })
+  )
+}
+
+const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessionsInspect })
+
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
 // the trusted control plane — the python/r data kernels have no host.compute, so SSH/approval always
@@ -3212,6 +3395,7 @@ const sandbox = {
     viewImage: hostViewImage,
     lineage: hostLineage,
     frames: hostFrames,
+    sessions: hostSessions,
     mcp: hostMcp,
     compute: hostCompute,
     agents: hostAgents,

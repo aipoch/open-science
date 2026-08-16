@@ -43,6 +43,7 @@ const CURRENT_PRIMARY_CAPABILITIES = [
   'host-agents',
   'host-skills',
   'host-frames',
+  'host-sessions',
   'host-llm',
   'host-message'
 ] as const
@@ -54,6 +55,7 @@ const NOTEBOOK_CONTROL_RPC_METHODS = [
   'agentsCall',
   'skillsCall',
   'framesCall',
+  'sessionsCall',
   'currentModelCall',
   'listModelsCall',
   'llmCall',
@@ -525,6 +527,12 @@ export class AcpSessionCapabilityOwner {
     }
     if (
       capabilities.includes('notebook') &&
+      policyAllowsSessionCapability(request.policy, 'host-sessions')
+    ) {
+      capabilities.push('host-sessions')
+    }
+    if (
+      capabilities.includes('notebook') &&
       policyAllowsSessionCapability(request.policy, 'host-llm')
     ) {
       capabilities.push('host-llm')
@@ -541,6 +549,7 @@ export class AcpSessionCapabilityOwner {
         capabilities.includes('host-agents') ||
         capabilities.includes('host-skills') ||
         capabilities.includes('host-frames') ||
+        capabilities.includes('host-sessions') ||
         capabilities.includes('host-llm')
           ? [...NOTEBOOK_CONTROL_RPC_METHODS]
           : []

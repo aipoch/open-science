@@ -680,6 +680,7 @@ describe('ACP session capability owner', () => {
       'host-agents',
       'host-skills',
       'host-frames',
+      'host-sessions',
       'host-llm'
     ])
     expect(primary.descriptor.modelFacingMcpServerNames).toEqual([
@@ -700,6 +701,7 @@ describe('ACP session capability owner', () => {
       'agentsCall',
       'skillsCall',
       'framesCall',
+      'sessionsCall',
       'currentModelCall',
       'listModelsCall',
       'llmCall',
@@ -761,13 +763,20 @@ describe('ACP session capability owner', () => {
           'lineageCall',
           'skillsCall',
           'framesCall',
+          'sessionsCall',
           'currentModelCall',
           'listModelsCall',
           'llmCall'
         ])
       )
       expect(built.descriptor.capabilities).toEqual(
-        expect.arrayContaining(['notebook', 'host-skills', 'host-frames', 'host-llm'])
+        expect.arrayContaining([
+          'notebook',
+          'host-skills',
+          'host-frames',
+          'host-sessions',
+          'host-llm'
+        ])
       )
       expect(built.descriptor.transport).toBe('stdio')
       expect(built.descriptor.modelFacingMcpServerNames).toContain(artifactServerName)
