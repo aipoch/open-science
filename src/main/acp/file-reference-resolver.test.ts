@@ -11,6 +11,11 @@ import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, stat: vi.fn(actual.stat) }
+})
+
 let root: string | undefined
 let disconnect: (() => Promise<void>) | undefined
 
@@ -293,6 +298,36 @@ describe('managed file reference resolver', () => {
         relativePath: 'second.txt'
       })
     ).rejects.toThrow(/Session storage limit/i)
+    resolver.clear()
+  })
+
+  it('bounds the bytes actually copied into a read-only snapshot', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    const sourcePath = join(root, 'growing.txt')
+    await writeFile(sourcePath, '1234')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) },
+      readOnlyProjectionMaxSessionBytes: 5
+    })
+    const context = { projectId: 'default-project', sessionId: 'session-1' }
+    const reference = {
+      id: 'linked-1',
+      name: 'growing.txt',
+      source: 'linked-folder' as const,
+      rootId: 'root-1',
+      relativePath: 'growing.txt'
+    }
+    const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    vi.mocked(stat).mockImplementationOnce(async (path) => {
+      const beforeGrowth = await actualFs.stat(path)
+      await writeFile(sourcePath, '123456')
+      return beforeGrowth
+    })
+
+    await expect(resolver.resolve(context, reference)).rejects.toThrow(/Session storage limit/i)
+
+    await writeFile(sourcePath, '12345')
+    await expect(resolver.resolve(context, reference)).resolves.toMatchObject({ size: 5 })
     resolver.clear()
   })
 

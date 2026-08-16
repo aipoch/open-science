@@ -1,7 +1,9 @@
-import { rmSync } from 'node:fs'
-import { copyFile, mkdtemp, realpath, rm, stat } from 'node:fs/promises'
+import { createReadStream, createWriteStream, rmSync } from 'node:fs'
+import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { Transform } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { pathToFileURL } from 'node:url'
 
 import type { FileReference } from '../../shared/artifacts'
@@ -61,12 +63,11 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
   async materialize(sessionId: string, sourcePath: string, sourceSize: number): Promise<string> {
     const generation = this.generation
     const sessionGeneration = this.sessionGenerations.get(sessionId) ?? 0
-    const reservedBytes = this.bytesBySession.get(sessionId) ?? 0
-    if (sourceSize > this.maxSessionBytes || reservedBytes + sourceSize > this.maxSessionBytes) {
+    const sessionBytes = this.bytesBySession.get(sessionId) ?? 0
+    if (sourceSize > this.maxSessionBytes - sessionBytes) {
       throw new Error('Read-only linked-folder snapshots exceed the Session storage limit.')
     }
-    this.bytesBySession.set(sessionId, reservedBytes + sourceSize)
-
+    let copiedBytes = 0
     let directory: string | undefined
     try {
       directory = await mkdtemp(join(tmpdir(), 'open-science-linked-ro-'))
@@ -81,7 +82,28 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
       directories.add(directory)
 
       const snapshotPath = join(directory, basename(sourcePath))
-      await copyFile(sourcePath, snapshotPath)
+      await pipeline(
+        createReadStream(sourcePath),
+        new Transform({
+          transform: (chunk: Buffer, _encoding, callback) => {
+            if (!this.isCurrent(sessionId, generation, sessionGeneration)) {
+              callback(new Error('Read-only linked-folder projection was superseded.'))
+              return
+            }
+            const sessionBytes = this.bytesBySession.get(sessionId) ?? 0
+            if (sessionBytes + chunk.length > this.maxSessionBytes) {
+              callback(
+                new Error('Read-only linked-folder snapshots exceed the Session storage limit.')
+              )
+              return
+            }
+            copiedBytes += chunk.length
+            this.bytesBySession.set(sessionId, sessionBytes + chunk.length)
+            callback(null, chunk)
+          }
+        }),
+        createWriteStream(snapshotPath, { flags: 'wx' })
+      )
       if (!this.isCurrent(sessionId, generation, sessionGeneration)) {
         throw new Error('Read-only linked-folder projection was superseded.')
       }
@@ -89,7 +111,7 @@ class ReadOnlyLinkedFileProjection implements FileReferenceResolverLifecycle {
     } catch (error) {
       const current = this.isCurrent(sessionId, generation, sessionGeneration)
       if (current) {
-        this.releaseReservation(sessionId, sourceSize)
+        this.releaseReservation(sessionId, copiedBytes)
       }
       if (directory) {
         const directories = this.directoriesBySession.get(sessionId)
