@@ -51,7 +51,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery, a
   // background cadence, and Retry), so this panel and the header/sidebar indicators never
-  // disagree. 'unknown' renders as Checking….
+  // disagree. 'unknown' renders as Checking…; 'probe-failed' remains retryable.
   const connectivity = useNetworkStore((state) => state.connectivity)
   const probeConnectivity = useNetworkStore((state) => state.probeConnectivity)
 
@@ -151,13 +151,21 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
           summary: t('The network link is up, but the internet is unreachable.'),
           detail: interfaceDetail
         }
-      : {
-          id: NETWORK_CHECK_ID,
-          label: networkLabel,
-          status: 'passed',
-          summary: t('The internet is reachable.'),
-          detail: interfaceDetail
-        }
+      : connectivity === 'probe-failed'
+        ? {
+            id: NETWORK_CHECK_ID,
+            label: networkLabel,
+            status: 'warning',
+            summary: t('Could not check whether the internet is reachable.'),
+            detail: interfaceDetail
+          }
+        : {
+            id: NETWORK_CHECK_ID,
+            label: networkLabel,
+            status: 'passed',
+            summary: t('The internet is reachable.'),
+            detail: interfaceDetail
+          }
 
   // 'unknown' only ever means a probe is in flight (offline settles on 'unreachable'), so it
   // always renders as Checking… — including an offline Retry.
@@ -194,7 +202,7 @@ const NetworkPanel = ({ view, onNavigate }: NetworkPanelProps): React.JSX.Elemen
               )}
             </ul>
 
-            {!isOnline || connectivity === 'unreachable' ? (
+            {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
               <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
                 <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
                   {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}

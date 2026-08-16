@@ -33,6 +33,19 @@ const buttonWithText = (text: string): HTMLButtonElement =>
   ) as HTMLButtonElement
 
 describe('NetworkPanel offline retry', () => {
+  it('shows a retry action for a failed cold-start probe', async () => {
+    Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+    useNetworkStore.setState({ isOnline: true, connectivity: 'probe-failed' })
+
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    })
+
+    expect(container.textContent).toContain('Could not check whether the internet is reachable.')
+    expect(buttonWithText('Check again')).not.toBeUndefined()
+    expect(container.textContent).not.toContain('Checking…')
+  })
+
   it('holds a checking state for at least 500ms when Check again is clicked while offline', async () => {
     await act(async () => {
       root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)

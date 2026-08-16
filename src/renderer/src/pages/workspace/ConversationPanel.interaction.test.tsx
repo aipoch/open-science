@@ -1940,6 +1940,47 @@ describe('ConversationPanel composer intake', () => {
     expect(item.textContent).toContain(reason)
   })
 
+  it('offers an explicit retry when Side chat hydration fails', () => {
+    const retryHydration = vi.fn()
+    const onStartSideChat = vi.fn()
+    const reason = 'Could not restore Side chats: IPC still unavailable'
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'session-existing',
+          projectId: 'project-a',
+          title: 'Existing session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: planOriginMessages(),
+          createdAt: 1,
+          updatedAt: 2
+        },
+        sideChatDisabledReason: reason
+      },
+      conversation: {
+        actions: {
+          sideChat: {
+            start: onStartSideChat
+          }
+        }
+      },
+      sideChat: {
+        retryHydration
+      }
+    })
+
+    const item = container.querySelector('[data-testid="menu-side-chat"]') as HTMLButtonElement
+    expect(item.disabled).toBe(false)
+    expect(item.textContent).toContain('Retry Side chat restore')
+    expect(item.textContent).toContain(reason)
+
+    act(() => item.click())
+
+    expect(retryHydration).toHaveBeenCalledOnce()
+    expect(onStartSideChat).not.toHaveBeenCalled()
+  })
+
   it('keeps Side chat disabled until the Session has a normal main conversation', () => {
     renderPanel({
       view: {

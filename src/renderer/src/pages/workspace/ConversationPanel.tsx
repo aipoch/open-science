@@ -341,6 +341,7 @@ const ConversationPanel = ({
   const {
     view: sideChat,
     send: onSendSideChat,
+    retryHydration: onRetrySideChatHydration,
     setDraft: onSideChatDraftChange,
     cancel: onCancelSideChat,
     close: onCloseSideChat
@@ -655,6 +656,7 @@ const ConversationPanel = ({
     attachments.length === 0 &&
     attachmentTransfers.length === 0 &&
     !sideChatDisabledReason
+  const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst) return
@@ -663,6 +665,7 @@ const ConversationPanel = ({
 
   const handleSideChat = (): void => {
     if (canStartSideChat) onStartSideChat()
+    else onRetrySideChatHydration?.()
   }
 
   const handleCloseSideChat = (): void => {
@@ -1536,7 +1539,7 @@ const ConversationPanel = ({
                                         <button
                                           type="button"
                                           className={composerIconButtonClassName}
-                                          disabled={!canStartSideChat}
+                                          disabled={!canStartSideChat && !canRetrySideChatHydration}
                                           aria-label={t('More send options')}
                                           data-testid="running-side-chat-menu-trigger"
                                         >
@@ -1553,7 +1556,7 @@ const ConversationPanel = ({
                               <DropdownMenuContent side="top" align="end" className="w-64">
                                 <DropdownMenuItem
                                   data-testid="menu-side-chat"
-                                  disabled={!canStartSideChat}
+                                  disabled={!canStartSideChat && !canRetrySideChatHydration}
                                   onSelect={handleSideChat}
                                   title={sideChatDisabledReason}
                                 >
@@ -1562,7 +1565,9 @@ const ConversationPanel = ({
                                     aria-hidden="true"
                                   />
                                   <span>
-                                    {t('Side chat')}
+                                    {canRetrySideChatHydration
+                                      ? t('Retry Side chat restore')
+                                      : t('Side chat')}
                                     {sideChatDisabledReason ? (
                                       <span className="block text-[11px] text-text-300">
                                         {sideChatDisabledReason}
@@ -1623,6 +1628,7 @@ const ConversationPanel = ({
                                         disabled={
                                           !canPlanFirst &&
                                           !canStartSideChat &&
+                                          !canRetrySideChatHydration &&
                                           (!effectiveCanSend || !onBranchInNewSession)
                                         }
                                         className={composerSplitSendMenuButtonClassName}
@@ -1657,7 +1663,7 @@ const ConversationPanel = ({
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     data-testid="menu-side-chat"
-                                    disabled={!canStartSideChat}
+                                    disabled={!canStartSideChat && !canRetrySideChatHydration}
                                     onSelect={handleSideChat}
                                     title={sideChatDisabledReason}
                                     className="whitespace-nowrap [@media(pointer:coarse)]:min-h-11"
@@ -1667,7 +1673,9 @@ const ConversationPanel = ({
                                       aria-hidden="true"
                                     />
                                     <span>
-                                      {t('Side chat')}
+                                      {canRetrySideChatHydration
+                                        ? t('Retry Side chat restore')
+                                        : t('Side chat')}
                                       {sideChatDisabledReason ? (
                                         <span className="block text-[11px] text-text-300">
                                           {sideChatDisabledReason}

@@ -150,6 +150,42 @@ describe('LocationStep', () => {
     expect(container.textContent).not.toContain('restart to set this up')
   })
 
+  it('shows an inline error when browsing for a location rejects', async () => {
+    window.api.storage.pickDirectory = vi
+      .fn()
+      .mockRejectedValue(new Error('Directory picker failed.'))
+    await renderStep()
+
+    await clickButton(/browse/i)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Directory picker failed.'
+    )
+  })
+
+  it('shows an inline error when inspecting a selected location rejects', async () => {
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockRejectedValue(new Error('Directory inspection failed.'))
+    await renderStep()
+
+    await clickButton(/browse/i)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Directory inspection failed.'
+    )
+    expect(container.textContent).not.toContain('/mnt/data/OpenScience')
+  })
+
   it('"Use default location" clears a previously chosen path', async () => {
     window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
     window.api.storage.inspectDataRoot = vi
