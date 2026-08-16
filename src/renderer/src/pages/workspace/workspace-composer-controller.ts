@@ -571,7 +571,16 @@ const useWorkspaceComposerController = ({
   )
   const restoreFailedSend = useCallback(
     (snapshot: ComposerSendSnapshot, preserveOnConflict = false): boolean => {
-      if ((versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version && !(preserveOnConflict && activeDraftKeyRef.current === snapshot.draftKey && docIsEmpty(doc) && attachments.length === 0 && transfers.length === 0)) {
+      if (
+        (versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version &&
+        !(
+          preserveOnConflict &&
+          activeDraftKeyRef.current === snapshot.draftKey &&
+          docIsEmpty(doc) &&
+          attachments.length === 0 &&
+          transfers.length === 0
+        )
+      ) {
         if (!preserveOnConflict) deleteAttachmentFiles(snapshot.attachments)
         return false
       }

@@ -275,11 +275,7 @@ const startPendingPrompt = (
 
     let attachments = request.attachments
     try {
-      attachments = await finalizeAttachments(
-        created.sessionId,
-        attachments,
-        request.projectId
-      )
+      attachments = await finalizeAttachments(created.sessionId, attachments, request.projectId)
       useSessionStore.getState().replaceMessageUploads({
         sessionId: created.sessionId,
         messageId: boundMessageId,

@@ -169,9 +169,7 @@ describe('workspace composer controller', () => {
     const second = hook.result.current.lifecycle.captureSend()
     act(() => hook.result.current.lifecycle.clearDraft(second.draftKey, second.version))
 
-    act(() =>
-      expect(hook.result.current.lifecycle.restoreFailedSend(first, true)).toBe(true)
-    )
+    act(() => expect(hook.result.current.lifecycle.restoreFailedSend(first, true)).toBe(true))
     expect(hook.result.current.view.doc).toEqual(textDoc('first queued intent'))
   })
 
