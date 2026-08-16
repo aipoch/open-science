@@ -615,6 +615,158 @@ describe('notebook run repository', () => {
     expect(reloaded?.runs[0].artifacts[0]).toMatchObject({ projectId: 'canonical-project' })
   })
 
+  it('keeps a matching legacy projectName document readable through loadOrCreate', async () => {
+    const root = await createStorageRoot()
+    const runJsonPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    const legacyDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    delete legacyDocument.projectId
+    legacyDocument.projectName = 'default-project'
+    legacyDocument.artifactSessionId = 'artifact-session-1'
+    await writeFile(runJsonPath, JSON.stringify(legacyDocument, null, 2), 'utf8')
+
+    const document = await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      workspaceCwd: '/relocated-workspace'
+    })
+
+    expect(document).toMatchObject({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      artifactSessionId: 'artifact-session-1',
+      workspaceCwd: '/relocated-workspace'
+    })
+  })
+
+  it('rejects a project ownership mismatch before caching or changing the root document', async () => {
+    const root = await createStorageRoot()
+    const runJsonPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
+    await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      workspaceCwd: '/workspace'
+    })
+    const misplacedDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    misplacedDocument.projectId = 'other-project'
+    const original = JSON.stringify(misplacedDocument, null, 2)
+    await writeFile(runJsonPath, original, 'utf8')
+    const repository = new NotebookRunRepository(root)
+
+    await expect(repository.findExisting('default-project', 'session-1')).rejects.toThrow(
+      'Notebook run document ownership mismatch: requested projectId "default-project", but run.json declares "other-project".'
+    )
+
+    expect(await readFile(runJsonPath, 'utf8')).toBe(original)
+    const cache = repository as unknown as { documentCache: Map<string, unknown> }
+    expect(cache.documentCache.size).toBe(0)
+  })
+
+  it('does not treat a session ownership mismatch as ENOENT in loadOrCreate', async () => {
+    const root = await createStorageRoot()
+    const runJsonPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    const misplacedDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    misplacedDocument.sessionId = 'other-session'
+    misplacedDocument.runs = [{ sentinel: 'must-not-be-replaced' }]
+    const original = JSON.stringify(misplacedDocument, null, 2)
+    await writeFile(runJsonPath, original, 'utf8')
+    const repository = new NotebookRunRepository(root)
+
+    await expect(
+      repository.loadOrCreate({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        lane,
+        workspaceCwd: '/workspace'
+      })
+    ).rejects.toThrow(
+      'Notebook run document ownership mismatch: requested sessionId "session-1", but run.json declares "other-session".'
+    )
+
+    expect(await readFile(runJsonPath, 'utf8')).toBe(original)
+  })
+
+  it('rejects a canonical projectId mismatch even when legacy projectName matches', async () => {
+    const root = await createStorageRoot()
+    const runJsonPath = join(root, 'notebooks', 'default-project', 'session-1', 'run.json')
+    await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
+      workspaceCwd: '/workspace'
+    })
+    const misplacedDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    misplacedDocument.projectId = 'canonical-other-project'
+    misplacedDocument.projectName = 'default-project'
+    await writeFile(runJsonPath, JSON.stringify(misplacedDocument, null, 2), 'utf8')
+
+    await expect(
+      new NotebookRunRepository(root).findExisting('default-project', 'session-1')
+    ).rejects.toThrow(/requested projectId "default-project".*"canonical-other-project"/)
+  })
+
+  it('rejects a mismatched Frame document before continuing a mutation', async () => {
+    const root = await createStorageRoot()
+    const lane = createFrameNotebookLane('default-project', 'session-1', 'child-frame-1')
+    const runJsonPath = join(
+      root,
+      'notebooks',
+      'default-project',
+      'session-1',
+      'frames',
+      'child-frame-1',
+      'run.json'
+    )
+    await new NotebookRunRepository(root).loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      lane,
+      workspaceCwd: '/workspace'
+    })
+    const misplacedDocument = JSON.parse(await readFile(runJsonPath, 'utf8'))
+    misplacedDocument.sessionId = 'other-session'
+    const original = JSON.stringify(misplacedDocument, null, 2)
+    await writeFile(runJsonPath, original, 'utf8')
+
+    await expect(
+      new NotebookRunRepository(root).appendRun({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        lane,
+        run: {
+          runId: 'must-not-be-appended',
+          cellId: 'cell-1',
+          source: 'agent',
+          kernelKind: 'python',
+          script: '1',
+          status: 'completed',
+          startedAt: 1,
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          artifacts: [],
+          workingFiles: []
+        }
+      })
+    ).rejects.toThrow(/requested sessionId "session-1".*"other-session"/)
+
+    expect(await readFile(runJsonPath, 'utf8')).toBe(original)
+  })
+
   it('keeps an explicit kernelKind when loading a run record from disk', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

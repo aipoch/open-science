@@ -25,6 +25,12 @@ const MAX_DOCUMENT_READ_ATTEMPTS = 2
 
 type DocumentFileIdentity = { mtimeMs: number; size: number; ino: number }
 
+type PersistedNotebookDocumentScope = {
+  projectId?: unknown
+  projectName?: unknown
+  sessionId?: unknown
+}
+
 const sameDocumentFileIdentity = (
   left: DocumentFileIdentity,
   right: DocumentFileIdentity
@@ -84,6 +90,37 @@ const isMissingFileError = (error: unknown): boolean =>
   error !== null &&
   'code' in error &&
   (error as { code?: unknown }).code === 'ENOENT'
+
+const persistedScopeValue = (value: unknown): string =>
+  value === undefined || value === null ? '<missing>' : (JSON.stringify(value) ?? String(value))
+
+// The physical notebooks/<projectId>/<sessionId>/run.json path is the ownership boundary. Validate
+// the persisted identity before decoding paths or normalizing request-derived fields so a misplaced
+// document can never be silently adopted by its containing directory.
+function assertNotebookDocumentOwnership(
+  document: unknown,
+  projectId: string,
+  sessionId: string
+): asserts document is NotebookRunDocument {
+  if (!document || typeof document !== 'object') {
+    throw new Error('Notebook run document ownership mismatch: run.json has no document scope.')
+  }
+
+  const scope = document as PersistedNotebookDocumentScope
+  const documentProjectId = scope.projectId ?? scope.projectName
+  if (documentProjectId !== projectId) {
+    throw new Error(
+      `Notebook run document ownership mismatch: requested projectId ${JSON.stringify(projectId)}, ` +
+        `but run.json declares ${persistedScopeValue(documentProjectId)}.`
+    )
+  }
+  if (scope.sessionId !== sessionId) {
+    throw new Error(
+      `Notebook run document ownership mismatch: requested sessionId ${JSON.stringify(sessionId)}, ` +
+        `but run.json declares ${persistedScopeValue(scope.sessionId)}.`
+    )
+  }
+}
 
 // Returns the shared runtime installation root used by notebook system instructions.
 const getRuntimeRoot = (storageRoot: string): string => join(storageRoot, 'runtime')
@@ -228,6 +265,7 @@ const normalizeDocument = (
   request: NormalizeNotebookRunDocumentRequest,
   document: NotebookRunDocument
 ): NotebookRunDocument => {
+  assertNotebookDocumentOwnership(document, request.projectId, request.sessionId)
   const storageProjectId = assertSafeNotebookPathSegment(request.projectId)
   const projectId = assertSafeNotebookPathSegment(document.projectId)
   const sessionId = assertSafeNotebookPathSegment(request.sessionId)
@@ -287,7 +325,8 @@ class NotebookRunRepository {
 
     try {
       const rawDocument = await readFile(filePath, 'utf8')
-      const document = JSON.parse(rawDocument) as NotebookRunDocument
+      const document: unknown = JSON.parse(rawDocument)
+      assertNotebookDocumentOwnership(document, projectId, sessionId)
       // Decode $DATA sentinels against the current data root before recomputing session roots,
       // so a relocated data root and the decoded working-file paths agree.
       const decoded = decodeRunDocumentDataPaths(document, this.storageRoot)
@@ -635,13 +674,15 @@ class NotebookRunRepository {
       const fileInfo = await stat(filePath)
       const cached = this.documentCache.get(filePath)
       if (cached && sameDocumentFileIdentity(cached, fileInfo)) {
+        assertNotebookDocumentOwnership(cached.document, safeProjectId, safeSessionId)
         // Refresh insertion order so the Map also acts as a small LRU.
         this.documentCache.delete(filePath)
         this.documentCache.set(filePath, cached)
         return cached.document
       }
       const rawDocument = await readFile(filePath, 'utf8')
-      const document = JSON.parse(rawDocument) as NotebookRunDocument
+      const document: unknown = JSON.parse(rawDocument)
+      assertNotebookDocumentOwnership(document, safeProjectId, safeSessionId)
       // Decode before normalization for the same reason as loadOrCreate above.
       const decoded = decodeRunDocumentDataPaths(document, this.storageRoot)
 
