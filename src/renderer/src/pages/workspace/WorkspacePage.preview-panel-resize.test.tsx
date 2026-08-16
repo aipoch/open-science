@@ -138,10 +138,6 @@ vi.mock('@/components/ui/resizable', () => ({
   )
 }))
 
-vi.mock('@/lib/session-persistence/session-persistence', () => ({
-  useSessionPersistence: () => true
-}))
-
 vi.mock('@/lib/preview-persistence/preview-persistence', () => ({
   usePreviewPersistence: vi.fn()
 }))

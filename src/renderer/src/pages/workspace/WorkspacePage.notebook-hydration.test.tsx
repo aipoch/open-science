@@ -27,10 +27,6 @@ vi.mock('@/components/ui/resizable', () => ({
   ResizableHandle: (): React.JSX.Element => <div data-testid="resize-handle" />
 }))
 
-vi.mock('@/lib/session-persistence/session-persistence', () => ({
-  useSessionPersistence: () => true
-}))
-
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
     actionError: null,
