@@ -401,7 +401,7 @@ export class ComputeJobWorkflowOwner {
         `Session concurrency limit must be an integer in the range 1..500 (got ${limit}).`
       )
     }
-    this.concurrencyManager.setSessionLimit(sessionId, limit)
+    await this.concurrencyManager.setSessionLimit(sessionId, limit)
   }
 
   async getSessionConcurrencyStatus(sessionId: string): Promise<SessionStatus> {

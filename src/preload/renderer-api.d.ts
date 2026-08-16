@@ -681,7 +681,7 @@ export interface OpenScienceAPI {
     ): Promise<void>
     // Scratch root: set path and mark pinned.
     scratchSet(providerId: string, path: string): Promise<void>
-    // Concurrent job limit: store 1..500 (not enforced in Phase 1).
+    // Enforced concurrent job limit: set 1..500.
     concurrencySet(providerId: string, limit: number): Promise<void>
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest(listener: (request: ComputeApprovalRequest) => void): () => void

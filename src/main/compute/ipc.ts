@@ -149,7 +149,7 @@ type ComputeHandlers = {
   ) => Promise<void>
   // Scratch root: set path and mark pinned.
   scratchSet: (providerId: string, path: string) => Promise<void>
-  // Concurrent job limit: store 1..500 (not enforced in Phase 1).
+  // Enforced concurrent job limit: set 1..500.
   concurrencySet: (providerId: string, limit: number) => Promise<void>
   // Session-level concurrency control (Phase 3c, issue 04).
   setSessionConcurrencyLimit: (sessionId: string, limit: number) => Promise<void>

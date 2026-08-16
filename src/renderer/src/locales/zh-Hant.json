@@ -2456,7 +2456,7 @@
   "Open {{name}} in split view beside the session": "在工作階段旁的分割檢視中開啟 {{name}}",
   "Preview uploaded file {{name}}": "預覽已上傳的檔案 {{name}}",
   "Skills aren't available with {{name}}; use Claude Code for skill-based workflows.": "{{name}} 不支援 Skill；請使用 Claude Code 執行以 Skill 為基礎的工作流程。",
-  "Maximum jobs running at the same time on this host (1–500).": "此主機上可同時執行的工作數上限（1–500）。",
+  "New jobs wait when this host reaches the limit (1–500). Lowering the limit does not stop running jobs.": "此主機達到上限（1–500）後，新工作將等待。降低上限不會停止執行中的工作。",
   "Remote access couldn't be loaded.": "無法載入遠端存取。",
   "{{fileName}} was saved. No location is shown here.": "已儲存 {{fileName}}。此處不會顯示儲存位置。",
   "Only checked Skills are bundled. Connector names are imported as selected references; full access can only be chosen later in the configuration page.": "僅封裝選取的 Skill。連接器名稱會作為選取的參照匯入；完整存取權只能稍後在設定頁面中選擇。",

@@ -618,7 +618,9 @@ export function ComputeHostDetail({
           <div className="min-w-0">
             <h4 className="text-sm font-medium text-foreground">{t('Concurrent job limit')}</h4>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {t('Maximum jobs running at the same time on this host (1–500).')}
+              {t(
+                'New jobs wait when this host reaches the limit (1–500). Lowering the limit does not stop running jobs.'
+              )}
             </p>
           </div>
           {!isEditingConcurrency ? (

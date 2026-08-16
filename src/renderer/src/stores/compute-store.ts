@@ -32,7 +32,7 @@ type ComputeStore = ComputeStoreData & {
   saveDetails: (providerId: string, text: string, oldText: string) => Promise<void>
   // Sets the scratch root path and marks the host as pinned.
   setScratch: (providerId: string, path: string) => Promise<void>
-  // Sets the concurrent job limit (1..500). Phase 1 stores but does not enforce.
+  // Sets the enforced concurrent job limit (1..500).
   setConcurrency: (providerId: string, limit: number) => Promise<void>
   // Queues an incoming approval request (from the main-process compute gate).
   enqueueApproval: (request: ComputeApprovalRequest) => void
@@ -160,7 +160,7 @@ export const useComputeStore = create<ComputeStore>((set) => ({
     }
   },
 
-  // Stores the concurrent job limit. Merges the updated host into cache.
+  // Updates the concurrent job limit. Merges the updated host into cache.
   setConcurrency: async (providerId, limit) => {
     await window.api.compute.concurrencySet(providerId, limit)
     const updatedHost = await window.api.compute.get(providerId)

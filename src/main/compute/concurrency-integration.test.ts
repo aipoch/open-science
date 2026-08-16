@@ -182,6 +182,60 @@ describe('ConcurrencyManager integration with ComputeService', () => {
     expect(job2?.status).toBe('queued')
   })
 
+  it('promotes queued work when the provider ceiling is raised', async () => {
+    const providerId = computeProviderId('test-host')
+    await service.setConcurrencyLimit(providerId, 1)
+
+    await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    const queued = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-2', projectId: 'project-1' }
+    )
+    expect(queued.status).toBe('queued')
+
+    await service.setConcurrencyLimit(providerId, 2)
+
+    await vi.waitFor(async () => {
+      expect((await jobRepo.get(queued.job_id))?.status).toBe('submitted')
+    })
+  })
+
+  it('promotes queued work when the session limit is raised', async () => {
+    const providerId = computeProviderId('test-host')
+    await service.setSessionConcurrencyLimit('session-1', 1)
+
+    await service.submitJob(
+      providerId,
+      'job 1',
+      'echo one',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    const queued = await service.submitJob(
+      providerId,
+      'job 2',
+      'echo two',
+      {},
+      { sessionId: 'session-1', projectId: 'project-1' }
+    )
+    expect(queued.status).toBe('queued')
+
+    await service.setSessionConcurrencyLimit('session-1', 2)
+
+    await vi.waitFor(async () => {
+      expect((await jobRepo.get(queued.job_id))?.status).toBe('submitted')
+    })
+  })
+
   it('should throw queue_full error when 100 jobs are already queued', async () => {
     const providerId = computeProviderId('test-host')
 

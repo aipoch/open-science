@@ -201,6 +201,9 @@ describe('ComputeHostDetail i18n', () => {
     expect(container.textContent).toContain('临时目录')
     expect(container.textContent).toContain('已固定')
     expect(container.textContent).toContain('并发作业上限')
+    expect(container.textContent).toContain(
+      '此主机达到上限（1–500）后，新任务将等待。降低上限不会停止正在运行的任务。'
+    )
     expect(container.textContent).toContain('10（默认）')
     expect(container.textContent).not.toContain('Concurrent job limit')
 
@@ -208,6 +211,9 @@ describe('ComputeHostDetail i18n', () => {
     expect(container.textContent).toContain('暫存目錄')
     expect(container.textContent).toContain('已釘選')
     expect(container.textContent).toContain('並行工作上限')
+    expect(container.textContent).toContain(
+      '此主機達到上限（1–500）後，新工作將等待。降低上限不會停止執行中的工作。'
+    )
     expect(container.textContent).toContain('10（預設）')
     expect(container.textContent).not.toContain('{{')
 

@@ -2456,7 +2456,7 @@
   "Open {{name}} in split view beside the session": "在会话旁的拆分视图中打开 {{name}}",
   "Preview uploaded file {{name}}": "预览上传的文件 {{name}}",
   "Skills aren't available with {{name}}; use Claude Code for skill-based workflows.": "{{name}} 不支持 Skill；请使用 Claude Code 运行基于 Skill 的工作流。",
-  "Maximum jobs running at the same time on this host (1–500).": "此主机上可同时运行的最大任务数（1–500）。",
+  "New jobs wait when this host reaches the limit (1–500). Lowering the limit does not stop running jobs.": "此主机达到上限（1–500）后，新任务将等待。降低上限不会停止正在运行的任务。",
   "Remote access couldn't be loaded.": "无法加载远程访问。",
   "{{fileName}} was saved. No location is shown here.": "已保存 {{fileName}}。此处不会显示保存位置。",
   "Only checked Skills are bundled. Connector names are imported as selected references; full access can only be chosen later in the configuration page.": "仅打包选中的 Skill。连接器名称会作为选中的引用导入；完整访问权限只能稍后在配置页面中选择。",
