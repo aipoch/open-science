@@ -109,15 +109,15 @@ open-science project create "Systematic review" --description "Evidence review w
 open-science project list --json
 ```
 
-Commands that accept `--project` require the project ID returned by `project list`. Project display
-names are not accepted as routing identifiers.
+Commands that accept `--project` allow either a project ID or an exact project name. The CLI resolves
+a unique display name to its ID before calling the Task API; use the ID when names are duplicated.
 
 ## Run a task
 
 Provide a prompt directly, read it from a UTF-8 file, or pipe it through stdin:
 
 ```bash
-open-science run --project <project-id> --prompt "Summarize the evidence" --wait
+open-science run --project "Systematic review" --prompt "Summarize the evidence" --wait
 open-science run --project <project-id> --prompt-file ./task.md --wait --json
 open-science run --project <project-id> --cwd ./research --prompt-file ./task.md --wait --json
 printf '%s\n' "Summarize the evidence" | open-science run --project <project-id> --wait --json

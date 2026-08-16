@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 import { findServiceState, readWebToken, resolveConfigRoot, STATE_FILE } from './config-root.mjs'
 import { codexLoginCommand } from './codex-login.mjs'
-import { connectToOpenScience } from './index.mjs'
+import { connectToOpenScience, OpenScienceApiError } from './index.mjs'
 import { locateApp } from './locate-app.mjs'
 
 const DEFAULT_PORT = 44100
@@ -30,7 +30,7 @@ Commands:
   codex login [--force]
   project list
   project create <name> [--description <text>]
-  run --project <id> (--prompt <text> | --prompt-file <path>) [--wait]
+  run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--wait]
   run status <run-id>
   run cancel <run-id>
   session status <session-id>
@@ -43,7 +43,7 @@ Options:
   --app-path <path>      Installed Open Science executable
   --config-root <path>   Config directory override
   --data-root <path>     Current Data Root override (rollback only)
-  --project <id>         Project id
+  --project <id-or-name> Project id or exact name
   --session <id>         Resume an existing session
   --cwd <path>           Working directory for a new or matching existing session
   --prompt <text>        Prompt text (or read stdin when omitted)
@@ -632,6 +632,18 @@ const readPrompt = async (options, deps) => {
   return (await deps.readStdin()).trim()
 }
 
+const resolveCliProjectId = async (client, selector) => {
+  const projects = await client.listProjects()
+  const byId = projects.find((project) => project.id === selector)
+  if (byId) return byId.id
+  const byName = projects.filter((project) => project.name === selector)
+  if (byName.length === 1) return byName[0].id
+  if (byName.length > 1) {
+    throw new CliUsageError(`Project name is ambiguous: ${selector}. Use a project ID.`)
+  }
+  throw new OpenScienceApiError(`Project not found: ${selector}`, { code: 'project_not_found' })
+}
+
 const emitRunEvent = (event, options, deps) => {
   if (options.jsonl) {
     deps.log(JSON.stringify(event))
@@ -734,6 +746,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   }
   if (command === 'run') {
     if (!options.project) throw new CliUsageError('--project is required.')
+    const projectId = await resolveCliProjectId(client, options.project)
     const prompt = await readPrompt(options, deps)
     if (!prompt) throw new CliUsageError('Prompt is required.')
     const sessionIdRef = { current: options.session, pending: [] }
@@ -749,7 +762,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     let result
     try {
       const started = await client.startRun({
-        project: options.project,
+        project: projectId,
         prompt,
         ...(options.cwd ? { cwd: resolve(options.cwd) } : {}),
         ...(options.session ? { sessionId: options.session } : {}),
