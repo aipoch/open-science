@@ -75,7 +75,7 @@ describe('HeadlessTaskApi adapter', () => {
     )
   })
 
-  it('reads and responds to a Session Plan through direct Task controls', async () => {
+  it('reads and responds to a Session Plan through the Task command view', async () => {
     const persisted: PersistedChatSession = {
       id: 'session-plan',
       projectId: project.id,
@@ -94,24 +94,17 @@ describe('HeadlessTaskApi adapter', () => {
       approval: 'pending',
       lifecycle: 'awaiting_approval'
     } as never
-    const getProjection = vi.fn(async () => projection)
-    const respond = vi.fn(async () => ({ projection, changed: true }))
-    const api = new HeadlessTaskApi({
-      commands: commandsFrom(async (channel) => {
-        if (channel === 'sessions:load-all') {
-          return { sessions: [persisted], manifest: { version: 1 } }
-        }
-        throw new Error(`Unexpected Task command: ${channel}`)
-      }),
-      agent: createAgent(),
-      controls: {
-        specialists: { resolve: async (reference) => ({ id: reference }) },
-        plans: { getProjection, respond },
-        reviewer: {
-          triggerReview: async () => ({ started: false, reason: 'already-reviewed' }),
-          getForSession: async () => []
-        }
+    const commandInvoke = vi.fn(async (channel: string) => {
+      if (channel === 'sessions:load-all') {
+        return { sessions: [persisted], manifest: { version: 1 } }
       }
+      if (channel === 'acp:get-plan-projection') return projection
+      if (channel === 'acp:respond-plan') return { projection, changed: true }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(commandInvoke),
+      agent: createAgent()
     })
 
     await expect(api.getSessionPlan(persisted.id)).resolves.toBe(projection)
@@ -123,17 +116,21 @@ describe('HeadlessTaskApi adapter', () => {
       })
     ).resolves.toEqual({ projection, changed: true })
 
-    expect(getProjection).toHaveBeenCalledWith(project.id, persisted.id)
-    expect(respond).toHaveBeenCalledWith({
-      projectId: project.id,
-      sessionId: persisted.id,
-      decision: 'approved',
-      artifactVersionId: 'plan-version',
-      expectedRevision: 3
-    })
+    expect(commandInvoke).toHaveBeenCalledWith('acp:get-plan-projection', expect.anything(), [
+      project.id,
+      persisted.id
+    ])
+    expect(commandInvoke).toHaveBeenCalledWith('acp:respond-plan', expect.anything(), [
+      {
+        projectId: project.id,
+        sessionId: persisted.id,
+        decision: 'approved',
+        artifactVersionId: 'plan-version',
+        expectedRevision: 3
+      }
+    ])
     api.dispose()
   })
-
   it('exposes Task Run progress through one subscription seam', async () => {
     const invoke = vi.fn(async (channel: string) => {
       if (channel === 'projects:list') return [project]

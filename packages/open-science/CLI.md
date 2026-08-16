@@ -186,20 +186,19 @@ open-science run \
   --json
 ```
 
-- --plan-first marks this turn as Plan First. The Run remains running while its generated Plan
+- `--plan-first` marks this turn as Plan First. The Run remains running while its generated Plan
   waits for an explicit response.
-- --auto-review and --no-auto-review update the Session automatic-review setting. When enabled, a
+- `--auto-review` and `--no-auto-review` update the Session automatic-review setting. When enabled, a
   successful turn starts the existing reviewer workflow before the Run becomes terminal; the Run
-  review property reports whether it started and its final lifecycle/outcome.
-- --specialist accepts a Specialist UUID or stable Profile name. It binds only a new Session. An
-  existing Session cannot be rebound, and a presentation displayName is not an identifier.
-- --delegation allow|deny updates whether the Session may create new delegated children. deny does
-  not cancel, hide, or prevent collection/messaging of children admitted earlier.
+  `review` property reports whether it started and its final lifecycle/outcome.
+- `--specialist` accepts a Specialist UUID or stable Profile name. It binds only a new Session. An
+  existing Session cannot be rebound, and a presentation `displayName` is not an identifier.
+- `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
+  does not cancel, hide, or prevent collection/messaging of children admitted earlier.
 
-Ordinary --wait retains its terminal-only behavior. Add --return-on-attention to return a
-still-running Run when automation must respond to a Plan, permission, or delegated question. The
-current release projects Plan approval as structured Run attention; permission and delegated
-question events remain available from the event stream.
+Ordinary `--wait` retains its terminal-only behavior. Add `--return-on-attention` to return a
+still-running Run when its Plan needs approval. Plan approval is the only structured Run attention
+in this release; permission and delegated-question events do not cause an attention return.
 
 Inspect and respond to an active Plan with its exact version and revision:
 
@@ -217,8 +216,8 @@ continues the parked Run; feedback asks the live Plan interaction for a revision
 
 The controls use the Session JSON authority; they do not add a Prisma/SQLite migration:
 
-- This change adds delegationPolicy with values allow or deny. Historical Session files that omit
-  it, and malformed values, restore as allow.
+- Session JSON stores `delegationPolicy` with values `allow` or `deny`. Historical Session files
+  that omit it, and malformed values, restore as `allow`.
 - autoReviewEnabled and specialistId already existed and are reused. Historical
   autoReviewEnabled omissions remain disabled; an omitted specialistId remains Main Agent.
 - Plan artifacts/approval/continuation continue under runtimeContext.plan; delegated attempts,
@@ -257,13 +256,13 @@ open-science run \
 
 Exit codes form part of the automation contract:
 
-| Exit code | Meaning                                                       |
-| --------- | ------------------------------------------------------------- |
-| `0`       | The command succeeded, including a completed waited run.      |
-| `1`       | A run failed or a general command failure occurred.           |
-| `2`       | CLI usage was invalid.                                        |
-| `3`       | The local daemon was unavailable.                             |
-| `4`       | A requested project, run, session, or artifact was not found. |
+| Exit code | Meaning                                                                   |
+| --------- | ------------------------------------------------------------------------- |
+| `0`       | The command succeeded, including a completed waited run.                  |
+| `1`       | A run failed or a general command failure occurred.                       |
+| `2`       | CLI usage was invalid.                                                    |
+| `3`       | The local daemon was unavailable.                                         |
+| `4`       | A requested project, run, session, artifact, or Specialist was not found. |
 
 Timeouts and `session_busy` conflicts use exit code `1` and retain their distinct `timeout` and
 `session_busy` error codes in structured output.

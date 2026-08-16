@@ -412,7 +412,7 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledTimes(humanCallers.length)
   })
 
-  it('routes Plan decisions and revision feedback only from a current human', async () => {
+  it('routes Plan decisions and revision feedback from current humans and Task automation', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -440,7 +440,24 @@ describe('ACP application commands', () => {
         acpCommands.respondPlan,
         invocation([request], createTaskCallerContext())
       )
-    ).rejects.toThrow('Only a current human caller can respond to a Session Plan.')
+    ).resolves.toMatchObject({ changed: true })
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation([request], createTaskCallerContext({ isAuthorizationCurrent: () => false }))
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation(
+          [request],
+          createWebCallerContext('agent-origin', { actionOrigin: 'agent-session' })
+        )
+      )
+    ).rejects.toThrow(
+      'Only a current human or Task automation caller can respond to a Session Plan.'
+    )
   })
 
   it('checks archive availability before resetting Session context or compacting', async () => {
@@ -770,7 +787,7 @@ describe('ACP application commands', () => {
     expect(respondDelegatedQuestion).not.toHaveBeenCalled()
   })
 
-  it('exposes Plan projection reads to the same current human callers on Electron and Web', async () => {
+  it('exposes Plan projection reads to current humans and Task automation', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -793,7 +810,7 @@ describe('ACP application commands', () => {
         acpCommands.getPlanProjection,
         invocation(['project-1', 'session-1'], createTaskCallerContext())
       )
-    ).rejects.toThrow('Only a current human caller can access a Session Plan.')
+    ).resolves.toBeNull()
     await expect(
       router.dispatcher.invoke(
         acpCommands.getPlanProjection,
@@ -804,7 +821,9 @@ describe('ACP application commands', () => {
       )
     ).rejects.toThrow('Caller authorization is no longer current.')
 
-    expect(dependencies.runtime.getSessionPlanProjection).toHaveBeenCalledTimes(humanCallers.length)
+    expect(dependencies.runtime.getSessionPlanProjection).toHaveBeenCalledTimes(
+      humanCallers.length + 1
+    )
   })
 
   it('accepts structured answers only from a current human-originated caller', async () => {

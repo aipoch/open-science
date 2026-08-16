@@ -1157,6 +1157,49 @@ describe('SessionPersistenceCoordinator', () => {
     expect(durable).toMatchObject({ title: 'Renderer rename', archivedAt: 10 })
   })
 
+  it('updates delegation policy through its dedicated durable Session owner', async () => {
+    const previousUpdatedAt = Date.now() + 10_000
+    let durable = createSession({ delegationPolicy: 'allow', updatedAt: previousUpdatedAt })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.setSessionDelegationPolicy('project-1', 'session-1', 'deny')
+    ).resolves.toMatchObject({ delegationPolicy: 'deny' })
+
+    expect(durable.delegationPolicy).toBe('deny')
+    expect(durable.updatedAt).toBeGreaterThan(previousUpdatedAt)
+  })
+
+  it('preserves main-owned delegation policy on an ordinary existing-Session save', async () => {
+    let durable = createSession({ delegationPolicy: 'deny' })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi.fn(async () => ({
+        status: 'found' as const,
+        session: durable
+      })),
+      saveSession: vi.fn(async (session) => {
+        durable = structuredClone(session)
+      })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(
+      coordinator.saveSession(
+        createSession({ title: 'Renderer rename', delegationPolicy: 'allow' })
+      )
+    ).resolves.toMatchObject({ title: 'Renderer rename', delegationPolicy: 'deny' })
+    expect(durable.delegationPolicy).toBe('deny')
+  })
+
   it('updates enabled Compute Hosts through the durable Session owner', async () => {
     const previousUpdatedAt = Date.now() + 10_000
     let durable = createSession({

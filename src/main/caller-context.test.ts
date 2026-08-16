@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ClientLeaseRegistry,
   callerContextForEvent,
+  canAccessSessionPlan,
   canSatisfyHumanApproval,
   createCallerContext,
   createElectronCallerContext,
@@ -53,6 +54,15 @@ describe('caller context', () => {
     expect(hasCallerAuthority(context, 'manage-remote-pairing')).toBe(true)
     current = false
     expect(hasCallerAuthority(context, 'manage-remote-pairing')).toBe(false)
+  })
+
+  it('grants current Task automation only the Session Plan capability', () => {
+    const currentTask = createTaskCallerContext()
+    const staleTask = createTaskCallerContext({ isAuthorizationCurrent: () => false })
+
+    expect(canSatisfyHumanApproval(currentTask)).toBe(false)
+    expect(canAccessSessionPlan(currentTask)).toBe(true)
+    expect(canAccessSessionPlan(staleTask)).toBe(false)
   })
 
   it('never treats an agent-originated action as a human approval', () => {

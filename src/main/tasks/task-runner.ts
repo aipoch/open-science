@@ -50,6 +50,7 @@ type TaskProjectPort = {
 type TaskSessionPort = {
   list(): Promise<PersistedChatSession[]>
   save(session: PersistedChatSession): Promise<void>
+  setDelegationPolicy(projectId: string, sessionId: string, policy: DelegationPolicy): Promise<void>
 }
 
 type TaskPreviewResourcePort = {
@@ -738,6 +739,14 @@ class TaskRunner {
           createdAt: now,
           updatedAt: now
         }
+
+    if (existing && request.delegationPolicy !== undefined) {
+      const setDelegationPolicy = this.dependencies.sessions.setDelegationPolicy
+      if (!setDelegationPolicy) {
+        throw new Error('Task delegation policy control is unavailable.')
+      }
+      await setDelegationPolicy(project.id, existing.id, request.delegationPolicy)
+    }
 
     // Starting a new authored turn consumes the old Resume authority. History replay remains durable
     // until the provider accepts this replacement turn, so a pre-acceptance rejection can retry it.

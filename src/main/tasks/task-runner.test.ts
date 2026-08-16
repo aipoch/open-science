@@ -44,13 +44,21 @@ const session: PersistedChatSession = {
   updatedAt: 2
 }
 
-const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunner =>
-  new TaskRunner({
+type TaskRunnerOverrides = Omit<Partial<TaskRunnerDependencies>, 'sessions'> & {
+  sessions?: Partial<TaskSessionPort>
+}
+
+const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
+  const defaultSessions: TaskSessionPort = {
+    list: async () => [],
+    save: async () => undefined,
+    setDelegationPolicy: async () => undefined
+  }
+  return new TaskRunner({
     projects: {
       list: async () => [project],
       create: async (request) => ({ ...project, ...request })
     },
-    sessions: { list: async () => [], save: async () => undefined },
     previewResources: {
       acquire: async () => ({ id: 'resource-1', url: 'preview://resource-1', size: 0 }),
       release: async () => undefined
@@ -72,9 +80,10 @@ const createRunner = (overrides: Partial<TaskRunnerDependencies> = {}): TaskRunn
     reviewer: { review: async () => ({ started: true }) },
     createId: () => 'generated-id',
     now: () => 1,
-    ...overrides
+    ...overrides,
+    sessions: { ...defaultSessions, ...overrides.sessions }
   })
-
+}
 describe('TaskRunner', () => {
   it('lists projects through its public interface', async () => {
     const projects: TaskProjectPort = {
@@ -111,7 +120,8 @@ describe('TaskRunner', () => {
     }
     const sessions: TaskSessionPort = {
       list: async () => [session],
-      save: async () => undefined
+      save: async () => undefined,
+      setDelegationPolicy: async () => undefined
     }
     const runner = createRunner({ projects, sessions })
 
@@ -573,6 +583,31 @@ describe('TaskRunner', () => {
       kind: 'plan-approval',
       plan: { artifactVersionId: 'plan-version', revision: 2 }
     })
+  })
+
+  it('uses the dedicated policy mutation for an existing Session', async () => {
+    const existing = { ...session, delegationPolicy: 'allow' as const }
+    const setDelegationPolicy = vi.fn(async () => undefined)
+    const ids = ['policy-user', 'policy-run', 'policy-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [existing],
+        save: async () => undefined,
+        setDelegationPolicy
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      sessionId: existing.id,
+      prompt: 'Continue without delegation.',
+      delegationPolicy: 'deny'
+    })
+    await runner.waitForRun(started.id)
+
+    expect(setDelegationPolicy).toHaveBeenCalledOnce()
+    expect(setDelegationPolicy).toHaveBeenCalledWith(project.id, existing.id, 'deny')
   })
 
   it('skips automatic review when the current turn has no assistant message', async () => {

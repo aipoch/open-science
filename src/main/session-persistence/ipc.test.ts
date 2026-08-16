@@ -462,6 +462,7 @@ describe('session persistence IPC handlers', () => {
       loadAll: vi.fn().mockResolvedValue(loadResult),
       loadOne: vi.fn(),
       saveSession: vi.fn(),
+      setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -491,6 +492,7 @@ describe('session persistence IPC handlers', () => {
         order.push('saved')
         return { created: false, session }
       }),
+      setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()
@@ -519,6 +521,7 @@ describe('session persistence IPC handlers', () => {
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       loadOne: vi.fn(),
       saveSession: vi.fn(),
+      setDelegationPolicy: vi.fn(),
       updateArchive: vi.fn(),
       deleteSession: vi.fn(),
       saveManifest: vi.fn()

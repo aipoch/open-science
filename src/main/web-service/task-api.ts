@@ -7,6 +7,7 @@ import type {
   FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
 import type { Project } from '../../shared/projects'
+import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import type {
@@ -72,6 +73,9 @@ class HeadlessTaskApi {
         },
         save: async (session) => {
           await this.invoke('sessions:save-session', session)
+        },
+        setDelegationPolicy: async (projectId, sessionId, policy) => {
+          await this.invoke('sessions:set-delegation-policy', projectId, sessionId, policy)
         }
       },
       agent: {
@@ -155,9 +159,11 @@ class HeadlessTaskApi {
 
   async getSessionPlan(sessionId: string): Promise<ActivePlanProjection | null> {
     const session = await this.runner.getSession(sessionId)
-    const plans = this.ports.controls?.plans
-    if (!plans) throw new Error('Task Plan controls are unavailable.')
-    return plans.getProjection(session.projectId, session.id)
+    return this.invoke(
+      'acp:get-plan-projection',
+      session.projectId,
+      session.id
+    ) as Promise<ActivePlanProjection | null>
   }
 
   async respondSessionPlan(
@@ -165,8 +171,6 @@ class HeadlessTaskApi {
     request: TaskPlanResponseRequest
   ): Promise<PlanResponseResult> {
     const session = await this.runner.getSession(sessionId)
-    const plans = this.ports.controls?.plans
-    if (!plans) throw new Error('Task Plan controls are unavailable.')
     const command: PlanResponseCommand =
       'feedback' in request && typeof request.feedback === 'string'
         ? { projectId: session.projectId, sessionId: session.id, feedback: request.feedback }
@@ -177,7 +181,7 @@ class HeadlessTaskApi {
             artifactVersionId: request.artifactVersionId,
             expectedRevision: request.expectedRevision
           }
-    return plans.respond(command)
+    return this.invoke('acp:respond-plan', command) as Promise<PlanResponseResult>
   }
 
   startRun(request: StartTaskRunRequest): Promise<TaskRun> {
@@ -242,29 +246,21 @@ class HeadlessTaskApi {
     session: PersistedChatSession,
     turnMessageId: string
   ): Promise<TaskRunReview> {
-    const reviewer = this.ports.controls?.reviewer
-    if (!reviewer) {
-      return {
-        started: false,
-        reason: 'run-failed',
-        errorMessage: 'Task Reviewer controls are unavailable.'
-      }
-    }
-    const started = await reviewer.triggerReview({
+    const started = (await this.invoke('reviewer:run', {
       sessionId: session.id,
       turnMessageId,
       projectId: session.projectId,
       mainSessionId: session.id,
       model: session.agentModel,
       origin: 'auto'
-    })
+    })) as ReviewRunResult
     if (!started.started) return started
 
     for (;;) {
-      const reviews = await reviewer.getForSession({
+      const reviews = (await this.invoke('reviewer:get-for-session', {
         projectId: session.projectId,
         appSessionId: session.id
-      })
+      })) as ReviewWithChecks[]
       const review = [...reviews]
         .reverse()
         .find((candidate) => candidate.turnMessageId === turnMessageId)

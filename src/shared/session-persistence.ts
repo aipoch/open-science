@@ -552,7 +552,6 @@ export type SessionConflictRebaseField =
   | 'permissionProfile'
   | 'autoReviewEnabled'
   | 'enabledComputeHosts'
-  | 'delegationPolicy'
   | 'pinned'
   | 'specialistId'
 

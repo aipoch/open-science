@@ -7,6 +7,7 @@ import {
 } from '../../test/fixtures/renderer-contract-certification'
 
 import {
+  canAccessSessionPlan,
   canSatisfyHumanApproval,
   createElectronCallerContext,
   createTaskCallerContext,
@@ -210,6 +211,7 @@ describe('renderer surface compatibility matrix', () => {
       canSatisfyHumanApproval(createWebCallerContext('remote-browser', { location: 'remote' }))
     ).toBe(true)
     expect(canSatisfyHumanApproval(createTaskCallerContext())).toBe(false)
+    expect(canAccessSessionPlan(createTaskCallerContext())).toBe(true)
     expect(
       canSatisfyHumanApproval(
         createWebCallerContext('expired-browser', {

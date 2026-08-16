@@ -862,6 +862,10 @@ const createApplicationModules = async (
       }
       return { created, session: durableSession }
     },
+    setDelegationPolicy: async (projectId, sessionId, policy) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.setSessionDelegationPolicy(projectId, sessionId, policy)
+    },
     updateArchive: async (request) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
       return archiveCoordinator.updateSessionArchive(request)
@@ -2878,13 +2882,7 @@ const createApplicationModules = async (
     taskControls: {
       specialists: {
         resolve: (reference) => profileService.resolveRunnableByReference(reference)
-      },
-      plans: {
-        getProjection: (projectId, sessionId) =>
-          runtime.getSessionPlanProjection(projectId, sessionId),
-        respond: (input) => runtime.respondSessionPlan(input)
-      },
-      reviewer: reviewerCommandOwner
+      }
     },
     sessionDeletionCapability: sessionPersistenceCoordinator,
     archiveCapability: archiveCoordinator,

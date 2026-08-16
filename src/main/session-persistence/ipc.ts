@@ -4,6 +4,7 @@ import type {
   DeleteSessionRequest,
   LoadAllSessionsResult,
   LoadSessionRequest,
+  DelegationPolicy,
   PersistedChatSession,
   SaveSessionOptions,
   SaveSessionManifestRequest,
@@ -27,6 +28,11 @@ type SessionPersistenceBackend = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
+  setDelegationPolicy?: (
+    projectId: string,
+    sessionId: string,
+    policy: DelegationPolicy
+  ) => Promise<PersistedChatSession>
   updateArchive?: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   deleteSession: (projectId: string, sessionId: string) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
@@ -39,6 +45,11 @@ type SessionPersistenceHandlers = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<{ created: boolean; session: PersistedChatSession }>
+  setDelegationPolicy: (
+    projectId: string,
+    sessionId: string,
+    policy: DelegationPolicy
+  ) => Promise<PersistedChatSession>
   updateArchive: (request: UpdateSessionArchiveRequest) => Promise<PersistedChatSession>
   deleteSession: (request: DeleteSessionRequest) => Promise<void>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
@@ -128,6 +139,12 @@ const createSessionPersistenceHandlersWithAttributionAuthority = (
       return options
         ? repository.saveSession(authorized, options)
         : repository.saveSession(authorized)
+    },
+    setDelegationPolicy: (projectId, sessionId, policy) => {
+      if (!repository.setDelegationPolicy) {
+        throw new Error('Session delegation policy mutation is unavailable.')
+      }
+      return repository.setDelegationPolicy(projectId, sessionId, policy)
     },
     updateArchive: (request) => {
       if (!repository.updateArchive) throw new Error('Session archive is unavailable.')

@@ -60,7 +60,7 @@ Options:
   --specialist <id-or-name>  Bind a new Session to a Specialist
   --delegation <policy>  allow or deny new delegated children
   --wait                 Wait for the run to finish
-  --return-on-attention  With --wait, return when the run needs an external response
+  --return-on-attention  With --wait, return when the Plan needs approval
   --timeout-ms <ms>      Stop waiting after this many milliseconds
   --cancel-on-timeout    Cancel the server run when --timeout-ms expires
   --jsonl                With run --wait, stream one machine-readable event per line

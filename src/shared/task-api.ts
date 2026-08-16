@@ -41,10 +41,7 @@ export type StartTaskRunRequest = {
   delegationPolicy?: DelegationPolicy
 }
 
-export type TaskRunAttention =
-  | { kind: 'plan-approval'; plan: ActivePlanProjection }
-  | { kind: 'permission' }
-  | { kind: 'delegated-question' }
+export type TaskRunAttention = { kind: 'plan-approval'; plan: ActivePlanProjection }
 
 export type TaskRunReview = {
   started: boolean

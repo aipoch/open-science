@@ -62,10 +62,35 @@ export type SessionPlan = {
   }
 }
 
-export type RunAttention =
-  | { kind: 'plan-approval'; plan: SessionPlan }
-  | { kind: 'permission' }
-  | { kind: 'delegated-question' }
+export type RunAttention = { kind: 'plan-approval'; plan: SessionPlan }
+
+export type PlanDecisionResponse = {
+  projection: SessionPlan
+  changed: boolean
+  continuationCommandId?: string
+}
+
+export type PlanFeedbackResponse = {
+  kind: 'feedback'
+  routeToInteractionId: string
+  artifactVersionId: string
+  text: string
+  message: {
+    id: string
+    role: 'user'
+    content: string
+    status: 'complete'
+    responseToMessageId: string
+    eventIds: string[]
+    createdAt: number
+    updatedAt: number
+  }
+  planRevision: number
+  continuationProjection?: SessionPlan
+  continuationCommandId: string
+}
+
+export type PlanResponse = PlanDecisionResponse | PlanFeedbackResponse
 
 export type Run = {
   id: string
@@ -148,7 +173,7 @@ export class OpenScienceClient {
           expectedRevision: number
         }
       | { feedback: string }
-  ): Promise<unknown>
+  ): Promise<PlanResponse>
   startRun(request: {
     project: string
     prompt: string
