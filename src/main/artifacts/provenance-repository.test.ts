@@ -1881,7 +1881,7 @@ describe('artifact provenance repository', () => {
         id: 'disposition-direct-pass',
         sourceFindingId: 'finding-direct-flagged',
         causeReviewId: 'review-direct-pass',
-        sequence: 0,
+        sequence: 1,
         trigger: 'review_submission',
         outcome: 'resolved',
         assessedArtifactVersionId: version.versionId,

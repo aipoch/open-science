@@ -64,6 +64,151 @@
       "tableName": "ReviewScopeSnapshot",
       "name": "ReviewScopeSnapshot_state_check",
       "expression": "\"state\" IN ('staging', 'ready')"
+    },
+    {
+      "tableName": "Review",
+      "name": "Review_lifecycle_check",
+      "expression": "\"lifecycle\" IN ('running', 'complete', 'error')"
+    },
+    {
+      "tableName": "Review",
+      "name": "Review_outcome_check",
+      "expression": "\"outcome\" IS NULL OR \"outcome\" IN ('pass', 'flagged')"
+    },
+    {
+      "tableName": "Review",
+      "name": "Review_state_check",
+      "expression": "((\"lifecycle\" = 'running' AND \"outcome\" IS NULL AND \"errorMessage\" IS NULL) OR (\"lifecycle\" = 'complete' AND \"outcome\" IS NOT NULL AND \"errorMessage\" IS NULL) OR (\"lifecycle\" = 'error' AND \"outcome\" IS NULL AND \"errorMessage\" IS NOT NULL))"
+    },
+    {
+      "tableName": "Finding",
+      "name": "Finding_status_check",
+      "expression": "\"status\" IN ('pass', 'warn', 'fail')"
+    },
+    {
+      "tableName": "Finding",
+      "name": "Finding_resolution_check",
+      "expression": "\"resolution\" IN ('open', 'resolved', 'unaddressed')"
+    },
+    {
+      "tableName": "Finding",
+      "name": "Finding_artifactBindingState_check",
+      "expression": "\"artifactBindingState\" IN ('scope_validated', 'legacy_unverified')"
+    },
+    {
+      "tableName": "Finding",
+      "name": "Finding_sortIndex_check",
+      "expression": "\"sortIndex\" >= 0"
+    },
+    {
+      "tableName": "Finding",
+      "name": "Finding_reflagCount_check",
+      "expression": "\"reflagCount\" >= 0"
+    },
+    {
+      "tableName": "Finding",
+      "name": "Finding_statusResolution_check",
+      "expression": "\"status\" <> 'pass' OR \"resolution\" = 'open'"
+    },
+    {
+      "tableName": "Finding",
+      "name": "Finding_artifactBinding_check",
+      "expression": "\"artifactBindingState\" <> 'scope_validated' OR \"artifactVersionId\" IS NOT NULL"
+    },
+    {
+      "tableName": "ReviewFindingDisposition",
+      "name": "ReviewFindingDisposition_sequence_check",
+      "expression": "\"sequence\" >= 1"
+    },
+    {
+      "tableName": "ReviewFindingDisposition",
+      "name": "ReviewFindingDisposition_trigger_check",
+      "expression": "\"trigger\" IN ('review_submission', 'loop_terminated', 'correction_failed', 'aborted')"
+    },
+    {
+      "tableName": "ReviewFindingDisposition",
+      "name": "ReviewFindingDisposition_outcome_check",
+      "expression": "\"outcome\" IN ('still_open', 'resolved', 'unaddressed')"
+    },
+    {
+      "tableName": "ReviewFindingDisposition",
+      "name": "ReviewFindingDisposition_state_check",
+      "expression": "((\"trigger\" = 'review_submission' AND \"causeReviewId\" IS NOT NULL AND \"outcome\" IN ('still_open', 'resolved')) OR (\"trigger\" IN ('loop_terminated', 'correction_failed', 'aborted') AND \"causeReviewId\" IS NULL AND \"outcome\" = 'unaddressed'))"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_shape_check",
+      "expression": "\"shape\" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_status_check",
+      "expression": "\"status\" IN ('queued', 'submitted', 'running', 'success', 'failed', 'timeout', 'error')"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_errorCode_check",
+      "expression": "\"errorCode\" IS NULL OR \"errorCode\" IN ('approval_denied', 'host_unreachable', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_timeoutSeconds_check",
+      "expression": "\"timeoutSeconds\" IS NULL OR \"timeoutSeconds\" BETWEEN 1 AND 604800"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_notification_check",
+      "expression": "\"notificationConsumedAt\" IS NULL OR \"notifiedAt\" IS NOT NULL"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_harvestPayload_check",
+      "expression": "(\"harvestError\" IS NULL AND \"leftOnRemote\" IS NULL) OR \"harvestedAt\" IS NOT NULL"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_harvestState_check",
+      "expression": "\"harvestedAt\" IS NULL OR \"status\" IN ('success', 'failed', 'timeout')"
+    },
+    {
+      "tableName": "ComputeJob",
+      "name": "ComputeJob_errorState_check",
+      "expression": "((\"errorCode\" IS NULL OR \"status\" IN ('failed', 'timeout', 'error')) AND (\"status\" <> 'error' OR \"errorCode\" IS NOT NULL))"
+    },
+    {
+      "tableName": "ComputeHost",
+      "name": "ComputeHost_shape_check",
+      "expression": "\"shape\" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')"
+    },
+    {
+      "tableName": "ComputeHost",
+      "name": "ComputeHost_scratchPinned_check",
+      "expression": "\"scratchPinned\" IN (false, true)"
+    },
+    {
+      "tableName": "ComputeHost",
+      "name": "ComputeHost_concurrencyLimit_check",
+      "expression": "\"concurrencyLimit\" IS NULL OR \"concurrencyLimit\" BETWEEN 1 AND 500"
+    },
+    {
+      "tableName": "ComputeHost",
+      "name": "ComputeHost_detailsUpdatedBy_check",
+      "expression": "\"detailsUpdatedBy\" IS NULL OR \"detailsUpdatedBy\" IN ('user', 'agent')"
+    },
+    {
+      "tableName": "ComputeHost",
+      "name": "ComputeHost_detailsUpdate_check",
+      "expression": "(\"detailsUpdatedAt\" IS NULL AND \"detailsUpdatedBy\" IS NULL) OR (\"detailsUpdatedAt\" IS NOT NULL AND \"detailsUpdatedBy\" IS NOT NULL)"
+    },
+    {
+      "tableName": "ComputeHost",
+      "name": "ComputeHost_scratchRoot_check",
+      "expression": "\"scratchPinned\" = false OR \"scratchRoot\" IS NOT NULL"
+    },
+    {
+      "tableName": "GrantedLocalRoot",
+      "name": "GrantedLocalRoot_access_check",
+      "expression": "\"access\" IN ('ro', 'rw')"
     }
   ]
 }

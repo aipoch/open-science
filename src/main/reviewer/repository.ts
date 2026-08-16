@@ -760,13 +760,16 @@ class ReviewRepository {
             )
           }
         }
+        const causeReviewId =
+          input.causeReviewId ??
+          (input.trigger === 'review_submission' ? assessmentReview.id : null)
         const eventId =
           input.eventId ??
           `review-disposition-${sha256(
             stableJson({
               reviewId: input.reviewId,
               sourceFindingId: input.sourceFindingId,
-              causeReviewId: input.causeReviewId ?? null,
+              causeReviewId,
               trigger: input.trigger
             })
           )}`
@@ -776,7 +779,7 @@ class ReviewRepository {
         if (existing) {
           if (
             existing.sourceFindingId !== finding.id ||
-            existing.causeReviewId !== (input.causeReviewId ?? null) ||
+            existing.causeReviewId !== causeReviewId ||
             existing.trigger !== input.trigger ||
             existing.outcome !== input.outcome ||
             existing.note !== (input.note ?? null) ||
@@ -804,7 +807,7 @@ class ReviewRepository {
             data: {
               id: eventId,
               sourceFindingId: finding.id,
-              causeReviewId: input.causeReviewId ?? null,
+              causeReviewId,
               sequence: (latest?.sequence ?? 0) + 1,
               trigger: input.trigger,
               outcome: input.outcome,

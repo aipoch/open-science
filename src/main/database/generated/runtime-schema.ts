@@ -75,7 +75,10 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "model" TEXT NOT NULL DEFAULT '',
     "reviewerLog" TEXT NOT NULL DEFAULT '[]',
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Review_lifecycle_check" CHECK ("lifecycle" IN ('running', 'complete', 'error')),
+    CONSTRAINT "Review_outcome_check" CHECK ("outcome" IS NULL OR "outcome" IN ('pass', 'flagged')),
+    CONSTRAINT "Review_state_check" CHECK ((("lifecycle" = 'running' AND "outcome" IS NULL AND "errorMessage" IS NULL) OR ("lifecycle" = 'complete' AND "outcome" IS NOT NULL AND "errorMessage" IS NULL) OR ("lifecycle" = 'error' AND "outcome" IS NULL AND "errorMessage" IS NOT NULL)))
 );`,
   `CREATE TABLE IF NOT EXISTS "Finding" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -89,7 +92,14 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "artifactBindingState" TEXT NOT NULL DEFAULT 'legacy_unverified',
     "sortIndex" INTEGER NOT NULL DEFAULT 0,
     "reflagCount" INTEGER NOT NULL DEFAULT 0,
-    CONSTRAINT "Finding_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    CONSTRAINT "Finding_reviewId_fkey" FOREIGN KEY ("reviewId") REFERENCES "Review" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "Finding_status_check" CHECK ("status" IN ('pass', 'warn', 'fail')),
+    CONSTRAINT "Finding_resolution_check" CHECK ("resolution" IN ('open', 'resolved', 'unaddressed')),
+    CONSTRAINT "Finding_artifactBindingState_check" CHECK ("artifactBindingState" IN ('scope_validated', 'legacy_unverified')),
+    CONSTRAINT "Finding_sortIndex_check" CHECK ("sortIndex" >= 0),
+    CONSTRAINT "Finding_reflagCount_check" CHECK ("reflagCount" >= 0),
+    CONSTRAINT "Finding_statusResolution_check" CHECK ("status" <> 'pass' OR "resolution" = 'open'),
+    CONSTRAINT "Finding_artifactBinding_check" CHECK ("artifactBindingState" <> 'scope_validated' OR "artifactVersionId" IS NOT NULL)
 );`,
   `CREATE TABLE IF NOT EXISTS "ProjectDeletionIntent" (
     "projectId" TEXT NOT NULL PRIMARY KEY,
@@ -272,7 +282,11 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "assessmentSnapshot" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "ReviewFindingDisposition_sourceFindingId_fkey" FOREIGN KEY ("sourceFindingId") REFERENCES "Finding" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "ReviewFindingDisposition_causeReviewId_fkey" FOREIGN KEY ("causeReviewId") REFERENCES "Review" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    CONSTRAINT "ReviewFindingDisposition_causeReviewId_fkey" FOREIGN KEY ("causeReviewId") REFERENCES "Review" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "ReviewFindingDisposition_sequence_check" CHECK ("sequence" >= 1),
+    CONSTRAINT "ReviewFindingDisposition_trigger_check" CHECK ("trigger" IN ('review_submission', 'loop_terminated', 'correction_failed', 'aborted')),
+    CONSTRAINT "ReviewFindingDisposition_outcome_check" CHECK ("outcome" IN ('still_open', 'resolved', 'unaddressed')),
+    CONSTRAINT "ReviewFindingDisposition_state_check" CHECK ((("trigger" = 'review_submission' AND "causeReviewId" IS NOT NULL AND "outcome" IN ('still_open', 'resolved')) OR ("trigger" IN ('loop_terminated', 'correction_failed', 'aborted') AND "causeReviewId" IS NULL AND "outcome" = 'unaddressed')))
 );`,
   `CREATE TABLE IF NOT EXISTS "ReviewScopeSnapshot" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -321,7 +335,15 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "submittedAt" DATETIME,
     "startedAt" DATETIME,
     "finishedAt" DATETIME,
-    "harvestedAt" DATETIME
+    "harvestedAt" DATETIME,
+    CONSTRAINT "ComputeJob_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
+    CONSTRAINT "ComputeJob_status_check" CHECK ("status" IN ('queued', 'submitted', 'running', 'success', 'failed', 'timeout', 'error')),
+    CONSTRAINT "ComputeJob_errorCode_check" CHECK ("errorCode" IS NULL OR "errorCode" IN ('approval_denied', 'host_unreachable', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')),
+    CONSTRAINT "ComputeJob_timeoutSeconds_check" CHECK ("timeoutSeconds" IS NULL OR "timeoutSeconds" BETWEEN 1 AND 604800),
+    CONSTRAINT "ComputeJob_notification_check" CHECK ("notificationConsumedAt" IS NULL OR "notifiedAt" IS NOT NULL),
+    CONSTRAINT "ComputeJob_harvestPayload_check" CHECK (("harvestError" IS NULL AND "leftOnRemote" IS NULL) OR "harvestedAt" IS NOT NULL),
+    CONSTRAINT "ComputeJob_harvestState_check" CHECK ("harvestedAt" IS NULL OR "status" IN ('success', 'failed', 'timeout')),
+    CONSTRAINT "ComputeJob_errorState_check" CHECK ((("errorCode" IS NULL OR "status" IN ('failed', 'timeout', 'error')) AND ("status" <> 'error' OR "errorCode" IS NOT NULL)))
 );`,
   `CREATE TABLE IF NOT EXISTS "ComputeHost" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -338,7 +360,13 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "detailsUpdatedAt" DATETIME,
     "detailsUpdatedBy" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ComputeHost_shape_check" CHECK ("shape" IN ('direct_ssh', 'scheduler_cluster', 'bridge_runner')),
+    CONSTRAINT "ComputeHost_scratchPinned_check" CHECK ("scratchPinned" IN (false, true)),
+    CONSTRAINT "ComputeHost_concurrencyLimit_check" CHECK ("concurrencyLimit" IS NULL OR "concurrencyLimit" BETWEEN 1 AND 500),
+    CONSTRAINT "ComputeHost_detailsUpdatedBy_check" CHECK ("detailsUpdatedBy" IS NULL OR "detailsUpdatedBy" IN ('user', 'agent')),
+    CONSTRAINT "ComputeHost_detailsUpdate_check" CHECK (("detailsUpdatedAt" IS NULL AND "detailsUpdatedBy" IS NULL) OR ("detailsUpdatedAt" IS NOT NULL AND "detailsUpdatedBy" IS NOT NULL)),
+    CONSTRAINT "ComputeHost_scratchRoot_check" CHECK ("scratchPinned" = false OR "scratchRoot" IS NOT NULL)
 );`,
   `CREATE TABLE IF NOT EXISTS "GrantedLocalRoot" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -346,7 +374,8 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "name" TEXT NOT NULL,
     "access" TEXT NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "GrantedLocalRoot_access_check" CHECK ("access" IN ('ro', 'rw'))
 );`
 ] as const
 

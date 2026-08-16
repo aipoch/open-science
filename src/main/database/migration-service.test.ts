@@ -20,7 +20,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0006_test_suffix'
+  const id = '0007_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -30,6 +30,30 @@ const futureTestMigration = (): MigrationManifestEntry => {
     checksum: checksumMigrationPayload(id, statements, verifiers),
     backupOnApply: 'none',
     backupRetention: 'retain'
+  }
+}
+
+const createDatabaseAtMigration0005 = async (client: PrismaClient): Promise<void> => {
+  const prefix = MIGRATION_MANIFEST.slice(0, -1)
+  for (const migration of prefix) {
+    if ('operations' in migration && migration.operations.length > 0) {
+      throw new Error(`Unexpected operation in ${migration.id} test prefix.`)
+    }
+    for (const statement of migration.statements) await client.$executeRawUnsafe(statement)
+  }
+  await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "checksum" TEXT NOT NULL,
+    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "_open_science_migrations_checksum_check"
+      CHECK (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
+  )`)
+  for (const migration of prefix) {
+    await client.$executeRawUnsafe(
+      `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
+      migration.id,
+      migration.checksum
+    )
   }
 }
 
@@ -158,6 +182,19 @@ describe('application database migrations', () => {
         [{ kind: 'table-exists', version: 1, table: 'probe\nname' }]
       )
     )
+    const operation = (canonicalTableDdl: string) =>
+      [
+        {
+          kind: 'rebuild-table-set',
+          version: 1,
+          tables: [{ tableName: 'Probe', canonicalTableDdl, columns: ['id'] }],
+          dropOrder: ['Probe'],
+          indexes: []
+        }
+      ] as const
+    expect(checksumMigrationPayload('0001_test', [], verifier, operation('one\r\ntwo'))).toBe(
+      checksumMigrationPayload('0001_test', [], verifier, operation('one\ntwo'))
+    )
   })
 
   it('records the runtime baseline once for a fresh database', async () => {
@@ -176,10 +213,11 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ],
       from: null,
-      to: '0005_project_preview_state_owner_fk'
+      to: '0006_database_domain_constraints'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -192,8 +230,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0005_project_preview_state_owner_fk',
-      to: '0005_project_preview_state_owner_fk'
+      from: '0006_database_domain_constraints',
+      to: '0006_database_domain_constraints'
     })
   })
 
@@ -204,6 +242,144 @@ describe('application database migrations', () => {
     await migrateApplicationDatabase(client)
 
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('replays 0006 when its constraint indexes are incomplete', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-0006-index-replay-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE "id" = '0006_database_domain_constraints'`
+    )
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      applied: ['0006_database_domain_constraints'],
+      from: '0005_project_preview_state_owner_fk',
+      to: '0006_database_domain_constraints'
+    })
+    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('upgrades valid 0005 rows while preserving known retired columns', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-0006-upgrade-'))
+    client = createProjectDbClient(storageRoot)
+    await createDatabaseAtMigration0005(client)
+    await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "summary" TEXT')
+    await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "checks" TEXT')
+    await client.$executeRawUnsafe('ALTER TABLE "Review" ADD COLUMN "reasoning" TEXT')
+    await client.$executeRawUnsafe('ALTER TABLE "Finding" ADD COLUMN "severity" TEXT')
+    await client.$executeRawUnsafe(`INSERT INTO "Review" (
+      "id", "projectId", "sessionId", "turnMessageId", "lifecycle", "outcome",
+      "updatedAt", "summary", "checks", "reasoning"
+    ) VALUES (
+      'review-1', 'project-1', 'session-1', 'message-1', 'complete', 'pass',
+      CURRENT_TIMESTAMP, 'summary', 'checks', 'reasoning'
+    )`)
+    await client.$executeRawUnsafe(`INSERT INTO "Finding" (
+      "id", "reviewId", "status", "resolution", "sortIndex", "reflagCount", "severity"
+    ) VALUES ('finding-1', 'review-1', 'warn', 'resolved', 2, 1, 'legacy')`)
+    await client.$executeRawUnsafe(`INSERT INTO "ReviewFindingDisposition" (
+      "id", "sourceFindingId", "causeReviewId", "sequence", "trigger", "outcome"
+    ) VALUES (
+      'disposition-1', 'finding-1', 'review-1', 1, 'review_submission', 'resolved'
+    )`)
+    await client.$executeRawUnsafe(`INSERT INTO "ReviewScopeSnapshot" (
+      "id", "projectId", "sessionId", "reviewId", "scopeTurnMessageId", "state",
+      "snapshotJson", "checksum", "storageKey", "blockCount"
+    ) VALUES (
+      'snapshot-1', 'project-1', 'session-1', 'review-1', 'message-1', 'ready',
+      '{}', 'checksum', 'snapshot-key', 0
+    )`)
+    await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
+      "id", "providerId", "shape", "sessionId", "projectId", "status", "intent",
+      "command", "commandHash", "errorCode", "timeoutSeconds", "notifiedAt",
+      "notificationConsumedAt"
+    ) VALUES (
+      'job-1', 'ssh:host', 'direct_ssh', 'session-1', 'project-1', 'failed', 'intent',
+      'command', 'hash', 'job_failed', 60, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )`)
+    await client.$executeRawUnsafe(`INSERT INTO "ComputeHost" (
+      "id", "providerId", "displayName", "shape", "sshAlias", "scratchRoot",
+      "scratchPinned", "concurrencyLimit", "detailsUpdatedAt", "detailsUpdatedBy", "updatedAt"
+    ) VALUES (
+      'host-1', 'ssh:host', 'Host', 'direct_ssh', 'host', '/scratch', true, 2,
+      CURRENT_TIMESTAMP, 'user', CURRENT_TIMESTAMP
+    )`)
+    await client.$executeRawUnsafe(`INSERT INTO "GrantedLocalRoot" (
+      "id", "path", "name", "access", "updatedAt"
+    ) VALUES ('root-1', '/data', 'Data', 'rw', CURRENT_TIMESTAMP)`)
+
+    await expect(migrateApplicationDatabase(client)).resolves.toEqual({
+      adoptedLegacy: false,
+      applied: ['0006_database_domain_constraints'],
+      from: '0005_project_preview_state_owner_fk',
+      to: '0006_database_domain_constraints'
+    })
+    await expect(
+      client.$queryRaw<
+        Array<{
+          summary: string
+          checks: string
+          reasoning: string
+          severity: string
+          dispositionCount: bigint
+          snapshotCount: bigint
+          jobCount: bigint
+          hostCount: bigint
+          rootCount: bigint
+        }>
+      >`SELECT
+        "Review"."summary", "Review"."checks", "Review"."reasoning", "Finding"."severity",
+        (SELECT COUNT(*) FROM "ReviewFindingDisposition") AS "dispositionCount",
+        (SELECT COUNT(*) FROM "ReviewScopeSnapshot") AS "snapshotCount",
+        (SELECT COUNT(*) FROM "ComputeJob") AS "jobCount",
+        (SELECT COUNT(*) FROM "ComputeHost") AS "hostCount",
+        (SELECT COUNT(*) FROM "GrantedLocalRoot") AS "rootCount"
+      FROM "Review" JOIN "Finding" ON "Finding"."reviewId" = "Review"."id"`
+    ).resolves.toEqual([
+      {
+        summary: 'summary',
+        checks: 'checks',
+        reasoning: 'reasoning',
+        severity: 'legacy',
+        dispositionCount: 1n,
+        snapshotCount: 1n,
+        jobCount: 1n,
+        hostCount: 1n,
+        rootCount: 1n
+      }
+    ])
+    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
+  it('rolls back 0006 when historical rows violate the new contract', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-0006-invalid-'))
+    client = createProjectDbClient(storageRoot)
+    await createDatabaseAtMigration0005(client)
+    await client.$executeRawUnsafe(`INSERT INTO "Review" (
+      "id", "projectId", "sessionId", "turnMessageId", "lifecycle", "updatedAt"
+    ) VALUES ('invalid-review', 'project-1', 'session-1', 'message-1', 'unknown', CURRENT_TIMESTAMP)`)
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0006_database_domain_constraints'
+    })
+    await expect(
+      client.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 1
+      `
+    ).resolves.toEqual([{ id: '0005_project_preview_state_owner_fk' }])
+    await expect(
+      client.$queryRaw<Array<{ lifecycle: string }>>`
+        SELECT "lifecycle" FROM "Review" WHERE "id" = 'invalid-review'
+      `
+    ).resolves.toEqual([{ lifecycle: 'unknown' }])
+    await expect(
+      client.$queryRaw<Array<{ sql: string }>>`
+        SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'Review'
+      `
+    ).resolves.toEqual([{ sql: expect.not.stringContaining('Review_lifecycle_check') }])
   })
 
   it('rejects schema objects outside the generated current target', async () => {
@@ -237,7 +413,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0005_project_preview_state_owner_fk'
+      migrationId: '0006_database_domain_constraints'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -253,9 +429,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0006_test_suffix'],
-      from: '0005_project_preview_state_owner_fk',
-      to: '0006_test_suffix'
+      applied: ['0007_test_suffix'],
+      from: '0006_database_domain_constraints',
+      to: '0007_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -267,7 +443,8 @@ describe('application database migrations', () => {
       { id: '0003_granted_local_roots' },
       { id: '0004_review_assessment_snapshots' },
       { id: '0005_project_preview_state_owner_fk' },
-      { id: '0006_test_suffix' }
+      { id: '0006_database_domain_constraints' },
+      { id: '0007_test_suffix' }
     ])
   })
 
@@ -324,10 +501,11 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0005_project_preview_state_owner_fk'
+      to: '0006_database_domain_constraints'
     })
     expect(backupEvents).toEqual([
       {
@@ -348,6 +526,11 @@ describe('application database migrations', () => {
       {
         migrationId: '0005_project_preview_state_owner_fk',
         path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0006_database_domain_constraints',
+        path: `${databasePath}.before-0006_database_domain_constraints.backup`,
         reused: false
       }
     ])
@@ -381,7 +564,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0006_test_suffix'
+      migrationId: '0007_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -398,7 +581,8 @@ describe('application database migrations', () => {
       { id: '0002_project_agent_context' },
       { id: '0003_granted_local_roots' },
       { id: '0004_review_assessment_snapshots' },
-      { id: '0005_project_preview_state_owner_fk' }
+      { id: '0005_project_preview_state_owner_fk' },
+      { id: '0006_database_domain_constraints' }
     ])
   })
 
@@ -420,7 +604,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0006_test_suffix'
+      migrationId: '0007_test_suffix'
     })
   })
 
@@ -451,9 +635,10 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_test_suffix'
+        '0006_database_domain_constraints',
+        '0007_test_suffix'
       ],
-      to: '0006_test_suffix'
+      to: '0007_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -671,7 +856,8 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
     await expect(
@@ -712,7 +898,8 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -766,7 +953,8 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
     await expect(
@@ -823,7 +1011,8 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -914,7 +1103,8 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
     await expect(
@@ -958,7 +1148,8 @@ describe('application database migrations', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
     expect(backupEvents).toEqual([
@@ -985,6 +1176,11 @@ describe('application database migrations', () => {
       {
         migrationId: '0005_project_preview_state_owner_fk',
         path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0006_database_domain_constraints',
+        path: `${databasePath}.before-0006_database_domain_constraints.backup`,
         reused: false
       }
     ])
@@ -1378,6 +1574,11 @@ describe('application database migrations', () => {
         migrationId: '0005_project_preview_state_owner_fk',
         path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`,
         reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0006_database_domain_constraints',
+        path: `${databasePath}.before-0006_database_domain_constraints.backup`,
+        reused: false
       })
     ])
     expect(retired).toEqual([
@@ -1394,6 +1595,10 @@ describe('application database migrations', () => {
       {
         migrationId: '0005_project_preview_state_owner_fk',
         path: `${databasePath}.before-0005_project_preview_state_owner_fk.backup`
+      },
+      {
+        migrationId: '0006_database_domain_constraints',
+        path: `${databasePath}.before-0006_database_domain_constraints.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })

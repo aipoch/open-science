@@ -106,7 +106,8 @@ describe('project prisma client (integration)', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
 
@@ -1014,7 +1015,8 @@ describe('project prisma client (integration)', () => {
         '0002_project_agent_context',
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk'
+        '0005_project_preview_state_owner_fk',
+        '0006_database_domain_constraints'
       ]
     })
 

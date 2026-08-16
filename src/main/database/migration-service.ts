@@ -9,7 +9,8 @@ import {
   applyRuntimeSchemaBaseline,
   prepareRuntimeSchemaBaseline,
   verifyCurrentRuntimeSchema,
-  verifyRuntimeSchemaBaseline
+  verifyRuntimeSchemaBaseline,
+  type AllowedSuffixCheckConstraints
 } from './legacy-baseline-adapter'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
@@ -18,6 +19,11 @@ import { projectAgentContextMigration } from './migrations/0002-project-agent-co
 import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
 import { reviewAssessmentSnapshotsMigration } from './migrations/0004-review-assessment-snapshots'
 import { projectPreviewStateOwnerFkMigration } from './migrations/0005-project-preview-state-owner-fk'
+import { databaseDomainConstraintsMigration } from './migrations/0006-database-domain-constraints'
+import {
+  applySqliteMigrationOperations,
+  type SqliteMigrationOperation
+} from './sqlite-schema-migrations'
 
 type MigrationVerifierDescriptor =
   | {
@@ -45,6 +51,19 @@ type MigrationVerifierDescriptor =
       referencedColumn: string
       onDelete: string
       onUpdate: string
+    }
+  | {
+      kind: 'check-constraints-exist'
+      version: 1
+      tables: readonly {
+        table: string
+        constraints: readonly { name: string; expression: string }[]
+      }[]
+    }
+  | {
+      kind: 'indexes-exist'
+      version: 1
+      indexes: readonly { name: string; sql: string }[]
     }
 
 type MigrationVerifiers = readonly [MigrationVerifierDescriptor, ...MigrationVerifierDescriptor[]]
@@ -78,6 +97,19 @@ const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): stri
       ]
         .map(lengthPrefixedChecksumText)
         .join('')}`
+    case 'check-constraints-exist':
+      return `check-constraints-exist:v${verifier.version}:${verifier.tables
+        .flatMap(({ table, constraints }) => [
+          table,
+          ...constraints.flatMap(({ name, expression }) => [name, expression])
+        ])
+        .map(lengthPrefixedChecksumText)
+        .join('')}`
+    case 'indexes-exist':
+      return `indexes-exist:v${verifier.version}:${verifier.indexes
+        .flatMap(({ name, sql }) => [name, sql])
+        .map(lengthPrefixedChecksumText)
+        .join('')}`
   }
 }
 
@@ -86,7 +118,8 @@ const BASELINE_ID = runtimeSchemaBaselineMigration.id
 const checksumMigrationPayload = (
   id: string,
   statements: readonly string[],
-  verifiers: MigrationVerifiers
+  verifiers: MigrationVerifiers,
+  operations: readonly SqliteMigrationOperation[] = []
 ): string => {
   const hash = createHash('sha256')
   for (const [kind, values] of [
@@ -99,6 +132,13 @@ const checksumMigrationPayload = (
       hash.update(`${kind}:${Buffer.byteLength(normalized, 'utf8')}:`, 'utf8')
       hash.update(normalized, 'utf8')
     }
+  }
+  for (const operation of operations) {
+    const serialized = JSON.stringify(operation, (_key, value: unknown) =>
+      typeof value === 'string' ? normalizeChecksumText(value) : value
+    )
+    hash.update(`operation:${Buffer.byteLength(serialized, 'utf8')}:`, 'utf8')
+    hash.update(serialized, 'utf8')
   }
   return hash.digest('hex')
 }
@@ -128,6 +168,18 @@ const PROJECT_PREVIEW_STATE_OWNER_FK_CHECKSUM = checksumMigrationPayload(
   projectPreviewStateOwnerFkMigration.statements,
   projectPreviewStateOwnerFkMigration.verifiers
 )
+const DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
+  databaseDomainConstraintsMigration.id,
+  databaseDomainConstraintsMigration.statements,
+  databaseDomainConstraintsMigration.verifiers,
+  databaseDomainConstraintsMigration.operations
+)
+const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
+  databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
+    table,
+    Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+  ])
+)
 const MIGRATION_MANIFEST = [
   {
     ...runtimeSchemaBaselineMigration,
@@ -156,6 +208,12 @@ const MIGRATION_MANIFEST = [
   {
     ...projectPreviewStateOwnerFkMigration,
     checksum: PROJECT_PREVIEW_STATE_OWNER_FK_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...databaseDomainConstraintsMigration,
+    checksum: DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -240,6 +298,7 @@ type MigrationManifestEntry = {
   id: string
   checksum: string
   statements: readonly string[]
+  operations?: readonly SqliteMigrationOperation[]
   verifiers: MigrationVerifiers
   backupOnApply: 'required' | 'none'
   backupRetention: 'retain' | 'delete-after-success'
@@ -247,7 +306,8 @@ type MigrationManifestEntry = {
 
 const runMigrationVerifiers = async (
   client: PrismaClient,
-  verifiers: MigrationVerifiers
+  verifiers: MigrationVerifiers,
+  allowedSuffixChecks: AllowedSuffixCheckConstraints = {}
 ): Promise<void> => {
   for (const verifier of verifiers) {
     switch (verifier.kind) {
@@ -258,7 +318,7 @@ const runMigrationVerifiers = async (
         ) {
           throw new Error('Migration verification found an unsupported baseline contract.')
         }
-        await verifyRuntimeSchemaBaseline(client)
+        await verifyRuntimeSchemaBaseline(client, allowedSuffixChecks)
         break
       case 'table-exists': {
         const rows = await client.$queryRaw<Array<{ name: string }>>`
@@ -310,6 +370,50 @@ const runMigrationVerifiers = async (
           throw new Error(
             `Migration verification found foreign-key violations in ${verifier.table}.`
           )
+        }
+        break
+      }
+      case 'check-constraints-exist': {
+        for (const table of verifier.tables) {
+          const rows = await migrationSqlExecutor.query<Array<{ sql: string | null }>>(
+            client,
+            `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = ?`,
+            table.table
+          )
+          const tableSql = rows[0]?.sql
+          if (
+            !tableSql ||
+            table.constraints.some(
+              ({ name, expression }) =>
+                !tableSql.includes(`CONSTRAINT "${name}" CHECK (${expression})`)
+            )
+          ) {
+            throw new Error(
+              `Migration verification found missing CHECK constraints in ${table.table}.`
+            )
+          }
+        }
+        break
+      }
+      case 'indexes-exist': {
+        const normalizeIndexSql = (value: string): string =>
+          value
+            .replace(
+              /^CREATE (UNIQUE )?INDEX IF NOT EXISTS /i,
+              (_match, unique: string | undefined) => `CREATE ${unique ?? ''}INDEX `
+            )
+            .replaceAll(/\s+/g, ' ')
+            .replace(/;$/, '')
+            .trim()
+        for (const index of verifier.indexes) {
+          const rows = await migrationSqlExecutor.query<Array<{ sql: string | null }>>(
+            client,
+            `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'index' AND "name" = ?`,
+            index.name
+          )
+          if (!rows[0]?.sql || normalizeIndexSql(rows[0].sql) !== normalizeIndexSql(index.sql)) {
+            throw new Error(`Migration verification found missing index ${index.name}.`)
+          }
         }
         break
       }
@@ -630,6 +734,8 @@ const classifyDatabaseFailure = (
     )
   const validationFailure =
     phase === 'validation' ||
+    (error instanceof DatabaseValidationError &&
+      error.data.kind === 'check-constraint-violation') ||
     /classification blocked|unsupported value|unknown columns?|row-count mismatch|foreign-key violation|baseline verification/i.test(
       detail
     )
@@ -709,7 +815,8 @@ const hasOnlyDeferredPreviewStateForeignKeyViolations = async (
 const applyBaselineMigration = async (
   client: PrismaClient,
   migration: MigrationManifestEntry,
-  deferPreviewStateForeignKeyViolations: boolean
+  deferPreviewStateForeignKeyViolations: boolean,
+  allowedSuffixChecks: AllowedSuffixCheckConstraints
 ): Promise<void> => {
   let prepared: Awaited<ReturnType<typeof prepareRuntimeSchemaBaseline>>
   try {
@@ -736,7 +843,7 @@ const applyBaselineMigration = async (
         }
         // The pinned 0005 suffix owns pruning these rows before the migration run completes.
       }
-      await runMigrationVerifiers(transactionClient, migration.verifiers)
+      await runMigrationVerifiers(transactionClient, migration.verifiers, allowedSuffixChecks)
       await insertLedgerRow(transactionClient, migration)
     })
   } catch (error) {
@@ -787,6 +894,7 @@ const applyManifestMigration = async (
         for (const statement of migration.statements) {
           await migrationSqlExecutor.execute(transaction, statement)
         }
+        await applySqliteMigrationOperations(transactionClient, migration.operations ?? [])
       }
       try {
         await runMigrationVerifiers(transactionClient, migration.verifiers)
@@ -899,15 +1007,28 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === projectPreviewStateOwnerFkMigration.id &&
       candidate.checksum === PROJECT_PREVIEW_STATE_OWNER_FK_CHECKSUM
   )
-
+  const adoptsDatabaseDomainConstraints = manifest.some(
+    (candidate) =>
+      candidate.id === databaseDomainConstraintsMigration.id &&
+      candidate.checksum === DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM
+  )
   const applied: string[] = []
   const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
+  const allowedSuffixChecks = adoptsDatabaseDomainConstraints
+    ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS
+    : {}
+
   let nextIndex = appliedCount
   if (nextIndex === 0) {
     const baseline = manifest[0]!
     options.onProgress?.({ phase: 'migrating', migrationId: baseline.id })
     await backupBeforeMigration(baseline)
-    await applyBaselineMigration(client, baseline, repairsPreviewStateForeignKeyViolations)
+    await applyBaselineMigration(
+      client,
+      baseline,
+      repairsPreviewStateForeignKeyViolations,
+      allowedSuffixChecks
+    )
     applied.push(baseline.id)
     nextIndex = 1
   }
@@ -931,6 +1052,7 @@ const migrateApplicationDatabase = (
 export {
   BASELINE_CHECKSUM,
   PROJECT_AGENT_CONTEXT_CHECKSUM,
+  DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

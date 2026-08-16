@@ -21,6 +21,23 @@ type SqliteCheckConstraintMigration = {
   canonicalTableDdl: string
 }
 
+type SqliteMigrationTable = {
+  tableName: string
+  canonicalTableDdl: string
+  columns: readonly string[]
+  optionalLegacyColumns?: readonly { name: string; definition: string }[]
+}
+
+type SqliteRebuildTableSetOperation = {
+  kind: 'rebuild-table-set'
+  version: 1
+  tables: readonly SqliteMigrationTable[]
+  dropOrder: readonly string[]
+  indexes: readonly string[]
+}
+
+type SqliteMigrationOperation = SqliteRebuildTableSetOperation
+
 const quoteIdentifier = (value: string): string => `"${value.replaceAll('"', '""')}"`
 const quoteLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`
 
@@ -89,6 +106,155 @@ const countRows = async (client: SqliteExecutor, tableName: string): Promise<big
     `SELECT COUNT(*) AS count FROM ${quoteIdentifier(tableName)}`
   )
   return BigInt(rows[0]?.count ?? 0)
+}
+
+const withOptionalLegacyColumns = (
+  canonicalTableDdl: string,
+  columns: readonly { name: string; definition: string }[]
+): string => {
+  if (columns.length === 0) return canonicalTableDdl
+  const constraintMarker = '\n    CONSTRAINT '
+  const markerIndex = canonicalTableDdl.indexOf(constraintMarker)
+  if (markerIndex === -1) {
+    throw new Error('Canonical SQLite DDL cannot preserve optional columns without constraints.')
+  }
+  const definitions = columns.map(({ definition }) => `    ${definition},`).join('\n')
+  return `${canonicalTableDdl.slice(0, markerIndex)}\n${definitions}${canonicalTableDdl.slice(markerIndex)}`
+}
+
+const applyRebuildTableSet = async (
+  client: SqliteExecutor,
+  operation: SqliteRebuildTableSetOperation
+): Promise<void> => {
+  const tableNames = new Set(operation.tables.map(({ tableName }) => tableName))
+  if (
+    tableNames.size !== operation.tables.length ||
+    operation.dropOrder.length !== tableNames.size ||
+    new Set(operation.dropOrder).size !== tableNames.size ||
+    operation.dropOrder.some((tableName) => !tableNames.has(tableName))
+  ) {
+    throw new Error('SQLite rebuild-table-set operation has an invalid table order.')
+  }
+
+  const prepared: Array<{
+    tableName: string
+    backupTableName: string
+    targetDdl: string
+    copyColumns: string[]
+    sourceRowCount: bigint
+  }> = []
+  for (const table of operation.tables) {
+    const sourceColumns = new Set(await readTableColumns(client, table.tableName))
+    const missingColumns = table.columns.filter((column) => !sourceColumns.has(column))
+    if (missingColumns.length > 0) {
+      throw new DatabaseValidationError(
+        `SQLite schema migration found missing columns in ${table.tableName}.`,
+        { kind: 'missing-columns', table: table.tableName, expected: missingColumns }
+      )
+    }
+    const optionalColumns = (table.optionalLegacyColumns ?? []).filter(({ name }) =>
+      sourceColumns.has(name)
+    )
+    const allowedColumns = new Set([
+      ...table.columns,
+      ...(table.optionalLegacyColumns ?? []).map(({ name }) => name)
+    ])
+    const unknownColumns = [...sourceColumns].filter((column) => !allowedColumns.has(column))
+    if (unknownColumns.length > 0) {
+      throw new DatabaseValidationError(
+        `SQLite schema migration blocked by unknown columns in ${table.tableName}.`,
+        { kind: 'unknown-columns', table: table.tableName, actual: unknownColumns }
+      )
+    }
+    prepared.push({
+      tableName: table.tableName,
+      backupTableName: `__open_science_rebuild_${table.tableName}`,
+      targetDdl: withOptionalLegacyColumns(table.canonicalTableDdl, optionalColumns),
+      copyColumns: [...table.columns, ...optionalColumns.map(({ name }) => name)],
+      sourceRowCount: await countRows(client, table.tableName)
+    })
+  }
+
+  for (const table of prepared) {
+    await migrationSqlExecutor.execute(
+      client,
+      `ALTER TABLE ${quoteIdentifier(table.tableName)} RENAME TO ${quoteIdentifier(table.backupTableName)}`
+    )
+  }
+  for (const table of prepared) await migrationSqlExecutor.execute(client, table.targetDdl)
+
+  for (const table of prepared) {
+    const quotedColumns = table.copyColumns.map(quoteIdentifier).join(', ')
+    try {
+      await migrationSqlExecutor.execute(
+        client,
+        `INSERT INTO ${quoteIdentifier(table.tableName)} (${quotedColumns}) SELECT ${quotedColumns} FROM ${quoteIdentifier(table.backupTableName)}`
+      )
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      if (!/CHECK constraint failed/i.test(detail)) throw error
+      throw new DatabaseValidationError(
+        `SQLite schema migration blocked by a CHECK constraint in ${table.tableName}.`,
+        {
+          kind: 'check-constraint-violation',
+          table: table.tableName
+        }
+      )
+    }
+    const targetRowCount = await countRows(client, table.tableName)
+    if (targetRowCount !== table.sourceRowCount) {
+      throw new DatabaseValidationError(
+        `SQLite schema migration found a row-count mismatch for ${table.tableName}.`,
+        {
+          kind: 'row-count-mismatch',
+          table: table.tableName,
+          expected: table.sourceRowCount,
+          actual: targetRowCount
+        }
+      )
+    }
+  }
+
+  const preparedByName = new Map(prepared.map((table) => [table.tableName, table]))
+  for (const tableName of operation.dropOrder) {
+    const table = preparedByName.get(tableName)!
+    await migrationSqlExecutor.execute(
+      client,
+      `DROP TABLE ${quoteIdentifier(table.backupTableName)}`
+    )
+  }
+  for (const index of operation.indexes) await migrationSqlExecutor.execute(client, index)
+
+  const violations = await migrationSqlExecutor.query<SqliteForeignKeyViolationRow[]>(
+    client,
+    'PRAGMA foreign_key_check'
+  )
+  if (violations.length > 0) {
+    const violation = violations[0]!
+    throw new DatabaseValidationError(
+      `SQLite schema migration introduced a foreign-key violation in ${violation.table}.`,
+      {
+        kind: 'foreign-key-violation',
+        table: violation.table,
+        constraint: String(violation.fkid),
+        expected: { parent: violation.parent },
+        actual: { rowid: violation.rowid }
+      }
+    )
+  }
+}
+
+const applySqliteMigrationOperations = async (
+  client: SqliteExecutor,
+  operations: readonly SqliteMigrationOperation[]
+): Promise<void> => {
+  for (const operation of operations) {
+    switch (operation.kind) {
+      case 'rebuild-table-set':
+        await applyRebuildTableSet(client, operation)
+        break
+    }
+  }
 }
 
 const rebuildTable = async (
@@ -196,5 +362,9 @@ const applySqliteCheckConstraints = async (
   }
 }
 
-export { applySqliteCheckConstraints, findPendingSqliteCheckConstraints }
-export type { SqliteCheckConstraintMigration }
+export {
+  applySqliteCheckConstraints,
+  applySqliteMigrationOperations,
+  findPendingSqliteCheckConstraints
+}
+export type { SqliteCheckConstraintMigration, SqliteMigrationOperation }

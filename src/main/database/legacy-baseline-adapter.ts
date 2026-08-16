@@ -94,6 +94,7 @@ type TargetIndex = {
   columns: readonly string[]
   unique: boolean
 }
+type AllowedSuffixCheckConstraints = Readonly<Record<string, Readonly<Record<string, string>>>>
 
 const splitSqlDefinitions = (ddl: string): string[] => {
   const open = ddl.indexOf('(')
@@ -541,7 +542,8 @@ const prepareRuntimeSchemaBaseline = async (
 const verifyRuntimeSchemaTarget = async (
   client: PrismaClient,
   target: RuntimeSchemaTarget,
-  exact: boolean = false
+  exact: boolean = false,
+  allowedSuffixChecks: AllowedSuffixCheckConstraints = {}
 ): Promise<void> => {
   const tables = await migrationSqlExecutor.query<SqliteSchemaName[]>(
     client,
@@ -699,13 +701,25 @@ const verifyRuntimeSchemaTarget = async (
         }
       )
     }
-    if (actualTable.checks.size !== expectedTable.checks.size) {
+    const allowedChecks = allowedSuffixChecks[tableName] ?? {}
+    const incompatibleSuffixCheck = [...actualTable.checks].find(
+      ([name, expression]) =>
+        !expectedTable.checks.has(name) &&
+        (!Object.hasOwn(allowedChecks, name) ||
+          !checkExpressionsMatch(
+            tableName,
+            name,
+            expression,
+            normalizeSqlFragment(allowedChecks[name]!)!
+          ))
+    )
+    if (incompatibleSuffixCheck) {
       throw new DatabaseValidationError(
         `Database baseline verification found an incompatible CHECK constraint set for ${tableName}.`,
         {
           kind: 'check-constraint-set-mismatch',
           table: tableName,
-          expected: [...expectedTable.checks.keys()],
+          expected: [...expectedTable.checks.keys(), ...Object.keys(allowedChecks)],
           actual: [...actualTable.checks.keys()]
         }
       )
@@ -855,8 +869,11 @@ const verifyRuntimeSchemaTarget = async (
   }
 }
 
-const verifyRuntimeSchemaBaseline = (client: PrismaClient): Promise<void> =>
-  verifyRuntimeSchemaTarget(client, BASELINE_SCHEMA_TARGET)
+const verifyRuntimeSchemaBaseline = (
+  client: PrismaClient,
+  allowedSuffixChecks: AllowedSuffixCheckConstraints = {}
+): Promise<void> =>
+  verifyRuntimeSchemaTarget(client, BASELINE_SCHEMA_TARGET, false, allowedSuffixChecks)
 
 const verifyCurrentRuntimeSchema = (client: PrismaClient): Promise<void> =>
   verifyRuntimeSchemaTarget(client, CURRENT_SCHEMA_TARGET, true)
@@ -928,4 +945,4 @@ export {
   verifyCurrentRuntimeSchema,
   verifyRuntimeSchemaBaseline
 }
-export type { PreparedRuntimeSchemaBaseline }
+export type { AllowedSuffixCheckConstraints, PreparedRuntimeSchemaBaseline }
