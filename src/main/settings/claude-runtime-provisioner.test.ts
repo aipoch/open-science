@@ -427,11 +427,16 @@ describe('provisionClaudeRuntime', () => {
     expect(await readdir(getClaudeSkillProjectionRevisionsDir(root))).toEqual([])
   })
 
-  it('publishes a canonical projection for a legacy imported Skill without frontmatter', async () => {
+  it.each([
+    ['without frontmatter', '# BioFlow transcriptomics\n'],
+    ['with scalar frontmatter', '---\nlegacy\n---\n# BioFlow transcriptomics\n'],
+    ['with array frontmatter', '---\n- legacy\n---\n# BioFlow transcriptomics\n'],
+    ['with malformed frontmatter', '---\nname: [\n---\n# BioFlow transcriptomics\n']
+  ])('publishes a canonical projection for a legacy imported Skill %s', async (_, document) => {
     const root = await createStorageRoot()
     const sourceDir = join(root, 'legacy-imported-skill')
     await mkdir(sourceDir)
-    await writeFile(join(sourceDir, 'SKILL.md'), '# BioFlow transcriptomics\n', 'utf8')
+    await writeFile(join(sourceDir, 'SKILL.md'), document, 'utf8')
     const skill: BundledSkill = {
       id: 'imported-bioflow-transcriptom',
       name: 'bioflow-transcriptom',
@@ -459,9 +464,7 @@ describe('provisionClaudeRuntime', () => {
     ).resolves.toBe(
       '---\nname: bioflow-transcriptom\ndescription: BioFlow transcriptomics\n---\n# BioFlow transcriptomics\n'
     )
-    await expect(readFile(join(sourceDir, 'SKILL.md'), 'utf8')).resolves.toBe(
-      '# BioFlow transcriptomics\n'
-    )
+    await expect(readFile(join(sourceDir, 'SKILL.md'), 'utf8')).resolves.toBe(document)
   })
 
   it.each(['root CLAUDE.md', 'root hooks', '.claude settings.json', '.claude hooks'])(

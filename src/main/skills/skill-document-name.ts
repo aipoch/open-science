@@ -11,18 +11,29 @@ const canonicalSkillDocument = (
   } = {}
 ): string => {
   const normalized = raw.replace(/\r\n?/g, '\n')
+  const synthesize = (body: string): string => {
+    const frontmatter = {
+      name,
+      description: options.synthesizeFrontmatter?.description.trim() || name
+    }
+    return `---\n${dumpYaml(frontmatter, { lineWidth: -1 }).trimEnd()}\n---\n${body}`
+  }
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized)
   if (!match) {
     if (!options.synthesizeFrontmatter) return raw
-    const frontmatter = {
-      name,
-      description: options.synthesizeFrontmatter.description.trim() || name
-    }
-    return `---\n${dumpYaml(frontmatter, { lineWidth: -1 }).trimEnd()}\n---\n${normalized}`
+    return synthesize(normalized)
   }
 
-  const parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
+  let parsed: unknown
+  try {
+    parsed = loadYaml(match[1], { schema: FAILSAFE_SCHEMA })
+  } catch (error) {
+    if (!options.synthesizeFrontmatter) throw error
+    return synthesize(normalized.slice(match[0].length))
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return options.synthesizeFrontmatter ? synthesize(normalized.slice(match[0].length)) : raw
+  }
   const fields = Object.entries(parsed as Record<string, unknown>)
   const frontmatter = {
     ...Object.fromEntries(
