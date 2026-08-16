@@ -239,7 +239,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 49 current data and content invoke channels', () => {
+  it('owns exactly the 50 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -280,6 +280,7 @@ describe('Data and content application commands', () => {
         'sessions:save-manifest',
         'sessions:update-archive',
         'sessions:save-session',
+        'sessions:set-delegation-policy',
         'uploads:abort-transfer',
         'uploads:append-transfer',
         'uploads:begin-transfer',

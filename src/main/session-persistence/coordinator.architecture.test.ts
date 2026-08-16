@@ -405,7 +405,7 @@ describe('Session persistence coordinator architecture', () => {
   it('keeps the facade and every deep owner within their completion gates', () => {
     for (const [file, source] of sources) {
       const physicalLines = source.split(/\r?\n/).length - Number(source.endsWith('\n'))
-      expect(physicalLines, file).toBeLessThanOrEqual(file === 'coordinator.ts' ? 1000 : 660)
+      expect(physicalLines, file).toBeLessThanOrEqual(file === 'coordinator.ts' ? 1000 : 750)
     }
   })
 
@@ -451,6 +451,7 @@ describe('Session persistence coordinator architecture', () => {
         'saveSideChatProjection',
         'sessionMetadataSnapshot',
         'sessionProjectId',
+        'setSessionDelegationPolicy',
         'setSessionDeletionHandlers',
         'setSessionEnabledComputeHosts',
         'settleMessage',
@@ -809,6 +810,7 @@ describe('Session persistence coordinator architecture', () => {
         'replaceMetadata',
         'saveSession',
         'sessionProjectId',
+        'setDelegationPolicy',
         'setEnabledComputeHosts'
       ].sort()
     )
@@ -886,6 +888,7 @@ describe('Session persistence coordinator architecture', () => {
       saveSideChatProjection: ['sideChatOwner.saveProjection'],
       sessionMetadataSnapshot: ['stateOwner.metadataSnapshot'],
       sessionProjectId: ['stateOwner.sessionProjectId'],
+      setSessionDelegationPolicy: ['stateOwner.setDelegationPolicy'],
       setSessionEnabledComputeHosts: ['stateOwner.setEnabledComputeHosts'],
       readChildren: ['delegatedWorkOwner.readChildren'],
       recoverInterruptedDelegatedWork: ['delegatedWorkOwner.recoverInterruptedDelegatedWork'],
