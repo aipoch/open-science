@@ -166,6 +166,18 @@ describe('notebook-env-store', () => {
     expect(useNotebookEnvStore.getState().scope).toBe('r')
   })
 
+  it('does not provision or reset while the authoritative status is unavailable', async () => {
+    const { api } = installApi()
+    useNotebookEnvStore.setState({ statusError: 'status unavailable' })
+
+    await useNotebookEnvStore.getState().provision('r')
+    await useNotebookEnvStore.getState().reset('python')
+
+    expect(api.provision).not.toHaveBeenCalled()
+    expect(api.repair).not.toHaveBeenCalled()
+    expect(useNotebookEnvStore.getState().statusError).toBe('status unavailable')
+  })
+
   it('applies a broadcast progress event and refreshes status', async () => {
     const status: ProvisionStatus = {
       pythonReady: false,
@@ -194,12 +206,20 @@ describe('notebook-env-store', () => {
     const { emit } = installApi({ getStatus })
     await useNotebookEnvStore.getState().init()
 
-    emit({ phase: 'download', message: 'Fetching bundle…', progress: 0.25 })
+    emit({
+      phase: 'download',
+      message: 'Fetching bundle…',
+      progress: 0.25,
+      scope: 'r',
+      sessionId: 'session-r'
+    })
 
     await vi.waitFor(() => {
       expect(useNotebookEnvStore.getState().ui).toEqual({
         kind: 'error',
-        message: 'refresh unavailable'
+        message: 'refresh unavailable',
+        scope: 'r',
+        sessionId: 'session-r'
       })
     })
   })

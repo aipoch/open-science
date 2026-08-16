@@ -141,10 +141,17 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   const applyUi = (partial: Partial<NotebookEnvState>): void =>
     set((s) => {
       const next = { ...s, ...partial }
+      const statusErrorScope = next.progress?.scope ?? next.scope
+      const statusErrorSessionId = next.progress?.sessionId
       return {
         ...partial,
         ui: next.statusError
-          ? ({ kind: 'error', message: next.statusError } as const)
+          ? ({
+              kind: 'error',
+              message: next.statusError,
+              ...(statusErrorScope ? { scope: statusErrorScope } : {}),
+              ...(statusErrorSessionId ? { sessionId: statusErrorSessionId } : {})
+            } as const)
           : deriveProvisionUi(next.status, next.scope, next.progress, next.error)
       }
     })
@@ -261,6 +268,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
     },
 
     provision: async (lang) => {
+      if (get().statusError) return
       const bridge = window.api?.notebookEnv
       const scope: ProvisionScope = lang
       applyUi({ scope, progress: undefined, error: undefined })
@@ -326,6 +334,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
     // confirmed stopped). Repair force-clears the quarantine and rebuilds — the reachable "Reset" entry
     // for a block that won't clear on its own. Tracked per-language like provision.
     reset: async (lang) => {
+      if (get().statusError) return
       const bridge = window.api?.notebookEnv
       applyUi({ scope: lang, error: undefined })
       applyLang(lang, { preparing: true, error: undefined })

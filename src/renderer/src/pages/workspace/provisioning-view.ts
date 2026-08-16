@@ -73,7 +73,7 @@ export function notebookGated(
   // A status-read error makes the active operation's exact scope unknown. If the last authoritative
   // snapshot was still provisioning, fail closed so an additive upgrade cannot become interactive
   // merely because its follow-up status refresh failed. The error overlay still exposes Retry.
-  if (ui.kind === 'error' && status.provisioning) return true
+  if (ui.kind === 'error' && status.provisioning) return ui.scope !== 'r'
   if (!status.pythonReady) return true
   return ui.kind === 'preparing' && ui.scope === 'upgrade'
 }
