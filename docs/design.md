@@ -395,6 +395,9 @@ colors communicate a successful or failed probe/migration result.
 - When a presentation above preview/base owns the shell, base content is `inert` and
   `aria-hidden`. Nested dialogs and fullscreen viewers retain local priority before base-pane or
   window close behavior.
+- Web event recovery keeps base content blocked until the event cursor is live. An ordinary
+  disconnect offers Reload immediately while retrying up to eight total connection attempts with
+  bounded backoff. Exhausted attempts and unsafe replay both stop reconnecting and require Reload.
 
 ### Button
 

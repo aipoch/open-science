@@ -45,6 +45,7 @@ type Listener = (payload: unknown) => void
 
 const BOOTSTRAP_ATTEMPTS = 8
 const BOOTSTRAP_TIMEOUT_MS = 8_000
+const EVENT_CONNECTION_ATTEMPTS = 8
 
 const clientId = sessionStorage.getItem('open-science-web-client') ?? crypto.randomUUID()
 sessionStorage.setItem('open-science-web-client', clientId)
@@ -304,9 +305,13 @@ const connectEvents = (): void => {
   })
   socket.addEventListener('close', () => {
     if (eventRecoveryRequired) return
-    publishEventConnectionPhase('reconnecting')
-    const delay = Math.min(1_000 * 2 ** eventReconnectAttempt, 10_000)
     eventReconnectAttempt += 1
+    if (eventReconnectAttempt >= EVENT_CONNECTION_ATTEMPTS) {
+      requireEventReload(socket)
+      return
+    }
+    publishEventConnectionPhase('reconnecting')
+    const delay = Math.min(1_000 * 2 ** (eventReconnectAttempt - 1), 10_000)
     window.setTimeout(connectEvents, delay)
   })
 }

@@ -20,6 +20,20 @@ afterEach(() => {
 })
 
 describe('WebEventRecoveryDialog', () => {
+  it('offers a recovery action while an ordinary reconnect is pending', async () => {
+    await act(async () => {
+      root.render(<WebEventRecoveryDialog active phase="reconnecting" />)
+    })
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain('Reconnecting to Open Science')
+    expect(
+      Array.from(dialog?.querySelectorAll('button') ?? []).some(
+        (button) => button.textContent === 'Reload'
+      )
+    ).toBe(true)
+  })
+
   it('blocks stale interaction while replay is in progress without offering an unsafe bypass', async () => {
     await act(async () => {
       root.render(<WebEventRecoveryDialog active phase="replaying" />)

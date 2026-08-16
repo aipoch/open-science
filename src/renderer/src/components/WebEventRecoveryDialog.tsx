@@ -25,6 +25,7 @@ const WebEventRecoveryDialog = ({
 }: WebEventRecoveryDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const reloadRequired = phase === 'reload-required'
+  const reloadAvailable = phase === 'reconnecting' || reloadRequired
   const title =
     phase === 'connecting'
       ? t('Connecting to Open Science')
@@ -35,7 +36,7 @@ const WebEventRecoveryDialog = ({
           : t('Reload required')
   const description = reloadRequired
     ? t(
-        'This page can no longer safely recover all updates. Reload to fetch a complete, current view.'
+        'Open Science could not restore a complete, current view. Reload this page to reconnect safely.'
       )
     : t(
         'Controls are paused while Open Science restores updates that may have arrived during the interruption.'
@@ -64,7 +65,7 @@ const WebEventRecoveryDialog = ({
               {description}
             </AlertDialog.Description>
           </div>
-          {reloadRequired ? (
+          {reloadAvailable ? (
             <div className={dialogFooterClassName}>
               <Button type="button" onClick={() => window.location.reload()}>
                 <RefreshCw aria-hidden="true" />

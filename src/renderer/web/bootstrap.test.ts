@@ -281,6 +281,29 @@ describe('Web bootstrap event connection', () => {
     expect(FakeWebSocket.instances).toHaveLength(3)
   })
 
+  it('stops reconnecting and requests a reload after eight consecutive closes', async () => {
+    const phases: string[] = []
+    const stateListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    await loadBootstrap()
+
+    const reconnectDelays = [1_000, 2_000, 4_000, 8_000, 10_000, 10_000, 10_000]
+    for (const delay of reconnectDelays) {
+      FakeWebSocket.instances.at(-1)?.emit('close')
+      await vi.advanceTimersByTimeAsync(delay)
+    }
+    expect(FakeWebSocket.instances).toHaveLength(8)
+
+    FakeWebSocket.instances.at(-1)?.emit('close')
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(phases.at(-1)).toBe('reload-required')
+    expect(FakeWebSocket.instances).toHaveLength(8)
+    window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+  })
+
   it('signals stores to refresh only after replay reaches the live cursor', async () => {
     const listener = vi.fn()
     window.addEventListener(WEB_EVENTS_OPEN_EVENT, listener)

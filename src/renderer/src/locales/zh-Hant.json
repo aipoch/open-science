@@ -2599,7 +2599,7 @@
   "Restoring missed updates": "正在還原遺漏的更新",
   "Reload required": "需要重新載入",
   "Controls are paused while Open Science restores updates that may have arrived during the interruption.": "Open Science 正在還原中斷期間可能抵達的更新，控制項已暫停使用。",
-  "This page can no longer safely recover all updates. Reload to fetch a complete, current view.": "此頁面已無法安全還原所有更新。請重新載入以取得完整的最新檢視。",
+  "Open Science could not restore a complete, current view. Reload this page to reconnect safely.": "Open Science 無法還原完整且最新的檢視。請重新載入此頁面以安全地重新連線。",
   "Reviewer requested corrections": "審查員已要求修正",
   "Connecting to remote computer…": "正在連線至遠端電腦…",
   "Reconnecting to remote computer… ({{attempt}}/{{maxAttempts}})": "正在重新連線至遠端電腦…（{{attempt}}/{{maxAttempts}}）",
