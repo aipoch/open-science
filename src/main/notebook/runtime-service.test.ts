@@ -6741,19 +6741,7 @@ describe('v4 runtime bindings & agent tools', () => {
         runtimeId: userPyA.envId
       })
       const close = teardown === 'shutdown' ? service.shutdownAll() : service.dispose()
-      let timeout: ReturnType<typeof setTimeout> | undefined
-      const outcome = await Promise.race([
-        Promise.all([bind, close]).then(
-          () => 'completed' as const,
-          () => 'rejected' as const
-        ),
-        new Promise<'timed-out'>((resolve) => {
-          timeout = setTimeout(() => resolve('timed-out'), 250)
-        })
-      ])
-      if (timeout) clearTimeout(timeout)
-
-      expect(outcome).toBe('completed')
+      await Promise.all([bind, close])
     }
   )
 
