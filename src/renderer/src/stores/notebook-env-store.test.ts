@@ -55,6 +55,27 @@ describe('notebook-env-store', () => {
     expect(useNotebookEnvStore.getState().status.pythonReady).toBe(true)
   })
 
+  it('surfaces an initial status query failure and retries the query without provisioning', async () => {
+    const getStatus = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('status unavailable'))
+      .mockResolvedValueOnce(READY)
+    const { api } = installApi({ getStatus })
+
+    await useNotebookEnvStore.getState().init()
+
+    expect(useNotebookEnvStore.getState().ui).toEqual({
+      kind: 'error',
+      message: 'status unavailable'
+    })
+
+    await useNotebookEnvStore.getState().retry()
+
+    expect(api.getStatus).toHaveBeenCalledTimes(2)
+    expect(api.provision).not.toHaveBeenCalled()
+    expect(useNotebookEnvStore.getState().ui).toEqual({ kind: 'ready' })
+  })
+
   it('maps a recovery-blocked status flag to a RUNTIME_RECOVERY_BLOCKED langError (surfaces Reset)', async () => {
     // Recovery blocks a prefix in the main process WITHOUT touching the ready marker, so status can read
     // ready. The store must translate the *RecoveryBlocked flag into a langError so the UI shows Reset.
@@ -118,6 +139,25 @@ describe('notebook-env-store', () => {
     })
     // status is re-hydrated after each progress tick so provisioning/ready flip in lockstep.
     expect(api.getStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('surfaces a rejected status refresh after progress without leaking the rejection', async () => {
+    const preparing = { ...createInitialNotebookEnvState().status, provisioning: true }
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce(preparing)
+      .mockRejectedValueOnce(new Error('refresh unavailable'))
+    const { emit } = installApi({ getStatus })
+    await useNotebookEnvStore.getState().init()
+
+    emit({ phase: 'download', message: 'Fetching bundle…', progress: 0.25 })
+
+    await vi.waitFor(() => {
+      expect(useNotebookEnvStore.getState().ui).toEqual({
+        kind: 'error',
+        message: 'refresh unavailable'
+      })
+    })
   })
 
   it('maps language progress scopes and clears the scope for a global upgrade', async () => {
