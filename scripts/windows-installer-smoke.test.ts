@@ -57,7 +57,10 @@ describe('Windows installer smoke plan', () => {
   })
 
   it('parses an optional positive released migration count', () => {
-    expect(parseArguments(['--installer-dir', 'dist']).expectedMigrationCount).toBeUndefined()
+    expect(parseArguments(['--installer-dir', 'dist'])).toMatchObject({
+      artifactRpcContract: 'reservation',
+      expectedMigrationCount: undefined
+    })
     expect(
       parseArguments([
         '--installer-dir',
@@ -84,6 +87,23 @@ describe('Windows installer smoke plan', () => {
           ...(value === undefined ? [] : [value])
         ])
       ).toThrow(/migration count must be a positive/)
+    }
+  })
+
+  it('accepts only explicit packaged Artifact RPC contracts', () => {
+    expect(
+      parseArguments(['--installer-dir', 'dist', '--artifact-rpc-contract', 'legacy'])
+        .artifactRpcContract
+    ).toBe('legacy')
+    for (const value of [undefined, 'automatic']) {
+      expect(() =>
+        parseArguments([
+          '--installer-dir',
+          'dist',
+          '--artifact-rpc-contract',
+          ...(value === undefined ? [] : [value])
+        ])
+      ).toThrow(/Artifact RPC contract must be legacy or reservation/)
     }
   })
 
@@ -173,6 +193,41 @@ describe('Windows installer smoke plan', () => {
         workspace
       )
     ).toThrow(/write scope/)
+  })
+
+  it('supports the released legacy Artifact contract without weakening reservation enforcement', () => {
+    const workspace = 'C:\\smoke\\workspace'
+    const legacyRequest = {
+      method: 'artifactCreateVersion',
+      params: {
+        projectId: 'installer-smoke-project',
+        appSessionId: 'installer-smoke-session',
+        artifactStorageSessionId: 'installer-smoke-session',
+        artifactRunId: 'installer-smoke-artifact-run',
+        writeOperationId: `artifact-write-${'a'.repeat(64)}`
+      }
+    }
+
+    expect(packagedArtifactSmokeRpcResult(legacyRequest, workspace, 'legacy')).toMatchObject({
+      versionId: 'installer-smoke-version',
+      path: join(workspace, 'windows-rpc-smoke.txt')
+    })
+    expect(() => packagedArtifactSmokeRpcResult(legacyRequest, workspace, 'reservation')).toThrow(
+      /reservation metadata/
+    )
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          ...legacyRequest,
+          params: {
+            ...legacyRequest.params,
+            resourceReservationId: 'partial-reservation'
+          }
+        },
+        workspace,
+        'legacy'
+      )
+    ).toThrow(/must omit reservation metadata/)
   })
 
   it('uses the released migration prefix only for current-version launch phases', () => {

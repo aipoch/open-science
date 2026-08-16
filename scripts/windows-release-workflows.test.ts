@@ -330,6 +330,15 @@ describe('post-merge Windows validation', () => {
     expect(released.run).toContain('Released migrations are not a continuous prefix')
     expect(released.run).toContain('"sha=$releasedSha"')
     expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
+    expect(released.run).toContain('f12fd1f871022c7a9b771d193202d9ecf98aca96')
+    expect(released.run)
+      .toContain(`git merge-base --is-ancestor $artifactReservationCommit $releasedSha
+if ($LASTEXITCODE -eq 0) {
+  $artifactRpcContract = 'reservation'
+} elseif ($LASTEXITCODE -eq 1) {
+  $artifactRpcContract = 'legacy'
+}`)
+    expect(released.run).toContain('"artifact_rpc_contract=$artifactRpcContract"')
 
     const updaterStep = findStep(upgrade, 'Certify Windows electron-updater differential update')
     const installerStep = findStep(
@@ -376,6 +385,9 @@ describe('post-merge Windows validation', () => {
     expect(
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
     ).toContain("--expected-migration-count '${{ steps.current.outputs.migration_count }}'")
+    expect(
+      findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
+    ).toContain("--artifact-rpc-contract '${{ steps.current.outputs.artifact_rpc_contract }}'")
     expect(
       findStep(upgrade, 'Drill Windows silent upgrade, process lock, rollback, and restart')
     ).toMatchObject({ id: 'installer', 'continue-on-error': true })

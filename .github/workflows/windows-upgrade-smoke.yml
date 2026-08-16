@@ -64,8 +64,19 @@ jobs:
               exit 1
             }
           }
+          $artifactReservationCommit = 'f12fd1f871022c7a9b771d193202d9ecf98aca96'
+          git merge-base --is-ancestor $artifactReservationCommit $releasedSha
+          if ($LASTEXITCODE -eq 0) {
+            $artifactRpcContract = 'reservation'
+          } elseif ($LASTEXITCODE -eq 1) {
+            $artifactRpcContract = 'legacy'
+          } else {
+            Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+            exit 1
+          }
           "sha=$releasedSha" >> $env:GITHUB_OUTPUT
           "migration_count=$($migrationFiles.Count)" >> $env:GITHUB_OUTPUT
+          "artifact_rpc_contract=$artifactRpcContract" >> $env:GITHUB_OUTPUT
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -134,6 +145,7 @@ jobs:
           node scripts/windows-installer-smoke.mjs `
             --installer-dir current `
             --previous-installer-dir previous `
+            --artifact-rpc-contract '${{ steps.current.outputs.artifact_rpc_contract }}' `
             --expected-migration-count '${{ steps.current.outputs.migration_count }}' 2>&1 |
             Tee-Object -FilePath windows-installer-certification.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

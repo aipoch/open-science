@@ -423,10 +423,13 @@ const assertPackagedArtifactScope = (params, requireWriteOperationId) => {
   }
 }
 
-const packagedArtifactSmokeRpcResult = (body, workspace) => {
+const packagedArtifactSmokeRpcResult = (body, workspace, artifactRpcContract = 'reservation') => {
   const params = body.params ?? {}
   const fileBytes = Buffer.byteLength(RPC_SMOKE_CONTENT)
   if (body.method === 'artifactReserveWrite') {
+    if (artifactRpcContract !== 'reservation') {
+      throw new Error('Legacy packaged Artifact RPC must not reserve a write.')
+    }
     assertPackagedArtifactScope(params, true)
     if (params.filename !== 'windows-rpc-smoke.txt' || params.fileBytes !== fileBytes) {
       throw new Error('Unexpected packaged Artifact write reservation request.')
@@ -440,7 +443,15 @@ const packagedArtifactSmokeRpcResult = (body, workspace) => {
   if (body.method === 'artifactCreateVersion') {
     assertPackagedArtifactScope(params, true)
     const checksum = createHash('sha256').update(RPC_SMOKE_CONTENT).digest('hex')
-    if (
+    if (artifactRpcContract === 'legacy') {
+      if (
+        params.resourceReservationId !== undefined ||
+        params.resourceSizeBytes !== undefined ||
+        params.resourceChecksum !== undefined
+      ) {
+        throw new Error('Legacy packaged Artifact Version must omit reservation metadata.')
+      }
+    } else if (
       params.resourceReservationId !== RPC_SMOKE_RESERVATION_ID ||
       params.resourceSizeBytes !== fileBytes ||
       params.resourceChecksum !== checksum
@@ -467,6 +478,9 @@ const packagedArtifactSmokeRpcResult = (body, workspace) => {
     }
   }
   if (body.method === 'artifactReleaseWrite') {
+    if (artifactRpcContract !== 'reservation') {
+      throw new Error('Legacy packaged Artifact RPC must not release a write reservation.')
+    }
     assertPackagedArtifactScope(params, false)
     if (params.reservationId !== RPC_SMOKE_RESERVATION_ID) {
       throw new Error('Unexpected packaged Artifact reservation release request.')
@@ -524,7 +538,11 @@ const connectPackagedMcp = async ({ executable, entryPath, serverArg, env, cwd }
   return { client, stderr: () => stderr }
 }
 
-const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
+const runPackagedLocalRpcSmoke = async ({
+  installDirectory,
+  env,
+  artifactRpcContract = 'reservation'
+}) => {
   const root = await mkdtemp(join(env.TEMP, RPC_SMOKE_ROOT_PREFIX))
   const workspace = join(root, 'workspace')
   const artifactStorage = join(root, 'artifacts')
@@ -570,7 +588,7 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
         })
         return
       }
-      const artifactResult = packagedArtifactSmokeRpcResult(body, workspace)
+      const artifactResult = packagedArtifactSmokeRpcResult(body, workspace, artifactRpcContract)
       if (artifactResult !== undefined) {
         sendJson(response, 200, { result: artifactResult })
         return
@@ -669,12 +687,10 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
     )
     assertToolResult('write_artifact_file', artifact, 'installer-smoke-version')
 
-    const expectedMethods = [
-      'state',
-      'executeShell',
-      'artifactReserveWrite',
-      'artifactCreateVersion'
-    ]
+    const expectedMethods =
+      artifactRpcContract === 'legacy'
+        ? ['state', 'executeShell', 'artifactCreateVersion']
+        : ['state', 'executeShell', 'artifactReserveWrite', 'artifactCreateVersion']
     if (JSON.stringify(methods) !== JSON.stringify(expectedMethods)) {
       throw new Error(`Unexpected packaged local RPC sequence: ${methods.join(' -> ')}`)
     }
@@ -960,6 +976,7 @@ const installAndProbe = async ({
   phase,
   env,
   legacyConfigRoots,
+  artifactRpcContract,
   expectedMigrationCount,
   onSqliteVersion
 }) => {
@@ -967,7 +984,8 @@ const installAndProbe = async ({
   await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
-  if (phase === 'current') await runPackagedLocalRpcSmoke({ installDirectory, env })
+  if (phase === 'current')
+    await runPackagedLocalRpcSmoke({ installDirectory, env, artifactRpcContract })
   return launchAndProbe({
     installDirectory,
     expectedVersion: installerVersion(installer),
@@ -986,6 +1004,7 @@ const installOverRunningApp = async ({
   phase,
   env,
   legacyConfigRoots,
+  artifactRpcContract,
   launchInstalledApp = true,
   expectedMigrationCount,
   onSqliteVersion
@@ -1006,7 +1025,8 @@ const installOverRunningApp = async ({
 
   await assertPackagedResources(installDirectory)
   await runProcess(join(installDirectory, 'resources', 'micromamba.exe'), ['--version'], { env })
-  if (phase === 'current') await runPackagedLocalRpcSmoke({ installDirectory, env })
+  if (phase === 'current')
+    await runPackagedLocalRpcSmoke({ installDirectory, env, artifactRpcContract })
   if (!launchInstalledApp) return undefined
   return launchAndProbe({
     installDirectory,
@@ -1054,8 +1074,14 @@ const parseArguments = (argv) => {
   const installerDirectory = valueFor('--installer-dir')
   if (!installerDirectory)
     throw new Error(
-      'Usage: --installer-dir <path> [--previous-installer-dir <path>] [--expected-migration-count <count>]'
+      'Usage: --installer-dir <path> [--previous-installer-dir <path>] [--artifact-rpc-contract <legacy|reservation>] [--expected-migration-count <count>]'
     )
+  const artifactRpcContractIndex = argv.indexOf('--artifact-rpc-contract')
+  const artifactRpcContract =
+    artifactRpcContractIndex === -1 ? 'reservation' : argv[artifactRpcContractIndex + 1]
+  if (artifactRpcContract !== 'legacy' && artifactRpcContract !== 'reservation') {
+    throw new Error('Artifact RPC contract must be legacy or reservation.')
+  }
   const expectedMigrationCountIndex = argv.indexOf('--expected-migration-count')
   const expectedMigrationCountValue =
     expectedMigrationCountIndex === -1 ? undefined : argv[expectedMigrationCountIndex + 1]
@@ -1075,6 +1101,7 @@ const parseArguments = (argv) => {
     previousInstallerDirectory: valueFor('--previous-installer-dir')
       ? resolve(valueFor('--previous-installer-dir'))
       : undefined,
+    artifactRpcContract,
     expectedMigrationCount
   }
 }
@@ -1133,6 +1160,7 @@ const main = async () => {
               installDirectory,
               env,
               legacyConfigRoots,
+              artifactRpcContract: options.artifactRpcContract,
               expectedMigrationCount: releasedMigrationCountForPhase(
                 cycle.phase,
                 options.expectedMigrationCount
@@ -1144,6 +1172,7 @@ const main = async () => {
               installDirectory,
               env,
               legacyConfigRoots,
+              artifactRpcContract: options.artifactRpcContract,
               expectedMigrationCount: releasedMigrationCountForPhase(
                 cycle.phase,
                 options.expectedMigrationCount
