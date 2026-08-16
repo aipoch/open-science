@@ -118,6 +118,31 @@ describe('probeConnectivity', () => {
     expect(useNetworkStore.getState().connectivity).toBe('unreachable')
   })
 
+  it('does not restore transient unknown when overlapping announced probes reject', async () => {
+    let resolveFirst!: (reachable: boolean) => void
+    const firstResult = new Promise<boolean>((resolve) => {
+      resolveFirst = resolve
+    })
+    const checkConnectivity = vi
+      .fn()
+      .mockReturnValueOnce(firstResult)
+      .mockRejectedValueOnce(new Error('bridge gone'))
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    const firstProbe = useNetworkStore.getState().probeConnectivity({ announce: true })
+    const secondProbe = useNetworkStore.getState().probeConnectivity({ announce: true })
+
+    await vi.advanceTimersByTimeAsync(500)
+    await secondProbe
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+
+    resolveFirst(true)
+    await firstProbe
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+    expect(checkConnectivity).toHaveBeenCalledTimes(2)
+  })
+
   it('falls back to reachable when there is no probe bridge', async () => {
     stubCheckConnectivity()
     useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
