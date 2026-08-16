@@ -575,6 +575,13 @@ const AppContent = (): React.JSX.Element | null => {
 
   const activePresentation = appShellPresentation.active
   const isBasePresentationActive = activePresentation === 'base' || activePresentation === 'preview'
+  const writeErrorAlert = sessionPersistence.writeError ? (
+    <SessionPersistenceAlert
+      title={t('Conversation storage needs attention')}
+      message={sessionPersistence.writeError}
+      onRetry={sessionPersistence.retryWrites}
+    />
+  ) : null
 
   return (
     <>
@@ -595,12 +602,8 @@ const AppContent = (): React.JSX.Element | null => {
             message={sessionPersistence.loadError}
             onRetry={sessionPersistence.retryLoad}
           />
-        ) : sessionPersistence.writeError ? (
-          <SessionPersistenceAlert
-            title={t('Conversation storage needs attention')}
-            message={sessionPersistence.writeError}
-            onRetry={sessionPersistence.retryWrites}
-          />
+        ) : writeErrorAlert ? (
+          writeErrorAlert
         ) : sessionPersistence.loadWarning ? (
           <SessionPersistenceAlert
             title={t('Saved conversation data was damaged')}
@@ -609,6 +612,7 @@ const AppContent = (): React.JSX.Element | null => {
             onDismiss={sessionPersistence.dismissLoadWarning}
           />
         ) : null}
+        {sessionPersistence.catalogRecovery.kind !== 'ready' ? writeErrorAlert : null}
         <WorkspaceAgentRuntimeProvider>
           {view === 'home' ? (
             <HomePage

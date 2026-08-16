@@ -1120,6 +1120,33 @@ describe('App startup routing', () => {
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
   })
 
+  it('keeps failed writes retryable while catalog recovery is visible', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.hasCompleteSessionCatalog = false
+    mocks.sessionPersistence.catalogRecovery = { kind: 'repairable', reason: 'session-scan' }
+    mocks.sessionPersistence.writeError =
+      'Open Science could not save the latest conversation changes. Retry before closing the app.'
+
+    await render()
+
+    const alerts = Array.from(
+      container.querySelectorAll('[data-testid="session-persistence-alert"]')
+    )
+    expect(alerts).toHaveLength(2)
+    expect(alerts[0]?.textContent).toContain('Project index needs repair')
+    expect(alerts[1]?.textContent).toContain('Conversation storage needs attention')
+
+    const retries = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="session-persistence-retry"]')
+    )
+    const repairIndex = retries.find((button) => button.textContent === 'Repair index')
+    const retryWrites = retries.find((button) => button.textContent === 'Retry')
+    repairIndex?.click()
+    retryWrites?.click()
+    expect(mocks.sessionPersistence.retryLoad).toHaveBeenCalledOnce()
+    expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
+  })
+
   it('reports quarantined corrupt conversation files without blocking healthy sessions', async () => {
     mocks.settings.isLoaded = true
     mocks.sessionPersistence.hasCompleteSessionCatalog = false
