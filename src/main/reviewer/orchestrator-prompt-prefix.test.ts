@@ -26,6 +26,7 @@ import type { MessageAttribution, PersistedChatSession } from '../../shared/sess
 // The reviewer prompt built by buildReviewerPrompt always starts with this line (see orchestrator.ts).
 // It is the stable marker used to locate the reviewer prompt inside the text sent to the agent.
 const REVIEWER_PROMPT_HEAD = 'You are reviewing turn: msg-2'
+const RECOVERY_PROMPT_HEAD = 'Your previous turn ended without calling submit_findings.'
 
 const makeSession = (): PersistedChatSession => ({
   id: 'session-1',
@@ -145,8 +146,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
       artifactStorageRoot: temporaryRoot!
     })
 
-    // Exactly one prompt was sent to the reviewer session.
-    expect(promptSink).toHaveLength(1)
+    expect(promptSink).toHaveLength(2)
     const sent = promptSink[0]!
 
     // The sent prompt begins with the prefix followed by a blank line, then the reviewer prompt.
@@ -157,6 +157,7 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
     expect(sent.indexOf(openCodePrefix)).toBeLessThan(sent.indexOf(REVIEWER_PROMPT_HEAD))
     // Concretely: prefix + separator + the reviewer prompt (which starts with its known head line).
     expect(sent.startsWith(`${openCodePrefix}\n\n${REVIEWER_PROMPT_HEAD}`)).toBe(true)
+    expect(promptSink[1]).toContain(RECOVERY_PROMPT_HEAD)
 
     await client.$disconnect()
   })
@@ -180,13 +181,14 @@ describe('runReview — framework-neutral rubric delivery (promptPrefix)', () =>
       artifactStorageRoot: temporaryRoot!
     })
 
-    expect(promptSink).toHaveLength(1)
+    expect(promptSink).toHaveLength(2)
     const sent = promptSink[0]!
 
     // No prefix: the text sent is exactly the reviewer prompt, starting with its head line.
     expect(sent.startsWith(REVIEWER_PROMPT_HEAD)).toBe(true)
     // And nothing from the opencode-style prefix leaked in.
     expect(sent).not.toContain('OPENCODE-RUBRIC-PREFIX')
+    expect(promptSink[1]).toContain(RECOVERY_PROMPT_HEAD)
 
     await client.$disconnect()
   })
@@ -425,14 +427,15 @@ describe('runScopedReview — framework-neutral rubric delivery (fix-loop re-rev
 
     // The initial review + exactly one scoped re-review each built a reviewer session.
     expect(buildCall).toBe(2)
-    // The scoped re-review sent exactly one prompt, and it carries the prefix ahead of the reviewer
-    // prompt for the correction turn (msg-4-correction).
-    expect(scopedPromptSink).toHaveLength(1)
+    // The scoped re-review prompt carries the prefix ahead of the reviewer prompt for the correction
+    // turn (msg-4-correction); its one recovery prompt remains a separate protocol instruction.
+    expect(scopedPromptSink).toHaveLength(2)
     const scopedHead = 'You are reviewing turn: msg-4-correction'
     const sent = scopedPromptSink[0]!
     expect(sent.startsWith(`${scopedPrefix}\n\n`)).toBe(true)
     expect(sent).toContain(scopedHead)
     expect(sent.startsWith(`${scopedPrefix}\n\n${scopedHead}`)).toBe(true)
+    expect(scopedPromptSink[1]).toContain(RECOVERY_PROMPT_HEAD)
 
     await client.$disconnect()
   })

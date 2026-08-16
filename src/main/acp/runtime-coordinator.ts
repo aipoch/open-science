@@ -1192,25 +1192,26 @@ class AcpRuntimeCoordinator {
           false
         )
       },
-      sendApplicationPrompt: async (request, attribution) => {
-        this.assertPromptAdmissionOpen()
-        const contextReset = await ensureActivitySession(request.sessionId)
-        const historyPreamble = options.session?.historyPreamble
-        return this.dispatchPrompt(
-          contextReset
-            ? {
-                ...request,
-                contextReset: true,
-                ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
-              }
-            : request,
-          undefined,
-          'sendApplicationPrompt',
-          runtime,
-          false,
-          attribution
-        )
-      }
+      sendApplicationPrompt: (request, attribution) =>
+        this.linearizeRootAdmission(request.sessionId, async () => {
+          this.assertPromptAdmissionOpen()
+          const contextReset = await ensureActivitySession(request.sessionId)
+          const historyPreamble = options.session?.historyPreamble
+          return this.dispatchPrompt(
+            contextReset
+              ? {
+                  ...request,
+                  contextReset: true,
+                  ...(historyPreamble && !request.historyPreamble ? { historyPreamble } : {})
+                }
+              : request,
+            undefined,
+            'sendApplicationPrompt',
+            runtime,
+            false,
+            attribution
+          )
+        })
     }
   }
 

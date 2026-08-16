@@ -288,6 +288,7 @@ export class ReviewerMcpServer {
     executionLogActivityIds: new Set<string>(),
     artifactVersionIds: new Set<string>()
   }
+  private findingsSubmissionAttempted = false
   private findingsSubmissionState: 'idle' | 'submitting' | 'submitted' = 'idle'
 
   constructor(
@@ -336,6 +337,10 @@ export class ReviewerMcpServer {
       ...connection,
       listening: this.httpServer.listening
     })
+  }
+
+  get submissionAttempted(): boolean {
+    return this.findingsSubmissionAttempted
   }
 
   // Returns the native HTTP config, or the Windows stdio proxy config for a named pipe.
@@ -468,6 +473,7 @@ export class ReviewerMcpServer {
         inputSchema: submitFindingsObjectSchema.shape
       },
       async (input) => {
+        this.findingsSubmissionAttempted = true
         // Keep the idle check and the transition to `submitting` free of awaits. JavaScript's
         // run-to-completion semantics then make this a single-writer gate for concurrent tool calls.
         if (this.findingsSubmissionState !== 'idle') {

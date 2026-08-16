@@ -18,6 +18,7 @@ const harness = vi.hoisted(() => ({
   events: [] as string[],
   inMutation: false,
   submission: undefined as NewCheck[] | undefined,
+  submissionAttempted: false,
   submit: undefined as ((checks: NewCheck[]) => Promise<void>) | undefined,
   promptError: undefined as Error | undefined,
   nextUpdate: undefined as (() => Promise<{ kind: string; stopReason?: string }>) | undefined,
@@ -80,6 +81,10 @@ vi.mock('./mcp-server', () => ({
     async stop(): Promise<void> {
       outsideMutation('mcp:stop')
       if (harness.stopError) throw harness.stopError
+    }
+
+    get submissionAttempted(): boolean {
+      return harness.submissionAttempted
     }
 
     toAcpMcpServerConfig(): Record<string, never> {
@@ -245,6 +250,7 @@ describe('review assessment owner', () => {
     harness.events = []
     harness.inMutation = false
     harness.submission = [{ status: 'pass', claim: 'Pass', evidence: 'Verified' }]
+    harness.submissionAttempted = false
     harness.submit = undefined
     harness.promptError = undefined
     harness.nextUpdate = undefined
@@ -339,6 +345,30 @@ describe('review assessment owner', () => {
     expect(reviewRepository.updateReview).toHaveBeenCalledWith('assessment-review', {
       model: 'selected-runtime-model'
     })
+  })
+
+  it('does not retry after submit_findings was attempted', async () => {
+    harness.submission = undefined
+    harness.submissionAttempted = true
+    const result = await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      mode: 'initial'
+    })
+
+    expect(result.review.lifecycle).toBe('error')
+    expect(harness.events.filter((event) => event === 'acp:prompt')).toHaveLength(1)
+  })
+
+  it('does not retry a cancelled reviewer turn', async () => {
+    harness.submission = undefined
+    harness.nextUpdate = async () => ({ kind: 'stop', stopReason: 'cancelled' })
+    const result = await runReviewAssessment({
+      ...commonOptions(makeRepository()),
+      mode: 'initial'
+    })
+
+    expect(result.review.lifecycle).toBe('error')
+    expect(harness.events.filter((event) => event === 'acp:prompt')).toHaveLength(1)
   })
 
   it('disposes a built session when the pinned model cannot be persisted', async () => {

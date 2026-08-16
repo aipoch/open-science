@@ -1204,6 +1204,68 @@ describe('AcpRuntimeCoordinator', () => {
     await laterUser
   })
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'linearizes a scoped Reviewer correction behind an active %s user prompt',
+    async (frameworkId) => {
+      const prompts = [createDeferred<unknown>(), createDeferred<unknown>()]
+      let promptIndex = 0
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: () => prompts[promptIndex++].promise
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession({
+        cwd: '/workspace',
+        projectName: 'project-1'
+      })
+
+      const userPrompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'active user turn'
+      })
+      await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+
+      const correction = coordinator.withActivity(
+        {
+          session: {
+            sessionId: session.sessionId,
+            cwd: '/workspace',
+            projectName: 'project-1',
+            previousFrameworkId: frameworkId
+          }
+        },
+        (runtime) =>
+          runtime.sendApplicationPrompt(
+            { sessionId: session.sessionId, text: '[Auditor] correct the reviewed turn' },
+            {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            }
+          )
+      )
+
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(vi.mocked(created.runtime.sendApplicationPrompt)).not.toHaveBeenCalled()
+
+      prompts[0].resolve({ stopReason: 'end_turn' })
+      await userPrompt
+      await vi.waitFor(() =>
+        expect(vi.mocked(created.runtime.sendApplicationPrompt)).toHaveBeenCalledOnce()
+      )
+
+      prompts[1].resolve({ stopReason: 'end_turn' })
+      await correction
+    }
+  )
+
   it('revalidates a parked upward branch inside the root lock before any provider call', async () => {
     let created!: ReturnType<typeof createFakeRuntime>
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

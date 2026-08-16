@@ -767,6 +767,7 @@ describe('ReviewerMcpServer HTTP transport', () => {
       })
       expect(missing.result?.isError).toBe(true)
       expect(missing.result?.content?.[0]?.text).toContain('Missing disposition')
+      expect(server.submissionAttempted).toBe(true)
 
       const duplicatedDisposition = await callTool(
         endpoint,
