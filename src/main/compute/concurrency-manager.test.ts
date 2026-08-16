@@ -89,10 +89,13 @@ describe('ConcurrencyManager', () => {
         updateStarted = resolve
       })
 
-      vi.mocked(hostRepo.get).mockImplementation(async () => ({
-        providerId: 'ssh:cluster-a',
-        concurrencyLimit: storedLimit
-      }) as ComputeHost)
+      vi.mocked(hostRepo.get).mockImplementation(
+        async () =>
+          ({
+            providerId: 'ssh:cluster-a',
+            concurrencyLimit: storedLimit
+          }) as ComputeHost
+      )
       vi.mocked(hostRepo.updateConcurrencyLimit).mockImplementation(async (_providerId, limit) => {
         updateStarted?.()
         await new Promise<void>((resolve) => {
