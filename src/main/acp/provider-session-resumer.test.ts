@@ -269,7 +269,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       order.push('state callback')
       if (options.observerError) throw options.observerError
     },
-    resumeTimeoutMs: 30_000,
+    resumeTimeoutMs: 60_000,
     setTimer,
     clearTimer: () => undefined,
     diagnosticContext: () => ({})
@@ -486,6 +486,21 @@ describe('AcpProviderSessionResumer', () => {
     await expect(resumed).rejects.toThrow('ACP session resume timed out.')
     expect(harness.disconnectTimedOutConnection).toHaveBeenCalledOnce()
     expect(harness.registry.isIdentityClaimed('stable-app-session')).toBe(false)
+  })
+
+  it('starts a fresh timeout budget after reconnecting before provider resume stalls', async () => {
+    const harness = createHarness()
+    harness.request.mockImplementationOnce(() => new Promise<never>(() => undefined))
+
+    const resumed = harness.resume()
+    await vi.waitFor(() => expect(harness.request).toHaveBeenCalledOnce())
+    harness.fireTimeout()
+
+    await expect(resumed).rejects.toThrow('ACP session resume timed out.')
+    expect(harness.setTimer).toHaveBeenCalledTimes(2)
+    expect(harness.setTimer).toHaveBeenNthCalledWith(1, expect.any(Function), 60_000)
+    expect(harness.setTimer).toHaveBeenNthCalledWith(2, expect.any(Function), 60_000)
+    expect(harness.disconnectTimedOutConnection).toHaveBeenCalledOnce()
   })
 
   it('transfers its reservation to fresh adoption when Resume Policy rejects the backend', async () => {

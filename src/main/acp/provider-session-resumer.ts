@@ -93,7 +93,12 @@ export class AcpProviderSessionResumer {
     const identity = reserved.reservation
 
     try {
-      return await this.withTimeout(() => this.resumeReserved(request, cwd, projectId, identity))
+      const connection = await this.withTimeout(() => this.deps.ensureConnected(cwd))
+      this.deps.assertCurrentConnection(connection)
+      identity.renew()
+      return await this.withTimeout(() =>
+        this.resumeConnected(request, connection, cwd, projectId, identity)
+      )
     } finally {
       identity.release()
     }
@@ -150,9 +155,7 @@ export class AcpProviderSessionResumer {
     }
   }
 
-  private async withTimeout(
-    operation: () => Promise<AcpCreateSessionResponse>
-  ): Promise<AcpCreateSessionResponse> {
+  private async withTimeout<Result>(operation: () => Promise<Result>): Promise<Result> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -172,16 +175,13 @@ export class AcpProviderSessionResumer {
     }
   }
 
-  private async resumeReserved(
+  private async resumeConnected(
     request: AcpResumeSessionRequest,
+    connection: ClientConnection,
     cwd: string,
     projectId: string,
     identity: AcpPrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
-    const connection = await this.deps.ensureConnected(cwd)
-    this.deps.assertCurrentConnection(connection)
-    identity.renew()
-
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()

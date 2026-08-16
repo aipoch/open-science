@@ -174,7 +174,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     updateCwd,
     pushEvent: (event) => session.publication.pushEvent(event),
     emitState,
-    resumeTimeoutMs: options.resumeTimeoutMs ?? 30_000,
+    resumeTimeoutMs: options.resumeTimeoutMs ?? 60_000,
     setTimer: base.setTimer,
     clearTimer: base.clearTimer,
     diagnosticContext
