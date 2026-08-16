@@ -527,12 +527,12 @@ const drainWorkspaceRuntimeEventsForPersistence = async (
 ): Promise<void> => {
   const snapshot = await window.api.acp.getState()
   const accepted = await ingestWorkspaceRuntimeSnapshot(snapshot, false)
+  await liveWorkspaceRuntimeEventProcessor.drain(sessionId)
+  if (accepted) syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
   // A versioned persistence drain shares the global revision watermark with the live React
   // projection. Reconcile the same accepted snapshot so the drain cannot strand that projection
   // behind it. Legacy unversioned pulls have no ordering proof and must not overwrite live state.
   if (accepted && snapshot.revision !== undefined) reconcileRuntimeSnapshot?.(snapshot)
-  await liveWorkspaceRuntimeEventProcessor.drain(sessionId)
-  if (accepted) syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
 }
 
 const useWorkspaceRuntimeEventDrain = (

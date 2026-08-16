@@ -386,6 +386,20 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(reconcileSnapshot).not.toHaveBeenCalled()
   })
 
+  it('reconciles live runtime state after durable drain projections settle', async () => {
+    const order: string[] = []
+    const setContextUsage = vi
+      .spyOn(useSessionStore.getState(), 'setContextUsage')
+      .mockImplementation(() => order.push('durable'))
+    const snapshot = createSnapshot({ revision: 2, sessionIds: ['session-1'] })
+    window.api = { acp: { getState: vi.fn().mockResolvedValue(snapshot) } } as never
+
+    await drainWorkspaceRuntimeEventsForPersistence(undefined, () => order.push('runtime'))
+
+    expect(order).toEqual(['durable', 'runtime'])
+    setContextUsage.mockRestore()
+  })
+
   it('routes permission commands through the runtime and persists its committed profile', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
