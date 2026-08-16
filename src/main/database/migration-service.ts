@@ -685,6 +685,8 @@ const hasOnlyDeferredPreviewStateForeignKeyViolations = async (
   client: PrismaClient,
   error: unknown
 ): Promise<boolean> => {
+  // This is a one-off bridge to the checksum-pinned 0005 repair below. Future suffix FKs must not
+  // copy this deferral: they need their own explicit migration and fail-closed adoption contract.
   if (
     !(error instanceof DatabaseValidationError) ||
     error.data.kind !== 'foreign-key-violation' ||

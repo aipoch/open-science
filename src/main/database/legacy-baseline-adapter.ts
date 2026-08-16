@@ -341,6 +341,24 @@ const TARGET_TABLES = createTargetTables(RUNTIME_SCHEMA_BASELINE_TARGET_SQL)
 const TARGET_INDEXES = createTargetIndexes(RUNTIME_SCHEMA_BASELINE_TARGET_SQL)
 const CURRENT_TARGET_TABLES = createTargetTables(CURRENT_RUNTIME_SCHEMA_TARGET_SQL)
 const CURRENT_TARGET_INDEXES = createTargetIndexes(CURRENT_RUNTIME_SCHEMA_TARGET_SQL)
+// Non-exact baseline adoption may recognize only released suffix FKs named here. Do not derive this
+// list from the generated current target: doing so would silently admit every future suffix FK.
+const NON_EXACT_BASELINE_FOREIGN_KEY_ALLOWLIST: ReadonlyMap<string, readonly TargetForeignKey[]> =
+  new Map([
+    [
+      'ProjectPreviewState',
+      [
+        {
+          name: 'ProjectPreviewState_projectId_fkey',
+          columns: ['projectId'],
+          targetColumns: ['id'],
+          targetTable: 'Project',
+          onDelete: 'CASCADE',
+          onUpdate: 'CASCADE'
+        }
+      ]
+    ]
+  ])
 // Post-baseline migrations can add indexes (e.g. 0003's GrantedLocalRoot_path_key), so a pre-ledger
 // database carrying them must still classify: known indexes are the baseline ∪ current target union,
 // mirroring the unknown-table check, which already classifies against the current target.
@@ -560,6 +578,20 @@ const verifyRuntimeSchemaTarget = async (
       foreignKey.onDelete,
       foreignKey.onUpdate
     ].join('|')
+  const findUnmatchedOccurrences = (
+    candidates: readonly string[],
+    available: readonly string[]
+  ): string[] => {
+    const remaining = new Map<string, number>()
+    for (const value of available) remaining.set(value, (remaining.get(value) ?? 0) + 1)
+
+    return candidates.filter((candidate) => {
+      const count = remaining.get(candidate) ?? 0
+      if (count === 0) return true
+      remaining.set(candidate, count - 1)
+      return false
+    })
+  }
 
   for (const [tableName, expectedTable] of target.tables) {
     const columns = await migrationSqlExecutor.query<SqliteTableColumn[]>(
@@ -679,19 +711,18 @@ const verifyRuntimeSchemaTarget = async (
       )
     }
     const expectedForeignKeys = expectedTable.foreignKeys.map(foreignKeyKey).sort()
-    // A pre-ledger database can already contain a released suffix FK. Require every baseline FK,
-    // allow only FKs present in the current generated target, and keep exact current verification.
-    const knownForeignKeyTable =
-      (exact ? expectedTable : CURRENT_TARGET_TABLES.get(tableName)) ?? expectedTable
-    const knownForeignKeys = new Set(knownForeignKeyTable.foreignKeys.map(foreignKeyKey))
+    // A pre-ledger database can already contain an explicitly released suffix FK. Require every
+    // baseline FK, admit only the narrow allowlist above, and keep exact current verification.
+    const allowedSuffixForeignKeys = exact
+      ? []
+      : (NON_EXACT_BASELINE_FOREIGN_KEY_ALLOWLIST.get(tableName) ?? [])
+    const knownForeignKeys = [
+      ...expectedForeignKeys,
+      ...allowedSuffixForeignKeys.map(foreignKeyKey)
+    ]
     const parsedForeignKeys = actualTable.foreignKeys.map(foreignKeyKey).sort()
-    const parsedForeignKeySet = new Set(parsedForeignKeys)
-    const missingForeignKeys = expectedForeignKeys.filter(
-      (foreignKey) => !parsedForeignKeySet.has(foreignKey)
-    )
-    const unknownForeignKeys = parsedForeignKeys.filter(
-      (foreignKey) => !knownForeignKeys.has(foreignKey)
-    )
+    const missingForeignKeys = findUnmatchedOccurrences(expectedForeignKeys, parsedForeignKeys)
+    const unknownForeignKeys = findUnmatchedOccurrences(parsedForeignKeys, knownForeignKeys)
     if (missingForeignKeys.length > 0 || unknownForeignKeys.length > 0) {
       throw new DatabaseValidationError(
         `Database baseline verification found incompatible foreign-key definitions for ${tableName}.`,
@@ -725,17 +756,19 @@ const verifyRuntimeSchemaTarget = async (
         foreignKey.columns.map((column, index) => pragmaForeignKeyKey(foreignKey, column, index))
       )
       .sort()
-    const knownPragmaForeignKeys = new Set(
-      knownForeignKeyTable.foreignKeys.flatMap((foreignKey) =>
+    const knownPragmaForeignKeys = [
+      ...targetPragmaForeignKeys,
+      ...allowedSuffixForeignKeys.flatMap((foreignKey) =>
         foreignKey.columns.map((column, index) => pragmaForeignKeyKey(foreignKey, column, index))
       )
+    ]
+    const missingPragmaForeignKeys = findUnmatchedOccurrences(
+      targetPragmaForeignKeys,
+      pragmaForeignKeys
     )
-    const pragmaForeignKeySet = new Set(pragmaForeignKeys)
-    const missingPragmaForeignKeys = targetPragmaForeignKeys.filter(
-      (foreignKey) => !pragmaForeignKeySet.has(foreignKey)
-    )
-    const unknownPragmaForeignKeys = pragmaForeignKeys.filter(
-      (foreignKey) => !knownPragmaForeignKeys.has(foreignKey)
+    const unknownPragmaForeignKeys = findUnmatchedOccurrences(
+      pragmaForeignKeys,
+      knownPragmaForeignKeys
     )
     if (missingPragmaForeignKeys.length > 0 || unknownPragmaForeignKeys.length > 0) {
       throw new DatabaseValidationError(

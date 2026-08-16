@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { createProjectDbClient } from '../projects/prisma-client'
 import { verifyCurrentRuntimeSchema } from './legacy-baseline-adapter'
+import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
 import {
   BASELINE_CHECKSUM,
   MIGRATION_MANIFEST,
@@ -457,6 +458,33 @@ describe('application database migrations', () => {
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
     ).resolves.toMatchObject({ name: 'Preserved' })
+  })
+
+  it('rejects an extra current-shaped foreign key on another pre-ledger table', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-unknown-suffix-fk-'))
+    client = createProjectDbClient(storageRoot)
+    const findingDdl = RUNTIME_SCHEMA_TABLE_DDL_BY_NAME.Finding
+    const currentForeignKey = findingDdl.match(/(CONSTRAINT[\s\S]+)\n\);$/)?.[1]
+    if (!currentForeignKey) throw new Error('Finding baseline FK fixture is unavailable.')
+    await client.$executeRawUnsafe(findingDdl.replace(/\n\);$/, `,\n    ${currentForeignKey}\n);`))
+
+    await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
+      code: 'database_validation_failed',
+      migrationId: '0001_runtime_schema_baseline',
+      cause: {
+        name: 'DatabaseValidationError',
+        data: {
+          kind: 'foreign-key-definition-mismatch',
+          table: 'Finding'
+        }
+      }
+    })
+    await expect(
+      client.$queryRaw<Array<{ name: string }>>`
+        SELECT name FROM sqlite_schema
+        WHERE name = '_open_science_migrations'
+      `
+    ).resolves.toEqual([])
   })
 
   it('migrates legacy Preview ownership while pruning orphan rows', async () => {
