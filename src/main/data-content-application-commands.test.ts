@@ -5,7 +5,7 @@ import {
   type ApplicationCommandRouter,
   type ApplicationInvocation
 } from './application-command-router'
-import { createCallerContext, type CallerContext } from './caller-context'
+import { createCallerContext, createTaskCallerContext, type CallerContext } from './caller-context'
 import { ArtifactOwnershipPersistenceRaceError } from './artifacts/provenance-repository'
 import {
   dataContentApplicationCommandGroups,
@@ -138,6 +138,7 @@ const createDependencies = () => {
     loadAll: vi.fn(),
     loadOne: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
+    setDelegationPolicy: vi.fn(async () => session),
     deleteSession: vi.fn(),
     saveManifest: vi.fn(),
     updateArchive: vi.fn(async () => session)
@@ -211,6 +212,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionLoadOne',
   'sessionSaveManifest',
   'sessionSave',
+  'sessionSetDelegationPolicy',
   'uploadStageLocalFile',
   'uploadStageLocalPath'
 ] as const satisfies readonly DataContentCommandKey[]
@@ -237,7 +239,7 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
-  it('owns exactly the 49 current data and content invoke channels', () => {
+  it('owns exactly the 50 current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
         'artifacts:finalize-run',
@@ -278,6 +280,7 @@ describe('Data and content application commands', () => {
         'sessions:save-manifest',
         'sessions:update-archive',
         'sessions:save-session',
+        'sessions:set-delegation-policy',
         'uploads:abort-transfer',
         'uploads:append-transfer',
         'uploads:begin-transfer',
@@ -639,6 +642,41 @@ describe('Data and content application commands', () => {
       session: deps.session,
       originClientId: 'web:renderer-1'
     })
+  })
+
+  it('allows only current Task automation to update main-owned delegation policy', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const args = ['project-1', 'session-1', 'deny'] as const
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSetDelegationPolicy,
+        invocation(args, createTaskCallerContext())
+      )
+    ).resolves.toBe(deps.session)
+    expect(deps.sessions.setDelegationPolicy).toHaveBeenCalledWith(...args)
+    expect(deps.events.publish).toHaveBeenCalledWith('session:updated', {
+      session: deps.session,
+      originClientId: 'web:headless-task-api'
+    })
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSetDelegationPolicy,
+        invocation(args)
+      )
+    ).rejects.toThrow(
+      'Channel only available from current Task automation: sessions:set-delegation-policy'
+    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionSetDelegationPolicy,
+        invocation(args, createTaskCallerContext({ isAuthorizationCurrent: () => false }))
+      )
+    ).rejects.toThrow('Caller authorization is no longer current.')
+    expect(deps.sessions.setDelegationPolicy).toHaveBeenCalledOnce()
   })
 
   it('dispatches every remaining Project and Session wrapper to its existing owner', async () => {

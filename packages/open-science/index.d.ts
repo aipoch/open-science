@@ -1,4 +1,6 @@
 export type PermissionProfile = 'ask' | 'auto' | 'full'
+export type DelegationPolicy = 'allow' | 'deny'
+export type TurnIntent = 'plan-first'
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunProgressPhase =
   | 'accepted'
@@ -29,6 +31,67 @@ export type Project = {
   updatedAt: number
 }
 
+export type PlanLifecycle =
+  | 'awaiting_approval'
+  | 'approved'
+  | 'in_progress'
+  | 'interrupted'
+  | 'blocked'
+  | 'completed'
+  | 'rejected'
+
+export type SessionPlan = {
+  artifactId: string
+  artifactVersionId: string
+  artifactChecksum: string
+  originatingPromptMessageId?: string
+  materializedAt?: number
+  revision: number
+  approval: 'pending' | 'approved' | 'rejected'
+  lifecycle: PlanLifecycle
+  requiresExplicitContinuation: boolean
+  document: unknown
+  stepStatuses: Record<string, unknown>
+  stepStates: Record<string, unknown>
+  counts: {
+    phases: number
+    delegations: number
+    steps: number
+    completed: number
+    inProgress: number
+  }
+}
+
+export type RunAttention = { kind: 'plan-approval'; plan: SessionPlan }
+
+export type PlanDecisionResponse = {
+  projection: SessionPlan
+  changed: boolean
+  continuationCommandId?: string
+}
+
+export type PlanFeedbackResponse = {
+  kind: 'feedback'
+  routeToInteractionId: string
+  artifactVersionId: string
+  text: string
+  message: {
+    id: string
+    role: 'user'
+    content: string
+    status: 'complete'
+    responseToMessageId: string
+    eventIds: string[]
+    createdAt: number
+    updatedAt: number
+  }
+  planRevision: number
+  continuationProjection?: SessionPlan
+  continuationCommandId: string
+}
+
+export type PlanResponse = PlanDecisionResponse | PlanFeedbackResponse
+
 export type Run = {
   id: string
   sessionId: string
@@ -42,6 +105,15 @@ export type Run = {
   output?: string
   error?: string
   artifacts: Artifact[]
+  attention?: RunAttention
+  review?: {
+    started: boolean
+    reason?: string
+    id?: string
+    lifecycle?: 'running' | 'complete' | 'error'
+    outcome?: 'pass' | 'flagged' | null
+    errorMessage?: string
+  }
 }
 
 export type SessionStatus =
@@ -53,6 +125,9 @@ export type Session = {
   title: string
   status: SessionStatus
   permissionProfile?: PermissionProfile
+  autoReviewEnabled: boolean
+  specialistId?: string
+  delegationPolicy: DelegationPolicy
   createdAt: number
   updatedAt: number
   output?: string
@@ -88,6 +163,17 @@ export class OpenScienceClient {
   createProject(request: { name: string; description?: string }): Promise<Project>
   listSessions(projectId?: string): Promise<Session[]>
   getSession(sessionId: string): Promise<Session>
+  getSessionPlan(sessionId: string): Promise<SessionPlan | null>
+  respondSessionPlan(
+    sessionId: string,
+    response:
+      | {
+          decision: 'approved' | 'rejected'
+          artifactVersionId: string
+          expectedRevision: number
+        }
+      | { feedback: string }
+  ): Promise<PlanResponse>
   startRun(request: {
     project: string
     prompt: string
@@ -95,12 +181,21 @@ export class OpenScienceClient {
     sessionId?: string
     permissionProfile?: PermissionProfile
     skillIds?: string[]
+    turnIntent?: TurnIntent
+    autoReviewEnabled?: boolean
+    specialist?: string
+    delegationPolicy?: DelegationPolicy
   }): Promise<Run>
   getRun(runId: string): Promise<Run>
   cancelRun(runId: string): Promise<Run>
   waitForRun(
     runId: string,
-    options?: { pollIntervalMs?: number; signal?: AbortSignal; timeoutMs?: number }
+    options?: {
+      pollIntervalMs?: number
+      returnOnAttention?: boolean
+      signal?: AbortSignal
+      timeoutMs?: number
+    }
   ): Promise<Run>
   listArtifacts(sessionId: string): Promise<Artifact[]>
   downloadArtifact(artifactId: string, options?: { signal?: AbortSignal }): Promise<Response>

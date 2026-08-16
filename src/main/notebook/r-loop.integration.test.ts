@@ -141,6 +141,33 @@ gate('r_loop.R', () => {
     }
   }, 60_000)
 
+  it.skipIf(process.platform === 'win32')(
+    'acknowledges SIGINT before two subsequent requests and preserves the namespace',
+    async () => {
+      const { child, send } = startLoop(rscriptBin(), {})
+      try {
+        expect((await send('cancel_state <- 41'))?.error).toBeNull()
+        const sleeping = send('Sys.sleep(30)')
+        await new Promise((resolve) => setTimeout(resolve, 100))
+
+        child.kill('SIGINT')
+
+        const interrupted = await sleeping
+        expect(interrupted.error).toBe('interrupted')
+        expect(interrupted.interruptAck).toBe(true)
+        const first = await send('cancel_state + 1')
+        const second = await send('cancel_state + 2')
+        expect(first.error).toBeNull()
+        expect(first.stdout).toContain('42')
+        expect(second.error).toBeNull()
+        expect(second.stdout).toContain('43')
+      } finally {
+        child.kill()
+      }
+    },
+    60_000
+  )
+
   it.each(['file.link', 'file.symlink'] as const)(
     'blocks %s aliases sourced from the managed runtime',
     async (operation) => {

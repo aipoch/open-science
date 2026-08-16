@@ -4986,6 +4986,57 @@ describe('branchInNewSession', () => {
     ).toHaveLength(1)
   })
 
+  it('preserves inactive conversation branches when retrying a pending replay prompt', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'stable source'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    const pending = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      content: 'retry this branch'
+    })
+    if (!pending) throw new Error('Expected a pending branched Session.')
+    useSessionStore.getState().failRun(pending.sessionId, 'creation failed')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => {
+        if (session.id !== pending.sessionId || !session.conversationGraph) return session
+        const activeBranch = session.conversationGraph.branches.find(
+          ({ id }) => id === session.conversationGraph?.frames[0].activeBranchId
+        )
+        if (!activeBranch) throw new Error('Expected an active conversation Branch.')
+        return {
+          ...session,
+          conversationGraph: {
+            ...session.conversationGraph,
+            branches: [
+              ...session.conversationGraph.branches,
+              {
+                ...activeBranch,
+                id: 'preserved-inactive-branch',
+                headMessageId: session.messages[0]?.id,
+                updatedAt: Date.now() - 1
+              }
+            ]
+          }
+        }
+      })
+    }))
+
+    useSessionStore.getState().appendUserMessage({
+      sessionId: pending.sessionId,
+      content: 'retry this branch'
+    })
+
+    const retried = useSessionStore
+      .getState()
+      .sessions.find((session) => session.id === pending.sessionId)
+    expect(retried?.conversationGraph?.branches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'preserved-inactive-branch' })])
+    )
+  })
+
   it('refuses a source whose conversation graph has failed synchronization', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',

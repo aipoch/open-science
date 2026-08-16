@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
+import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -52,7 +53,12 @@ import {
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
 import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
-import { hasAnswerableDelegatedQuestion } from '../workspace/subagent-release-projection'
+import {
+  isSessionWaitReason,
+  resolveSessionWaitReason,
+  sessionWaitReasonLabelKeys,
+  type SessionWaitReason
+} from '../workspace/session-wait-reason'
 
 import { DeleteProjectDialog } from './DeleteProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
@@ -76,11 +82,17 @@ type ProjectSummary = {
   project: Project
   sessionCount: number
   runningCount: number
-  needsYouCount: number
+  waitingCount: number
   lastActivityAt: number
 }
 
-type HomeSessionActivity = 'running' | 'needs-you' | 'completed'
+type HomeSessionActivity = 'running' | 'completed' | SessionWaitReason
+
+const homeSessionWaitAriaLabelKeys = {
+  'waiting-for-user': 'Open session {{title}}, waiting for your answer',
+  'waiting-permission': 'Open session {{title}}, waiting for permission',
+  'waiting-plan-approval': 'Open session {{title}}, waiting for plan approval'
+} as const satisfies Record<SessionWaitReason, string>
 
 type HomeSessionUpdate = {
   session: ChatSession
@@ -91,8 +103,12 @@ type HomeSessionUpdate = {
 type HomePageProps = {
   canDeleteProjects: boolean
   hasCompleteSessionCatalog: boolean
+  catalogRecovery?: SessionCatalogRecovery
   onOpenGlobalSearch: () => void
 }
+
+const INCOMPLETE_PROJECT_SESSION_CATALOG_ERROR =
+  'Cannot archive a Project while its Session catalog is incomplete.'
 
 // Optional warnings (currently Python and reduced key protection) never create a Home alert. Only a
 // failed check that blocks the core flow asks an existing user to revisit environment setup.
@@ -101,15 +117,9 @@ const getRequiredEnvironmentFailures = (
 ): EnvironmentCheckItem[] => environment?.checks.filter((check) => check.status === 'failed') ?? []
 
 const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
-  if (hasAnswerableDelegatedQuestion(session)) return 'needs-you'
+  const waitReason = resolveSessionWaitReason(session)
+  if (waitReason) return waitReason
   if (session.status === 'running' || hasCurrentRunningDelegatedAttempt(session)) return 'running'
-  if (
-    session.status === 'waiting-for-user' ||
-    session.status === 'waiting-permission' ||
-    session.status === 'waiting-plan-approval'
-  ) {
-    return 'needs-you'
-  }
   return undefined
 }
 
@@ -136,6 +146,7 @@ const rowActionClassName =
 const HomePage = ({
   canDeleteProjects,
   hasCompleteSessionCatalog,
+  catalogRecovery,
   onOpenGlobalSearch
 }: HomePageProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -179,6 +190,9 @@ const HomePage = ({
   const [markReadErrorSessionIds, setMarkReadErrorSessionIds] = useState<Set<string>>(
     () => new Set()
   )
+  const effectiveCatalogRecovery: SessionCatalogRecovery =
+    catalogRecovery ??
+    (hasCompleteSessionCatalog ? { kind: 'ready' } : { kind: 'repairable', reason: 'session-scan' })
 
   const activeProjects = useMemo(
     () => projects.filter((project) => project.archivedAt === undefined),
@@ -224,8 +238,9 @@ const HomePage = ({
           {
             session,
             activity,
-            activityTimestamp:
-              activity === 'needs-you' ? session.updatedAt : getRunningActivityTimestamp(session)
+            activityTimestamp: isSessionWaitReason(activity)
+              ? session.updatedAt
+              : getRunningActivityTimestamp(session)
           }
         ]
       }
@@ -242,10 +257,10 @@ const HomePage = ({
         : []
     })
 
-    const activityOrder: HomeSessionActivity[] = ['needs-you', 'running', 'completed']
     return updates.sort(
       (left, right) =>
-        activityOrder.indexOf(left.activity) - activityOrder.indexOf(right.activity) ||
+        (isSessionWaitReason(left.activity) ? 0 : left.activity === 'running' ? 1 : 2) -
+          (isSessionWaitReason(right.activity) ? 0 : right.activity === 'running' ? 1 : 2) ||
         right.activityTimestamp - left.activityTimestamp
     )
   }, [persistedSessions, unreadCompletedBySession])
@@ -253,7 +268,7 @@ const HomePage = ({
   const activeSessionCounts = useMemo(
     () => ({
       running: sessionUpdates.filter(({ activity }) => activity === 'running').length,
-      needsYou: sessionUpdates.filter(({ activity }) => activity === 'needs-you').length
+      waiting: sessionUpdates.filter(({ activity }) => isSessionWaitReason(activity)).length
     }),
     [sessionUpdates]
   )
@@ -279,9 +294,10 @@ const HomePage = ({
         runningCount: projectSessions.filter(
           (session) => getHomeSessionActivity(session) === 'running'
         ).length,
-        needsYouCount: projectSessions.filter(
-          (session) => getHomeSessionActivity(session) === 'needs-you'
-        ).length,
+        waitingCount: projectSessions.filter((session) => {
+          const activity = getHomeSessionActivity(session)
+          return activity !== undefined && isSessionWaitReason(activity)
+        }).length,
         lastActivityAt
       }
     })
@@ -394,6 +410,19 @@ const HomePage = ({
           session.status === 'waiting-plan-approval')
     )
 
+  const archiveUnavailableReason = (project: Project): string | undefined => {
+    if (!canDeleteProjects) return t('Retry project recovery before archiving.')
+    if (!hasCompleteSessionCatalog) {
+      return effectiveCatalogRecovery.kind === 'damaged-authority'
+        ? t('Project archive is unavailable because a damaged conversation cannot be verified.')
+        : t('Repair the project index before archiving.')
+    }
+    if (!canArchiveProject(project)) {
+      return t('Finish or stop active sessions before archiving this project.')
+    }
+    return undefined
+  }
+
   const archiveProject = (project: Project): void => {
     if (!canArchiveProject(project) || archivingProjectIds.has(project.id)) return
 
@@ -403,7 +432,11 @@ const HomePage = ({
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
         setProjectActionError(
-          error instanceof Error ? error.message : t('Could not archive project.')
+          error instanceof Error && error.message.includes(INCOMPLETE_PROJECT_SESSION_CATALOG_ERROR)
+            ? t('Repair the project index before archiving.')
+            : error instanceof Error
+              ? error.message
+              : t('Could not archive project.')
         )
       )
       .finally(() => {
@@ -514,14 +547,14 @@ const HomePage = ({
                 Open Science
               </a>
               {hasCompleteSessionCatalog &&
-              (activeSessionCounts.needsYou > 0 || activeSessionCounts.running > 0) ? (
+              (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
                 <div className="flex items-center gap-1.5 text-xs font-medium">
-                  {activeSessionCounts.needsYou > 0 ? (
+                  {activeSessionCounts.waiting > 0 ? (
                     <span className="text-session-waiting">
-                      {t('{{count}} waiting on you', { count: activeSessionCounts.needsYou })}
+                      {t('{{count}} waiting on you', { count: activeSessionCounts.waiting })}
                     </span>
                   ) : null}
-                  {activeSessionCounts.needsYou > 0 && activeSessionCounts.running > 0 ? (
+                  {activeSessionCounts.waiting > 0 && activeSessionCounts.running > 0 ? (
                     <span className="text-text-300" aria-hidden="true">
                       ·
                     </span>
@@ -600,7 +633,8 @@ const HomePage = ({
           <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
             <div className="grid grid-cols-1 gap-3 py-1 md:grid-cols-2">
               {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
-                const needsYou = activity === 'needs-you'
+                const waitReason = isSessionWaitReason(activity) ? activity : undefined
+                const waiting = waitReason !== undefined
                 const completed = activity === 'completed'
                 // A finished session reads "just now" rather than the bare bucket, so the two cases
                 // stay separate keys instead of being assembled from a translated fragment.
@@ -616,8 +650,8 @@ const HomePage = ({
                       className="flex min-h-36 w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 p-5 text-left shadow-card transition-colors duration-150 ease-out hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
                       onClick={() => openSession(session.projectId, session.id, 'user')}
                       aria-label={
-                        needsYou
-                          ? t('Open session {{title}}, needs you', { title: session.title })
+                        waitReason
+                          ? t(homeSessionWaitAriaLabelKeys[waitReason], { title: session.title })
                           : completed
                             ? t('Open session {{title}}, completed', { title: session.title })
                             : t('Open session {{title}}, running', { title: session.title })
@@ -627,7 +661,7 @@ const HomePage = ({
                         className={cn(
                           'min-w-0 max-w-full truncate text-base font-semibold text-text-000',
                           completed && 'pr-10',
-                          !needsYou && !completed && 'home-session-title-running'
+                          !waiting && !completed && 'home-session-title-running'
                         )}
                       >
                         {session.title}
@@ -639,7 +673,7 @@ const HomePage = ({
                         <span
                           className={cn(
                             'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
-                            needsYou
+                            waiting
                               ? 'bg-session-waiting/10 text-session-waiting'
                               : completed
                                 ? 'bg-success-000/10 text-success-000'
@@ -648,7 +682,7 @@ const HomePage = ({
                         >
                           {completed ? (
                             <Check className="size-3" strokeWidth={2} aria-hidden="true" />
-                          ) : needsYou ? (
+                          ) : waiting ? (
                             <span
                               className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
                               aria-hidden="true"
@@ -660,14 +694,20 @@ const HomePage = ({
                               aria-hidden="true"
                             />
                           )}
-                          {t(needsYou ? 'Needs you' : completed ? 'Completed' : 'Running')}
+                          {t(
+                            waitReason
+                              ? sessionWaitReasonLabelKeys[waitReason]
+                              : completed
+                                ? 'Completed'
+                                : 'Running'
+                          )}
                         </span>
                         <span className="shrink-0 text-xs text-text-100">
                           {completed
                             ? isJustNow
                               ? t('just now')
                               : relativeActivityTime
-                            : needsYou
+                            : waiting
                               ? t('waiting {{time}}', { time: relativeActivityTime })
                               : t('running {{time}}', { time: relativeActivityTime })}
                         </span>
@@ -764,7 +804,7 @@ const HomePage = ({
             ) : (
               <div className={listCardClassName}>
                 {projectSummaries.map(
-                  ({ project, sessionCount, runningCount, needsYouCount, lastActivityAt }) => (
+                  ({ project, sessionCount, runningCount, waitingCount, lastActivityAt }) => (
                     <div
                       key={project.id}
                       className={rowClassName}
@@ -793,16 +833,16 @@ const HomePage = ({
                             {t('Example')}
                           </span>
                         ) : null}
-                        {hasCompleteSessionCatalog && needsYouCount > 0 ? (
+                        {hasCompleteSessionCatalog && waitingCount > 0 ? (
                           <span
                             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-waiting"
-                            aria-label={t('{{count}} waiting on you', { count: needsYouCount })}
+                            aria-label={t('{{count}} waiting on you', { count: waitingCount })}
                           >
                             <span
                               className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
                               aria-hidden="true"
                             />
-                            <span aria-hidden="true">{needsYouCount}</span>
+                            <span aria-hidden="true">{waitingCount}</span>
                           </span>
                         ) : null}
                         {hasCompleteSessionCatalog && runningCount > 0 ? (
@@ -878,6 +918,7 @@ const HomePage = ({
                             disabled={
                               !canArchiveProject(project) || archivingProjectIds.has(project.id)
                             }
+                            title={archiveUnavailableReason(project)}
                             onSelect={() => archiveProject(project)}
                           >
                             <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -890,6 +931,11 @@ const HomePage = ({
                           <DropdownMenuItem
                             className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
                             disabled={!canDeleteProjects}
+                            title={
+                              canDeleteProjects
+                                ? undefined
+                                : t('Retry project recovery before deleting projects.')
+                            }
                             onSelect={() => openDeleteDialog(project)}
                           >
                             <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />

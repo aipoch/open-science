@@ -641,12 +641,15 @@ colors communicate a successful or failed probe/migration result.
 - Home reads live Session projections from the application-level runtime owner; it does not mount
   Workspace commands or preview side effects. Background artifacts remain durable, but only the
   foreground Workspace for their owning Project may auto-open a molecule preview.
-- Session activity labels: `running` maps to `Running`; `waiting-permission` and
-  `waiting-plan-approval` map to `Needs you`; unread successful outcomes map to `Completed`. Use the
+- Session activity labels: the Home and Project summaries combine every waiting reason as
+  `waiting on you`, while individual Home cards and Workspace rows show the exact shared reason:
+  `waiting-for-user` maps to `Waiting for your answer`, `waiting-permission` maps to
+  `Waiting for permission`, and `waiting-plan-approval` maps to `Waiting for plan approval`.
+  `running` maps to `Running`; unread successful outcomes map to `Completed`. Use the
   existing `session-running`, `session-waiting`, and `success-000` tokens. `session-running` is blue
   in both themes; Running uses a rotating loader in Session update cards and Project counts plus an
   intermittent left-to-right light sweep over the card title, with both title and loader static under
-  reduced motion. Needs you keeps its amber pulse, while Completed uses a static green check in both
+  reduced motion. Waiting keeps its amber pulse, while Completed uses a static green check in both
   the Session update card and message center.
 - Session update cards and the Projects / Recent sessions containers use `shadow-card` without an
   additional border, so its built-in hairline ring matches the New project button instead of

@@ -73,22 +73,28 @@ const LocationStep = ({
   const isRestartingRef = useRef(false)
 
   const handleBrowseLocation = async (): Promise<void> => {
-    const picked = await window.api.storage.pickDirectory()
-    if (!picked) return
-
-    const result = await window.api.storage.inspectDataRoot(picked)
-    if (result.kind === 'invalid') {
-      setLocationError(result.error)
-      return
-    }
-
-    onLocationDraftChange({
-      chosenParent: picked,
-      chosenDataRoot: result.dataRoot,
-      chosenKind: result.kind
-    })
-    onRelaunchErrorChange(undefined)
     setLocationError(undefined)
+    try {
+      const picked = await window.api.storage.pickDirectory()
+      if (!picked) return
+
+      const result = await window.api.storage.inspectDataRoot(picked)
+      if (result.kind === 'invalid') {
+        setLocationError(result.error)
+        return
+      }
+
+      onLocationDraftChange({
+        chosenParent: picked,
+        chosenDataRoot: result.dataRoot,
+        chosenKind: result.kind
+      })
+      onRelaunchErrorChange(undefined)
+    } catch (error) {
+      setLocationError(
+        onboardingErrorMessage(error, t('Could not choose the data location. Try again.'))
+      )
+    }
   }
 
   const handleResetLocation = (): void => {

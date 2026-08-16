@@ -1380,6 +1380,12 @@ describe('startWebHttpServer', () => {
       createProject: vi.fn().mockResolvedValue({ id: 'project-2', name: 'Created' }),
       listSessions: vi.fn().mockResolvedValue([{ id: 'session/1', title: 'Review' }]),
       getSession: vi.fn().mockResolvedValue({ id: 'session/1', title: 'Review' }),
+      getSessionPlan: vi.fn().mockResolvedValue({
+        artifactVersionId: 'plan-version',
+        revision: 2,
+        lifecycle: 'awaiting_approval'
+      }),
+      respondSessionPlan: vi.fn().mockResolvedValue({ changed: true }),
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
         sessionId: 'session-1',
@@ -1504,6 +1510,55 @@ describe('startWebHttpServer', () => {
     const session = await fetch(`${base}/api/v1/sessions/session%2F1`, { headers })
     expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
     expect(tasks.getSession).toHaveBeenCalledWith('session/1')
+
+    const plan = await fetch(`${base}/api/v1/sessions/session%2F1/plan`, { headers })
+    expect(await plan.json()).toEqual({
+      data: {
+        artifactVersionId: 'plan-version',
+        revision: 2,
+        lifecycle: 'awaiting_approval'
+      }
+    })
+    expect(tasks.getSessionPlan).toHaveBeenCalledWith('session/1')
+
+    const approvedPlan = await fetch(`${base}/api/v1/sessions/session%2F1/plan/respond`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        decision: 'approved',
+        artifactVersionId: 'plan-version',
+        expectedRevision: 2
+      })
+    })
+    expect(await approvedPlan.json()).toEqual({ data: { changed: true } })
+    expect(tasks.respondSessionPlan).toHaveBeenCalledWith('session/1', {
+      decision: 'approved',
+      artifactVersionId: 'plan-version',
+      expectedRevision: 2
+    })
+
+    tasks.respondSessionPlan.mockClear()
+    for (const invalidResponse of [
+      null,
+      {},
+      { feedback: '   ' },
+      { feedback: 'revise', decision: 'rejected' },
+      { decision: 'maybe', artifactVersionId: 'plan-version', expectedRevision: 2 },
+      { decision: 'approved', artifactVersionId: '', expectedRevision: 2 },
+      { decision: 'approved', artifactVersionId: 'plan-version', expectedRevision: -1 },
+      { decision: 'approved', artifactVersionId: 'plan-version', expectedRevision: 1.5 }
+    ]) {
+      const invalidPlanResponse = await fetch(`${base}/api/v1/sessions/session%2F1/plan/respond`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify(invalidResponse)
+      })
+      expect(invalidPlanResponse.status).toBe(400)
+      expect(await invalidPlanResponse.json()).toMatchObject({
+        error: { code: 'invalid_request' }
+      })
+    }
+    expect(tasks.respondSessionPlan).not.toHaveBeenCalled()
 
     const artifacts = await fetch(`${base}/api/v1/sessions/session%2F1/artifacts`, { headers })
     expect(await artifacts.json()).toEqual({

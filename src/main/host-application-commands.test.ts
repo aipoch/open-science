@@ -104,6 +104,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
   reviewer: {
     run: vi.fn(async () => ({ started: true })),
     getForSession: vi.fn(async () => []),
+    abort: vi.fn(() => undefined),
     abortFixLoop: vi.fn(() => undefined)
   },
   storage: {
@@ -166,21 +167,25 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 51 request channels in their existing capability groups', () => {
+  it('defines the exact 52 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
-    ).map(({ capability, contracts }) => ({
-      capability,
-      channels: contracts
+    ).map(({ capability, contracts }) => {
+      const rendererChannels = contracts
         .filter(
           ({ kind, surfaceInstallation }) =>
             kind === 'method' && surfaceInstallation.localWeb === 'web-rpc'
         )
         .map(({ channel }) => channel)
         .filter((channel): channel is string => channel !== null)
-    }))
+      return {
+        capability,
+        channels:
+          capability === 'reviewer' ? ['reviewer:abort', ...rendererChannels] : rendererChannels
+      }
+    })
 
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(51)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(52)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -196,7 +201,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(51)
+    expect(router.dispatcher.commandNames()).toHaveLength(52)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -295,6 +300,10 @@ describe('Host application commands', () => {
       invocation([{ mode: 'remoteit' }])
     )
     await router.dispatcher.invoke(
+      hostApplicationCommands.reviewer.abort,
+      invocation([reviewSession])
+    )
+    await router.dispatcher.invoke(
       hostApplicationCommands.reviewer.abortFixLoop,
       invocation([reviewSession])
     )
@@ -358,6 +367,7 @@ describe('Host application commands', () => {
     expect(dependencies.remoteAccess.setMode).toHaveBeenCalledWith('remoteit')
     expect(dependencies.reviewer.run).toHaveBeenCalledWith(reviewRun)
     expect(dependencies.reviewer.getForSession).toHaveBeenCalledWith(reviewSession)
+    expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent)
     expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root)
 

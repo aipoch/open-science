@@ -412,6 +412,8 @@ export type PersistedSessionResumeRecovery = {
 export type PersistedPendingHistoryReplay =
   { kind: 'all' } | { kind: 'before-message'; messageId: string }
 
+export type DelegationPolicy = 'allow' | 'deny'
+
 export type PersistedToolActivityStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
 export type PersistedToolActivityDisposition = 'declined' | 'permission-closed'
 
@@ -493,6 +495,9 @@ export type PersistedChatSession = {
   // Per-conversation auto-review toggle. Absent (older files) or non-true is treated as disabled;
   // only an explicit true enables it.
   autoReviewEnabled?: boolean
+  // Controls admission of new delegated children for this Session. Older files omit it and restore
+  // to allow. Switching to deny never cancels or hides children that were already admitted.
+  delegationPolicy?: DelegationPolicy
   // Per-session enabled compute hosts (providerIds like "ssh:alias"). Stored as an array for JSON
   // compatibility; semantically a set (single-select for now, multi-select-ready internally).
   // Absent on older sessions — treated as empty (no host enabled).
@@ -538,6 +543,13 @@ export type PersistedChatSession = {
   filesRevision?: number
   createdAt: number
   updatedAt: number
+}
+
+// New session-file writes always carry the canonical graph. PersistedChatSession intentionally
+// keeps the field optional so historical flat-only files remain readable and can be upgraded on
+// their next write.
+export type MaterializedPersistedChatSession = PersistedChatSession & {
+  conversationGraph: PersistedConversationGraph
 }
 
 // Renderer-owned preferences that can be replayed onto a newer durable graph after a stale-graph
@@ -2694,9 +2706,11 @@ export const sanitizeMessageImages = (value: unknown): PersistedMessageImage[] |
 
 // Applies the image boundary immediately before repository serialization without changing runtime
 // status fields (running sessions must remain restorable as interrupted sessions after a restart).
-export const sanitizeSessionMessageImages = (
-  session: PersistedChatSession
-): PersistedChatSession => {
+export function sanitizeSessionMessageImages(
+  session: MaterializedPersistedChatSession
+): MaterializedPersistedChatSession
+export function sanitizeSessionMessageImages(session: PersistedChatSession): PersistedChatSession
+export function sanitizeSessionMessageImages(session: PersistedChatSession): PersistedChatSession {
   const sanitizeMessages = <Message extends PersistedChatMessage>(
     messages: readonly Message[]
   ): Message[] => {
@@ -3214,7 +3228,7 @@ const projectActiveNestedDelegateActivities = (
 
 export const materializeSessionConversationGraph = (
   session: PersistedChatSession
-): PersistedChatSession => {
+): MaterializedPersistedChatSession => {
   const messageGraph = session.conversationGraph
     ? materializeGraphPhase('messages', () =>
         synchronizeActiveConversationMessages(
@@ -3365,6 +3379,8 @@ const sanitizeSession = (
     // Auto-review defaults off: a missing or non-boolean value restores as disabled, and only an
     // explicit true turns it on.
     autoReviewEnabled: session.autoReviewEnabled === true ? true : false,
+    // Only deny changes behavior; missing/malformed historical values preserve delegation.
+    delegationPolicy: session.delegationPolicy === 'deny' ? 'deny' : 'allow',
     messages: Array.isArray(session.messages)
       ? session.messages
           .map((message) => sanitizeMessage(message, options))
@@ -3546,7 +3562,7 @@ const sanitizeSession = (
 // Durable envelope for a single session file; the version allows future per-file migrations.
 export type PersistedSessionFile = {
   version: typeof SESSION_FILE_VERSION
-  session: PersistedChatSession
+  session: MaterializedPersistedChatSession
 }
 
 // Wraps a session in the on-disk envelope written per file.

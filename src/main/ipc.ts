@@ -292,6 +292,7 @@ import { ConversationSkillImporter, SkillImportApprovalBroker } from './skills/c
 import { HostSkillsService, type HostSkillsCatalog } from './skills/host-skills-service'
 import { UserSkillCatalogObserver } from './skills/user-skill-catalog-observer'
 import type { ConversationSkillImportApprovalResponse } from '../shared/settings'
+import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 
 const permissionGrantsLog = createLogger('permission-grants')
@@ -325,6 +326,7 @@ export type ApplicationRuntimeInterfaces = {
   >
   settingsService: WindowSettingsCapabilities
   taskAgent: TaskAgentPort
+  taskControls: TaskControlPorts
   sessionDeletionCapability: Pick<SessionPersistenceCoordinator, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
   detectActiveSessions: () => ReturnType<typeof detectActiveSessions>
@@ -859,6 +861,10 @@ const createApplicationModules = async (
         )
       }
       return { created, session: durableSession }
+    },
+    setDelegationPolicy: async (projectId, sessionId, policy) => {
+      await projectDeletionCoordinator.recoverPendingDeletions()
+      return sessionPersistenceCoordinator.setSessionDelegationPolicy(projectId, sessionId, policy)
     },
     updateArchive: async (request) => {
       await projectDeletionCoordinator.recoverPendingDeletions()
@@ -2873,6 +2879,11 @@ const createApplicationModules = async (
     notificationInbox,
     settingsService,
     taskAgent,
+    taskControls: {
+      specialists: {
+        resolve: (reference) => profileService.resolveRunnableByReference(reference)
+      }
+    },
     sessionDeletionCapability: sessionPersistenceCoordinator,
     archiveCapability: archiveCoordinator,
     detectActiveSessions: () =>

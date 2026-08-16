@@ -203,7 +203,9 @@ describe('production application command wiring', () => {
     expect(webServiceSource).toContain(
       "Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>"
     )
-    expect(webServiceSource).toContain('{ commands: applicationCommands.task, agent: taskAgent }')
+    expect(webServiceSource).toContain(
+      '{ commands: applicationCommands.task, agent: taskAgent, controls: taskControls }'
+    )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
     expect(readSource('src/main/tasks/task-runner.ts')).not.toContain('applicationCommands')

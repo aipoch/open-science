@@ -102,6 +102,17 @@ describe('probeConnectivity', () => {
     expect(useNetworkStore.getState().connectivity).toBe('reachable')
   })
 
+  it('settles a rejected cold-start probe as a retryable terminal failure', async () => {
+    stubCheckConnectivity(vi.fn().mockRejectedValue(new Error('bridge gone')))
+    vi.resetModules()
+    const { useNetworkStore: coldStartStore } = await import('./network-store')
+    coldStartStore.setState({ isOnline: true, connectivity: 'unknown' })
+
+    await coldStartStore.getState().probeConnectivity()
+
+    expect(coldStartStore.getState().connectivity).toBe('probe-failed')
+  })
+
   it('restores the last known state when an announced bridge call rejects', async () => {
     const checkConnectivity = vi.fn().mockRejectedValue(new Error('bridge gone'))
     stubCheckConnectivity(checkConnectivity)

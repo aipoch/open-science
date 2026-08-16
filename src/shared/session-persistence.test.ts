@@ -187,6 +187,38 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('writes a canonical graph while retaining flat messages as the active projection', () => {
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Historical flat session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Persist me',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const written = createSessionFile(session)
+
+    expect(written.version).toBe(SESSION_FILE_VERSION)
+    expect(written.session.conversationGraph.schemaVersion).toBe(1)
+    expect(written.session.messages).toEqual(session.messages)
+    expect(written.session.conversationGraph.messages).toEqual([
+      expect.objectContaining({ id: 'message-1', content: 'Persist me' })
+    ])
+  })
+
   it('identifies message synchronization failures without exposing the raw graph error', () => {
     const session: PersistedChatSession = {
       id: 'session-1',
@@ -2775,6 +2807,19 @@ describe('normalizeSessionFile with activities', () => {
     expect(enabled?.autoReviewEnabled).toBe(true)
     expect(legacy?.autoReviewEnabled).toBe(false)
     expect(corrupt?.autoReviewEnabled).toBe(false)
+  })
+
+  it('round-trips delegation policy and defaults historical or malformed values to allow', () => {
+    const base = { ...createSessionWithActivity(undefined), activities: undefined }
+    const denied = normalizeSessionFile({ ...base, delegationPolicy: 'deny' })
+    const allowed = normalizeSessionFile({ ...base, delegationPolicy: 'allow' })
+    const legacy = normalizeSessionFile({ ...base })
+    const malformed = normalizeSessionFile({ ...base, delegationPolicy: 'sometimes' })
+
+    expect(denied?.delegationPolicy).toBe('deny')
+    expect(allowed?.delegationPolicy).toBe('allow')
+    expect(legacy?.delegationPolicy).toBe('allow')
+    expect(malformed?.delegationPolicy).toBe('allow')
   })
 
   it('round-trips enabledComputeHosts and filters out invalid values', () => {

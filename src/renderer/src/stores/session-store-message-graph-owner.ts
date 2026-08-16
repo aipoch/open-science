@@ -284,9 +284,7 @@ export const createSessionMessageGraphOwner = <
                 messages: nextMessages,
                 pendingContextReplayMessageId: replayPromptIndex >= 0 ? userMessage.id : undefined,
                 conversationGraph: synchronizeSessionGraph(
-                  replayPromptIndex >= 0
-                    ? { ...session, messages: nextMessages, conversationGraph: undefined }
-                    : session,
+                  session,
                   nextMessages,
                   now,
                   agentFrameworkId ?? session.agentFrameworkId ?? 'claude-code',

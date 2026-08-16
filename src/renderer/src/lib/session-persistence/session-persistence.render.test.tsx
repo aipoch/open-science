@@ -88,6 +88,12 @@ describe('session persistence startup', () => {
         data-loading={String(persistence.isLoading)}
         data-ready={String(persistence.isReady)}
         data-catalog-complete={String(persistence.hasCompleteSessionCatalog)}
+        data-catalog-recovery={persistence.catalogRecovery.kind}
+        data-catalog-recovery-reason={
+          persistence.catalogRecovery.kind === 'repairable'
+            ? persistence.catalogRecovery.reason
+            : undefined
+        }
         data-deletion-ready={String(persistence.canDeleteSessionsAndProjects)}
       >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
@@ -311,6 +317,8 @@ describe('session persistence startup', () => {
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
     expect(container.querySelector('div')?.dataset.hydrated).toBe('true')
     expect(container.querySelector('div')?.dataset.deletionReady).toBe('true')
+    expect(container.querySelector('div')?.dataset.catalogRecovery).toBe('repairable')
+    expect(container.querySelector('div')?.dataset.catalogRecoveryReason).toBe('session-scan')
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
       'could not be read'
     )
@@ -505,6 +513,9 @@ describe('session persistence startup', () => {
 
     expect(container.querySelector('div')?.dataset.ready).toBe('false')
     expect(container.querySelector('div')?.dataset.deletionReady).toBe('false')
+    expect(container.querySelector('div')?.dataset.catalogRecovery).toBe(
+      'project-deletion-recovery'
+    )
     expect(container.querySelector('[data-testid="load-error"]')?.textContent).toContain(
       'storage recovery could not finish'
     )
@@ -530,6 +541,7 @@ describe('session persistence startup', () => {
 
     expect(container.querySelector('div')?.dataset.ready).toBe('true')
     expect(container.querySelector('div')?.dataset.catalogComplete).toBe('false')
+    expect(container.querySelector('div')?.dataset.catalogRecovery).toBe('damaged-authority')
     expect(container.querySelector('[data-testid="load-warning"]')?.textContent).toContain(
       'damaged and moved aside'
     )

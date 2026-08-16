@@ -21,7 +21,7 @@ import {
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
-import { canSatisfyHumanApproval } from '../caller-context'
+import { canAccessSessionPlan, canSatisfyHumanApproval } from '../caller-context'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import {
   resolveElicitationResponseSessionId,
@@ -115,7 +115,7 @@ const acpCommands = Object.freeze({
   respondPlan: defineApplicationCommand<
     'acp:respond-plan',
     readonly [request: Parameters<AcpRuntimeCoordinator['respondSessionPlan']>[0]],
-    unknown
+    Awaited<ReturnType<AcpRuntimeCoordinator['respondSessionPlan']>>
   >('acp:respond-plan')
 })
 
@@ -285,14 +285,18 @@ const registerAcpCommands = (
           dependencies.runtime.revokePermissionGrant(invocation.args[0])
         ),
       'acp:get-plan-projection': (invocation) => {
-        if (!canSatisfyHumanApproval(invocation.callerContext)) {
-          throw new Error('Only a current human caller can access a Session Plan.')
+        if (!canAccessSessionPlan(invocation.callerContext)) {
+          throw new Error(
+            'Only a current human or Task automation caller can access a Session Plan.'
+          )
         }
         return dependencies.runtime.getSessionPlanProjection(invocation.args[0], invocation.args[1])
       },
       'acp:respond-plan': (invocation) => {
-        if (!canSatisfyHumanApproval(invocation.callerContext)) {
-          throw new Error('Only a current human caller can respond to a Session Plan.')
+        if (!canAccessSessionPlan(invocation.callerContext)) {
+          throw new Error(
+            'Only a current human or Task automation caller can respond to a Session Plan.'
+          )
         }
         return dependencies.archiveAvailability
           ? dependencies.archiveAvailability.withSessionAvailable(

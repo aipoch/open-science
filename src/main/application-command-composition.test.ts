@@ -229,7 +229,7 @@ describe('application command composition', () => {
     expect(listProjects).toHaveBeenCalledOnce()
   })
 
-  it('keeps Reviewer commands on local and remote Web but out of Task', () => {
+  it('exposes only Reviewer run and reads to Task automation', () => {
     const composition = createApplicationCommandComposition(dependencies())
     const reviewerCommands = ['reviewer:abort-fix-loop', 'reviewer:get-for-session', 'reviewer:run']
 
@@ -238,10 +238,13 @@ describe('application command composition', () => {
     for (const command of reviewerCommands) {
       expect(composition.remoteWeb.rejectedCommandNames()).not.toContain(command)
     }
-    expect(composition.task.commandNames()).not.toEqual(expect.arrayContaining(reviewerCommands))
+    expect(composition.task.commandNames()).toEqual(
+      expect.arrayContaining(['reviewer:abort', 'reviewer:get-for-session', 'reviewer:run'])
+    )
+    expect(composition.task.commandNames()).not.toContain('reviewer:abort-fix-loop')
   })
 
-  it('exposes only the seven Task commands and no transport-wide capability', async () => {
+  it('exposes only the thirteen Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
@@ -249,6 +252,12 @@ describe('application command composition', () => {
       'projects:create',
       'sessions:load-all',
       'sessions:save-session',
+      'sessions:set-delegation-policy',
+      'acp:get-plan-projection',
+      'acp:respond-plan',
+      'reviewer:abort',
+      'reviewer:get-for-session',
+      'reviewer:run',
       'artifacts:finalize-run',
       'preview-resources:acquire',
       'preview-resources:release'

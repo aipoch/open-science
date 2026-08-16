@@ -650,6 +650,33 @@ describe('reviewer IPC handlers', () => {
     })
   })
 
+  describe('Task review-chain cancellation', () => {
+    it('aborts an active initial review without exposing a new Electron handler', async () => {
+      let finishRun: (() => void) | undefined
+      let reviewSignal: AbortSignal | undefined
+      runReview.mockImplementation(
+        (options?: { onStarted?: () => void; fixLoopAbortSignal?: AbortSignal }) => {
+          reviewSignal = options?.fixLoopAbortSignal
+          options?.onStarted?.()
+          return new Promise<void>((resolve) => {
+            finishRun = resolve
+          })
+        }
+      )
+      const owner = createReviewerCommandOwner({ acpRuntime })
+
+      await expect(owner.run(createRequest())).resolves.toEqual({ started: true })
+      expect(reviewSignal?.aborted).toBe(false)
+
+      owner.abort({ projectId: 'project-1', appSessionId: 'session-1' })
+      expect(reviewSignal?.aborted).toBe(true)
+      expect(handlers.has('reviewer:abort')).toBe(false)
+
+      finishRun?.()
+      await vi.waitFor(() => expect(runReview).toHaveBeenCalledOnce())
+    })
+  })
+
   describe('orchestrator callback wiring', () => {
     type OrchestratorCallbacks = {
       onStarted?: () => void

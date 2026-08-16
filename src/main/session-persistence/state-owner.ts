@@ -6,6 +6,7 @@ import type { ProjectFilesChangedEvent, ProjectFileSource } from '../../shared/p
 import {
   materializeSessionConversationGraph,
   sanitizeSessionRuntimeContext,
+  type DelegationPolicy,
   type PersistedChatMessage,
   type PersistedChatSession,
   type PersistedSessionStatus,
@@ -446,6 +447,29 @@ class SessionPersistenceStateOwner {
     return message
   }
 
+  async setDelegationPolicy(
+    projectId: string,
+    sessionId: string,
+    policy: DelegationPolicy
+  ): Promise<PersistedChatSession> {
+    if (policy !== 'allow' && policy !== 'deny') {
+      throw new Error('Delegation policy must be allow or deny.')
+    }
+    this.options.assertMutable(projectId, sessionId, 'mutate')
+    const loaded = await this.options.repository.loadSessionWithDiagnostics(projectId, sessionId)
+    if (loaded.status !== 'found') {
+      throw new Error(`Cannot update delegation policy for a ${loaded.status} Session.`)
+    }
+    const durableSession: PersistedChatSession = {
+      ...loaded.session,
+      delegationPolicy: policy,
+      updatedAt: Math.max(loaded.session.updatedAt + 1, Date.now())
+    }
+    await this.options.repository.saveSession(durableSession)
+    this.recordSession(durableSession)
+    return durableSession
+  }
+
   async setEnabledComputeHosts(
     projectId: string,
     sessionId: string,
@@ -530,6 +554,11 @@ class SessionPersistenceStateOwner {
     delete rendererOwnedSession.runtimeContext
     delete rendererOwnedSession.archivedAt
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    const delegationPolicyChanged =
+      authority !== undefined &&
+      (rendererOwnedSession.delegationPolicy === 'deny' ? 'deny' : 'allow') !==
+        (authority.delegationPolicy === 'deny' ? 'deny' : 'allow')
+    if (authority) delete rendererOwnedSession.delegationPolicy
     const permissionOwnedStatus =
       authority?.runtimeContext?.permission?.state === 'pending'
         ? 'waiting-permission'
@@ -549,6 +578,9 @@ class SessionPersistenceStateOwner {
       ...(authority?.archivedAt ? { archivedAt: authority.archivedAt } : {}),
       ...(authority ? { branchSource: authority.branchSource } : {}),
       ...(authority
+        ? { delegationPolicy: authority.delegationPolicy === 'deny' ? 'deny' : 'allow' }
+        : {}),
+      ...(authority
         ? {
             enabledComputeHosts: authority.enabledComputeHosts
               ? [...authority.enabledComputeHosts]
@@ -557,7 +589,10 @@ class SessionPersistenceStateOwner {
         : {}),
       ...(mainOwnedStatus ? { status: mainOwnedStatus } : {}),
       updatedAt:
-        authority?.runtimeContext || mainOwnedStatus || authority?.enabledComputeHosts !== undefined
+        authority?.runtimeContext ||
+        mainOwnedStatus ||
+        authority?.enabledComputeHosts !== undefined ||
+        delegationPolicyChanged
           ? Math.max(rendererOwnedSession.updatedAt, (authority?.updatedAt ?? -1) + 1, Date.now())
           : rendererOwnedSession.updatedAt
     }

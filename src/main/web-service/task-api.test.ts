@@ -75,6 +75,62 @@ describe('HeadlessTaskApi adapter', () => {
     )
   })
 
+  it('reads and responds to a Session Plan through the Task command view', async () => {
+    const persisted: PersistedChatSession = {
+      id: 'session-plan',
+      projectId: project.id,
+      title: 'Plan session',
+      cwd: '/workspace/plan',
+      status: 'waiting-plan-approval',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const projection = {
+      artifactId: 'plan-artifact',
+      artifactVersionId: 'plan-version',
+      artifactChecksum: 'checksum',
+      revision: 3,
+      approval: 'pending',
+      lifecycle: 'awaiting_approval'
+    } as never
+    const commandInvoke = vi.fn(async (channel: string) => {
+      if (channel === 'sessions:load-all') {
+        return { sessions: [persisted], manifest: { version: 1 } }
+      }
+      if (channel === 'acp:get-plan-projection') return projection
+      if (channel === 'acp:respond-plan') return { projection, changed: true }
+      throw new Error(`Unexpected Task command: ${channel}`)
+    })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(commandInvoke),
+      agent: createAgent()
+    })
+
+    await expect(api.getSessionPlan(persisted.id)).resolves.toBe(projection)
+    await expect(
+      api.respondSessionPlan(persisted.id, {
+        decision: 'approved',
+        artifactVersionId: 'plan-version',
+        expectedRevision: 3
+      })
+    ).resolves.toEqual({ projection, changed: true })
+
+    expect(commandInvoke).toHaveBeenCalledWith('acp:get-plan-projection', expect.anything(), [
+      project.id,
+      persisted.id
+    ])
+    expect(commandInvoke).toHaveBeenCalledWith('acp:respond-plan', expect.anything(), [
+      {
+        projectId: project.id,
+        sessionId: persisted.id,
+        decision: 'approved',
+        artifactVersionId: 'plan-version',
+        expectedRevision: 3
+      }
+    ])
+    await api.dispose()
+  })
   it('exposes Task Run progress through one subscription seam', async () => {
     const invoke = vi.fn(async (channel: string) => {
       if (channel === 'projects:list') return [project]
@@ -106,7 +162,7 @@ describe('HeadlessTaskApi adapter', () => {
       'completed'
     ])
     unsubscribe()
-    api.dispose()
+    await api.dispose()
   })
 
   it('maps public query and artifact commands to the compatibility façade', async () => {
@@ -408,6 +464,207 @@ describe('HeadlessTaskApi adapter', () => {
 
     expect(cancelled).toMatchObject({ status: 'cancelled' })
     expect(agent.cancelPrompt).toHaveBeenCalledWith('session-cancel-context')
+  })
+
+  it('aborts the Reviewer command when cancellation reaches an automatic review', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'reviewer:run') return { started: true }
+      if (channel === 'reviewer:get-for-session') {
+        return [{ id: 'review-1', turnMessageId: 'review-agent', lifecycle: 'running' }]
+      }
+      if (channel === 'reviewer:abort') return undefined
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-review-cancel' })),
+      prompt: vi.fn(async () => {
+        emitEvent?.({
+          id: 'review-message-event',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          sessionId: 'session-review-cancel',
+          role: 'assistant',
+          text: 'Review this output.'
+        })
+      })
+    })
+    const ids = ['review-user', 'review-run', 'review-agent']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent },
+      {
+        createId: () => ids.shift() ?? 'generated-id',
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    const run = await api.startRun({
+      project: project.id,
+      prompt: 'Produce and review.',
+      autoReviewEnabled: true
+    })
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('reviewer:get-for-session', expect.anything(), [
+        { projectId: project.id, appSessionId: 'session-review-cancel' }
+      ])
+    )
+    await expect(api.cancelRun(run.id)).resolves.toMatchObject({ status: 'cancelled' })
+
+    expect(invoke).toHaveBeenCalledWith('reviewer:abort', expect.anything(), [
+      { projectId: project.id, appSessionId: 'session-review-cancel' }
+    ])
+    await api.dispose()
+  })
+
+  it('keeps admitted automatic-review polling alive after remote authorization expires', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let authorizationCurrent = true
+    const context = createTaskCallerContext({
+      location: 'remote',
+      isAuthorizationCurrent: () => authorizationCurrent
+    })
+    const invoke = vi.fn(
+      async (channel: string, callerContext: CallerContext): Promise<unknown> => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') {
+          return { sessions: [], manifest: { version: 1 } }
+        }
+        if (channel === 'sessions:save-session') return undefined
+        if (channel === 'reviewer:run') {
+          expect(callerContext).toBe(context)
+          authorizationCurrent = false
+          return { started: true }
+        }
+        if (channel === 'reviewer:get-for-session') {
+          expect(callerContext).toEqual(taskCallerContext())
+          expect(callerContext.isAuthorizationCurrent()).toBe(true)
+          return [{ id: 'review-expired', turnMessageId: 'expired-agent', lifecycle: 'completed' }]
+        }
+        throw new Error(`Unexpected RPC channel: ${channel}`)
+      }
+    )
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-review-expired' })),
+      prompt: vi.fn(async () => {
+        emitEvent?.({
+          id: 'expired-message-event',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          sessionId: 'session-review-expired',
+          role: 'assistant',
+          text: 'Review after authorization expiry.'
+        })
+      })
+    })
+    const ids = ['expired-user', 'expired-run', 'expired-agent']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent },
+      {
+        createId: () => ids.shift() ?? 'generated-id',
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    const run = await api.runWithCallerContext(context, () =>
+      api.startRun({
+        project: project.id,
+        prompt: 'Produce and review after authorization expiry.',
+        autoReviewEnabled: true
+      })
+    )
+    await expect(api.waitForRun(run.id)).resolves.toMatchObject({
+      status: 'completed',
+      review: { started: true, id: 'review-expired', lifecycle: 'completed' }
+    })
+    expect(authorizationCurrent).toBe(false)
+    await api.dispose()
+  })
+
+  it('awaits Reviewer cleanup before completing Task API disposal', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markAbortStarted: (() => void) | undefined
+    let releaseAbort: (() => void) | undefined
+    const abortStarted = new Promise<void>((resolve) => {
+      markAbortStarted = resolve
+    })
+    const abortGate = new Promise<void>((resolve) => {
+      releaseAbort = resolve
+    })
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'reviewer:run') return { started: true }
+      if (channel === 'reviewer:get-for-session') {
+        return [{ id: 'review-1', turnMessageId: 'dispose-agent', lifecycle: 'running' }]
+      }
+      if (channel === 'reviewer:abort') {
+        markAbortStarted?.()
+        await abortGate
+        return undefined
+      }
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-review-dispose' })),
+      prompt: vi.fn(async () => {
+        emitEvent?.({
+          id: 'dispose-message-event',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          sessionId: 'session-review-dispose',
+          role: 'assistant',
+          text: 'Review before disposal.'
+        })
+      })
+    })
+    const ids = ['dispose-user', 'dispose-run', 'dispose-agent']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent },
+      {
+        createId: () => ids.shift() ?? 'generated-id',
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    await api.startRun({
+      project: project.id,
+      prompt: 'Produce and review before disposal.',
+      autoReviewEnabled: true
+    })
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('reviewer:get-for-session', expect.anything(), [
+        { projectId: project.id, appSessionId: 'session-review-dispose' }
+      ])
+    )
+    let disposed = false
+    const disposal = api.dispose().then(() => {
+      disposed = true
+    })
+    await abortStarted
+
+    expect(disposed).toBe(false)
+    releaseAbort?.()
+    await disposal
+    expect(disposed).toBe(true)
+    expect(invoke).toHaveBeenCalledWith('reviewer:abort', expect.anything(), [
+      { projectId: project.id, appSessionId: 'session-review-dispose' }
+    ])
   })
 
   it('does not enter the direct Agent port for cancellation after authorization expires', async () => {

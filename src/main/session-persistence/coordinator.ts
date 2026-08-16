@@ -1,6 +1,7 @@
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type { ProjectFileSource } from '../../shared/project-files'
 import type {
+  DelegationPolicy,
   LoadAllSessionsResult,
   PersistedChatMessage,
   PersistedChatSession,
@@ -715,6 +716,14 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         { conflictRebaseFields: ['specialistId'] }
       )
     })
+  }
+
+  setSessionDelegationPolicy(
+    projectId: string,
+    sessionId: string,
+    policy: DelegationPolicy
+  ): Promise<PersistedChatSession> {
+    return this.enqueue(() => this.stateOwner.setDelegationPolicy(projectId, sessionId, policy))
   }
 
   setSessionEnabledComputeHosts(

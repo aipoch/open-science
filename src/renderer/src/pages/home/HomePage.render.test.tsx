@@ -803,7 +803,7 @@ describe('HomePage activity overview', () => {
     expect(update?.compareDocumentPosition(newProject!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  it('prioritizes needs-you cards and shows separate per-project activity counts', async () => {
+  it('prioritizes waiting cards with exact reasons and keeps aggregate activity counts', async () => {
     const now = 600_000
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
     const openSession = vi.fn()
@@ -841,10 +841,12 @@ describe('HomePage activity overview', () => {
     expect(cardGrid?.classList.contains('overflow-x-auto')).toBe(false)
     expect(cards[0]?.classList.contains('cursor-pointer')).toBe(true)
     expect([...cards].map((card) => card.getAttribute('aria-label'))).toEqual([
-      'Open session Plan review, needs you',
-      'Open session Permission request, needs you',
+      'Open session Plan review, waiting for plan approval',
+      'Open session Permission request, waiting for permission',
       'Open session Running analysis, running'
     ])
+    expect(activeSection?.textContent).toContain('Waiting for plan approval')
+    expect(activeSection?.textContent).toContain('Waiting for permission')
     expect(activeSection?.textContent).toContain('waiting 2m')
     expect(activeSection?.textContent).toContain('waiting 3m')
     expect(activeSection?.textContent).toContain('running 5m')
@@ -875,7 +877,7 @@ describe('HomePage activity overview', () => {
     nowSpy.mockRestore()
   })
 
-  it('shows a running Session as Needs you when its active branch has a delegated question', async () => {
+  it('shows a running Session as waiting for an answer for an active delegated question', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [project],
@@ -893,8 +895,11 @@ describe('HomePage activity overview', () => {
     )
 
     expect(
-      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+      container.querySelector(
+        '[aria-label="Open session Delegated question, waiting for your answer"]'
+      )
     ).not.toBeNull()
+    expect(container.textContent).toContain('Waiting for your answer')
     expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
   })
@@ -1177,7 +1182,7 @@ describe('HomePage activity overview', () => {
     nowSpy.mockRestore()
   })
 
-  it('shows Needs you ahead of an unread completion for an idle Session', async () => {
+  it('shows an answer wait ahead of an unread completion for an idle Session', async () => {
     const now = 600_000
     useProjectStore.setState({
       ...createInitialProjectState(),
@@ -1216,7 +1221,9 @@ describe('HomePage activity overview', () => {
     )
 
     expect(
-      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+      container.querySelector(
+        '[aria-label="Open session Delegated question, waiting for your answer"]'
+      )
     ).not.toBeNull()
     expect(
       container.querySelector('[aria-label="Open session Delegated question, completed"]')
@@ -1226,7 +1233,7 @@ describe('HomePage activity overview', () => {
     ).toBeNull()
   })
 
-  it('still shows Needs you while the user is previewing the question source Subagent', async () => {
+  it('still shows the answer wait while the user previews the question source Subagent', async () => {
     const candidate = sessionWithPendingDelegatedQuestion('running', 600_000)
     if (candidate.conversationGraph) candidate.conversationGraph.activeFrameId = 'child'
     useProjectStore.setState({
@@ -1246,7 +1253,9 @@ describe('HomePage activity overview', () => {
     )
 
     expect(
-      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+      container.querySelector(
+        '[aria-label="Open session Delegated question, waiting for your answer"]'
+      )
     ).not.toBeNull()
   })
 
@@ -1276,7 +1285,7 @@ describe('HomePage activity overview', () => {
         }
       }
     }
-  ])('does not show Needs you when $reason', async ({ mutate }) => {
+  ])('does not show an answer wait when $reason', async ({ mutate }) => {
     const candidate = sessionWithPendingDelegatedQuestion('running', 600_000)
     mutate(candidate)
     useProjectStore.setState({
@@ -1299,7 +1308,9 @@ describe('HomePage activity overview', () => {
       container.querySelector('[aria-label="Open session Delegated question, running"]')
     ).not.toBeNull()
     expect(
-      container.querySelector('[aria-label="Open session Delegated question, needs you"]')
+      container.querySelector(
+        '[aria-label="Open session Delegated question, waiting for your answer"]'
+      )
     ).toBeNull()
   })
 
@@ -1329,11 +1340,11 @@ describe('HomePage activity overview', () => {
     })
 
     expect(
-      container.querySelector('[aria-label="Open session Live analysis, needs you"]')
+      container.querySelector('[aria-label="Open session Live analysis, waiting for permission"]')
     ).not.toBeNull()
   })
 
-  it('keeps a timed-out Plan approval visible as needs you', async () => {
+  it('keeps a timed-out Plan approval visible with its exact wait reason', async () => {
     useProjectStore.setState({
       ...createInitialProjectState(),
       projects: [project],
@@ -1355,7 +1366,9 @@ describe('HomePage activity overview', () => {
     )
 
     expect(
-      container.querySelector('[aria-label="Open session Create a research plan, needs you"]')
+      container.querySelector(
+        '[aria-label="Open session Create a research plan, waiting for plan approval"]'
+      )
     ).not.toBeNull()
     expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
   })

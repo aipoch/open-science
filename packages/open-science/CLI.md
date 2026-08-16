@@ -170,6 +170,63 @@ open-science run \
 The default approval profile is `ask`. Unattended workflows must explicitly use
 `--approval-profile auto` or `--approval-profile full` when that access is appropriate.
 
+### Execution controls
+
+The run command exposes four provider-neutral controls:
+
+```bash
+open-science run \
+  --project "Systematic review" \
+  --prompt-file ./task.md \
+  --plan-first \
+  --auto-review \
+  --specialist literature-reviewer \
+  --delegation deny \
+  --wait \
+  --return-on-attention \
+  --json
+```
+
+- `--plan-first` marks this turn as Plan First. The Run remains running while its generated Plan
+  waits for an explicit response.
+- `--auto-review` and `--no-auto-review` update the Session automatic-review setting. When enabled, a
+  successful turn starts the existing reviewer workflow before the Run becomes terminal; the Run
+  `review` property reports whether it started and its final lifecycle/outcome.
+- `--specialist` accepts a Specialist UUID or stable Profile name. It binds only a new Session. An
+  existing Session cannot be rebound, and a presentation `displayName` is not an identifier.
+- `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
+  does not cancel, hide, or prevent collection/messaging of children admitted earlier.
+
+Ordinary `--wait` retains its terminal-only behavior. Add `--return-on-attention` to return a
+still-running Run when its Plan needs approval. Plan approval is the only structured Run attention
+in this release; permission and delegated-question events do not cause an attention return.
+
+Inspect and respond to an active Plan with its exact version and revision:
+
+```bash
+open-science plan show <session-id> --json
+open-science plan approve <session-id> --artifact-version <id> --revision <number> --json
+open-science plan reject <session-id> --artifact-version <id> --revision <number> --json
+open-science plan revise <session-id> --feedback "Split the validation step" --json
+```
+
+Version/revision matching prevents a stale automation client from deciding a newer Plan. Approval
+continues the parked Run; feedback asks the live Plan interaction for a revision.
+
+### Session persistence and compatibility
+
+The controls use the Session JSON authority; they do not add a Prisma/SQLite migration:
+
+- Session JSON stores `delegationPolicy` with values `allow` or `deny`. Historical Session files
+  that omit it, and malformed values, restore as `allow`.
+- autoReviewEnabled and specialistId already existed and are reused. Historical
+  autoReviewEnabled omissions remain disabled; an omitted specialistId remains Main Agent.
+- Plan artifacts/approval/continuation continue under runtimeContext.plan; delegated attempts,
+  messages, and questions continue under runtimeContext.delegatedWork.
+
+No Session or Run status enum is added. Existing waiting-plan-approval remains the durable Session
+status, while a public Run remains running and carries an attention discriminant.
+
 ## Machine-readable output
 
 Use `--json` to emit one result. `--jsonl` requires `run --wait` and emits progress events followed by
@@ -200,13 +257,13 @@ open-science run \
 
 Exit codes form part of the automation contract:
 
-| Exit code | Meaning                                                       |
-| --------- | ------------------------------------------------------------- |
-| `0`       | The command succeeded, including a completed waited run.      |
-| `1`       | A run failed or a general command failure occurred.           |
-| `2`       | CLI usage was invalid.                                        |
-| `3`       | The local daemon was unavailable.                             |
-| `4`       | A requested project, run, session, or artifact was not found. |
+| Exit code | Meaning                                                                   |
+| --------- | ------------------------------------------------------------------------- |
+| `0`       | The command succeeded, including a completed waited run.                  |
+| `1`       | A run failed or a general command failure occurred.                       |
+| `2`       | CLI usage was invalid.                                                    |
+| `3`       | The local daemon was unavailable.                                         |
+| `4`       | A requested project, run, session, artifact, or Specialist was not found. |
 
 Timeouts and `session_busy` conflicts use exit code `1` and retain their distinct `timeout` and
 `session_busy` error codes in structured output.

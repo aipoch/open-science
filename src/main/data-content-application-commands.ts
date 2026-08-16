@@ -261,6 +261,11 @@ const dataContentApplicationCommands = Object.freeze({
     ],
     SessionPersistence.PersistedChatSession
   >('sessions:save-session'),
+  sessionSetDelegationPolicy: defineApplicationCommand<
+    'sessions:set-delegation-policy',
+    readonly [projectId: string, sessionId: string, policy: SessionPersistence.DelegationPolicy],
+    SessionPersistence.PersistedChatSession
+  >('sessions:set-delegation-policy'),
   uploadAbortTransfer: uploadCommand('uploads:abort-transfer', 'abortTransfer'),
   uploadAppendTransfer: uploadCommand('uploads:append-transfer', 'appendTransfer'),
   uploadBeginTransfer: uploadCommand('uploads:begin-transfer', 'beginTransfer'),
@@ -325,7 +330,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionLoadOne,
     dataContentApplicationCommands.sessionSaveManifest,
     dataContentApplicationCommands.sessionUpdateArchive,
-    dataContentApplicationCommands.sessionSave
+    dataContentApplicationCommands.sessionSave,
+    dataContentApplicationCommands.sessionSetDelegationPolicy
   ] as const),
   defineApplicationCommandGroup('uploads', [
     dataContentApplicationCommands.uploadAbortTransfer,
@@ -357,6 +363,21 @@ const assertElectronCaller = (
 ): void => {
   if (invocation.callerContext.surface !== 'electron') {
     throw new Error(`Channel only available from the Electron app: ${name}`)
+  }
+}
+
+const assertTaskAutomationCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  name: string
+): void => {
+  const { callerContext } = invocation
+  if (
+    !callerContext.isAuthorizationCurrent() ||
+    callerContext.surface !== 'task' ||
+    callerContext.principalKind !== 'automation' ||
+    callerContext.actionOrigin !== 'automation'
+  ) {
+    throw new Error(`Channel only available from current Task automation: ${name}`)
   }
 }
 
@@ -517,6 +538,25 @@ const registerDataContentApplicationCommands = (
             { session: result.session, originClientId }
           )
           return result.session
+        })
+      },
+      'sessions:set-delegation-policy': (invocation) => {
+        assertTaskAutomationCaller(
+          invocation,
+          dataContentApplicationCommands.sessionSetDelegationPolicy.name
+        )
+        const originClientId = invocation.callerContext.lifecycleClientId
+        return dependencies.withDataRootWrite(async () => {
+          const session = await dependencies.sessions.setDelegationPolicy(
+            invocation.args[0],
+            invocation.args[1],
+            invocation.args[2]
+          )
+          publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionUpdated, {
+            session,
+            originClientId
+          })
+          return session
         })
       }
     })

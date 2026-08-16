@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 
 // Real end-to-end reachability probed by the main process (the same HTTPS HEAD check the
-// onboarding environment step uses). 'unknown' means there is no fresh answer and surfaces
-// render it as "checking"; it never persists, because every probe eventually applies a result.
-export type NetworkConnectivity = 'unknown' | 'reachable' | 'unreachable'
+// onboarding environment step uses). 'unknown' means a probe is in flight and surfaces render it
+// as "checking"; 'probe-failed' is the terminal recovery state when no prior answer can be restored.
+export type NetworkConnectivity = 'unknown' | 'reachable' | 'unreachable' | 'probe-failed'
 
 type NetworkStore = {
   // Whether the browser believes the machine has a network connection. Seeded from
@@ -29,13 +29,13 @@ const MIN_CHECKING_MS = 500
 
 export const useNetworkStore = create<NetworkStore>((set, get) => {
   let probeGeneration = 0
-  let lastKnownConnectivity: Exclude<NetworkConnectivity, 'unknown'> | undefined
+  let lastKnownConnectivity: Extract<NetworkConnectivity, 'reachable' | 'unreachable'> | undefined
 
   const probeConnectivity = async ({ announce = false } = {}): Promise<void> => {
     const generation = ++probeGeneration
     const startedAt = Date.now()
     const currentConnectivity = get().connectivity
-    if (currentConnectivity !== 'unknown') {
+    if (currentConnectivity === 'reachable' || currentConnectivity === 'unreachable') {
       lastKnownConnectivity = currentConnectivity
     }
 
@@ -61,18 +61,17 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
         try {
           reachable = await checkConnectivity()
         } catch {
-          // Bridge failure keeps the last known state rather than crying wolf. Announced probes
-          // still honor the minimum Checking… presentation before restoring that state.
+          // Bridge failure keeps the last known reachability rather than crying wolf. When a cold
+          // start has no previous answer, settle to an explicit terminal failure so Checking… never
+          // becomes permanent and the user can retry.
           await holdAnnouncedState()
           const currentState = get()
           if (
-            announce &&
             probeGeneration === generation &&
             currentState.isOnline &&
-            currentState.connectivity === 'unknown' &&
-            lastKnownConnectivity !== undefined
+            currentState.connectivity === 'unknown'
           ) {
-            set({ connectivity: lastKnownConnectivity })
+            set({ connectivity: lastKnownConnectivity ?? 'probe-failed' })
           }
           return
         }

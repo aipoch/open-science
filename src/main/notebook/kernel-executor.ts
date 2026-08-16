@@ -69,6 +69,9 @@ type CancelIdleTimer = (handle: IdleTimerHandle) => void
 // alive until an explicit shutdown/restart or session teardown.
 const DEFAULT_IDLE_MS = 0
 const DEFAULT_CANCELLATION_GRACE_MS = 2_000
+// Queued behind an interrupted R request before its queue is released. The sleep gives a SIGINT that
+// raced with the original response an interruptible, side-effect-free request to land in.
+const R_INTERRUPT_PROBE_CODE = 'base::Sys.sleep(0.05)'
 
 // Real scheduler: unref'd so a pending idle timer alone never keeps the process alive.
 const defaultScheduleIdleTimer: ScheduleIdleTimer = (fn, ms) => {
@@ -135,6 +138,9 @@ type PendingRequest = {
   signal?: AbortSignal
   abortListener?: () => void
   cancellationTimer?: IdleTimerHandle
+  interruptProbeReqId?: string
+  interruptAcknowledged?: boolean
+  response?: KernelLoopResponse
   timeout?: TimeoutController
   timeoutMs?: number
 }
@@ -661,6 +667,19 @@ class NotebookKernelExecutor implements NotebookExecutor {
         return
       }
       const timeoutMs = request.timeoutMs
+      const pending: PendingRequest = {
+        reqId,
+        resolve: (response) =>
+          resolve({
+            response,
+            timedOut: pending.timeout?.timedOut ?? false,
+            cancelled: pending.cancelled
+          }),
+        reject,
+        cancelled: false,
+        signal: request.signal,
+        timeoutMs
+      }
       const timeout =
         timeoutMs === undefined
           ? undefined
@@ -669,7 +688,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
               // SIGKILL is routed through terminateProcessTree, which reaps descendants too.
               kill: (signal) => {
                 if (signal === 'SIGKILL') this.killChildTracked(proc)
-                else proc.child.kill(signal)
+                else {
+                  proc.child.kill(signal)
+                  if (proc.kind === 'r') this.queueRInterruptProbe(proc, pending)
+                }
               },
               onHardTimeout: () => {
                 // Drop the wedged loop so the next execute respawns it, then fail this run.
@@ -685,21 +707,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
                 )
               }
             })
-
-      const pending: PendingRequest = {
-        reqId,
-        resolve: (response) =>
-          resolve({
-            response,
-            timedOut: timeout?.timedOut ?? false,
-            cancelled: pending.cancelled
-          }),
-        reject,
-        cancelled: false,
-        signal: request.signal,
-        timeout,
-        timeoutMs
-      }
+      pending.timeout = timeout
       proc.pending = pending
 
       if (request.signal) {
@@ -722,6 +730,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
           }
 
           proc.child.kill('SIGINT')
+          if (proc.kind === 'r') this.queueRInterruptProbe(proc, pending)
           pending.cancellationTimer = this.scheduleIdleTimer(() => {
             pending.cancellationTimer = undefined
             if (proc.pending !== pending) return
@@ -752,12 +761,53 @@ class NotebookKernelExecutor implements NotebookExecutor {
     if (!response) return
 
     const pending = proc.pending
-    if (!pending || pending.reqId !== response.reqId) return
+    if (!pending) return
+
+    if (pending.reqId === response.reqId) {
+      pending.response = response
+      pending.interruptAcknowledged ||= response.interruptAck === true
+      if (pending.interruptProbeReqId !== undefined) return
+      this.settlePendingResponse(proc, pending, response)
+      return
+    }
+
+    if (pending.interruptProbeReqId !== response.reqId) return
+    pending.interruptProbeReqId = undefined
+    // An interrupted probe explicitly acknowledges a late SIGINT. A successful probe also
+    // acknowledges it: the unmaskable base sleep held an interrupt checkpoint open after the
+    // original request, so returning normally proves the original request already consumed SIGINT
+    // (including when user code caught the interrupt itself).
+    pending.interruptAcknowledged ||= response.interruptAck === true || response.error === null
+    if (!pending.interruptAcknowledged) {
+      this.queueRInterruptProbe(proc, pending)
+      return
+    }
+    if (pending.response) this.settlePendingResponse(proc, pending, pending.response)
+  }
+
+  private settlePendingResponse(
+    proc: ProcState,
+    pending: PendingRequest,
+    response: KernelLoopResponse
+  ): void {
+    if (proc.pending !== pending) return
 
     this.clearPendingResources(pending)
     proc.pending = undefined
     pending.resolve(response)
     this.rearmIdleTimerIfLive(proc)
+  }
+
+  // R may emit the cancelled request's ordinary response before the OS-delivered SIGINT reaches an
+  // interrupt checkpoint. Pre-queue a private probe while the original request is still pending, and
+  // retain queue ownership until either request explicitly acknowledges the interrupt or the trusted
+  // probe completes its interruptible delay. If neither happens, the existing cancellation/hard-
+  // timeout grace drops the process tree.
+  private queueRInterruptProbe(proc: ProcState, pending: PendingRequest): void {
+    if (proc.pending !== pending || pending.interruptProbeReqId !== undefined) return
+    const reqId = randomUUID()
+    pending.interruptProbeReqId = reqId
+    proc.child.stdin.write(frameRRequest(reqId, R_INTERRUPT_PROBE_CODE))
   }
 
   // Reads each captured figure file, base64-encodes it, and unlinks it. A missing/unreadable file is

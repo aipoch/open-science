@@ -39,6 +39,8 @@ import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import { NotificationBell } from '@/components/NotificationBell'
 
+import { resolveSessionWaitReason, sessionWaitReasonLabelKeys } from './session-wait-reason'
+
 type WorkspaceSidebarProps = {
   projectName: string
   sessions: ChatSession[]
@@ -102,9 +104,7 @@ const sessionStatusDotClassName: Record<SessionStatus, string> = {
 const sessionStatusLabelKeys = {
   idle: 'Idle',
   running: 'Running',
-  'waiting-for-user': 'Waiting for your answer',
-  'waiting-permission': 'Waiting for permission',
-  'waiting-plan-approval': 'Waiting for plan approval',
+  ...sessionWaitReasonLabelKeys,
   error: 'Error'
 } as const satisfies Record<SessionStatus, string>
 
@@ -112,11 +112,18 @@ const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
-const isLiveSessionStatus = (status: SessionStatus): boolean =>
-  status === 'running' ||
-  status === 'waiting-for-user' ||
-  status === 'waiting-permission' ||
-  status === 'waiting-plan-approval'
+const getPresentedSessionStatus = (session: ChatSession): SessionStatus =>
+  resolveSessionWaitReason(session) ?? session.status
+
+const isLiveSession = (session: ChatSession): boolean => {
+  const status = getPresentedSessionStatus(session)
+  return (
+    status === 'running' ||
+    status === 'waiting-for-user' ||
+    status === 'waiting-permission' ||
+    status === 'waiting-plan-approval'
+  )
+}
 
 // The label is English source text that travels to the header as data, so it is translated where it
 // is read rather than here. Keeping the union closed means a section added upstream fails typecheck
@@ -152,7 +159,7 @@ const getSessionSections = (sessions: ChatSession[], now: number): SidebarSessio
     if (session.pinned) {
       pinned.push(session)
     } else if (
-      isLiveSessionStatus(session.status) ||
+      isLiveSession(session) ||
       (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
     ) {
       active.push(session)
@@ -431,11 +438,12 @@ const WorkspaceSidebarView = ({
                 {section.items.map((session) => {
                   const isActive = session.id === activeSessionId
                   const shortcutNumber = shortcutNumberBySessionId.get(session.id)
+                  const presentedStatus = getPresentedSessionStatus(session)
                   const isExportDisabled =
                     session.messages.length === 0 ||
-                    session.status === 'running' ||
-                    session.status === 'waiting-for-user' ||
-                    session.status === 'waiting-permission'
+                    presentedStatus === 'running' ||
+                    presentedStatus === 'waiting-for-user' ||
+                    presentedStatus === 'waiting-permission'
 
                   return (
                     <div
@@ -462,20 +470,20 @@ const WorkspaceSidebarView = ({
                             <span
                               className={cn(
                                 'size-[7px] shrink-0 rounded-full',
-                                sessionStatusDotClassName[session.status]
+                                sessionStatusDotClassName[presentedStatus]
                               )}
                             />
                           </span>
                           <span className="sr-only">
                             {t('Session status: {{status}}', {
-                              status: t(sessionStatusLabelKeys[session.status])
+                              status: t(sessionStatusLabelKeys[presentedStatus])
                             })}
                           </span>
                           <span
                             className={cn(
                               'min-w-0 flex-1 overflow-hidden whitespace-nowrap',
                               section.label === 'Active' &&
-                                session.status !== 'idle' &&
+                                presentedStatus !== 'idle' &&
                                 'font-semibold'
                             )}
                           >

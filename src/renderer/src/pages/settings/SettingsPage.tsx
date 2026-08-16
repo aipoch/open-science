@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
+import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { useComputeStore } from '@/stores/compute-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
@@ -78,6 +79,10 @@ type SettingsPageProps = {
   open: boolean
   onClose: () => void
   onOpenSession?: (sessionId: string) => void
+  canDeleteProjects?: boolean
+  hasCompleteSessionCatalog?: boolean
+  catalogRecovery?: SessionCatalogRecovery
+  onRetryCatalogRecovery?: () => void
 }
 
 type SettingsPageHandle = {
@@ -241,7 +246,15 @@ const INITIAL_LOCATION: NavLocation = {
 // App-level model settings surface. Reuses the onboarding cards/form; manages providers (CRUD +
 // activate + test). Opened from the Home/Workspace gear entry.
 const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function SettingsPage(
-  { open, onClose, onOpenSession },
+  {
+    open,
+    onClose,
+    onOpenSession,
+    canDeleteProjects = true,
+    hasCompleteSessionCatalog = true,
+    catalogRecovery = { kind: 'ready' },
+    onRetryCatalogRecovery
+  },
   ref
 ): React.JSX.Element {
   const { t } = useTranslation()
@@ -1095,7 +1108,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     }
                   />
                 ) : activePanel === 'archived' ? (
-                  <ArchivedPanel view={archivedView} onNavigate={navigateArchived} />
+                  <ArchivedPanel
+                    view={archivedView}
+                    onNavigate={navigateArchived}
+                    canDeleteProjects={canDeleteProjects}
+                    hasCompleteSessionCatalog={hasCompleteSessionCatalog}
+                    catalogRecovery={catalogRecovery}
+                    onRetryCatalogRecovery={onRetryCatalogRecovery}
+                  />
                 ) : activePanel === 'runtimes' ? (
                   <RuntimesPanel
                     title={t('Notebook runtimes')}

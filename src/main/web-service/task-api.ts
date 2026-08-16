@@ -7,17 +7,23 @@ import type {
   FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
 import type { Project } from '../../shared/projects'
+import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
+import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import type {
   AcquiredTaskArtifact,
   StartTaskRunRequest,
+  TaskPlanResponseRequest,
   TaskRun,
   TaskRunProgressEvent,
+  TaskRunReview,
   TaskSessionSummary
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
+import type { PlanResponseResult } from '../session-plan/plan-service'
+import type { TaskControlPorts } from '../tasks/task-control-ports'
 import {
   TaskRunner,
   TaskRunnerError,
@@ -32,6 +38,7 @@ const TASK_CALLER_CONTEXT = createTaskCallerContext()
 type TaskApiPorts = {
   commands: ApplicationCommandByNameDispatcher
   agent: TaskAgentPort
+  controls?: TaskControlPorts
 }
 
 type TaskApiDependencies = {
@@ -66,6 +73,9 @@ class HeadlessTaskApi {
         },
         save: async (session) => {
           await this.invoke('sessions:save-session', session)
+        },
+        setDelegationPolicy: async (projectId, sessionId, policy) => {
+          await this.invoke('sessions:set-delegation-policy', projectId, sessionId, policy)
         }
       },
       agent: {
@@ -110,14 +120,20 @@ class HeadlessTaskApi {
         }
       },
       runtimeEvents: { subscribe: subscribeEvents },
+      specialists: {
+        resolve: (reference) => this.resolveSpecialist(reference)
+      },
+      reviewer: {
+        review: (session, turnMessageId, signal) => this.review(session, turnMessageId, signal)
+      },
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
     } satisfies TaskRunnerDependencies)
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     try {
-      this.runner.dispose()
+      await this.runner.dispose()
     } finally {
       this.commandClient.dispose()
     }
@@ -141,6 +157,33 @@ class HeadlessTaskApi {
 
   getSession(sessionId: string): Promise<TaskSessionSummary> {
     return this.runner.getSession(sessionId)
+  }
+
+  async getSessionPlan(sessionId: string): Promise<ActivePlanProjection | null> {
+    const session = await this.runner.getSession(sessionId)
+    return this.invoke(
+      'acp:get-plan-projection',
+      session.projectId,
+      session.id
+    ) as Promise<ActivePlanProjection | null>
+  }
+
+  async respondSessionPlan(
+    sessionId: string,
+    request: TaskPlanResponseRequest
+  ): Promise<PlanResponseResult> {
+    const session = await this.runner.getSession(sessionId)
+    const command: PlanResponseCommand =
+      'feedback' in request && typeof request.feedback === 'string'
+        ? { projectId: session.projectId, sessionId: session.id, feedback: request.feedback }
+        : {
+            projectId: session.projectId,
+            sessionId: session.id,
+            decision: request.decision,
+            artifactVersionId: request.artifactVersionId,
+            expectedRevision: request.expectedRevision
+          }
+    return this.invoke('acp:respond-plan', command) as Promise<PlanResponseResult>
   }
 
   startRun(request: StartTaskRunRequest): Promise<TaskRun> {
@@ -193,6 +236,79 @@ class HeadlessTaskApi {
       return Promise.reject(new Error('Caller authorization is no longer current.'))
     }
     return operation()
+  }
+
+  private resolveSpecialist(reference: string): Promise<{ id: string }> {
+    const specialists = this.ports.controls?.specialists
+    if (!specialists) return Promise.reject(new Error('Task Specialist controls are unavailable.'))
+    return specialists.resolve(reference)
+  }
+
+  private async review(
+    session: PersistedChatSession,
+    turnMessageId: string,
+    signal: AbortSignal
+  ): Promise<TaskRunReview> {
+    const reviewSession = { projectId: session.projectId, appSessionId: session.id }
+    const throwIfAborted = async (): Promise<void> => {
+      if (!signal.aborted) return
+      // Cancellation is cleanup for an already-authorized Task Run. Use the fixed Task capability so
+      // an expired remote request lease cannot strand the separate Reviewer runtime.
+      await this.commandClient.invoke(this.ports.commands, 'reviewer:abort', TASK_CALLER_CONTEXT, [
+        reviewSession
+      ])
+      throw new Error('Automatic review was cancelled.')
+    }
+    const waitForPoll = (): Promise<void> =>
+      new Promise((resolve) => {
+        const onAbort = (): void => {
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(() => {
+          signal.removeEventListener('abort', onAbort)
+          resolve()
+        }, 250)
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
+      })
+
+    await throwIfAborted()
+    const started = (await this.invoke('reviewer:run', {
+      sessionId: session.id,
+      turnMessageId,
+      projectId: session.projectId,
+      mainSessionId: session.id,
+      model: session.agentModel,
+      origin: 'auto'
+    })) as ReviewRunResult
+    await throwIfAborted()
+    if (!started.started) return started
+
+    for (;;) {
+      // Polling is lifecycle work for an admitted review. Keep it independent from the originating
+      // request lease, which may expire while the separate Reviewer runtime is still working.
+      const reviews = (await this.commandClient.invoke(
+        this.ports.commands,
+        'reviewer:get-for-session',
+        TASK_CALLER_CONTEXT,
+        [{ projectId: session.projectId, appSessionId: session.id }]
+      )) as ReviewWithChecks[]
+      const review = [...reviews]
+        .reverse()
+        .find((candidate) => candidate.turnMessageId === turnMessageId)
+      if (review && review.lifecycle !== 'running') {
+        return {
+          started: true,
+          id: review.id,
+          lifecycle: review.lifecycle,
+          outcome: review.outcome,
+          errorMessage: review.errorMessage
+        }
+      }
+      await waitForPoll()
+      await throwIfAborted()
+    }
   }
 }
 

@@ -120,11 +120,22 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'uploads:stage-local-file'
 ])
 
+const TASK_NATIVE_COMMAND_NAMES = Object.freeze([
+  'sessions:set-delegation-policy',
+  'reviewer:abort'
+])
+
 const TASK_COMMAND_NAMES = Object.freeze([
   'projects:list',
   'projects:create',
   'sessions:load-all',
   'sessions:save-session',
+  'sessions:set-delegation-policy',
+  'acp:get-plan-projection',
+  'acp:respond-plan',
+  'reviewer:abort',
+  'reviewer:get-for-session',
+  'reviewer:run',
   'artifacts:finalize-run',
   'preview-resources:acquire',
   'preview-resources:release'
@@ -278,8 +289,9 @@ const certifyInventory = (
   }
 
   const nonWebNames = [...commands.keys()].filter((name) => !localWebNames.includes(name)).sort()
-  if (nonWebNames.join('\n') !== [...ELECTRON_NATIVE_COMMAND_NAMES].sort().join('\n')) {
-    failInventory(`unexpected Electron-native commands ${nonWebNames.join(', ')}`)
+  const nativeCommandNames = [...ELECTRON_NATIVE_COMMAND_NAMES, ...TASK_NATIVE_COMMAND_NAMES]
+  if (nonWebNames.join('\n') !== nativeCommandNames.sort().join('\n')) {
+    failInventory(`unexpected native commands ${nonWebNames.join(', ')}`)
   }
   const remotePartition = new Set([...remoteWebNames, ...remoteRejectedNames])
   if (
