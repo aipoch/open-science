@@ -36,6 +36,7 @@ describe('workspace page component boundaries', () => {
   it('keeps workspace regions in page-private component files', () => {
     const workspacePageSource = readFileSync(workspacePagePath, 'utf8')
     const workspacePanelLayoutSource = readFileSync(workspacePanelLayoutPath, 'utf8')
+    const workspaceSidebarSource = readFileSync(workspaceSidebarPath, 'utf8')
     // The sidebar's session-list subscription lives in a container between the page and the view.
     const workspaceSidebarContainerSource = readFileSync(workspaceSidebarContainerPath, 'utf8')
 
@@ -59,6 +60,8 @@ describe('workspace page component boundaries', () => {
       "import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'"
     )
     expect(workspacePageSource).toContain('<WorkspaceSidebarContainer')
+    expect(workspaceSidebarContainerSource).toContain('starNudgeKey={projectId}')
+    expect(workspaceSidebarSource).toContain('nudgeKey={activeStarNudgeKey}')
 
     expect(workspacePageSource).toContain(
       "import { WorkspacePanelLayout } from './workspace-panel-layout'"

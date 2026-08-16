@@ -44,6 +44,7 @@ import { projectPresentedSessionActionability } from './session-wait-reason'
 
 type WorkspaceSidebarProps = {
   projectName: string
+  starNudgeKey?: string
   sessions: ChatSession[]
   activeSessionId: string | undefined
   canCreateConversation: boolean
@@ -208,6 +209,7 @@ const sessionMenuIconClassName = 'flex size-4 shrink-0 items-center justify-cent
 // Left navigation owns session selection, creation entry, and workspace settings.
 const WorkspaceSidebarView = ({
   projectName,
+  starNudgeKey,
   sessions,
   activeSessionId,
   canCreateConversation,
@@ -249,6 +251,9 @@ const WorkspaceSidebarView = ({
       .map((session, index) => [session.id, index + 1])
   )
   const isMac = window.api?.platform === 'darwin'
+  const activeStarNudgeKey = (mobileMode ? isMobileOpen : sidebarToggle?.state !== 'collapsed')
+    ? starNudgeKey
+    : undefined
 
   return (
     <aside
@@ -677,7 +682,11 @@ const WorkspaceSidebarView = ({
                 className="size-8 rounded-md"
                 onOpen={mobileMode ? onMobileClose : undefined}
               />
-              <GitHubStarBadge />
+              <GitHubStarBadge
+                key={activeStarNudgeKey}
+                variant="workspace"
+                nudgeKey={activeStarNudgeKey}
+              />
               <NetworkStatusIndicator variant="icon" />
             </div>
           </div>

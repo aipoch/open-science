@@ -585,7 +585,7 @@ const HomePage = ({
             ) : null}
             <NetworkStatusIndicator variant="pill" />
             <span className="hidden sm:inline-flex">
-              <GitHubStarBadge />
+              <GitHubStarBadge variant="home" />
             </span>
             <Button
               variant="ghost"
