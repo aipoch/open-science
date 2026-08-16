@@ -124,7 +124,7 @@ type WorkspaceMessageQueueRuntimeOptions = Pick<
 class WorkspaceMessageQueueOwner {
   readonly queues = new Map<string, MessageQueueItem[]>()
   readonly dispatches = new Map<string, MessageQueueDispatch>()
-  nextQueueId = 0
+  private nextQueueId = 0
   private listeners = new Set<() => void>()
   private snapshot: MessageQueueSnapshot = { queues: new Map(), announcement: '' }
   private sessionSubscription:
@@ -144,6 +144,11 @@ class WorkspaceMessageQueueOwner {
   }
 
   getSnapshot = (): MessageQueueSnapshot => this.snapshot
+
+  createQueueItemId(): string {
+    this.nextQueueId += 1
+    return `queued-message-${Date.now()}-${this.nextQueueId}`
+  }
 
   emit = (announcement?: string): void => {
     this.snapshot = {
@@ -468,7 +473,7 @@ const useWorkspaceMessageQueueController = (
         return false
       }
       const item: MessageQueueItem = {
-        id: `queued-message-${Date.now()}-${++owner.nextQueueId}`,
+        id: owner.createQueueItemId(),
         sessionId: session.id,
         ...identity,
         snapshot,
