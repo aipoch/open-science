@@ -259,6 +259,12 @@ const useWorkspaceMessageQueueController = (
         } finally {
           activeDispatch.settled = true
           resolveCompletion()
+          if (!optionsRef.current.getSession(sessionId)) {
+            if (dispatchBySessionRef.current.get(sessionId) === activeDispatch) {
+              dispatchBySessionRef.current.delete(sessionId)
+            }
+            discardSession(sessionId)
+          }
         }
       })()
     },

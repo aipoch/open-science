@@ -393,6 +393,40 @@ describe('workspace message queue controller', () => {
     )
   })
 
+  it('discards snapshots after an in-flight dispatch settles for a deleted Session', async () => {
+    const idle = session('idle')
+    let currentSession: ChatSession | undefined = idle
+    let rejectSend!: (error: Error) => void
+    const input = options(idle, {
+      getSession: () => currentSession,
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(
+          () =>
+            new Promise<never>((_, reject) => {
+              rejectSend = reject
+            })
+        )
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.lifecycle.enqueue({ ...admission('first'), session: idle })
+      hook.result.current.lifecycle.enqueue({ ...admission('second'), session: idle })
+    })
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    currentSession = undefined
+    hook.rerender(options(idle, { ...input, getSession: () => currentSession }))
+    expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
+
+    await act(async () => rejectSend(new Error('Session deleted')))
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+    expect(input.composer.discardSnapshot).toHaveBeenCalledTimes(2)
+  })
+
   it('waits for cancellation before Send now dispatches', async () => {
     const order: string[] = []
     let currentSession = session()
