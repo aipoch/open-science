@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
 import type { ResponsesBridgeNamespacedTool } from '../settings/responses-bridge'
-import { submitFindingsInputSchema } from './mcp-server'
+import { submitFindingsBridgeInputSchema } from './mcp-server'
 
 export const REVIEWER_BRIDGE_TOOL_NAMESPACE = `mcp__${REVIEWER_MCP_SERVER_NAME.replace(
   /[^a-zA-Z0-9_]/g,
@@ -41,7 +41,7 @@ export const REVIEWER_BRIDGE_NAMESPACED_TOOLS: ResponsesBridgeNamespacedTool[] =
     name: REVIEWER_MCP_TOOLS.submitFindings,
     description:
       'Submit at least one structured pass, warn, or fail check exactly once, then stop. An empty checks array is invalid.',
-    parameters: z.toJSONSchema(submitFindingsInputSchema, {
+    parameters: z.toJSONSchema(submitFindingsBridgeInputSchema, {
       target: 'draft-7'
     }) as ResponsesBridgeNamespacedTool['parameters']
   }

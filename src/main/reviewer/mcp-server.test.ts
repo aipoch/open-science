@@ -15,6 +15,7 @@ import {
   validateReviewerEvidenceAccess,
   ReviewerMcpServer
 } from './mcp-server'
+import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from './bridge-tools'
 import { createReviewerMcpStdioProxy } from './mcp-stdio-proxy'
 import type { TurnScope } from '../../shared/reviewer'
 import type { ArtifactContent, ExecRecord, OrderedBlock, ReviewerHostServer } from './host-sdk'
@@ -225,6 +226,20 @@ describe('mapChecksToScope', () => {
 })
 
 describe('submitFindingsInputSchema — v3 unified checks[] (no reasoning)', () => {
+  it('leaves the bridge item count to the per-run MCP schema', () => {
+    const submitFindingsTool = REVIEWER_BRIDGE_NAMESPACED_TOOLS.find(
+      (tool) => tool.name === 'submit_findings'
+    )
+    const checksSchema = (
+      submitFindingsTool?.parameters as {
+        properties?: { checks?: { minItems?: number; maxItems?: number } }
+      }
+    ).properties?.checks
+
+    expect(checksSchema?.minItems).toBe(1)
+    expect(checksSchema?.maxItems).toBeUndefined()
+  })
+
   it('accepts checks[] with status pass|warn|fail (no reasoning field)', () => {
     const parsed = submitFindingsInputSchema.safeParse({
       checks: [

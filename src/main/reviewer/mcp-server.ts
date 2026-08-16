@@ -111,23 +111,30 @@ type SubmitFindingsObjectSchema = z.ZodObject<{
 
 export type SubmitFindingsInput = z.infer<SubmitFindingsObjectSchema>
 
-const createSubmitFindingsObjectSchema = (trackedCheckAllowance = 0): SubmitFindingsObjectSchema =>
-  z
-    .object({
-      checks: z
-        .array(checkSchema)
-        .min(1, 'Submit at least one explicit pass, warn, or fail check.')
-        .max(
+const createSubmitFindingsObjectSchema = (
+  trackedCheckAllowance: number | null = 0
+): SubmitFindingsObjectSchema => {
+  const checksSchema = z
+    .array(checkSchema)
+    .min(1, 'Submit at least one explicit pass, warn, or fail check.')
+  const boundedChecksSchema =
+    trackedCheckAllowance === null
+      ? checksSchema
+      : checksSchema.max(
           MAX_REVIEW_CHECKS + trackedCheckAllowance,
           `At most ${MAX_REVIEW_CHECKS} new findings are allowed beyond tracked dispositions`
         )
-        .describe(
-          'All checks you ran, each with status pass|warn|fail, claim, and evidence. ' +
-            'A locator is required for warn/fail and optional for pass. ' +
-            'A completed review requires at least one explicit check; an empty array is never a pass.'
-        )
+
+  return z
+    .object({
+      checks: boundedChecksSchema.describe(
+        'All checks you ran, each with status pass|warn|fail, claim, and evidence. ' +
+          'A locator is required for warn/fail and optional for pass. ' +
+          'A completed review requires at least one explicit check; an empty array is never a pass.'
+      )
     })
     .strict() // Reject unknown fields including the old `summary`, old `findings`, and old `reasoning`
+}
 
 const createSubmitFindingsInputSchema = (
   trackedCheckAllowance = 0
@@ -146,6 +153,7 @@ const createSubmitFindingsInputSchema = (
   })
 
 export const submitFindingsInputSchema = createSubmitFindingsInputSchema()
+export const submitFindingsBridgeInputSchema = createSubmitFindingsObjectSchema(null)
 
 export type ReviewerEvidenceAccessLedger = {
   turnRead: boolean
