@@ -441,14 +441,64 @@ describe('module test impact commands', () => {
     const spawn = vi.fn(() => ({ status: 0 }))
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 
-    expect(executeModuleTestPlan(plan, { cwd: '/repo', spawn })).toBe(0)
+    expect(
+      executeModuleTestPlan(plan, {
+        cwd: '/repo',
+        spawn,
+        environment: { npm_execpath: '/npm/bin/npm-cli.js' },
+        nodeExecutable: '/node'
+      })
+    ).toBe(0)
     expect(write).toHaveBeenCalledWith(formatModuleTestPlan(plan))
     expect(spawn).toHaveBeenCalledWith(
-      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      '/node',
+      ['/npm/bin/npm-cli.js', 'test', '--', ...plan.testFiles],
+      expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
+    )
+    write.mockRestore()
+  })
+
+  it('fails with an actionable error instead of spawning a Windows command shim', () => {
+    const plan = createModuleTestPlan('artifact_storage')
+    const spawn = vi.fn()
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+
+    expect(() =>
+      executeModuleTestPlan(plan, {
+        spawn,
+        environment: {},
+        platform: 'win32'
+      })
+    ).toThrow('run this command through npm run test:module or npm run test:affected')
+    expect(spawn).not.toHaveBeenCalled()
+    write.mockRestore()
+  })
+
+  it('retains the PATH-based npm fallback for direct POSIX execution', () => {
+    const plan = createModuleTestPlan('artifact_storage')
+    const spawn = vi.fn(() => ({ status: 0 }))
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+
+    expect(
+      executeModuleTestPlan(plan, {
+        cwd: '/repo',
+        spawn,
+        environment: {},
+        platform: 'linux'
+      })
+    ).toBe(0)
+    expect(spawn).toHaveBeenCalledWith(
+      'npm',
       ['test', '--', ...plan.testFiles],
       expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
     )
     write.mockRestore()
+  })
+
+  it('keeps delegated-work behavior in the Session persistence Module plan', () => {
+    expect(createModuleTestPlan('session_persistence').testFiles).toContain(
+      'src/main/session-persistence/delegated-work-records.test.ts'
+    )
   })
 
   it('keeps npm test as the complete portable suite', () => {

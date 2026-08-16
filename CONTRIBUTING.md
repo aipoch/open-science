@@ -49,6 +49,7 @@ Run installation, development, and validation commands from the repository root:
 | Run            | `npm run dev`                                              |
 | Target test    | `npm test -- <affected-test-path> [-t '<test pattern>']`   |
 | Module tests   | `npm run test:module -- <module-id>`                       |
+| Affected tests | `npm run test:affected -- --base <base> --head <head>`     |
 | Node typecheck | `npm run typecheck:node`                                   |
 | Web typecheck  | `npm run typecheck:web`                                    |
 | Lint           | `npm run lint`                                             |
@@ -174,6 +175,11 @@ Before handoff, derive the minimum set from the final material diff:
 
 Directory proximity alone is not impact evidence. If a file mixes responsibilities, treat it as
 Interface-affecting or use the full fallback.
+
+`test:module` supports only the Module IDs declared in `scripts/ci/module-impact.json`. It runs that
+Module's curated owner, contract, and representative consumer tests; it is not complete downstream
+verification for an Interface change. Use `test:affected` or the exact-head PR Gate plan when an
+Interface or its consumers may have changed.
 
 ### Full fallback
 

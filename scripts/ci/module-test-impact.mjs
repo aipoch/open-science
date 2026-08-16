@@ -198,12 +198,25 @@ export function formatModuleTestPlan(plan) {
 
 export function executeModuleTestPlan(
   plan,
-  { cwd = process.cwd(), spawn = spawnSync, environment = process.env } = {}
+  {
+    cwd = process.cwd(),
+    spawn = spawnSync,
+    environment = process.env,
+    platform = process.platform,
+    nodeExecutable = process.execPath
+  } = {}
 ) {
   process.stdout.write(formatModuleTestPlan(plan))
   if (plan.mode === 'selective' && plan.testFiles.length === 0) return 0
-  const command = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-  const arguments_ = plan.mode === 'full' ? ['test'] : ['test', '--', ...plan.testFiles]
+  const npmArguments = plan.mode === 'full' ? ['test'] : ['test', '--', ...plan.testFiles]
+  const npmExecPath = environment.npm_execpath
+  if (platform === 'win32' && !npmExecPath) {
+    throw new Error(
+      'npm_execpath is unavailable on Windows; run this command through npm run test:module or npm run test:affected'
+    )
+  }
+  const command = npmExecPath ? nodeExecutable : 'npm'
+  const arguments_ = npmExecPath ? [npmExecPath, ...npmArguments] : npmArguments
   const result = spawn(command, arguments_, { cwd, env: environment, stdio: 'inherit' })
   if (result.error) throw result.error
   return result.status ?? 1

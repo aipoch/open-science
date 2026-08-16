@@ -658,7 +658,8 @@
       "testFiles": {
         "owner": [
           "src/main/session-persistence/coordinator.architecture.test.ts",
-          "src/main/session-persistence/coordinator.test.ts"
+          "src/main/session-persistence/coordinator.test.ts",
+          "src/main/session-persistence/delegated-work-records.test.ts"
         ],
         "contract": [
           "src/shared/session-persistence.test.ts",

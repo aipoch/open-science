@@ -958,7 +958,8 @@ describe('Session persistence coordinator architecture', () => {
     expect(sessionPersistence.consumerModules).toEqual([])
     expect(sessionPersistence.testFiles.owner).toEqual([
       'src/main/session-persistence/coordinator.architecture.test.ts',
-      'src/main/session-persistence/coordinator.test.ts'
+      'src/main/session-persistence/coordinator.test.ts',
+      'src/main/session-persistence/delegated-work-records.test.ts'
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',
