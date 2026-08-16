@@ -82,6 +82,9 @@ Do not infer capabilities by reflecting over `host`, and do not treat this resul
 credential, permission, or readiness inventory. Call it again when current availability matters; each
 call returns a fresh frozen projection.
 
+`host.help()` documents registered topics only. A `not_found` result identifies missing Help
+documentation: `not_found` does not override `host.capabilities()` or prove that a method is absent.
+
 ## Discover managed Project files
 
 When `caps.artifacts === true`, use `await host.artifacts(options)` to list generated Artifacts and

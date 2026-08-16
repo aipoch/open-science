@@ -10,6 +10,7 @@ const HOST_SDK_OPERATION_IDS = Object.freeze(
   [
     ...HOST_SDK_SUBAGENT_OPERATION_IDS,
     'host.currentModel',
+    'host.llm',
     'host.listModels',
     'host.viewImage'
   ].sort()
@@ -22,6 +23,7 @@ type HostSdkHelpContext = Readonly<{
   capabilities: Readonly<
     Record<HostSdkSubagentOperation, boolean> & {
       currentModel?: boolean
+      llm?: boolean
       listModels?: boolean
       viewImage?: boolean
     }
@@ -767,6 +769,114 @@ const CURRENT_MODEL_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       : { status: 'unavailable', reason: 'The calling Session model is unavailable.' }
 }
 
+const LLM_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.llm',
+  path: 'host.llm',
+  aliases: ['llm'],
+  summary: 'Run bounded, one-shot, tool-less inference through the active Host LLM backend.',
+  call_forms: [{ signature: 'await host.llm(request, options?)', accepts: 'request_options' }],
+  request: {
+    accepts: ['prompt_string', 'exact_prompt_object', 'request_array'],
+    fields: [
+      {
+        name: 'prompt',
+        type: 'string',
+        required: true,
+        description: 'Non-empty prompt; an object request accepts no other fields.'
+      }
+    ]
+  },
+  options: {
+    fields: [
+      {
+        name: 'maxConcurrency',
+        type: 'integer',
+        required: false,
+        default: 2,
+        range: '1..4',
+        description: 'Batch-only concurrency bound.'
+      }
+    ]
+  },
+  returns: {
+    mirrorsInput: true,
+    success_fields: [
+      { name: 'text', type: 'string', required: true, description: 'Generated text.' },
+      { name: 'model', type: 'string', required: true, description: 'Observed model id.' },
+      {
+        name: 'stopReason',
+        type: 'string',
+        required: true,
+        description: 'end_turn, max_tokens, max_turn_requests, refusal, or cancelled.'
+      },
+      {
+        name: 'usage',
+        type: 'object',
+        required: false,
+        description: 'Provider-neutral camelCase token usage when available.'
+      }
+    ],
+    usage_fields: [
+      {
+        name: 'inputTokens',
+        type: 'integer',
+        required: true,
+        description: 'Non-negative input-token count.'
+      },
+      {
+        name: 'cacheTokens',
+        type: 'integer',
+        required: true,
+        description: 'Non-negative aggregate cache-token count.'
+      },
+      {
+        name: 'outputTokens',
+        type: 'integer',
+        required: true,
+        description: 'Non-negative output-token count.'
+      },
+      {
+        name: 'cachedReadTokens',
+        type: 'integer',
+        required: false,
+        description: 'Non-negative cache-read token count when available.'
+      },
+      {
+        name: 'cachedWriteTokens',
+        type: 'integer',
+        required: false,
+        description: 'Non-negative cache-write token count when available.'
+      },
+      {
+        name: 'turnCount',
+        type: 'integer',
+        required: false,
+        description: 'Positive provider-turn count when available.'
+      }
+    ],
+    batch_error_fields: [
+      { name: 'error', type: 'string', required: true, description: 'Public per-item failure.' }
+    ]
+  },
+  constraints: [
+    'JavaScript control REPL only; no caller-supplied model, tools, files, network, or system prompt.',
+    'Options are accepted only for batch calls; batches preserve request order and item count.',
+    'Each prompt is limited to 64 KiB; a batch is limited to 32 items and 512 KiB.'
+  ],
+  examples: [
+    { title: 'One-shot inference', code: "await host.llm('Summarize the findings.')" },
+    {
+      title: 'Bounded fan-out',
+      code: "await host.llm(['Classify A.', 'Classify B.'], { maxConcurrency: 2 })"
+    }
+  ],
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.llm
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: 'The active Host LLM route is unavailable.' }
+}
+
 const LIST_MODELS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   kind: 'operation',
   id: 'host.listModels',
@@ -796,6 +906,7 @@ const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   COLLECT_DESCRIPTOR,
   CURRENT_MODEL_DESCRIPTOR,
   DELEGATE_DESCRIPTOR,
+  LLM_DESCRIPTOR,
   LIST_MODELS_DESCRIPTOR,
   MESSAGE_RECEIPT_DESCRIPTOR,
   RESOLVE_MESSAGE_DESCRIPTOR,
@@ -816,7 +927,7 @@ if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_
 }
 
 const MAX_HELP_QUERY_CHARS = 128
-const MAX_CATALOG_RESULT_CHARS = 2_500
+const MAX_CATALOG_RESULT_CHARS = 2_700
 const MAX_OPERATION_RESULT_CHARS = 3_600
 const MAX_DELEGATE_RESULT_CHARS = 3_200
 

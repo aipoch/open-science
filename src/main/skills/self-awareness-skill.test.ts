@@ -93,6 +93,7 @@ describe('self-awareness bundled Skill', () => {
       'agentFrameId',
       'latestVersionCreatedAt',
       '`count` is the total number of matches',
+      '`not_found` does not override `host.capabilities()`',
       '`maxDepth`',
       '`maxNodes`',
       '`rootsOnly`',

@@ -221,6 +221,36 @@ describe('capabilitiesCall RPC', () => {
     })
   })
 
+  it('reports host.llm as available through authenticated host.help', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostModel: {
+        isLlmAvailable: async () => true,
+        isCurrentModelAvailable: async () => false,
+        isListModelsAvailable: async () => false,
+        currentModel: async () => 'model-a',
+        listModels: async () => [],
+        call: async () => ({}) as never
+      }
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+
+    await expect(callHostSdkHelp(connection, 'llm')).resolves.toMatchObject({
+      response: { status: 200 },
+      payload: {
+        result: {
+          kind: 'operation',
+          id: 'host.llm',
+          availability: { status: 'available' }
+        }
+      }
+    })
+  })
+
   it('does not advertise host.viewImage without a trusted execution workspace', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
