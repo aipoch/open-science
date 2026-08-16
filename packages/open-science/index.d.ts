@@ -117,7 +117,7 @@ export type Run = {
 }
 
 export type SessionStatus =
-  'idle' | 'running' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
+  'idle' | 'running' | 'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
 
 export type Session = {
   id: string
