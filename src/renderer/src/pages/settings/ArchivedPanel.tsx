@@ -49,6 +49,9 @@ const ArchivedPanel = ({
   const [busyKey, setBusyKey] = useState<string | undefined>()
   const [panelError, setPanelError] = useState<string | undefined>()
   const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>()
+  const [sessionDeleteError, setSessionDeleteError] = useState<
+    'runtime' | 'persistence' | undefined
+  >()
 
   const archivedProjects = useMemo(
     () => projects.filter((project) => project.archivedAt !== undefined),
@@ -108,23 +111,24 @@ const ArchivedPanel = ({
 
   const deleteArchivedSession = (): void => {
     const session = sessionToDelete
-    if (!session || !canDeleteProjects) return
+    if (!session || !canDeleteProjects || busyKey === `session:${session.id}`) return
 
     setBusyKey(`session:${session.id}`)
     setPanelError(undefined)
-    void (async () => {
-      const state = await window.api.acp.getState()
-      if (state.sessionIds.includes(session.id)) {
-        await window.api.acp.deleteSession({ sessionId: session.id })
-      }
-      await window.api.sessions.deleteSession({
+    setSessionDeleteError(undefined)
+    void window.api.sessions
+      .deleteSession({
         projectId: session.projectId,
         sessionId: session.id
       })
-      useSessionStore.getState().deleteSession(session.id)
-      useArchiveUndoStore.getState().dismissSession(session.id)
-      setSessionToDelete(undefined)
-    })()
+      .then((result) => {
+        if (result.status === 'failed') {
+          setSessionDeleteError(result.reason)
+          return
+        }
+        useArchiveUndoStore.getState().dismissSession(session.id)
+        setSessionToDelete(undefined)
+      })
       .catch((deleteError: unknown) =>
         setPanelError(describeError(deleteError, t('Could not delete session.')))
       )
@@ -197,6 +201,7 @@ const ArchivedPanel = ({
         }
         onClick={() => {
           setPanelError(undefined)
+          setSessionDeleteError(undefined)
           setSessionToDelete(session)
         }}
       >
@@ -338,7 +343,11 @@ const ArchivedPanel = ({
         session={sessionToDelete}
         canDelete={canDeleteProjects}
         isDeleting={busyKey === `session:${sessionToDelete?.id}`}
-        onCancel={() => setSessionToDelete(undefined)}
+        error={sessionDeleteError}
+        onCancel={() => {
+          setSessionToDelete(undefined)
+          setSessionDeleteError(undefined)
+        }}
         onConfirmDelete={deleteArchivedSession}
       />
     </div>

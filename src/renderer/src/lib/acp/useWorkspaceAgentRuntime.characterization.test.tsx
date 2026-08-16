@@ -263,7 +263,6 @@ describe('workspace Agent Runtime hook contract', () => {
         'resendEditedMessage',
         'cancelRun',
         'resumeInterruptedSession',
-        'deleteRuntimeSession',
         'respondToPermission',
         'setPermissionProfile',
         'revokePermissionGrant'

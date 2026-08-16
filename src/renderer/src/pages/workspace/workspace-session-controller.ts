@@ -9,6 +9,10 @@ import {
 
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import type {
+  DeleteSessionRequest,
+  SessionDeletionResult
+} from '../../../../shared/session-persistence'
+import type {
   CompletionHandoffLifecycleEvent,
   SpecialistListItem
 } from '../../../../shared/specialist'
@@ -17,10 +21,6 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
-import type {
-  DeleteWorkspaceSessionOptions,
-  WorkspaceSessionDeletionResult
-} from '@/lib/acp/workspace-session-deletion'
 
 import {
   getWorkspaceSpecialistBarrierSnapshot,
@@ -50,22 +50,15 @@ type WorkspaceSessionControllerOptions = {
   hasUnfinishedTransfers: (sessionId: string) => boolean
   beginSessionDeletion: (sessionId: string) => boolean
   settleSessionDeletion: (sessionId: string, deleted: boolean) => void
-  deleteRuntimeSession: (
-    sessionId: string,
-    options?: DeleteWorkspaceSessionOptions
-  ) => Promise<WorkspaceSessionDeletionResult>
+  deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
 }
 
-type SessionDeletionFailureReason = Extract<
-  WorkspaceSessionDeletionResult,
-  { status: 'failed' }
->['reason']
+type SessionDeletionFailureReason = Extract<SessionDeletionResult, { status: 'failed' }>['reason']
 
 type SessionDeleteDialogState = {
   session: ChatSession
   isDeleting: boolean
   error: SessionDeletionFailureReason | null
-  runtimeDetached: boolean
 }
 
 type SpecialistSendIntent = {
@@ -161,7 +154,7 @@ const useWorkspaceSessionController = ({
   hasUnfinishedTransfers,
   beginSessionDeletion,
   settleSessionDeletion,
-  deleteRuntimeSession
+  deleteSession
 }: WorkspaceSessionControllerOptions): WorkspaceSessionController => {
   const renameSession = useSessionStore((state) => state.renameSession)
   const togglePinned = useSessionStore((state) => state.togglePinned)
@@ -309,8 +302,7 @@ const useWorkspaceSessionController = ({
       setDeleteDialog({
         session,
         isDeleting: false,
-        error: null,
-        runtimeDetached: false
+        error: null
       })
     }
   }
@@ -318,7 +310,7 @@ const useWorkspaceSessionController = ({
   const confirmDelete = (): void => {
     if (!isPersistenceHydrated || !canDeleteConversations || !deleteDialog) return
     useNavigationStore.getState().recordUserNavigation()
-    const { session, runtimeDetached } = deleteDialog
+    const { session } = deleteDialog
     const sessionId = session.id
     if (deletingIdsRef.current.has(sessionId) || !beginSessionDeletion(sessionId)) return
     deletingIdsRef.current.add(sessionId)
@@ -326,10 +318,7 @@ const useWorkspaceSessionController = ({
     setDeleteDialog((current) =>
       current?.session.id === sessionId ? { ...current, isDeleting: true, error: null } : current
     )
-    const deletion = runtimeDetached
-      ? deleteRuntimeSession(sessionId, { runtimeDetached: true })
-      : deleteRuntimeSession(sessionId)
-    void deletion
+    void deleteSession({ projectId: session.projectId, sessionId })
       .then((result) => {
         const deleted = result.status === 'deleted'
         settleSessionDeletion(sessionId, deleted)
@@ -342,8 +331,7 @@ const useWorkspaceSessionController = ({
             ? {
                 ...current,
                 isDeleting: false,
-                error: result.reason,
-                runtimeDetached: result.runtimeDetached
+                error: result.reason
               }
             : current
         )

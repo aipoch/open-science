@@ -46,7 +46,7 @@ describe('ArchivedPanel', () => {
     root = createRoot(container)
     updateArchive.mockReset().mockResolvedValue({ ...session, archivedAt: undefined })
     deleteProject.mockReset().mockResolvedValue(undefined)
-    deleteSession.mockReset().mockResolvedValue(undefined)
+    deleteSession.mockReset().mockResolvedValue({ status: 'deleted', runtimeDetached: true })
     window.api = {
       sessions: { updateArchive, deleteSession },
       acp: { getState: vi.fn().mockResolvedValue({ sessionIds: [] }), deleteSession: vi.fn() }
@@ -124,7 +124,50 @@ describe('ArchivedPanel', () => {
       projectId: project.id,
       sessionId: session.id
     })
+    expect(window.api.acp.getState).not.toHaveBeenCalled()
+    expect(window.api.acp.deleteSession).not.toHaveBeenCalled()
     expect(useArchiveUndoStore.getState().notices).toEqual([])
+  })
+
+  it('keeps the archived Session dialog open and retries the unified deletion command', async () => {
+    deleteSession
+      .mockResolvedValueOnce({
+        status: 'failed',
+        reason: 'persistence',
+        runtimeDetached: true
+      })
+      .mockResolvedValueOnce({ status: 'deleted', runtimeDetached: true })
+    await act(async () =>
+      root.render(<ArchivedPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete')
+    )
+    await act(async () => openDelete?.click())
+    let dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    let confirmDelete = Array.from(
+      dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []
+    ).find((button) => button.textContent === 'Delete')
+    await act(async () => confirmDelete?.click())
+
+    dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toContain(
+      "couldn't delete the saved Session"
+    )
+    expect(deleteSession).toHaveBeenCalledTimes(1)
+
+    confirmDelete = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent === 'Retry'
+    )
+    await act(async () => confirmDelete?.click())
+
+    expect(deleteSession).toHaveBeenCalledTimes(2)
+    expect(deleteSession).toHaveBeenNthCalledWith(2, {
+      projectId: project.id,
+      sessionId: session.id
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
   it('clears a failed Project deletion error before opening the next confirmation', async () => {

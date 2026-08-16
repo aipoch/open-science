@@ -13,12 +13,6 @@ import {
   sendWorkspaceMessage,
   type SendWorkspaceMessageIntent
 } from './workspace-runtime-command-owner'
-import {
-  deleteWorkspaceSession,
-  type DeleteWorkspaceSessionOptions,
-  type WorkspaceDeletionRuntime,
-  type WorkspaceSessionDeletionResult
-} from './workspace-session-deletion'
 
 type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 
@@ -615,13 +609,6 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
           ? cancelledOverflowRecoverySessionIds
           : undefined
       )
-    },
-    delete(
-      runtime: WorkspaceDeletionRuntime,
-      sessionId: string,
-      options?: DeleteWorkspaceSessionOptions
-    ): Promise<WorkspaceSessionDeletionResult> {
-      return deleteWorkspaceSession(runtime, sessionId, window.api.sessions.deleteSession, options)
     }
   }
 }

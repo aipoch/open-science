@@ -3678,6 +3678,11 @@ export type DeleteSessionRequest = {
   sessionId: string
 }
 
+export type SessionDeletionResult =
+  | { status: 'deleted'; runtimeDetached: true }
+  | { status: 'failed'; reason: 'runtime'; runtimeDetached: false }
+  | { status: 'failed'; reason: 'persistence'; runtimeDetached: true }
+
 export type UpdateSessionArchiveRequest = {
   projectId: string
   sessionId: string

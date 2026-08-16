@@ -96,7 +96,7 @@ const conversationCommandCalls = (sourcePath: string): string[] => {
     'resendEditedMessage',
     'resumeInterruptedSession',
     'cancelRun',
-    'deleteRuntimeSession'
+    'deleteSession'
   ])
   const calls: string[] = []
   const sourceFile = createSourceFile(

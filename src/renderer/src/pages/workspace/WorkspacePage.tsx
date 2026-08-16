@@ -10,6 +10,7 @@ import {
   useWorkspaceElicitation
 } from '@/lib/acp/useWorkspaceElicitation'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
+import { deleteSession } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -34,7 +35,6 @@ import {
 import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
-
 import {
   appendArtifactMention,
   docArtifactCount,
@@ -279,7 +279,7 @@ const WorkspacePage = ({
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
       composer.lifecycle.settleSessionDeletion(sessionId, deleted),
-    deleteRuntimeSession: runtime.deleteRuntimeSession
+    deleteSession
   })
   const historySpecialistId = sessionController.view.specialist.historyId
   const activeSpecialistId = activeSession?.specialistId

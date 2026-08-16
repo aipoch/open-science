@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SpecialistListItem } from '../../../../shared/specialist'
+import type { SessionDeletionResult } from '../../../../shared/session-persistence'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import {
@@ -126,7 +127,7 @@ const renderController = (overrides: Partial<Options> = {}): ControllerHook => {
     hasUnfinishedTransfers: vi.fn(() => false),
     beginSessionDeletion: vi.fn(() => true),
     settleSessionDeletion: vi.fn(),
-    deleteRuntimeSession: vi.fn().mockResolvedValue({ status: 'deleted', runtimeDetached: true })
+    deleteSession: vi.fn().mockResolvedValue({ status: 'deleted', runtimeDetached: true })
   }
   const Harness = (): null => {
     result.current = useWorkspaceSessionController({
@@ -311,26 +312,26 @@ describe('workspace session controller', () => {
 
   it('coordinates duplicate deletion through the composer transaction boundary', async () => {
     const active = session()
-    const deletion = deferred<
-      | { status: 'deleted'; runtimeDetached: true }
-      | { status: 'failed'; reason: 'runtime'; runtimeDetached: false }
-      | { status: 'failed'; reason: 'persistence'; runtimeDetached: true }
-    >()
+    const deletion = deferred<SessionDeletionResult>()
     const beginSessionDeletion = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
     const settleSessionDeletion = vi.fn()
-    const deleteRuntimeSession = vi.fn(() => deletion.promise)
+    const deleteSession = vi.fn(() => deletion.promise)
     const hook = renderController({
       activeSession: active,
       beginSessionDeletion,
       settleSessionDeletion,
-      deleteRuntimeSession
+      deleteSession
     })
     mounted.push(hook)
 
     act(() => hook.result.current.actions.openDelete(active))
     act(() => hook.result.current.actions.confirmDelete())
     act(() => hook.result.current.actions.confirmDelete())
-    expect(deleteRuntimeSession).toHaveBeenCalledOnce()
+    expect(deleteSession).toHaveBeenCalledOnce()
+    expect(deleteSession).toHaveBeenCalledWith({
+      projectId: active.projectId,
+      sessionId: active.id
+    })
     expect(hook.result.current.view.dialogs.delete?.session.id).toBe(active.id)
     expect(hook.result.current.view.dialogs.delete?.isDeleting).toBe(true)
 
@@ -346,7 +347,7 @@ describe('workspace session controller', () => {
   it('keeps a background Session dialog open with a retryable persistence error', async () => {
     const active = session({ id: 'session-active' })
     const background = session({ id: 'session-background' })
-    const deleteRuntimeSession = vi
+    const deleteSession = vi
       .fn()
       .mockResolvedValueOnce({
         status: 'failed',
@@ -357,7 +358,7 @@ describe('workspace session controller', () => {
     const settleSessionDeletion = vi.fn()
     const hook = renderController({
       activeSession: active,
-      deleteRuntimeSession,
+      deleteSession,
       settleSessionDeletion
     })
     mounted.push(hook)
@@ -368,15 +369,15 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.dialogs.delete).toMatchObject({
       session: { id: background.id },
       isDeleting: false,
-      error: 'persistence',
-      runtimeDetached: true
+      error: 'persistence'
     })
     expect(settleSessionDeletion).toHaveBeenLastCalledWith(background.id, false)
 
     await act(async () => hook.result.current.actions.confirmDelete())
 
-    expect(deleteRuntimeSession).toHaveBeenNthCalledWith(2, background.id, {
-      runtimeDetached: true
+    expect(deleteSession).toHaveBeenNthCalledWith(2, {
+      projectId: background.projectId,
+      sessionId: background.id
     })
     expect(settleSessionDeletion).toHaveBeenLastCalledWith(background.id, true)
     expect(hook.result.current.view.dialogs.delete).toBeNull()

@@ -467,7 +467,6 @@ const hookKeys = [
   'resendEditedMessage',
   'cancelRun',
   'resumeInterruptedSession',
-  'deleteRuntimeSession',
   'respondToPermission',
   'setPermissionProfile',
   'revokePermissionGrant'
@@ -576,8 +575,7 @@ describe('workspace runtime architecture', () => {
       compact: 1,
       ensureReady: 1,
       resume: 1,
-      cancel: 1,
-      delete: 1
+      cancel: 1
     })
     expect(Object.fromEntries(propertyCallCounts(facadeFile, 'runtime'))).toEqual({
       setPermissionProfile: 1,
@@ -782,7 +780,7 @@ describe('workspace runtime architecture', () => {
     })
     expect(violations).toEqual([])
   })
-  it('keeps the lifecycle owner interface at seven operations', () => {
+  it('keeps the lifecycle owner interface at six operations', () => {
     const lifecyclePath = `${ownerTargets.get('workspace-runtime-session-lifecycle-owner')}.ts`
     const lifecycle = variableArrow(
       sourceFileFor(lifecyclePath),
@@ -794,8 +792,7 @@ describe('workspace runtime architecture', () => {
       'compact',
       'ensureReady',
       'resume',
-      'cancel',
-      'delete'
+      'cancel'
     ])
   })
   it('keeps the module-impact owner and test closure complete', () => {

@@ -219,12 +219,6 @@ const registerSessionPersistenceIpcHandlers = (
       return session
     })
   })
-  ipcMainHandle('sessions:delete-session', async (_event, request: DeleteSessionRequest) => {
-    await withDataRootWrite(async () => {
-      await handlers.deleteSession(request)
-      broadcastLifecycleEvent(LIFECYCLE_CHANNELS.sessionDeleted, request)
-    })
-  })
   ipcMainHandle('sessions:save-manifest', (_event, request: SaveSessionManifestRequest) =>
     withDataRootWrite(() => handlers.saveManifest(request))
   )

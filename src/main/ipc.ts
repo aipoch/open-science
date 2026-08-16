@@ -195,6 +195,8 @@ import { registerSideChatIpcHandlers } from './side-chat/ipc'
 import { SideChatRuntimeOwner } from './side-chat/runtime-owner'
 import { type SessionPersistenceBackend } from './session-persistence/ipc'
 import { MainMessageAttributionAuthority } from './session-persistence/message-attribution-authority'
+import { SessionDeletionOwner } from './session-deletion/owner'
+import { registerSessionDeletionIpcHandler } from './session-deletion/ipc'
 import { tryDecryptKey } from './settings/crypto'
 import { SETTINGS_INSTALL_LOG_CHANNEL, registerSettingsIpcHandlers } from './settings/ipc'
 import { registerLocalFsIpcHandlers } from './local-fs/ipc'
@@ -2635,6 +2637,18 @@ const createApplicationModules = async (
       notebookInputRegistry.readPreview(request)
     )
   })
+  const sessionDeletionOwner = new SessionDeletionOwner({
+    runtime,
+    persistence: {
+      deleteSession: (request) =>
+        withDataRootWrite(() =>
+          sessionPersistenceBackend.deleteSession(request.projectId, request.sessionId)
+        )
+    }
+  })
+  declareElectronAdapter('session-deletion', () =>
+    registerSessionDeletionIpcHandler(sessionDeletionOwner)
+  )
   declareElectronAdapter('session-persistence', () =>
     registerSessionPersistenceIpcHandlers(
       sessionPersistenceBackend,

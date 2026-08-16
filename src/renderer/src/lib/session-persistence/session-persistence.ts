@@ -10,7 +10,8 @@ import {
   type SaveSessionOptions,
   type SessionConflictRebaseField,
   type SessionLoadDiagnostics,
-  type SaveSessionManifestRequest
+  type SaveSessionManifestRequest,
+  type SessionDeletionResult
 } from '../../../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
@@ -27,9 +28,12 @@ type SessionPersistenceApi = {
     session: PersistedChatSession,
     options?: SaveSessionOptions
   ) => Promise<PersistedChatSession>
-  deleteSession: (request: DeleteSessionRequest) => Promise<void>
+  deleteSession: (request: DeleteSessionRequest) => Promise<SessionDeletionResult>
   saveManifest: (request: SaveSessionManifestRequest) => Promise<void>
 }
+
+const deleteSession = (request: DeleteSessionRequest): Promise<SessionDeletionResult> =>
+  window.api.sessions.deleteSession(request)
 
 type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
 
@@ -814,6 +818,7 @@ export {
   loadPersistedSessions,
   reconcilePendingArtifacts,
   deriveSessionCatalogRecovery,
+  deleteSession,
   saveSessionInOrder,
   useSessionPersistence
 }

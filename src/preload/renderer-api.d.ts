@@ -190,6 +190,7 @@ import type {
 } from '../shared/project-files'
 import type {
   DeleteSessionRequest,
+  SessionDeletionResult,
   LoadAllSessionsResult,
   LoadSessionRequest,
   PersistedChatSession,
@@ -432,7 +433,7 @@ export interface OpenScienceAPI {
       options?: SaveSessionOptions
     ): Promise<PersistedChatSession>
     updateArchive(request: UpdateSessionArchiveRequest): Promise<PersistedChatSession>
-    deleteSession(request: DeleteSessionRequest): Promise<void>
+    deleteSession(request: DeleteSessionRequest): Promise<SessionDeletionResult>
     saveManifest(request: SaveSessionManifestRequest): Promise<void>
     exportConversation(request: ExportConversationRequest): Promise<ExportConversationResult>
     onFlushRequest?(listener: AcpListener<SessionPersistenceFlushRequest>): RemoveListener

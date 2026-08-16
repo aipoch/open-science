@@ -402,7 +402,6 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-one',
       'sessions:save-session',
       'sessions:update-archive',
-      'sessions:delete-session',
       'sessions:save-manifest'
     ])
 
@@ -425,13 +424,12 @@ describe('session persistence IPC handlers', () => {
     const updatedSession = { ...session, title: 'Updated session', updatedAt: 1710000000001 }
     await ipcHandlers.get('sessions:save-session')?.(event, updatedSession)
     await ipcHandlers.get('sessions:update-archive')?.(event, archiveRequest)
-    await ipcHandlers.get('sessions:delete-session')?.(event, deleteRequest)
     await ipcHandlers.get('sessions:save-manifest')?.(undefined, manifestRequest)
 
     expect(repository.saveSession).toHaveBeenCalledWith(session)
     expect(repository.loadOne).toHaveBeenCalledWith(deleteRequest)
     expect(repository.updateArchive).toHaveBeenCalledWith(archiveRequest)
-    expect(repository.deleteSession).toHaveBeenCalledWith('project-a', 'session-1')
+    expect(repository.deleteSession).not.toHaveBeenCalled()
     expect(reviewRepository.deleteReviewsForSession).not.toHaveBeenCalled()
     expect(repository.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:created', {
@@ -446,7 +444,6 @@ describe('session persistence IPC handlers', () => {
       session: { ...durableSession, archivedAt: 3 },
       originClientId: 'electron:2'
     })
-    expect(broadcastLifecycleEvent).toHaveBeenCalledWith('session:deleted', deleteRequest)
   })
 
   it('dispatches through the injected application handler identity', async () => {
@@ -552,12 +549,9 @@ describe('session persistence IPC handlers', () => {
     beginMigration()
 
     await expect(
-      ipcHandlers.get('sessions:delete-session')?.(undefined, {
-        projectId: 'project-a',
-        sessionId: 'session-1'
-      })
+      ipcHandlers.get('sessions:save-session')?.({ sender: { id: 1 } }, createSession())
     ).rejects.toThrow(/moving your data/i)
-    expect(repository.deleteSession).not.toHaveBeenCalled()
+    expect(repository.saveSession).not.toHaveBeenCalled()
   })
 
   it('does not broadcast a stale projection when durable save propagation fails', async () => {
