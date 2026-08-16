@@ -196,7 +196,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
           skill.id === COMPUTE_SKILL_ID
             ? await readFile(join(target, 'SKILL.md'), 'utf8').catch(() => undefined)
             : undefined
-        await this.copySkill(target, skill, priorComputeDocument)
+        await this.copySkill(target, skill, { priorComputeDocument })
         versions[name] = version
       } catch (error) {
         await rm(target, { recursive: true, force: true }).catch(() => undefined)
@@ -239,7 +239,7 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
 
       const target = join(skillsDir, skill.name)
       try {
-        await this.copySkill(target, skill)
+        await this.copySkill(target, skill, { synthesizeFrontmatter: true })
       } catch (error) {
         await rm(target, { recursive: true, force: true }).catch(() => undefined)
         log.warn('failed to materialize Agent-facing Skill', {
@@ -254,7 +254,10 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
   private async copySkill(
     target: string,
     skill: BundledSkill,
-    priorComputeDocument?: string
+    options: Readonly<{
+      priorComputeDocument?: string
+      synthesizeFrontmatter?: boolean
+    }> = {}
   ): Promise<void> {
     // Restore write bits before removal in case a prior sync left the dir read-only.
     await chmodTree(target, 'writable')
@@ -269,12 +272,16 @@ class ClaudeCodeSkillMaterializer implements SkillMaterializer {
         return true
       }
     })
-    await normalizeSkillDocumentName(join(target, 'SKILL.md'), skill.name)
-    if (priorComputeDocument !== undefined) {
+    await normalizeSkillDocumentName(join(target, 'SKILL.md'), skill.name, {
+      ...(options.synthesizeFrontmatter
+        ? { synthesizeFrontmatter: { description: skill.description || skill.displayName } }
+        : {})
+    })
+    if (options.priorComputeDocument !== undefined) {
       const current = await readFile(join(target, 'SKILL.md'), 'utf8')
       await writeFile(
         join(target, 'SKILL.md'),
-        preserveComputeHostProjection(current, priorComputeDocument),
+        preserveComputeHostProjection(current, options.priorComputeDocument),
         'utf8'
       )
     }

@@ -14,6 +14,9 @@ import { join, relative } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
+import type { BundledSkill } from '../skills/registry'
+
 const renameSourceModes = vi.hoisted(() => [] as number[])
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -422,6 +425,43 @@ describe('provisionClaudeRuntime', () => {
     ).rejects.toThrow('Skill projection')
 
     expect(await readdir(getClaudeSkillProjectionRevisionsDir(root))).toEqual([])
+  })
+
+  it('publishes a canonical projection for a legacy imported Skill without frontmatter', async () => {
+    const root = await createStorageRoot()
+    const sourceDir = join(root, 'legacy-imported-skill')
+    await mkdir(sourceDir)
+    await writeFile(join(sourceDir, 'SKILL.md'), '# BioFlow transcriptomics\n', 'utf8')
+    const skill: BundledSkill = {
+      id: 'imported-bioflow-transcriptom',
+      name: 'bioflow-transcriptom',
+      displayName: 'BioFlow transcriptomics',
+      description: '',
+      source: 'imported',
+      updatedAt: 'legacy',
+      sourceDir
+    }
+
+    const assets = await provisionClaudeRuntime({
+      storageRoot: root,
+      materializeProjection: async (projectionRoot) => {
+        await new ClaudeCodeSkillMaterializer().sync(join(projectionRoot, '.claude'), [skill], {
+          directoryLayout: 'agent-facing'
+        })
+      }
+    })
+
+    await expect(
+      readFile(
+        join(assets.skillProjection.root, '.claude', 'skills', 'bioflow-transcriptom', 'SKILL.md'),
+        'utf8'
+      )
+    ).resolves.toBe(
+      '---\nname: bioflow-transcriptom\ndescription: BioFlow transcriptomics\n---\n# BioFlow transcriptomics\n'
+    )
+    await expect(readFile(join(sourceDir, 'SKILL.md'), 'utf8')).resolves.toBe(
+      '# BioFlow transcriptomics\n'
+    )
   })
 
   it.each(['root CLAUDE.md', 'root hooks', '.claude settings.json', '.claude hooks'])(
