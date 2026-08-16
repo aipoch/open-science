@@ -206,11 +206,13 @@ const useOwnedSideChatRuntime = (): SideChatRuntimeController => {
       })
     })
 
-    if (!api.list) {
+    const list = api.list
+    if (!list) {
       setHydrated(true)
       return removeListener
     }
-    void api.list().then(
+    const restoredList = list().catch(() => list())
+    void restoredList.then(
       (snapshotList) => {
         if (disposed) return
         const next = new Map(viewsRef.current)
