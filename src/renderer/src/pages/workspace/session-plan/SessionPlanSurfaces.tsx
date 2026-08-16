@@ -5,7 +5,7 @@
  * contrast: inherited from the shared Button, Textarea, and workspace surface tokens
  * slop test: pass · component scope, existing workspace chrome and tokens preserved
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import {
   CornerDownLeft,
@@ -338,6 +338,23 @@ const PlanPreviewSurface = ({
   const { t } = useTranslation()
 
   const planDocument = validatedPreviewDocument(projection.document)
+  const decisionInFlightRef = useRef(false)
+  const [decisionBusy, setDecisionBusy] = useState(false)
+  const projectionKey = `${projection.artifactVersionId}:${projection.revision}`
+  const [resolvedProjectionKey, setResolvedProjectionKey] = useState<string>()
+
+  const respond = async (decision: 'approved' | 'rejected'): Promise<void> => {
+    if (!onRespond || decisionInFlightRef.current) return
+    decisionInFlightRef.current = true
+    setDecisionBusy(true)
+    try {
+      await onRespond(decision)
+      setResolvedProjectionKey(projectionKey)
+    } finally {
+      decisionInFlightRef.current = false
+      setDecisionBusy(false)
+    }
+  }
 
   const download =
     onDownload ??
@@ -356,7 +373,7 @@ const PlanPreviewSurface = ({
     })
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-bg-10 text-foreground">
+    <div className="flex h-full min-h-0 flex-col bg-bg-10 text-foreground" aria-busy={decisionBusy}>
       <header className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
         <span className="truncate text-xs text-muted-foreground">
           plan-{projection.artifactVersionId}.json
@@ -371,12 +388,25 @@ const PlanPreviewSurface = ({
             <Download className="size-4" aria-hidden="true" />
             {t('Download')}
           </Button>
-          {planDocument && !stale && projection.approval === 'pending' && onRespond ? (
+          {planDocument &&
+          !stale &&
+          projection.approval === 'pending' &&
+          resolvedProjectionKey !== projectionKey &&
+          onRespond ? (
             <>
-              <Button type="button" variant="outline" onClick={() => void onRespond('rejected')}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={decisionBusy}
+                onClick={() => void respond('rejected')}
+              >
                 {t('Dismiss')}
               </Button>
-              <Button type="button" onClick={() => void onRespond('approved')}>
+              <Button
+                type="button"
+                disabled={decisionBusy}
+                onClick={() => void respond('approved')}
+              >
                 {t('Approve')}
               </Button>
             </>

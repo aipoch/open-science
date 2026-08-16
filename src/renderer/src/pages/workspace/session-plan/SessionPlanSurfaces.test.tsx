@@ -208,11 +208,10 @@ describe('Session Plan renderer surfaces', () => {
       <PlanPreviewSurface projection={projection} onDownload={onDownload} onRespond={onRespond} />
     )
     fireEvent.click(screen.getByRole('button', { name: 'Download Plan' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(onDownload).toHaveBeenCalledOnce()
-    expect(onRespond).toHaveBeenNthCalledWith(1, 'rejected')
-    expect(onRespond).toHaveBeenNthCalledWith(2, 'approved')
+    expect(onRespond).toHaveBeenCalledOnce()
+    expect(onRespond).toHaveBeenCalledWith('approved')
 
     rerender(
       <PlanPreviewSurface
@@ -228,6 +227,23 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getByRole('button', { name: 'Download Plan' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+  })
+
+  it('submits only the first Preview decision while its response is pending', () => {
+    const onRespond = vi.fn(() => new Promise<void>(() => undefined))
+    render(<PlanPreviewSurface projection={projection} onRespond={onRespond} />)
+
+    const dismiss = screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement
+    const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement
+    fireEvent.click(dismiss)
+
+    expect(dismiss.disabled).toBe(true)
+    expect(approve.disabled).toBe(true)
+    expect(dismiss.closest('[aria-busy="true"]')).not.toBeNull()
+    fireEvent.click(approve)
+
+    expect(onRespond).toHaveBeenCalledOnce()
+    expect(onRespond).toHaveBeenCalledWith('rejected')
   })
 
   it('explains why a pending Preview without a live response handler is read-only', () => {
@@ -278,11 +294,10 @@ describe('Session Plan renderer surfaces', () => {
     expect(document.querySelector('header')?.className).toContain('h-9')
     fireEvent.click(screen.getByRole('button', { name: 'Download Plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     fireEvent.click(screen.getByRole('button', { name: 'Enter full screen' }))
     expect(onDownload).toHaveBeenCalledOnce()
-    expect(onRespond).toHaveBeenNthCalledWith(1, 'rejected')
-    expect(onRespond).toHaveBeenNthCalledWith(2, 'approved')
+    expect(onRespond).toHaveBeenCalledOnce()
+    expect(onRespond).toHaveBeenCalledWith('rejected')
     expect(onToggleFullScreen).toHaveBeenCalledOnce()
   })
 
