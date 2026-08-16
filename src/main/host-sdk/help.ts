@@ -12,6 +12,7 @@ const HOST_SDK_OPERATION_IDS = Object.freeze(
     'host.currentModel',
     'host.llm',
     'host.listModels',
+    'host.sessions',
     'host.viewImage'
   ].sort()
 )
@@ -25,6 +26,7 @@ type HostSdkHelpContext = Readonly<{
       currentModel?: boolean
       llm?: boolean
       listModels?: boolean
+      sessions?: boolean
       viewImage?: boolean
     }
   >
@@ -901,6 +903,103 @@ const LIST_MODELS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       : { status: 'unavailable', reason: 'The active Host LLM model catalog is unavailable.' }
 }
 
+const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.sessions',
+  path: 'host.sessions',
+  aliases: ['sessions'],
+  summary: 'List or inspect read-only Session diagnostics in the current Project.',
+  call_forms: [
+    { signature: 'await host.sessions.list(options?)', accepts: 'optional_list_options' },
+    { signature: 'await host.sessions.inspect(sessionId)', accepts: 'exact_session_id' }
+  ],
+  request: {
+    fields: [
+      {
+        name: 'sessionId',
+        type: 'string',
+        required: true,
+        when: 'inspect',
+        description: 'Exact Session id in the token-owned current Project.'
+      }
+    ]
+  },
+  options: {
+    fields: [
+      {
+        name: 'archived',
+        type: "'exclude' | 'include' | 'only'",
+        required: false,
+        default: 'exclude',
+        description: 'List-only archive filter.'
+      },
+      {
+        name: 'search',
+        type: 'string',
+        required: false,
+        description: 'Fuzzy title or exact Session id match.'
+      },
+      {
+        name: 'cursor',
+        type: 'string',
+        required: false,
+        description: 'List-only cursor from the same filters and snapshot.'
+      },
+      {
+        name: 'limit',
+        type: 'integer',
+        required: false,
+        default: 20,
+        range: '1..100',
+        description: 'Maximum Sessions returned by list.'
+      }
+    ]
+  },
+  returns: {
+    type: 'SessionDiagnostic | SessionDiagnosticPage',
+    list_fields: [
+      { name: 'totalCount', type: 'integer', required: true, description: 'Total matches.' },
+      { name: 'nextCursor', type: 'string', required: false, description: 'Next page.' },
+      { name: 'sessions', type: 'SessionDiagnostic[]', required: true, description: 'Page.' }
+    ],
+    session_fields: [
+      { name: 'sessionId', type: 'string', required: true, description: 'Exact Session id.' },
+      { name: 'title', type: 'string', required: true, description: 'Durable title.' },
+      { name: 'status', type: 'string', required: true, description: 'Durable Session status.' },
+      { name: 'createdAt', type: 'string', required: true, description: 'ISO timestamp.' },
+      { name: 'updatedAt', type: 'string', required: true, description: 'ISO timestamp.' },
+      { name: 'runtime', type: 'object', required: true, description: 'Bounded live evidence.' },
+      {
+        name: 'activeConversation',
+        type: 'object',
+        required: false,
+        description: 'Frame, Branch, and message-count navigation metadata.'
+      },
+      {
+        name: 'latestObservation',
+        type: 'object',
+        required: false,
+        description: 'Latest bounded runtime observation.'
+      }
+    ]
+  },
+  constraints: [
+    'Main JavaScript control REPL only; Project scope comes from the session-bound token.',
+    'Read-only and metadata-only; use host.frames for transcript content and Branch traversal.',
+    'Live runtime fields are current evidence, not inferred historical state.'
+  ],
+  examples: [
+    { title: 'List recent Sessions', code: 'await host.sessions.list({ limit: 20 })' },
+    { title: 'Inspect one Session', code: 'await host.sessions.inspect(sessionId)' }
+  ],
+  resolveAvailability: ({ callerRole, capabilities }) =>
+    callerRole === 'delegate'
+      ? { status: 'unavailable', reason: 'host.sessions is available only to Main.' }
+      : capabilities.sessions
+        ? { status: 'available' }
+        : { status: 'unavailable', reason: 'host.sessions is not provisioned for this Session.' }
+}
+
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   CHILDREN_DESCRIPTOR,
   COLLECT_DESCRIPTOR,
@@ -911,6 +1010,7 @@ const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   MESSAGE_RECEIPT_DESCRIPTOR,
   RESOLVE_MESSAGE_DESCRIPTOR,
   SEND_FRAME_MESSAGE_DESCRIPTOR,
+  SESSIONS_DESCRIPTOR,
   STOP_CHILD_DESCRIPTOR,
   SUBMIT_OUTPUT_DESCRIPTOR,
   VIEW_IMAGE_DESCRIPTOR
@@ -927,7 +1027,7 @@ if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_
 }
 
 const MAX_HELP_QUERY_CHARS = 128
-const MAX_CATALOG_RESULT_CHARS = 2_700
+const MAX_CATALOG_RESULT_CHARS = 2_900
 const MAX_OPERATION_RESULT_CHARS = 3_600
 const MAX_DELEGATE_RESULT_CHARS = 3_200
 

@@ -64,13 +64,13 @@ describe('Host SDK help', () => {
         aliases: [id.slice('host.'.length)]
       }))
     )
-    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_700)
+    expect(JSON.stringify(catalog).length).toBeLessThanOrEqual(2_900)
 
     const unavailableCatalog = hostSdkHelp.query(undefined, {
       callerRole: 'main',
       capabilities: unprovisioned
     })
-    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(2_700)
+    expect(JSON.stringify(unavailableCatalog).length).toBeLessThanOrEqual(2_900)
   })
 
   it('documents the transient visual-model-gated viewImage contract', () => {
@@ -158,6 +158,27 @@ describe('Host SDK help', () => {
       hostSdkHelp.query('llm', {
         ...mainContext,
         capabilities: { ...mainContext.capabilities, llm: false }
+      })
+    ).toMatchObject({ availability: { status: 'unavailable' } })
+  })
+
+  it('documents Main-only Project Session diagnostics through one namespace topic', () => {
+    const capabilities = { ...mainContext.capabilities, sessions: true }
+    const help = hostSdkHelp.query('sessions', { ...mainContext, capabilities })
+    expect(help).toMatchObject({
+      kind: 'operation',
+      id: 'host.sessions',
+      availability: { status: 'available' },
+      call_forms: [
+        { signature: 'await host.sessions.list(options?)' },
+        { signature: 'await host.sessions.inspect(sessionId)' }
+      ]
+    })
+    expect(hostSdkHelp.query('host.sessions', { ...mainContext, capabilities })).toEqual(help)
+    expect(
+      hostSdkHelp.query('sessions', {
+        ...delegateContext,
+        capabilities
       })
     ).toMatchObject({ availability: { status: 'unavailable' } })
   })

@@ -278,6 +278,29 @@ describe('capabilitiesCall RPC', () => {
     })
   })
 
+  it('reports host.sessions as available through authenticated host.help', async () => {
+    server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
+      transport: 'tcp',
+      hostSessions: {} as never
+    })
+    const connection = await server.issueControlConnection(
+      'trusted-session',
+      'trusted-project',
+      'root-frame-trusted-session'
+    )
+
+    await expect(callHostSdkHelp(connection, 'sessions')).resolves.toMatchObject({
+      response: { status: 200 },
+      payload: {
+        result: {
+          kind: 'operation',
+          id: 'host.sessions',
+          availability: { status: 'available' }
+        }
+      }
+    })
+  })
+
   it('does not advertise host.viewImage without a trusted execution workspace', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
