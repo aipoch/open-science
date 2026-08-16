@@ -1162,31 +1162,36 @@ const WorkspaceMessageItemImpl = ({
               >
                 {message.status === 'complete' && onBranchInNewSession ? (
                   <TooltipProvider delayDuration={200}>
-                    <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
-                      <button
-                        type="button"
-                        className={userMessageActionButtonClassName}
-                        aria-label={copied ? t('Copied') : t('Copy message')}
-                        onClick={handleCopyMessage}
-                      >
-                        {copied ? (
-                          <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        ) : (
-                          <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                        )}
-                      </button>
-                    </UserMessageActionTooltip>
-                    <UserMessageActionTooltip label={t('Branch in new session')}>
-                      <button
-                        type="button"
-                        className={userMessageActionButtonClassName}
-                        aria-label={t('Branch in new session')}
-                        disabled={!canBranchInNewSession}
-                        onClick={() => onBranchInNewSession(message.id)}
-                      >
-                        <GitBranch className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                      </button>
-                    </UserMessageActionTooltip>
+                    <div
+                      data-slot="assistant-message-actions"
+                      className="flex items-center gap-0.5"
+                    >
+                      <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
+                        <button
+                          type="button"
+                          className={userMessageActionButtonClassName}
+                          aria-label={copied ? t('Copied') : t('Copy message')}
+                          onClick={handleCopyMessage}
+                        >
+                          {copied ? (
+                            <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                          ) : (
+                            <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                          )}
+                        </button>
+                      </UserMessageActionTooltip>
+                      <UserMessageActionTooltip label={t('Branch in new session')}>
+                        <button
+                          type="button"
+                          className={userMessageActionButtonClassName}
+                          aria-label={t('Branch in new session')}
+                          disabled={!canBranchInNewSession}
+                          onClick={() => onBranchInNewSession(message.id)}
+                        >
+                          <GitBranch className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      </UserMessageActionTooltip>
+                    </div>
                   </TooltipProvider>
                 ) : null}
                 {terminalDate ? (
