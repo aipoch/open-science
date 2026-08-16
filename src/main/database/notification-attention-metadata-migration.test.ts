@@ -65,9 +65,9 @@ describe('notification attention metadata migration', () => {
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0007_notification_attention_metadata'],
+      applied: ['0007_notification_attention_metadata', '0008_database_json_constraints'],
       from: '0006_database_domain_constraints',
-      to: '0007_notification_attention_metadata'
+      to: '0008_database_json_constraints'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

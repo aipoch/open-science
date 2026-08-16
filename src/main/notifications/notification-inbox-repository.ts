@@ -67,16 +67,16 @@ const invalidateSessionRows = async (
   sessionIds: readonly string[],
   invalidatedAt: Date
 ): Promise<number> => {
-  const invalidated = await mutateInChunks(sessionIds, (sessionIdsChunk) =>
-    client.notificationInboxItem.updateMany({
-      where: { sessionId: { in: sessionIdsChunk }, targetInvalidatedAt: null },
-      data: { targetInvalidatedAt: invalidatedAt }
-    })
-  )
   const acknowledged = await mutateInChunks(sessionIds, (sessionIdsChunk) =>
     client.notificationInboxItem.updateMany({
       where: { sessionId: { in: sessionIdsChunk }, readAt: null },
       data: { readAt: invalidatedAt }
+    })
+  )
+  const invalidated = await mutateInChunks(sessionIds, (sessionIdsChunk) =>
+    client.notificationInboxItem.updateMany({
+      where: { sessionId: { in: sessionIdsChunk }, targetInvalidatedAt: null },
+      data: { targetInvalidatedAt: invalidatedAt }
     })
   )
   return invalidated + acknowledged

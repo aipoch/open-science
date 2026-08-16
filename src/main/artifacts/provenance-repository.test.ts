@@ -1075,7 +1075,8 @@ describe('artifact provenance repository', () => {
         projectId: 'project-1',
         sessionId: 'session-1',
         state: 'deleting',
-        deletionOperationId: 'delete-1'
+        deletionOperationId: 'delete-1',
+        retainedReviewIdsJson: '[]'
       }
     })
     await compatibilityRepository.writePendingFile({
@@ -2924,6 +2925,7 @@ describe('artifact provenance repository', () => {
       data: {
         executionSnapshotJson: invalidExecution,
         executionSnapshotChecksum: createHash('sha256').update(invalidExecution).digest('hex'),
+        executionSnapshotStorageKey: 'invalid-execution.json',
         executionSnapshotSchemaVersion: 2
       }
     })
@@ -2935,6 +2937,7 @@ describe('artifact provenance repository', () => {
       data: {
         executionSnapshotJson: ancestryProbe.executionSnapshotJson,
         executionSnapshotChecksum: ancestryProbe.executionSnapshotChecksum,
+        executionSnapshotStorageKey: ancestryProbe.executionSnapshotStorageKey,
         executionSnapshotSchemaVersion: ancestryProbe.executionSnapshotSchemaVersion
       }
     })
@@ -2982,6 +2985,7 @@ describe('artifact provenance repository', () => {
         producerRunIndex: 0,
         executionSnapshotJson: forgedExecution,
         executionSnapshotChecksum: forgedExecutionChecksum,
+        executionSnapshotStorageKey: 'forged-execution.json',
         executionSnapshotSchemaVersion: 2,
         evidenceJson: forgedEvidence,
         evidenceChecksum: createHash('sha256').update(forgedEvidence).digest('hex')
@@ -2998,6 +3002,7 @@ describe('artifact provenance repository', () => {
         producerRunIndex: ancestryProbe.producerRunIndex,
         executionSnapshotJson: ancestryProbe.executionSnapshotJson,
         executionSnapshotChecksum: ancestryProbe.executionSnapshotChecksum,
+        executionSnapshotStorageKey: ancestryProbe.executionSnapshotStorageKey,
         executionSnapshotSchemaVersion: ancestryProbe.executionSnapshotSchemaVersion,
         evidenceJson: ancestryProbe.evidenceJson,
         evidenceChecksum: ancestryProbe.evidenceChecksum

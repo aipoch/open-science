@@ -105,7 +105,7 @@ describe('NotificationInboxDbRepository', () => {
     const repository = await createRepository()
     for (const [originId, actionState] of [
       ['stale', 'pending'],
-      ['settled', 'resolved']
+      ['settled', 'pending']
     ] as const) {
       await repository.record({
         id: `approval-${originId}`,
@@ -118,6 +118,7 @@ describe('NotificationInboxDbRepository', () => {
         actionState
       })
     }
+    await repository.settle('authorization:connector:settled', 'resolved', 2000)
     await repository.record({
       id: 'approval-plan',
       dedupeKey: 'authorization:session-plan:plan-1',

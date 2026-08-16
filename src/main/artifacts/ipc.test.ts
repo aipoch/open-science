@@ -452,7 +452,9 @@ describe('artifact IPC handlers', () => {
         where: { id: version.versionId },
         data: {
           executionSnapshotJson: '{"schemaVersion":2}',
-          executionSnapshotChecksum: '0'.repeat(64)
+          executionSnapshotChecksum: '0'.repeat(64),
+          executionSnapshotStorageKey: 'corrupt-execution.json',
+          executionSnapshotSchemaVersion: 2
         }
       })
       await compatibility.prepareRunFinalization({

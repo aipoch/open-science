@@ -132,7 +132,9 @@ describe('artifact finalization startup recovery', () => {
       where: { id: version.versionId },
       data: {
         executionSnapshotJson: '{"schemaVersion":2}',
-        executionSnapshotChecksum: '0'.repeat(64)
+        executionSnapshotChecksum: '0'.repeat(64),
+        executionSnapshotStorageKey: 'corrupt-execution.json',
+        executionSnapshotSchemaVersion: 2
       }
     })
     const coordinator = new SessionPersistenceCoordinator(
@@ -282,14 +284,17 @@ describe('artifact finalization startup recovery', () => {
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     ).resolves.toMatchObject({ state: 'pending', messageId: null })
 
-    // Even with unavailable producer evidence, a persisted snapshot-associated field must not be
+    // Even with unavailable producer evidence, a corrupt persisted snapshot bundle must not be
     // interpreted as the legitimate no-producer case.
     await client.artifactVersion.update({
       where: { id: version.versionId },
       data: {
         evidenceJson: persisted.evidenceJson,
         evidenceChecksum: persisted.evidenceChecksum,
-        executionSnapshotChecksum: '0'.repeat(64)
+        executionSnapshotJson: '{}',
+        executionSnapshotChecksum: '0'.repeat(64),
+        executionSnapshotStorageKey: 'missing-execution.json',
+        executionSnapshotSchemaVersion: 2
       }
     })
     await coordinator.loadAll()
@@ -305,7 +310,10 @@ describe('artifact finalization startup recovery', () => {
       data: {
         evidenceJson: malformedEvidenceJson,
         evidenceChecksum: createHash('sha256').update(malformedEvidenceJson).digest('hex'),
-        executionSnapshotChecksum: null
+        executionSnapshotJson: null,
+        executionSnapshotChecksum: null,
+        executionSnapshotStorageKey: null,
+        executionSnapshotSchemaVersion: null
       }
     })
     await coordinator.loadAll()

@@ -17,7 +17,7 @@ import { PrismaClient } from '@prisma/client'
 describe('packaged database migration ledger smoke', () => {
   it('pins every packaged application migration identity and checksum', () => {
     expect(MIGRATION_MANIFEST.at(-1)?.checksum).toBe(
-      'fad3ef7da9f26b7d6da2321ca44674d5c96238ab65515714b51dfe76df7fe10a'
+      'c4e978ff2a0176b61cf9d07f80a521c5444ec716d11804c6d26b9d8757766423'
     )
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST.slice(0, -1))).toThrow(
