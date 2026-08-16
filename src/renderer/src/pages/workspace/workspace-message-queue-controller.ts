@@ -63,6 +63,7 @@ type WorkspaceMessageQueueControllerOptions = {
   }
   runtime: Pick<WorkspaceAgentRuntime, 'sendMessage' | 'cancelRun'>
   isBarrierInFlight: (sessionId: string) => boolean
+  isSpecialistReady: (sessionId: string) => boolean
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
@@ -195,6 +196,14 @@ const useWorkspaceMessageQueueController = (
         })
         return
       }
+      if (session.specialistId !== item.specialistId) {
+        replaceItem(sessionId, item.id, {
+          phase: 'error',
+          error: { kind: 'send' }
+        })
+        return
+      }
+      if (!current.isSpecialistReady(sessionId)) return
       if (!queueSessionIsSendable(current, session)) return
 
       replaceItem(sessionId, item.id, { phase: 'sending', error: undefined })

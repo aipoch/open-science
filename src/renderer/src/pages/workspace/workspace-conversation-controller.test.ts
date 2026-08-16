@@ -404,6 +404,36 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
+  it('does not queue while the selected Specialist is not ready', () => {
+    const running = runningSession()
+    const input = options({ activeSession: running, getSession: () => running })
+    input.session.lifecycle.canStartSend = vi.fn(() => false)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+
+    expect(hook.result.current.queue.items).toEqual([])
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('captures the active Session Specialist when queueing', async () => {
+    let currentSession = { ...runningSession(), specialistId: 'specialist-a' }
+    const input = options({ activeSession: currentSession, getSession: () => currentSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    currentSession = { ...currentSession, status: 'idle' }
+    hook.rerender({ ...input, activeSession: currentSession, getSession: () => currentSession })
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ specialistId: 'specialist-a' })
+    )
+  })
+
   it('blocks an immediate submit while the queued head is being admitted', async () => {
     let currentSession = runningSession()
     let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void

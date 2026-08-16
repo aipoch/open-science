@@ -227,6 +227,14 @@ const useWorkspaceConversationController = (
     },
     runtime: options.runtime,
     isBarrierInFlight: options.session.lifecycle.isBarrierInFlight,
+    isSpecialistReady: (sessionId) => {
+      const current = optionsRef.current
+      return (
+        current.activeSession?.id === sessionId &&
+        current.session.view.specialist.sendAvailable &&
+        current.session.lifecycle.canStartSend()
+      )
+    },
     abortFixLoop: options.abortFixLoop,
     getSession: options.getSession,
     subscribeSessionChanges: options.subscribeSessionChanges
@@ -236,6 +244,7 @@ const useWorkspaceConversationController = (
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
       if (mode === 'retry-reconfigure' && !session.actions.beginReconfigureRetry()) return
+      if (!session.lifecycle.canStartSend()) return
       const queueDraft = mode === 'continue' && canQueueDraft(current)
       const queueBlocksImmediateSend = Boolean(
         activeSession && messageQueue.lifecycle.blocksImmediateSend(activeSession.id)
@@ -253,7 +262,7 @@ const useWorkspaceConversationController = (
         return
       }
       if (queueDraft && activeSession) {
-        const { draftSpecialistId, hasPendingSwitch } = session.lifecycle.captureSendIntent(false)
+        const { hasPendingSwitch } = session.lifecycle.captureSendIntent(false)
         if (hasPendingSwitch) return
         const snapshot = composer.lifecycle.captureSend()
         if (
@@ -263,15 +272,13 @@ const useWorkspaceConversationController = (
             text: docToText(snapshot.doc),
             forcedSkillIds,
             permissionProfile: current.permissionProfile,
-            specialistId: draftSpecialistId
+            specialistId: activeSession.specialistId
           })
         ) {
           composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
         }
         return
       }
-
-      if (!session.lifecycle.canStartSend()) return
 
       const snapshot = composer.lifecycle.captureSend()
       if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return

@@ -84,6 +84,7 @@ const options = (
     cancelRun: vi.fn(async () => undefined)
   },
   isBarrierInFlight: vi.fn(() => false),
+  isSpecialistReady: vi.fn(() => true),
   abortFixLoop: vi.fn(async () => undefined),
   getSession: () => activeSession,
   subscribeSessionChanges: () => () => undefined,
@@ -292,6 +293,42 @@ describe('workspace message queue controller', () => {
         error: { kind: 'send' }
       })
     )
+  })
+
+  it('pauses dispatch until the captured Specialist is ready', async () => {
+    const idle = session('idle')
+    let specialistReady = false
+    const input = options(idle, { isSpecialistReady: () => specialistReady })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.lifecycle.enqueue({ ...admission('wait'), session: idle }))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+
+    specialistReady = true
+    hook.rerender(options(idle, { ...input, isSpecialistReady: () => specialistReady }))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+  })
+
+  it('retains a queued prompt when its captured Specialist changes', async () => {
+    const running = session('running')
+    let currentSession = running
+    const input = options(running, { getSession: () => currentSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('stay bound'),
+        session: running,
+        specialistId: undefined
+      })
+    )
+    currentSession = { ...running, status: 'idle', specialistId: 'specialist-b' }
+    hook.rerender(options(currentSession, { ...input, getSession: () => currentSession }))
+
+    await vi.waitFor(() => expect(hook.result.current.items[0].phase).toBe('error'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
   it('waits for cancellation before Send now dispatches', async () => {

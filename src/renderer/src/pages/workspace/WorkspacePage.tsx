@@ -569,7 +569,8 @@ const WorkspacePage = ({
     isSessionPersistenceReady &&
     activeSessionActionability?.actions.changeAgentControls.allowed !== false &&
     !activeSessionHasRuntimeInteraction &&
-    !activeSession?.compacting
+    !activeSession?.compacting &&
+    conversation.queue.items.length === 0
   const canChangePermissionProfile =
     isSessionPersistenceReady &&
     !activeSessionHasSendPreparation &&
