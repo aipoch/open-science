@@ -37,10 +37,12 @@ jobs:
           node-version: 22
           cache: npm
 
-      # The selected source suites use the JS/TS toolchain but do not build Electron or load generated
-      # Prisma clients. Skipping lifecycle scripts avoids the native rebuild performed by postinstall.
+      # Several control-plane suites import modules that cross the Electron boundary. Use the normal
+      # repository install so Electron, generated clients, patches, and native dependencies match the
+      # source path exercised by the rest of CI. The focused dry-run proved that --ignore-scripts leaves
+      # Electron intentionally uninstalled and causes those suites to fail during collection.
       - name: Install test dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci
 
       # Use the same pinned, digest-verified micromamba downloader as the packaged runtime. These are
       # ephemeral source-certification environments, not the immutable CDN packs certified later at

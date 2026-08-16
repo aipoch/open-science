@@ -60,10 +60,12 @@ describe('runtime certification workflow', () => {
 
   it('uses pinned micromamba to provision real Python and R prerequisites', () => {
     const source = workflow('runtime-certification.yml').jobs.source
+    const install = step(source, 'Install test dependencies')
     const fetch = step(source, 'Fetch pinned micromamba')
     const create = step(source, 'Create real Python and R environments')
     const verify = step(source, 'Verify runtime prerequisites')
 
+    expect(install.run).toBe('npm ci')
     expect(fetch.run).toContain('scripts/fetch-micromamba.mjs linux-64')
     expect(create.run).toContain('python=3.12 matplotlib-base nomkl')
     expect(create.run).toContain('r-base=4.4 r-jsonlite r-ggplot2')
