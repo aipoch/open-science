@@ -22189,6 +22189,44 @@ describe('ACP runtime — model hot switch', () => {
     }
   }
 
+  it('reports model facts only while the Session has an active attachment', async () => {
+    const initialProcess = new FakeAgentProcess()
+    const resumedProcess = new FakeAgentProcess()
+    startFakeAgent(initialProcess, ['s-model'], { configOptions: [modelOption()] })
+    startFakeAgent(resumedProcess, [], { configOptions: [modelOption()] })
+    let spawnCount = 0
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      resolveBackend: () => ({
+        framework: {
+          ...claudeCodeFramework,
+          spawn: () => asAgentProcess(spawnCount++ === 0 ? initialProcess : resumedProcess)
+        },
+        backendId: 'claude-code:provider-a',
+        modelRoute: 'claude-anthropic',
+        executablePath: '/bin/claude',
+        env: {},
+        sessionModel: 'model-a',
+        supportsImageInput: true,
+        contextUsageModel: 'model-a'
+      })
+    })
+
+    const session = await runtime.createSession({ cwd: '/workspace' })
+    expect(runtime.captureSessionModel(session.sessionId)).toMatchObject({
+      backend: { context: { model: 'model-a' } }
+    })
+
+    await runtime.disconnect()
+    expect(runtime.captureSessionModel(session.sessionId)).toBeUndefined()
+
+    await runtime.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+    expect(runtime.captureSessionModel(session.sessionId)).toMatchObject({
+      backend: { context: { model: 'model-a' } }
+    })
+  })
+
   it('switches every idle session and the generation default without replacing the process', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-model-1', 's-model-2', 's-model-3'], {

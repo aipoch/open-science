@@ -569,8 +569,9 @@ class AcpRuntime {
   captureSessionModel(
     sessionId: string
   ): Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined {
-    const aggregate = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
-    if (!aggregate) return undefined
+    const record = this.sessionRegistry.lookup(sessionId)
+    if (!record?.attachment) return undefined
+    const aggregate = record.aggregate.snapshot()
     return Object.freeze({
       backend: this.backend,
       ...(aggregate.appliedModel ? { appliedModel: aggregate.appliedModel } : {})
