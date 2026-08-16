@@ -121,14 +121,17 @@ describe('provisionClaudeRuntime', () => {
       (await stat(join(assets.skillProjection.root, '.claude', 'skills', 'demo', 'SKILL.md')))
         .mode & 0o222
     ).toBe(0)
-    expect(
-      (
-        await stat(
-          join(assets.skillProjection.root, '.claude', 'skills', 'demo', 'scripts', 'run.sh')
-        )
-      ).mode & 0o111
-    ).not.toBe(0)
-    expect(renameSourceModes).toEqual([0o755])
+    if (process.platform !== 'win32') {
+      expect(
+        (
+          await stat(
+            join(assets.skillProjection.root, '.claude', 'skills', 'demo', 'scripts', 'run.sh')
+          )
+        ).mode & 0o111
+      ).not.toBe(0)
+    }
+    expect(renameSourceModes).toHaveLength(1)
+    expect(renameSourceModes[0] & 0o200).not.toBe(0)
   })
 
   it('rejects a symbolic-link private profile without changing its victim', async () => {

@@ -134,6 +134,7 @@
         "src/main/notebook/micromamba-cache.ts",
         "src/main/notebook/micromamba.ts",
         "src/main/notebook/package-listing.ts",
+        "src/main/notebook/package-manager.ts",
         "src/main/notebook/provisioner-runtime.ts",
         "src/main/notebook/provisioner.ts",
         "src/main/notebook/python-command.ts",
