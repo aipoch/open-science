@@ -234,7 +234,6 @@ const useWorkspaceMessageQueueController = (
             parts: item.snapshot.doc.nodes,
             cwd: item.cwd,
             projectId: item.projectId,
-            projectName: item.projectId,
             permissionProfile: item.permissionProfile,
             forcedSkillIds: item.forcedSkillIds,
             specialistId: item.specialistId
