@@ -98,7 +98,7 @@ describe('release and scheduled workflow topology', () => {
     })
     expect(nightly.jobs.build).toMatchObject({
       needs: 'plan',
-      if: "needs.plan.outputs.should_build == 'true'",
+      if: "needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'runtime-source'",
       uses: './.github/workflows/build.yml',
       with: { nightly: true }
     })

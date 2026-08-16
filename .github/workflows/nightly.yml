@@ -6,6 +6,15 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Focused no-side-effect validation plan
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - runtime-source
 
 # Build and publication preparation run without write access. Only the separate workflow_run
 # publisher receives contents:write, and it never checks out or executes the triggering revision.
@@ -39,11 +48,21 @@ jobs:
 
   build:
     needs: plan
-    if: needs.plan.outputs.should_build == 'true'
+    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'runtime-source'
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
       nightly: true
+
+  # Scheduled coverage remains advisory during burn-in and is deliberately absent from prepare.needs.
+  # A manual `runtime-source` dispatch runs this exact reusable job as a blocking focused dry-run while
+  # build/package/publish preparation stay skipped.
+  runtime-certification:
+    needs: plan
+    if: needs.plan.outputs.should_build == 'true'
+    uses: ./.github/workflows/runtime-certification.yml
+    with:
+      allow_failure: ${{ github.event_name != 'workflow_dispatch' }}
 
   package-smoke:
     needs: build
