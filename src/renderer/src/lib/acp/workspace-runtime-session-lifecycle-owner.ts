@@ -486,6 +486,7 @@ const cancelWorkspaceRun = async (
   if (!snapshot) {
     cancelledSessionIds?.delete(sessionId)
     useSessionStore.getState().failRun(sessionId, 'Agent cancellation failed')
+    throw new Error('Agent cancellation failed')
   }
 }
 const processContextOverflowRecovery = (

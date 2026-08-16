@@ -229,11 +229,7 @@ const useWorkspaceConversationController = (
     isBarrierInFlight: options.session.lifecycle.isBarrierInFlight,
     isSpecialistReady: (sessionId) => {
       const current = optionsRef.current
-      return (
-        current.activeSession?.id === sessionId &&
-        current.session.view.specialist.sendAvailable &&
-        current.session.lifecycle.canStartSend()
-      )
+      return current.session.lifecycle.canStartSend(sessionId)
     },
     hasPendingPermissionRequest: options.hasPendingPermissionRequest,
     abortFixLoop: options.abortFixLoop,

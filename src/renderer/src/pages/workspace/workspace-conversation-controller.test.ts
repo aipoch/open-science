@@ -436,6 +436,34 @@ describe('workspace conversation controller', () => {
     )
   })
 
+  it('drains queued work after another Session becomes active', async () => {
+    const queuedSession = runningSession()
+    const activeSession = session({ id: 'session-b' })
+    const input = options({
+      activeSession: queuedSession,
+      promptInFlightSessionIds: [queuedSession.id],
+      getSession: (sessionId) => (sessionId === queuedSession.id ? queuedSession : activeSession)
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    const settledQueuedSession = { ...queuedSession, status: 'idle' as const }
+    hook.rerender({
+      ...input,
+      activeSession,
+      promptInFlightSessionIds: [],
+      getSession: (sessionId) =>
+        sessionId === queuedSession.id ? settledQueuedSession : activeSession
+    })
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    expect(input.session.lifecycle.canStartSend).toHaveBeenCalledWith(queuedSession.id)
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: queuedSession.id })
+    )
+  })
+
   it('blocks immediate submit and revision while the queued head is being admitted', async () => {
     let currentSession = runningSession()
     let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void

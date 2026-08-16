@@ -208,6 +208,19 @@ describe('workspace session controller', () => {
     expect(hook.result.current.lifecycle.canStartSend()).toBe(false)
   })
 
+  it('checks Specialist readiness for an inactive Session', () => {
+    const active = session()
+    const inactive = session({ id: 'session-b', specialistId: 'specialist-b' })
+    useSessionStore.setState({ sessions: [active, inactive], selectedSessionId: active.id })
+    const hook = renderController({
+      activeSession: active,
+      specialistItems: [specialist('specialist-b', 'Specialist B')]
+    })
+    mounted.push(hook)
+
+    expect(hook.result.current.lifecycle.canStartSend(inactive.id)).toBe(true)
+  })
+
   it('archives durably before enqueueing undo and clearing the active selection', async () => {
     const active = session()
     const order: string[] = []

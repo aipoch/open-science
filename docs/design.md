@@ -570,7 +570,7 @@ colors communicate a successful or failed probe/migration result.
 - During a normal running root turn, the primary composer submit action captures the current doc,
   attachments, permission profile, Specialist, Session, Agent Frame, and Message Branch into a
   renderer-memory queue instead of overlapping the active runtime prompt. The queue drains one item
-  at a time after the bound Session becomes sendable.
+  at a time after the bound Session becomes sendable, including while another Session is selected.
 - Show the queue disclosure at the right edge of the Notebook chrome above the ordinary composer.
   Expanded rows render as a compact list at the top of the form using its existing surface with
   hairline separators rather than nested cards. Dragging over another row moves neighboring rows

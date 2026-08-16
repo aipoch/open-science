@@ -6269,6 +6269,18 @@ describe('manual native context compaction', () => {
     })
     expect(cancelledSessionIds).toEqual(new Set(['session-1']))
   })
+
+  it('rejects when runtime cancellation returns no terminal snapshot', async () => {
+    const runtime = { cancel: vi.fn().mockResolvedValue(undefined) }
+
+    await expect(cancelWorkspaceRun(runtime, 'session-1')).rejects.toThrow(
+      'Agent cancellation failed'
+    )
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'Agent cancellation failed'
+    })
+  })
 })
 
 describe('resendEditedWorkspaceMessage', () => {

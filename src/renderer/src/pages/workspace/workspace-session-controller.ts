@@ -88,7 +88,7 @@ type WorkspaceSessionController = {
   }
   lifecycle: {
     canArchive: (session: ChatSession) => boolean
-    canStartSend: () => boolean
+    canStartSend: (sessionId?: string) => boolean
     captureSendIntent: (branchInNewSession: boolean) => SpecialistSendIntent
     prepareSpecialistSend: (sessionId: string, specialistId: string | undefined) => Promise<boolean>
     isBarrierInFlight: (sessionId: string) => boolean
@@ -325,7 +325,21 @@ const useWorkspaceSessionController = ({
     if (reconfigureError?.sessionId === sessionId) setReconfigureError(null)
   }
 
-  const canStartSend = (): boolean => {
+  const canStartSend = (sessionId?: string): boolean => {
+    if (sessionId && sessionId !== activeSession?.id) {
+      const session = useSessionStore
+        .getState()
+        .sessions.find((candidate) => candidate.id === sessionId)
+      if (!session || barrierInFlightRef.current.has(sessionId)) return false
+      if (session.specialistId === undefined) return true
+      if (!specialistCatalogLoaded) {
+        void loadSpecialists()
+        return false
+      }
+      return specialistItems.some(
+        (item) => item.kind === 'custom' && item.enabled && item.id === session.specialistId
+      )
+    }
     if (!activeSession) return !newConversationSpecialistUnavailable
     if (barrierInFlightRef.current.has(activeSession.id)) return false
     if (activeSession.specialistId === undefined) return specialistSendAvailable
