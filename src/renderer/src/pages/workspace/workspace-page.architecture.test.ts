@@ -140,8 +140,8 @@ const conversationPanelPropNames = (): string[] => {
 
 describe('workspace page architecture', () => {
   it('keeps the page and extracted owners within their completion gates', () => {
-    // The i18n subscription adds an import and hook without adding a page responsibility.
-    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_205)
+    // The i18n and queue subscriptions add wiring without adding a page responsibility.
+    expect(rawLineCount(readSource(ownerPaths.page))).toBeLessThanOrEqual(1_207)
     for (const ownerPath of [
       ownerPaths.layout,
       ownerPaths.composer,
