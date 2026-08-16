@@ -134,11 +134,51 @@ describe('HostSessionsService', () => {
     expect(JSON.stringify(await service.list({}, context))).not.toMatch(/SECRET|\/private/u)
   })
 
+  it('projects the graph active Frame instead of forcing root Frame navigation', async () => {
+    const target = session()
+    const graph = target.conversationGraph!
+    graph.frames.push({
+      id: 'reviewer-frame',
+      parentFrameId: graph.rootFrameId,
+      originMessageId: 'message-1',
+      originBindingState: 'validated',
+      kind: 'reviewer',
+      status: 'running',
+      activeBranchId: 'reviewer-branch',
+      createdAt: 201
+    })
+    graph.branches.push({
+      id: 'reviewer-branch',
+      agentFrameId: 'reviewer-frame',
+      headMessageId: 'reviewer-message',
+      createdAt: 201,
+      updatedAt: 202
+    })
+    graph.messages.push({
+      ...message('reviewer-message', 202),
+      agentFrameId: 'reviewer-frame',
+      introducedOnBranchId: 'reviewer-branch'
+    })
+    graph.activeFrameId = 'reviewer-frame'
+    const service = new HostSessionsService(repository([target]), {
+      getSnapshot: () => undefined
+    })
+
+    await expect(service.inspect('session-1', context)).resolves.toMatchObject({
+      active_conversation: {
+        frame_id: 'reviewer-frame',
+        branch_id: 'reviewer-branch',
+        message_count: 1
+      }
+    })
+  })
+
   it('filters, orders, and paginates the Session catalog with snapshot-bound cursors', async () => {
     const sessions = [
       session({ id: 'session-b', title: 'Genomics beta', updatedAt: 300 }),
       session({ id: 'session-a', title: 'Genomics alpha', updatedAt: 300 }),
       session({ id: 'session-c', title: 'Unrelated', updatedAt: 100 }),
+      session({ id: 'session-special-identity', title: 'Identity only', updatedAt: 100 }),
       session({
         id: 'session-archived',
         title: 'Genomics archive',
@@ -173,6 +213,16 @@ describe('HostSessionsService', () => {
     await expect(
       service.list({ archived: 'include', search: 'gen' }, context)
     ).resolves.toMatchObject({ total_count: 3 })
+    await expect(service.list({ search: 'special' }, context)).resolves.toMatchObject({
+      total_count: 0,
+      sessions: []
+    })
+    await expect(
+      service.list({ search: 'session-special-identity' }, context)
+    ).resolves.toMatchObject({
+      total_count: 1,
+      sessions: [expect.objectContaining({ session_id: 'session-special-identity' })]
+    })
     await expect(service.list({ limit: 2, cursor: first.next_cursor }, context)).rejects.toThrow(
       'cursor does not match'
     )

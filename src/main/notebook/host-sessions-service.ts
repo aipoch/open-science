@@ -144,7 +144,7 @@ const latestSessionEvent = (
 const activeConversation = (session: PersistedChatSession): unknown => {
   const graph = session.conversationGraph
   if (!graph) return undefined
-  const frame = graph.frames.find((candidate) => candidate.id === graph.rootFrameId)
+  const frame = graph.frames.find((candidate) => candidate.id === graph.activeFrameId)
   if (!frame) return undefined
   const branch = graph.branches.find(
     (candidate) => candidate.id === frame.activeBranchId && candidate.agentFrameId === frame.id
@@ -224,7 +224,8 @@ class HostSessionsService {
         if (normalized.archived === 'only' && session.archivedAt === undefined) return false
         if (
           normalized.search &&
-          ![session.title, session.id].some((value) => fuzzyScore(normalized.search!, value))
+          session.id !== normalized.search &&
+          !fuzzyScore(normalized.search, session.title)
         ) {
           return false
         }
