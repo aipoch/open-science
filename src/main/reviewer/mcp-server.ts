@@ -105,22 +105,34 @@ const checkSchema = z.discriminatedUnion('status', [
 // v2: a single `checks[]` replaces the old findings[]+summary+checks[] split.
 // v3: reasoning removed — the reviewer log is captured from the action stream, not self-authored.
 // summary is explicitly excluded — the panel no longer shows it.
-const submitFindingsObjectSchema = z
-  .object({
-    checks: z
-      .array(checkSchema)
-      .min(1, 'Submit at least one explicit pass, warn, or fail check.')
-      .max(MAX_REVIEW_CHECKS, `At most ${MAX_REVIEW_CHECKS} findings are allowed`)
-      .describe(
-        'All checks you ran, each with status pass|warn|fail, claim, and evidence. ' +
-          'A locator is required for warn/fail and optional for pass. ' +
-          'A completed review requires at least one explicit check; an empty array is never a pass.'
-      )
-  })
-  .strict() // Reject unknown fields including the old `summary`, old `findings`, and old `reasoning`
+type SubmitFindingsObjectSchema = z.ZodObject<{
+  checks: z.ZodArray<typeof checkSchema>
+}>
 
-export const submitFindingsInputSchema = submitFindingsObjectSchema.superRefine(
-  (input, context) => {
+export type SubmitFindingsInput = z.infer<SubmitFindingsObjectSchema>
+
+const createSubmitFindingsObjectSchema = (trackedCheckAllowance = 0): SubmitFindingsObjectSchema =>
+  z
+    .object({
+      checks: z
+        .array(checkSchema)
+        .min(1, 'Submit at least one explicit pass, warn, or fail check.')
+        .max(
+          MAX_REVIEW_CHECKS + trackedCheckAllowance,
+          `At most ${MAX_REVIEW_CHECKS} new findings are allowed beyond tracked dispositions`
+        )
+        .describe(
+          'All checks you ran, each with status pass|warn|fail, claim, and evidence. ' +
+            'A locator is required for warn/fail and optional for pass. ' +
+            'A completed review requires at least one explicit check; an empty array is never a pass.'
+        )
+    })
+    .strict() // Reject unknown fields including the old `summary`, old `findings`, and old `reasoning`
+
+const createSubmitFindingsInputSchema = (
+  trackedCheckAllowance = 0
+): z.ZodType<SubmitFindingsInput> =>
+  createSubmitFindingsObjectSchema(trackedCheckAllowance).superRefine((input, context) => {
     const bytes = reviewSubmissionByteLength(input.checks)
     if (bytes > MAX_REVIEW_SUBMISSION_BYTES) {
       context.addIssue({
@@ -131,10 +143,9 @@ export const submitFindingsInputSchema = submitFindingsObjectSchema.superRefine(
           `(got ${bytes} bytes)`
       })
     }
-  }
-)
+  })
 
-export type SubmitFindingsInput = z.infer<typeof submitFindingsInputSchema>
+export const submitFindingsInputSchema = createSubmitFindingsInputSchema()
 
 export type ReviewerEvidenceAccessLedger = {
   turnRead: boolean
@@ -342,6 +353,10 @@ export class ReviewerMcpServer {
       name: REVIEWER_MCP_SERVER_NAME,
       version: '1.0.0'
     })
+
+    const trackedCheckAllowance = this.trackedFindingIds.size
+    const submitFindingsObjectSchema = createSubmitFindingsObjectSchema(trackedCheckAllowance)
+    const submitFindingsInputSchema = createSubmitFindingsInputSchema(trackedCheckAllowance)
 
     const evidence = this.evidence
     if (evidence) {

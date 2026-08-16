@@ -460,6 +460,56 @@ describe('review repository (integration)', () => {
     ).rejects.toThrow(/Tracked Finding is unavailable/i)
   })
 
+  it('commits more than five historical tracked dispositions in one re-review', async () => {
+    const repository = await createRepository()
+    const sourceReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-history-limit',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    await client!.finding.createMany({
+      data: Array.from({ length: 6 }, (_, index) => ({
+        reviewId: sourceReview.id,
+        status: 'warn',
+        resolution: 'open',
+        claim: `Historical finding ${index + 1}`,
+        evidence: `Historical evidence ${index + 1}`,
+        locator: '{}',
+        sortIndex: index
+      }))
+    })
+    const source = (
+      await repository.getReviewsForProjectSession('project-1', 'session-history-limit')
+    ).find((review) => review.id === sourceReview.id)!
+    const assessmentReview = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-history-limit',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+
+    const committed = await repository.commitScopedSubmission({
+      reviewId: assessmentReview.id,
+      checks: source.checks.map((finding, index) => ({
+        status: 'pass' as const,
+        claim: `Historical finding ${index + 1} is resolved`,
+        evidence: `Verified historical finding ${index + 1}`,
+        sourceFindingId: finding.id
+      })),
+      expectedSourceFindingIds: source.checks.map((finding) => finding.id),
+      outcome: 'pass'
+    })
+
+    expect(committed).toMatchObject({ lifecycle: 'complete', outcome: 'pass' })
+    expect(committed.submittedChecks).toHaveLength(6)
+    expect(committed.checks).toEqual([])
+    const reloadedSource = (
+      await repository.getReviewsForProjectSession('project-1', 'session-history-limit')
+    ).find((review) => review.id === sourceReview.id)
+    expect(reloadedSource?.checks.every((finding) => finding.resolution === 'resolved')).toBe(true)
+  })
+
   it('rolls back a scoped submission when any tracked disposition is invalid', async () => {
     const repository = await createRepository()
     const assessmentReview = await repository.createReview({

@@ -13,10 +13,16 @@ type PersistableReviewCheck = Pick<NewCheck, 'claim' | 'evidence'> &
 export const reviewSubmissionByteLength = (checks: readonly unknown[]): number =>
   Buffer.byteLength(JSON.stringify({ checks }), 'utf8')
 
-const assertReviewSubmissionWithinLimits = (checks: readonly PersistableReviewCheck[]): void => {
-  if (checks.length > MAX_REVIEW_CHECKS) {
+// Required tracked dispositions expand only the item-count allowance; field and byte limits still
+// apply to the complete re-review submission.
+const assertReviewSubmissionWithinLimits = (
+  checks: readonly PersistableReviewCheck[],
+  trackedCheckAllowance = 0
+): void => {
+  const maxChecks = MAX_REVIEW_CHECKS + trackedCheckAllowance
+  if (checks.length > maxChecks) {
     throw new RangeError(
-      `A Reviewer result may contain at most ${MAX_REVIEW_CHECKS} checks (got ${checks.length}).`
+      `A Reviewer result may contain at most ${maxChecks} checks (got ${checks.length}).`
     )
   }
 

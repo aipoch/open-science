@@ -370,7 +370,7 @@ class ReviewRepository {
     if (input.checks.length === 0) {
       throw new Error('A completed Review submission requires at least one explicit check.')
     }
-    assertReviewSubmissionWithinLimits(input.checks)
+    assertReviewSubmissionWithinLimits(input.checks, input.expectedSourceFindingIds.length)
     const trackedFindingIds = input.checks.flatMap((check) =>
       check.sourceFindingId ? [check.sourceFindingId] : []
     )
