@@ -123,6 +123,20 @@ describe('database JSON constraints migration', () => {
     client = createProjectDbClient(storageRoot)
     await createDatabaseAtMigration0007(client)
     await seedValidAffectedRows(client)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "NotificationInboxItem" ("sequence","id","dedupeKey","kind","originId","title","summary") VALUES (41,'deleted-notification','deleted-notification','task.completed','deleted-origin','Title','Summary')`
+    )
+    await client.$executeRawUnsafe(
+      `DELETE FROM "NotificationInboxItem" WHERE "id" = 'deleted-notification'`
+    )
+    await client.$executeRawUnsafe(`DELETE FROM "ManagedFile"`)
+    await client.$executeRawUnsafe(
+      `INSERT INTO "ManagedFile" (
+        "seq","source","sourceFileId","projectId","sessionId","displayName","storageKey",
+        "sizeBytes","sortAtMs","updatedAt"
+      ) VALUES (43,'upload','deleted-file','project','session','deleted.txt','deleted-content',0,0,CURRENT_TIMESTAMP)`
+    )
+    await client.$executeRawUnsafe(`DELETE FROM "ManagedFile"`)
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
       adoptedLegacy: false,
@@ -163,12 +177,12 @@ describe('database JSON constraints migration', () => {
       client.$queryRaw<Array<{ sequence: number }>>`
         SELECT "sequence" FROM "NotificationInboxItem" WHERE "id" = 'next-notification'
       `
-    ).resolves.toEqual([{ sequence: 12 }])
+    ).resolves.toEqual([{ sequence: 42 }])
     await expect(
       client.$queryRaw<Array<{ seq: number }>>`
         SELECT "seq" FROM "ManagedFile" WHERE "sourceFileId" = 'next-file'
       `
-    ).resolves.toEqual([{ seq: 14 }])
+    ).resolves.toEqual([{ seq: 44 }])
   })
 
   it('fails closed and rolls back all rebuilt tables when historical data is invalid', async () => {

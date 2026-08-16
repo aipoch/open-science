@@ -6,6 +6,7 @@ import { DatabaseValidationError, summarizeDatabaseValue } from './database-vali
 
 type SqliteTableInfoRow = { name: string }
 type SqliteTableSqlRow = { sql: string | null }
+type SqliteSequenceRow = { seq: bigint | number | null }
 type SqliteForeignKeyViolationRow = {
   table: string
   rowid: bigint | number | null
@@ -108,6 +109,43 @@ const countRows = async (client: SqliteExecutor, tableName: string): Promise<big
   return BigInt(rows[0]?.count ?? 0)
 }
 
+const readAutoincrementSequence = async (
+  client: SqliteExecutor,
+  tableName: string,
+  targetDdl: string
+): Promise<bigint | number | undefined> => {
+  if (!/\bAUTOINCREMENT\b/i.test(targetDdl)) return undefined
+  const sequenceTable = await migrationSqlExecutor.query<Array<{ present: number }>>(
+    client,
+    `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'`
+  )
+  if (sequenceTable.length === 0) return undefined
+  const rows = await migrationSqlExecutor.query<SqliteSequenceRow[]>(
+    client,
+    `SELECT seq FROM sqlite_sequence WHERE name = ? LIMIT 1`,
+    tableName
+  )
+  return rows[0]?.seq ?? undefined
+}
+
+const restoreAutoincrementSequence = async (
+  client: SqliteExecutor,
+  tableName: string,
+  sequence: bigint | number
+): Promise<void> => {
+  await migrationSqlExecutor.execute(
+    client,
+    `DELETE FROM sqlite_sequence WHERE name = ?`,
+    tableName
+  )
+  await migrationSqlExecutor.execute(
+    client,
+    `INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)`,
+    tableName,
+    sequence
+  )
+}
+
 const withOptionalLegacyColumns = (
   canonicalTableDdl: string,
   columns: readonly { name: string; definition: string }[]
@@ -142,6 +180,7 @@ const applyRebuildTableSet = async (
     targetDdl: string
     copyColumns: string[]
     sourceRowCount: bigint
+    autoincrementSequence: bigint | number | undefined
   }> = []
   for (const table of operation.tables) {
     const sourceColumns = new Set(await readTableColumns(client, table.tableName))
@@ -166,12 +205,14 @@ const applyRebuildTableSet = async (
         { kind: 'unknown-columns', table: table.tableName, actual: unknownColumns }
       )
     }
+    const targetDdl = withOptionalLegacyColumns(table.canonicalTableDdl, optionalColumns)
     prepared.push({
       tableName: table.tableName,
       backupTableName: `__open_science_rebuild_${table.tableName}`,
-      targetDdl: withOptionalLegacyColumns(table.canonicalTableDdl, optionalColumns),
+      targetDdl,
       copyColumns: [...table.columns, ...optionalColumns.map(({ name }) => name)],
-      sourceRowCount: await countRows(client, table.tableName)
+      sourceRowCount: await countRows(client, table.tableName),
+      autoincrementSequence: await readAutoincrementSequence(client, table.tableName, targetDdl)
     })
   }
 
@@ -222,6 +263,10 @@ const applyRebuildTableSet = async (
       client,
       `DROP TABLE ${quoteIdentifier(table.backupTableName)}`
     )
+  }
+  for (const table of prepared) {
+    if (table.autoincrementSequence === undefined) continue
+    await restoreAutoincrementSequence(client, table.tableName, table.autoincrementSequence)
   }
   for (const index of operation.indexes) await migrationSqlExecutor.execute(client, index)
 
