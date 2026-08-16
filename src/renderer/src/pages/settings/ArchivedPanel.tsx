@@ -337,6 +337,7 @@ const ArchivedPanel = ({
       <DeleteSessionDialog
         session={sessionToDelete}
         canDelete={canDeleteProjects}
+        isDeleting={busyKey === `session:${sessionToDelete?.id}`}
         onCancel={() => setSessionToDelete(undefined)}
         onConfirmDelete={deleteArchivedSession}
       />

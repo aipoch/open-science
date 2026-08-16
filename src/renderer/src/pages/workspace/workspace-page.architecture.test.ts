@@ -250,6 +250,16 @@ describe('workspace page architecture', () => {
     expect(pageSource).toContain('onConfirmDelete={conversation.actions.delete}')
   })
 
+  it('forwards archived Session deletion progress to the shared dialog', () => {
+    const archivedPanelSource = readSource(
+      resolve(rendererRoot, 'pages/settings/ArchivedPanel.tsx')
+    )
+
+    expect(archivedPanelSource).toContain(
+      'isDeleting={busyKey === `session:${sessionToDelete?.id}`}'
+    )
+  })
+
   it('keeps Workspace runtime internals behind the public renderer facade', () => {
     const workspaceSources = productionSourcePaths
       .filter((path) => !relative(workspaceDirectory, path).startsWith('..'))
