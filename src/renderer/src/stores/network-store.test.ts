@@ -102,6 +102,22 @@ describe('probeConnectivity', () => {
     expect(useNetworkStore.getState().connectivity).toBe('reachable')
   })
 
+  it('restores the last known state when an announced bridge call rejects', async () => {
+    const checkConnectivity = vi.fn().mockRejectedValue(new Error('bridge gone'))
+    stubCheckConnectivity(checkConnectivity)
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    const probe = useNetworkStore.getState().probeConnectivity({ announce: true })
+    expect(useNetworkStore.getState().connectivity).toBe('unknown')
+
+    await vi.advanceTimersByTimeAsync(499)
+    expect(useNetworkStore.getState().connectivity).toBe('unknown')
+
+    await vi.advanceTimersByTimeAsync(1)
+    await probe
+    expect(useNetworkStore.getState().connectivity).toBe('unreachable')
+  })
+
   it('falls back to reachable when there is no probe bridge', async () => {
     stubCheckConnectivity()
     useNetworkStore.setState({ isOnline: true, connectivity: 'unknown' })
