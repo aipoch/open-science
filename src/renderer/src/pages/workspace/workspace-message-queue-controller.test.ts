@@ -207,6 +207,33 @@ describe('workspace message queue controller', () => {
     )
   })
 
+  it('drains the next item when an admitted turn ends in error', async () => {
+    let currentSession = session('idle')
+    const input = options(currentSession, { getSession: () => currentSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.lifecycle.enqueue({ ...admission('first'), session: currentSession })
+      hook.result.current.lifecycle.enqueue({ ...admission('second'), session: currentSession })
+    })
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(hook.result.current.items.map((item) => item.text)).toEqual(['second'])
+    )
+
+    currentSession = session('error')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        getSession: () => currentSession
+      })
+    )
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+  })
+
   it('waits for cancellation before Send now dispatches', async () => {
     const order: string[] = []
     let currentSession = session()

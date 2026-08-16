@@ -169,10 +169,15 @@ const useWorkspaceMessageQueueController = (
       const existingDispatch = dispatchBySessionRef.current.get(sessionId)
       if (existingDispatch) {
         const session = current.getSession(sessionId)
-        if (existingDispatch.settled && session && !queueSessionIsSendable(current, session)) {
+        if (!existingDispatch.settled) return
+        if (session?.status === 'error') {
           dispatchBySessionRef.current.delete(sessionId)
+        } else {
+          if (session && !queueSessionIsSendable(current, session)) {
+            dispatchBySessionRef.current.delete(sessionId)
+          }
+          return
         }
-        return
       }
       const item = itemsFor(sessionId)[0]
       if (!item || item.phase === 'sending' || item.phase === 'error') return
