@@ -571,7 +571,10 @@ const WorkspacePage = ({
     !activeSessionHasRuntimeInteraction &&
     !activeSession?.compacting
   const canChangePermissionProfile =
-    isSessionPersistenceReady && !activeSessionHasSendPreparation && !activeSession?.compacting
+    isSessionPersistenceReady &&
+    !activeSessionHasSendPreparation &&
+    !activeSession?.compacting &&
+    conversation.queue.items.length === 0
   const canCompactContext =
     isSessionPersistenceReady &&
     activeSessionSupportsNativeCompaction &&

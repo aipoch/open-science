@@ -268,6 +268,32 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
   })
 
+  it('retains a queued prompt when runtime admission fails after append', async () => {
+    const idle = session('idle')
+    const input = options(idle, {
+      runtime: {
+        cancelRun: vi.fn(async () => undefined),
+        sendMessage: vi.fn(async () => ({
+          sessionId: idle.id,
+          messageId: 'message-appended',
+          admitted: false
+        }))
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.lifecycle.enqueue({ ...admission('retry me'), session: idle }))
+
+    await vi.waitFor(() =>
+      expect(hook.result.current.items[0]).toMatchObject({
+        text: 'retry me',
+        phase: 'error',
+        error: { kind: 'send' }
+      })
+    )
+  })
+
   it('waits for cancellation before Send now dispatches', async () => {
     const order: string[] = []
     let currentSession = session()

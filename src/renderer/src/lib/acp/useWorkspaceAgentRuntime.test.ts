@@ -1751,6 +1751,39 @@ describe('workspace agent message sending', () => {
     })
   })
 
+  it('reports an appended prompt as not admitted when attachment finalization fails', async () => {
+    const attachment = createAttachment()
+    vi.stubGlobal('window', {
+      api: {
+        uploads: {
+          finalizeSession: vi.fn().mockRejectedValue(new Error('attachment finalization failed'))
+        }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const result = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'inspect the attachment',
+      attachments: [attachment],
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(result).toMatchObject({ admitted: false })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      status: 'error',
+      error: 'attachment finalization failed'
+    })
+  })
+
   it('binds an explicit continuation prompt to the durable active Plan version', async () => {
     const sendPrompt = vi.fn().mockResolvedValue(createSnapshot(['transport-session-1']))
     const runtime = {

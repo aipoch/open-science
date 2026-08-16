@@ -63,7 +63,7 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   requireExistingSession?: boolean
 }
 
-type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
+type SendWorkspaceMessageResult = { sessionId: string; messageId: string; admitted?: boolean }
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 type WorkspaceCommandLifecycle = {
@@ -531,7 +531,7 @@ const sendWorkspaceMessage = async (
       )
     } catch (error) {
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
-      return appended
+      return { ...appended, admitted: false }
     }
     const continuation = input.planContinuation
       ? {

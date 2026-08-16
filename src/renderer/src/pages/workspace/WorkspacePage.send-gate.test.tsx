@@ -256,6 +256,57 @@ describe('WorkspacePage send gate while compacting', () => {
     }
   )
 
+  it('freezes the permission profile while queued prompts retain its captured value', async () => {
+    useSessionStore.setState({
+      sessions: [
+        createSession({
+          status: 'running',
+          conversationGraph: {
+            schemaVersion: 1,
+            rootFrameId: 'root',
+            activeFrameId: 'root',
+            frames: [
+              {
+                id: 'root',
+                originBindingState: 'root',
+                kind: 'root',
+                status: 'running',
+                activeBranchId: 'branch-a',
+                createdAt: 1
+              }
+            ],
+            branches: [
+              {
+                id: 'branch-a',
+                agentFrameId: 'root',
+                headMessageId: 'message-a',
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ],
+            messages: [],
+            activities: [],
+            activityGroups: [],
+            runtimeSegments: []
+          }
+        })
+      ],
+      selectedSessionId: 'sess-a'
+    })
+    await renderPage()
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(true)
+
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('queue this'))
+    })
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+
+    expect(conversationProps.conversation.queue.items).toHaveLength(1)
+    expect(conversationProps.permissions.canChangePermissionProfile).toBe(false)
+  })
+
   it('does not query Plan authority before a newly bound Session is persisted', async () => {
     useSessionStore.setState({
       sessions: [createSession({ status: 'running' })],

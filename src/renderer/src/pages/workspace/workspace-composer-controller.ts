@@ -10,7 +10,7 @@ import {
   type ComposerUploadTransfer,
   type UploadStagingApi
 } from './composer-upload-transfer'
-import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
+import { docIsEmpty, emptyDoc, type ComposerDoc } from './composer/composer-doc'
 import { normalizeHistorySkills, type ComposerHistoryEntry } from './composer/composer-history'
 
 type ComposerDraft = {
@@ -571,7 +571,7 @@ const useWorkspaceComposerController = ({
   )
   const restoreFailedSend = useCallback(
     (snapshot: ComposerSendSnapshot, preserveOnConflict = false): boolean => {
-      if ((versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version) {
+      if ((versionsRef.current[snapshot.draftKey] ?? 0) !== snapshot.version && !(preserveOnConflict && activeDraftKeyRef.current === snapshot.draftKey && docIsEmpty(doc) && attachments.length === 0 && transfers.length === 0)) {
         if (!preserveOnConflict) deleteAttachmentFiles(snapshot.attachments)
         return false
       }
@@ -587,7 +587,7 @@ const useWorkspaceComposerController = ({
       }
       return true
     },
-    [deleteAttachmentFiles]
+    [attachments.length, deleteAttachmentFiles, doc, transfers.length]
   )
   const hasUnfinishedTransfers = useCallback(
     (draftKey: string): boolean =>

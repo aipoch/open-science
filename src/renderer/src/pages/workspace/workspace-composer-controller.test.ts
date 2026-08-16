@@ -158,6 +158,23 @@ describe('workspace composer controller', () => {
     expect(hook.result.current.view.doc).toEqual(textDoc('new intent'))
   })
 
+  it('restores an older queued item after later queued drafts leave the composer empty', () => {
+    const hook = renderController()
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.changeDoc(textDoc('first queued intent')))
+    const first = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(first.draftKey, first.version))
+    act(() => hook.result.current.actions.changeDoc(textDoc('second queued intent')))
+    const second = hook.result.current.lifecycle.captureSend()
+    act(() => hook.result.current.lifecycle.clearDraft(second.draftKey, second.version))
+
+    act(() =>
+      expect(hook.result.current.lifecycle.restoreFailedSend(first, true)).toBe(true)
+    )
+    expect(hook.result.current.view.doc).toEqual(textDoc('first queued intent'))
+  })
+
   it('discards queued uploads without changing the current draft version', () => {
     const uploadApi = uploads()
     const hook = renderController(uploadApi)

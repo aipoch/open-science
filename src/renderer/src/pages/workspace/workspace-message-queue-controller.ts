@@ -221,7 +221,9 @@ const useWorkspaceMessageQueueController = (
             forcedSkillIds: item.forcedSkillIds,
             specialistId: item.specialistId
           })
-          if (!result) throw new Error('The queued message was not admitted.')
+          if (!result || result.admitted === false) {
+            throw new Error('The queued message was not admitted.')
+          }
           const latest = itemsFor(sessionId)
           const remaining = latest.filter((candidate) => candidate.id !== item.id)
           if (remaining.length === 0) queueBySessionRef.current.delete(sessionId)
