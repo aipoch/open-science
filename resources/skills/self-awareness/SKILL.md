@@ -16,22 +16,23 @@ const caps = await host.capabilities()
 
 The current project-native result contains 19 known boolean keys:
 
-- `mcp` gates `host.mcp` connector calls.
+- `mcp` gates connector calls through `host.mcp(server, method, args?)`.
 - `compute` gates the `host.compute` namespace.
 - `agents` gates the `host.agents` namespace.
 - `skills` gates the `host.skills` namespace.
-- `artifacts` gates `host.artifacts` and `host.artifactPath`.
+- `artifacts` gates managed-file discovery through `host.artifacts(options?)` and exact path
+  resolution through `host.artifactPath(versionId)`.
 - `lineage` gates the read-only `host.lineage` namespace.
 - `frames` gates the read-only `host.frames` namespace.
-- `llm` gates `host.llm` one-shot, tool-less inference.
-- `currentModel` gates `host.currentModel()`, which returns the calling Session's exact current
-  model id and fails when the live backend cannot establish one.
-- `listModels` gates `host.listModels()`, which returns the frozen, stable-sorted configured model
-  ids for the current Host LLM Provider and framework. It never refreshes over the network or merges
-  ids across Providers.
-- `viewImage` gates transient `host.viewImage(source, options?)` image attachment from an Artifact or
-  Upload Version in the current Project, or a path relative to the current execution workspace. For
-  a generated file, pass the same relative path used to save it.
+- `llm` gates one-shot, tool-less inference through `host.llm(request, options?)`.
+- `currentModel` gates exact current-model lookup through `host.currentModel()`. It returns the
+  calling Session's exact current model id and fails when the live backend cannot establish one.
+- `listModels` gates configured Host LLM model discovery through `host.listModels()`. It returns the
+  frozen, stable-sorted configured model ids for the current Host LLM Provider and framework. It
+  never refreshes over the network or merges ids across Providers.
+- `viewImage` gates transient image attachment through `host.viewImage(source, options?)`. Sources
+  may be an Artifact or Upload Version in the current Project, or a path relative to the current
+  execution workspace. For a generated file, pass the same relative path used to save it.
 - `delegate`, `children`, `collect`, `stopChild`, and `resolveMessage` are Main/root-only delegated
   work operations.
 - `sendFrameMessage` and `messageReceipt` are available to Main/root and Delegate agents when their
