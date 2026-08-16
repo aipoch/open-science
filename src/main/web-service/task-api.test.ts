@@ -466,6 +466,63 @@ describe('HeadlessTaskApi adapter', () => {
     expect(agent.cancelPrompt).toHaveBeenCalledWith('session-cancel-context')
   })
 
+  it('aborts the Reviewer command when cancellation reaches an automatic review', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'reviewer:run') return { started: true }
+      if (channel === 'reviewer:get-for-session') {
+        return [{ id: 'review-1', turnMessageId: 'review-agent', lifecycle: 'running' }]
+      }
+      if (channel === 'reviewer:abort') return undefined
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-review-cancel' })),
+      prompt: vi.fn(async () => {
+        emitEvent?.({
+          id: 'review-message-event',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          sessionId: 'session-review-cancel',
+          role: 'assistant',
+          text: 'Review this output.'
+        })
+      })
+    })
+    const ids = ['review-user', 'review-run', 'review-agent']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent },
+      {
+        createId: () => ids.shift() ?? 'generated-id',
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    const run = await api.startRun({
+      project: project.id,
+      prompt: 'Produce and review.',
+      autoReviewEnabled: true
+    })
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('reviewer:get-for-session', expect.anything(), [
+        { projectId: project.id, appSessionId: 'session-review-cancel' }
+      ])
+    )
+    await expect(api.cancelRun(run.id)).resolves.toMatchObject({ status: 'cancelled' })
+
+    expect(invoke).toHaveBeenCalledWith('reviewer:abort', expect.anything(), [
+      { projectId: project.id, appSessionId: 'session-review-cancel' }
+    ])
+    api.dispose()
+  })
+
   it('does not enter the direct Agent port for cancellation after authorization expires', async () => {
     let finishPrompt: (() => void) | undefined
     const promptGate = new Promise<void>((resolve) => {

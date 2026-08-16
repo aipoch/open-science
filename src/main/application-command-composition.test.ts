@@ -239,12 +239,12 @@ describe('application command composition', () => {
       expect(composition.remoteWeb.rejectedCommandNames()).not.toContain(command)
     }
     expect(composition.task.commandNames()).toEqual(
-      expect.arrayContaining(['reviewer:get-for-session', 'reviewer:run'])
+      expect.arrayContaining(['reviewer:abort', 'reviewer:get-for-session', 'reviewer:run'])
     )
     expect(composition.task.commandNames()).not.toContain('reviewer:abort-fix-loop')
   })
 
-  it('exposes only the twelve Task commands and no transport-wide capability', async () => {
+  it('exposes only the thirteen Task commands and no transport-wide capability', async () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.task.commandNames()).toEqual([
@@ -255,6 +255,7 @@ describe('application command composition', () => {
       'sessions:set-delegation-policy',
       'acp:get-plan-projection',
       'acp:respond-plan',
+      'reviewer:abort',
       'reviewer:get-for-session',
       'reviewer:run',
       'artifacts:finalize-run',

@@ -1537,6 +1537,29 @@ describe('startWebHttpServer', () => {
       expectedRevision: 2
     })
 
+    tasks.respondSessionPlan.mockClear()
+    for (const invalidResponse of [
+      null,
+      {},
+      { feedback: '   ' },
+      { feedback: 'revise', decision: 'rejected' },
+      { decision: 'maybe', artifactVersionId: 'plan-version', expectedRevision: 2 },
+      { decision: 'approved', artifactVersionId: '', expectedRevision: 2 },
+      { decision: 'approved', artifactVersionId: 'plan-version', expectedRevision: -1 },
+      { decision: 'approved', artifactVersionId: 'plan-version', expectedRevision: 1.5 }
+    ]) {
+      const invalidPlanResponse = await fetch(`${base}/api/v1/sessions/session%2F1/plan/respond`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify(invalidResponse)
+      })
+      expect(invalidPlanResponse.status).toBe(400)
+      expect(await invalidPlanResponse.json()).toMatchObject({
+        error: { code: 'invalid_request' }
+      })
+    }
+    expect(tasks.respondSessionPlan).not.toHaveBeenCalled()
+
     const artifacts = await fetch(`${base}/api/v1/sessions/session%2F1/artifacts`, { headers })
     expect(await artifacts.json()).toEqual({
       data: [{ id: 'artifact/1', name: 'report.md' }]

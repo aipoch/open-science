@@ -106,6 +106,7 @@ type ReviewerCommandOwner = Readonly<{
   run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
+  abort: (request: ReviewSessionRequest) => void
   abortFixLoop: (request: ReviewSessionRequest) => void
 }>
 
@@ -149,6 +150,10 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // reviewer session id). Project deletion owns the same signal, so user cancellation and Project
   // quiescence converge on one operation without maintaining competing AbortControllers.
   const fixLoopAbortControllers = new Map<string, () => void>()
+  // Task cancellation targets the whole admitted Review chain, including the initial assessment.
+  // Keep this separate from the renderer's fix-loop-only affordance and allow concurrent manual
+  // Reviews for different turns in one Session to be cancelled together.
+  const activeReviewAbortControllers = new Map<string, Set<() => void>>()
 
   // Guards against concurrent reviews of the same turn — e.g. a double-clicked "Re-run review" or two
   // stale cards fired at once. Project is part of the key because Session ids are not globally owned.
@@ -184,6 +189,17 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     } else {
       log.warn('abort-fix-loop: no active fix loop found for session', request)
     }
+  }
+
+  const abort = (request: ReviewSessionRequest): void => {
+    const key = `${request.projectId}\0${request.appSessionId}`
+    const controllers = activeReviewAbortControllers.get(key)
+    if (!controllers || controllers.size === 0) {
+      log.warn('abort: no active review found for session', request)
+      return
+    }
+    log.info('review abort requested', request)
+    for (const controller of controllers) controller()
   }
 
   // Returns whether a review actually STARTED. The session is loaded up front (not in the background)
@@ -348,6 +364,10 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
 
       const effectiveMainSessionId = mainSessionId ?? sessionId
       const effectiveMainSessionKey = `${projectId}\0${effectiveMainSessionId}`
+      const activeControllers =
+        activeReviewAbortControllers.get(effectiveMainSessionKey) ?? new Set<() => void>()
+      activeControllers.add(projectAdmission.abort)
+      activeReviewAbortControllers.set(effectiveMainSessionKey, activeControllers)
 
       void runReview({
         sessionId,
@@ -416,6 +436,10 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           // genuine pre-push failure (scope/insert), not a persistence race, so it is not auto-retried.
           settle({ started: false, reason: 'run-failed' })
           inFlightReviewKeys.delete(inFlightKey)
+          activeControllers.delete(projectAdmission.abort)
+          if (activeControllers.size === 0) {
+            activeReviewAbortControllers.delete(effectiveMainSessionKey)
+          }
           try {
             releaseDataRootWriter?.()
           } finally {
@@ -447,7 +471,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     })
   }
 
-  return { run: triggerReview, triggerReview, getForSession, abortFixLoop }
+  return { run: triggerReview, triggerReview, getForSession, abort, abortFixLoop }
 }
 
 // Registers the legacy Electron adapter against an injectable owner. A future Host command

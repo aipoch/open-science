@@ -123,7 +123,9 @@ class HeadlessTaskApi {
       specialists: {
         resolve: (reference) => this.resolveSpecialist(reference)
       },
-      reviewer: { review: (session, turnMessageId) => this.review(session, turnMessageId) },
+      reviewer: {
+        review: (session, turnMessageId, signal) => this.review(session, turnMessageId, signal)
+      },
       createId: dependencies.createId ?? randomUUID,
       now: dependencies.now ?? Date.now
     } satisfies TaskRunnerDependencies)
@@ -244,8 +246,34 @@ class HeadlessTaskApi {
 
   private async review(
     session: PersistedChatSession,
-    turnMessageId: string
+    turnMessageId: string,
+    signal: AbortSignal
   ): Promise<TaskRunReview> {
+    const reviewSession = { projectId: session.projectId, appSessionId: session.id }
+    const throwIfAborted = async (): Promise<void> => {
+      if (!signal.aborted) return
+      // Cancellation is cleanup for an already-authorized Task Run. Use the fixed Task capability so
+      // an expired remote request lease cannot strand the separate Reviewer runtime.
+      await this.commandClient.invoke(this.ports.commands, 'reviewer:abort', TASK_CALLER_CONTEXT, [
+        reviewSession
+      ])
+      throw new Error('Automatic review was cancelled.')
+    }
+    const waitForPoll = (): Promise<void> =>
+      new Promise((resolve) => {
+        const onAbort = (): void => {
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(() => {
+          signal.removeEventListener('abort', onAbort)
+          resolve()
+        }, 250)
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
+      })
+
+    await throwIfAborted()
     const started = (await this.invoke('reviewer:run', {
       sessionId: session.id,
       turnMessageId,
@@ -254,6 +282,7 @@ class HeadlessTaskApi {
       model: session.agentModel,
       origin: 'auto'
     })) as ReviewRunResult
+    await throwIfAborted()
     if (!started.started) return started
 
     for (;;) {
@@ -273,7 +302,8 @@ class HeadlessTaskApi {
           errorMessage: review.errorMessage
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, 250))
+      await waitForPoll()
+      await throwIfAborted()
     }
   }
 }

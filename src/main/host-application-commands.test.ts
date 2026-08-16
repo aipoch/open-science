@@ -104,6 +104,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
   reviewer: {
     run: vi.fn(async () => ({ started: true })),
     getForSession: vi.fn(async () => []),
+    abort: vi.fn(() => undefined),
     abortFixLoop: vi.fn(() => undefined)
   },
   storage: {
@@ -295,6 +296,10 @@ describe('Host application commands', () => {
       invocation([{ mode: 'remoteit' }])
     )
     await router.dispatcher.invoke(
+      hostApplicationCommands.reviewer.abort,
+      invocation([reviewSession])
+    )
+    await router.dispatcher.invoke(
       hostApplicationCommands.reviewer.abortFixLoop,
       invocation([reviewSession])
     )
@@ -358,6 +363,7 @@ describe('Host application commands', () => {
     expect(dependencies.remoteAccess.setMode).toHaveBeenCalledWith('remoteit')
     expect(dependencies.reviewer.run).toHaveBeenCalledWith(reviewRun)
     expect(dependencies.reviewer.getForSession).toHaveBeenCalledWith(reviewSession)
+    expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.storage.commitAndRelaunch).toHaveBeenCalledWith(parent)
     expect(dependencies.storage.setDataRootAndRelaunch).toHaveBeenCalledWith(root)
 

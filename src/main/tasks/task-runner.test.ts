@@ -571,7 +571,8 @@ describe('TaskRunner', () => {
     })
     expect(review).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'session-controlled' }),
-      'assistant-controlled'
+      'assistant-controlled',
+      expect.any(AbortSignal)
     )
     expect(completed.review).toEqual({
       started: true,
@@ -583,6 +584,70 @@ describe('TaskRunner', () => {
       kind: 'plan-approval',
       plan: { artifactVersionId: 'plan-version', revision: 2 }
     })
+  })
+
+  it('aborts an in-flight automatic review when Run cancellation is accepted', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const review = vi.fn(
+      (_session: PersistedChatSession, _turnMessageId: string, signal: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          markReviewStarted?.()
+          const rejectCancellation = (): void => reject(new Error('review cancelled'))
+          if (signal.aborted) rejectCancellation()
+          else signal.addEventListener('abort', rejectCancellation, { once: true })
+        })
+    )
+    const cancelPrompt = vi.fn(async () => undefined)
+    const ids = ['review-user', 'review-run', 'review-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => undefined
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-review-cancel' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'review-message-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-review-cancel',
+            role: 'assistant',
+            text: 'Review this output.'
+          })
+        }
+      },
+      reviewer: { review },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    const started = await runner.startRun({
+      project: project.id,
+      prompt: 'Produce and review.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+    const cancelled = await runner.cancelRun(started.id)
+
+    expect(cancelled).toMatchObject({ status: 'cancelled', review: undefined })
+    expect(cancelPrompt).toHaveBeenCalledWith('session-review-cancel')
+    expect(review.mock.calls[0]?.[2].aborted).toBe(true)
   })
 
   it('uses the dedicated policy mutation for an existing Session', async () => {

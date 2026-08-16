@@ -199,6 +199,45 @@ const taskErrorStatus = (error: TaskApiError): number => {
   return 404
 }
 
+const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TaskApiError('invalid_request', 'Plan response must be an object.')
+  }
+  const candidate = value as Record<string, unknown>
+  if ('feedback' in candidate) {
+    if (
+      typeof candidate.feedback !== 'string' ||
+      candidate.feedback.trim().length === 0 ||
+      'decision' in candidate ||
+      'artifactVersionId' in candidate ||
+      'expectedRevision' in candidate
+    ) {
+      throw new TaskApiError(
+        'invalid_request',
+        'Plan feedback must be a non-empty string without decision fields.'
+      )
+    }
+    return { feedback: candidate.feedback.trim() }
+  }
+  if (
+    (candidate.decision !== 'approved' && candidate.decision !== 'rejected') ||
+    typeof candidate.artifactVersionId !== 'string' ||
+    candidate.artifactVersionId.trim().length === 0 ||
+    !Number.isInteger(candidate.expectedRevision) ||
+    (candidate.expectedRevision as number) < 0
+  ) {
+    throw new TaskApiError(
+      'invalid_request',
+      'Plan decision requires approved or rejected, a non-empty artifact version, and a non-negative integer revision.'
+    )
+  }
+  return {
+    decision: candidate.decision,
+    artifactVersionId: candidate.artifactVersionId.trim(),
+    expectedRevision: candidate.expectedRevision as number
+  }
+}
+
 class ExternalAuthorizationExpiredError extends Error {
   constructor() {
     super('Remote authorization expired before the request was executed.')
@@ -376,7 +415,7 @@ const handleTaskApiRequest = async (
         /^\/api\/v1\/sessions\/([^/]+)\/plan\/respond$/
       )
       if (sessionPlanResponseMatch && request.method === 'POST' && tasks.respondSessionPlan) {
-        const body = (await readJsonBody(request)) as TaskPlanResponseRequest
+        const body = parseTaskPlanResponseRequest(await readJsonBody(request))
         assertExternalAuthorizationCurrent(externalAuthorization)
         json(response, 200, {
           data: await tasks.respondSessionPlan(

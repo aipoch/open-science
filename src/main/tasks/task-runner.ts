@@ -133,7 +133,11 @@ type TaskSpecialistPort = {
 }
 
 type TaskReviewerPort = {
-  review(session: PersistedChatSession, turnMessageId: string): Promise<TaskRunReview>
+  review(
+    session: PersistedChatSession,
+    turnMessageId: string,
+    signal: AbortSignal
+  ): Promise<TaskRunReview>
 }
 
 type TaskRunnerDependencies = {
@@ -157,6 +161,7 @@ type MutableTaskRun = TaskRun & {
   providerAccepted: boolean
   firstVisibleOutput: boolean
   heartbeatTimer?: ReturnType<typeof setTimeout>
+  reviewAbortController?: AbortController
   cancellation?: {
     accepted: boolean
     dispatch: Promise<void>
@@ -596,6 +601,7 @@ class TaskRunner {
     cancellation.dispatch = Promise.resolve()
       .then(() => this.dependencies.agent.cancelPrompt(run.sessionId))
       .then(() => {
+        run.reviewAbortController?.abort()
         cancellation.accepted = true
       })
       .catch((error) => {
@@ -846,16 +852,25 @@ class TaskRunner {
             message.role === 'agent' && message.responseToMessageId === run.promptMessageId
         )
       if (reviewedMessage) {
+        const reviewAbortController = new AbortController()
+        run.reviewAbortController = reviewAbortController
         try {
           run.review = await this.dependencies.reviewer.review(
             completed!.session,
-            reviewedMessage.id
+            reviewedMessage.id,
+            reviewAbortController.signal
           )
         } catch (error) {
-          run.review = {
-            started: false,
-            reason: 'run-failed',
-            errorMessage: error instanceof Error ? error.message : String(error)
+          if (!reviewAbortController.signal.aborted) {
+            run.review = {
+              started: false,
+              reason: 'run-failed',
+              errorMessage: error instanceof Error ? error.message : String(error)
+            }
+          }
+        } finally {
+          if (run.reviewAbortController === reviewAbortController) {
+            run.reviewAbortController = undefined
           }
         }
       }

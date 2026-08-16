@@ -208,6 +208,9 @@ const remoteAccessCommands = Object.freeze({
 })
 
 const reviewerCommands = Object.freeze({
+  abort: defineApplicationCommand<'reviewer:abort', readonly [request: ReviewSessionRequest], void>(
+    'reviewer:abort'
+  ),
   abortFixLoop: defineApplicationCommand<
     'reviewer:abort-fix-loop',
     readonly [request: ReviewSessionRequest],
@@ -350,7 +353,7 @@ type HostApplicationCommandDependencies = Readonly<{
     RemoteAccessService,
     'snapshot' | 'detect' | 'setMode' | 'disable' | 'approve' | 'reject' | 'revoke'
   >
-  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abortFixLoop'>
+  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
   storage: Readonly<{
     getInfo: () => Promise<StorageInfo>
     revealAppStorage: () => Promise<RevealAppStorageResult>
@@ -505,6 +508,7 @@ const registerHostApplicationCommands = (
       }
     })
     scope.registerGroup(hostApplicationCommandGroups[6], {
+      'reviewer:abort': ({ args }) => dependencies.reviewer.abort(args[0]),
       'reviewer:abort-fix-loop': ({ args }) => dependencies.reviewer.abortFixLoop(args[0]),
       'reviewer:get-for-session': ({ args }) => dependencies.reviewer.getForSession(args[0]),
       'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])
