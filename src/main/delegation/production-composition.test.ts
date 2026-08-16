@@ -737,6 +737,8 @@ describe('production delegated-work composition', () => {
   it('records the admitted cross-provider model on every child Runtime Segment', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-model-snapshot-'))
     const execution = createDeterministicDelegateExecution()
+    execution.plan({ status: 'completed', response: 'first complete' })
+    execution.plan({ status: 'completed', response: 'second complete' })
     const resolveExecutionModel = vi.fn(async () => ({
       snapshot: {
         frameworkId: 'opencode' as const,
@@ -757,16 +759,10 @@ describe('production delegated-work composition', () => {
       resolveExecutionModel
     )
 
-    await harness.composition.host.delegate(
-      harness.caller,
-      [
-        { task: 'first', name: 'first' },
-        { task: 'second', name: 'second' }
-      ],
-      { wait: false }
-    )
-    await expect.poll(() => harness.execution.controls()).toHaveLength(2)
-    await expect.poll(() => harness.durable().conversationGraph?.runtimeSegments.length).toBe(3)
+    await harness.composition.host.delegate(harness.caller, [
+      { task: 'first', name: 'first' },
+      { task: 'second', name: 'second' }
+    ])
 
     expect(resolveExecutionModel).toHaveBeenCalledOnce()
     expect(harness.durable().conversationGraph?.runtimeSegments.slice(-2)).toEqual([
