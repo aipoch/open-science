@@ -89,7 +89,10 @@ const composeAcpRuntimeLifecycleOwners = (
         if (clearPermissionProfile) entry.aggregate.setPermissionProfile(undefined)
       }
     },
-    clearPromptContent: () => base.promptContentOwner.clear(),
+    clearPromptContent: (connectionGeneration) => {
+      if (connectionGeneration === undefined) base.promptContentOwner.clear()
+      else base.promptContentOwner.clearGeneration(connectionGeneration)
+    },
     clearHandoffContinuity: () => base.handoffContinuity.clearGeneration(),
     clearSessionProjection: () => session.sessionUpdateProjector.clearGeneration(),
     disposeSessionProjection: () => session.sessionUpdateProjector.dispose(),

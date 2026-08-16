@@ -22,7 +22,7 @@ type CloseState = Readonly<{
   disposeSessionCapabilities: (sessionIds: string[]) => void
   disposeActiveSessions: (recordFailure: CleanupFailure) => void
   detachSessionConnections: (clearPermissionProfile: boolean) => void
-  clearPromptContent: () => void
+  clearPromptContent: (connectionGeneration?: number) => void
   clearHandoffContinuity: () => void
   clearSessionProjection: () => void
   disposeSessionProjection: () => void
@@ -124,7 +124,7 @@ class AcpConnectionCloseWorkflow {
     runCleanup('MCP HTTP routes', this.options.state.clearHttpRoutes)
     this.options.state.selectSession()
     await this.options.resources.teardown(teardownGeneration, recordFailure)
-    this.options.state.clearPromptContent()
+    this.options.state.clearPromptContent(teardownGeneration - 1)
     if (emitClosedStatus && teardownGeneration === this.options.currentGeneration()) {
       runCleanup('closed-status', () => this.options.state.setStatus('closed'))
     }
@@ -153,7 +153,7 @@ class AcpConnectionCloseWorkflow {
     this.options.backendGeneration.supersede(teardownGeneration)
     this.options.state.disposeSessionCapabilities(this.options.state.activeSessionIds())
     this.options.state.detachSessionConnections(false)
-    this.options.state.clearPromptContent()
+    this.options.state.clearPromptContent(teardownGeneration)
     this.options.state.clearHandoffContinuity()
     this.options.state.disposeSessionProjection()
     this.options.state.clearContextUsage()
@@ -217,7 +217,7 @@ class AcpConnectionCloseWorkflow {
       .teardown(teardownGeneration, (stage, error) => {
         this.reportFailure(`${stage} cleanup after failed deferred disconnect failed`, error)
       })
-      .finally(() => this.options.state.clearPromptContent())
+      .finally(() => this.options.state.clearPromptContent(teardownGeneration - 1))
     this.options.state.transitionStatus('closed')
     try {
       this.options.state.emitState()

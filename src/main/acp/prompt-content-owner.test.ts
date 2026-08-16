@@ -34,15 +34,16 @@ describe('AcpPromptContentOwner', () => {
     const root = await createRoot()
     const sourcePath = join(root, 'study.csv')
     await writeFile(sourcePath, 'id,value\n1,2\n')
-    const owner = new AcpPromptContentOwner({
-      fileReferenceResolver: createManagedFileReferenceResolver({
-        grantedRoots: { resolveRoot: async () => ({ path: root, access: 'ro' }) }
-      })
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root, access: 'ro' }) }
     })
+    const resolveReference = vi.spyOn(resolver, 'resolve')
+    const owner = new AcpPromptContentOwner({ fileReferenceResolver: resolver })
 
     const prepared = await owner.prepare({
       appSessionId: 'session-1',
       projectId: 'default-project',
+      connectionGeneration: 2,
       text: 'analyze this file',
       historyImages: [],
       historyUploads: [],
@@ -69,6 +70,10 @@ describe('AcpPromptContentOwner', () => {
     if (resource?.type === 'resource') {
       expect(resource.resource.uri).not.toBe(pathToFileURL(sourcePath).href)
     }
+    expect(resolveReference).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionGeneration: 2 }),
+      expect.anything()
+    )
     owner.clear()
   })
 

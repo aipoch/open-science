@@ -50,6 +50,7 @@ type AcpPromptTurnPlanContext = Readonly<{
 
 type AcpActivatedPromptTurn = Readonly<{
   request: AcpPromptRequest
+  connectionGeneration: number
   mode: AcpPromptTurnMode
   session: ActiveSession
   interaction: AcpPromptSessionInteractionScope
@@ -58,6 +59,7 @@ type AcpActivatedPromptTurn = Readonly<{
 }>
 
 type AcpPromptTurnEnvironment = Readonly<{
+  connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
   bridgeSkillsAvailable: () => boolean
@@ -262,6 +264,7 @@ class AcpPromptTurnWorkflow {
     })
     return this.executeTurn({
       request,
+      connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
       mode,
       session: activeSession,
       interaction,
@@ -337,6 +340,7 @@ class AcpPromptTurnWorkflow {
         turn.plan.authorized ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       prepared = await preparation.prepare({
         request: preparationRequest,
+        connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),
         specialistPrefix: snapshot?.specialistPrefix,

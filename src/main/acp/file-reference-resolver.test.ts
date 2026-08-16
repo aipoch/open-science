@@ -272,6 +272,35 @@ describe('managed file reference resolver', () => {
     await expect(stat(resolved.absolutePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('clears only snapshots owned by the disconnected connection generation', async () => {
+    root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
+    await writeFile(join(root, 'study.csv'), 'data\n')
+    const resolver = createManagedFileReferenceResolver({
+      grantedRoots: { resolveRoot: async () => ({ path: root!, access: 'ro' }) }
+    })
+    const reference = {
+      id: 'linked-1',
+      name: 'study.csv',
+      source: 'linked-folder' as const,
+      rootId: 'root-1',
+      relativePath: 'study.csv'
+    }
+    const oldSnapshot = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1', connectionGeneration: 1 },
+      reference
+    )
+    const successorSnapshot = await resolver.resolve(
+      { projectId: 'default-project', sessionId: 'session-1', connectionGeneration: 2 },
+      reference
+    )
+
+    resolver.clearGeneration(1)
+
+    await expect(stat(oldSnapshot.absolutePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(successorSnapshot.absolutePath)).resolves.toMatchObject({ size: 5 })
+    resolver.clear()
+  })
+
   it('bounds cumulative read-only snapshot storage for a Session', async () => {
     root = await mkdtemp(join(tmpdir(), 'file-reference-resolver-'))
     await writeFile(join(root, 'first.txt'), '123')
