@@ -54,6 +54,8 @@ const NOTEBOOK_CONTROL_RPC_METHODS = [
   'agentsCall',
   'skillsCall',
   'framesCall',
+  'currentModelCall',
+  'listModelsCall',
   'llmCall',
   'viewImageCall'
 ] as const

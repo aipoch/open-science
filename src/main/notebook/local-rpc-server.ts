@@ -58,7 +58,7 @@ import {
   readBoundedJsonBody
 } from '../resource-budget'
 import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-llm-service'
+import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-model-service'
 import type {
   AuthenticatedDelegateCaller,
   DurableDelegatedWork
@@ -230,8 +230,12 @@ type NotebookLocalRpcServerOptions = {
   skillsService?: {
     dispatch(op: unknown, context: TrustedCallingSession): Promise<unknown>
   }
-  hostLlm?: {
-    isAvailable(): Promise<boolean>
+  hostModel?: {
+    isLlmAvailable(): Promise<boolean>
+    isCurrentModelAvailable(sessionId: string): Promise<boolean>
+    isListModelsAvailable(): Promise<boolean>
+    currentModel(sessionId: string): Promise<string>
+    listModels(): Promise<readonly string[]>
     call(
       input: HostLlmCallInput,
       signal?: AbortSignal
@@ -356,6 +360,8 @@ const CONTROL_RPC_METHODS = new Set([
   'delegatedWorkCall',
   'skillsCall',
   'llmCall',
+  'currentModelCall',
+  'listModelsCall',
   'viewImageCall',
   'requestUserInput'
 ])
@@ -443,7 +449,7 @@ class NotebookLocalRpcServer {
   private readonly agentsService: NotebookLocalRpcServerOptions['agentsService']
   private readonly delegatedWorkService: NotebookLocalRpcServerOptions['delegatedWorkService']
   private readonly skillsService: NotebookLocalRpcServerOptions['skillsService']
-  private readonly hostLlm: NotebookLocalRpcServerOptions['hostLlm']
+  private readonly hostModel: NotebookLocalRpcServerOptions['hostModel']
   private readonly hostViewImage: NotebookLocalRpcServerOptions['hostViewImage']
   private server: Server | undefined
   private serverLifecycle: NotebookRpcServerLifecycle | undefined
@@ -493,7 +499,7 @@ class NotebookLocalRpcServer {
     this.agentsService = options.agentsService
     this.delegatedWorkService = options.delegatedWorkService
     this.skillsService = options.skillsService
-    this.hostLlm = options.hostLlm
+    this.hostModel = options.hostModel
     this.hostViewImage = options.hostViewImage
   }
 
@@ -1280,7 +1286,11 @@ class NotebookLocalRpcServer {
         artifacts: Boolean(this.hostArtifacts),
         lineage: Boolean(this.hostLineage),
         frames: Boolean(this.hostFrames),
-        llm: Boolean(this.hostLlm) && (await this.hostLlm!.isAvailable()),
+        llm: Boolean(this.hostModel) && (await this.hostModel!.isLlmAvailable()),
+        currentModel:
+          Boolean(this.hostModel) &&
+          (await this.hostModel!.isCurrentModelAvailable(sessionBinding.sessionId)),
+        listModels: Boolean(this.hostModel) && (await this.hostModel!.isListModelsAvailable()),
         viewImage:
           Boolean(this.hostViewImage) &&
           (await this.hostViewImage!.isAvailable({ sessionId: sessionBinding.sessionId })),
@@ -1395,8 +1405,28 @@ class NotebookLocalRpcServer {
           if (method === 'framesCall' && !sessionBinding.isControl) {
             throw new RpcHttpError(403, 'host.frames requires a control-plane REPL capability.')
           }
-          if (method === 'llmCall' && !sessionBinding.isControl) {
-            throw new RpcHttpError(403, 'host.llm requires a control-plane REPL capability.')
+          if (
+            (method === 'llmCall' ||
+              method === 'currentModelCall' ||
+              method === 'listModelsCall') &&
+            !sessionBinding.isControl
+          ) {
+            const hostMethod =
+              method === 'currentModelCall'
+                ? 'host.currentModel'
+                : method === 'listModelsCall'
+                  ? 'host.listModels'
+                  : 'host.llm'
+            throw new RpcHttpError(403, `${hostMethod} requires a control-plane REPL capability.`)
+          }
+          if (
+            (method === 'currentModelCall' || method === 'listModelsCall') &&
+            Object.keys(params).length > 0
+          ) {
+            throw new RpcHttpError(
+              400,
+              `${method === 'currentModelCall' ? 'host.currentModel' : 'host.listModels'} RPC params must be empty.`
+            )
           }
           if (method === 'viewImageCall') {
             if (!sessionBinding.isControl || !sessionBinding.activeControlInvocation) {
@@ -1840,11 +1870,25 @@ class NotebookLocalRpcServer {
     }
 
     if (method === 'llmCall') {
-      if (!this.hostLlm) throw new Error('host.llm is not configured.')
+      if (!this.hostModel) throw new Error('host.llm is not configured.')
       const { sessionId: _sessionId, projectId: _projectId, ...input } = params
       void _sessionId
       void _projectId
-      return this.hostLlm.call(input as HostLlmCallInput, signal)
+      return this.hostModel.call(input as HostLlmCallInput, signal)
+    }
+
+    if (method === 'currentModelCall') {
+      if (!this.hostModel) throw new Error('host.currentModel is not configured.')
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      if (!sessionId) {
+        throw new RpcHttpError(403, 'host.currentModel trusted Session identity is incomplete.')
+      }
+      return this.hostModel.currentModel(sessionId)
+    }
+
+    if (method === 'listModelsCall') {
+      if (!this.hostModel) throw new Error('host.listModels is not configured.')
+      return this.hostModel.listModels()
     }
 
     if (method === 'viewImageCall') {

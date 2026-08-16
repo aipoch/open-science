@@ -700,6 +700,8 @@ describe('ACP session capability owner', () => {
       'agentsCall',
       'skillsCall',
       'framesCall',
+      'currentModelCall',
+      'listModelsCall',
       'llmCall',
       'viewImageCall'
     ])
@@ -759,6 +761,8 @@ describe('ACP session capability owner', () => {
           'lineageCall',
           'skillsCall',
           'framesCall',
+          'currentModelCall',
+          'listModelsCall',
           'llmCall'
         ])
       )

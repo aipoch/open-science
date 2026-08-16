@@ -137,7 +137,7 @@ import { runtimeRoot } from './notebook/runtime-paths'
 import { HostArtifactsService } from './notebook/host-artifacts-service'
 import { HostLineageService } from './notebook/host-lineage-service'
 import { HostFramesService } from './notebook/host-frames-service'
-import { HostLlmService } from './notebook/host-llm-service'
+import { HostModelService } from './notebook/host-model-service'
 import { HostViewImageService } from './notebook/host-view-image-service'
 import type { NotebookEnvironmentManager } from './notebook/runtime-service'
 import { parseArtifactVersionLocator } from '../shared/artifact-provenance'
@@ -1617,8 +1617,16 @@ const createApplicationModules = async (
     onPublishedSkillsChanged: requestSkillCatalogRefresh
   })
   const hostLlmLog = createLogger('notebook:host-llm')
-  const hostLlmService = new HostLlmService({
+  const hostModelService = new HostModelService({
     captureTarget: () => settingsService.captureActiveExplicitAgentBackendTarget(),
+    captureSessionModel: (sessionId) => runtimeRef.current?.captureSessionModel(sessionId),
+    captureModelCatalog: async () => {
+      const settings = await settingsService.getSettingsView()
+      return {
+        providers: settings.providers,
+        claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId
+      }
+    },
     runner: new RestrictedInferenceRunner({
       appVersion: app.getVersion(),
       configRoot,
@@ -1706,18 +1714,18 @@ const createApplicationModules = async (
       agentsService,
       delegatedWorkService: delegatedWork.host,
       skillsService: hostSkillsService,
-      hostLlm: hostLlmService,
+      hostModel: hostModelService,
       hostViewImage: hostViewImageService
     }),
     createNotebookLocalRpcModule
   )
   // Reverse module disposal cancels active inference before the RPC server waits for its handlers.
-  await modules.add(hostLlmService, (service) => ({
-    name: 'host-llm-service',
+  await modules.add(hostModelService, (service) => ({
+    name: 'host-model-service',
     capability: service,
     dispose: () => service.shutdown()
   }))
-  void hostLlmService
+  void hostModelService
     .sweepStaleProfiles()
     .catch((error) =>
       hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))

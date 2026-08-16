@@ -1040,6 +1040,8 @@ const HOST_CAPABILITY_KNOWN_KEYS = Object.freeze([
   'lineage',
   'frames',
   'llm',
+  'currentModel',
+  'listModels',
   'viewImage',
   'children',
   'collect',
@@ -1090,6 +1092,42 @@ async function hostCapabilities(...args) {
     throw new Error('host.capabilities returned an invalid capability projection')
   }
   return Object.freeze(Object.fromEntries(Object.entries(result)))
+}
+
+async function hostModelIntrospectionRpc(method, label) {
+  if (!RPC_ENDPOINT) throw new Error(`${label} is unavailable: RPC endpoint not set`)
+  const res = await capturedRpcFetch(RPC_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (RPC_TOKEN || '') },
+    body: JSON.stringify({ method, params: {} })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) throw new Error(body.error || `${label} HTTP ` + res.status)
+  return body.result
+}
+
+async function hostCurrentModel(...args) {
+  if (args.length !== 0) throw new TypeError('host.currentModel accepts no arguments')
+  const result = await hostModelIntrospectionRpc('currentModelCall', 'host.currentModel')
+  if (typeof result !== 'string' || !result.trim() || result === 'provider-default') {
+    throw new Error('host.currentModel returned an invalid model id')
+  }
+  return result
+}
+
+async function hostListModels(...args) {
+  if (args.length !== 0) throw new TypeError('host.listModels accepts no arguments')
+  const result = await hostModelIntrospectionRpc('listModelsCall', 'host.listModels')
+  if (
+    !Array.isArray(result) ||
+    result.length === 0 ||
+    result.some((model) => typeof model !== 'string' || !model.trim()) ||
+    new Set(result).size !== result.length ||
+    result.some((model, index) => index > 0 && result[index - 1] > model)
+  ) {
+    throw new Error('host.listModels returned an invalid model catalog')
+  }
+  return Object.freeze([...result])
 }
 
 const HOST_LLM_STOP_REASONS = new Set([
@@ -3166,6 +3204,8 @@ const sandbox = {
   host: {
     help: hostHelp,
     capabilities: hostCapabilities,
+    currentModel: hostCurrentModel,
+    listModels: hostListModels,
     llm: hostLlm,
     artifacts: hostArtifacts,
     artifactPath: hostArtifactPath,

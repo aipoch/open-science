@@ -156,13 +156,13 @@ describe('Notebook application composition', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
-  it('registers Host LLM after local RPC so reverse disposal cancels inference first', () => {
+  it('registers Host Model after local RPC so reverse disposal cancels inference first', () => {
     const source = readFileSync(resolve(__dirname, '../ipc.ts'), 'utf8')
     const localRpcRegistration = source.indexOf('const notebookRpcServer = await modules.add(')
-    const hostLlmRegistration = source.indexOf("name: 'host-llm-service'")
+    const hostModelRegistration = source.indexOf("name: 'host-model-service'")
 
     expect(localRpcRegistration).toBeGreaterThan(-1)
-    expect(hostLlmRegistration).toBeGreaterThan(localRpcRegistration)
+    expect(hostModelRegistration).toBeGreaterThan(localRpcRegistration)
   })
 
   it('closes local RPC once when later composition rolls back', async () => {

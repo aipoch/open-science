@@ -14,7 +14,7 @@ JavaScript control REPL; Python and R data kernels do not receive it.
 const caps = await host.capabilities()
 ```
 
-The current project-native result contains 17 known boolean keys:
+The current project-native result contains 19 known boolean keys:
 
 - `mcp` gates `host.mcp` connector calls.
 - `compute` gates the `host.compute` namespace.
@@ -24,6 +24,11 @@ The current project-native result contains 17 known boolean keys:
 - `lineage` gates the read-only `host.lineage` namespace.
 - `frames` gates the read-only `host.frames` namespace.
 - `llm` gates `host.llm` one-shot, tool-less inference.
+- `currentModel` gates `host.currentModel()`, which returns the calling Session's exact current
+  model id and fails when the live backend cannot establish one.
+- `listModels` gates `host.listModels()`, which returns the frozen, stable-sorted configured model
+  ids for the current Host LLM Provider and framework. It never refreshes over the network or merges
+  ids across Providers.
 - `viewImage` gates transient `host.viewImage(source, options?)` image attachment from an Artifact or
   Upload Version in the current Project, or a path relative to the current execution workspace. For
   a generated file, pass the same relative path used to save it.
@@ -53,6 +58,14 @@ if (caps.compute === true) {
 
 if (caps.llm === true) {
   const result = await host.llm('Summarize the current findings.')
+}
+
+if (caps.currentModel === true) {
+  const sessionModel = await host.currentModel()
+}
+
+if (caps.listModels === true) {
+  const hostLlmModels = await host.listModels()
 }
 
 if (caps.viewImage === true) {

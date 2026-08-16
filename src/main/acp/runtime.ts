@@ -566,6 +566,17 @@ class AcpRuntime {
     return this.backend
   }
 
+  captureSessionModel(
+    sessionId: string
+  ): Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined {
+    const aggregate = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
+    if (!aggregate) return undefined
+    return Object.freeze({
+      backend: this.backend,
+      ...(aggregate.appliedModel ? { appliedModel: aggregate.appliedModel } : {})
+    })
+  }
+
   callSessionPlan(input: AcpSessionPlanCall): Promise<unknown> {
     return this.sessionPlanWorkflow.call(input)
   }

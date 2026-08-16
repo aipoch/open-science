@@ -569,7 +569,7 @@ describe('Settings backend ownership architecture', () => {
       'src/main/acp/artifact-code-reconstruction-runner.ts',
       'src/main/acp/restricted-inference-runner.ts',
       'src/main/artifacts/code-reconstruction.ts',
-      'src/main/notebook/host-llm-service.ts',
+      'src/main/notebook/host-model-service.ts',
       'src/main/reviewer/model-runtime-owner.ts',
       'src/main/settings/reviewer-model-owner.ts',
       'src/main/settings/service.ts',
@@ -648,6 +648,8 @@ describe('Settings backend ownership architecture', () => {
       'delegatedWorkCall',
       'skillsCall',
       'llmCall',
+      'currentModelCall',
+      'listModelsCall',
       'viewImageCall',
       'requestUserInput'
     ])

@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { CODEX_SHARED_PROVIDER_ID } from '../../shared/settings'
+import {
+  CODEX_SHARED_PROVIDER_ID,
+  type ClaudeSubscriptionProviderId,
+  type ProviderView
+} from '../../shared/settings'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
+import { getAgentFramework } from '../agent-framework'
+import type { AcpBackendGenerationView } from '../acp/backend-generation-owner'
 import {
   DEFAULT_OUTPUT_LIMIT_BYTES,
   RestrictedInferenceError,
@@ -13,8 +19,8 @@ import {
   MAX_BATCH_ITEMS,
   MAX_CONCURRENCY,
   MAX_PROMPT_BYTES,
-  HostLlmService
-} from './host-llm-service'
+  HostModelService
+} from './host-model-service'
 
 const target: ExplicitAgentBackendTarget = {
   frameworkId: 'claude-code',
@@ -34,6 +40,25 @@ const inferenceResult = (
   ...overrides
 })
 
+const provider = (
+  id: string,
+  models: string[],
+  overrides: Partial<ProviderView> = {}
+): ProviderView => ({
+  id,
+  type: 'custom',
+  name: id,
+  apiEndpoints: ['anthropic', 'openai', 'responses'],
+  baseUrl: 'https://example.test/v1',
+  model: models[0],
+  models,
+  supportsImageInput: false,
+  hasKey: true,
+  needsKey: false,
+  lastValidatedAt: 1,
+  ...overrides
+})
+
 type RunnerHarness = Pick<
   RestrictedInferenceRunner,
   'run' | 'shutdown' | 'supportsTarget' | 'sweepStaleProfiles'
@@ -48,9 +73,23 @@ const makeService = (
   run: (
     input: Parameters<RestrictedInferenceRunner['run']>[0]
   ) => Promise<RestrictedInferenceResult>,
-  capturedTarget: ExplicitAgentBackendTarget = target
+  capturedTarget: ExplicitAgentBackendTarget = target,
+  captureSessionModel: () =>
+    Readonly<{ backend: AcpBackendGenerationView; appliedModel?: string }> | undefined = () => ({
+    backend: {
+      framework: getAgentFramework('claude-code'),
+      session: { modelRequired: false },
+      prompt: { systemPromptAppends: [] },
+      context: { model: 'claude-session-model', supportsImageInput: false },
+      adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+    }
+  }),
+  captureModelCatalog: () => Promise<{
+    providers: readonly ProviderView[]
+    claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
+  }> = async () => ({ providers: [provider('provider-a', ['model-a'])] })
 ): {
-  service: HostLlmService
+  service: HostModelService
   runner: RunnerHarness
   captureTarget: ReturnType<typeof vi.fn>
 } => {
@@ -64,13 +103,167 @@ const makeService = (
     )
   }
   return {
-    service: new HostLlmService({ captureTarget, runner }),
+    service: new HostModelService({
+      captureTarget,
+      captureSessionModel,
+      captureModelCatalog,
+      runner
+    }),
     runner,
     captureTarget
   }
 }
 
-describe('HostLlmService', () => {
+describe('HostModelService', () => {
+  it('returns the exact model projected by the calling Session backend', async () => {
+    const { service } = makeService(async () => inferenceResult('unused'))
+    await expect(service.currentModel('session-a')).resolves.toBe('claude-session-model')
+    await expect(service.isCurrentModelAvailable('session-a')).resolves.toBe(true)
+  })
+
+  it.each([
+    ['claude-code', 'claude-code', 'claude-anthropic'],
+    ['opencode', 'opencode', 'opencode-openai'],
+    ['codex-response', 'codex', 'codex-responses'],
+    ['codex-bridge', 'codex', 'codex-bridge']
+  ] as const)('projects the exact %s Session model', async (_label, frameworkId, modelRoute) => {
+    const { service } = makeService(
+      async () => inferenceResult('unused'),
+      target,
+      () => ({
+        backend: {
+          framework: getAgentFramework(frameworkId),
+          modelRoute,
+          session: { modelRequired: frameworkId === 'codex' },
+          prompt: { systemPromptAppends: [] },
+          context: { model: `${modelRoute}-model`, supportsImageInput: false },
+          adapter: {
+            nativeMcpEnabled: modelRoute !== 'codex-bridge',
+            bridgeMcpAliasesEnabled: modelRoute === 'codex-bridge'
+          }
+        },
+        ...(frameworkId === 'opencode' ? { appliedModel: `${modelRoute}-model` } : {})
+      })
+    )
+
+    await expect(service.currentModel('session-a')).resolves.toBe(`${modelRoute}-model`)
+  })
+
+  it('fails closed while OpenCode has not confirmed the configured Session model', async () => {
+    const { service } = makeService(
+      async () => inferenceResult('unused'),
+      target,
+      () => ({
+        backend: {
+          framework: getAgentFramework('opencode'),
+          modelRoute: 'opencode-openai',
+          session: { model: 'configured-model', modelRequired: false },
+          prompt: { systemPromptAppends: [] },
+          context: { model: 'configured-model', supportsImageInput: false },
+          adapter: {
+            nativeMcpEnabled: true,
+            bridgeMcpAliasesEnabled: false
+          }
+        }
+      })
+    )
+
+    await expect(service.currentModel('session-a')).rejects.toThrow(
+      'host.currentModel is unavailable because the Session model is unknown.'
+    )
+    await expect(service.isCurrentModelAvailable('session-a')).resolves.toBe(false)
+  })
+
+  it('fails explicitly when the calling Session has no exact model id', async () => {
+    const { service } = makeService(
+      async () => inferenceResult('unused'),
+      target,
+      () => undefined
+    )
+
+    await expect(service.currentModel('missing-session')).rejects.toThrow(
+      'host.currentModel is unavailable because the Session model is unknown.'
+    )
+    await expect(service.isCurrentModelAvailable('missing-session')).resolves.toBe(false)
+  })
+
+  it('returns a sorted deduplicated catalog scoped to the active Host LLM Provider', async () => {
+    const { service } = makeService(
+      async () => inferenceResult('unused'),
+      target,
+      undefined,
+      async () => ({
+        providers: [
+          provider('other-provider', ['other-model']),
+          provider('provider-a', ['model-z', 'model-a', 'model-z'])
+        ]
+      })
+    )
+    const models = await service.listModels()
+
+    expect(models).toEqual(['model-a', 'model-z'])
+    expect(Object.isFrozen(models)).toBe(true)
+  })
+
+  it('keeps listModels available for a configured Codex subscription when llm is unavailable', async () => {
+    const codexTarget: ExplicitAgentBackendTarget = {
+      frameworkId: 'codex',
+      providerId: CODEX_SHARED_PROVIDER_ID,
+      model: { kind: 'provider-default' },
+      reasoningEffort: 'default'
+    }
+    const { service } = makeService(
+      async () => inferenceResult('unused'),
+      codexTarget,
+      undefined,
+      async () => ({
+        providers: [
+          provider(CODEX_SHARED_PROVIDER_ID, ['gpt-5', 'gpt-5-mini'], {
+            type: 'codex-shared',
+            apiEndpoints: ['responses'],
+            hasKey: false
+          })
+        ]
+      })
+    )
+
+    await expect(service.isLlmAvailable()).resolves.toBe(false)
+    await expect(service.listModels()).resolves.toEqual(['gpt-5', 'gpt-5-mini'])
+    await expect(service.isListModelsAvailable()).resolves.toBe(true)
+  })
+
+  it('fails listModels explicitly when the active target Provider is absent from the catalog', async () => {
+    const { service } = makeService(
+      async () => inferenceResult('unused'),
+      target,
+      undefined,
+      async () => ({ providers: [provider('other-provider', ['model-a'])] })
+    )
+
+    await expect(service.listModels()).rejects.toThrow(
+      'host.listModels is unavailable because the active Host LLM model catalog cannot be resolved.'
+    )
+    await expect(service.isListModelsAvailable()).resolves.toBe(false)
+  })
+
+  it('fails listModels explicitly when the active Provider has not been validated', async () => {
+    const unvalidatedProvider = {
+      ...provider('provider-a', ['model-a']),
+      lastValidatedAt: undefined
+    }
+    const { service } = makeService(
+      async () => inferenceResult('unused'),
+      target,
+      undefined,
+      async () => ({ providers: [unvalidatedProvider] })
+    )
+
+    await expect(service.listModels()).rejects.toThrow(
+      'host.listModels is unavailable because the active Host LLM model catalog cannot be resolved.'
+    )
+    await expect(service.isListModelsAvailable()).resolves.toBe(false)
+  })
+
   it('accepts a string or exact prompt object and returns a deeply frozen projection', async () => {
     const { service, runner, captureTarget } = makeService(async ({ prompt }) =>
       inferenceResult(`answer:${prompt}`, {
@@ -269,7 +462,7 @@ describe('HostLlmService', () => {
       unsupported
     )
 
-    await expect(service.isAvailable()).resolves.toBe(false)
+    await expect(service.isLlmAvailable()).resolves.toBe(false)
     await expect(service.call({ request: 'hello' })).rejects.toThrow(
       'selected backend cannot enforce tool-less execution'
     )
@@ -327,11 +520,13 @@ describe('HostLlmService', () => {
       finishCapture = resolve
     })
     const { runner } = makeService(async ({ prompt }) => inferenceResult(prompt))
-    const service = new HostLlmService({
+    const service = new HostModelService({
       captureTarget: vi.fn(() => captured),
+      captureSessionModel: () => undefined,
+      captureModelCatalog: async () => ({ providers: [] }),
       runner
     })
-    const availability = service.isAvailable()
+    const availability = service.isLlmAvailable()
 
     await service.shutdown()
     finishCapture(target)

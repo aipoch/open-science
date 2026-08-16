@@ -7,14 +7,25 @@ const HOST_SDK_SUBAGENT_OPERATION_IDS = HOST_CAPABILITY_OPERATION_KEYS.map(
   (operation) => `host.${operation}` as const
 ) as readonly `host.${HostCapabilityOperationKey}`[]
 const HOST_SDK_OPERATION_IDS = Object.freeze(
-  [...HOST_SDK_SUBAGENT_OPERATION_IDS, 'host.viewImage'].sort()
+  [
+    ...HOST_SDK_SUBAGENT_OPERATION_IDS,
+    'host.currentModel',
+    'host.listModels',
+    'host.viewImage'
+  ].sort()
 )
 
 type HostSdkSubagentOperation = HostCapabilityOperationKey
 
 type HostSdkHelpContext = Readonly<{
   callerRole: 'main' | 'delegate'
-  capabilities: Readonly<Record<HostSdkSubagentOperation, boolean> & { viewImage?: boolean }>
+  capabilities: Readonly<
+    Record<HostSdkSubagentOperation, boolean> & {
+      currentModel?: boolean
+      listModels?: boolean
+      viewImage?: boolean
+    }
+  >
 }>
 
 type HostSdkAvailability =
@@ -735,10 +746,57 @@ const VIEW_IMAGE_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
       : { status: 'unavailable', reason: 'host.viewImage requires a certified visual route.' }
 }
 
+const CURRENT_MODEL_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.currentModel',
+  path: 'host.currentModel',
+  aliases: ['currentModel'],
+  summary: "Return the calling Session's exact current model id.",
+  call_forms: [{ signature: 'await host.currentModel()', accepts: 'no_arguments' }],
+  request: NO_OPTIONS,
+  options: NO_OPTIONS,
+  returns: { type: 'string', description: 'Exact model id for the token-bound Session.' },
+  constraints: [
+    'JavaScript control REPL only; caller-supplied Session identity is never accepted.',
+    'Fails when the live Session backend cannot establish an exact model id.'
+  ],
+  examples: [{ title: 'Inspect the Session model', code: 'await host.currentModel()' }],
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.currentModel
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: 'The calling Session model is unavailable.' }
+}
+
+const LIST_MODELS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
+  kind: 'operation',
+  id: 'host.listModels',
+  path: 'host.listModels',
+  aliases: ['listModels'],
+  summary: 'List configured models for the current Host LLM Provider and framework.',
+  call_forms: [{ signature: 'await host.listModels()', accepts: 'no_arguments' }],
+  request: NO_OPTIONS,
+  options: NO_OPTIONS,
+  returns: {
+    type: 'string[]',
+    description: 'Stable-sorted, deduplicated, frozen model ids.'
+  },
+  constraints: [
+    'Uses the existing configured and validated catalog; never refreshes over the network.',
+    'Does not merge model ids across Providers.'
+  ],
+  examples: [{ title: 'Inspect Host LLM models', code: 'await host.listModels()' }],
+  resolveAvailability: ({ capabilities }) =>
+    capabilities.listModels
+      ? { status: 'available' }
+      : { status: 'unavailable', reason: 'The active Host LLM model catalog is unavailable.' }
+}
+
 const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
   CHILDREN_DESCRIPTOR,
   COLLECT_DESCRIPTOR,
+  CURRENT_MODEL_DESCRIPTOR,
   DELEGATE_DESCRIPTOR,
+  LIST_MODELS_DESCRIPTOR,
   MESSAGE_RECEIPT_DESCRIPTOR,
   RESOLVE_MESSAGE_DESCRIPTOR,
   SEND_FRAME_MESSAGE_DESCRIPTOR,
@@ -748,7 +806,9 @@ const OPERATION_DESCRIPTORS: readonly HostSdkHelpOperationDescriptor[] = [
 ]
 
 const registeredOperationIds = [...OPERATION_DESCRIPTORS]
-  .filter(({ id }) => id !== 'host.viewImage')
+  .filter(({ id }) =>
+    HOST_SDK_SUBAGENT_OPERATION_IDS.includes(id as (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number])
+  )
   .map(({ id }) => id)
   .sort() as (typeof HOST_SDK_SUBAGENT_OPERATION_IDS)[number][]
 if (JSON.stringify(registeredOperationIds) !== JSON.stringify(HOST_SDK_SUBAGENT_OPERATION_IDS)) {

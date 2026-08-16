@@ -56,7 +56,14 @@ describe('capabilitiesCall RPC', () => {
       hostArtifacts: {} as never,
       hostLineage: {} as never,
       hostFrames: {} as never,
-      hostLlm: { isAvailable: async () => true, call: async () => ({}) as never }
+      hostModel: {
+        isLlmAvailable: async () => true,
+        isCurrentModelAvailable: async () => true,
+        isListModelsAvailable: async () => true,
+        currentModel: async () => 'model-a',
+        listModels: async () => ['model-a'],
+        call: async () => ({}) as never
+      }
     })
     const connection = await server.issueControlConnection(
       'trusted-session',
@@ -81,6 +88,8 @@ describe('capabilitiesCall RPC', () => {
         lineage: true,
         frames: true,
         llm: true,
+        currentModel: true,
+        listModels: true,
         viewImage: false,
         delegate: false,
         children: false,
@@ -116,6 +125,8 @@ describe('capabilitiesCall RPC', () => {
           lineage: false,
           frames: false,
           llm: false,
+          currentModel: false,
+          listModels: false,
           viewImage: false
         }
       }
@@ -167,7 +178,14 @@ describe('capabilitiesCall RPC', () => {
   it('returns false when host.llm is configured but the active route is unavailable', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      hostLlm: { isAvailable: async () => false, call: async () => ({}) as never }
+      hostModel: {
+        isLlmAvailable: async () => false,
+        isCurrentModelAvailable: async () => true,
+        isListModelsAvailable: async () => true,
+        currentModel: async () => 'model-a',
+        listModels: async () => ['model-a'],
+        call: async () => ({}) as never
+      }
     })
     const connection = await server.issueControlConnection(
       'trusted-session',
@@ -176,14 +194,21 @@ describe('capabilitiesCall RPC', () => {
     )
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
-      payload: { result: { llm: false } }
+      payload: { result: { llm: false, currentModel: true, listModels: true } }
     })
   })
 
   it('does not advertise host.llm through a non-control session capability', async () => {
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      hostLlm: { isAvailable: async () => true, call: async () => ({}) as never }
+      hostModel: {
+        isLlmAvailable: async () => true,
+        isCurrentModelAvailable: async () => true,
+        isListModelsAvailable: async () => true,
+        currentModel: async () => 'model-a',
+        listModels: async () => ['model-a'],
+        call: async () => ({}) as never
+      }
     })
     const connection = await server.issueSessionConnection(
       'trusted-session',
@@ -192,7 +217,7 @@ describe('capabilitiesCall RPC', () => {
     )
 
     await expect(callCapabilities(connection)).resolves.toMatchObject({
-      payload: { result: { llm: false } }
+      payload: { result: { llm: false, currentModel: false, listModels: false } }
     })
   })
 

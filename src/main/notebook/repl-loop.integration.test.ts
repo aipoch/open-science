@@ -1521,6 +1521,120 @@ describe('repl_loop local RPC transport', () => {
     }
   }, 60_000)
 
+  it('validates and freezes Host model introspection results', async () => {
+    const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      let body = ''
+      request.on('data', (chunk) => (body += chunk))
+      request.on('end', () => {
+        const parsed = JSON.parse(body) as { method?: string; params?: Record<string, unknown> }
+        requests.push(parsed)
+        const result = parsed.method === 'currentModelCall' ? 'model-b' : ['model-a', 'model-b']
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-host-model-introspection-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      const result = await send(
+        'const current = await host.currentModel(); const models = await host.listModels(); ' +
+          'return JSON.stringify({ current, models, frozen: Object.isFrozen(models) })'
+      )
+
+      expect(result.error).toBeNull()
+      expect(JSON.parse(result.result ?? '{}')).toEqual({
+        current: 'model-b',
+        models: ['model-a', 'model-b'],
+        frozen: true
+      })
+      expect(requests).toEqual([
+        { method: 'currentModelCall', params: {} },
+        { method: 'listModelsCall', params: {} }
+      ])
+
+      const extraCurrent = await send(
+        "try { await host.currentModel('forged'); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(extraCurrent.result).toBe('TypeError: host.currentModel accepts no arguments')
+      expect(requests).toHaveLength(2)
+
+      const extraList = await send(
+        "try { await host.listModels({ providerId: 'forged' }); return 'no error' } " +
+          "catch (error) { return error.name + ': ' + error.message }"
+      )
+      expect(extraList.result).toBe('TypeError: host.listModels accepts no arguments')
+      expect(requests).toHaveLength(2)
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
+  it('rejects malformed Host model introspection results', async () => {
+    const results: unknown[] = [
+      '',
+      'provider-default',
+      [],
+      ['model-b', 'model-a'],
+      ['model-a', 'model-a'],
+      ['model-a', 42]
+    ]
+    const server = createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        response
+          .writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ result: results.shift() }))
+      })
+    })
+    const connection = await listenForLocalRpc(server, {
+      name: 'repl-loop-host-model-introspection-invalid-test',
+      transport: 'pipe'
+    })
+    const { child, send } = startLoop({
+      OPEN_SCIENCE_MCP_RPC_ENDPOINT: connection.endpoint,
+      OPEN_SCIENCE_MCP_RPC_SOCKET_PATH: connection.socketPath,
+      OPEN_SCIENCE_MCP_RPC_TOKEN: 'test-token'
+    })
+
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        const current = await send(
+          "try { await host.currentModel(); return 'no error' } " +
+            'catch (error) { return error.message }'
+        )
+        expect(current.result).toBe('host.currentModel returned an invalid model id')
+      }
+
+      for (let index = 0; index < 4; index += 1) {
+        const models = await send(
+          "try { await host.listModels(); return 'no error' } " +
+            'catch (error) { return error.message }'
+        )
+        expect(models.result).toBe('host.listModels returned an invalid model catalog')
+      }
+      expect(results).toEqual([])
+    } finally {
+      child.kill()
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  }, 60_000)
+
   it('validates and deeply freezes host.llm single and batch results', async () => {
     const requests: Array<{ method?: string; params?: Record<string, unknown> }> = []
     const server = createServer((request, response) => {

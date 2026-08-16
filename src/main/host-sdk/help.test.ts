@@ -92,6 +92,28 @@ describe('Host SDK help', () => {
     expect(request).not.toMatch(/Notebook/u)
   })
 
+  it('documents the zero-argument model introspection contracts independently', () => {
+    const capabilities = {
+      ...mainContext.capabilities,
+      currentModel: true,
+      listModels: false
+    }
+    expect(hostSdkHelp.query('currentModel', { ...mainContext, capabilities })).toMatchObject({
+      kind: 'operation',
+      id: 'host.currentModel',
+      availability: { status: 'available' },
+      call_forms: [{ signature: 'await host.currentModel()' }],
+      returns: { type: 'string' }
+    })
+    expect(hostSdkHelp.query('listModels', { ...mainContext, capabilities })).toMatchObject({
+      kind: 'operation',
+      id: 'host.listModels',
+      availability: { status: 'unavailable' },
+      call_forms: [{ signature: 'await host.listModels()' }],
+      returns: { type: 'string[]' }
+    })
+  })
+
   it('keeps the published REPL subagent surface and Help registry in lockstep', () => {
     const source = readFileSync(resolve(process.cwd(), 'resources/notebook/repl_loop.js'), 'utf8')
     const match = source.match(/const subagentHostOperations = Object\.freeze\(\{([\s\S]*?)\n\}\)/)

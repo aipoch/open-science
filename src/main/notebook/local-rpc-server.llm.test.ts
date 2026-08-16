@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { HostLlmCallInput, HostLlmResult } from './host-llm-service'
+import type { HostLlmCallInput, HostLlmResult } from './host-model-service'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 
 let server: NotebookLocalRpcServer | undefined
@@ -29,12 +29,16 @@ describe('llmCall RPC', () => {
       (input: HostLlmCallInput, signal?: AbortSignal) => Promise<HostLlmResult>
     >(async () => ({ text: 'PONG', model: 'model-a', stopReason: 'end_turn' }))
     const hostLlm = {
-      isAvailable: vi.fn(async () => true),
+      isLlmAvailable: vi.fn(async () => true),
+      isCurrentModelAvailable: vi.fn(async () => true),
+      isListModelsAvailable: vi.fn(async () => true),
+      currentModel: vi.fn(async () => 'model-a'),
+      listModels: vi.fn(async () => ['model-a']),
       call: hostLlmCall
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      hostLlm
+      hostModel: hostLlm
     })
     const control = await server.issueControlConnection(
       'trusted-session',
@@ -78,7 +82,11 @@ describe('llmCall RPC', () => {
   it('aborts host inference when the RPC client disconnects', async () => {
     let observedSignal: AbortSignal | undefined
     const hostLlm = {
-      isAvailable: vi.fn(async () => true),
+      isLlmAvailable: vi.fn(async () => true),
+      isCurrentModelAvailable: vi.fn(async () => true),
+      isListModelsAvailable: vi.fn(async () => true),
+      currentModel: vi.fn(async () => 'model-a'),
+      listModels: vi.fn(async () => ['model-a']),
       call: vi.fn(
         async (_input: unknown, signal?: AbortSignal) =>
           new Promise<never>((_resolve, reject) => {
@@ -91,7 +99,7 @@ describe('llmCall RPC', () => {
     }
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      hostLlm
+      hostModel: hostLlm
     })
     const control = await server.issueControlConnection(
       'trusted-session',

@@ -18,6 +18,8 @@ const allServices = {
   lineage: true,
   frames: true,
   llm: true,
+  currentModel: true,
+  listModels: true,
   viewImage: true,
   delegate: true,
   children: true,
@@ -44,7 +46,7 @@ const project = (
   })
 
 describe('Host capability projection', () => {
-  it('owns the complete 17-key project-native catalog', () => {
+  it('owns the complete 19-key project-native catalog', () => {
     expect(HOST_CAPABILITY_KEYS).toEqual([
       'mcp',
       'compute',
@@ -54,6 +56,8 @@ describe('Host capability projection', () => {
       'lineage',
       'frames',
       'llm',
+      'currentModel',
+      'listModels',
       'viewImage',
       'children',
       'collect',
@@ -99,19 +103,21 @@ describe('Host capability projection', () => {
     })
   })
 
-  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'])
-  ('keeps the shared Main projection stable for %s', () => {
-    expect(project()).toMatchObject({
-      delegate: true,
-      children: true,
-      collect: true,
-      stopChild: true,
-      sendFrameMessage: true,
-      messageReceipt: true,
-      resolveMessage: true,
-      submitOutput: false
-    })
-  })
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'])(
+    'keeps the shared Main projection stable for %s',
+    () => {
+      expect(project()).toMatchObject({
+        delegate: true,
+        children: true,
+        collect: true,
+        stopChild: true,
+        sendFrameMessage: true,
+        messageReceipt: true,
+        resolveMessage: true,
+        submitOutput: false
+      })
+    }
+  )
 
   it('requires each operation route and service instead of advertising an uncallable method', () => {
     expect(
@@ -130,8 +136,13 @@ describe('Host capability projection', () => {
   })
 
   it('keeps the bundled JavaScript known catalog aligned without a runtime cross-layer import', () => {
-    const source = readFileSync(resolve(__dirname, '../../../resources/notebook/repl_loop.js'), 'utf8')
-    const match = source.match(/const HOST_CAPABILITY_KNOWN_KEYS = Object\.freeze\(\[([\s\S]*?)\]\)/)
+    const source = readFileSync(
+      resolve(__dirname, '../../../resources/notebook/repl_loop.js'),
+      'utf8'
+    )
+    const match = source.match(
+      /const HOST_CAPABILITY_KNOWN_KEYS = Object\.freeze\(\[([\s\S]*?)\]\)/
+    )
     expect(match?.[1].match(/'[^']+'/g)?.map((key) => key.slice(1, -1))).toEqual(
       HOST_CAPABILITY_KEYS
     )
