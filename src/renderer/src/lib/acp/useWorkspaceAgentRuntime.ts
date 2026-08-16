@@ -56,6 +56,7 @@ import {
   type SendWorkspaceMessageResult
 } from './workspace-runtime-command-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
+import type { WorkspaceSessionDeletion } from './workspace-session-deletion'
 import { useSubagentRuntimePresentation } from './workspace-subagent-runtime-presentation'
 import {
   createPermissionResponseAttemptOwner,
@@ -118,7 +119,7 @@ type WorkspaceAgentRuntime = {
   ) => Promise<boolean>
   cancelRun: (sessionId: string) => Promise<void>
   resumeInterruptedSession: (sessionId: string) => Promise<void>
-  deleteRuntimeSession: (sessionId: string) => Promise<boolean>
+  deleteRuntimeSession: WorkspaceSessionDeletion
   respondToPermission: (requestId: string, optionId?: string) => Promise<void>
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
@@ -414,8 +415,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     (sessionId: string): Promise<void> => lifecycleOwner.cancel(runtime, sessionId),
     [lifecycleOwner, runtime]
   )
-  const deleteRuntimeSession = useCallback(
-    (sessionId: string): Promise<boolean> => lifecycleOwner.delete(runtime, sessionId),
+  const deleteRuntimeSession = useCallback<WorkspaceSessionDeletion>(
+    (sessionId, options) => lifecycleOwner.delete(runtime, sessionId, options),
     [lifecycleOwner, runtime]
   )
   const respondToPermission = useCallback(

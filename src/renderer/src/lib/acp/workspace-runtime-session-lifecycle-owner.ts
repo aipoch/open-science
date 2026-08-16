@@ -13,6 +13,12 @@ import {
   sendWorkspaceMessage,
   type SendWorkspaceMessageIntent
 } from './workspace-runtime-command-owner'
+import {
+  deleteWorkspaceSession,
+  type DeleteWorkspaceSessionOptions,
+  type WorkspaceDeletionRuntime,
+  type WorkspaceSessionDeletionResult
+} from './workspace-session-deletion'
 
 type RuntimeEventDrain = (sessionId?: string) => Promise<void>
 
@@ -28,9 +34,7 @@ type WorkspaceMessageRuntime = Pick<
 > &
   Partial<Pick<ReturnType<typeof useAcpRuntime>, 'compactSession' | 'continueInterruptedTurn'>>
 
-type WorkspaceDeletionRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'deleteSession'>
 type WorkspaceCancellationRuntime = Pick<ReturnType<typeof useAcpRuntime>, 'cancel'>
-type PersistSessionDeletion = (request: { projectId: string; sessionId: string }) => Promise<void>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 const workspaceSession = (sessionId: string): ChatSession | undefined =>
@@ -539,35 +543,6 @@ const processContextOverflowRecovery = (
   }
 }
 
-// Deletes in three ordered ownership layers: agent runtime, durable JSON/DB coordinator, then renderer
-// state. A failure in either authoritative layer leaves the session visible with an actionable error.
-const deleteWorkspaceSession = async (
-  runtime: WorkspaceDeletionRuntime,
-  sessionId: string,
-  persistDeletion: PersistSessionDeletion = window.api.sessions.deleteSession
-): Promise<boolean> => {
-  const session = workspaceSession(sessionId)
-  if (!session?.projectId) return false
-
-  const snapshot = await runtime.deleteSession(sessionId)
-  if (!snapshot || snapshot.sessionIds.includes(sessionId)) {
-    useSessionStore.getState().failRun(sessionId, 'Agent session deletion failed')
-    return false
-  }
-
-  try {
-    await persistDeletion({ projectId: session.projectId, sessionId })
-  } catch (error) {
-    useSessionStore
-      .getState()
-      .failRun(sessionId, `Session deletion failed: ${getErrorMessage(error)}`)
-    throw error
-  }
-
-  useSessionStore.getState().deleteSession(sessionId)
-  return true
-}
-
 // Own retry dedup, cooldown, cancellation and human-authorized Plan provenance across React renders.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- the object is the seam.
 const createWorkspaceRuntimeSessionLifecycleOwner = () => {
@@ -641,8 +616,12 @@ const createWorkspaceRuntimeSessionLifecycleOwner = () => {
           : undefined
       )
     },
-    delete(runtime: WorkspaceDeletionRuntime, sessionId: string): Promise<boolean> {
-      return deleteWorkspaceSession(runtime, sessionId).catch(() => false)
+    delete(
+      runtime: WorkspaceDeletionRuntime,
+      sessionId: string,
+      options?: DeleteWorkspaceSessionOptions
+    ): Promise<WorkspaceSessionDeletionResult> {
+      return deleteWorkspaceSession(runtime, sessionId, window.api.sessions.deleteSession, options)
     }
   }
 }
@@ -651,7 +630,6 @@ export {
   cancelWorkspaceRun,
   compactWorkspaceSession,
   createWorkspaceRuntimeSessionLifecycleOwner,
-  deleteWorkspaceSession,
   ensureWorkspaceSessionReady,
   processContextOverflowRecovery,
   recoverContextOverflowWorkspaceSession,

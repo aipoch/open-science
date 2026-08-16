@@ -41,11 +41,11 @@ import {
   cancelWorkspaceRun,
   compactWorkspaceSession,
   createWorkspaceRuntimeSessionLifecycleOwner,
-  deleteWorkspaceSession,
   processContextOverflowRecovery,
   recoverContextOverflowWorkspaceSession,
   resumeInterruptedWorkspaceSession
 } from './workspace-runtime-session-lifecycle-owner'
+import { deleteWorkspaceSession } from './workspace-session-deletion'
 
 const createEvent = (overrides: Partial<AcpRuntimeEvent>): AcpRuntimeEvent => ({
   id: 'event-1',
@@ -830,21 +830,73 @@ describe('workspace session deletion', () => {
     const runtime = { deleteSession: vi.fn().mockResolvedValue(createSnapshot()) }
     const persistDelete = vi.fn().mockResolvedValue(undefined)
 
-    await deleteWorkspaceSession(runtime, 'session-1', persistDelete)
+    await expect(deleteWorkspaceSession(runtime, 'session-1', persistDelete)).resolves.toEqual({
+      status: 'deleted',
+      runtimeDetached: true
+    })
 
     expect(persistDelete).toHaveBeenCalledWith({ projectId: 'project-1', sessionId: 'session-1' })
     expect(useSessionStore.getState().sessions).toEqual([])
   })
 
-  it('keeps the session visible when durable deletion fails', async () => {
+  it('keeps run state neutral and returns a retryable result when durable deletion fails', async () => {
     const runtime = { deleteSession: vi.fn().mockResolvedValue(createSnapshot()) }
     const persistDelete = vi.fn().mockRejectedValue(new Error('disk locked'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const statusBeforeDeletion = useSessionStore.getState().sessions[0].status
 
-    await expect(deleteWorkspaceSession(runtime, 'session-1', persistDelete)).rejects.toThrow(
-      'disk locked'
-    )
+    await expect(deleteWorkspaceSession(runtime, 'session-1', persistDelete)).resolves.toEqual({
+      status: 'failed',
+      reason: 'persistence',
+      runtimeDetached: true
+    })
 
     expect(useSessionStore.getState().sessions).toHaveLength(1)
+    expect(useSessionStore.getState().sessions[0].status).toBe(statusBeforeDeletion)
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+    expect(warn).toHaveBeenCalledWith('Session persistence deletion failed', expect.any(Error))
+  })
+
+  it('keeps run state neutral when runtime deletion fails', async () => {
+    const runtime = { deleteSession: vi.fn().mockResolvedValue(undefined) }
+    const persistDelete = vi.fn()
+    const statusBeforeDeletion = useSessionStore.getState().sessions[0].status
+
+    await expect(deleteWorkspaceSession(runtime, 'session-1', persistDelete)).resolves.toEqual({
+      status: 'failed',
+      reason: 'runtime',
+      runtimeDetached: false
+    })
+
+    expect(persistDelete).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].status).toBe(statusBeforeDeletion)
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+  })
+
+  it('retries persistence idempotently after the runtime is already detached', async () => {
+    const runtime = { deleteSession: vi.fn().mockResolvedValue(createSnapshot()) }
+    const persistDelete = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('disk locked'))
+      .mockResolvedValueOnce(undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const first = await deleteWorkspaceSession(runtime, 'session-1', persistDelete)
+    expect(first).toEqual({
+      status: 'failed',
+      reason: 'persistence',
+      runtimeDetached: true
+    })
+
+    await expect(
+      deleteWorkspaceSession(runtime, 'session-1', persistDelete, {
+        runtimeDetached: first.runtimeDetached
+      })
+    ).resolves.toEqual({ status: 'deleted', runtimeDetached: true })
+
+    expect(runtime.deleteSession).toHaveBeenCalledOnce()
+    expect(persistDelete).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions).toEqual([])
   })
 })
 

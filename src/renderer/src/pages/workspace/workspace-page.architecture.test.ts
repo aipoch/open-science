@@ -239,6 +239,17 @@ describe('workspace page architecture', () => {
     }
   })
 
+  it('routes desktop and mobile Session deletion through one controller and dialog', () => {
+    const pageSource = readSource(ownerPaths.page)
+
+    expect(pageSource.match(/sessionController\.actions\.openDelete/g)).toHaveLength(2)
+    expect(pageSource.match(/<DeleteSessionDialog/g)).toHaveLength(1)
+    expect(pageSource).toContain(
+      'error={sessionController.view.dialogs.delete?.error ?? undefined}'
+    )
+    expect(pageSource).toContain('onConfirmDelete={conversation.actions.delete}')
+  })
+
   it('keeps Workspace runtime internals behind the public renderer facade', () => {
     const workspaceSources = productionSourcePaths
       .filter((path) => !relative(workspaceDirectory, path).startsWith('..'))

@@ -1159,14 +1159,14 @@ const WorkspacePage = ({
         onCancel={sessionController.actions.closeRename}
         onConfirmRename={sessionController.actions.confirmRename}
       />
-
       <DeleteSessionDialog
-        session={sessionController.view.dialogs.delete ?? undefined}
+        session={sessionController.view.dialogs.delete?.session}
         canDelete={canDeleteConversations}
+        isDeleting={sessionController.view.dialogs.delete?.isDeleting}
+        error={sessionController.view.dialogs.delete?.error ?? undefined}
         onCancel={sessionController.actions.closeDelete}
         onConfirmDelete={conversation.actions.delete}
       />
-
       <DownloadSessionArtifactsDialog
         session={sessionController.view.dialogs.downloadArtifacts ?? undefined}
         onClose={sessionController.actions.closeDownloadArtifacts}

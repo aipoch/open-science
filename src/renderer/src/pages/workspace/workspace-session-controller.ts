@@ -10,6 +10,10 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
+import type {
+  DeleteWorkspaceSessionOptions,
+  WorkspaceSessionDeletionResult
+} from '@/lib/acp/workspace-session-deletion'
 
 type ReconfigureError = {
   sessionId: string
@@ -32,7 +36,22 @@ type WorkspaceSessionControllerOptions = {
   hasUnfinishedTransfers: (sessionId: string) => boolean
   beginSessionDeletion: (sessionId: string) => boolean
   settleSessionDeletion: (sessionId: string, deleted: boolean) => void
-  deleteRuntimeSession: (sessionId: string) => Promise<boolean>
+  deleteRuntimeSession: (
+    sessionId: string,
+    options?: DeleteWorkspaceSessionOptions
+  ) => Promise<WorkspaceSessionDeletionResult>
+}
+
+type SessionDeletionFailureReason = Extract<
+  WorkspaceSessionDeletionResult,
+  { status: 'failed' }
+>['reason']
+
+type SessionDeleteDialogState = {
+  session: ChatSession
+  isDeleting: boolean
+  error: SessionDeletionFailureReason | null
+  runtimeDetached: boolean
 }
 
 type SpecialistSendIntent = {
@@ -45,7 +64,7 @@ type WorkspaceSessionController = {
   view: {
     dialogs: {
       rename: { session: ChatSession; draft: string } | null
-      delete: ChatSession | null
+      delete: SessionDeleteDialogState | null
       downloadArtifacts: ChatSession | null
       notebook: ChatSession | null
       jobList: { open: boolean; sessionId: string }
@@ -156,11 +175,12 @@ const useWorkspaceSessionController = ({
     session: ChatSession
     draft: string
   } | null>(null)
-  const [deleteDialog, setDeleteDialog] = useState<ChatSession | null>(null)
+  const [deleteDialog, setDeleteDialog] = useState<SessionDeleteDialogState | null>(null)
   const [downloadArtifactsDialog, setDownloadArtifactsDialog] = useState<ChatSession | null>(null)
   const [notebookDialog, setNotebookDialog] = useState<ChatSession | null>(null)
   const [jobListDialog, setJobListDialog] = useState({ open: false, sessionId: '' })
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(new Set())
+  const deletingIdsRef = useRef(new Set<string>())
   const [archivingIds, setArchivingIds] = useState<ReadonlySet<string>>(new Set())
 
   const activeHasPending = Boolean(
@@ -275,27 +295,66 @@ const useWorkspaceSessionController = ({
   }
 
   const openDelete = (session: ChatSession): void => {
-    if (isPersistenceHydrated && canDeleteConversations) setDeleteDialog(session)
+    if (isPersistenceHydrated && canDeleteConversations && deletingIdsRef.current.size === 0) {
+      setDeleteDialog({
+        session,
+        isDeleting: false,
+        error: null,
+        runtimeDetached: false
+      })
+    }
   }
 
   const confirmDelete = (): void => {
     if (!isPersistenceHydrated || !canDeleteConversations || !deleteDialog) return
     useNavigationStore.getState().recordUserNavigation()
-    const sessionId = deleteDialog.id
-    if (!beginSessionDeletion(sessionId)) {
-      setDeleteDialog(null)
-      return
-    }
+    const { session, runtimeDetached } = deleteDialog
+    const sessionId = session.id
+    if (deletingIdsRef.current.has(sessionId) || !beginSessionDeletion(sessionId)) return
+    deletingIdsRef.current.add(sessionId)
     setDeletingIds((current) => new Set(current).add(sessionId))
-    setDeleteDialog(null)
-    void deleteRuntimeSession(sessionId).then((deleted) => {
-      setDeletingIds((current) => {
-        const next = new Set(current)
-        next.delete(sessionId)
-        return next
+    setDeleteDialog((current) =>
+      current?.session.id === sessionId ? { ...current, isDeleting: true, error: null } : current
+    )
+    const deletion = runtimeDetached
+      ? deleteRuntimeSession(sessionId, { runtimeDetached: true })
+      : deleteRuntimeSession(sessionId)
+    void deletion
+      .then((result) => {
+        const deleted = result.status === 'deleted'
+        settleSessionDeletion(sessionId, deleted)
+        if (deleted) {
+          setDeleteDialog((current) => (current?.session.id === sessionId ? null : current))
+          return
+        }
+        setDeleteDialog((current) =>
+          current?.session.id === sessionId
+            ? {
+                ...current,
+                isDeleting: false,
+                error: result.reason,
+                runtimeDetached: result.runtimeDetached
+              }
+            : current
+        )
       })
-      settleSessionDeletion(sessionId, deleted)
-    })
+      .catch((error: unknown) => {
+        console.warn('Unexpected Session deletion failure', error)
+        settleSessionDeletion(sessionId, false)
+        setDeleteDialog((current) =>
+          current?.session.id === sessionId
+            ? { ...current, isDeleting: false, error: 'runtime' }
+            : current
+        )
+      })
+      .finally(() => {
+        deletingIdsRef.current.delete(sessionId)
+        setDeletingIds((current) => {
+          const next = new Set(current)
+          next.delete(sessionId)
+          return next
+        })
+      })
   }
 
   const selectSpecialist = (specialistId: string | undefined): void => {
@@ -554,7 +613,7 @@ const useWorkspaceSessionController = ({
       archive,
       exportConversation,
       openDelete,
-      closeDelete: () => setDeleteDialog(null),
+      closeDelete: () => setDeleteDialog((current) => (current?.isDeleting ? current : null)),
       confirmDelete,
       openDownloadArtifacts: setDownloadArtifactsDialog,
       closeDownloadArtifacts: () => setDownloadArtifactsDialog(null),
@@ -579,4 +638,10 @@ const useWorkspaceSessionController = ({
 }
 
 export { useWorkspaceSessionController }
-export type { ReconfigureError, SpecialistSendIntent, WorkspaceSessionController }
+export type {
+  ReconfigureError,
+  SessionDeleteDialogState,
+  SessionDeletionFailureReason,
+  SpecialistSendIntent,
+  WorkspaceSessionController
+}

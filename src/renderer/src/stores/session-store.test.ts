@@ -4584,6 +4584,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
+      'src/renderer/src/lib/acp/workspace-session-deletion.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
       'src/renderer/src/lib/active-session-display.ts',
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',

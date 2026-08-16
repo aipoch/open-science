@@ -20,6 +20,8 @@ import type { ChatSession } from '@/stores/session-store'
 type DeleteSessionDialogProps = {
   session: ChatSession | undefined
   canDelete: boolean
+  isDeleting?: boolean
+  error?: 'runtime' | 'persistence'
   onCancel: () => void
   onConfirmDelete: () => void
 }
@@ -31,6 +33,8 @@ const deleteDialogConfirmButtonClassName =
 const DeleteSessionDialog = ({
   session,
   canDelete,
+  isDeleting = false,
+  error,
   onCancel,
   onConfirmDelete
 }: DeleteSessionDialogProps): React.JSX.Element => {
@@ -41,13 +45,14 @@ const DeleteSessionDialog = ({
     <AlertDialog.Root
       open={Boolean(session)}
       onOpenChange={(open) => {
-        if (!open) onCancel()
+        if (!open && !isDeleting) onCancel()
       }}
     >
       <AlertDialog.Portal>
         <AlertDialog.Overlay className={dialogOverlayClassName} />
         <AlertDialog.Content
           className={dialogPanelClassName('w-[min(420px,calc(100vw-2rem))] p-0')}
+          aria-busy={isDeleting}
         >
           <div className={dialogHeaderClassName}>
             <div className="min-w-0">
@@ -61,6 +66,7 @@ const DeleteSessionDialog = ({
               size="icon-sm"
               aria-label={t('Close')}
               className={dialogCloseButtonClassName}
+              disabled={isDeleting}
               onClick={onCancel}
             >
               <X className="size-4" aria-hidden="true" />
@@ -73,23 +79,42 @@ const DeleteSessionDialog = ({
                 { title: dialogSession?.title ?? '' }
               )}
             </AlertDialog.Description>
+            {isDeleting ? (
+              <p className="mt-3 text-sm text-muted-foreground" role="status" aria-live="polite">
+                {t('Deleting…')}
+              </p>
+            ) : null}
+            {error ? (
+              <p className="mt-3 text-sm text-destructive" role="alert">
+                {error === 'persistence'
+                  ? t(
+                      "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
+                    )
+                  : t(
+                      "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
+                    )}
+              </p>
+            ) : null}
           </div>
           <div className={dialogFooterClassName}>
             <AlertDialog.Cancel asChild>
-              <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+              <Button
+                type="button"
+                variant="ghost"
+                className={dialogCancelButtonClassName}
+                disabled={isDeleting}
+              >
                 {t('Cancel')}
               </Button>
             </AlertDialog.Cancel>
-            <AlertDialog.Action asChild>
-              <Button
-                type="button"
-                className={deleteDialogConfirmButtonClassName}
-                disabled={!canDelete}
-                onClick={onConfirmDelete}
-              >
-                {t('Delete')}
-              </Button>
-            </AlertDialog.Action>
+            <Button
+              type="button"
+              className={deleteDialogConfirmButtonClassName}
+              disabled={!canDelete || isDeleting}
+              onClick={onConfirmDelete}
+            >
+              {isDeleting ? t('Deleting…') : error ? t('Retry') : t('Delete')}
+            </Button>
           </div>
         </AlertDialog.Content>
       </AlertDialog.Portal>

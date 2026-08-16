@@ -236,4 +236,79 @@ describe('workspace session dialogs behavior wiring', () => {
 
     expect(deleteButton?.props.disabled).toBe(true)
   })
+
+  it('keeps deletion open and disables duplicate or dismiss actions while deleting', async () => {
+    const { DeleteSessionDialog } = await import('./DeleteSessionDialog')
+    const onCancel = vi.fn()
+    const tree = DeleteSessionDialog({
+      session: createSession(),
+      canDelete: true,
+      isDeleting: true,
+      onCancel,
+      onConfirmDelete: vi.fn()
+    })
+    const elements = collectElements(tree)
+    const root = elements[0]
+    const content = elements.find((element) => element.props['aria-busy'] === true)
+    const deletingButton = elements.find(
+      (element) => getTextContent(element).trim() === 'Deleting…' && element.props.onClick
+    )
+    const closeButton = elements.find((element) => element.props['aria-label'] === 'Close')
+    const cancelButton = elements.find(
+      (element) => getTextContent(element).trim() === 'Cancel' && element.props.disabled === true
+    )
+    const status = elements.find((element) => element.props.role === 'status')
+
+    ;(root.props.onOpenChange as (open: boolean) => void)(false)
+
+    expect(onCancel).not.toHaveBeenCalled()
+    expect(content).toBeDefined()
+    expect(deletingButton?.props.disabled).toBe(true)
+    expect(closeButton?.props.disabled).toBe(true)
+    expect(cancelButton).toBeDefined()
+    expect(getTextContent(status)).toBe('Deleting…')
+  })
+
+  it('renders safe accessible deletion errors with retry and cancel actions', async () => {
+    const { DeleteSessionDialog } = await import('./DeleteSessionDialog')
+    const onCancel = vi.fn()
+    const onConfirmDelete = vi.fn()
+    const tree = DeleteSessionDialog({
+      session: createSession(),
+      canDelete: true,
+      error: 'persistence',
+      onCancel,
+      onConfirmDelete
+    })
+    const elements = collectElements(tree)
+    const alert = elements.find((element) => element.props.role === 'alert')
+    const retryButton = elements.find(
+      (element) => getTextContent(element).trim() === 'Retry' && element.props.onClick
+    )
+    const cancelButton = elements.find(
+      (element) => getTextContent(element).trim() === 'Cancel' && element.props.disabled !== true
+    )
+
+    expect(getTextContent(alert)).toBe(
+      "The agent was stopped, but Open Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again."
+    )
+    expect(getTextContent(tree)).not.toContain('disk locked')
+    ;(retryButton?.props.onClick as () => void)()
+    expect(onConfirmDelete).toHaveBeenCalledOnce()
+    expect(cancelButton).toBeDefined()
+
+    const runtimeTree = DeleteSessionDialog({
+      session: createSession(),
+      canDelete: true,
+      error: 'runtime',
+      onCancel,
+      onConfirmDelete
+    })
+    const runtimeAlert = collectElements(runtimeTree).find(
+      (element) => element.props.role === 'alert'
+    )
+    expect(getTextContent(runtimeAlert)).toBe(
+      "Open Science couldn't stop the agent for this Session. The Session was not deleted. Please try again."
+    )
+  })
 })
