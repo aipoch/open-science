@@ -1221,7 +1221,7 @@ describe('AcpRuntimeCoordinator', () => {
       })
       const session = await coordinator.createSession({
         cwd: '/workspace',
-        projectName: 'project-1'
+        projectId: 'project-1'
       })
 
       const userPrompt = coordinator.sendPrompt({
@@ -1235,7 +1235,7 @@ describe('AcpRuntimeCoordinator', () => {
           session: {
             sessionId: session.sessionId,
             cwd: '/workspace',
-            projectName: 'project-1',
+            projectId: 'project-1',
             previousFrameworkId: frameworkId
           }
         },
