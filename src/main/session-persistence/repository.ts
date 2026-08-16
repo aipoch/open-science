@@ -948,6 +948,16 @@ class SessionRepository {
         }
       }
 
+      // The file name is authoritative for global Session identity. Unlike the owning Project,
+      // an id mismatch is corruption rather than a legacy field that may be repaired from the path.
+      const fileName = basename(filePath)
+      const fileSessionId = fileName.endsWith('.json')
+        ? fileName.slice(0, -'.json'.length)
+        : undefined
+      if (session.id !== fileSessionId) {
+        throw new Error('Session id does not match its file name')
+      }
+
       return { session: decodeSessionDataPaths({ ...session, projectId }), isComplete: true }
     } catch {
       const wasQuarantined =
@@ -1056,7 +1066,10 @@ class SessionRepository {
 
   private async backupInvalidFile(filePath: string): Promise<void> {
     this.backupSequence += 1
-    await rename(filePath, `${filePath}.invalid-${Date.now()}-${this.backupSequence}`)
+    await this.dependencies.renameFile(
+      filePath,
+      `${filePath}.invalid-${Date.now()}-${this.backupSequence}`
+    )
   }
 }
 

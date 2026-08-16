@@ -620,10 +620,13 @@ describe('session persistence repository (per-session files)', () => {
     const repository = new SessionRepository(await createStorageRoot())
     const projectA = join(storageRoot!, 'sessions', 'project-a')
     const projectB = join(storageRoot!, 'sessions', 'project-b')
-    const rawA = JSON.stringify({ version: 2, session: createSession() })
+    const rawA = JSON.stringify({
+      version: 2,
+      session: createSession({ id: 'private-session-a' })
+    })
     const rawB = JSON.stringify({
       version: 2,
-      session: createSession({ id: 'session-2', projectId: 'project-b' })
+      session: createSession({ id: 'private-session-b', projectId: 'project-b' })
     })
     await mkdir(projectA, { recursive: true })
     await mkdir(projectB, { recursive: true })
@@ -639,6 +642,197 @@ describe('session persistence repository (per-session files)', () => {
     })
     expect(JSON.stringify(scan.scanMetrics)).not.toContain('private-session')
     expect(JSON.stringify(scan.scanMetrics)).not.toContain('project-a')
+  })
+
+  it('quarantines a Session whose normalized id does not match its file name', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    const mismatchedPath = join(projectDir, 'foo.json')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(
+      mismatchedPath,
+      JSON.stringify({ version: 2, session: createSession({ id: 'bar' }) }),
+      'utf8'
+    )
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(true)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'foo.json',
+        recovered: true
+      }
+    ])
+    await expect(readFile(mismatchedPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readdir(projectDir)).resolves.toEqual([
+      expect.stringMatching(/^foo\.json\.invalid-/)
+    ])
+  })
+
+  it('reports a mismatched Session id as corrupt without moving it in read-only mode', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    const mismatchedPath = join(projectDir, 'foo.json')
+    const mismatchedJson = JSON.stringify({
+      version: 2,
+      session: createSession({ id: 'bar' })
+    })
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(mismatchedPath, mismatchedJson, 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'foo.json',
+        recovered: false
+      }
+    ])
+    await expect(
+      repository.loadProjectWithDiagnostics('project-a', { mode: 'read-only' })
+    ).resolves.toEqual({ sessions: [], isComplete: false })
+    await expect(
+      repository.loadSessionWithDiagnostics('project-a', 'foo', { mode: 'read-only' })
+    ).resolves.toEqual({ status: 'unreadable' })
+    await expect(readFile(mismatchedPath, 'utf8')).resolves.toBe(mismatchedJson)
+    await expect(readdir(projectDir)).resolves.toEqual(['foo.json'])
+  })
+
+  it('does not return a differently identified Session from a direct load', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(
+      join(projectDir, 'foo.json'),
+      JSON.stringify({ version: 2, session: createSession({ id: 'bar' }) }),
+      'utf8'
+    )
+
+    await expect(repository.loadSession('project-a', 'foo')).resolves.toBeUndefined()
+    await expect(readdir(projectDir)).resolves.toEqual([
+      expect.stringMatching(/^foo\.json\.invalid-/)
+    ])
+  })
+
+  it('loads a Session when its normalized id exactly matches its file name', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(
+      join(projectDir, 'foo.json'),
+      JSON.stringify({ version: 2, session: createSession({ id: 'foo' }) }),
+      'utf8'
+    )
+
+    await expect(repository.loadSession('project-a', 'foo')).resolves.toMatchObject({
+      id: 'foo',
+      projectId: 'project-a'
+    })
+  })
+
+  it('applies file-name identity validation to bare legacy Session JSON', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(
+      join(projectDir, 'foo.json'),
+      JSON.stringify(createSession({ id: 'bar' })),
+      'utf8'
+    )
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.warnings).toEqual([
+      expect.objectContaining({ kind: 'corrupt', fileName: 'foo.json', recovered: true })
+    ])
+    await expect(readdir(projectDir)).resolves.toEqual([
+      expect.stringMatching(/^foo\.json\.invalid-/)
+    ])
+  })
+
+  it('fails closed when a mismatched Session cannot be quarantined', async () => {
+    const root = await createStorageRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    const mismatchedPath = join(projectDir, 'foo.json')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(
+      mismatchedPath,
+      JSON.stringify({ version: 2, session: createSession({ id: 'bar' }) }),
+      'utf8'
+    )
+    const renameFile = vi.fn(async () => {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    })
+    const repository = new SessionRepository(root, { renameFile })
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'foo.json',
+        recovered: false
+      }
+    ])
+    await expect(readFile(mismatchedPath, 'utf8')).resolves.toContain('"id":"bar"')
+    expect(renameFile).toHaveBeenCalledOnce()
+  })
+
+  it('can save the canonical embedded id after quarantining a mismatched file', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectDir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(
+      join(projectDir, 'foo.json'),
+      JSON.stringify({ version: 2, session: createSession({ id: 'bar' }) }),
+      'utf8'
+    )
+
+    await repository.loadAllWithDiagnostics()
+    await repository.saveSession(createSession({ id: 'bar' }))
+
+    await expect(repository.loadSession('project-a', 'bar')).resolves.toMatchObject({ id: 'bar' })
+    expect(await readdir(projectDir)).toEqual(
+      expect.arrayContaining(['bar.json', expect.stringMatching(/^foo\.json\.invalid-/)])
+    )
+  })
+
+  it('does not let a mismatched embedded id create a false cross-Project duplicate', async () => {
+    const repository = new SessionRepository(await createStorageRoot())
+    const projectADir = join(storageRoot!, 'sessions', 'project-a')
+    await mkdir(projectADir, { recursive: true })
+    await writeFile(
+      join(projectADir, 'foo.json'),
+      JSON.stringify({ version: 2, session: createSession({ id: 'bar' }) }),
+      'utf8'
+    )
+    await repository.saveSession(createSession({ id: 'bar', projectId: 'project-b' }))
+
+    const scan = await repository.loadAllWithDiagnostics({ mode: 'read-only' })
+
+    expect(scan.result.sessions).toEqual([
+      expect.objectContaining({ id: 'bar', projectId: 'project-b' })
+    ])
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'corrupt',
+        projectId: 'project-a',
+        fileName: 'foo.json',
+        recovered: false
+      }
+    ])
   })
 
   it('reports corrupt authority without moving files during a read-only scan', async () => {
