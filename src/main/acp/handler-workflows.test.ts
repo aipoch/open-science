@@ -211,6 +211,36 @@ describe('ACP Save as skill workflow', () => {
     expect(request).not.toHaveProperty('forcedSkillIds')
   })
 
+  it('retains history images for a text-only model when the Vision relay is available', async () => {
+    const harness = createHarness((session) => {
+      const images = [
+        {
+          id: 'history-image',
+          mimeType: 'image/png' as const,
+          data: Buffer.from('history-image').toString('base64'),
+          byteLength: Buffer.byteLength('history-image')
+        }
+      ]
+      session.messages[0].images = images
+      session.conversationGraph!.messages[0].images = structuredClone(images)
+    })
+    harness.captureSessionBackend.mockReturnValue({
+      framework: { id: 'claude-code' },
+      modelRoute: 'claude-anthropic',
+      context: { window: 100_000, supportsImageInput: false }
+    })
+
+    await harness.workflows.saveAsSkill({ ...harness.request, supportsImageRelay: true })
+
+    expect(harness.startContinuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeFallback: expect.objectContaining({
+          historyImages: [expect.objectContaining({ mimeType: 'image/png', byteLength: 13 })]
+        })
+      })
+    )
+  })
+
   it('rejects at provider admission while Side chat owns the parent Session', async () => {
     const admission = vi.fn(() => {
       throw new Error('Close Side chat before saving this conversation as a Skill.')

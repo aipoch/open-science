@@ -5539,6 +5539,74 @@ describe('SettingsService: Reviewer model', () => {
   })
 })
 
+describe('SettingsService: Vision model', () => {
+  it('persists and admits one image-capable fixed target', async () => {
+    const service = createService()
+    const created = await service.upsertProvider({
+      type: 'custom',
+      name: 'Vision gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://vision.example/v1',
+      model: 'vision-model',
+      key: 'secret',
+      supportsImageInput: true
+    })
+    const configuration = {
+      providerId: created.providers[0].id,
+      model: 'vision-model',
+      reasoningEffort: 'high' as const
+    }
+
+    await expect(service.setVisionModel(configuration)).resolves.toMatchObject({
+      visionModel: configuration
+    })
+    await expect(service.admitVisionModel()).resolves.toEqual({
+      frameworkId: 'claude-code',
+      providerId: configuration.providerId,
+      model: { kind: 'required', id: 'vision-model' },
+      reasoningEffort: 'high',
+      configurationFingerprint: expect.any(String)
+    })
+  })
+
+  it('rejects a target that cannot receive images and preserves the prior configuration', async () => {
+    const service = createService()
+    const visual = await service.upsertProvider({
+      type: 'custom',
+      name: 'Visual gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://vision.example/v1',
+      model: 'vision-model',
+      key: 'secret',
+      supportsImageInput: true
+    })
+    const configuration = {
+      providerId: visual.providers[0].id,
+      model: 'vision-model',
+      reasoningEffort: 'default' as const
+    }
+    await service.setVisionModel(configuration)
+    const textOnly = await service.upsertProvider({
+      type: 'custom',
+      name: 'Text gateway',
+      apiEndpoints: ['anthropic'],
+      baseUrl: 'https://text.example/v1',
+      model: 'text-model',
+      key: 'secret',
+      supportsImageInput: false
+    })
+
+    await expect(
+      service.setVisionModel({
+        providerId: textOnly.providers.find((provider) => provider.name === 'Text gateway')!.id,
+        model: 'text-model',
+        reasoningEffort: 'default'
+      })
+    ).rejects.toThrow('does not support image input')
+    expect((await service.getSettingsView()).visionModel).toEqual(configuration)
+  })
+})
+
 describe('SettingsService: notifications preference', () => {
   it('projects enabled when no preference is stored', async () => {
     const service = createService()

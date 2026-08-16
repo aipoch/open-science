@@ -52,6 +52,7 @@ import type {
   ReasoningEffort,
   ReviewerModelConfiguration,
   SubagentModelConfiguration,
+  VisionModelConfiguration as VisionModel,
   SkillBundlePreviewResult,
   SkillImportPreviewContent,
   SkillSource,
@@ -109,6 +110,7 @@ import type { CodexAuthControllerPort } from './codex-auth'
 import { createSettingsIdSequence } from './id-sequence'
 import { createSubagentModels, SubagentModelOwner } from './subagent-model-owner'
 import { createReviewerModels, ReviewerModelOwner } from './reviewer-model-owner'
+import { createVisionModels, VisionModelOwner } from './vision-model-owner'
 
 import type { SystemProxyEnvironment } from './system-proxy'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
@@ -192,6 +194,7 @@ class SettingsService {
   private readonly backendResolver: AgentBackendResolver
   private readonly subagentModels: SubagentModelOwner
   private readonly reviewerModels: ReviewerModelOwner
+  private readonly visionModels: VisionModelOwner
   private readonly storageRoot: string
   private readonly applyNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
   private readonly userClaudeDir: string
@@ -271,6 +274,7 @@ class SettingsService {
       this.providers,
       this.backendResolver
     )
+    this.visionModels = createVisionModels(this.repository, this.providers, this.backendResolver)
   }
 
   // Returns the raw stored settings document (unmasked), for main-process bootstrap needs (e.g. priming
@@ -372,15 +376,12 @@ class SettingsService {
   private async migrateLegacyKeyRefs(settings: StoredSettings): Promise<StoredSettings> {
     if (!isEncryptionAvailable()) return settings
     let changed = await this.providers.migrateLegacyKeyRefs(settings.providers)
-
     changed = (await this.connectors.migrateLegacyNcbiKeyRef(settings.connectors)) || changed
-
     return changed ? this.repository.getSettings() : settings
   }
 
   async setAgentFramework(id: AgentFrameworkId): Promise<SettingsSnapshot> {
     await this.repository.setAgentFramework(id)
-
     return this.getSettingsView()
   }
 
@@ -388,7 +389,6 @@ class SettingsService {
   // level live over ACP (otherwise it reconnects); the persisted value drives the next spawn.
   async setReasoningEffort(effort: ReasoningEffort): Promise<SettingsSnapshot> {
     await this.preferences.setReasoningEffort(effort)
-
     return this.getSettingsView()
   }
 
@@ -400,6 +400,15 @@ class SettingsService {
   async setReviewerModel(configuration: ReviewerModelConfiguration): Promise<SettingsSnapshot> {
     await this.reviewerModels.set(configuration)
     return this.getSettingsView()
+  }
+
+  async setVisionModel(configuration: VisionModel | undefined): Promise<SettingsSnapshot> {
+    await this.visionModels.set(configuration)
+    return this.getSettingsView()
+  }
+
+  async admitVisionModel(): ReturnType<VisionModelOwner['admit']> {
+    return this.visionModels.admit()
   }
 
   async admitReviewerExecutionModel(): ReturnType<ReviewerModelOwner['admit']> {
@@ -435,7 +444,6 @@ class SettingsService {
 
   async setNotificationsEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.preferences.setNotificationsEnabled(enabled)
-
     return this.getSettingsView()
   }
 
@@ -447,7 +455,6 @@ class SettingsService {
 
   async setConversationSkillImportEnabled(enabled: boolean): Promise<SettingsSnapshot> {
     await this.preferences.setConversationSkillImportEnabled(enabled)
-
     return this.getSettingsView()
   }
 
@@ -459,7 +466,6 @@ class SettingsService {
     preference: CloseActionPreference | undefined
   ): Promise<SettingsSnapshot> {
     await this.preferences.setClosePreference(preference)
-
     return this.getSettingsView()
   }
 
@@ -467,7 +473,6 @@ class SettingsService {
     filter: ProjectFilesFilterPreference | undefined
   ): Promise<SettingsSnapshot> {
     await this.preferences.setProjectFilesFilter(filter)
-
     return this.getSettingsView()
   }
 
@@ -477,13 +482,11 @@ class SettingsService {
 
   async setAppIconVariant(variant: AppIconVariant): Promise<SettingsSnapshot> {
     await this.preferences.setAppIconVariant(variant)
-
     return this.getSettingsView()
   }
 
   async setDefaultPermissionProfile(profile: PermissionProfileId): Promise<SettingsSnapshot> {
     await this.preferences.setDefaultPermissionProfile(profile)
-
     return this.getSettingsView()
   }
 
@@ -761,7 +764,6 @@ class SettingsService {
   // Records that first-run onboarding finished so later launches skip the wizard.
   async markOnboardingComplete(): Promise<SettingsSnapshot> {
     await this.preferences.markOnboardingComplete()
-
     return this.getSettingsView()
   }
 

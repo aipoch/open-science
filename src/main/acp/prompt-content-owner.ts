@@ -60,6 +60,7 @@ type PrepareAcpPromptContentInput = {
   references: ReadonlyArray<FileReference>
   codexSkillInputs: ReadonlyArray<CodexSkillInput>
   skillImportEnabled: boolean
+  imageCompatibilityRelay?: boolean
   fileTextBudget?: number
   skillImportTurnToken?: string
   onSkillImportAttachmentEligible?: (attachmentUri: string) => void
@@ -72,6 +73,7 @@ type AcpPromptTurnInputs = {
 
 type PreparedAcpPromptContent = {
   content: string | ContentBlock[]
+  historyImageCount: number
   turnInputs?: AcpPromptTurnInputs
 }
 
@@ -88,6 +90,10 @@ type PromptFileTextBudget = {
   remaining: number
   perFileLimit: number
 }
+
+const isImageBlock = (block: ContentBlock): boolean =>
+  block.type === 'image' ||
+  (block.type === 'resource_link' && block.mimeType?.startsWith('image/') === true)
 
 const errorMessage = (error: unknown): string => {
   try {
@@ -113,6 +119,7 @@ class AcpPromptContentOwner {
   async prepare(input: PrepareAcpPromptContentInput): Promise<PreparedAcpPromptContent> {
     const hasUploads = input.historyUploads.length > 0 || input.currentUploads.length > 0
     let promptUploads: UploadedAttachment[] = []
+    let historyImageCount = 0
 
     let content: string | ContentBlock[]
     if (!hasUploads && input.references.length === 0 && input.historyImages.length === 0) {
@@ -127,8 +134,8 @@ class AcpPromptContentOwner {
         remaining: totalFileTextBudget,
         perFileLimit: Math.max(1, Math.floor(totalFileTextBudget / 2))
       }
-      const appendBlock = (block: ContentBlock, overflowFallback?: ContentBlock): void => {
-        if (block.type === 'image') {
+      const appendBlock = (block: ContentBlock, overflowFallback?: ContentBlock): boolean => {
+        if (block.type === 'image' && !input.imageCompatibilityRelay) {
           try {
             imageBudget = consumeInlineImageBudget(imageBudget, {
               data: block.data,
@@ -140,16 +147,19 @@ class AcpPromptContentOwner {
               error.code === 'IMAGE_TOTAL_BUDGET_EXCEEDED'
             ) {
               if (overflowFallback) contentBlocks.push(overflowFallback)
-              return
+              return false
             }
             throw error
           }
         }
         contentBlocks.push(block)
+        return true
       }
 
       for (const image of input.historyImages) {
-        appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })
+        if (appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })) {
+          historyImageCount += 1
+        }
       }
       if (input.historyImages.length > 0) {
         this.setSessionInlineImageBytes(input, imageBudget.base64Bytes)
@@ -188,10 +198,13 @@ class AcpPromptContentOwner {
             fileTextBudget
           )
           for (const block of blocks) {
-            appendBlock(
+            const appended = appendBlock(
               block,
               this.imageOverflowResourceLink(block, attachment.originalName, attachment.size)
             )
+            if (index < input.historyUploads.length && isImageBlock(block) && appended) {
+              historyImageCount += 1
+            }
           }
         }
       }
@@ -218,6 +231,7 @@ class AcpPromptContentOwner {
 
     return {
       content: preparedContent,
+      historyImageCount,
       ...(hasTurnInputs
         ? {
             turnInputs: {
@@ -424,12 +438,21 @@ class AcpPromptContentOwner {
 
     if (imageMimeType) {
       if (size > MAX_AUTO_PROCESS_IMAGE_BYTES) {
+        const resourceLink: ContentBlock = {
+          type: 'resource_link',
+          uri,
+          name,
+          title: name,
+          mimeType: imageMimeType,
+          size
+        }
+        if (input.imageCompatibilityRelay) return [resourceLink]
         return [
           {
             type: 'text',
             text: buildDeferredMediaNotice({ name, size, kind: 'image' })
           },
-          { type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }
+          resourceLink
         ]
       }
       const { data, mimeType: outMimeType } = await buildImageContentData(
@@ -438,14 +461,16 @@ class AcpPromptContentOwner {
         size
       )
 
-      const alreadyInlined = this.getSessionInlineImageBytes(input)
-      if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
-        return [{ type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }]
-      }
+      if (!input.imageCompatibilityRelay) {
+        const alreadyInlined = this.getSessionInlineImageBytes(input)
+        if (!canInlineImageInSession(alreadyInlined, data.length, this.inlineImageBudgetBytes)) {
+          return [{ type: 'resource_link', uri, name, title: name, mimeType: imageMimeType, size }]
+        }
 
-      // Charge before the request-level append. Existing behavior retains this charge even if a later
-      // reference fails or the request image budget rejects this block.
-      this.setSessionInlineImageBytes(input, alreadyInlined + data.length)
+        // Charge before the request-level append. Existing behavior retains this charge even if a
+        // later reference fails or the request image budget rejects this block.
+        this.setSessionInlineImageBytes(input, alreadyInlined + data.length)
+      }
       return [{ type: 'image', data, mimeType: outMimeType, uri }]
     }
 

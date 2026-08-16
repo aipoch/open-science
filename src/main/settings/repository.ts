@@ -36,7 +36,11 @@ import {
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
-import { buildReviewerModelMutation, buildSubagentModelMutation } from './subagent-model-settings'
+import {
+  buildReviewerModelMutation,
+  buildSubagentModelMutation,
+  buildVisionModelMutation
+} from './subagent-model-settings'
 
 // Stable semantic mutation facade. The injected document store owns arbitration and atomic IO; all
 // secret handling remains above this layer in crypto.ts and service.ts.
@@ -287,6 +291,12 @@ class SettingsRepository {
     ...args: Parameters<typeof buildReviewerModelMutation>
   ): Promise<StoredSettings> {
     return this.mutate(buildReviewerModelMutation(...args))
+  }
+
+  async setVisionModel(
+    ...args: Parameters<typeof buildVisionModelMutation>
+  ): Promise<StoredSettings> {
+    return this.mutate(buildVisionModelMutation(...args))
   }
 
   async setNotificationsEnabled(enabled: boolean): Promise<StoredSettings> {

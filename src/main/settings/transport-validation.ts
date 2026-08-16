@@ -5,7 +5,8 @@ import {
   type ProjectFilesFilterPreference,
   type ReasoningEffort,
   type ReviewerModelConfiguration,
-  type SubagentModelConfiguration
+  type SubagentModelConfiguration,
+  type VisionModelConfiguration
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import { isPermissionProfileId, type PermissionProfileId } from '../../shared/permission-profiles'
@@ -68,6 +69,31 @@ const readSubagentModel = (request: unknown): SubagentModelConfiguration =>
 
 const readReviewerModel = (request: unknown): ReviewerModelConfiguration =>
   readModelConfiguration(request, 'Reviewer')
+
+const readVisionModel = (request: unknown): VisionModelConfiguration | undefined => {
+  const configuration = readField(request, 'configuration')
+  if (configuration === undefined) return undefined
+  if (typeof configuration !== 'object' || configuration === null || Array.isArray(configuration)) {
+    throw new Error('Invalid Vision model configuration.')
+  }
+  const value = configuration as Record<string, unknown>
+  if (
+    Object.keys(value).length === 3 &&
+    Object.keys(value).every((key) => ['providerId', 'model', 'reasoningEffort'].includes(key)) &&
+    typeof value.providerId === 'string' &&
+    value.providerId.trim() !== '' &&
+    typeof value.model === 'string' &&
+    value.model.trim() !== '' &&
+    isReasoningEffort(value.reasoningEffort)
+  ) {
+    return {
+      providerId: value.providerId,
+      model: value.model,
+      reasoningEffort: value.reasoningEffort
+    }
+  }
+  throw new Error('Invalid Vision model configuration.')
+}
 
 const readConversationSkillImportEnabled = (request: unknown): boolean => {
   const enabled = readField(request, 'enabled')
@@ -155,5 +181,6 @@ export {
   readProjectFilesFilter,
   readReasoningEffort,
   readReviewerModel,
-  readSubagentModel
+  readSubagentModel,
+  readVisionModel
 }

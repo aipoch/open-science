@@ -510,6 +510,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setSkillsEnabled',
       'settings.setSubagentModel',
       'settings.setToolPermission',
+      'settings.setVisionModel',
       'settings.uninstallClaude',
       'settings.uninstallCodex',
       'settings.uninstallOpencode',

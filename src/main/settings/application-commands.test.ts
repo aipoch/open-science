@@ -54,6 +54,7 @@ const expectedChannels = [
   'settings:set-project-files-filter',
   'settings:set-reviewer-model',
   'settings:set-subagent-model',
+  'settings:set-vision-model',
   'settings:validate-provider'
 ] as const
 
@@ -117,7 +118,7 @@ const createDependencies = (): Readonly<{
 }
 
 describe('Settings core application commands', () => {
-  it('installs the exact 39-command inventory and dispatches a remote-safe preflight query', async () => {
+  it('installs the exact 40-command inventory and dispatches a remote-safe preflight query', async () => {
     const { dependencies, serviceMethod } = createDependencies()
     const preflight = { agentReady: true }
     serviceMethod('getPreflight').mockResolvedValue(preflight)

@@ -44,6 +44,7 @@ type FakeSettingsService = Record<
   | 'setReasoningEffort'
   | 'setReviewerModel'
   | 'setSubagentModel'
+  | 'setVisionModel'
   | 'resolveActiveReasoningEffort'
   | 'resolveActiveModelChangeTarget'
   | 'setNotificationsEnabled'
@@ -127,6 +128,7 @@ const createFakeService = (): FakeSettingsService => ({
   setSubagentModel: vi
     .fn()
     .mockResolvedValue({ claude: {}, providers: [], subagentModel: { mode: 'inherit' } }),
+  setVisionModel: vi.fn().mockResolvedValue({ claude: {}, providers: [] }),
   resolveActiveReasoningEffort: vi.fn().mockResolvedValue('high'),
   resolveActiveModelChangeTarget: vi.fn().mockResolvedValue(undefined),
   setNotificationsEnabled: vi
@@ -1145,6 +1147,29 @@ describe('settings IPC handlers', () => {
       })
     ).rejects.toThrow('Invalid Reviewer model configuration.')
     expect(service.setReviewerModel).toHaveBeenCalledOnce()
+  })
+
+  it('validates, clears, and forwards the Vision model configuration', async () => {
+    handlers.clear()
+    const service = createFakeService()
+    const configuration = {
+      providerId: 'provider-a',
+      model: 'vision-model',
+      reasoningEffort: 'high' as const
+    }
+    const snapshot = { claude: {}, providers: [], visionModel: configuration }
+    service.setVisionModel.mockResolvedValue(snapshot)
+    registerTestSettingsIpcHandlers({ service: asService(service) })
+
+    await expect(invoke('settings:set-vision-model', { configuration })).resolves.toBe(snapshot)
+    await expect(invoke('settings:set-vision-model', {})).resolves.toBe(snapshot)
+    expect(service.setVisionModel).toHaveBeenNthCalledWith(1, configuration)
+    expect(service.setVisionModel).toHaveBeenNthCalledWith(2, undefined)
+
+    await expect(
+      invoke('settings:set-vision-model', { configuration: { ...configuration, model: '' } })
+    ).rejects.toThrow('Invalid Vision model configuration.')
+    expect(service.setVisionModel).toHaveBeenCalledTimes(2)
   })
 
   it('persists the notifications preference on set-notifications-enabled', async () => {

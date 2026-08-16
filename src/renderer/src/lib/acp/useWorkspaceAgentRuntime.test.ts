@@ -2812,51 +2812,62 @@ describe('workspace agent message sending', () => {
     })
   })
 
-  it('omits history images when branching into a text-only model', async () => {
-    useSessionStore.getState().appendUserMessage({
-      sessionId: 'source-session',
-      content: 'Inspect this chart',
-      cwd: '/workspace/project',
-      projectId: 'project-1'
-    })
-    useSessionStore.getState().appendAgentMessageChunk({
-      sessionId: 'source-session',
-      streamId: 'source-stream',
-      eventId: 'source-image-event',
-      image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
-    })
-    useSessionStore.getState().finishRun('source-session')
-    const sourceBeforeBranch = useSessionStore.getState().sessions[0]
-    const runtime = {
-      state: createSnapshot(['source-session']),
-      createSession: vi.fn().mockResolvedValue({
-        sessionId: 'branched-runtime-session',
-        cwd: '/workspace/project'
-      }),
-      resumeSession: vi.fn(),
-      resetSessionContext: vi.fn(),
-      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+  it.each([
+    ['omits', false],
+    ['replays', true]
+  ] as const)(
+    '%s history images based on Vision relay support',
+    async (_action, supportsImageRelay) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'source-session',
+        content: 'Inspect this chart',
+        cwd: '/workspace/project',
+        projectId: 'project-1'
+      })
+      useSessionStore.getState().appendAgentMessageChunk({
+        sessionId: 'source-session',
+        streamId: 'source-stream',
+        eventId: 'source-image-event',
+        image: { mimeType: 'image/png', data: 'aGVsbG8=', byteLength: 5 }
+      })
+      useSessionStore.getState().finishRun('source-session')
+      const sourceBeforeBranch = useSessionStore.getState().sessions[0]
+      const runtime = {
+        state: createSnapshot(['source-session']),
+        createSession: vi.fn().mockResolvedValue({
+          sessionId: 'branched-runtime-session',
+          cwd: '/workspace/project'
+        }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['branched-runtime-session']))
+      }
+
+      const branched = await sendWorkspaceMessage(runtime, {
+        branchSourceSessionId: 'source-session',
+        text: 'Try another chart explanation',
+        supportsImageInput: false,
+        supportsImageRelay
+      })
+
+      expect(branched).toBeDefined()
+      await flushRuntimeTasks()
+
+      expect(runtime.createSession).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Inspect this chart')
+      expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([])
+      expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual(
+        supportsImageRelay
+          ? [expect.objectContaining({ mimeType: 'image/png', data: 'aGVsbG8=' })]
+          : []
+      )
+      expect(
+        useSessionStore.getState().sessions.find((session) => session.id === 'source-session')
+      ).toEqual(sourceBeforeBranch)
+      expect(useSessionStore.getState().selectedSessionId).toBe('branched-runtime-session')
     }
-
-    const branched = await sendWorkspaceMessage(runtime, {
-      branchSourceSessionId: 'source-session',
-      text: 'Try another chart explanation',
-      supportsImageInput: false
-    })
-
-    expect(branched).toBeDefined()
-    await flushRuntimeTasks()
-
-    expect(runtime.createSession).toHaveBeenCalledOnce()
-    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
-    expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Inspect this chart')
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toEqual([])
-    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([])
-    expect(
-      useSessionStore.getState().sessions.find((session) => session.id === 'source-session')
-    ).toEqual(sourceBeforeBranch)
-    expect(useSessionStore.getState().selectedSessionId).toBe('branched-runtime-session')
-  })
+  )
 
   it('publishes a path-only legacy history upload under the source Session before replay', async () => {
     const finalizedHistory = createAttachment({
@@ -6652,6 +6663,56 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(session?.error).toBeUndefined()
   })
 
+  it('replays original session images when a text-only model has a Vision relay', async () => {
+    const originalImage = {
+      id: 'img-1',
+      mimeType: 'image/png' as const,
+      data: 'AQID',
+      byteLength: 3
+    }
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              images: [originalImage]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+            createMessage('user-2', 'user', 'second prompt', baseTime + 200)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 200
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const resent = await resendEditedWorkspaceMessage(
+      runtime,
+      { sessionId: 'session-1', messageId: 'user-2', text: 'second prompt, edited' },
+      { supportsImageInput: true }
+    )
+    await flushRuntimeTasks()
+
+    expect(resent).toBe(true)
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([originalImage])
+    expect(useSessionStore.getState().sessions[0].messages[0].images).toEqual([originalImage])
+  })
+
   it('classifies generic image uploads by extension before a text-only edited resend', async () => {
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -6956,5 +7017,56 @@ describe('sendWorkspaceMessage replay image filtering', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[7]).toBeUndefined()
     const session = useSessionStore.getState().sessions[0]
     expect(session?.error).toBeUndefined()
+  })
+
+  it('resets native image context but replays originals through the Vision relay', async () => {
+    const originalImage = {
+      id: 'img-1',
+      mimeType: 'image/png' as const,
+      data: 'AQID',
+      byteLength: 3
+    }
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [
+        {
+          id: 'session-1',
+          projectId: 'default-project',
+          title: 'Conversation',
+          cwd: '/workspace/project',
+          status: 'idle' as const,
+          messages: [
+            {
+              ...createMessage('user-1', 'user', 'first prompt', baseTime),
+              images: [originalImage]
+            },
+            createMessage('agent-1', 'agent', 'first answer', baseTime + 100)
+          ],
+          createdAt: baseTime,
+          updatedAt: baseTime + 100
+        }
+      ],
+      selectedSessionId: 'session-1'
+    })
+    const runtime = {
+      state: createSnapshot([]),
+      createSession: vi.fn(),
+      resumeSession: vi.fn().mockResolvedValue({ contextReset: false }),
+      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'session-1',
+      text: 'follow up',
+      cwd: '/workspace/project',
+      supportsImageInput: false,
+      supportsImageRelay: true
+    })
+    await flushRuntimeTasks()
+
+    expect(sent).toBeDefined()
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([originalImage])
   })
 })

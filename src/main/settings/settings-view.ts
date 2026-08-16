@@ -55,6 +55,7 @@ export const buildSettingsSnapshot = (
     reasoningEffort: preferences.reasoningEffort,
     subagentModel: settings.subagentModel ?? { mode: 'inherit' },
     reviewerModel: settings.reviewerModel ?? { mode: 'inherit' },
+    visionModel: settings.visionModel,
     notificationsEnabled: preferences.notificationsEnabled,
     conversationSkillImportEnabled: preferences.conversationSkillImportEnabled,
     closePreference: preferences.closePreference,

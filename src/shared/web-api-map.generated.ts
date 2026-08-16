@@ -220,6 +220,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setSkillsEnabled': 'settings:set-skills-enabled',
   'settings.setSubagentModel': 'settings:set-subagent-model',
   'settings.setToolPermission': 'settings:set-tool-permission',
+  'settings.setVisionModel': 'settings:set-vision-model',
   'settings.uninstallClaude': 'settings:uninstall-claude',
   'settings.uninstallCodex': 'settings:uninstall-codex',
   'settings.uninstallOpencode': 'settings:uninstall-opencode',

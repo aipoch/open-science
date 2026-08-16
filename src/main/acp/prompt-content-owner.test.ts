@@ -1,5 +1,5 @@
 import type { ContentBlock } from '@agentclientprotocol/sdk'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -9,6 +9,7 @@ import type { UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
 import { UploadRepository } from '../uploads/repository'
 import { stageUploadFixtures } from '../uploads/repository.test-utils'
+import { MAX_AUTO_PROCESS_IMAGE_BYTES } from '../uploads/attachment-media'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import { AcpPromptContentOwner } from './prompt-content-owner'
 
@@ -100,7 +101,7 @@ describe('AcpPromptContentOwner', () => {
       onSkillImportAttachmentEligible
     })
 
-    expect(plain).toEqual({ content: '  plain text is preserved  ' })
+    expect(plain).toEqual({ content: '  plain text is preserved  ', historyImageCount: 0 })
     expect(resolveReference).not.toHaveBeenCalled()
     expect(onSkillImportAttachmentEligible).not.toHaveBeenCalled()
 
@@ -130,7 +131,8 @@ describe('AcpPromptContentOwner', () => {
             'open-science/skill-inputs': [{ name: 'research', path: '/skills/research/SKILL.md' }]
           }
         }
-      ]
+      ],
+      historyImageCount: 0
     })
     expect(resolveReference).not.toHaveBeenCalled()
   })
@@ -220,6 +222,7 @@ describe('AcpPromptContentOwner', () => {
     ])
     expect(blocks[0]).toEqual({ type: 'text', text: 'combined prompt' })
     expect(blocks[1]).toMatchObject({ type: 'image', mimeType: 'image/png' })
+    expect(result.historyImageCount).toBe(1)
     expect(blocks[2]).toMatchObject({ type: 'resource_link', name: 'history.txt' })
     expect(blocks[3]).toMatchObject({
       type: 'resource',
@@ -414,6 +417,22 @@ describe('AcpPromptContentOwner', () => {
     expect(contentBlocks(first.content).at(-1)?.type).toBe('image')
     expect(contentBlocks(overBudget.content).at(-1)?.type).toBe('resource_link')
 
+    const relay = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'default-project',
+      text: 'relay.png',
+      historyImages: [],
+      historyUploads: [],
+      currentUploads: [await stageImage('relay.png')],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      imageCompatibilityRelay: true,
+      skillImportTurnToken: undefined,
+      onSkillImportAttachmentEligible: vi.fn()
+    })
+    expect(contentBlocks(relay.content).at(-1)?.type).toBe('image')
+
     owner.resetSession('session-1')
     const afterReset = await prepareImage('after-reset.png')
     expect(contentBlocks(afterReset.content).at(-1)?.type).toBe('image')
@@ -421,6 +440,55 @@ describe('AcpPromptContentOwner', () => {
     owner.clear()
     const afterClear = await prepareImage('after-clear.png')
     expect(contentBlocks(afterClear.content).at(-1)?.type).toBe('image')
+  })
+
+  it('leaves only a relay-owned link for an oversized historical image', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const [pending] = await stageUploadFixtures(uploads, {
+      files: [
+        {
+          name: 'oversized.png',
+          mimeType: 'image/png',
+          content: Buffer.from('png').toString('base64')
+        }
+      ]
+    })
+    const [historyImage] = await uploads.finalizePendingSessionUploads(
+      'session-1',
+      [pending],
+      'default-project'
+    )
+    const path = await uploads.resolveSessionUploadPath(
+      'session-1',
+      { path: historyImage.path },
+      'default-project'
+    )
+    await truncate(path, MAX_AUTO_PROCESS_IMAGE_BYTES + 1)
+    const owner = new AcpPromptContentOwner({
+      uploadRepository: uploads,
+      fileReferenceResolver: createManagedFileReferenceResolver({ uploads })
+    })
+
+    const prepared = await owner.prepare({
+      appSessionId: 'session-1',
+      projectId: 'default-project',
+      text: 'inspect history',
+      historyImages: [],
+      historyUploads: [historyImage],
+      currentUploads: [],
+      references: [],
+      codexSkillInputs: [],
+      skillImportEnabled: false,
+      imageCompatibilityRelay: true,
+      skillImportTurnToken: undefined,
+      onSkillImportAttachmentEligible: vi.fn()
+    })
+
+    expect(contentBlocks(prepared.content)).toEqual([
+      { type: 'text', text: 'inspect history' },
+      expect.objectContaining({ type: 'resource_link', name: 'oversized.png' })
+    ])
   })
 
   it('keeps already-processed image bytes charged when a later reference rejects', async () => {

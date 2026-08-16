@@ -6,7 +6,8 @@ import type {
   ReasoningEffort,
   ReviewerModelConfiguration,
   SettingsSnapshot,
-  SubagentModelConfiguration
+  SubagentModelConfiguration,
+  VisionModelConfiguration
 } from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
 import type { PermissionProfileId } from '../../../shared/permission-profiles'
@@ -25,6 +26,8 @@ type SettingsPreferencesState = {
   reviewerModelPending?: boolean
   subagentModel?: SubagentModelConfiguration
   subagentModelPending?: boolean
+  visionModel?: VisionModelConfiguration
+  visionModelPending?: boolean
   notificationsEnabled: boolean
   conversationSkillImportEnabled: boolean
   closePreference: CloseActionPreference | undefined
@@ -46,6 +49,7 @@ export type SettingsPreferencesActions = {
   setReasoningEffort: (effort: ReasoningEffort) => Promise<void>
   setReviewerModel: (configuration: ReviewerModelConfiguration) => Promise<void>
   setSubagentModel: (configuration: SubagentModelConfiguration) => Promise<void>
+  setVisionModel: (configuration: VisionModelConfiguration | undefined) => Promise<void>
   setNotificationsEnabled: (enabled: boolean) => Promise<void>
   setConversationSkillImportEnabled: (enabled: boolean) => Promise<void>
   setClosePreference: (preference: CloseActionPreference | undefined) => Promise<void>
@@ -73,7 +77,7 @@ type SettingsPreferencesCommands = Pick<
   Partial<
     Pick<
       Window['api']['settings'],
-      'getSettings' | 'setReviewerModel' | 'setSubagentModel' | 'setNetworkProxy'
+      'getSettings' | 'setReviewerModel' | 'setSubagentModel' | 'setVisionModel' | 'setNetworkProxy'
     >
   >
 
@@ -176,6 +180,30 @@ export const createSettingsPreferencesSlice = ({
         }
       } finally {
         if (write.isCurrent()) setState({ subagentModelPending: false })
+      }
+    },
+
+    setVisionModel: async (configuration) => {
+      const write = writeCoordinator.begin('visionModel')
+      setState({ visionModelPending: true })
+      try {
+        const snapshot = await getCommands().setVisionModel!({ configuration })
+        if (!write.isCurrent()) return
+        reconcileSnapshot(snapshot)
+        write.succeed()
+      } catch (error) {
+        write.fail('Could not save Vision model. Refresh the model catalog and try again.')
+        console.error('Failed to set Vision model', error)
+        const refresh = getCommands().getSettings
+        if (refresh) {
+          try {
+            reconcileSnapshot(await refresh())
+          } catch (refreshError) {
+            console.error('Failed to refresh Settings after rejected Vision model', refreshError)
+          }
+        }
+      } finally {
+        if (write.isCurrent()) setState({ visionModelPending: false })
       }
     },
 

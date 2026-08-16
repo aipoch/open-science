@@ -308,6 +308,17 @@ describe('ACP model-change workflow', () => {
     expect(harness.updateModel).not.toHaveBeenCalled()
   })
 
+  it('reconnects when an image-capable model replaces a text-only model', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.workflow.apply(target('model-b', { supportsImageInput: true }))
+    ).resolves.toBe(true)
+
+    expect(harness.requestReconnect).toHaveBeenCalledOnce()
+    expect(harness.updateModel).not.toHaveBeenCalled()
+  })
+
   it('recovers a failed reconnect before releasing admission', async () => {
     const harness = createHarness()
     const failure = new Error('reconnect failed')

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { isCodexSubscriptionProviderId } from '../../shared/settings'
-import type { AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpMessageImage, AcpRuntimeEvent, AcpTurnTokenUsage } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
@@ -38,6 +38,7 @@ type RestrictedInferenceResult = Readonly<{
 
 type RestrictedInferenceRunInput = Readonly<{
   prompt: string
+  images?: readonly AcpMessageImage[]
   target: ExplicitAgentBackendTarget
   systemPrompt: string
   agentName: string
@@ -259,6 +260,7 @@ class RestrictedInferenceRunner {
       const response = await runtime.sendPrompt({
         sessionId,
         text: input.prompt,
+        ...(input.images?.length ? { historyImages: [...input.images] } : {}),
         suppressUserMessage: true
       })
 

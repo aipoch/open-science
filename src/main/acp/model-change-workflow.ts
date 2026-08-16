@@ -215,6 +215,10 @@ class AcpModelChangeWorkflow {
     const connection = this.options.connectionResources.connection
     if (!connection) return false
     const backend = this.options.backendGeneration.current
+    // ACP Sessions retain provider-side context that the host cannot inspect. Crossing the image
+    // capability boundary therefore requires a fresh Session so history is rebuilt with either
+    // native image blocks or the configured text-evidence relay.
+    if (backend.context.supportsImageInput !== target.supportsImageInput) return false
     if (
       backend.framework.id === 'codex' &&
       target.route !== 'codex-bridge' &&
@@ -223,14 +227,6 @@ class AcpModelChangeWorkflow {
     ) {
       return false
     }
-    if (
-      backend.context.supportsImageInput &&
-      !target.supportsImageInput &&
-      (target.route === 'claude-anthropic' || target.route === 'codex-bridge')
-    ) {
-      return false
-    }
-
     try {
       if (
         target.providerTransportTargetId &&

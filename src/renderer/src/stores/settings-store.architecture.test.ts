@@ -100,6 +100,7 @@ const publicImports = new Set([
   'selectAnyInstalling',
   'selectFrameworkApiEndpoints',
   'selectProviderModelOptions',
+  'selectVisionRelayAvailable',
   'ProviderModelOption',
   'SaveProviderResult'
 ])
@@ -312,6 +313,9 @@ const allowedFacadeVariables = new Set([
   'applySnapshot',
   'DEFAULT_FRAMEWORK_API_ENDPOINTS',
   'selectFrameworkApiEndpoints',
+  'selectVisionRelayAvailable',
+  'configuration',
+  'selectedKey',
   'selectProviderModelOptions',
   'settingsLoadPromise',
   'SAFE_SETTINGS_LOAD_ERROR',

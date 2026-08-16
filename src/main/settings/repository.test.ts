@@ -148,6 +148,38 @@ describe('settings repository', () => {
     })
   })
 
+  it('defaults, validates, and atomically persists the Vision model selection', async () => {
+    expect(sanitizeSettings({ providers: [] }).visionModel).toBeUndefined()
+    expect(
+      sanitizeSettings({
+        providers: [],
+        visionModel: {
+          providerId: 'provider-a',
+          model: '',
+          reasoningEffort: 'high'
+        }
+      }).visionModel
+    ).toBeUndefined()
+
+    const repository = new SettingsRepository(await createStorageRoot())
+    await repository.setVisionModel({
+      providerId: 'provider-a',
+      model: 'vision-model',
+      reasoningEffort: 'high'
+    })
+
+    await expect(repository.getSettings()).resolves.toMatchObject({
+      visionModel: {
+        providerId: 'provider-a',
+        model: 'vision-model',
+        reasoningEffort: 'high'
+      }
+    })
+
+    await repository.setVisionModel(undefined)
+    await expect(repository.getSettings()).resolves.not.toHaveProperty('visionModel')
+  })
+
   it('keeps only an existing Claude subscription provider as the preferred mode', () => {
     const providers = [
       {

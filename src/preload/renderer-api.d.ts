@@ -231,6 +231,7 @@ import type {
   SetReasoningEffortRequest,
   SetReviewerModelRequest,
   SetSubagentModelRequest,
+  SetVisionModelRequest,
   SetSkillEnabledRequest,
   SetSkillsEnabledRequest,
   SettingsSnapshot,
@@ -464,6 +465,7 @@ export interface OpenScienceAPI {
     setReasoningEffort(request: SetReasoningEffortRequest): Promise<SettingsSnapshot>
     setReviewerModel(request: SetReviewerModelRequest): Promise<SettingsSnapshot>
     setSubagentModel(request: SetSubagentModelRequest): Promise<SettingsSnapshot>
+    setVisionModel(request: SetVisionModelRequest): Promise<SettingsSnapshot>
     onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void
     setNotificationsEnabled(request: SetNotificationsEnabledRequest): Promise<SettingsSnapshot>
     setConversationSkillImportEnabled(

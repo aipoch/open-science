@@ -132,6 +132,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
+  imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
 }
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
@@ -168,7 +169,8 @@ const createAcpRuntime = ({
   delegatedNotebookConnection,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
-  sideChatRelays
+  sideChatRelays,
+  imageInputCompatibility
 }: AcpRuntimeCompositionOptions): AcpRuntimeCoordinator => {
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
@@ -393,6 +395,7 @@ const createAcpRuntime = ({
         permissionGrantStore,
         permissionGrantRegistry,
         permissionGrantContext,
+        imageInputCompatibility,
         resolveSpecialistIdentity: profileService
           ? async (specialistId: string, frameworkId: string) => {
               let profile

@@ -10,7 +10,8 @@ import {
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
   isReasoningEffort,
-  type SubagentModelConfiguration
+  type SubagentModelConfiguration,
+  type VisionModelConfiguration
 } from '../../shared/settings'
 import { isPermissionProfileId } from '../../shared/permission-profiles'
 import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
@@ -99,6 +100,16 @@ const sanitizeSubagentModel = (value: unknown): SubagentModelConfiguration => {
     }
   }
   return { mode: 'inherit' }
+}
+
+const sanitizeVisionModel = (value: unknown): VisionModelConfiguration | undefined => {
+  if (!isRecord(value)) return undefined
+  const providerId = asString(value.providerId)
+  const model = asString(value.model)
+  const reasoningEffort = asString(value.reasoningEffort)
+  return providerId && model && isReasoningEffort(reasoningEffort)
+    ? { providerId, model, reasoningEffort }
+    : undefined
 }
 
 // Validates the per-language manual-interpreter catalog without applying platform-specific rules.
@@ -201,11 +212,13 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     ...sanitizedProviders.filter((provider) => !isCodexSubscriptionProvider(provider.type)),
     ...(migratedCodexProvider ? [migratedCodexProvider] : [])
   ]
+  const visionModel = sanitizeVisionModel(value.visionModel)
   const settings: StoredSettings = {
     version: SETTINGS_FILE_VERSION,
     providers,
     subagentModel: sanitizeSubagentModel(value.subagentModel),
-    reviewerModel: sanitizeSubagentModel(value.reviewerModel)
+    reviewerModel: sanitizeSubagentModel(value.reviewerModel),
+    ...(visionModel ? { visionModel } : {})
   }
   const claudeSubscriptionProviderId = asString(value.claudeSubscriptionProviderId)
   if (

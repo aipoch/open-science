@@ -224,6 +224,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.setReviewerModel', request),
     setSubagentModel: (request) =>
       electronRendererContracts.invoke('settings.setSubagentModel', request),
+    setVisionModel: (request) =>
+      electronRendererContracts.invoke('settings.setVisionModel', request),
     onChanged: (listener) => electronRendererContracts.subscribe('settings.onChanged', listener),
     setNotificationsEnabled: (request) =>
       electronRendererContracts.invoke('settings.setNotificationsEnabled', request),

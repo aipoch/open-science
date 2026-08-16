@@ -261,6 +261,72 @@ describe('WorkspacePage image attachment gating', () => {
     expect(conversationProps.composer.view.attachments).toEqual([])
   })
 
+  it('stages and sends an image through a configured Vision model', async () => {
+    setActiveProviderImageSupport(false)
+    useSettingsStore.setState((state) => ({
+      providers: [
+        ...state.providers,
+        {
+          ...createProvider(true),
+          id: 'vision-provider',
+          name: 'Vision Provider',
+          models: ['vision-model']
+        }
+      ],
+      visionModel: {
+        providerId: 'vision-provider',
+        model: 'vision-model',
+        reasoningEffort: 'default'
+      }
+    }))
+    const staged: UploadedAttachment = {
+      id: 'att-relay',
+      sessionId: '.pending',
+      name: 'pic.png',
+      originalName: 'pic.png',
+      path: '/uploads/pic.png',
+      mimeType: 'image/png',
+      size: 3
+    }
+    stageLocalFile.mockResolvedValue(staged)
+    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a' })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([imageFile()])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.composer.view.attachments).toEqual([staged]))
+    })
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(runtime.sendMessage).toHaveBeenCalledTimes(1))
+    })
+    expect(runtime.sendMessage.mock.calls[0][0].attachments).toEqual([staged])
+  })
+
+  it('keeps image staging blocked when the configured Vision model is unavailable', async () => {
+    setActiveProviderImageSupport(false)
+    useSettingsStore.setState({
+      visionModel: {
+        providerId: 'removed-provider',
+        model: 'vision-model',
+        reasoningEffort: 'default'
+      }
+    })
+
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.stageFiles([imageFile()])
+    })
+    await act(async () => {
+      await vi.waitFor(() => expect(conversationProps.view.actionError).toBe(IMAGE_BLOCKED_MESSAGE))
+    })
+    expect(stageLocalFile).not.toHaveBeenCalled()
+  })
+
   it('blocks sending a previously staged image after the model loses image support', async () => {
     // Stage while the model supports images so the attachment lands in composer state...
     setActiveProviderImageSupport(true)

@@ -41,6 +41,7 @@ import { createAcpHandlerWorkflows } from './acp/handler-workflows'
 import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
+import { ImageInputCompatibilityOwner } from './acp/image-input-compatibility-owner'
 import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
@@ -1748,6 +1749,31 @@ const createApplicationModules = async (
     .catch((error) =>
       hostLlmLog.error('stale host.llm profile cleanup failed', diagnosticErrorFields(error))
     )
+  const visionInferenceRunner = new RestrictedInferenceRunner({
+    appVersion: app.getVersion(),
+    configRoot,
+    profileNamespace: 'vision-evidence',
+    resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
+  })
+  void visionInferenceRunner
+    .sweepStaleProfiles()
+    .catch((error) =>
+      hostLlmLog.error('stale Vision model profile cleanup failed', diagnosticErrorFields(error))
+    )
+  const imageInputCompatibility = await modules.add(
+    new ImageInputCompatibilityOwner({
+      captureTarget: () => settingsService.admitVisionModel(),
+      runner: visionInferenceRunner
+    }),
+    (owner) => ({
+      name: 'image-input-compatibility',
+      capability: owner,
+      dispose: () => {
+        owner.clear()
+        return visionInferenceRunner.shutdown()
+      }
+    })
+  )
   notebookRpcServerRef.current = notebookRpcServer
   // Register ownership before ACP construction. Reverse disposal therefore drains ACP + Notebook
   // through the coordinator first, then releases the local bridge without creating a second runtime
@@ -1870,7 +1896,8 @@ const createApplicationModules = async (
       profileService,
       sessionPersistenceCoordinator,
       delegatedWork: delegatedWork.root,
-      sideChatRelays: mainPromptSideChatRelay
+      sideChatRelays: mainPromptSideChatRelay,
+      imageInputCompatibility
     },
     (options) => {
       const runtime = createAcpRuntime(options)

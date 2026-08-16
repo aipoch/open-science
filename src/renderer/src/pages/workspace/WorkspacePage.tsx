@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useTranslation } from 'react-i18next'
-
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -13,7 +12,7 @@ import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persist
 import { deleteSession } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
-import { useSettingsStore } from '@/stores/settings-store'
+import { selectVisionRelayAvailable, useSettingsStore } from '@/stores/settings-store'
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
@@ -108,7 +107,8 @@ const WorkspacePage = ({
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const supportsImageInput = useSettingsStore(
     (state) =>
-      state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput
+      state.providers.find((provider) => provider.id === activeProviderId)?.supportsImageInput ===
+        true || selectVisionRelayAvailable(state)
   )
   const scopedProjectId = activeProjectId ?? ''
   const activeProject = useProjectStore((state) =>

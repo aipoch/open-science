@@ -182,7 +182,7 @@ const prepareSaveAsSkillContinuation = (
     activeBranchMessages.slice(0, -1).filter((message) => !isHiddenControlMessage(message)),
     replayDescriptor,
     session.projectId,
-    sessionBackend.context.supportsImageInput
+    sessionBackend.context.supportsImageInput || request.supportsImageRelay === true
   )
   if (!historyReplay) {
     throw new Error('Save as skill conversation history could not be replayed.')

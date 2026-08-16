@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import { ReviewerModelSelect, SubagentModelSelect } from './SubagentModelSelect'
+import { ReviewerModelSelect, SubagentModelSelect, VisionModelSelect } from './SubagentModelSelect'
 
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = (): boolean => false
@@ -251,6 +251,85 @@ describe('ReviewerModelSelect', () => {
         '[aria-label="Reviewer model Reasoning effort"]'
       )?.disabled
     ).toBe(true)
+    act(() => root.unmount())
+  })
+})
+
+describe('VisionModelSelect', () => {
+  beforeEach(() => {
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportsSkills: true,
+          supportedApiTypes: ['openai']
+        }
+      ],
+      providers: [
+        {
+          id: 'text-provider',
+          type: 'custom',
+          name: 'Text Provider',
+          apiEndpoints: ['openai'],
+          model: 'text-model',
+          models: ['text-model'],
+          supportsImageInput: false,
+          hasKey: true,
+          needsKey: false
+        },
+        {
+          id: 'vision-provider',
+          type: 'custom',
+          name: 'Vision Provider',
+          apiEndpoints: ['openai'],
+          model: 'vision-model',
+          models: ['vision-model'],
+          supportsImageInput: true,
+          hasKey: true,
+          needsKey: false
+        }
+      ],
+      setVisionModel: vi.fn(async () => undefined)
+    })
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('offers only image-capable configured models and saves an independent selection', () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => root.render(<VisionModelSelect />))
+
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Vision model Model"]'
+    )
+    expect(trigger?.textContent).toContain('Not configured')
+    act(() => {
+      trigger?.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      trigger?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    const options = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'))
+    expect(options.some((candidate) => candidate.textContent?.includes('text-model'))).toBe(false)
+    const visionOption = options.find((candidate) =>
+      candidate.textContent?.includes('vision-model')
+    )
+    act(() => {
+      visionOption?.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }))
+      visionOption?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(useSettingsStore.getState().setVisionModel).toHaveBeenCalledWith({
+      providerId: 'vision-provider',
+      model: 'vision-model',
+      reasoningEffort: 'default'
+    })
     act(() => root.unmount())
   })
 })

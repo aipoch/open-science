@@ -383,20 +383,27 @@ describe('SettingsPage layout', () => {
       'button'
     )
 
-    // The Model panel splits Active model, Reasoning effort, Subagent model, and Reviewer model (their own
-    // sections) from provider management; the agent framework moved to the Agent sub-panel.
+    // The Model panel splits Active model, Reasoning effort, Subagent, Reviewer, and Vision models
+    // (their own sections) from provider management; agent framework moved to the Agent sub-panel.
     expect(document.body.textContent).toContain('Active model')
     expect(document.body.textContent).toContain('Reasoning effort')
     expect(document.body.textContent).toContain('preserve relative strength when models change')
     expect(document.body.textContent).toContain('may approximate unsupported levels')
     expect(document.body.textContent).toContain('Providers')
     expect(document.body.textContent).not.toContain('Agent framework')
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(5)
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(6)
     expect(
       Array.from(document.body.querySelectorAll('[data-slot="settings-section"]')).map((section) =>
         section.getAttribute('aria-label')
       )
-    ).toEqual(['Active model', 'Reasoning effort', 'Subagent model', 'Reviewer model', 'Providers'])
+    ).toEqual([
+      'Active model',
+      'Reasoning effort',
+      'Subagent model',
+      'Reviewer model',
+      'Vision model',
+      'Providers'
+    ])
     expect(document.body.textContent).toContain('Model used by subagents when Delegation is on.')
     expect(document.body.textContent).toContain(
       'Model used for manual, automatic, and re-run Reviews.'

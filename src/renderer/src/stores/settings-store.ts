@@ -4,9 +4,14 @@ import {
   DEFAULT_APP_ICON_VARIANT,
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_NOTIFICATIONS_ENABLED,
-  DEFAULT_REASONING_EFFORT
+  DEFAULT_REASONING_EFFORT,
+  isCodexSubscriptionProvider
 } from '../../../shared/settings'
-import { buildConfiguredModelInventory } from '../../../shared/configured-model-catalog'
+import {
+  buildConfiguredModelCatalog,
+  buildConfiguredModelInventory,
+  configuredModelKey
+} from '../../../shared/configured-model-catalog'
 import type { OfficialVendorId } from '../../../shared/provider-registry'
 import type { PackageMirror } from '../../../shared/mirror'
 import {
@@ -74,7 +79,8 @@ import type {
   ReviewerModelConfiguration,
   SettingsSnapshot,
   AppIconVariant,
-  SubagentModelConfiguration
+  SubagentModelConfiguration,
+  VisionModelConfiguration
 } from '../../../shared/settings'
 
 type SettingsStoreData = RuntimeSetupState &
@@ -115,6 +121,8 @@ type SettingsStoreData = RuntimeSetupState &
     reviewerModelPending: boolean
     subagentModel: SubagentModelConfiguration
     subagentModelPending: boolean
+    visionModel: VisionModelConfiguration | undefined
+    visionModelPending: boolean
     // Whether the app posts an OS notification when an agent task finishes or fails while unfocused.
     notificationsEnabled: boolean
     // Whether conversations receive the app-owned Skill package import tool and instructions.
@@ -176,6 +184,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   reviewerModelPending: false,
   subagentModel: { mode: 'inherit' },
   subagentModelPending: false,
+  visionModel: undefined,
+  visionModelPending: false,
   notificationsEnabled: DEFAULT_NOTIFICATIONS_ENABLED,
   conversationSkillImportEnabled: DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   closePreference: undefined,
@@ -197,6 +207,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   reasoningEffort: snapshot.reasoningEffort,
   reviewerModel: snapshot.reviewerModel ?? { mode: 'inherit' },
   subagentModel: snapshot.subagentModel ?? { mode: 'inherit' },
+  visionModel: snapshot.visionModel,
   // Defensive: main always fills this, but an untyped snapshot (tests, older backends) must not
   // write undefined into the boolean preference.
   notificationsEnabled: snapshot.notificationsEnabled ?? DEFAULT_NOTIFICATIONS_ENABLED,
@@ -225,6 +236,25 @@ const DEFAULT_FRAMEWORK_API_ENDPOINTS: ChatApiEndpoint[] = ['anthropic']
 export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ChatApiEndpoint[] =>
   state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
     ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
+
+export const selectVisionRelayAvailable = (state: SettingsStoreData): boolean => {
+  const configuration = state.visionModel
+  if (!configuration) return false
+  const selectedKey = configuredModelKey(configuration.providerId, configuration.model)
+  return buildConfiguredModelCatalog({
+    providers: state.providers,
+    activeProviderId: state.activeProviderId,
+    claudeSubscriptionProviderId: state.claudeSubscriptionProviderId,
+    frameworkId: state.agentFrameworkId,
+    frameworkEndpoints: selectFrameworkApiEndpoints(state)
+  }).some(
+    (entry) =>
+      entry.key === selectedKey &&
+      entry.selectable &&
+      entry.supportsImageInput &&
+      !isCodexSubscriptionProvider(entry.providerType)
+  )
+}
 
 // A single selectable (provider, model) entry for the composer picker. `model` is '' for a provider
 // with no concrete model, meaning "use the provider default".

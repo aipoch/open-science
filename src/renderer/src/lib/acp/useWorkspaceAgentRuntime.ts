@@ -11,7 +11,6 @@ import {
   type PropsWithChildren,
   type ReactElement
 } from 'react'
-
 import {
   type AcpAgentRuntimeUpdate,
   type AcpContextUsage,
@@ -27,7 +26,7 @@ import {
 } from '../../../../shared/permission-profiles'
 import { resolveModelContextWindow } from '../../../../shared/provider-registry'
 import { useSessionStore, type ChatSession } from '../../stores/session-store'
-import { useSettingsStore } from '../../stores/settings-store'
+import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
 import { useAcpRuntime } from './useAcpRuntime'
 import {
   resolveHistoryReplayTarget,
@@ -63,18 +62,15 @@ import {
   pendingWorkspacePermissions
 } from './workspace-permission-response-attempt-owner'
 import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
-
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'setPermissionProfile'
 >
 type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
-
 const EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS: string[] = []
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
-
 const setWorkspacePermissionProfile = async (
   runtime: WorkspacePermissionProfileRuntime,
   sessionId: string,
@@ -123,7 +119,6 @@ type WorkspaceAgentRuntime = {
   setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => Promise<boolean>
   revokePermissionGrant: (sessionId: string, categoryKey: string) => Promise<void>
 }
-
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
 const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
@@ -156,7 +151,9 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const activeProvider = useSettingsStore((state) =>
     state.providers.find((candidate) => candidate.id === state.activeProviderId)
   )
-  const supportsImageInput = activeProvider?.supportsImageInput ?? false
+  const visionRelayAvailable = useSettingsStore(selectVisionRelayAvailable)
+  const supportsNativeImageInput = activeProvider?.supportsImageInput === true
+  const supportsHistoryImageInput = supportsNativeImageInput || visionRelayAvailable
   const activeModel = useSettingsStore((state) => state.activeModel)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
@@ -255,12 +252,11 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
 
   useEffect(() => {
     lifecycleOwner.processRuntimeEvents(runtime, runtime.state.events, {
-      supportsImageInput,
+      supportsImageInput: supportsHistoryImageInput,
       getHistoryReplayDescriptor: getSessionHistoryReplayDescriptor
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runtime is read fresh; fire on new events.
-  }, [runtime.state.events, getSessionHistoryReplayDescriptor, supportsImageInput])
-
+  }, [runtime.state.events, getSessionHistoryReplayDescriptor, supportsHistoryImageInput])
   const agentPromptInFlightSessionIds =
     runtime.state.agentPromptInFlightSessionIds ?? EMPTY_AGENT_PROMPT_IN_FLIGHT_SESSION_IDS
 
@@ -330,7 +326,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         runtime,
         {
           ...input,
-          supportsImageInput,
+          supportsImageInput: supportsNativeImageInput,
+          supportsImageRelay: visionRelayAvailable,
           agentFrameworkId,
           agentBackendId,
           agentModel: activeModel,
@@ -345,7 +342,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     [
       lifecycleOwner,
       runtime,
-      supportsImageInput,
+      supportsNativeImageInput,
+      visionRelayAvailable,
       agentFrameworkId,
       agentBackendId,
       activeModel,
@@ -361,7 +359,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
         runtime,
         { sessionId, messageId, ...input },
         {
-          supportsImageInput,
+          supportsImageInput: supportsNativeImageInput,
+          supportsImageRelay: visionRelayAvailable,
           agentFrameworkId,
           agentBackendId,
           agentModel: activeModel,
@@ -372,7 +371,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
       ),
     [
       runtime,
-      supportsImageInput,
+      supportsNativeImageInput,
+      visionRelayAvailable,
       agentFrameworkId,
       agentBackendId,
       activeModel,
@@ -399,14 +399,14 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     (sessionId: string): Promise<void> =>
       lifecycleOwner.resume(runtime, sessionId, drainRuntimeEvents, {
         historyReplayDescriptor: getSessionHistoryReplayDescriptor(sessionId),
-        supportsImageInput
+        supportsImageInput: supportsHistoryImageInput
       }),
     [
       lifecycleOwner,
       runtime,
       drainRuntimeEvents,
       getSessionHistoryReplayDescriptor,
-      supportsImageInput
+      supportsHistoryImageInput
     ]
   )
   const cancelRun = useCallback(

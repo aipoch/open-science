@@ -10,7 +10,8 @@ import type {
   ProviderValidationFailure,
   ReasoningEffort,
   ReviewerModelConfiguration,
-  SubagentModelConfiguration
+  SubagentModelConfiguration,
+  VisionModelConfiguration
 } from '../../shared/settings'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
 import type { OfficialVendorId } from '../../shared/provider-registry'
@@ -159,6 +160,8 @@ export type StoredSettings = {
   subagentModel?: SubagentModelConfiguration
   // Global Reviewer model routing. Absence in older documents means follow the Active model.
   reviewerModel?: ReviewerModelConfiguration
+  // Optional visual relay target. Absence in older documents and new installs means disabled.
+  visionModel?: VisionModelConfiguration
   // Desktop-notification preference for finished/failed agent tasks. Absent means enabled.
   notificationsEnabled?: boolean
   // Conversation-driven Skill package import. Absent means enabled.

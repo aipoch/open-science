@@ -734,6 +734,9 @@ export type AcpSaveAsSkillRequest = {
   sessionId: string
   agentFrameId: string
   messageBranchId: string
+  // Renderer capability hint only. Main still captures and validates the configured Vision target
+  // before any retained history image can reach the active text-only model.
+  supportsImageRelay?: boolean
   // Durable hidden control Message created on the active Branch before dispatch.
   promptMessageId: string
 }

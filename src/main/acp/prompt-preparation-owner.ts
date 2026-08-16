@@ -15,6 +15,7 @@ import type {
   SessionEstimateInput
 } from './context-usage-tracker'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
+import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import type {
   AcpSessionPresentationPolicy,
   AcpSessionToolingAvailability
@@ -32,6 +33,7 @@ type NotebookTurnInputs = Readonly<{
 }>
 type AcpPromptPreparationOwnerOptions = Readonly<{
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
+  imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
   presentation: Pick<AcpSessionPresentationPolicy, 'buildTurnPromptPrefix' | 'continuationText'>
   contextUsage: Pick<
     ContextUsageTracker,
@@ -210,10 +212,23 @@ class AcpPromptPreparationOwner {
         references: input.request.referencedArtifacts ?? [],
         codexSkillInputs: skillActivityInputs,
         skillImportEnabled: input.skillImportEnabled,
+        imageCompatibilityRelay:
+          input.backend.context.supportsImageInput === false &&
+          this.options.imageInputCompatibility !== undefined,
         fileTextBudget: resolveFileTextBudget(input.backend.context.window),
         skillImportTurnToken: input.skillImportTurnToken,
         onSkillImportAttachmentEligible: input.onSkillImportAttachmentEligible
       })
+      if (await cancelled()) return cancelPrepared()
+      const providerContent = this.options.imageInputCompatibility
+        ? await this.options.imageInputCompatibility.prepare({
+            content: prepared.content,
+            focus: input.request.text,
+            supportsImageInput: input.backend.context.supportsImageInput,
+            historyImageCount: prepared.historyImageCount,
+            signal: input.signal
+          })
+        : prepared.content
       if (await cancelled()) return cancelPrepared()
 
       if (this.options.notebook?.registerTurnInputs && prepared.turnInputs) {
@@ -233,7 +248,7 @@ class AcpPromptPreparationOwner {
       contextTurn = this.options.contextUsage.beginTurn(input.request.sessionId)
       const contextEstimateCurrent = await this.recordContextEstimate(
         input,
-        prepared.content,
+        providerContent,
         promptPrefix,
         skillActivityInputs
       )
@@ -243,7 +258,7 @@ class AcpPromptPreparationOwner {
       let transferred = false
       return Object.freeze({
         status: 'ready' as const,
-        content: prepared.content,
+        content: providerContent,
         ...(promptPrefix ? { promptPrefix } : {}),
         skillActivityInputs,
         transferContextTurn: (): ContextWindowTurnHandle => {

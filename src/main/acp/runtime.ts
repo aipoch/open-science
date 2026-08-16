@@ -76,6 +76,7 @@ import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpAppContinuationOwner } from './app-continuation-owner'
 import type { ContextUsageTracker } from './context-usage-tracker'
+import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import type { AcpElicitationOwner } from './elicitation-owner'
 import type {
   ReviewerSessionOwner,
@@ -223,6 +224,7 @@ type AcpRuntimeOptions = {
   // Per-session cumulative inlined-image budget in base64 bytes. Defaults to MAX_SESSION_INLINE_IMAGE_BYTES;
   // injectable so tests can drive the degrade-to-file path with small fixtures.
   inlineImageBudgetBytes?: number
+  imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'isAvailable' | 'prepare'>
   contextUsageTracker?: ContextUsageTracker
   // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
   opencodeUsageFetch?: typeof fetch
@@ -1317,7 +1319,7 @@ class AcpRuntime {
         ? {
             replay: {
               descriptor: this.durableContinuationHistoryReplayDescriptor(),
-              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+              supportsImageInput: await this.supportsDurableContinuationImages()
             }
           }
         : {})
@@ -1469,7 +1471,7 @@ class AcpRuntime {
           ? {
               replay: {
                 descriptor: this.durableContinuationHistoryReplayDescriptor(),
-                supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+                supportsImageInput: await this.supportsDurableContinuationImages()
               }
             }
           : {})
@@ -1791,7 +1793,7 @@ class AcpRuntime {
         ? {
             replay: {
               descriptor: this.durableContinuationHistoryReplayDescriptor(),
-              supportsImageInput: this.backendGeneration.current.context.supportsImageInput
+              supportsImageInput: await this.supportsDurableContinuationImages()
             }
           }
         : {})
@@ -2222,6 +2224,13 @@ class AcpRuntime {
       target,
       ...(backend.context.window ? { contextWindow: backend.context.window } : {})
     }
+  }
+
+  private async supportsDurableContinuationImages(): Promise<boolean> {
+    return (
+      this.backendGeneration.current.context.supportsImageInput ||
+      (await this.options.imageInputCompatibility?.isAvailable()) === true
+    )
   }
 
   private processEventDisposition(

@@ -1674,10 +1674,14 @@ describe('ACP runtime provider prompt acceptance', () => {
     ['Codex Responses', codexFramework, 'codex-responses', 'codex:provider-a'],
     ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
   ] as const)(
-    'reports provider acceptance after the first %s update',
+    'forwards visual input and reports provider acceptance after the first %s update',
     async (_name, framework, modelRoute, backendId) => {
       const process = new FakeAgentProcess()
+      let receivedPrompt: ContentBlock[] = []
       startFakeAgent(process, ['acceptance-session'], {
+        onPrompt: ({ prompt }) => {
+          receivedPrompt = prompt
+        },
         ...(framework.id === 'codex'
           ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
           : {})
@@ -1700,8 +1704,24 @@ describe('ACP runtime provider prompt acceptance', () => {
       })
 
       const session = await runtime.createSession({ cwd: '/workspace' })
-      await runtime.sendPrompt({ sessionId: session.sessionId, text: 'Research this.' })
+      const imageData = Buffer.from(`visual-${modelRoute}`).toString('base64')
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Research this.',
+        historyImages: [
+          {
+            mimeType: 'image/png',
+            data: imageData,
+            byteLength: Buffer.byteLength(`visual-${modelRoute}`)
+          }
+        ]
+      })
 
+      expect(receivedPrompt).toContainEqual({
+        type: 'image',
+        mimeType: 'image/png',
+        data: imageData
+      })
       expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
       expect(onProviderPromptAccepted).toHaveBeenCalledWith(session.sessionId, undefined)
     }
@@ -2869,9 +2889,22 @@ describe('ACP runtime restored permission continuation', () => {
     )
   })
 
-  it.each(RESTORED_CONTINUATION_FRAMEWORKS)(
+  it.each([
+    ...RESTORED_CONTINUATION_FRAMEWORKS.map(
+      ([name, framework, modelRoute, backendId]) =>
+        [name, framework, modelRoute, backendId, true, false] as const
+    ),
+    [
+      'OpenCode with Vision relay',
+      opencodeFramework,
+      'opencode-openai',
+      'opencode:provider-a',
+      false,
+      true
+    ] as const
+  ])(
     'builds restored permission replay through %s from Main-owned Session history after context reset',
-    async (_name, framework, modelRoute, backendId) => {
+    async (_name, framework, modelRoute, backendId, supportsImageInput, usesImageRelay) => {
       const process = new FakeAgentProcess()
       const receivedPrompts: ContentBlock[][] = []
       const fakeAgent = startFakeAgent(process, ['adopted-provider-session'], {
@@ -2970,9 +3003,22 @@ describe('ACP runtime restored permission continuation', () => {
         }
       )
       const loadSessionForContinuation = vi.fn(async () => structuredClone(persistedSession))
+      const imageInputCompatibility = {
+        isAvailable: vi.fn(async () => true),
+        prepare: vi.fn(async ({ content }: { content: string | ContentBlock[] }) =>
+          typeof content === 'string'
+            ? content
+            : content.map((block) =>
+                block.type === 'image'
+                  ? { type: 'text' as const, text: 'Vision-relayed historical image evidence.' }
+                  : block
+              )
+        )
+      }
       const runtime = new AcpRuntime({
         appVersion: '0.1.0',
         defaultCwd: '/workspace',
+        ...(usesImageRelay ? { imageInputCompatibility } : {}),
         permissionWait: {
           sessions: {
             readSessionRuntimeContext: vi.fn(async () => structuredClone(runtimeContext)),
@@ -2988,7 +3034,7 @@ describe('ACP runtime restored permission continuation', () => {
           executablePath: '/bin/agent',
           env: {},
           contextWindow: 200_000,
-          supportsImageInput: true,
+          supportsImageInput,
           ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
         })
       })
@@ -3010,9 +3056,27 @@ describe('ACP runtime restored permission continuation', () => {
       expect(loadSessionForContinuation).toHaveBeenCalledWith('project-1', 'restored-session')
       expect(fakeAgent.prompts[0]?.text).toContain('Main-owned earlier request.')
       expect(fakeAgent.prompts[0]?.text).toContain('approved the pending tool permission')
-      expect(receivedPrompts[0]).toEqual(
-        expect.arrayContaining([expect.objectContaining({ type: 'image' })])
-      )
+      if (usesImageRelay) {
+        expect(imageInputCompatibility.isAvailable).toHaveBeenCalledOnce()
+        expect(imageInputCompatibility.prepare).toHaveBeenCalledWith(
+          expect.objectContaining({ supportsImageInput: false, historyImageCount: 1 })
+        )
+        expect(receivedPrompts[0]).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'text',
+              text: 'Vision-relayed historical image evidence.'
+            })
+          ])
+        )
+        expect(receivedPrompts[0]).not.toEqual(
+          expect.arrayContaining([expect.objectContaining({ type: 'image' })])
+        )
+      } else {
+        expect(receivedPrompts[0]).toEqual(
+          expect.arrayContaining([expect.objectContaining({ type: 'image' })])
+        )
+      }
     }
   )
 
@@ -22287,7 +22351,8 @@ describe('ACP runtime — model hot switch', () => {
       runtime.applyModelChange(
         modelTarget('model-b', {
           backendId: 'claude-code:provider-b',
-          anthropicBridgeTargetId: 'provider-b/model-b'
+          anthropicBridgeTargetId: 'provider-b/model-b',
+          supportsImageInput: false
         })
       )
     ).resolves.toBe(true)
@@ -22295,7 +22360,8 @@ describe('ACP runtime — model hot switch', () => {
       runtime.applyModelChange(
         modelTarget('model-a', {
           backendId: 'claude-code:provider-a',
-          anthropicBridgeTargetId: 'provider-a/model-a'
+          anthropicBridgeTargetId: 'provider-a/model-a',
+          supportsImageInput: false
         })
       )
     ).resolves.toBe(true)
@@ -22389,7 +22455,7 @@ describe('ACP runtime — model hot switch', () => {
     expect(process.killed).toBe(false)
   })
 
-  it('hot-switches from a text-only model to an image-capable model in place', async () => {
+  it('reconnects when switching from a text-only model to an image-capable model', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['s-model'], { configOptions: [modelOption()] })
     const { runtime } = createModelRuntime(process, vi.fn(), false)
@@ -22398,17 +22464,15 @@ describe('ACP runtime — model hot switch', () => {
 
     await runtime.applyModelChange(modelTarget('model-b'))
 
-    expect(fakeAgent.configChanges).toEqual([
-      { sessionId: 's-model', configId: 'model', value: 'model-b' }
-    ])
-    expect(process.killed).toBe(false)
+    expect(fakeAgent.configChanges).toEqual([])
+    expect(process.killed).toBe(true)
   })
 
   it.each([
     ['OpenCode', opencodeFramework, 'opencode-openai', 'opencode:provider-a'],
     ['native Codex', codexFramework, 'codex-responses', 'codex:provider-a']
   ] as const)(
-    'lets %s filter historical images while hot-switching to a text-only model',
+    'reconnects %s before switching to a text-only model',
     async (_name, framework, route, backendId) => {
       const process = new FakeAgentProcess()
       const fakeAgent = startFakeAgent(process, ['s-model'], {
@@ -22446,10 +22510,8 @@ describe('ACP runtime — model hot switch', () => {
         reasoningEffort: 'default'
       })
 
-      expect(fakeAgent.configChanges).toEqual([
-        { sessionId: 's-model', configId: 'model', value: 'model-b' }
-      ])
-      expect(process.killed).toBe(false)
+      expect(fakeAgent.configChanges).toEqual([])
+      expect(process.killed).toBe(true)
     }
   )
 

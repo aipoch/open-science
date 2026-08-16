@@ -4,6 +4,7 @@ export type SettingsWriteKey =
   | 'reasoningEffort'
   | 'reviewerModel'
   | 'subagentModel'
+  | 'visionModel'
   | 'notifications'
   | 'conversationSkillImport'
   | 'closePreference'

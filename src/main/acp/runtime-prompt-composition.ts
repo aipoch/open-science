@@ -134,6 +134,7 @@ const composeAcpRuntimePromptOwners = (
 
   const promptPreparation = new AcpPromptPreparationOwner({
     promptContent: base.promptContentOwner,
+    imageInputCompatibility: options.imageInputCompatibility,
     presentation: base.sessionPresentationPolicy,
     contextUsage: base.contextUsageTracker,
     selectBridgeSkills: async (text, catalog, signal) =>

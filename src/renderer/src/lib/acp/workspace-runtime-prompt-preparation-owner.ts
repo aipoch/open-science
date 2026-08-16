@@ -48,6 +48,7 @@ type PrepareExistingWorkspacePromptRequest = {
     frameworkId?: AgentFrameworkId
     backendId?: string
     supportsImageInput?: boolean
+    supportsImageRelay?: boolean
   }
   replay: {
     descriptor?: HistoryReplayDescriptor
@@ -108,6 +109,13 @@ const hasHistoryImages = (messages: ChatMessage[]): boolean =>
   messages.some(
     (message) => (message.images?.length ?? 0) > 0 || message.uploads?.some(isReplayImage) === true
   )
+
+const supportsReplayImages = (
+  runtime: PrepareExistingWorkspacePromptRequest['selectedRuntime']
+): boolean | undefined =>
+  runtime.supportsImageInput === false
+    ? runtime.supportsImageRelay === true
+    : runtime.supportsImageInput
 
 const replayAttachmentsForModel = (
   replay: HistoryReplayContext | undefined,
@@ -194,6 +202,7 @@ const prepareExistingWorkspacePrompt = async (
     runtimeMustAdoptSession &&
     request.selectedRuntime.supportsImageInput === false &&
     hasHistoryImages(currentSession?.messages ?? [])
+  const replaySupportsImageInput = supportsReplayImages(request.selectedRuntime)
   const preparationRequired = branchResetRequired || runtimeMustAdoptSession
 
   const releasePreparation = preparationRequired
@@ -351,7 +360,7 @@ const prepareExistingWorkspacePrompt = async (
             request.replay.descriptor,
             request.selectedRuntime.frameworkId,
             request.projectId,
-            request.selectedRuntime.supportsImageInput
+            replaySupportsImageInput
           )
         : undefined
     const includeResumeFallback = Boolean(request.replay.includeResumeFallback && historyMessages)
@@ -362,29 +371,19 @@ const prepareExistingWorkspacePrompt = async (
             request.replay.descriptor,
             request.selectedRuntime.frameworkId,
             request.projectId,
-            request.selectedRuntime.supportsImageInput
+            replaySupportsImageInput
           )
         : undefined
 
     return {
       historyPreamble: replay?.historyPreamble,
-      historyAttachments: replayAttachmentsForModel(
-        replay,
-        request.selectedRuntime.supportsImageInput
-      ),
-      historyImages:
-        request.selectedRuntime.supportsImageInput === false ? undefined : replay?.historyImages,
+      historyAttachments: replayAttachmentsForModel(replay, replaySupportsImageInput),
+      historyImages: replaySupportsImageInput === false ? undefined : replay?.historyImages,
       resumeFallback: includeResumeFallback
         ? {
             historyPreamble: fallback?.historyPreamble,
-            historyAttachments: replayAttachmentsForModel(
-              fallback,
-              request.selectedRuntime.supportsImageInput
-            ),
-            historyImages:
-              request.selectedRuntime.supportsImageInput === false
-                ? undefined
-                : fallback?.historyImages
+            historyAttachments: replayAttachmentsForModel(fallback, replaySupportsImageInput),
+            historyImages: replaySupportsImageInput === false ? undefined : fallback?.historyImages
           }
         : undefined,
       contextReset
