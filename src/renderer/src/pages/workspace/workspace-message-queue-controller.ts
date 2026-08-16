@@ -106,6 +106,7 @@ const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
   session: ChatSession
 ): boolean =>
+  session.archivedAt === undefined &&
   (session.status === 'idle' || session.status === 'error') &&
   !options.promptInFlightSessionIds.includes(session.id) &&
   !options.sendPreparationInFlightSessionIds.includes(session.id) &&

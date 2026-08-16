@@ -234,6 +234,40 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
   })
 
+  it('pauses queued prompts while the session is archived', async () => {
+    let currentSession = session('idle')
+    const input = options(currentSession, { getSession: () => currentSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    currentSession = { ...currentSession, archivedAt: 2 }
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        getSession: () => currentSession
+      })
+    )
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('after restore'),
+        session: currentSession
+      })
+    )
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+
+    currentSession = { ...currentSession, archivedAt: undefined }
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        getSession: () => currentSession
+      })
+    )
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+  })
+
   it('waits for cancellation before Send now dispatches', async () => {
     const order: string[] = []
     let currentSession = session()
