@@ -21,18 +21,18 @@ const HOST_LLM_SYSTEM_PROMPT = [
 type HostLlmRequest = string | Readonly<{ prompt: string }>
 
 type HostLlmUsage = Readonly<{
-  input_tokens: number
-  cache_tokens: number
-  output_tokens: number
-  cached_read_tokens?: number
-  cached_write_tokens?: number
-  turn_count?: number
+  inputTokens: number
+  cacheTokens: number
+  outputTokens: number
+  cachedReadTokens?: number
+  cachedWriteTokens?: number
+  turnCount?: number
 }>
 
 type HostLlmResult = Readonly<{
   text: string
   model: string
-  stop_reason: RestrictedInferenceResult['stopReason']
+  stopReason: RestrictedInferenceResult['stopReason']
   usage?: HostLlmUsage
 }>
 
@@ -125,22 +125,22 @@ const publicError = (error: unknown): string => {
 const projectResult = (result: RestrictedInferenceResult): HostLlmResult => {
   const usage = result.usage
     ? Object.freeze({
-        input_tokens: result.usage.inputTokens,
-        cache_tokens: result.usage.cacheTokens,
-        output_tokens: result.usage.outputTokens,
+        inputTokens: result.usage.inputTokens,
+        cacheTokens: result.usage.cacheTokens,
+        outputTokens: result.usage.outputTokens,
         ...(result.usage.cachedReadTokens === undefined
           ? {}
-          : { cached_read_tokens: result.usage.cachedReadTokens }),
+          : { cachedReadTokens: result.usage.cachedReadTokens }),
         ...(result.usage.cachedWriteTokens === undefined
           ? {}
-          : { cached_write_tokens: result.usage.cachedWriteTokens }),
-        ...(result.usage.turnCount === undefined ? {} : { turn_count: result.usage.turnCount })
+          : { cachedWriteTokens: result.usage.cachedWriteTokens }),
+        ...(result.usage.turnCount === undefined ? {} : { turnCount: result.usage.turnCount })
       })
     : undefined
   return Object.freeze({
     text: result.text,
     model: result.model,
-    stop_reason: result.stopReason,
+    stopReason: result.stopReason,
     ...(usage ? { usage } : {})
   })
 }

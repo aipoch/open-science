@@ -91,14 +91,14 @@ describe('HostLlmService', () => {
     expect(first).toEqual({
       text: 'answer:one',
       model: 'model-a',
-      stop_reason: 'end_turn',
+      stopReason: 'end_turn',
       usage: {
-        input_tokens: 10,
-        cache_tokens: 3,
-        output_tokens: 4,
-        cached_read_tokens: 2,
-        cached_write_tokens: 1,
-        turn_count: 1
+        inputTokens: 10,
+        cacheTokens: 3,
+        outputTokens: 4,
+        cachedReadTokens: 2,
+        cachedWriteTokens: 1,
+        turnCount: 1
       }
     })
     expect(second).toMatchObject({ text: 'answer:two' })
@@ -129,8 +129,8 @@ describe('HostLlmService', () => {
         options: { max_concurrency: 2 }
       })
     ).resolves.toEqual([
-      { text: 'SLOW', model: 'model-a', stop_reason: 'end_turn' },
-      { text: 'FAST', model: 'model-a', stop_reason: 'end_turn' },
+      { text: 'SLOW', model: 'model-a', stopReason: 'end_turn' },
+      { text: 'FAST', model: 'model-a', stopReason: 'end_turn' },
       { error: 'host.llm requests must be a prompt string or an exact { prompt } object.' },
       { error: 'host.llm stopped because the selected agent attempted to use a tool.' }
     ])

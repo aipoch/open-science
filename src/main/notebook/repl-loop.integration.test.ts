@@ -1542,30 +1542,39 @@ describe('repl_loop local RPC transport', () => {
                   }
                 : index === 1
                   ? { error: 'provider unavailable' }
-                  : { text: 'A', model: 'model-a', stop_reason: 'end_turn' }
+                  : { text: 'A', model: 'model-a', stopReason: 'end_turn' }
             )
           : parsed.params?.request === 'INVALID_RESULT'
-            ? { text: 'leak', model: 'model-a', stop_reason: 'end_turn', raw: 'private' }
-            : parsed.params?.request === 'INVALID_USAGE'
-              ? {
-                  text: 'leak',
-                  model: 'model-a',
-                  stop_reason: 'end_turn',
-                  usage: { input_tokens: 1, output_tokens: 1 }
-                }
-              : {
-                  text: 'PONG',
-                  model: 'model-a',
-                  stop_reason: 'end_turn',
-                  usage: {
-                    input_tokens: 10,
-                    cache_tokens: 3,
-                    output_tokens: 4,
-                    cached_read_tokens: 2,
-                    cached_write_tokens: 1,
-                    turn_count: 1
+            ? { text: 'leak', model: 'model-a', stopReason: 'end_turn', raw: 'private' }
+            : parsed.params?.request === 'LEGACY_RESULT'
+              ? { text: 'legacy', model: 'model-a', stop_reason: 'end_turn' }
+              : parsed.params?.request === 'LEGACY_USAGE'
+                ? {
+                    text: 'legacy',
+                    model: 'model-a',
+                    stopReason: 'end_turn',
+                    usage: { input_tokens: 1, cache_tokens: 0, output_tokens: 1 }
                   }
-                }
+                : parsed.params?.request === 'INVALID_USAGE'
+                  ? {
+                      text: 'leak',
+                      model: 'model-a',
+                      stopReason: 'end_turn',
+                      usage: { inputTokens: 1, outputTokens: 1 }
+                    }
+                  : {
+                      text: 'PONG',
+                      model: 'model-a',
+                      stopReason: 'end_turn',
+                      usage: {
+                        inputTokens: 10,
+                        cacheTokens: 3,
+                        outputTokens: 4,
+                        cachedReadTokens: 2,
+                        cachedWriteTokens: 1,
+                        turnCount: 1
+                      }
+                    }
         response
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify({ result }))
@@ -1591,14 +1600,14 @@ describe('repl_loop local RPC transport', () => {
         value: {
           text: 'PONG',
           model: 'model-a',
-          stop_reason: 'end_turn',
+          stopReason: 'end_turn',
           usage: {
-            input_tokens: 10,
-            cache_tokens: 3,
-            output_tokens: 4,
-            cached_read_tokens: 2,
-            cached_write_tokens: 1,
-            turn_count: 1
+            inputTokens: 10,
+            cacheTokens: 3,
+            outputTokens: 4,
+            cachedReadTokens: 2,
+            cachedWriteTokens: 1,
+            turnCount: 1
           }
         },
         frozen: true,
@@ -1612,7 +1621,7 @@ describe('repl_loop local RPC transport', () => {
       expect(batch.error).toBeNull()
       expect(JSON.parse(batch.result ?? '{}')).toEqual({
         value: [
-          { text: 'A', model: 'model-a', stop_reason: 'end_turn' },
+          { text: 'A', model: 'model-a', stopReason: 'end_turn' },
           { error: 'provider unavailable' }
         ],
         frozen: true,
@@ -1668,7 +1677,7 @@ describe('repl_loop local RPC transport', () => {
       )
       expect(isolatedInvalidItems.error).toBeNull()
       expect(JSON.parse(isolatedInvalidItems.result ?? '[]')).toEqual([
-        { text: 'A', model: 'model-a', stop_reason: 'end_turn' },
+        { text: 'A', model: 'model-a', stopReason: 'end_turn' },
         { error: 'host.llm requests must be a prompt string or an exact { prompt } object.' },
         { error: 'host.llm requests must be a prompt string or an exact { prompt } object.' }
       ])
@@ -1683,7 +1692,7 @@ describe('repl_loop local RPC transport', () => {
       )
       expect(snapshottedAccessor.error).toBeNull()
       expect(JSON.parse(snapshottedAccessor.result ?? '{}')).toEqual({
-        value: [{ text: 'A', model: 'model-a', stop_reason: 'end_turn' }],
+        value: [{ text: 'A', model: 'model-a', stopReason: 'end_turn' }],
         reads: 1
       })
       expect(requests.at(-1)).toEqual({
@@ -1712,6 +1721,18 @@ describe('repl_loop local RPC transport', () => {
           'catch (error) { return error.message }'
       )
       expect(invalidUsage.result).toBe('host.llm returned invalid usage')
+
+      const legacyResult = await send(
+        "try { await host.llm('LEGACY_RESULT'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(legacyResult.result).toBe('host.llm returned an invalid result')
+
+      const legacyUsage = await send(
+        "try { await host.llm('LEGACY_USAGE'); return 'no error' } " +
+          'catch (error) { return error.message }'
+      )
+      expect(legacyUsage.result).toBe('host.llm returned invalid usage')
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>

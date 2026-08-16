@@ -1104,8 +1104,8 @@ const validatedHostLlmUsage = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('host.llm returned invalid usage')
   }
-  const required = ['input_tokens', 'cache_tokens', 'output_tokens']
-  const optional = ['cached_read_tokens', 'cached_write_tokens', 'turn_count']
+  const required = ['inputTokens', 'cacheTokens', 'outputTokens']
+  const optional = ['cachedReadTokens', 'cachedWriteTokens', 'turnCount']
   const keys = Object.keys(value)
   if (
     required.some((key) => !keys.includes(key)) ||
@@ -1115,7 +1115,7 @@ const validatedHostLlmUsage = (value) => {
         value[key] !== undefined &&
         (typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || value[key] < 0)
     ) ||
-    (value.turn_count !== undefined && value.turn_count < 1)
+    (value.turnCount !== undefined && value.turnCount < 1)
   ) {
     throw new Error('host.llm returned invalid usage')
   }
@@ -1128,18 +1128,18 @@ const validatedHostLlmResult = (value) => {
   }
   const keys = Object.keys(value)
   if (
-    !['text', 'model', 'stop_reason'].every((key) => keys.includes(key)) ||
-    keys.some((key) => !['text', 'model', 'stop_reason', 'usage'].includes(key)) ||
+    !['text', 'model', 'stopReason'].every((key) => keys.includes(key)) ||
+    keys.some((key) => !['text', 'model', 'stopReason', 'usage'].includes(key)) ||
     typeof value.text !== 'string' ||
     typeof value.model !== 'string' ||
-    !HOST_LLM_STOP_REASONS.has(value.stop_reason)
+    !HOST_LLM_STOP_REASONS.has(value.stopReason)
   ) {
     throw new Error('host.llm returned an invalid result')
   }
   return Object.freeze({
     text: value.text,
     model: value.model,
-    stop_reason: value.stop_reason,
+    stopReason: value.stopReason,
     ...(value.usage === undefined ? {} : { usage: validatedHostLlmUsage(value.usage) })
   })
 }

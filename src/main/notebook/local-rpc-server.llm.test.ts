@@ -27,7 +27,7 @@ describe('llmCall RPC', () => {
   it('routes only through a control capability and strips trusted identity fields', async () => {
     const hostLlmCall = vi.fn<
       (input: HostLlmCallInput, signal?: AbortSignal) => Promise<HostLlmResult>
-    >(async () => ({ text: 'PONG', model: 'model-a', stop_reason: 'end_turn' }))
+    >(async () => ({ text: 'PONG', model: 'model-a', stopReason: 'end_turn' }))
     const hostLlm = {
       isAvailable: vi.fn(async () => true),
       call: hostLlmCall
@@ -50,7 +50,7 @@ describe('llmCall RPC', () => {
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
-      result: { text: 'PONG', model: 'model-a', stop_reason: 'end_turn' }
+      result: { text: 'PONG', model: 'model-a', stopReason: 'end_turn' }
     })
     expect(hostLlmCall).toHaveBeenCalledOnce()
     expect(hostLlmCall.mock.calls[0]?.[0]).toEqual({ request: 'PING' })
