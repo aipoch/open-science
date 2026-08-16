@@ -290,6 +290,7 @@ describe('post-merge Windows validation', () => {
     const commands = build.run?.split('\n').map((line) => line.trim()) ?? []
 
     expect(verifyTypecheck.run).toBe('npm run typecheck')
+    expect(verifyTypecheck.env).toEqual({ NODE_OPTIONS: '--max-old-space-size=4096' })
     expect(commands).toContain('npm run build:e2e')
     expect(commands).toContain('npm run build:web')
     expect(commands).not.toContain('npm run build')
