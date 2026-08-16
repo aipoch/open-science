@@ -16,11 +16,11 @@ const createOwner = (
   new AcpSessionCapabilityOwner({
     artifacts: {
       dataRoot: '/data',
-      projectName: 'project',
+      projectId: 'project',
       mcpEntryPath: '/app/main.js'
     },
     notebook: {
-      projectName: 'project',
+      projectId: 'project',
       mcpEntryPath: '/app/main.js',
       getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:1', token: 'notebook' })
     },
@@ -36,7 +36,7 @@ describe('ACP session capability owner', () => {
     const owner = createOwner({
       artifacts: {
         dataRoot: '/data',
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         currentRunFile: '/data/delegated/executions/attempt-1.json'
       },
@@ -51,7 +51,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace/child',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     const artifact = provision.mcpServers.find((server) => server.name === 'open_science_artifacts')
 
@@ -95,7 +95,7 @@ describe('ACP session capability owner', () => {
         bridgeMcpAliasesEnabled: false,
         policy: SIDE_CHAT_SESSION_CAPABILITY_POLICY,
         sessionCwd: '/empty',
-        projectName: 'project-1'
+        projectId: 'project-1'
       })
 
       expect(provision.descriptor).toMatchObject({
@@ -143,7 +143,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
 
     expect(provision.descriptor).toMatchObject({
@@ -175,7 +175,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
 
     expect(provision.descriptor.capabilities).toEqual(['plan'])
@@ -209,7 +209,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     const planServer = provision.mcpServers[0]
     expect(planServer && 'env' in planServer).toBe(true)
@@ -254,7 +254,7 @@ describe('ACP session capability owner', () => {
       artifacts: undefined,
       skillImport: undefined,
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1',
@@ -273,7 +273,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
 
     provision.commit('app-session')
@@ -292,7 +292,7 @@ describe('ACP session capability owner', () => {
     const releaseSessionCapabilities = vi.fn()
     const owner = createOwner({
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1',
@@ -317,7 +317,7 @@ describe('ACP session capability owner', () => {
         bridgeMcpAliasesEnabled: false,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         sessionCwd: '/workspace',
-        projectName: 'project'
+        projectId: 'project'
       })
     ).rejects.toThrow('Skill import RPC unavailable')
     expect(notebookRelease).toHaveBeenCalledOnce()
@@ -354,7 +354,7 @@ describe('ACP session capability owner', () => {
         bridgeMcpAliasesEnabled: false,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         sessionCwd: '/workspace',
-        projectName: 'project'
+        projectId: 'project'
       })
     ).rejects.toThrow('Skill import RPC unavailable')
 
@@ -389,7 +389,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     }
     const committed = await owner.provision(input)
     committed.commit('session-1')
@@ -422,7 +422,7 @@ describe('ACP session capability owner', () => {
       skillImport: undefined,
       mcpHttpHost: host,
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection
       }
@@ -434,7 +434,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
     await vi.waitFor(() => expect(getRpcConnection).toHaveBeenCalledOnce())
 
@@ -477,7 +477,7 @@ describe('ACP session capability owner', () => {
       skillImport: undefined,
       mcpHttpHost: host,
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection
       }
@@ -489,7 +489,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     }
     const staleProvisionPromise = owner.provision(input)
     await vi.waitFor(() => expect(getRpcConnection).toHaveBeenCalledOnce())
@@ -519,7 +519,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
 
     owner.dispose()
@@ -536,7 +536,7 @@ describe('ACP session capability owner', () => {
       artifacts: undefined,
       skillImport: undefined,
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1',
@@ -554,7 +554,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
 
     provision.release({ ownsStableIdentity: true })
@@ -577,7 +577,7 @@ describe('ACP session capability owner', () => {
       artifacts: undefined,
       skillImport: undefined,
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1',
@@ -594,7 +594,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     }
     const first = await owner.provision(input)
     const second = await owner.provision(input)
@@ -619,7 +619,7 @@ describe('ACP session capability owner', () => {
       artifacts: undefined,
       skillImport: undefined,
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1',
@@ -636,7 +636,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     }
     const first = await owner.provision(input)
     const second = await owner.provision(input)
@@ -661,7 +661,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
     const reviewer = await owner.provision({
       stableAppSessionId: 'reviewer-session',
@@ -670,7 +670,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: REVIEWER_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
 
     expect(primary.descriptor.capabilities).toEqual([
@@ -754,7 +754,7 @@ describe('ACP session capability owner', () => {
         bridgeMcpAliasesEnabled,
         policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
         sessionCwd: '/workspace',
-        projectName: 'project'
+        projectId: 'project'
       })
 
       expect(built.descriptor.controlRpcMethods).toEqual(
@@ -793,7 +793,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
 
     expect(Object.isFrozen(built.descriptor)).toBe(true)
@@ -813,7 +813,7 @@ describe('ACP session capability owner', () => {
     let skillImportProvision = 0
     const owner = createOwner({
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1',
@@ -838,7 +838,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
     first.commit('session-1')
     const second = await owner.provision({
@@ -848,7 +848,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
 
     second.commit('session-1')
@@ -887,7 +887,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
     provision.commit('session-1')
 
@@ -916,7 +916,7 @@ describe('ACP session capability owner', () => {
       skillImport: undefined,
       mcpHttpHost: host,
       notebook: {
-        projectName: 'project',
+        projectId: 'project',
         mcpEntryPath: '/app/main.js',
         getRpcConnection: async () => ({
           endpoint: 'http://127.0.0.1:1',
@@ -933,7 +933,7 @@ describe('ACP session capability owner', () => {
       bridgeMcpAliasesEnabled: false,
       policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
       sessionCwd: '/workspace',
-      projectName: 'project'
+      projectId: 'project'
     })
     provision.commit('session-1')
 

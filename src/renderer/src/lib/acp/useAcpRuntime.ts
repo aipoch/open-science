@@ -49,14 +49,14 @@ const useAcpRuntime = (): {
   disconnect: () => Promise<AcpStateSnapshot | undefined>
   createSession: (
     cwd?: string,
-    projectName?: string,
+    projectId?: string,
     permissionProfile?: PermissionProfileId,
     specialistId?: string
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
-    projectName?: string,
+    projectId?: string,
     permissionProfile?: PermissionProfileId,
     previousFrameworkId?: AcpResumeSessionRequest['previousFrameworkId'],
     previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
@@ -68,7 +68,7 @@ const useAcpRuntime = (): {
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
     cwd: AcpResumeSessionRequest['cwd'],
-    projectName?: string,
+    projectId?: string,
     permissionProfile?: PermissionProfileId
   ) => Promise<AcpCreateSessionResponse>
   compactSession: (
@@ -236,12 +236,12 @@ const useAcpRuntime = (): {
   const createSession = useCallback(
     (
       cwd?: string,
-      projectName?: string,
+      projectId?: string,
       permissionProfile?: PermissionProfileId,
       specialistId?: string
     ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.createSession({ cwd, projectName, permissionProfile, specialistId })
+        window.api.acp.createSession({ cwd, projectId, permissionProfile, specialistId })
       ),
     [runValueAction]
   )
@@ -251,7 +251,7 @@ const useAcpRuntime = (): {
     (
       sessionId: AcpResumeSessionRequest['sessionId'],
       cwd: AcpResumeSessionRequest['cwd'],
-      projectName?: string,
+      projectId?: string,
       permissionProfile?: PermissionProfileId,
       previousFrameworkId?: AcpResumeSessionRequest['previousFrameworkId'],
       previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
@@ -263,7 +263,7 @@ const useAcpRuntime = (): {
         window.api.acp.resumeSession({
           sessionId,
           cwd,
-          projectName,
+          projectId,
           permissionProfile,
           previousFrameworkId,
           previousBackendId,
@@ -287,11 +287,11 @@ const useAcpRuntime = (): {
     (
       sessionId: AcpResumeSessionRequest['sessionId'],
       cwd: AcpResumeSessionRequest['cwd'],
-      projectName?: string,
+      projectId?: string,
       permissionProfile?: PermissionProfileId
     ) =>
       runValueAction(setIsConnecting, () =>
-        window.api.acp.resetSessionContext({ sessionId, cwd, projectName, permissionProfile })
+        window.api.acp.resetSessionContext({ sessionId, cwd, projectId, permissionProfile })
       ),
     [runValueAction]
   )

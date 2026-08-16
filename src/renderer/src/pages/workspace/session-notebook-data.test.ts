@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { loadSessionNotebookData, loadSessionNotebookRuns } from './session-notebook-data'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 
-const request = { sessionId: 's1', projectName: 'default', workspaceCwd: '/w' }
+const request = { sessionId: 's1', projectId: 'default', workspaceCwd: '/w' }
 
 const makeRun = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
   runId: 'r1',

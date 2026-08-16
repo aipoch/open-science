@@ -48,7 +48,7 @@ type PendingArtifactRunPublication = {
 }
 
 type PrepareArtifactRunFinalizationRequest = {
-  projectName: string
+  projectId: string
   sourceSessionId: string
   sessionId: string
   runId: string
@@ -57,7 +57,7 @@ type PrepareArtifactRunFinalizationRequest = {
 }
 
 type PendingArtifactVersionRoutingRequest = {
-  projectName: string
+  projectId: string
   sessionId: string
   runId: string
   filename: string
@@ -78,8 +78,8 @@ type ArtifactPublicationStorage = PendingFileTransactionStorage & {
   assertSafePathSegment: (segment: string) => string
   assertSafeFilename: (filename: string) => string
   normalizeArtifactVersionIds: (versionIds: readonly string[]) => string[]
-  getProjectArtifactDir: (projectName: string) => string
-  getMessageDir: (projectName: string, sessionId: string, messageId: string) => string
+  getProjectArtifactDir: (projectId: string) => string
+  getMessageDir: (projectId: string, sessionId: string, messageId: string) => string
   readSubdirectoryNames: (directory: string) => Promise<string[]>
   readFileEntries: (directory: string) => Promise<Array<{ name: string }>>
   isPendingArtifactRunDirectory: (name: string) => boolean
@@ -93,7 +93,7 @@ type ArtifactPublicationStorage = PendingFileTransactionStorage & {
   ) => Promise<void>
   recoverMovedArtifactMetadata: (sourceDirectory: string, targetDirectory: string) => Promise<void>
   listMessageFiles: (request: {
-    projectName: string
+    projectId: string
     sessionId: string
     messageId: string
   }) => Promise<ArtifactFile[]>

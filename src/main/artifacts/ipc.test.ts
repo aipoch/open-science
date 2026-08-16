@@ -97,7 +97,7 @@ beforeEach(() => {
 describe('artifact IPC handlers', () => {
   const createFinalizedArtifact = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
     id: 'session-1:message-1:result.txt',
-    projectName: 'default-project',
+    projectId: 'default-project',
     sessionId: 'session-1',
     messageId: 'message-1',
     name: 'result.txt',
@@ -114,7 +114,7 @@ describe('artifact IPC handlers', () => {
     const handlers = createArtifactHandlers(repository, runRegistry)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'result.txt',
@@ -122,7 +122,7 @@ describe('artifact IPC handlers', () => {
     })
 
     const claimId = runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1'
@@ -133,7 +133,7 @@ describe('artifact IPC handlers', () => {
       messageId: 'message-1'
     })
     const listed = await repository.listMessageFiles({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       messageId: 'message-1'
     })
@@ -157,7 +157,7 @@ describe('artifact IPC handlers', () => {
     const runRegistry = new ArtifactRunRegistry()
     const handlers = createArtifactHandlers(repository, runRegistry)
     const claimId = runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1'
@@ -205,7 +205,7 @@ describe('artifact IPC handlers', () => {
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -256,7 +256,7 @@ describe('artifact IPC handlers', () => {
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -308,7 +308,7 @@ describe('artifact IPC handlers', () => {
     const provenance = { finalizeRun: vi.fn() }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -346,7 +346,7 @@ describe('artifact IPC handlers', () => {
     const provenance = { finalizeRun: vi.fn() }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -432,7 +432,7 @@ describe('artifact IPC handlers', () => {
         loadSession: async () => session
       })
       await compatibility.writePendingFile({
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'artifact-session-1',
         runId: 'run-1',
         filename: 'result.png',
@@ -456,7 +456,7 @@ describe('artifact IPC handlers', () => {
         }
       })
       await compatibility.prepareRunFinalization({
-        projectName: 'project-1',
+        projectId: 'project-1',
         sourceSessionId: 'artifact-session-1',
         sessionId: 'session-1',
         runId: 'run-1',
@@ -465,7 +465,7 @@ describe('artifact IPC handlers', () => {
       })
       const registry = new ArtifactRunRegistry()
       const claimId = registry.register({
-        projectName: 'project-1',
+        projectId: 'project-1',
         artifactSessionId: 'artifact-session-1',
         sessionId: 'session-1',
         runId: 'run-1',
@@ -483,14 +483,14 @@ describe('artifact IPC handlers', () => {
       })
       await expect(
         compatibility.listPendingRunFiles({
-          projectName: 'project-1',
+          projectId: 'project-1',
           sessionId: 'artifact-session-1',
           runId: 'run-1'
         })
       ).resolves.toEqual([expect.objectContaining({ name: 'result.png' })])
       await expect(
         compatibility.listMessageFiles({
-          projectName: 'project-1',
+          projectId: 'project-1',
           sessionId: 'session-1',
           messageId: message.id
         })
@@ -521,7 +521,7 @@ describe('artifact IPC handlers', () => {
     }
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -584,7 +584,7 @@ describe('artifact IPC handlers', () => {
     } as unknown as ArtifactRepository
     const registry = new ArtifactRunRegistry()
     const claimId = registry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1'
@@ -653,7 +653,7 @@ describe('artifact IPC handlers', () => {
     const openPath = vi.fn().mockResolvedValue('')
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), { openPath })
     const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'result.txt',
@@ -672,7 +672,7 @@ describe('artifact IPC handlers', () => {
     const repository = new ArtifactRepository(await createStorageRoot())
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
     const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'result.txt',
@@ -691,7 +691,7 @@ describe('artifact IPC handlers', () => {
     const repository = new ArtifactRepository(await createStorageRoot())
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
     const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'pixel.png',
@@ -713,7 +713,7 @@ describe('artifact IPC handlers', () => {
     const repository = new ArtifactRepository(await createStorageRoot())
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
     const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'result.txt',
@@ -752,14 +752,14 @@ describe('artifact IPC handlers', () => {
     const handlers = createArtifactHandlers(repository, runRegistry)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'result.txt',
       source: createInlineSource('ok')
     })
     const claimId = runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1'
@@ -796,7 +796,7 @@ describe('artifact IPC handlers', () => {
         versionNumber: 1,
         checksum: 'a'.repeat(64),
         createdAt: '2026-08-04T00:00:00.000Z',
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'source-session-1',
         runId: 'run-1',
         name: 'sin.png',
@@ -833,7 +833,7 @@ describe('artifact IPC handlers', () => {
     // A run whose files were emitted and are awaiting the renderer's finalize call — it has left the
     // runtime's prompt-active set but must still be treated as in-flight, not orphaned.
     runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-awaiting-finalize'
@@ -843,7 +843,7 @@ describe('artifact IPC handlers', () => {
       getActiveArtifactRunIds: () => ['run-in-prompt']
     })
 
-    await handlers.listProjectFiles({ projectName: 'default-project' })
+    await handlers.listProjectFiles({ projectId: 'default-project' })
 
     const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
     expect([...passedSet].sort()).toEqual(['run-awaiting-finalize', 'run-in-prompt'])
@@ -854,7 +854,7 @@ describe('artifact IPC handlers', () => {
     const repository = { listProjectArtifacts } as unknown as ArtifactRepository
     const runRegistry = new ArtifactRunRegistry()
     const claimId = runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-done'
@@ -862,7 +862,7 @@ describe('artifact IPC handlers', () => {
     runRegistry.markFinalized(claimId, 'message-1')
 
     const handlers = createArtifactHandlers(repository, runRegistry)
-    await handlers.listProjectFiles({ projectName: 'default-project' })
+    await handlers.listProjectFiles({ projectId: 'default-project' })
 
     const passedSet = listProjectArtifacts.mock.calls[0][1] as Set<string>
     expect(passedSet.has('run-done')).toBe(false)
@@ -916,7 +916,7 @@ describe('artifact IPC handler registration', () => {
     } as unknown as ArtifactRepository
     const runRegistry = new ArtifactRunRegistry()
     const claimId = runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1'
@@ -965,7 +965,7 @@ describe('artifact IPC handler registration', () => {
     registrationFailure.channel = undefined
     registrationFailure.error = undefined
     registerArtifactIpcHandlers(undefined, undefined, undefined, undefined, undefined, injected)
-    await ipcHandlers.get('artifacts:list-project-files')?.({}, { projectName: 'default-project' })
+    await ipcHandlers.get('artifacts:list-project-files')?.({}, { projectId: 'default-project' })
     expect(injected.listProjectFiles).toHaveBeenCalledOnce()
   })
 
@@ -991,7 +991,7 @@ describe('artifact IPC handler registration', () => {
     } as unknown as ArtifactRepository
     const runRegistry = new ArtifactRunRegistry()
     const claimId = runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1'
@@ -1007,7 +1007,7 @@ describe('artifact IPC handler registration', () => {
     )
     expect(finalizeResult).toEqual({ ok: true, artifacts: [] })
     expect(finalizeRunArtifacts).toHaveBeenCalledWith({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sourceSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -1017,7 +1017,7 @@ describe('artifact IPC handler registration', () => {
     await ipcHandlers.get('artifacts:list-project-files')?.(
       {},
       {
-        projectName: 'default-project'
+        projectId: 'default-project'
       }
     )
     expect(listProjectArtifacts).toHaveBeenCalledWith('default-project', expect.any(Set))
@@ -1025,14 +1025,14 @@ describe('artifact IPC handler registration', () => {
     await ipcHandlers.get('artifacts:reconcile-pending')?.(
       {},
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         messageId: 'message-1',
         pendingPaths: ['/p/.pending/run-1/a.txt']
       }
     )
     expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       messageId: 'message-1',
       pendingPaths: ['/p/.pending/run-1/a.txt']
@@ -1108,7 +1108,7 @@ describe('artifact IPC handler registration', () => {
     }
     const runRegistry = new ArtifactRunRegistry()
     const claimId = runRegistry.register({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -1195,7 +1195,7 @@ describe('artifact IPC handler registration', () => {
     await ipcHandlers.get('artifacts:list-project-files')?.(
       {},
       {
-        projectName: 'default-project'
+        projectId: 'default-project'
       }
     )
 
@@ -1213,7 +1213,7 @@ describe('artifact handler edge cases', () => {
     const openPath = vi.fn().mockResolvedValue('no application is registered for this file type')
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), { openPath })
     const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'result.txt',
@@ -1235,7 +1235,7 @@ describe('artifact handler edge cases', () => {
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry())
 
     const request = {
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       messageId: 'message-1',
       pendingPaths: ['/p/.pending/run-1/a.txt', '/p/.pending/run-1/b.txt']

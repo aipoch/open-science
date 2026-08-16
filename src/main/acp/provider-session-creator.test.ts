@@ -118,7 +118,7 @@ const createHarness = (options: {
   })
   const creator = new AcpProviderSessionCreator({
     defaultCwd: '/default',
-    defaultProjectName: 'default-project',
+    defaultProjectId: 'default-project',
     currentCwd: () => '/current',
     ensureConnected: vi.fn(async () => {
       order.push('ensure connection')
@@ -184,7 +184,7 @@ describe('AcpProviderSessionCreator', () => {
   it('publishes the provider-returned id as the fresh application Session id', async () => {
     const harness = createHarness({ order: [] })
 
-    const result = await harness.creator.create({ cwd: '/workspace', projectName: 'project-a' })
+    const result = await harness.creator.create({ cwd: '/workspace', projectId: 'project-a' })
 
     expect(result).toEqual({
       sessionId: 'provider-session',
@@ -264,7 +264,7 @@ describe('AcpProviderSessionCreator', () => {
       }
     })
 
-    await harness.creator.create({ projectName: 'project-1', specialistId: 'specialist-1' })
+    await harness.creator.create({ projectId: 'project-1', specialistId: 'specialist-1' })
 
     expect(harness.sessionSetupAppends.at(-1)?.slice(-2)).toEqual([
       'specialist identity append',
@@ -288,7 +288,7 @@ describe('AcpProviderSessionCreator', () => {
         projectAgentContext: 'Always cite DOIs.'
       })
 
-      await harness.creator.create({ projectName: 'project-1' })
+      await harness.creator.create({ projectId: 'project-1' })
 
       expect(harness.provision).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -312,7 +312,7 @@ describe('AcpProviderSessionCreator', () => {
   it('creates the session without an Agent Context append when no resolver is configured', async () => {
     const harness = createHarness({})
 
-    await harness.creator.create({ projectName: 'project-1' })
+    await harness.creator.create({ projectId: 'project-1' })
 
     expect(harness.sessionSetupAppends.length).toBeGreaterThan(0)
     expect(harness.sessionSetupAppends.flat()).not.toContain('Always cite DOIs.')

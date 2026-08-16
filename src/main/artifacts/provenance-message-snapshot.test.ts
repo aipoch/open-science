@@ -124,7 +124,7 @@ describe('Provenance Message snapshots', () => {
       promptMessageId: 'prompt-1'
     }
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'sin.png',
@@ -446,7 +446,7 @@ describe('Provenance Message snapshots', () => {
       promptMessageId: 'prompt-1'
     }
     await compatibilityRepository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'artifact-session-1',
       runId: 'artifact-run-1',
       filename: 'sin.png',

@@ -64,8 +64,7 @@ const composeAcpRuntimePromptOwners = (
   const activeSession = (sessionId: string) =>
     session.sessionRegistry.lookup(sessionId)?.attachment?.session
   const currentFramework = () => base.backendGeneration.current.framework
-  const projectName = (sessionId: string): string =>
-    session.sessionEnvironment.projectName(sessionId)
+  const projectId = (sessionId: string): string => session.sessionEnvironment.projectId(sessionId)
   const emitState = (): void => session.publication.emitState()
   const diagnosticContext = () => ({
     framework: currentFramework().id,
@@ -101,7 +100,7 @@ const composeAcpRuntimePromptOwners = (
       appSessionId: sessionId,
       artifactStorageSessionId:
         base.sessionCapabilities.artifactRoutingIdFor(sessionId) ?? sessionId,
-      projectId: projectName(sessionId),
+      projectId: projectId(sessionId),
       agentName: currentFramework().displayName,
       provenanceContext
     })
@@ -237,7 +236,7 @@ const composeAcpRuntimePromptOwners = (
         })
     },
     currentCwd: () => base.snapshotOwner.cwd,
-    resolveProjectName: projectName,
+    resolveProjectId: projectId,
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,
     recordAdmittedPrompt: (request) => base.handoffContinuity.recordAdmittedPrompt(request),

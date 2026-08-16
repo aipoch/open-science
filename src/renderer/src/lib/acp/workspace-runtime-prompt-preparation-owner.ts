@@ -36,7 +36,7 @@ type PrepareExistingWorkspacePromptRequest = {
   sessionId: string
   requireExistingSession?: boolean
   cwd?: string
-  projectName?: string
+  projectId?: string
   permissionProfile?: PermissionProfileId
   selectedRuntime: {
     frameworkId?: AgentFrameworkId
@@ -185,12 +185,12 @@ const prepareExistingWorkspacePrompt = async (
         return undefined
       }
 
-      await shutdownNotebookForBranchChange(sessionId, resetCwd, request.projectName)
+      await shutdownNotebookForBranchChange(sessionId, resetCwd, request.projectId)
       if (!selectedRuntimeChanged && !runtimeDetached) {
         const reset = await runtime.resetSessionContext(
           sessionId,
           resetCwd,
-          request.projectName,
+          request.projectId,
           currentSession?.permissionProfile ?? request.permissionProfile
         )
         useSessionStore.getState().markResumed(
@@ -220,7 +220,7 @@ const prepareExistingWorkspacePrompt = async (
       const resumeResult = await runtime.resumeSession(
         sessionId,
         resumeCwd,
-        request.projectName,
+        request.projectId,
         currentSession?.permissionProfile ?? request.permissionProfile,
         currentSession?.agentFrameworkId,
         currentSession?.agentBackendId,
@@ -245,7 +245,7 @@ const prepareExistingWorkspacePrompt = async (
         const reset = await runtime.resetSessionContext(
           sessionId,
           resumeCwd,
-          request.projectName,
+          request.projectId,
           currentSession?.permissionProfile ?? request.permissionProfile
         )
         useSessionStore.getState().markResumed(
@@ -317,7 +317,7 @@ const prepareExistingWorkspacePrompt = async (
             historyMessages,
             request.replay.descriptor,
             request.selectedRuntime.frameworkId,
-            request.projectName,
+            request.projectId,
             request.selectedRuntime.supportsImageInput
           )
         : undefined
@@ -328,7 +328,7 @@ const prepareExistingWorkspacePrompt = async (
             historyMessages,
             request.replay.descriptor,
             request.selectedRuntime.frameworkId,
-            request.projectName,
+            request.projectId,
             request.selectedRuntime.supportsImageInput
           )
         : undefined

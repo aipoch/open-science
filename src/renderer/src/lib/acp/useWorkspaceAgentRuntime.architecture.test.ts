@@ -477,7 +477,6 @@ const sendIntentKeys = [
   'attachments',
   'cwd',
   'projectId',
-  'projectName',
   'permissionProfile',
   'forcedSkillIds',
   'referencedArtifacts',

@@ -168,7 +168,7 @@ const createArtifactHandlers = (
               dependencies.logger ?? log
             )
           return dependencies.withSessionMutation
-            ? dependencies.withSessionMutation(claim.projectName, claim.sessionId, finalize)
+            ? dependencies.withSessionMutation(claim.projectId, claim.sessionId, finalize)
             : finalize()
         })
       ),
@@ -177,7 +177,7 @@ const createArtifactHandlers = (
     reconcilePendingArtifacts: (request) =>
       withDataRootWrite(() =>
         repository.reconcilePendingArtifactPaths({
-          projectName: resolveProjectId(request),
+          projectId: resolveProjectId(request),
           sessionId: request.sessionId,
           messageId: request.messageId,
           pendingPaths: request.pendingPaths
@@ -266,7 +266,7 @@ const finalizeRunArtifacts = async (
     }
 
     return repository.listMessageFiles({
-      projectName: claim.projectName,
+      projectId: claim.projectId,
       sessionId: claim.sessionId,
       messageId: request.messageId
     })
@@ -299,7 +299,7 @@ const finalizeRunArtifacts = async (
         )
       }
       provenanceRequest = {
-        projectId: claim.projectName,
+        projectId: claim.projectId,
         appSessionId: claim.sessionId,
         artifactRunId: claim.runId,
         artifactVersionIds: [...claim.artifactVersionIds],
@@ -320,7 +320,7 @@ const finalizeRunArtifacts = async (
     // Publish compatibility bytes only after the complete provenance transaction succeeds. The move is
     // idempotent, so a finalized-but-unlinked run can replay here or during prepared-marker recovery.
     const artifacts = await repository.finalizeRunArtifacts({
-      projectName: claim.projectName,
+      projectId: claim.projectId,
       sourceSessionId: claim.artifactSessionId,
       sessionId: claim.sessionId,
       runId: claim.runId,

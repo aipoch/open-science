@@ -16,7 +16,7 @@ import type {
   UploadTransferStatus
 } from '../../shared/uploads'
 import {
-  DEFAULT_UPLOAD_PROJECT_NAME,
+  DEFAULT_UPLOAD_PROJECT_ID,
   STANDALONE_UPLOAD_SESSION_ID,
   type UploadedAttachment
 } from '../../shared/uploads'
@@ -274,7 +274,7 @@ const createUploadCommandOwner = (
         progressTarget,
         true
       )
-      const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_NAME
+      const projectId = request.projectId ?? DEFAULT_UPLOAD_PROJECT_ID
       try {
         await withDataRootWrite(() =>
           repository.finalizePendingSessionUploads(

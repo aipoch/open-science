@@ -45,8 +45,8 @@ type SaveProjectArtifactFile = {
 
 type SaveProjectArtifactsRequest = {
   projectId: string
-  // Display name only: seeds the suggested zip filename. Identity stays with projectId.
-  projectName: string
+  // Presentation-only filename seed prepared by the renderer. Project identity stays with projectId.
+  suggestedArchiveName: string
   files: SaveProjectArtifactFile[]
 }
 

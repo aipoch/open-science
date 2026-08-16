@@ -98,7 +98,7 @@ const createHarness = (): WorkflowHarness => {
   const entry = registry.publish(reserved.reservation, 'app-session', {
     session,
     cwd: '/workspace',
-    projectName: 'project-a',
+    projectId: 'project-a',
     frameworkId: 'claude-code',
     backendId: backend.backendId,
     permissionProfile,

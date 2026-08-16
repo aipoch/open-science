@@ -895,7 +895,7 @@ class NotebookRuntimeService {
 
       envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'restarting'))
       await this.repository.clearKernelTerminations({
-        projectName: session.projectId,
+        projectId: session.projectId,
         sessionId: session.sessionId,
         lane: session.lane,
         status: 'restarting'
@@ -909,7 +909,7 @@ class NotebookRuntimeService {
       } finally {
         envKeys.forEach((processKey) => session.setKernelStatus(processKey, 'idle'))
         await this.repository.updateKernelStatus({
-          projectName: session.projectId,
+          projectId: session.projectId,
           sessionId: session.sessionId,
           lane: session.lane,
           status: 'idle'
@@ -940,7 +940,7 @@ class NotebookRuntimeService {
   // DIFFERENT envs proceed concurrently (the lock is keyed by resolved env name, not language).
   async managePackages(request: InstallRequest): Promise<InstallResult> {
     const manage = (): Promise<InstallResult> => this.packageOperations.manage(request)
-    if (request.projectId === undefined && request.projectName === undefined) return manage()
+    if (request.projectId === undefined && request.projectId === undefined) return manage()
 
     // Project admission is keyed only by project identity. InstallRequest intentionally keeps the
     // session fields optional because settings and repair flows can manage a global environment.

@@ -35,7 +35,7 @@ type PendingFileBudgetReservation = {
 }
 
 type PendingFileTransactionStorage = {
-  getPendingRunDir: (projectName: string, sessionId: string, runId: string) => string
+  getPendingRunDir: (projectId: string, sessionId: string, runId: string) => string
   getArtifactMetadataPath: (directory: string, filename: string) => string
   resolveAllowedImportFilePath: (
     path: string,
@@ -50,7 +50,7 @@ type PendingFileTransactionStorage = {
     metadata: { mimeType?: string; kind?: 'plan' }
   ) => Promise<void>
   createArtifactFile: (request: {
-    projectName: string
+    projectId: string
     sessionId: string
     filename: string
     filePath: string
@@ -79,8 +79,8 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
   ) => Promise<Result>
 }): Promise<Result> => {
   const { request, storage } = options
-  const { projectName, sessionId, runId, filename } = request
-  const directory = storage.getPendingRunDir(projectName, sessionId, runId)
+  const { projectId, sessionId, runId, filename } = request
+  const directory = storage.getPendingRunDir(projectId, sessionId, runId)
   const filePath = join(directory, filename)
   const suffix = `${Date.now()}-${randomUUID()}`
   const temporaryPath = `${filePath}.${suffix}.tmp`
@@ -178,7 +178,7 @@ const runPendingFileTransaction = async <Result, Routing>(options: {
     })
 
     const artifact = await storage.createArtifactFile({
-      projectName,
+      projectId,
       sessionId,
       runId,
       filename,

@@ -21,7 +21,7 @@ const attachInput = (
 ): AcpSessionAggregateAttachInput => ({
   session: providerSession(sessionId),
   cwd: '/workspace',
-  projectName: 'project-1',
+  projectId: 'project-1',
   frameworkId: 'claude-code',
   permissionProfile: permissionProfile(),
   ...overrides
@@ -123,7 +123,7 @@ describe('ACP session aggregate', () => {
     const firstSnapshot = aggregate.snapshot()
     expect(firstSnapshot).toMatchObject({
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       specialistId: 'specialist-1',
       specialistPrefix: 'Follow the selected specialist.',
       sessionSetupPromptPrefix: 'Project Agent Context.',
@@ -193,7 +193,7 @@ describe('ACP session aggregate', () => {
       appliedModel: undefined,
       configOptions: undefined,
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: profile,
       frameworkId: 'codex',
       backendId: 'backend-1',
@@ -209,7 +209,7 @@ describe('ACP session aggregate', () => {
       appliedModel: undefined,
       configOptions: undefined,
       cwd: undefined,
-      projectName: undefined,
+      projectId: undefined,
       permissionProfile: profile,
       frameworkId: 'codex',
       backendId: 'backend-1',

@@ -45,7 +45,7 @@ import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
 import { startDiagnosticOperation } from '../diagnostics/operation'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
 
-type LegacySessionSource = { projectName: string; sessionId: string }
+type LegacySessionSource = { projectId: string; sessionId: string }
 type NotebookSessionSource = { projectId: string; sessionId: string }
 
 type StorageCommandOwnerDeps = {

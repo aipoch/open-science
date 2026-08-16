@@ -168,7 +168,7 @@ const createHarness = (
     adopter.adopt('stable-app-session', {
       connection,
       cwd: '/workspace',
-      projectName: 'project-a',
+      projectId: 'project-a',
       identity: reservation.reservation,
       specialistId
     })

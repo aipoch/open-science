@@ -1,6 +1,6 @@
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 
-import { DEFAULT_UPLOAD_PROJECT_NAME } from '../../shared/uploads'
+import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import type { AgentFramework } from '../agent-framework'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionCreator } from './provider-session-creator'
@@ -59,7 +59,7 @@ const composeAcpRuntimeProviderSessionOwners = (
       ),
       blockStartup: !base.connectionTransitions.barrier
     })
-  const defaultProjectName = options.artifacts?.projectName || DEFAULT_UPLOAD_PROJECT_NAME
+  const defaultProjectId = options.artifacts?.projectId || DEFAULT_UPLOAD_PROJECT_ID
   const updateCwd = (cwd: string): void => base.snapshotOwner.updateCwd(cwd)
   const emitState = (): void => session.publication.emitState()
   const withOperation = <Result>(work: () => Promise<Result>): Promise<Result> => {
@@ -72,7 +72,7 @@ const composeAcpRuntimeProviderSessionOwners = (
 
   const providerSessionCreator = new AcpProviderSessionCreator({
     defaultCwd: options.defaultCwd,
-    defaultProjectName,
+    defaultProjectId,
     currentCwd: () => base.snapshotOwner.cwd,
     ensureConnected,
     assertCurrentConnection,
@@ -110,7 +110,7 @@ const composeAcpRuntimeProviderSessionOwners = (
   })
   const sessionReplacement = new AcpSessionReplacementWorkflow({
     defaultCwd: options.defaultCwd,
-    defaultProjectName,
+    defaultProjectId,
     currentCwd: () => base.snapshotOwner.cwd,
     currentFrameworkId: () => currentFramework().id,
     ensureConnected,
@@ -151,7 +151,7 @@ const composeAcpRuntimeProviderSessionOwners = (
   })
   const providerSessionResumer = new AcpProviderSessionResumer({
     defaultCwd: options.defaultCwd,
-    defaultProjectName,
+    defaultProjectId,
     currentCwd: () => base.snapshotOwner.cwd,
     currentConnection,
     ensureConnected,

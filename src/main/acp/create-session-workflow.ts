@@ -54,7 +54,7 @@ const createAcpCreateSessionWorkflow = (
         })
       }
       return dependencies.withProjectAvailable
-        ? dependencies.withProjectAvailable(request.projectName, createAvailableSession)
+        ? dependencies.withProjectAvailable(request.projectId, createAvailableSession)
         : createAvailableSession()
     }
   }

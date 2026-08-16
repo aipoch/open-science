@@ -247,7 +247,7 @@ const createRecoveredArtifact = (
   versionNumber: 1,
   checksum: 'a'.repeat(64),
   createdAt: '2026-07-29T00:00:00.000Z',
-  projectName: 'project-1',
+  projectId: 'project-1',
   sessionId: 'session-1',
   runId: 'artifact-run-1',
   name: 'result.csv',

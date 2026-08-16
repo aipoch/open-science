@@ -106,7 +106,7 @@ const assertSaveProjectArtifactsRequest = (request: SaveProjectArtifactsRequest)
     request === null ||
     typeof request.projectId !== 'string' ||
     request.projectId.trim().length === 0 ||
-    typeof request.projectName !== 'string' ||
+    typeof request.suggestedArchiveName !== 'string' ||
     !Array.isArray(request.files) ||
     request.files.length === 0 ||
     request.files.length > 10000 ||
@@ -205,8 +205,8 @@ const getSafeZipEntryName = (suggestedName: string, sourcePath: string): string 
   return ZIP_FORBIDDEN_ENTRY_NAMES.has(fallback) ? 'proto' : fallback
 }
 
-const getSafeZipBaseName = (projectName: string): string => {
-  const trimmed = projectName
+const getSafeZipBaseName = (suggestedArchiveName: string): string => {
+  const trimmed = suggestedArchiveName
     .trim()
     .replaceAll('/', '-')
     .replaceAll('\\', '-')
@@ -505,7 +505,7 @@ const registerFileSaveHandlers = (options: RegisterFileSaveHandlersOptions = {})
       const dialogOptions = {
         defaultPath: join(
           app.getPath('downloads'),
-          `${getSafeZipBaseName(request.projectName)}-artifacts.zip`
+          `${getSafeZipBaseName(request.suggestedArchiveName)}-artifacts.zip`
         ),
         title: 'Download project artifacts',
         filters: [{ name: 'ZIP', extensions: ['zip'] }]

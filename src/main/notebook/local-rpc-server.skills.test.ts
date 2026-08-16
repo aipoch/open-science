@@ -20,7 +20,7 @@ const makeService = async (): Promise<NotebookRuntimeService> => {
   return new NotebookRuntimeService({
     configRoot: storageRoot,
     dataRoot: storageRoot,
-    projectName: 'project-a',
+    projectId: 'project-a',
     repository: new NotebookRunRepository(storageRoot),
     executorFactory: () => ({
       execute: async () => ({

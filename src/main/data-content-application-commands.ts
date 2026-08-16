@@ -537,7 +537,7 @@ const registerDataContentApplicationCommands = (
         assertLocalCaller(invocation, dataContentApplicationCommands.uploadStageLocalPath.name)
         const attachment = await dependencies.uploads.stageLocalPath(invocation)
         dependencies.events.publish('project-files:changed', {
-          projectId: invocation.args[0].projectId ?? Uploads.DEFAULT_UPLOAD_PROJECT_NAME,
+          projectId: invocation.args[0].projectId ?? Uploads.DEFAULT_UPLOAD_PROJECT_ID,
           sessionId: Uploads.STANDALONE_UPLOAD_SESSION_ID,
           sources: ['upload'],
           kind: 'upsert'

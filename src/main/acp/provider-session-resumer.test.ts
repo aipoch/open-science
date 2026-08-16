@@ -135,7 +135,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
       registry.publish(successor.reservation, 'stable-app-session', {
         session: successorSession,
         cwd: '/successor-workspace',
-        projectName: 'successor-project',
+        projectId: 'successor-project',
         frameworkId: 'claude-code',
         backendId: 'claude-code',
         permissionProfile
@@ -199,7 +199,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     registry.publish(attached.reservation, 'stable-app-session', {
       session: providerSession,
       cwd: '/old-workspace',
-      projectName: 'old-project',
+      projectId: 'old-project',
       frameworkId: 'claude-code',
       backendId: 'claude-code',
       permissionProfile
@@ -232,7 +232,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
   })
   const resumer = new AcpProviderSessionResumer({
     defaultCwd: '/default',
-    defaultProjectName: 'default-project',
+    defaultProjectId: 'default-project',
     currentCwd: () => undefined,
     currentConnection: () => connection,
     ensureConnected:
@@ -280,7 +280,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     resumer.resume({
       sessionId: 'stable-app-session',
       cwd: '/workspace',
-      projectName: 'project-a',
+      projectId: 'project-a',
       ...request
     })
 
@@ -326,7 +326,7 @@ describe('AcpProviderSessionResumer', () => {
 
     const response = await harness.resume({
       cwd: '/moved-workspace',
-      projectName: 'moved-project',
+      projectId: 'moved-project',
       specialistId: 'specialist-1',
       permissionProfile: 'full'
     })
@@ -346,7 +346,7 @@ describe('AcpProviderSessionResumer', () => {
     })
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
       cwd: resolve('/moved-workspace'),
-      projectName: 'moved-project',
+      projectId: 'moved-project',
       specialistId: 'specialist-1',
       permissionProfile
     })
@@ -377,7 +377,7 @@ describe('AcpProviderSessionResumer', () => {
 
     const resumed = harness.resume({
       cwd: '/stale-workspace',
-      projectName: 'stale-project',
+      projectId: 'stale-project',
       specialistId: 'stale-specialist'
     })
     await configureStarted
@@ -392,7 +392,7 @@ describe('AcpProviderSessionResumer', () => {
     harness.registry.publish(successor.reservation, 'stable-app-session', {
       session: harness.successorSession,
       cwd: '/successor-workspace',
-      projectName: 'successor-project',
+      projectId: 'successor-project',
       frameworkId: 'claude-code',
       backendId: 'claude-code',
       permissionProfile
@@ -407,7 +407,7 @@ describe('AcpProviderSessionResumer', () => {
     )
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
       cwd: '/successor-workspace',
-      projectName: 'successor-project',
+      projectId: 'successor-project',
       specialistId: 'stale-specialist',
       permissionProfile
     })
@@ -429,12 +429,12 @@ describe('AcpProviderSessionResumer', () => {
     })
 
     await expect(
-      harness.resume({ cwd: '/stale-workspace', projectName: 'stale-project' })
+      harness.resume({ cwd: '/stale-workspace', projectId: 'stale-project' })
     ).rejects.toThrow('ACP session startup was superseded.')
 
     expect(harness.registry.lookup('stable-app-session')?.aggregate.snapshot()).toMatchObject({
       cwd: '/old-workspace',
-      projectName: 'old-project',
+      projectId: 'old-project',
       permissionProfile
     })
     expect(select).not.toHaveBeenCalled()

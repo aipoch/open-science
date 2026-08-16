@@ -9,7 +9,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 
 export type { ActiveSessionInfo }
 
-type LegacyActiveSessionSource = { projectName: string; sessionId: string }
+type LegacyActiveSessionSource = { projectId: string; sessionId: string }
 type ActiveNotebookSessionSource = { projectId: string; sessionId: string }
 
 type ActiveDetectionDeps = {
@@ -32,7 +32,7 @@ const createDelegatedActivityProjection = (): DelegatedActivityProjection => {
     recordSession: (session) => {
       const key = JSON.stringify([session.projectId, session.id])
       if (hasCurrentRunningDelegatedAttempt(session)) {
-        activeSessions.set(key, { projectName: session.projectId, sessionId: session.id })
+        activeSessions.set(key, { projectId: session.projectId, sessionId: session.id })
       } else {
         activeSessions.delete(key)
       }
@@ -47,19 +47,19 @@ const createDelegatedActivityProjection = (): DelegatedActivityProjection => {
 export const detectActiveSessions = (deps: ActiveDetectionDeps): ActiveSessionInfo[] => {
   const delegatedSessions = deps.delegated.getActiveDelegatedSessions()
   const delegatedKeys = new Set(
-    delegatedSessions.map((entry) => JSON.stringify([entry.projectName, entry.sessionId]))
+    delegatedSessions.map((entry) => JSON.stringify([entry.projectId, entry.sessionId]))
   )
   const rootSessions = deps.runtime
     .getActivePromptSessions()
-    .filter((entry) => !delegatedKeys.has(JSON.stringify([entry.projectName, entry.sessionId])))
+    .filter((entry) => !delegatedKeys.has(JSON.stringify([entry.projectId, entry.sessionId])))
   return [
     ...delegatedSessions.map((entry): ActiveSessionInfo => ({
-      projectId: entry.projectName,
+      projectId: entry.projectId,
       sessionId: entry.sessionId,
       kind: 'delegated'
     })),
     ...rootSessions.map((entry): ActiveSessionInfo => ({
-      projectId: entry.projectName,
+      projectId: entry.projectId,
       sessionId: entry.sessionId,
       kind: 'agent'
     })),

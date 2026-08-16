@@ -60,7 +60,7 @@ const createPermissionRequest = (
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
-  projectName: 'default-project',
+  projectId: 'default-project',
   sessionId: 'artifact-session-1',
   runId: 'run-1',
   name: 'result.txt',

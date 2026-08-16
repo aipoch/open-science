@@ -190,7 +190,7 @@ describe('OpenCode immediate handoff production path', () => {
           framework: opencodeFramework,
           callbacks,
           notebook: {
-            projectName: 'Artifacts',
+            projectId: 'Artifacts',
             mcpEntryPath: '/bin/mcp',
             getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4567', token: 'nb' }),
             registerSessionSpecialist: (_sessionId, specialistId) => {
@@ -257,7 +257,7 @@ describe('OpenCode immediate handoff production path', () => {
     const notebookService = new NotebookRuntimeService({
       configRoot: storageRoot,
       dataRoot: storageRoot,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(storageRoot),
       executorFactory: () =>
         new NotebookKernelExecutor({

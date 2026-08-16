@@ -266,7 +266,7 @@ class ArtifactProvenanceFinalizationRecovery {
       // crash before pending bytes moved. Operational compatibility failures escape and keep startup
       // incomplete without exposing the not-yet-attached Version in Session JSON.
       await compatibilityRepository.finalizeRunArtifacts({
-        projectName: projectId,
+        projectId: projectId,
         sourceSessionId: marker.sourceSessionId,
         sessionId: appSessionId,
         runId: artifactRunId,

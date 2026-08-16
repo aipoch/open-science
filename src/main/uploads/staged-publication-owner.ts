@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 
 import {
-  DEFAULT_UPLOAD_PROJECT_NAME,
+  DEFAULT_UPLOAD_PROJECT_ID,
   PENDING_UPLOAD_SESSION_ID,
   type UploadedAttachment
 } from '../../shared/uploads'
@@ -87,7 +87,7 @@ class StagedPublicationOwner {
   async finalizePendingSessionUploads(
     sessionId: string,
     attachments: UploadedAttachment[],
-    projectId = DEFAULT_UPLOAD_PROJECT_NAME
+    projectId = DEFAULT_UPLOAD_PROJECT_ID
   ): Promise<UploadedAttachment[]> {
     return this.finalizeSessionUploads(sessionId, attachments, projectId)
   }
@@ -99,7 +99,7 @@ class StagedPublicationOwner {
     options: PublicationOptions = {}
   ): Promise<UploadedAttachment[]> {
     const safeSessionId = assertSafePathSegment(sessionId)
-    const safeProjectId = assertSafePathSegment(projectId.trim() || DEFAULT_UPLOAD_PROJECT_NAME)
+    const safeProjectId = assertSafePathSegment(projectId.trim() || DEFAULT_UPLOAD_PROJECT_ID)
     if (options.requireExistingAuthority && !this.options.getClient) {
       throw new Error('Legacy Upload authority is unavailable for orphan recovery.')
     }

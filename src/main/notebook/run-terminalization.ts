@@ -87,7 +87,7 @@ class NotebookRunTerminalizationOwner {
     try {
       await this.reconcilePending(session)
       await this.options.repository.appendRun({
-        projectName: session.projectId,
+        projectId: session.projectId,
         sessionId: session.sessionId,
         lane,
         run: runningRun
@@ -209,7 +209,7 @@ class NotebookRunTerminalizationOwner {
     terminalRun: NotebookRunRecord
   ): Promise<NotebookRunRecord> {
     const document = await this.options.repository.updateRun({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       run: terminalRun

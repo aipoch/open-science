@@ -153,7 +153,7 @@ export class ArtifactProvenanceStagingRecovery {
     let routingPublisher = publishCompatibilityRouting
     if (!routingPublisher) {
       const pendingOwner = await this.options.compatibilityRepository.findPendingFileForRun({
-        projectName: projectId,
+        projectId: projectId,
         runId: version.artifactRunId,
         filename: requestedFilename,
         checksum: version.checksum
@@ -306,7 +306,7 @@ export class ArtifactProvenanceStagingRecovery {
     options: CompatibilityRoutingPublicationOptions = {}
   ): Promise<void> {
     await this.options.compatibilityRepository.ensurePendingVersionRouting({
-      projectName: projectId,
+      projectId: projectId,
       sessionId: artifactStorageSessionId,
       runId: version.artifactRunId,
       filename,

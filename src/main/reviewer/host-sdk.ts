@@ -506,11 +506,11 @@ const isLikelyText = (bytes: Buffer): boolean => {
 }
 
 // Resolves an artifact file path from managed storage, reusing the layout owned by ArtifactRepository:
-// <storageRoot>/artifacts/<projectName>/<sessionId>/<messageId>/<filename>. The version id is the
+// <storageRoot>/artifacts/<projectId>/<sessionId>/<messageId>/<filename>. The version id is the
 // colon-composite <sessionId>:<messageId>:<filename> assigned when the artifact is attached to a turn.
 export const resolveArtifactPath = (
   storageRoot: string,
-  projectName: string,
+  projectId: string,
   versionId: string
 ): string => {
   const firstColon = versionId.indexOf(':')
@@ -524,7 +524,7 @@ export const resolveArtifactPath = (
   const messageId = versionId.slice(firstColon + 1, secondColon)
   const filename = versionId.slice(secondColon + 1)
 
-  return join(getProjectArtifactDir(storageRoot, projectName), sessionId, messageId, filename)
+  return join(getProjectArtifactDir(storageRoot, projectId), sessionId, messageId, filename)
 }
 
 // MIME types and file extensions that indicate a tabular (delimiter-separated) format.

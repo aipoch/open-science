@@ -30,7 +30,7 @@ const createEnvironment = async (
 
   return {
     storageRoot: root,
-    projectName: 'default-project',
+    projectId: 'default-project',
     sessionId: 'session-1',
     currentRunFile,
     allowedImportRoots: []
@@ -62,7 +62,7 @@ describe('artifact MCP server', () => {
 
     expect(artifact).toMatchObject({
       id: 'session-1:run-1:plot.svg',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       name: 'plot.svg',
@@ -346,7 +346,7 @@ describe('artifact MCP server', () => {
       command: '/Applications/Open Science.app/Contents/MacOS/Open Science',
       entryPath: '/app/out/main/index.js',
       storageRoot: '/Users/example/.open-science',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       currentRunFile:
         '/Users/example/.open-science/artifacts/default-project/session-1/.pending/current-run.json',
@@ -361,7 +361,6 @@ describe('artifact MCP server', () => {
         { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
         { name: 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT', value: '/Users/example/.open-science' },
         { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID', value: 'default-project' },
-        { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME', value: 'default-project' },
         { name: 'OPEN_SCIENCE_ARTIFACT_SESSION_ID', value: 'session-1' },
         {
           name: 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE',
@@ -384,7 +383,7 @@ describe('artifact MCP server', () => {
       command: 'C:\\Open Science.exe',
       entryPath: 'C:\\app\\main.js',
       storageRoot: 'C:\\OpenScience',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       currentRunFile: 'C:\\OpenScience\\current-run.json',
       allowedImportRoots: ['C:\\workspace'],
@@ -491,7 +490,7 @@ describe('artifact MCP server', () => {
       createdAt: '2026-07-27T00:00:00.000Z',
       producerRunId: 'notebook-run-17',
       environment: 'analysis-python',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'artifact-run-1',
       name: 'sin.png',
@@ -657,7 +656,7 @@ describe('artifact MCP server', () => {
                 versionNumber: 1,
                 checksum: 'b'.repeat(64),
                 createdAt: '2026-08-07T00:00:00.000Z',
-                projectName: 'default-project',
+                projectId: 'default-project',
                 sessionId: 'parent-session-1',
                 runId: 'artifact-run-delegated',
                 name: 'delegated.txt',
@@ -693,7 +692,7 @@ describe('artifact MCP server', () => {
   it('returns a compact legacy artifact receipt without echoing local paths', () => {
     const result = toWriteArtifactToolResult({
       id: 'legacy-artifact-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'artifact-run-1',
       name: 'table.csv',
@@ -774,7 +773,7 @@ describe('artifact MCP server', () => {
               versionNumber: 1,
               checksum: 'a'.repeat(64),
               createdAt: '2026-07-27T00:00:00.000Z',
-              projectName: 'default-project',
+              projectId: 'default-project',
               sessionId: 'session-1',
               runId: 'artifact-run-1',
               name: 'sin.png',
@@ -841,7 +840,7 @@ describe('artifact MCP server', () => {
       createdAt: '2026-07-27T00:00:00.000Z',
       producerRunId: 'notebook-run-17',
       environment: 'analysis-python',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'artifact-run-1',
       name: 'sin.png',

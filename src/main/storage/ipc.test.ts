@@ -356,12 +356,10 @@ describe('storage IPC handlers', () => {
 
   it('detect-active maps runtime and notebook session sources into ActiveSessionInfo', async () => {
     const deps = fakeDeps({
-      getActivePromptSessions: vi
-        .fn()
-        .mockReturnValue([{ projectName: 'p', sessionId: 'agent-1' }]),
+      getActivePromptSessions: vi.fn().mockReturnValue([{ projectId: 'p', sessionId: 'agent-1' }]),
       getActiveDelegatedSessions: vi
         .fn()
-        .mockReturnValue([{ projectName: 'p', sessionId: 'delegated-1' }]),
+        .mockReturnValue([{ projectId: 'p', sessionId: 'delegated-1' }]),
       notebook: {
         shutdownAll: vi.fn().mockResolvedValue({ reaped: true }),
         dispose: vi.fn().mockResolvedValue({ reaped: true }),
@@ -480,7 +478,7 @@ describe('storage IPC handlers', () => {
     const deps = fakeDeps({
       getActiveDelegatedSessions: vi
         .fn()
-        .mockReturnValue([{ projectName: 'p', sessionId: 'delegated-1' }])
+        .mockReturnValue([{ projectId: 'p', sessionId: 'delegated-1' }])
     })
     registerStorageIpcHandlers(deps)
 

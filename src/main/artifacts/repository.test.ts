@@ -57,7 +57,7 @@ describe('artifact repository', () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-plan',
       filename: 'plan.json',
@@ -88,7 +88,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'report.xml',
@@ -98,7 +98,7 @@ describe('artifact repository', () => {
 
     expect(artifact).toMatchObject({
       id: 'session-1:run-1:report.xml',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       name: 'report.xml',
@@ -118,7 +118,7 @@ describe('artifact repository', () => {
     const content = Buffer.alloc(4 * 1024 * 1024, 7).toString('base64')
 
     const artifact = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'large.bin',
@@ -139,7 +139,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'plot.png',
@@ -160,7 +160,7 @@ describe('artifact repository', () => {
     await expect(
       repository.writePendingFile(
         {
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-1',
           runId: 'run-1',
           filename: 'too-large.txt',
@@ -182,7 +182,7 @@ describe('artifact repository', () => {
     await expect(
       repository.writePendingFile(
         {
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-1',
           runId: 'run-1',
           filename: 'too-large.bin',
@@ -205,7 +205,7 @@ describe('artifact repository', () => {
     await expect(
       repository.writePendingFile(
         {
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-1',
           runId: 'run-1',
           filename: 'growing.bin',
@@ -250,7 +250,7 @@ describe('artifact repository', () => {
 
     const artifact = await repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'pinned.bin',
@@ -278,7 +278,7 @@ describe('artifact repository', () => {
     await expect(
       repository.writePendingFile(
         {
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-1',
           runId: 'run-1',
           filename: 'reserve.txt',
@@ -300,7 +300,7 @@ describe('artifact repository', () => {
     await expect(
       repository.writePendingFile(
         {
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-1',
           runId: 'run-1',
           filename: 'plot.png',
@@ -324,7 +324,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'plot.png',
@@ -348,7 +348,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'chart.png',
@@ -375,7 +375,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'plot.png',
@@ -402,7 +402,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
     const artifact = await repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'plot.png',
@@ -427,7 +427,7 @@ describe('artifact repository', () => {
 
     const attempt = repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'plot.png',
@@ -449,7 +449,7 @@ describe('artifact repository', () => {
 
     const attempt = repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'outside.txt',
@@ -475,7 +475,7 @@ describe('artifact repository', () => {
 
     const attempt = repository.writePendingFile(
       {
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'never-saved.png',
@@ -492,7 +492,7 @@ describe('artifact repository', () => {
 
     await expect(
       repository.writePendingFile({
-        projectName: '../default-project',
+        projectId: '../default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'report.xml',
@@ -501,7 +501,7 @@ describe('artifact repository', () => {
     ).rejects.toThrow(/Invalid artifact path segment/)
     await expect(
       repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session/1',
         runId: 'run-1',
         filename: 'report.xml',
@@ -510,7 +510,7 @@ describe('artifact repository', () => {
     ).rejects.toThrow(/Invalid artifact path segment/)
     await expect(
       repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: '../report.xml',
@@ -519,7 +519,7 @@ describe('artifact repository', () => {
     ).rejects.toThrow(/Invalid artifact filename/)
     await expect(
       repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'nested\\report.xml',
@@ -528,7 +528,7 @@ describe('artifact repository', () => {
     ).rejects.toThrow(/Invalid artifact filename/)
     await expect(
       repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'report:1.xml',
@@ -537,7 +537,7 @@ describe('artifact repository', () => {
     ).rejects.toThrow(/Invalid artifact filename/)
     await expect(
       repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         filename: 'report\n.xml',
@@ -551,7 +551,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'report.xml',
@@ -560,7 +560,7 @@ describe('artifact repository', () => {
     })
 
     const files = await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
@@ -569,7 +569,7 @@ describe('artifact repository', () => {
     expect(files).toHaveLength(1)
     expect(files[0]).toMatchObject({
       id: 'session-1:message-1:report.xml',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       messageId: 'message-1',
       name: 'report.xml',
@@ -596,7 +596,7 @@ describe('artifact repository', () => {
     }
 
     await repository.prepareRunFinalization({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sourceSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -617,7 +617,7 @@ describe('artifact repository', () => {
     ).resolves.not.toHaveProperty('messageId')
 
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sourceSessionId: 'artifact-session-1',
       sessionId: 'session-1',
       runId: 'run-1',
@@ -635,7 +635,7 @@ describe('artifact repository', () => {
     })
     await expect(
       repository.prepareRunFinalization({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sourceSessionId: 'artifact-session-1',
         sessionId: 'session-1',
         runId: 'run-1',
@@ -645,7 +645,7 @@ describe('artifact repository', () => {
     ).resolves.toBeUndefined()
     await expect(
       repository.finalizeRunArtifacts({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sourceSessionId: 'artifact-session-1',
         sessionId: 'session-1',
         runId: 'run-1',
@@ -655,7 +655,7 @@ describe('artifact repository', () => {
     ).rejects.toThrow(/Version ids conflict/i)
     await expect(
       repository.prepareRunFinalization({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sourceSessionId: 'artifact-session-1',
         sessionId: 'session-1',
         runId: 'run-1',
@@ -669,7 +669,7 @@ describe('artifact repository', () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'storage-session-1',
       runId: 'run-ownerless',
       filename: 'draft.txt',
@@ -702,7 +702,7 @@ describe('artifact repository', () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     const pending = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'storage-session-1',
       runId: 'run-metadata-only',
       filename: 'result.txt',
@@ -763,7 +763,7 @@ describe('artifact repository', () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'storage-session-1',
       runId: 'run-corrupt',
       filename: 'result.txt',
@@ -790,7 +790,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
     for (const sessionId of ['storage-session-1', 'storage-session-2']) {
       await repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId,
         runId: 'run-duplicate',
         filename: 'result.txt',
@@ -817,14 +817,14 @@ describe('artifact repository', () => {
       }
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'storage-session-1',
       runId: 'run-io',
       filename: 'result.txt',
       source: createInlineSource('result')
     })
     await repository.prepareRunFinalization({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sourceSessionId: 'storage-session-1',
       sessionId: 'session-1',
       runId: 'run-io',
@@ -860,7 +860,7 @@ describe('artifact repository', () => {
       }
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'report.xml',
@@ -877,7 +877,7 @@ describe('artifact repository', () => {
 
     await expect(
       repository.finalizeRunArtifacts({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         messageId: 'message-1'
@@ -887,7 +887,7 @@ describe('artifact repository', () => {
 
     await expect(
       repository.finalizeRunArtifacts({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId: 'run-1',
         messageId: 'message-1'
@@ -906,7 +906,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'plot.png',
@@ -923,7 +923,7 @@ describe('artifact repository', () => {
     )
 
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-7'
@@ -947,27 +947,27 @@ describe('artifact repository', () => {
     // Two runs in one session each produce report.csv, finalized into different messages. The second
     // finalize is newer, so a newest-mtime recovery would wrongly resolve run A's path to run B's file.
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-a',
       filename: 'report.csv',
       source: createInlineSource('run-a-content')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-a',
       messageId: 'message-a'
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-b',
       filename: 'report.csv',
       source: createInlineSource('run-b-content')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-b',
       messageId: 'message-b'
@@ -1000,27 +1000,27 @@ describe('artifact repository', () => {
     // for run A still exists, so recovery must NOT fall back to run B's same-named file — the artifact
     // is simply gone.
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-a',
       filename: 'report.csv',
       source: createInlineSource('run-a-content')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-a',
       messageId: 'message-a'
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-b',
       filename: 'report.csv',
       source: createInlineSource('run-b-content')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-b',
       messageId: 'message-b'
@@ -1045,14 +1045,14 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'legacy.txt',
       source: createInlineSource('legacy')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
@@ -1087,14 +1087,14 @@ describe('artifact repository', () => {
       ['run-b', 'message-b', 'b']
     ] as const) {
       await repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId,
         filename: 'report.csv',
         source: createInlineSource(content)
       })
       await repository.finalizeRunArtifacts({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId,
         messageId
@@ -1126,14 +1126,14 @@ describe('artifact repository', () => {
       ['run-b', 'message-b', 'b']
     ] as const) {
       await repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId,
         filename: 'report.csv',
         source: createInlineSource(content)
       })
       await repository.finalizeRunArtifacts({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         runId,
         messageId
@@ -1176,7 +1176,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-1',
       filename: 'report.xml',
@@ -1184,7 +1184,7 @@ describe('artifact repository', () => {
     })
 
     const files = await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sourceSessionId: 'artifact-session-1',
       sessionId: 'real-session-1',
       runId: 'run-1',
@@ -1208,21 +1208,21 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'report.xml',
       source: createInlineSource('<report />')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
     })
 
     const files = await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
@@ -1242,14 +1242,14 @@ describe('artifact repository', () => {
     const messageDir = join(root, 'artifacts', 'default-project', 'session-1', 'message-1')
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'alpha.txt',
       source: createInlineSource('a')
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'zeta.txt',
@@ -1259,7 +1259,7 @@ describe('artifact repository', () => {
     await rename(join(pendingDir, 'alpha.txt'), join(messageDir, 'alpha.txt'))
 
     const files = await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
@@ -1277,7 +1277,7 @@ describe('artifact repository', () => {
     const messageDir = join(root, 'artifacts', 'default-project', 'session-1', 'message-1')
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'alpha.svg',
@@ -1288,7 +1288,7 @@ describe('artifact repository', () => {
     await rename(join(pendingDir, 'alpha.svg'), join(messageDir, 'alpha.svg'))
 
     const files = await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
@@ -1307,14 +1307,14 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'zeta.txt',
       source: createInlineSource('z')
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'alpha.txt',
@@ -1322,7 +1322,7 @@ describe('artifact repository', () => {
     })
 
     const files = await repository.listPendingRunFiles({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1'
     })
@@ -1330,7 +1330,7 @@ describe('artifact repository', () => {
     expect(files.map((file) => file.name)).toEqual(['alpha.txt', 'zeta.txt'])
     expect(files[0]).toMatchObject({
       id: 'session-1:run-1:alpha.txt',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       name: 'alpha.txt'
@@ -1342,7 +1342,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
     const content = 'immutable pending bytes'
     const pending = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'storage-session-1',
       runId: 'artifact-run-1',
       filename: 'result.txt',
@@ -1352,7 +1352,7 @@ describe('artifact repository', () => {
     const checksum = sha256(content)
 
     await repository.ensurePendingVersionRouting({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'storage-session-1',
       runId: 'artifact-run-1',
       filename: 'result.txt',
@@ -1369,7 +1369,7 @@ describe('artifact repository', () => {
 
     await expect(
       repository.ensurePendingVersionRouting({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'storage-session-1',
         runId: 'artifact-run-1',
         filename: 'result.txt',
@@ -1387,7 +1387,7 @@ describe('artifact repository', () => {
 
     await expect(
       repository.findPendingVersionRouting({
-        projectName: 'default-project',
+        projectId: 'default-project',
         artifactId: 'artifact-1',
         versionId: 'version-1'
       })
@@ -1403,7 +1403,7 @@ describe('artifact repository', () => {
     const root = await createStorageRoot()
     const repository = new ArtifactRepository(root)
     const request = {
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'storage-session-1',
       runId: 'artifact-run-1',
       filename: 'result.txt',
@@ -1430,7 +1430,7 @@ describe('artifact repository', () => {
     ).rejects.toThrow('sqlite pending transition failed')
 
     const route = await repository.findPendingVersionRouting({
-      projectName: 'default-project',
+      projectId: 'default-project',
       artifactId: 'artifact-1',
       versionId: 'version-1'
     })
@@ -1450,14 +1450,14 @@ describe('artifact repository', () => {
 
     for (const sessionId of ['storage-session-1', 'storage-session-2']) {
       const pending = await repository.writePendingFile({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId,
         runId: 'artifact-run-1',
         filename: 'result.txt',
         source: createInlineSource(content)
       })
       await repository.ensurePendingVersionRouting({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId,
         runId: 'artifact-run-1',
         filename: 'result.txt',
@@ -1474,7 +1474,7 @@ describe('artifact repository', () => {
 
     await expect(
       repository.findPendingVersionRouting({
-        projectName: 'default-project',
+        projectId: 'default-project',
         artifactId: 'artifact-1',
         versionId: 'version-1'
       })
@@ -1486,7 +1486,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'legacy-session',
       runId: 'legacy-run',
       filename: 'legacy.svg',
@@ -1495,7 +1495,7 @@ describe('artifact repository', () => {
     })
 
     const [legacy] = await repository.listPendingRunFiles({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'legacy-session',
       runId: 'legacy-run'
     })
@@ -1515,28 +1515,28 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'zeta.txt',
       source: createInlineSource('z')
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'alpha.txt',
       source: createInlineSource('a')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
     })
 
     const files = await repository.listMessageFiles({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       messageId: 'message-1'
     })
@@ -1550,27 +1550,27 @@ describe('artifact repository', () => {
 
     // Two sessions each finalize a file into a message directory.
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       filename: 'alpha.txt',
       source: createInlineSource('a')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-1',
       messageId: 'message-1'
     })
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-2',
       runId: 'run-2',
       filename: 'beta.txt',
       source: createInlineSource('b')
     })
     await repository.finalizeRunArtifacts({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-2',
       runId: 'run-2',
       messageId: 'message-2'
@@ -1588,7 +1588,7 @@ describe('artifact repository', () => {
     // A file written into a pending run whose turn crashed before the renderer attached it: no message
     // owns it, so startup reconciliation cannot claim it. It must still be surfaced, not hidden forever.
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-orphan',
       filename: 'draft.txt',
@@ -1621,7 +1621,7 @@ describe('artifact repository', () => {
 
     // An in-flight turn (run-active): its files are still being written.
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-active',
       filename: 'in-progress.txt',
@@ -1629,7 +1629,7 @@ describe('artifact repository', () => {
     })
     // A genuinely orphaned pending run from an earlier crash.
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-dead',
       filename: 'orphan.txt',
@@ -1652,7 +1652,7 @@ describe('artifact repository', () => {
     // A crash left a pending run AND its stale current-run.json handoff. On restart no run is live, so
     // the crashed run's files must surface — the persisted handoff must NOT keep hiding them.
     await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'run-crashed',
       filename: 'crashed.txt',
@@ -1682,7 +1682,7 @@ describe('artifact repository', () => {
     // Simulate the crash window: a pending file was written and its path persisted, but finalize never
     // ran (no run-registry claim survives a restart).
     const pending = await repository.writePendingFile({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'artifact-session-1',
       runId: 'run-7',
       filename: 'chart.png',
@@ -1692,7 +1692,7 @@ describe('artifact repository', () => {
     expect(pending.path).toContain('.pending')
 
     const finalized = await repository.reconcilePendingArtifactPaths({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'app-session-1',
       messageId: 'message-9',
       pendingPaths: [pending.path]
@@ -1706,7 +1706,7 @@ describe('artifact repository', () => {
 
     // Idempotent: replaying the reconcile (e.g. a second startup) returns the same finalized file.
     const replayed = await repository.reconcilePendingArtifactPaths({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'app-session-1',
       messageId: 'message-9',
       pendingPaths: [pending.path]
@@ -1719,7 +1719,7 @@ describe('artifact repository', () => {
     const repository = new ArtifactRepository(root)
 
     const finalized = await repository.reconcilePendingArtifactPaths({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'app-session-1',
       messageId: 'message-1',
       pendingPaths: [
@@ -1747,7 +1747,7 @@ describe('artifact repository', () => {
       session: string
     ): Promise<unknown> =>
       repository.writePendingFile({
-        projectName: project,
+        projectId: project,
         sessionId: session,
         runId: 'run-1',
         filename: 'plot.png',

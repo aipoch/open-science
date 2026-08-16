@@ -81,7 +81,7 @@ delete process.env.OPEN_SCIENCE_MCP_RPC_TOKEN
 // enumerates process.env sees neither the token nor the routing identity. Absent -> host.compute call
 // payloads omit them and the approval broker falls back to 'once'-only semantics.
 const COMPUTE_SESSION_ID = process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
-const COMPUTE_PROJECT_NAME =
+const COMPUTE_PROJECT_ID =
   process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID || process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
 delete process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID
 delete process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID
@@ -1015,7 +1015,7 @@ async function hostMcp(server, method, args = undefined, kwargs = undefined) {
         method,
         args: callArgs,
         sessionId: COMPUTE_SESSION_ID,
-        ...(COMPUTE_PROJECT_NAME ? { projectId: COMPUTE_PROJECT_NAME } : {})
+        ...(COMPUTE_PROJECT_ID ? { projectId: COMPUTE_PROJECT_ID } : {})
       }
     })
   })
@@ -3240,7 +3240,7 @@ const hostCompute = {
           login_shell: normalized.login_shell !== undefined ? normalized.login_shell : true,
           timeout_seconds: normalized.timeout_seconds,
           session_id: COMPUTE_SESSION_ID,
-          project_id: COMPUTE_PROJECT_NAME
+          project_id: COMPUTE_PROJECT_ID
         })
       },
 
@@ -3305,7 +3305,7 @@ const hostCompute = {
           timeout_seconds: normalized.timeout_seconds,
           harvest,
           session_id: COMPUTE_SESSION_ID,
-          project_id: COMPUTE_PROJECT_NAME,
+          project_id: COMPUTE_PROJECT_ID,
           workspace_cwd: process.cwd()
         })
       },

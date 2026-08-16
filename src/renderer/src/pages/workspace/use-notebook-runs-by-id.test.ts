@@ -12,7 +12,7 @@ import { useNotebookRunsById } from './use-notebook-runs-by-id'
 
 const reference: NotebookSessionReference = {
   sessionId: 'session-1',
-  projectName: 'project-1',
+  projectId: 'project-1',
   workspaceCwd: '/workspace',
   notebookSessionRoot: '/workspace/.notebook',
   dataRoot: '/workspace/data',

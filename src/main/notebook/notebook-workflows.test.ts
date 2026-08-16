@@ -153,7 +153,7 @@ describe('Notebook command workflows', () => {
     }
     const reference: NotebookSessionReference = {
       sessionId: 'session-1',
-      projectName: 'Project',
+      projectId: 'Project',
       workspaceCwd: '/workspace',
       notebookSessionRoot: '/data/notebooks/session-1',
       dataRoot: '/data',

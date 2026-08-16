@@ -108,14 +108,14 @@ describe('artifact finalization startup recovery', () => {
 
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -159,14 +159,14 @@ describe('artifact finalization startup recovery', () => {
     ).resolves.not.toHaveProperty('messageId')
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([expect.objectContaining({ name: 'result.png' })])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -196,7 +196,7 @@ describe('artifact finalization startup recovery', () => {
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -225,7 +225,7 @@ describe('artifact finalization startup recovery', () => {
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -273,7 +273,7 @@ describe('artifact finalization startup recovery', () => {
     expect(loaded.sessions[0].messages[1].artifactIds).toBeUndefined()
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -345,7 +345,7 @@ describe('artifact finalization startup recovery', () => {
     ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
@@ -357,14 +357,14 @@ describe('artifact finalization startup recovery', () => {
     expect(retried.sessions[0].messages[1].artifactIds).toEqual([version.versionId])
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -388,14 +388,14 @@ describe('artifact finalization startup recovery', () => {
 
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -407,7 +407,7 @@ describe('artifact finalization startup recovery', () => {
     const { provenance, version, context } = await prepareRecovery(compatibility)
     await finalizeAndLinkVersion({ provenance, version, context })
     const [pending] = await compatibility.listPendingRunFiles({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sessionId: STORAGE_SESSION_ID,
       runId: RUN_ID
     })
@@ -416,7 +416,7 @@ describe('artifact finalization startup recovery', () => {
     await rename(pending.path, join(messageDirectory, pending.name))
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -434,7 +434,7 @@ describe('artifact finalization startup recovery', () => {
 
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -467,14 +467,14 @@ describe('artifact finalization startup recovery', () => {
     ).toEqual([version.versionId])
     await expect(
       compatibility.listPendingRunFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: STORAGE_SESSION_ID,
         runId: RUN_ID
       })
     ).resolves.toEqual([])
     await expect(
       compatibility.listMessageFiles({
-        projectName: PROJECT_ID,
+        projectId: PROJECT_ID,
         sessionId: SESSION_ID,
         messageId: 'message-1'
       })
@@ -526,7 +526,7 @@ describe('artifact finalization startup recovery', () => {
     await coordinator.loadAll()
 
     await compatibility.writePendingFile({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sessionId: STORAGE_SESSION_ID,
       runId: RUN_ID,
       filename: 'second.png',
@@ -763,7 +763,7 @@ describe('artifact finalization startup recovery', () => {
       promptMessageId: prompt.id
     }
     await compatibility.writePendingFile({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sessionId: STORAGE_SESSION_ID,
       runId: RUN_ID,
       filename: 'result.png',
@@ -780,7 +780,7 @@ describe('artifact finalization startup recovery', () => {
       filename: 'result.png'
     })
     await compatibility.prepareRunFinalization({
-      projectName: PROJECT_ID,
+      projectId: PROJECT_ID,
       sourceSessionId: STORAGE_SESSION_ID,
       sessionId: SESSION_ID,
       runId: RUN_ID,

@@ -26,7 +26,7 @@ const log = createLogger('acp')
 type AcpProviderSessionAdoptionRequest = Readonly<{
   connection: ClientConnection
   cwd: string
-  projectName: string
+  projectId: string
   // The enclosing resume/reset transaction transfers its opaque stable-ID reservation here after
   // reconnect renewal. Adoption owns extension, publication, and terminal release; the caller's
   // finally may release the same handle only as an idempotent fallback.
@@ -50,10 +50,10 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
     frameworkId: string
   ) => Promise<{ append: string; prefix: string } | undefined>
   resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
-  // The ACP projectName carries the Project id (see workspace-conversation-controller). Returns
+  // The ACP projectId carries the Project id (see workspace-conversation-controller). Returns
   // undefined when the project has no Agent Context or the lookup fails; failures never block
   // session adoption.
-  resolveProjectAgentContext?: (projectName: string) => Promise<string | undefined>
+  resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
   peekClaudeReplay: (sessionId: string) => string | undefined
   commitClaudeReplay: (sessionId: string) => void
   updateCwd: (cwd: string) => void
@@ -83,7 +83,7 @@ export class AcpProviderSessionAdopter {
         bridgeMcpAliasesEnabled: startupBackend.adapter.bridgeMcpAliasesEnabled,
         policy: this.deps.capabilityPolicy,
         sessionCwd: request.cwd,
-        projectName: request.projectName
+        projectId: request.projectId
       })
       const specialistId =
         request.specialistId ??
@@ -93,7 +93,7 @@ export class AcpProviderSessionAdopter {
         this.resolveSpecialistSkills(specialistId)
       ])
       const handoffAppend = this.deps.peekClaudeReplay(stableAppSessionId)
-      const projectContextAppend = await this.resolveProjectAgentContext(request.projectName)
+      const projectContextAppend = await this.resolveProjectAgentContext(request.projectId)
       const setup = this.presentation.buildSessionSetup({
         framework: startupBackend.framework,
         tooling: {
@@ -153,7 +153,7 @@ export class AcpProviderSessionAdopter {
         const { aggregate } = this.deps.registry.publish(identity, stableAppSessionId, {
           session: provisionalSession,
           cwd: request.cwd,
-          projectName: request.projectName,
+          projectId: request.projectId,
           frameworkId: backend.framework.id,
           backendId: backend.backendId,
           permissionProfile: structuredClone(configuration.permissionProfile),
@@ -215,10 +215,10 @@ export class AcpProviderSessionAdopter {
     }
   }
 
-  private async resolveProjectAgentContext(projectName: string): Promise<string | undefined> {
+  private async resolveProjectAgentContext(projectId: string): Promise<string | undefined> {
     if (!this.deps.resolveProjectAgentContext) return undefined
     try {
-      const context = await this.deps.resolveProjectAgentContext(projectName)
+      const context = await this.deps.resolveProjectAgentContext(projectId)
       const trimmed = context?.trim()
       return trimmed ? trimmed : undefined
     } catch (error) {

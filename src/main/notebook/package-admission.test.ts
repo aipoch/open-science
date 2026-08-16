@@ -112,14 +112,14 @@ describe('NotebookPackageAdmissionOwner', () => {
       packages: ['numpy'],
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       environment: 'stale-caller-target'
     })
 
     expect(options.loadSession).toHaveBeenCalledWith({
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     expect(admission).toMatchObject({
       status: 'admitted',

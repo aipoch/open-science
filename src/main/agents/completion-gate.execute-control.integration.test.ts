@@ -75,7 +75,7 @@ const createExecuteControlHarness = async (
   const service = new NotebookRuntimeService({
     configRoot: root,
     dataRoot: root,
-    projectName: 'default-project',
+    projectId: 'default-project',
     repository: new NotebookRunRepository(root),
     platform: 'linux'
   })
@@ -101,7 +101,7 @@ const createExecuteControlHarness = async (
   )
   const executeControl = vi.fn((code: string, timeoutMs?: number) =>
     service.executeControl({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'trusted-session',
       workspaceCwd: root,
       code,

@@ -169,7 +169,7 @@ describe('buildProjectFileLibrary', () => {
       await import('./project-files-library')
     const liveArtifact = {
       id: 's-live:m1:live.png',
-      projectName: 'proj-1',
+      projectId: 'proj-1',
       sessionId: 's-live',
       name: 'live.png',
       path: '/artifacts/proj-1/s-live/m1/live.png',
@@ -180,7 +180,7 @@ describe('buildProjectFileLibrary', () => {
     }
     const orphan = {
       id: 's-gone:m9:orphan.csv',
-      projectName: 'proj-1',
+      projectId: 'proj-1',
       sessionId: 's-gone',
       name: 'orphan.csv',
       path: '/artifacts/proj-1/s-gone/m9/orphan.csv',

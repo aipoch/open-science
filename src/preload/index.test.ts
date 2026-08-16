@@ -956,7 +956,7 @@ const sampleSessionArtifactSelection = {
 }
 const sampleProjectArtifactSelection = {
   projectId: 'p-1',
-  projectName: 'Research',
+  suggestedArchiveName: 'Research',
   files: [
     { source: 'artifact', sessionId: 's-1', path: 'artifact://report', suggestedName: 'report.csv' }
   ]

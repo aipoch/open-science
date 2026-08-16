@@ -70,7 +70,7 @@ const makeScope = (artifactVersionIds: string[] = [V1]): TurnScope => ({
 })
 
 // Writes an artifact into the REAL managed layout the app uses:
-// <root>/artifacts/<projectName>/<sessionId>/<messageId>/<filename>, keyed by the colon-composite
+// <root>/artifacts/<projectId>/<sessionId>/<messageId>/<filename>, keyed by the colon-composite
 // version id <sessionId>:<messageId>:<filename>.
 const writeArtifact = async (root: string, versionId: string, content: string): Promise<void> => {
   const firstColon = versionId.indexOf(':')

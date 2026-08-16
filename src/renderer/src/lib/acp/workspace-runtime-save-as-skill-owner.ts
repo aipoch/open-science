@@ -58,7 +58,7 @@ const useWorkspaceRuntimeSaveAsSkillOwner = ({
           sessionId: request.sessionId,
           requireExistingSession: true,
           cwd: initialSession.cwd,
-          projectName: initialSession.projectId,
+          projectId: initialSession.projectId,
           permissionProfile: initialSession.permissionProfile,
           selectedRuntime: {
             frameworkId: currentRuntime.frameworkId,

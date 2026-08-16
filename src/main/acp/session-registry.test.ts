@@ -43,7 +43,7 @@ const publish = (
   const publication = registry.publish(reservation, appSessionId, {
     session: providerSession(providerSessionId),
     cwd: '/workspace',
-    projectName: 'project-1',
+    projectId: 'project-1',
     frameworkId: 'claude-code',
     permissionProfile: permissionProfile()
   })
@@ -265,7 +265,7 @@ describe('ACP session registry', () => {
     entry.aggregate.attach({
       session: entry.attachment!.session,
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       frameworkId: 'claude-code',
       permissionProfile: permissionProfile(),
       appliedModel: 'model-1'
@@ -283,7 +283,7 @@ describe('ACP session registry', () => {
     entry.aggregate.attach({
       session: entry.attachment!.session,
       cwd: '/workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       frameworkId: 'codex',
       backendId: 'backend-1',
       permissionProfile: permissionProfile(),
@@ -299,7 +299,7 @@ describe('ACP session registry', () => {
     expect(registry.lookup('app-a')?.aggregate.snapshot()).toMatchObject({
       providerSessionId: undefined,
       cwd: undefined,
-      projectName: undefined,
+      projectId: undefined,
       frameworkId: 'codex',
       backendId: 'backend-1',
       permissionProfile: permissionProfile(),

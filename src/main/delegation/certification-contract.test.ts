@@ -60,7 +60,7 @@ const artifactFor = (scope: DelegatedArtifactScope): ArtifactFile => ({
   versionNumber: 1,
   checksum: `checksum-${scope.attemptId}`,
   createdAt: '2026-08-07T00:00:00.000Z',
-  projectName: scope.session.projectId,
+  projectId: scope.session.projectId,
   sessionId: scope.session.sessionId,
   runId: scope.executionId,
   name: `${scope.agentFrameId}.md`,

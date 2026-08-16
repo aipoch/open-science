@@ -50,7 +50,7 @@ const session = (
   const terminate = vi.fn().mockResolvedValue(undefined)
   const value = new NotebookSessionAggregate({
     sessionId,
-    projectName: 'project',
+    projectId: 'project',
     lane: createRootNotebookLane('project', sessionId, 'root-frame-' + sessionId),
     cwd: '/workspace',
     notebookSessionRoot: '/workspace',

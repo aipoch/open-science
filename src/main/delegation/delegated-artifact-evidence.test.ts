@@ -40,7 +40,7 @@ describe('delegated Artifact evidence adapter', () => {
             versionNumber: 1,
             checksum: request.content,
             createdAt: '2026-08-07T00:00:00.000Z',
-            projectName: request.projectId,
+            projectId: request.projectId,
             sessionId: request.appSessionId,
             runId: request.artifactRunId,
             name: request.filename,

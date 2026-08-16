@@ -871,7 +871,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 
     const creation = handlers.get('acp:create-session')?.(
       {},
-      { cwd: '/workspace', projectName: 'project-1', permissionProfile: 'ask' }
+      { cwd: '/workspace', projectId: 'project-1', permissionProfile: 'ask' }
     )
     await Promise.resolve()
     expect(createSession).not.toHaveBeenCalled()
@@ -887,18 +887,18 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 
     const firstResult = await handlers.get('acp:create-session')?.(
       {},
-      { projectName: 'project-1', permissionProfile: 'ask' }
+      { projectId: 'project-1', permissionProfile: 'ask' }
     )
     const secondResult = await handlers.get('acp:create-session')?.(
       {},
-      { projectName: 'project-1', permissionProfile: 'ask' }
+      { projectId: 'project-1', permissionProfile: 'ask' }
     )
 
     expect(createSession).toHaveBeenCalledTimes(2)
     const firstRequest = createSession.mock.calls[0][0]
     const secondRequest = createSession.mock.calls[1][0]
     expect(firstRequest).toMatchObject({
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask',
       cwd: expect.any(String)
     })
@@ -917,7 +917,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     registerWithFakes()
     const request = {
       cwd: 'D:\\research\\chosen-workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask' as const
     }
 
@@ -934,14 +934,14 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
       {},
       {
         cwd: '  D:\\research\\chosen-workspace  ',
-        projectName: 'project-1',
+        projectId: 'project-1',
         permissionProfile: 'ask'
       }
     )
 
     expect(createSession).toHaveBeenCalledWith({
       cwd: 'D:\\research\\chosen-workspace',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask'
     })
     expect(mkdir).not.toHaveBeenCalled()
@@ -952,7 +952,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 
     await handlers.get('acp:create-session')?.(
       {},
-      { cwd: '   ', projectName: 'project-1', permissionProfile: 'ask' }
+      { cwd: '   ', projectId: 'project-1', permissionProfile: 'ask' }
     )
 
     const request = createSession.mock.calls[0][0]
@@ -965,10 +965,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     beginMigration()
 
     await expect(
-      handlers.get('acp:create-session')?.(
-        {},
-        { projectName: 'project-1', permissionProfile: 'ask' }
-      )
+      handlers.get('acp:create-session')?.({}, { projectId: 'project-1', permissionProfile: 'ask' })
     ).rejects.toThrow(/moving your data/i)
 
     expect(mkdir).not.toHaveBeenCalled()
@@ -987,7 +984,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 
     const createPromise = handlers.get('acp:create-session')?.(
       {},
-      { projectName: 'project-1', permissionProfile: 'ask' }
+      { projectId: 'project-1', permissionProfile: 'ask' }
     )
     await vi.waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
 
@@ -1012,10 +1009,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     createSession.mockRejectedValueOnce(error)
 
     await expect(
-      handlers.get('acp:create-session')?.(
-        {},
-        { projectName: 'project-1', permissionProfile: 'ask' }
-      )
+      handlers.get('acp:create-session')?.({}, { projectId: 'project-1', permissionProfile: 'ask' })
     ).rejects.toBe(error)
 
     const request = createSession.mock.calls[0][0]
@@ -1029,10 +1023,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     createSession.mockRejectedValueOnce(superseded)
 
     await expect(
-      handlers.get('acp:create-session')?.(
-        {},
-        { projectName: 'project-1', permissionProfile: 'ask' }
-      )
+      handlers.get('acp:create-session')?.({}, { projectId: 'project-1', permissionProfile: 'ask' })
     ).rejects.toBe(superseded)
 
     const request = createSession.mock.calls[0][0]
@@ -1053,7 +1044,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
 
     const createPromise = handlers.get('acp:create-session')?.(
       {},
-      { projectName: 'project-1', permissionProfile: 'ask' }
+      { projectId: 'project-1', permissionProfile: 'ask' }
     )
     await vi.waitFor(() => expect(rm).toHaveBeenCalledTimes(1))
 
@@ -1079,10 +1070,7 @@ describe('installAcpIpcHandlers — managed session workspace', () => {
     rm.mockRejectedValueOnce(new Error('workspace rollback failed'))
 
     await expect(
-      handlers.get('acp:create-session')?.(
-        {},
-        { projectName: 'project-1', permissionProfile: 'ask' }
-      )
+      handlers.get('acp:create-session')?.({}, { projectId: 'project-1', permissionProfile: 'ask' })
     ).rejects.toBe(failure)
   })
 })
@@ -1155,7 +1143,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     const request: AcpResumeSessionRequest = {
       sessionId: 'session-1',
       cwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     }
     resumeSession.mockImplementationOnce(async () => {
       expect(admissionActive).toBe(true)
@@ -1173,7 +1161,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     const request: AcpResumeSessionRequest = {
       sessionId: 'private-session-id',
       cwd: '/Users/alice/private-project',
-      projectName: 'private-project'
+      projectId: 'private-project'
     }
     resumeSession.mockResolvedValueOnce({
       sessionId: request.sessionId,
@@ -1205,7 +1193,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     const serialized = JSON.stringify(infoLogSpy.mock.calls)
     expect(serialized).not.toContain(request.sessionId)
     expect(serialized).not.toContain(request.cwd)
-    expect(serialized).not.toContain(request.projectName)
+    expect(serialized).not.toContain(request.projectId)
     expect(serialized).not.toContain('private-backend-id')
   })
 

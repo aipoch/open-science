@@ -40,11 +40,11 @@ afterEach(async () => {
 })
 
 // Builds a legacy (pre-sentinel) run.json document with absolute paths under `root`.
-const buildLegacyRunDocument = (root: string, projectName: string): NotebookRunDocument => {
-  const sessionRoot = join(root, NOTEBOOKS_DIR, projectName, 'session-1')
+const buildLegacyRunDocument = (root: string, projectId: string): NotebookRunDocument => {
+  const sessionRoot = join(root, NOTEBOOKS_DIR, projectId, 'session-1')
   return {
     version: 1,
-    projectName,
+    projectName: projectId,
     sessionId: 'session-1',
     workspaceCwd: sessionRoot,
     notebookSessionRoot: sessionRoot,
@@ -83,7 +83,7 @@ const buildLegacyRunDocument = (root: string, projectName: string): NotebookRunD
       }
     ],
     updatedAt: 0
-  }
+  } as unknown as NotebookRunDocument
 }
 
 describe('normalizeLegacyDataPaths (integration)', () => {
@@ -101,19 +101,19 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     const sessionRepository = new SessionRepository(configRoot)
 
     const project = await projectRepository.create({ name: 'Project A' })
-    const projectName = project.id
+    const projectId = project.id
 
     // Seed a legacy session file directly on disk (absolute paths), simulating a pre-sentinel install.
-    const sessionDir = join(configRoot, 'sessions', projectName)
+    const sessionDir = join(configRoot, 'sessions', projectId)
     await mkdir(sessionDir, { recursive: true })
-    const artifactPath = join(dataRoot, 'artifacts', projectName, 'session-1', 'm', 'plot.png')
+    const artifactPath = join(dataRoot, 'artifacts', projectId, 'session-1', 'm', 'plot.png')
     const legacySessionFile = {
       version: 1,
       session: {
         id: 'session-1',
-        projectId: projectName,
+        projectId,
         title: 'Legacy session',
-        cwd: join(dataRoot, 'notebooks', projectName, 'session-1'),
+        cwd: join(dataRoot, 'notebooks', projectId, 'session-1'),
         status: 'idle',
         messages: [],
         artifacts: [{ id: 'a1', kind: 'managed-file', path: artifactPath }],
@@ -130,7 +130,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     // Seed a legacy preview-state row directly through the DB, bypassing the sentinel-aware writer.
     await client.projectPreviewState.create({
       data: {
-        projectId: projectName,
+        projectId,
         panelState: 'open',
         activeItemId: null,
         items: JSON.stringify([
@@ -148,11 +148,11 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     })
 
     // Seed a legacy notebook run.json directly on disk (absolute paths).
-    const notebookSessionDir = join(dataRoot, NOTEBOOKS_DIR, projectName, 'session-1')
+    const notebookSessionDir = join(dataRoot, NOTEBOOKS_DIR, projectId, 'session-1')
     await mkdir(notebookSessionDir, { recursive: true })
     await writeFile(
       join(notebookSessionDir, NOTEBOOK_RUN_FILE),
-      JSON.stringify(buildLegacyRunDocument(dataRoot, projectName), null, 2),
+      JSON.stringify(buildLegacyRunDocument(dataRoot, projectId), null, 2),
       'utf8'
     )
 
@@ -172,7 +172,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
 
     // Preview-state row now uses $DATA.
     const previewRowAfterFirstPass = await client.projectPreviewState.findUnique({
-      where: { projectId: projectName }
+      where: { projectId }
     })
     expect(previewRowAfterFirstPass?.items).toContain('$DATA/')
     expect(previewRowAfterFirstPass?.items).not.toContain(dataRoot)
@@ -181,7 +181,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     const runRawAfterFirstPass = await readFile(join(notebookSessionDir, NOTEBOOK_RUN_FILE), 'utf8')
     expect(runRawAfterFirstPass).toContain('$DATA/')
     expect(runRawAfterFirstPass).not.toContain(dataRoot)
-    expect(JSON.parse(runRawAfterFirstPass)).toMatchObject({ projectId: projectName })
+    expect(JSON.parse(runRawAfterFirstPass)).toMatchObject({ projectId })
     expect(JSON.parse(runRawAfterFirstPass).projectName).toBeUndefined()
 
     // --- Relocation: reading from a different data root resolves paths under the new root. ---
@@ -190,27 +190,27 @@ describe('normalizeLegacyDataPaths (integration)', () => {
       initDataRoot(newRoot)
 
       const { sessions } = await sessionRepository.loadAll()
-      expect(sessions[0].cwd).toBe(join(newRoot, 'notebooks', projectName, 'session-1'))
+      expect(sessions[0].cwd).toBe(join(newRoot, 'notebooks', projectId, 'session-1'))
       expect(sessions[0].artifacts?.[0].path).toBe(
-        join(newRoot, 'artifacts', projectName, 'session-1', 'm', 'plot.png')
+        join(newRoot, 'artifacts', projectId, 'session-1', 'm', 'plot.png')
       )
 
-      const relocatedPreview = await previewStateRepository.get(projectName)
+      const relocatedPreview = await previewStateRepository.get(projectId)
       expect(relocatedPreview?.items[0].path).toBe(
-        join(newRoot, 'artifacts', projectName, 'session-1', 'm', 'plot.png')
+        join(newRoot, 'artifacts', projectId, 'session-1', 'm', 'plot.png')
       )
 
       // Simulate the notebooks tree having physically moved alongside the data root, then confirm a
       // repository rooted at the new location decodes the $DATA-encoded run.json without throwing.
       await cp(join(dataRoot, NOTEBOOKS_DIR), join(newRoot, NOTEBOOKS_DIR), { recursive: true })
       const relocatedNotebookRepository = new NotebookRunRepository(newRoot)
-      const relocatedRun = await relocatedNotebookRepository.findExisting(projectName, 'session-1')
+      const relocatedRun = await relocatedNotebookRepository.findExisting(projectId, 'session-1')
 
       expect(relocatedRun?.notebookSessionRoot).toBe(
-        join(newRoot, NOTEBOOKS_DIR, projectName, 'session-1')
+        join(newRoot, NOTEBOOKS_DIR, projectId, 'session-1')
       )
       expect(relocatedRun?.runs[0].workingFiles[0].path).toBe(
-        join(newRoot, NOTEBOOKS_DIR, projectName, 'session-1', 'data', 'processed.csv')
+        join(newRoot, NOTEBOOKS_DIR, projectId, 'session-1', 'data', 'processed.csv')
       )
     } finally {
       await rm(newRoot, { recursive: true, force: true })
@@ -231,7 +231,7 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     expect(sessionRawAfterSecondPass).toContain('$DATA/')
 
     const previewRowAfterSecondPass = await client.projectPreviewState.findUnique({
-      where: { projectId: projectName }
+      where: { projectId }
     })
     expect(previewRowAfterSecondPass?.items).not.toContain('$DATA/$DATA')
 

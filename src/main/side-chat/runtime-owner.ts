@@ -463,7 +463,7 @@ class SideChatRuntimeOwner {
       }
       runtime = this.createRuntime(runtimeOptions)
       runtimeRef.current = runtime
-      const created = await runtime.createSession({ cwd, projectName: request.projectId })
+      const created = await runtime.createSession({ cwd, projectId: request.projectId })
       activeChat = {
         revision: 0,
         parentSessionId: request.parentSessionId,
@@ -777,7 +777,7 @@ class SideChatRuntimeOwner {
           ? { providerContinuityToken: active.providerContinuityToken }
           : {}),
         cwd: join(active.jobRoot, 'cwd'),
-        projectName: active.projectId,
+        projectId: active.projectId,
         previousFrameworkId: active.frameworkId,
         ...(active.backendId ? { previousBackendId: active.backendId } : {})
       })
@@ -980,7 +980,7 @@ class SideChatRuntimeOwner {
           ? { providerContinuityToken: sideChat.providerContinuityToken }
           : {}),
         cwd,
-        projectName: dormant.projectId,
+        projectId: dormant.projectId,
         previousFrameworkId: sideChat.frameworkId,
         ...(sideChat.backendId ? { previousBackendId: sideChat.backendId } : {})
       })

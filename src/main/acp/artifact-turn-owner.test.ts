@@ -41,7 +41,7 @@ const artifactVersion = (overrides: Partial<ArtifactFile> = {}): ArtifactFile =>
   mimeType: 'text/plain',
   size: 6,
   mtimeMs: 1,
-  projectName: 'project-1',
+  projectId: 'project-1',
   sessionId: 'artifact-session-1',
   runId: 'artifact-run-1',
   versionId: 'version-1',
@@ -1009,7 +1009,7 @@ describe('ArtifactTurnOwner', () => {
     const repository = new ArtifactRepository(blockedRoot)
     const revoked: string[] = []
     await repository.writePendingFile({
-      projectName: 'seed',
+      projectId: 'seed',
       sessionId: 'seed',
       runId: 'seed',
       filename: 'seed.txt',

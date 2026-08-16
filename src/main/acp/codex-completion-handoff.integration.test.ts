@@ -192,13 +192,13 @@ describe('Codex approved handoff', () => {
           artifacts: {
             configRoot: storageRoot,
             dataRoot: storageRoot,
-            projectName: 'test',
+            projectId: 'test',
             mcpEntryPath: '/test/mcp.js',
             repository: new ArtifactRepository(storageRoot),
             getRpcConnection: () => notebookRpcServer.ensureStarted()
           },
           notebook: {
-            projectName: 'test',
+            projectId: 'test',
             mcpEntryPath: '/test/mcp.js',
             getRpcConnection: ({ sessionId, projectId }) =>
               notebookRpcServer.issueSessionConnection(

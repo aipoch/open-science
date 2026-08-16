@@ -465,7 +465,7 @@ const packagedArtifactSmokeRpcResult = (body, workspace, artifactRpcContract = '
       versionNumber: 1,
       checksum,
       createdAt: new Date(0).toISOString(),
-      projectName: 'installer-smoke-project',
+      projectId: 'installer-smoke-project',
       sessionId: 'installer-smoke-session',
       runId: 'installer-smoke-artifact-run',
       name: 'windows-rpc-smoke.txt',
@@ -637,7 +637,7 @@ const runPackagedLocalRpcSmoke = async ({
         OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT: 'http://localhost',
         OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH: socketPath,
         OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN: token,
-        OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'installer-smoke-project',
+        OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'installer-smoke-project',
         OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'installer-smoke-session',
         OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD: workspace
       }
@@ -663,7 +663,7 @@ const runPackagedLocalRpcSmoke = async ({
       env: {
         ...sharedEnv,
         OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT: artifactStorage,
-        OPEN_SCIENCE_ARTIFACT_PROJECT_NAME: 'installer-smoke-project',
+        OPEN_SCIENCE_ARTIFACT_PROJECT_ID: 'installer-smoke-project',
         OPEN_SCIENCE_ARTIFACT_SESSION_ID: 'installer-smoke-session',
         OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE: currentRunFile,
         OPEN_SCIENCE_ARTIFACT_ALLOWED_IMPORT_ROOTS: JSON.stringify([workspace]),

@@ -672,7 +672,7 @@ const composeAcpRuntimePlanWorkflow = (
   const preflight = (
     request: AcpPromptRequest
   ): AcpPromptTurnPlanContext | Promise<AcpPromptTurnPlanContext> => {
-    const projectId = session.sessionEnvironment.projectName(request.sessionId)
+    const projectId = session.sessionEnvironment.projectId(request.sessionId)
     if (request.planContinuation && request.planContinuation.projectId !== projectId) {
       throw new PlanCommandError(
         'interaction-mismatch',
@@ -833,7 +833,7 @@ const composeAcpRuntimePlanWorkflow = (
     if (!service) return
     try {
       const current = await service.getProjection(
-        session.sessionEnvironment.projectName(sessionId),
+        session.sessionEnvironment.projectId(sessionId),
         sessionId,
         { interactionIsLive: false }
       )

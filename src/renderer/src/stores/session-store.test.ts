@@ -37,7 +37,7 @@ import {
 
 const createArtifactFile = (overrides: Partial<ArtifactFile> = {}): ArtifactFile => ({
   id: 'artifact-session-1:run-1:result.txt',
-  projectName: 'default-project',
+  projectId: 'default-project',
   sessionId: 'artifact-session-1',
   runId: 'run-1',
   name: 'result.txt',
@@ -5553,7 +5553,7 @@ describe('truncateSessionFromMessage', () => {
     })
     const artifact = createArtifactFile({
       id: 'artifact-version-2',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       runId: 'artifact-run-2',
       name: 'sin.png',

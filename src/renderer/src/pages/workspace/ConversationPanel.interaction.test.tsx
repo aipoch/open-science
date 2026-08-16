@@ -884,7 +884,7 @@ describe('ConversationPanel composer intake', () => {
       sessionTools: {
         notebookReference: {
           sessionId: activeSession.id,
-          projectName: activeSession.projectId,
+          projectId: activeSession.projectId,
           workspaceCwd: '/workspace',
           notebookSessionRoot: '/notebook',
           dataRoot: '/data',
@@ -1080,7 +1080,7 @@ describe('ConversationPanel composer intake', () => {
       sessionTools: {
         notebookReference: {
           sessionId: activeSession.id,
-          projectName: activeSession.projectId,
+          projectId: activeSession.projectId,
           workspaceCwd: '/workspace',
           notebookSessionRoot: '/notebook',
           dataRoot: '/data',
@@ -1982,7 +1982,7 @@ describe('ConversationPanel composer intake', () => {
       sessionTools: {
         notebookReference: {
           sessionId: 'session-existing',
-          projectName: 'project-a',
+          projectId: 'project-a',
           workspaceCwd: '/workspace',
           notebookSessionRoot: '/notebook',
           dataRoot: '/data',
@@ -2838,7 +2838,7 @@ describe('ConversationPanel + menu', () => {
       sessionTools: {
         notebookReference: {
           sessionId: session.id,
-          projectName: session.projectId,
+          projectId: session.projectId,
           workspaceCwd: '/workspace',
           notebookSessionRoot: '/notebook',
           dataRoot: '/data',
@@ -3958,7 +3958,7 @@ describe('ConversationPanel notebook bar', () => {
   const notebookReference = {
     notebookId: 'nb-1',
     sessionId: 'session-bar',
-    projectName: 'proj',
+    projectId: 'proj',
     workspaceCwd: '/workspace',
     notebookSessionRoot: '/nb',
     dataRoot: '/data',

@@ -67,15 +67,15 @@ const listDirNames = async (dir: string): Promise<string[]> => {
   }
 }
 
-// Walks notebooks/<projectName>/<sessionId>/run.json two levels deep and encodes each document's
+// Walks notebooks/<projectId>/<sessionId>/run.json two levels deep and encodes each document's
 // data-root paths in place with an atomic temp+rename write. A session directory without a run.json
 // yet is skipped; any other read/write failure propagates so the caller can retry next launch.
 const normalizeNotebookRunFiles = async (dataRoot: string): Promise<void> => {
   const notebooksDir = join(dataRoot, NOTEBOOKS_DIR)
-  const projectNames = await listDirNames(notebooksDir)
+  const projectIds = await listDirNames(notebooksDir)
 
-  for (const projectName of projectNames) {
-    const projectDir = join(notebooksDir, projectName)
+  for (const projectId of projectIds) {
+    const projectDir = join(notebooksDir, projectId)
     const sessionIds = await listDirNames(projectDir)
 
     for (const sessionId of sessionIds) {

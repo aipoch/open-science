@@ -215,7 +215,6 @@ const useWorkspaceConversationController = (
             parts: snapshot.doc.nodes,
             cwd: activeSession?.cwd,
             projectId: activeSession?.projectId ?? current.projectId,
-            projectName: activeSession?.projectId ?? current.projectId,
             permissionProfile: current.permissionProfile,
             forcedSkillIds,
             ...(mode === 'plan-first' ? { turnIntent: 'plan-first' as const } : {}),

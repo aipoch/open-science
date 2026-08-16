@@ -18,7 +18,7 @@ const publishSession = (
   registry.publish(reserved.reservation, appSessionId, {
     session,
     cwd: '/workspace',
-    projectName: 'project',
+    projectId: 'project',
     frameworkId: 'claude-code',
     permissionProfile: {
       selectedProfile: 'ask',

@@ -59,7 +59,7 @@ describe('preview file item helpers', () => {
       checksum: 'checksum-2',
       createdAt: '2026-07-27T20:00:00.000Z',
       state: 'finalized' as const,
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       runId: 'artifact-run-2',
       name: 'result.png',

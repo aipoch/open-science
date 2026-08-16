@@ -408,7 +408,7 @@ const writeArtifactFileForCurrentRun = async (
       ]
     : environment.allowedImportRoots.slice(0, 1)
   const writeRequest = {
-    projectName: projectId,
+    projectId,
     sessionId: artifactStorageSessionId,
     runId: context.artifactRunId,
     filename: input.filename,
@@ -638,8 +638,6 @@ const createArtifactMcpServerConfig = (request: ArtifactMcpServerConfigRequest):
       { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
       { name: 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT', value: request.storageRoot },
       { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID', value: projectId },
-      // Keep the old variable for rollback to a child entry point that predates the adapter.
-      { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_NAME', value: projectId },
       { name: 'OPEN_SCIENCE_ARTIFACT_SESSION_ID', value: request.sessionId },
       { name: 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE', value: request.currentRunFile },
       {
@@ -677,10 +675,12 @@ const parseAllowedImportRoots = (value: string | undefined): string[] =>
 const createArtifactMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
 ): ArtifactMcpEnvironment => {
-  const projectId = resolveProjectId({
-    projectId: env.OPEN_SCIENCE_ARTIFACT_PROJECT_ID,
-    projectName: env.OPEN_SCIENCE_ARTIFACT_PROJECT_NAME
-  })
+  const currentProjectId = env.OPEN_SCIENCE_ARTIFACT_PROJECT_ID
+  const legacyProjectId = env.OPEN_SCIENCE_ARTIFACT_PROJECT_NAME
+  if (currentProjectId && legacyProjectId && currentProjectId !== legacyProjectId) {
+    throw new Error('Conflicting projectId and legacy projectName values.')
+  }
+  const projectId = resolveProjectId({ projectId: currentProjectId ?? legacyProjectId })
   return {
     storageRoot: requireEnvironmentVariable(env, 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT'),
     projectId,

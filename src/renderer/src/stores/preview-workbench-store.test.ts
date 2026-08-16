@@ -162,7 +162,7 @@ describe('preview workbench store', () => {
   it('selects the first passively discovered preview without opening the panel', () => {
     const notebookItem = createNotebookPreviewItem({
       sessionId: 'session-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       workspaceCwd: '/workspace',
       notebookSessionRoot: '/notebooks/session-1',
       dataRoot: '/notebooks/session-1/data',
@@ -311,7 +311,7 @@ describe('preview workbench store', () => {
   it('creates a stable notebook preview item from a notebook session reference', () => {
     const notebookItem = createNotebookPreviewItem({
       sessionId: 'session-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       workspaceCwd: '/workspace',
       notebookSessionRoot: '/home/.open-science/notebooks/default-project/session-1',
       dataRoot: '/home/.open-science/notebooks/default-project/session-1/data',

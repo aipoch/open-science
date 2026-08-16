@@ -261,8 +261,6 @@ const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest):
         : []),
       { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: request.token },
       { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: projectId },
-      // Keep the old variable for rollback to a child entry point that predates the adapter.
-      { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: projectId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: request.sessionId },
       { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: request.workspaceCwd }
     ]
@@ -287,10 +285,12 @@ const requireEnvironmentVariable = (
 const createNotebookMcpEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
 ): NotebookMcpEnvironment => {
-  const projectId = resolveProjectId({
-    projectId: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID,
-    projectName: env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
-  })
+  const currentProjectId = env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID
+  const legacyProjectId = env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME
+  if (currentProjectId && legacyProjectId && currentProjectId !== legacyProjectId) {
+    throw new Error('Conflicting projectId and legacy projectName values.')
+  }
+  const projectId = resolveProjectId({ projectId: currentProjectId ?? legacyProjectId })
   return {
     endpoint: requireEnvironmentVariable(env, 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT'),
     socketPath: env.OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH,

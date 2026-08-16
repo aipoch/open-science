@@ -143,7 +143,7 @@ describe('ACP application commands', () => {
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
     const connect = { cwd: '/workspace' }
-    const createSession = { projectName: 'project-1', permissionProfile: 'ask' as const }
+    const createSession = { projectId: 'project-1', permissionProfile: 'ask' as const }
     const resumeSession = { sessionId: 'session-1', cwd: '/workspace' }
     const interruptedTurn = {
       sessionId: 'session-1',

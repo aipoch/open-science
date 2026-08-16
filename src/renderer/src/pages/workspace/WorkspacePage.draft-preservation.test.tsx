@@ -795,8 +795,7 @@ describe('WorkspacePage draft preservation', () => {
         sessionId: undefined,
         branchSourceSessionId: 'sess-a',
         text: 'try a different approach',
-        projectId: 'proj-1',
-        projectName: 'proj-1'
+        projectId: 'proj-1'
       })
     )
     expect(conversationProps.composer.view.doc).toEqual(emptyDoc)

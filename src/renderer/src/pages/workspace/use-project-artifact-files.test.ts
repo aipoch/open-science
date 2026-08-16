@@ -35,7 +35,7 @@ const renderHook = <Value>(
 
 const artifact = (projectId: string, name: string): ArtifactFile => ({
   id: `${projectId}:m:${name}`,
-  projectName: projectId,
+  projectId: projectId,
   sessionId: 's',
   name,
   path: `/artifacts/${projectId}/s/m/${name}`,

@@ -278,7 +278,7 @@ class ArtifactWriteBudgetOwner {
         : publication.sourceSessionId === request.artifactStorageSessionId
       if (!belongsToSession) continue
       const files = await this.options.compatibilityRepository.listPendingRunFiles({
-        projectName: request.projectId,
+        projectId: request.projectId,
         sessionId: publication.sourceSessionId,
         runId: publication.runId
       })

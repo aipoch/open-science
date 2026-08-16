@@ -38,9 +38,9 @@ const delegatedSession = (
 describe('detectActiveSessions', () => {
   it('tags runtime prompts as agent and notebook sessions as notebook', () => {
     const result = detectActiveSessions({
-      runtime: { getActivePromptSessions: () => [{ projectName: 'p', sessionId: 's1' }] },
+      runtime: { getActivePromptSessions: () => [{ projectId: 'p', sessionId: 's1' }] },
       delegated: {
-        getActiveDelegatedSessions: () => [{ projectName: 'p', sessionId: 'delegated-1' }]
+        getActiveDelegatedSessions: () => [{ projectId: 'p', sessionId: 'delegated-1' }]
       },
       notebook: { getActiveNotebookSessions: () => [{ projectId: 'p', sessionId: 's2' }] }
     })
@@ -64,7 +64,7 @@ describe('detectActiveSessions', () => {
   })
 
   it('deduplicates root and delegated agent work for the same Session', () => {
-    const source = { projectName: 'p', sessionId: 's1' }
+    const source = { projectId: 'p', sessionId: 's1' }
     const result = detectActiveSessions({
       runtime: { getActivePromptSessions: () => [source] },
       delegated: { getActiveDelegatedSessions: () => [source] },

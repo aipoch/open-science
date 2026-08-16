@@ -136,7 +136,7 @@ const lifecycleCallbackHarness = (
   const service = new NotebookRuntimeService({
     configRoot: root,
     dataRoot: root,
-    projectName: 'default-project',
+    projectId: 'default-project',
     repository: options.repository ?? new NotebookRunRepository(root),
     callbacks: {
       onNotebookChanged: (event) => changedSessions.push(event.sessionId)
@@ -167,7 +167,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       executorFactory: () => ({
@@ -201,14 +201,14 @@ describe('notebook runtime service', () => {
     }
 
     await service.execute({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: 'root_value = 1',
       provenanceContext: rootContext
     })
     await service.execute({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: 'child_value = 2',
@@ -220,7 +220,7 @@ describe('notebook runtime service', () => {
       join(root, 'notebooks', 'default-project', 'session-1', 'frames', 'child-frame-1', 'data')
     ])
     const state = await service.state({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       provenanceContext: rootContext
@@ -236,13 +236,13 @@ describe('notebook runtime service', () => {
     ])
 
     await service.shutdown({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       provenanceContext: childContext
     })
     await service.execute({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: 'root_value += 1',
@@ -260,7 +260,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       executorFactory: () => {
@@ -296,21 +296,21 @@ describe('notebook runtime service', () => {
       promptMessageId: 'message-child'
     }
     await service.execute({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: 'root_value = 1',
       provenanceContext: rootContext
     })
     await service.execute({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: 'child_value = 2',
       provenanceContext: childContext
     })
     await service.execute({
-      projectName: 'project-2',
+      projectId: 'project-2',
       sessionId: 'session-2',
       workspaceCwd: '/workspace',
       code: 'other_value = 3'
@@ -335,12 +335,12 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       environmentStateTracker: verifiedPackageMutationTracker()
     })
     const request = {
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-pending',
       workspaceCwd: '/workspace'
     }
@@ -366,7 +366,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       executorFactory: () => ({
@@ -390,7 +390,7 @@ describe('notebook runtime service', () => {
       })
     })
     const request = {
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-restarting',
       workspaceCwd: root
     }
@@ -437,13 +437,13 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       executorFactory: () => ({ execute, shutdown })
     })
     const request = {
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-executing',
       workspaceCwd: root
     }
@@ -478,7 +478,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       executorFactory: () => ({
@@ -519,7 +519,7 @@ describe('notebook runtime service', () => {
           })
       }
     })
-    const scope = { projectName: 'project-1', workspaceCwd: root }
+    const scope = { projectId: 'project-1', workspaceCwd: root }
 
     const control = service.executeControl({ ...scope, sessionId: 'control-session', code: '1' })
     const shell = service.executeShell({
@@ -554,7 +554,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       installPackagesImpl
@@ -598,7 +598,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       installPackagesImpl
@@ -631,7 +631,7 @@ describe('notebook runtime service', () => {
     expect(existsSync(sessionRoot)).toBe(false)
 
     const begin = await service.beginCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })
@@ -731,7 +731,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: {
         prepareRun: vi.fn().mockResolvedValue({
@@ -794,12 +794,12 @@ describe('notebook runtime service', () => {
     })
 
     const begin = await service.beginCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })
     await service.appendCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       writeId: begin.writeId,
@@ -809,14 +809,14 @@ describe('notebook runtime service', () => {
 
     await expect(
       service.beginCodeCell({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         workspaceCwd: '/workspace'
       })
     ).rejects.toThrow(/already receiving code/)
 
     await service.finishCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       writeId: begin.writeId,
@@ -825,7 +825,7 @@ describe('notebook runtime service', () => {
 
     const now = vi.spyOn(Date, 'now').mockReturnValue(42)
     const summary = await service.runCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       cellId: begin.cellId
@@ -900,7 +900,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request) => ({
@@ -916,7 +916,7 @@ describe('notebook runtime service', () => {
     })
 
     const summary = await service.execute({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: 'import pandas'
@@ -942,7 +942,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: verifiedPackageMutationTracker(),
       executorFactory: () => ({
@@ -1010,7 +1010,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       executorFactory: () => ({
         execute: async (request) => ({
@@ -1027,7 +1027,7 @@ describe('notebook runtime service', () => {
 
     await expect(
       service.execute({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         workspaceCwd: root,
         code: 'print("done")'
@@ -1035,7 +1035,7 @@ describe('notebook runtime service', () => {
     ).rejects.toThrow('transient terminal write failure')
 
     const state = await service.state({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: root
     })
@@ -1064,7 +1064,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       executorFactory: () => ({
         execute,
@@ -1112,7 +1112,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       environmentStateTracker: {
         ...verifiedPackageMutationTracker(),
@@ -1145,7 +1145,7 @@ describe('notebook runtime service', () => {
 
     expect(execute).toHaveBeenCalledOnce()
     const document = await repository.loadOrCreate({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       workspaceCwd: root
@@ -1178,7 +1178,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       notebookRuntimeSettings: {
         getSnapshot: async (language) => ({
@@ -1232,7 +1232,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute,
@@ -1265,7 +1265,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute,
@@ -1290,7 +1290,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: {
         prepareRun: vi.fn().mockResolvedValue({
@@ -1320,7 +1320,7 @@ describe('notebook runtime service', () => {
 
     await expect(
       service.execute({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         workspaceCwd: '/workspace',
         code: 'print("ok")'
@@ -1339,7 +1339,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request) => ({
@@ -1355,7 +1355,7 @@ describe('notebook runtime service', () => {
     })
 
     const summary = await service.execute({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: 'print(os.getcwd())',
@@ -1363,7 +1363,7 @@ describe('notebook runtime service', () => {
       inputKind: 'terminal'
     })
     const state = await service.state({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })
@@ -1387,7 +1387,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       callbacks: {
         onNotebookAvailable: (event) => notifications.push(`available:${event.sessionId}`),
@@ -1407,7 +1407,7 @@ describe('notebook runtime service', () => {
     })
 
     await service.beginCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'user-session',
       workspaceCwd: '/workspace',
       source: 'user'
@@ -1416,12 +1416,12 @@ describe('notebook runtime service', () => {
     expect(notifications).toEqual(['changed:user-session'])
 
     const begin = await service.beginCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'agent-session',
       workspaceCwd: '/workspace'
     })
     await service.appendCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'agent-session',
       workspaceCwd: '/workspace',
       writeId: begin.writeId,
@@ -1429,14 +1429,14 @@ describe('notebook runtime service', () => {
       delta: "print('ok')"
     })
     await service.finishCodeCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'agent-session',
       workspaceCwd: '/workspace',
       writeId: begin.writeId,
       cellId: begin.cellId
     })
     await service.runCell({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'agent-session',
       workspaceCwd: '/workspace',
       cellId: begin.cellId
@@ -1459,7 +1459,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       callbacks: {
         onNotebookAvailable: (event) => availableSessions.push(event.sessionId)
@@ -1498,7 +1498,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request) => ({
@@ -1539,7 +1539,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -1564,7 +1564,7 @@ describe('notebook runtime service', () => {
     }))
 
     await service.execute({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace',
       code: "print('hi')"
@@ -1582,7 +1582,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -1660,7 +1660,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -1711,7 +1711,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -1824,7 +1824,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -1906,7 +1906,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -1930,7 +1930,7 @@ describe('notebook runtime service', () => {
       for (const code of ['return 1', 'return 2']) {
         await expect(
           service.executeControl({
-            projectName: 'default-project',
+            projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: projectWorkspace,
             code
@@ -1991,7 +1991,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -2038,7 +2038,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -2059,7 +2059,7 @@ describe('notebook runtime service', () => {
     }))
 
     await service.executeControl({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: root,
       code: 'return 1',
@@ -2100,7 +2100,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -2117,7 +2117,7 @@ describe('notebook runtime service', () => {
     service.setMcpRpcConnectionResolver(resolveConnection)
     const request = (attemptId: string): Parameters<typeof service.executeControl>[0] =>
       ({
-        projectName: 'project-1',
+        projectId: 'project-1',
         sessionId: 'session-1',
         workspaceCwd: root,
         code: 'return 1',
@@ -2189,7 +2189,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: (sessionId) => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -2237,7 +2237,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute,
@@ -2265,7 +2265,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'my-project',
+      projectId: 'my-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -2284,7 +2284,7 @@ describe('notebook runtime service', () => {
     })
 
     await service.executeControl({
-      projectName: 'my-project',
+      projectId: 'my-project',
       sessionId: 'session-9',
       workspaceCwd: root,
       code: 'return 1'
@@ -2303,7 +2303,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (): Promise<NotebookExecutionResult> => {
@@ -2339,7 +2339,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -2372,7 +2372,7 @@ describe('notebook runtime service', () => {
       new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         // Unit tests already run inside the host's process sandbox on macOS. Select the portable
         // semantic-policy path here; managed-runtime-guard.test.ts verifies the Seatbelt wrapper.
@@ -2417,7 +2417,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         shellProcess: { execute }
       })
@@ -2464,7 +2464,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         shellProcess: { execute }
       })
@@ -2561,7 +2561,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         platform: 'win32'
       })
@@ -2611,7 +2611,7 @@ describe('notebook runtime service', () => {
           const service = new NotebookRuntimeService({
             configRoot: root,
             dataRoot: root,
-            projectName: 'default-project',
+            projectId: 'default-project',
             repository: new NotebookRunRepository(root),
             platform: 'linux'
           })
@@ -2819,12 +2819,12 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
 
     const reference = await service.getSessionReference({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'never-used',
       workspaceCwd: '/workspace'
     })
@@ -2839,7 +2839,7 @@ describe('notebook runtime service', () => {
     const firstService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -2855,7 +2855,7 @@ describe('notebook runtime service', () => {
     })
 
     await firstService.execute({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'restored-session',
       workspaceCwd: '/workspace',
       code: "print('done')"
@@ -2865,7 +2865,7 @@ describe('notebook runtime service', () => {
     const restartedService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
 
@@ -2876,7 +2876,7 @@ describe('notebook runtime service', () => {
 
     expect(reference).toMatchObject({
       sessionId: 'restored-session',
-      projectName: 'default-project',
+      projectId: 'default-project',
       workspaceCwd: '/workspace',
       notebookSessionRoot: join(root, 'notebooks', 'default-project', 'restored-session'),
       dataRoot: join(root, 'notebooks', 'default-project', 'restored-session', 'data'),
@@ -2904,7 +2904,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     await service.recoverInterruptedOperations()
@@ -2919,7 +2919,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const originalReadState = RuntimeOperationJournal.prototype.readState
@@ -2955,7 +2955,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
 
@@ -2980,7 +2980,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     await service.recoverInterruptedOperations()
@@ -3004,7 +3004,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     await service.recoverInterruptedOperations()
@@ -3018,13 +3018,13 @@ describe('notebook runtime service', () => {
     // Simulate a prior process that died mid-run: persist a run left in 'running'.
     const priorRepo = new NotebookRunRepository(root)
     await priorRepo.loadOrCreate({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'crashed',
       lane: createRootNotebookLane('default-project', 'crashed', 'root-frame-crashed'),
       workspaceCwd: '/workspace'
     })
     await priorRepo.appendRun({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'crashed',
       lane: createRootNotebookLane('default-project', 'crashed', 'root-frame-crashed'),
       run: {
@@ -3046,7 +3046,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const state = await service.state({ sessionId: 'crashed', workspaceCwd: '/workspace' })
@@ -3065,7 +3065,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -3098,7 +3098,7 @@ describe('notebook runtime service', () => {
 
     const submit = (code: string): Promise<unknown> =>
       service.execute({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         workspaceCwd: '/workspace',
         code,
@@ -3148,7 +3148,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -3209,7 +3209,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       // Each session gets its own executor; the shared counter proves both can be in flight at once.
       executorFactory: (sessionId) => ({
@@ -3237,7 +3237,7 @@ describe('notebook runtime service', () => {
 
     const submit = (sessionId: string): Promise<unknown> =>
       service.execute({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId,
         workspaceCwd: '/workspace',
         code: 'print(1)',
@@ -3264,7 +3264,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -3301,7 +3301,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -3341,7 +3341,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -3376,7 +3376,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -3416,7 +3416,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -3474,7 +3474,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       callbacks: {
         onNotebookChanged: (event) => changedSessions.push(event.sessionId)
@@ -3699,7 +3699,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: (_sessionId, callbacks) => {
         lifecycle = callbacks
@@ -3759,7 +3759,7 @@ describe('notebook runtime service', () => {
     const firstService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3769,7 +3769,7 @@ describe('notebook runtime service', () => {
     const recoveredService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3778,7 +3778,7 @@ describe('notebook runtime service', () => {
     const reloadedService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3797,7 +3797,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       executorFactory: (_sessionId, callbacks) => {
         lifecycle = callbacks
@@ -3853,7 +3853,7 @@ describe('notebook runtime service', () => {
     const firstService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3869,7 +3869,7 @@ describe('notebook runtime service', () => {
     const recoveredService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3887,7 +3887,7 @@ describe('notebook runtime service', () => {
     const reloadedService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3920,7 +3920,7 @@ describe('notebook runtime service', () => {
     const firstService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3930,7 +3930,7 @@ describe('notebook runtime service', () => {
     const recoveredService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3943,7 +3943,7 @@ describe('notebook runtime service', () => {
     const reloadedService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -3971,7 +3971,7 @@ describe('notebook runtime service', () => {
     const firstService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       executorFactory
     })
@@ -3983,7 +3983,7 @@ describe('notebook runtime service', () => {
     const runJsonPath = (await firstService.state({ sessionId: 'session-1', workspaceCwd: root }))
       .runJsonPath
     await repository.updateKernelStatus({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       status: 'terminated'
@@ -3992,7 +3992,7 @@ describe('notebook runtime service', () => {
     const recoveredService = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory
     })
@@ -4025,7 +4025,7 @@ describe('notebook runtime service', () => {
       new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository,
         environmentStateTracker: {
           prepareRun: vi.fn().mockResolvedValue({
@@ -4190,7 +4190,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn().mockResolvedValue({
@@ -4252,7 +4252,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn().mockResolvedValue({
@@ -4314,7 +4314,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         executorFactory: () => ({
@@ -4363,7 +4363,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       })
       const events: string[] = []
@@ -4394,7 +4394,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       })
 
@@ -4414,7 +4414,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       })
       const events: string[] = []
@@ -4445,7 +4445,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         executorFactory: (_sessionId, callbacks) => ({
           execute: async (): Promise<NotebookExecutionResult> => {
@@ -4477,7 +4477,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         executorFactory: (_sessionId, callbacks) => ({
           execute: async (request): Promise<NotebookExecutionResult> => {
@@ -4516,7 +4516,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         executorFactory: (_sessionId, callbacks) => ({
           execute: async (request): Promise<NotebookExecutionResult> => {
@@ -4576,7 +4576,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => {
         factoryCalls += 1
@@ -4615,7 +4615,7 @@ describe('notebook runtime service', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (): Promise<NotebookExecutionResult> => ({
@@ -4670,7 +4670,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -4695,7 +4695,7 @@ describe('notebook runtime service', () => {
       const result = await service.inspectPackages({
         language: 'python',
         packages: ['numpy'],
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         workspaceCwd: root
       })
@@ -4725,7 +4725,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -4750,7 +4750,7 @@ describe('notebook runtime service', () => {
         service.inspectPackages({
           language: 'python',
           packages: ['numpy'],
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-1',
           workspaceCwd: root
         })
@@ -4769,7 +4769,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         discoverRuntimes: async (language) =>
           language === 'python'
@@ -4821,7 +4821,7 @@ describe('notebook runtime service', () => {
         service.inspectPackages({
           language: 'python',
           packages: ['numpy'],
-          projectName: 'default-project',
+          projectId: 'default-project',
           sessionId: 'session-1',
           workspaceCwd: root
         })
@@ -4836,7 +4836,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -4900,7 +4900,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -4960,7 +4960,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         executorFactory: () => ({
@@ -5013,7 +5013,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -5075,7 +5075,7 @@ describe('notebook runtime service', () => {
       const restarted = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         executorFactory: () => ({
@@ -5108,7 +5108,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         discoverRuntimes: async (language) => [
@@ -5185,7 +5185,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -5214,7 +5214,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -5258,7 +5258,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         logger: { info, warn, error: vi.fn() },
         environmentStateTracker: {
@@ -5302,7 +5302,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         logger: { info, warn: vi.fn(), error: vi.fn() },
         environmentStateTracker: {
@@ -5353,7 +5353,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -5407,7 +5407,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         getPackageMirror: () => undefined,
         mirrorProbe: { probe }
@@ -5430,7 +5430,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         executorFactory: () => ({
@@ -5469,7 +5469,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         executorFactory: () => ({
@@ -5532,7 +5532,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       })
 
@@ -5553,7 +5553,7 @@ describe('notebook runtime service', () => {
       new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         executorFactory: () => ({
           execute: async (request): Promise<NotebookExecutionResult> => {
@@ -5659,7 +5659,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn().mockResolvedValue({
@@ -5728,7 +5728,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         executorFactory: () => ({
@@ -5777,7 +5777,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         // Surface the named agent-created env so the installer session can bind it.
@@ -5858,7 +5858,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentManager: {
           createNamedEnvironment: async (name, language, packages) => {
@@ -5925,7 +5925,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentManager: {
           createNamedEnvironment: async (name, language) => {
@@ -5977,7 +5977,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentManager: {
           createNamedEnvironment: async (name, language) => ({
@@ -6011,7 +6011,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         discoverRuntimes: async (language) =>
           language === 'python'
@@ -6081,7 +6081,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         executorFactory: () => ({
           execute: async () => {
@@ -6146,7 +6146,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: {
           prepareRun: vi.fn(),
@@ -6196,7 +6196,7 @@ describe('notebook runtime service', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root),
         environmentStateTracker: verifiedPackageMutationTracker(),
         executorFactory: () => ({
@@ -6293,7 +6293,7 @@ describe('v4 runtime bindings & agent tools', () => {
     new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: options.repository ?? new NotebookRunRepository(root),
       discoverRuntimes:
         options.discoverRuntimes ??
@@ -6527,13 +6527,13 @@ describe('v4 runtime bindings & agent tools', () => {
     const seedTerminatedDefault = async (sessionId: string): Promise<void> => {
       const lane = createRootNotebookLane('default-project', sessionId, `root-frame-${sessionId}`)
       await repository.loadOrCreate({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId,
         workspaceCwd: root,
         lane
       })
       await repository.markKernelTerminated({
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId,
         lane,
         kernelInstance: { kind: 'python', environment: DEFAULT_PY_ENV }
@@ -6658,7 +6658,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       discoverRuntimes: async (language) => (language === 'python' ? [userPyA] : []),
       notebookRuntimeSettings: {
@@ -7534,7 +7534,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentManager: {
         createNamedEnvironment: async (name, language) => ({
@@ -8117,7 +8117,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       discoverRuntimes: async (language) => (language === 'r' ? [namedR] : []),
       environmentManager: {
@@ -8508,7 +8508,7 @@ describe('v4 runtime bindings & agent tools', () => {
       }
     })
     const request = {
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 's',
       workspaceCwd: root
     }
@@ -8568,7 +8568,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository,
       executorFactory
     })
@@ -8591,7 +8591,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => {
@@ -8639,7 +8639,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -8682,7 +8682,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const operationOwner = (
@@ -8724,7 +8724,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -8773,7 +8773,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request): Promise<NotebookExecutionResult> => ({
@@ -8835,7 +8835,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       discoverRuntimes: async (language) => (language === 'python' ? [userPyA, userPyB] : []),
       notebookRuntimeSettings: {
@@ -9068,7 +9068,7 @@ describe('v4 runtime bindings & agent tools', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentManager: {
         createNamedEnvironment: async (name, language) => ({
@@ -9137,7 +9137,7 @@ describe('v4 runtime bindings & agent tools', () => {
         const service = new NotebookRuntimeService({
           configRoot: root,
           dataRoot: root,
-          projectName: 'default-project',
+          projectId: 'default-project',
           repository: new NotebookRunRepository(root),
           notebookRuntimeSettings: {
             getSnapshot: async (language) => ({

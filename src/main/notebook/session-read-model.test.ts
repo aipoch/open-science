@@ -165,7 +165,7 @@ describe('NotebookSessionReadModel', () => {
       ]
     })
     await repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: session.cwd,
@@ -205,25 +205,25 @@ describe('NotebookSessionReadModel', () => {
       ]
     })
     await repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: session.cwd
     })
     await repository.markKernelTerminated({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       kernelInstance: { kind: 'r', environment: 'analysis' }
     })
     await repository.markKernelTerminated({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       kernelInstance: { kind: 'python', environment: 'default-python' }
     })
     await repository.markKernelTerminated({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       kernelInstance: { kind: 'repl' }
@@ -267,7 +267,7 @@ describe('NotebookSessionReadModel', () => {
       }))
     })
     await repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: session.cwd
@@ -303,7 +303,7 @@ describe('NotebookSessionReadModel', () => {
     const repository = new NotebookRunRepository(storageRoot)
     const session = makeSession(storageRoot)
     await repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: session.cwd
@@ -345,7 +345,7 @@ describe('NotebookSessionReadModel', () => {
     const repository = new NotebookRunRepository(storageRoot)
     const session = makeSession(storageRoot)
     await repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: session.cwd
@@ -389,7 +389,7 @@ describe('NotebookSessionReadModel', () => {
 
     const persistedWorkspace = join(storageRoot, 'persisted-workspace')
     await repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       workspaceCwd: persistedWorkspace
@@ -403,7 +403,6 @@ describe('NotebookSessionReadModel', () => {
     ).resolves.toEqual({
       sessionId: session.sessionId,
       projectId: session.projectId,
-      projectName: session.projectId,
       workspaceCwd: persistedWorkspace,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
@@ -423,13 +422,13 @@ describe('NotebookSessionReadModel', () => {
     const repository = new NotebookRunRepository(storageRoot)
     const childLane = createFrameNotebookLane('default-project', 'session-1', 'frame-child')
     await repository.loadOrCreate({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/child-workspace',
       lane: childLane
     })
     await repository.appendRun({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       lane: childLane,
       run: makeRun({ runId: 'child-run', agentFrameId: 'frame-child' })
@@ -437,13 +436,13 @@ describe('NotebookSessionReadModel', () => {
 
     const reference = await makeReadModel(storageRoot, undefined, repository).getSessionReference({
       sessionId: 'session-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       workspaceCwd: '/root-workspace'
     })
 
     expect(reference).toMatchObject({
       sessionId: 'session-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       workspaceCwd: '/root-workspace'
     })
   })

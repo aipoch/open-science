@@ -74,7 +74,7 @@ describe('AcpRuntimeActivity', () => {
     const resume: AcpResumeSessionRequest = {
       sessionId: 'session-1',
       cwd: '/workspace',
-      projectName: 'project-1'
+      projectId: 'project-1'
     }
     const options: AcpRuntimeActivityOptions = {
       session: {

@@ -316,11 +316,11 @@ class AcpRuntimeCoordinator {
     return runtime.respondSessionPlan(input)
   }
 
-  getActivePromptSessions(): { projectName: string; sessionId: string }[] {
+  getActivePromptSessions(): { projectId: string; sessionId: string }[] {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getActivePromptSessions())
   }
 
-  getQuitBlockingPromptSessions(): { projectName: string; sessionId: string }[] {
+  getQuitBlockingPromptSessions(): { projectId: string; sessionId: string }[] {
     return Array.from(this.runtimes).flatMap((runtime) => runtime.getQuitBlockingPromptSessions())
   }
 
@@ -1146,7 +1146,7 @@ class AcpRuntimeCoordinator {
         const resumeRequest: AcpResumeSessionRequest = {
           sessionId: session.sessionId,
           cwd: session.cwd,
-          ...(session.projectName ? { projectName: session.projectName } : {}),
+          ...(session.projectId ? { projectId: session.projectId } : {}),
           ...(session.permissionProfile ? { permissionProfile: session.permissionProfile } : {}),
           ...(session.previousFrameworkId
             ? { previousFrameworkId: session.previousFrameworkId }

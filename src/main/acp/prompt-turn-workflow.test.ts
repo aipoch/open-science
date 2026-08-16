@@ -142,7 +142,7 @@ const createHarness = (
   aggregate.attach({
     session,
     cwd: '/session',
-    projectName: 'project-1',
+    projectId: 'project-1',
     frameworkId: 'opencode',
     permissionProfile: {
       selectedProfile: 'ask',
@@ -313,7 +313,7 @@ const createHarness = (
     permission,
     finalization,
     currentCwd: () => '/default',
-    resolveProjectName: () => 'project-1',
+    resolveProjectId: () => 'project-1',
     disconnectForReload: vi.fn(async () => journal.push('disconnect')),
     resumeAfterReload,
     recordAdmittedPrompt: vi.fn(() => journal.push('handoff')),
@@ -570,7 +570,7 @@ describe('AcpPromptTurnWorkflow', () => {
     expect(harness.resumeAfterReload).toHaveBeenCalledWith({
       sessionId: 's1',
       cwd: '/session',
-      projectName: 'project-1',
+      projectId: 'project-1',
       permissionProfile: 'ask'
     })
     expect(turn).toMatchObject({ contextReset: true, historyPreamble: 'restored transcript' })

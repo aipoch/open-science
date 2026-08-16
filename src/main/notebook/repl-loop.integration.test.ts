@@ -2976,7 +2976,7 @@ gate('repl_loop.js host.compute', () => {
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
       OPEN_SCIENCE_NOTEBOOK_SESSION_ID: 'session-42',
-      OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME: 'my-project'
+      OPEN_SCIENCE_NOTEBOOK_PROJECT_ID: 'my-project'
     })
     try {
       const r = await send(
@@ -2990,7 +2990,7 @@ gate('repl_loop.js host.compute', () => {
     }
   }, 60_000)
 
-  it('removes the session/project identity from process.env so sandbox code cannot read it', async () => {
+  it('normalizes and removes legacy session/project identity from process.env', async () => {
     const { child, send } = startLoop({
       OPEN_SCIENCE_MCP_RPC_ENDPOINT: endpoint,
       OPEN_SCIENCE_MCP_RPC_TOKEN: 'tok',
@@ -2999,10 +2999,10 @@ gate('repl_loop.js host.compute', () => {
     })
     try {
       const r = await send(
-        'return JSON.stringify([process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID, process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME])'
+        'return JSON.stringify([process.env.OPEN_SCIENCE_NOTEBOOK_SESSION_ID, process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_ID, process.env.OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME])'
       )
       expect(r.error).toBeNull()
-      expect(JSON.parse(r.result ?? '')).toEqual([null, null])
+      expect(JSON.parse(r.result ?? '')).toEqual([null, null, null])
     } finally {
       child.kill()
     }

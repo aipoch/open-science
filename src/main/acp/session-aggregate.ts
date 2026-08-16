@@ -6,7 +6,7 @@ import type { AgentFrameworkId } from '../../shared/settings'
 type AcpSessionAggregateAttachInput = {
   session: ActiveSession
   cwd: string
-  projectName: string
+  projectId: string
   frameworkId: AgentFrameworkId
   backendId?: string
   permissionProfile: SessionPermissionProfileState
@@ -25,7 +25,7 @@ type DeepReadonly<Value> = Value extends (...args: never[]) => unknown
 type AcpSessionAggregateSnapshot = DeepReadonly<{
   providerSessionId?: string
   cwd?: string
-  projectName?: string
+  projectId?: string
   frameworkId?: AgentFrameworkId
   backendId?: string
   permissionProfile?: SessionPermissionProfileState
@@ -50,7 +50,7 @@ const deepFreeze = <Value>(value: Value): Value => {
 class AcpSessionAggregate {
   private session: ActiveSession | undefined
   private cwd: string | undefined
-  private projectName: string | undefined
+  private projectId: string | undefined
   private frameworkId: AgentFrameworkId | undefined
   private backendId: string | undefined
   private permissionProfile: SessionPermissionProfileState | undefined
@@ -77,7 +77,7 @@ class AcpSessionAggregate {
     return deepFreeze({
       providerSessionId: this.session?.sessionId,
       cwd: this.cwd,
-      projectName: this.projectName,
+      projectId: this.projectId,
       frameworkId: this.frameworkId,
       backendId: this.backendId,
       permissionProfile:
@@ -98,7 +98,7 @@ class AcpSessionAggregate {
     const previous = this.session
     this.session = input.session
     this.cwd = input.cwd
-    this.projectName = input.projectName
+    this.projectId = input.projectId
     this.frameworkId = input.frameworkId
     if (input.backendId !== undefined) this.backendId = input.backendId
     this.permissionProfile = structuredClone(input.permissionProfile)
@@ -108,9 +108,9 @@ class AcpSessionAggregate {
     return previous
   }
 
-  updateLocation(cwd: string, projectName: string): void {
+  updateLocation(cwd: string, projectId: string): void {
     this.cwd = cwd
-    this.projectName = projectName
+    this.projectId = projectId
     this.refreshSnapshot()
   }
 
@@ -164,7 +164,7 @@ class AcpSessionAggregate {
     this.appliedModel = undefined
     this.configOptions = undefined
     this.cwd = undefined
-    this.projectName = undefined
+    this.projectId = undefined
     this.refreshSnapshot()
   }
 }

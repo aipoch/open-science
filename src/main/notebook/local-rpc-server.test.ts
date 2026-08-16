@@ -531,7 +531,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const execute = vi.spyOn(service, 'execute')
@@ -582,7 +582,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -642,7 +642,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -698,7 +698,7 @@ describe('notebook local RPC server', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       })
       const server = new NotebookLocalRpcServer(service, {
@@ -797,7 +797,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -857,7 +857,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -922,7 +922,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -982,7 +982,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1044,7 +1044,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1104,7 +1104,7 @@ describe('notebook local RPC server', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       })
       const server = new NotebookLocalRpcServer(service, {
@@ -1173,7 +1173,7 @@ describe('notebook local RPC server', () => {
       const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       })
       const server = new NotebookLocalRpcServer(service, { transport })
@@ -1224,7 +1224,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1269,7 +1269,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, { transport: 'pipe' })
@@ -1317,7 +1317,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request) => ({
@@ -1359,7 +1359,7 @@ describe('notebook local RPC server', () => {
         body: JSON.stringify({
           method: 'execute',
           params: {
-            projectName: 'default-project',
+            projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: '/workspace',
             code: 'print(1 + 1)'
@@ -1392,7 +1392,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: {
         prepareRun: vi.fn(),
@@ -1429,7 +1429,7 @@ describe('notebook local RPC server', () => {
         body: JSON.stringify({
           method: 'inspectPackages',
           params: {
-            projectName: 'default-project',
+            projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: root,
             language: 'python',
@@ -1455,7 +1455,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request) => ({
@@ -1488,7 +1488,7 @@ describe('notebook local RPC server', () => {
         body: JSON.stringify({
           method: 'execute',
           params: {
-            projectName: 'default-project',
+            projectId: 'default-project',
             sessionId: 'notebook-session-1',
             workspaceCwd: '/workspace',
             code: 'print("ok")'
@@ -1512,7 +1512,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1566,7 +1566,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1621,7 +1621,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1673,7 +1673,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1723,7 +1723,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1772,7 +1772,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1914,7 +1914,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const server = new NotebookLocalRpcServer(service, {
@@ -1961,7 +1961,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const requests: unknown[] = []
@@ -1978,7 +1978,7 @@ describe('notebook local RPC server', () => {
             versionNumber: 1,
             checksum: 'a'.repeat(64),
             createdAt: '2026-07-27T00:00:00.000Z',
-            projectName: 'project-1',
+            projectId: 'project-1',
             sessionId: 'session-1',
             runId: 'artifact-run-1',
             name: 'sin.png',
@@ -2150,7 +2150,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const createStarted = createDeferred()
@@ -2171,7 +2171,7 @@ describe('notebook local RPC server', () => {
             versionNumber: 1,
             checksum: 'a'.repeat(64),
             createdAt: '2026-07-27T00:00:00.000Z',
-            projectName: 'project-1',
+            projectId: 'project-1',
             sessionId: 'session-1',
             runId: 'artifact-run-1',
             name: 'sin.png',
@@ -2246,7 +2246,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const createVersion = vi.fn()
@@ -2293,7 +2293,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const createVersion = vi.fn()
@@ -2357,7 +2357,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const createVersion = vi.fn().mockResolvedValue({ versionId: 'version-1' })
@@ -2404,7 +2404,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const replayRequests: unknown[] = []
@@ -2484,7 +2484,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       executorFactory: () => ({
         execute: async (request) => {
@@ -2567,7 +2567,7 @@ describe('notebook local RPC server', () => {
         body: JSON.stringify({
           method: 'execute',
           params: {
-            projectName: 'default-project',
+            projectId: 'default-project',
             sessionId: 'session-1',
             workspaceCwd: '/workspace',
             code: 'print("ok")'
@@ -2607,7 +2607,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     vi.spyOn(service, 'execute').mockImplementation(async (executeRequest) => {
@@ -2688,7 +2688,7 @@ describe('notebook local RPC server', () => {
       new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
-        projectName: 'default-project',
+        projectId: 'default-project',
         repository: new NotebookRunRepository(root)
       }),
       { transport: 'tcp', token: 'secret-token' }
@@ -2732,7 +2732,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentStateTracker: {
         prepareRun: vi.fn(),
@@ -2784,7 +2784,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root),
       environmentManager: {
         createNamedEnvironment: async (name, language) => ({
@@ -2837,7 +2837,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     // Inject a fake compute service with the minimal surface the dispatch needs.
@@ -2924,7 +2924,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const calls: Array<{ sessionId: string; limit: number }> = []
@@ -2985,7 +2985,7 @@ describe('notebook local RPC server', () => {
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
-      projectName: 'default-project',
+      projectId: 'default-project',
       repository: new NotebookRunRepository(root)
     })
     const fakeComputeService = {

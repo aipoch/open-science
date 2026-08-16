@@ -38,7 +38,6 @@ type SendWorkspaceMessageIntent = {
   attachments?: UploadedAttachment[]
   cwd?: string
   projectId?: string
-  projectName?: string
   permissionProfile?: PermissionProfileId
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
@@ -283,7 +282,7 @@ const startPendingPrompt = (
     try {
       created = await runtime.createSession(
         request.cwd,
-        request.projectName,
+        request.projectId,
         request.permissionProfile,
         request.specialistId ?? undefined
       )
@@ -322,7 +321,7 @@ const startPendingPrompt = (
         created.sessionId,
         bound.messageId,
         attachments,
-        request.projectName
+        request.projectId
       )
     } catch (error) {
       useSessionStore.getState().failRun(created.sessionId, errorMessage(error))
@@ -441,7 +440,7 @@ const sendWorkspaceMessage = async (
       content,
       attachments,
       cwd: session.cwd || input.cwd,
-      projectName: session.projectId,
+      projectId: session.projectId,
       permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
       specialistId: session.specialistId,
       replay,
@@ -464,8 +463,8 @@ const sendWorkspaceMessage = async (
     ) {
       return undefined
     }
-    const projectName = input.projectName ?? session?.projectId ?? input.projectId
-    if (input.planContinuation && !projectName) return undefined
+    const projectId = input.projectId ?? session?.projectId
+    if (input.planContinuation && !projectId) return undefined
 
     if (session?.isPending) {
       const cwd = input.cwd || session.cwd || undefined
@@ -475,7 +474,7 @@ const sendWorkspaceMessage = async (
           replay = replayHistory(
             session.messages.filter((item) => item.id !== session.pendingContextReplayMessageId),
             input,
-            projectName
+            projectId
           )
         } catch (error) {
           useSessionStore.getState().failRun(session.id, errorMessage(error))
@@ -501,7 +500,7 @@ const sendWorkspaceMessage = async (
         content,
         attachments: effectiveAttachments,
         cwd,
-        projectName,
+        projectId,
         permissionProfile: session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
         specialistId: session.pendingContextReplayMessageId ? session.specialistId : undefined,
         replay,
@@ -514,7 +513,7 @@ const sendWorkspaceMessage = async (
       sessionId,
       requireExistingSession: input.requireExistingSession,
       cwd: input.cwd,
-      projectName,
+      projectId,
       permissionProfile: input.permissionProfile,
       selectedRuntime: {
         frameworkId: input.agentFrameworkId,
@@ -554,7 +553,7 @@ const sendWorkspaceMessage = async (
         sessionId,
         appended.messageId,
         effectiveAttachments,
-        projectName
+        projectId
       )
     } catch (error) {
       useSessionStore.getState().failRun(sessionId, errorMessage(error))
@@ -562,7 +561,7 @@ const sendWorkspaceMessage = async (
     }
     const continuation = input.planContinuation
       ? {
-          projectId: projectName!,
+          projectId: projectId!,
           artifactVersionId: input.planContinuation.artifactVersionId,
           expectedRevision: input.planContinuation.revision,
           ...(input.planContinuation.pendingAction
@@ -606,7 +605,7 @@ const sendWorkspaceMessage = async (
     content,
     attachments,
     cwd: input.cwd,
-    projectName: input.projectName,
+    projectId: input.projectId,
     permissionProfile: input.permissionProfile ?? DEFAULT_PERMISSION_PROFILE,
     specialistId: input.specialistId ?? undefined,
     turnIntent: input.turnIntent

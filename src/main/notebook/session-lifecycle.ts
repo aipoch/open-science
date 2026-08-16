@@ -113,7 +113,7 @@ class NotebookSessionLifecycleOwner {
     const ensuring = this.options.sessions.getOrCreate(lane, async () => {
       this.assertProjectAvailable(projectId)
       let document = await this.options.repository.loadOrCreate({
-        projectName: projectId,
+        projectId: projectId,
         sessionId: request.sessionId,
         workspaceCwd: request.workspaceCwd,
         lane
@@ -349,7 +349,7 @@ class NotebookSessionLifecycleOwner {
         // explicit restart instead of replacing the ambiguity with a partial known-instance set.
         if (session.hasUnknownDurableKernelTermination()) return
         await this.options.repository.markKernelTerminated({
-          projectName: session.projectId,
+          projectId: session.projectId,
           sessionId: session.sessionId,
           lane: session.lane,
           kernelInstance
@@ -358,7 +358,7 @@ class NotebookSessionLifecycleOwner {
       } else if (status === 'idle') {
         if (!session.hasDurableKernelTermination(processKey)) return
         await this.options.repository.clearKernelTermination({
-          projectName: session.projectId,
+          projectId: session.projectId,
           sessionId: session.sessionId,
           lane: session.lane,
           kernelInstance
@@ -366,7 +366,7 @@ class NotebookSessionLifecycleOwner {
         session.clearDurableKernelTermination(processKey)
       } else {
         await this.options.repository.updateKernelStatus({
-          projectName: session.projectId,
+          projectId: session.projectId,
           sessionId: session.sessionId,
           lane: session.lane,
           status
@@ -383,7 +383,7 @@ class NotebookSessionLifecycleOwner {
   ): Promise<void> {
     if (!session.hasDurableKernelTermination(processKey)) return
     await this.options.repository.clearKernelTermination({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       lane: session.lane,
       kernelInstance: kernelInstanceForProcessKey(processKey)

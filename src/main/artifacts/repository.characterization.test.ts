@@ -47,7 +47,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
   it('keeps pending paths, publication markers, and finalized paths stable', async () => {
     const { repository, root } = await createRepository()
     const pending = await repository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'storage-session-1',
       runId: 'run-1',
       filename: 'report.txt',
@@ -76,7 +76,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
     })
 
     await repository.prepareRunFinalization({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sourceSessionId: 'storage-session-1',
       sessionId: 'app-session-1',
       runId: 'run-1',
@@ -104,7 +104,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
     ).resolves.toEqual(preparedMarker)
 
     const [finalized] = await repository.finalizeRunArtifacts({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sourceSessionId: 'storage-session-1',
       sessionId: 'app-session-1',
       runId: 'run-1',
@@ -144,7 +144,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
   it('restores pending bytes and metadata when publication fails before routing is durable', async () => {
     const { repository } = await createRepository()
     const request = {
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'storage-session-1',
       runId: 'run-1',
       filename: 'result.txt'
@@ -182,7 +182,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
   it('recovers a managed preview only after a prepared marker is bound to a message', async () => {
     const { repository, root } = await createRepository()
     const pending = await repository.writePendingFile({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'storage-session-1',
       runId: 'run-1',
       filename: 'notes.txt',
@@ -190,7 +190,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
       source: inlineSource('0123456789')
     })
     await repository.prepareRunFinalization({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sourceSessionId: 'storage-session-1',
       sessionId: 'app-session-1',
       runId: 'run-1',
@@ -213,7 +213,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
     })
 
     await repository.finalizeRunArtifacts({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sourceSessionId: 'storage-session-1',
       sessionId: 'app-session-1',
       runId: 'run-1',
@@ -253,7 +253,7 @@ describe('ArtifactRepository storage compatibility contract', () => {
     await writeFile(legacyPath, 'legacy content', 'utf8')
 
     const [legacy] = await repository.listMessageFiles({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'legacy-session',
       messageId: 'legacy-message'
     })

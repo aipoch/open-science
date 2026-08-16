@@ -33,7 +33,7 @@ describe('notebook repository cache consistency', () => {
     const sessionId = 'session-1'
     const runJsonPath = join(storageRoot, 'notebooks', 'default-project', sessionId, 'run.json')
     await repository.loadOrCreate({
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId,
       workspaceCwd: '/workspace',
       lane: createRootNotebookLane('default-project', sessionId, 'root-frame-session-1')

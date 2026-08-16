@@ -119,7 +119,7 @@ describe('NotebookPreview env gate (mounted)', () => {
     toolKind: 'notebook',
     notebook: {
       sessionId: 'session-1',
-      projectName: 'proj',
+      projectId: 'proj',
       workspaceCwd: '/tmp/proj',
       notebookSessionRoot: '/tmp/proj/.notebook',
       dataRoot: '/tmp/proj/.notebook/data',
@@ -269,7 +269,7 @@ describe('NotebookPreview per-kernel tabs', () => {
     toolKind: 'notebook',
     notebook: {
       sessionId: 'session-1',
-      projectName: 'proj',
+      projectId: 'proj',
       workspaceCwd: '/tmp/proj',
       notebookSessionRoot: '/tmp/proj/.notebook',
       dataRoot: '/tmp/proj/.notebook/data',
@@ -557,7 +557,7 @@ describe('NotebookPreview per-environment selector', () => {
     toolKind: 'notebook',
     notebook: {
       sessionId: 'session-1',
-      projectName: 'proj',
+      projectId: 'proj',
       workspaceCwd: '/tmp/proj',
       notebookSessionRoot: '/tmp/proj/.notebook',
       dataRoot: '/tmp/proj/.notebook/data',

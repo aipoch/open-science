@@ -34,7 +34,7 @@ describe('Notebook application composition', () => {
     const application = createNotebookApplication({
       configRoot: '/config',
       dataRoot: '/data',
-      projectName: 'Open Science',
+      projectId: 'Open Science',
       repository: {} as never,
       locale: 'en-US',
       appVersion: '1.2.3',
@@ -51,7 +51,7 @@ describe('Notebook application composition', () => {
     expect(runtimeConstruction.options).toMatchObject({
       configRoot: '/config',
       dataRoot: '/data',
-      projectName: 'Open Science',
+      projectId: 'Open Science',
       locale: 'en-US',
       appVersion: '1.2.3'
     })
@@ -62,7 +62,7 @@ describe('Notebook application composition', () => {
     createNotebookApplication({
       configRoot: '/config',
       dataRoot: '/data',
-      projectName: 'Open Science',
+      projectId: 'Open Science',
       repository: {} as never,
       events: { publish }
     })
@@ -83,7 +83,7 @@ describe('Notebook application composition', () => {
     const module = createNotebookApplicationModule({
       configRoot: '/config',
       dataRoot: '/data',
-      projectName: 'Open Science',
+      projectId: 'Open Science',
       events: { publish: vi.fn() },
       disposeTimeoutMs: 25,
       isBackendTeardownOwned: () => false
@@ -98,7 +98,7 @@ describe('Notebook application composition', () => {
     const module = createNotebookApplicationModule({
       configRoot: '/config',
       dataRoot: '/data',
-      projectName: 'Open Science',
+      projectId: 'Open Science',
       events: { publish: vi.fn() },
       disposeTimeoutMs: 25,
       isBackendTeardownOwned: () => true

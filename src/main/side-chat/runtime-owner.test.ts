@@ -1024,7 +1024,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       sessionId: 'side-chat-restored',
       providerSessionId: 'provider-restored',
       cwd: join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-restored', 'cwd'),
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: 'claude-code',
       previousBackendId: 'claude-code:provider-a'
     })
@@ -1578,7 +1578,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       sessionId: 'side-session-reconfigure',
       providerSessionId: 'side-session-reconfigure',
       cwd: join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId, 'cwd'),
-      projectName: 'project-1',
+      projectId: 'project-1',
       previousFrameworkId: 'claude-code',
       previousBackendId: 'claude-code:provider-a'
     })

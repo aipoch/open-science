@@ -673,7 +673,7 @@ export type AcpConnectRequest = {
 export type AcpCreateSessionRequest = {
   cwd?: string
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
-  projectName?: string
+  projectId?: string
   permissionProfile?: PermissionProfileId
   // Immutable Specialist UUID to bind on first turn. Main process resolves the latest Profile at
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
@@ -702,7 +702,7 @@ export type AcpResumeSessionRequest = {
   providerSessionId?: string
   providerContinuityToken?: string
   cwd: string
-  projectName?: string
+  projectId?: string
   permissionProfile?: PermissionProfileId
   previousFrameworkId?: AgentFrameworkId
   previousBackendId?: string

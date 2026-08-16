@@ -42,7 +42,7 @@ const runningRun = (
 
 const documentWith = (runs: NotebookRunRecord[]): NotebookRunDocument => ({
   version: 1,
-  projectName: session.projectId,
+  projectId: session.projectId,
   sessionId: session.sessionId,
   workspaceCwd: '/workspace',
   notebookSessionRoot: session.notebookSessionRoot,

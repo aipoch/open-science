@@ -95,7 +95,7 @@ describe('PreviewToolContent', () => {
           toolKind: 'notebook',
           notebook: {
             sessionId: 'notebook-session',
-            projectName: 'Project',
+            projectId: 'Project',
             workspaceCwd: '/workspace',
             notebookSessionRoot: '/data/notebooks/Project/notebook-session',
             dataRoot: '/data',

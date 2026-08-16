@@ -163,7 +163,7 @@ const DownloadProjectArtifactsDialog = ({
     try {
       const result = await window.api.saveProjectArtifacts({
         projectId: project.id,
-        projectName: project.name,
+        suggestedArchiveName: project.name,
         files: selectedFiles.map((file) => ({
           source: file.source,
           sessionId: file.sessionId,

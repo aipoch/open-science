@@ -156,12 +156,12 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
-  resolveProjectName: (sessionId: string) => string
+  resolveProjectId: (sessionId: string) => string
   disconnectForReload: () => Promise<unknown>
   resumeAfterReload: (input: {
     sessionId: string
     cwd: string
-    projectName: string
+    projectId: string
     permissionProfile: PermissionProfileId
   }) => Promise<{ contextReset?: boolean }>
   recordAdmittedPrompt: (request: AcpPromptRequest) => void
@@ -200,12 +200,12 @@ class AcpPromptTurnWorkflow {
       if (skill.reloadDecision.kind === 'reload') {
         this.assertSessionIdle(request.sessionId)
         const snapshot = this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
-        const projectName = this.options.resolveProjectName(request.sessionId)
+        const projectId = this.options.resolveProjectId(request.sessionId)
         await this.options.disconnectForReload()
         const resumed = await this.options.resumeAfterReload({
           sessionId: request.sessionId,
           cwd: snapshot?.cwd ?? this.options.currentCwd(),
-          projectName,
+          projectId,
           permissionProfile:
             snapshot?.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE
         })
@@ -341,7 +341,7 @@ class AcpPromptTurnWorkflow {
         tooling: env.tooling(),
         specialistPrefix: snapshot?.specialistPrefix,
         sessionSetupPromptPrefix: snapshot?.sessionSetupPromptPrefix,
-        projectId: this.options.resolveProjectName(sessionId),
+        projectId: this.options.resolveProjectId(sessionId),
         fallbackPromptMessageId: artifacts.promptMessageIdFor(artifact),
         bridgeSkillsAvailable: env.bridgeSkillsAvailable(),
         skillImportEnabled: env.skillImportEnabled(),

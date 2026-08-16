@@ -4,7 +4,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { app } from 'electron'
 
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
-import { DEFAULT_ARTIFACT_PROJECT_NAME } from '../../shared/artifacts'
+import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
@@ -51,15 +51,15 @@ import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 const log = createLogger('acp')
 
 // Builds the session-setup resolver for a project's Agent Context system-prompt append. The ACP
-// projectName carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_NAME fallback
+// projectId carries the Project id; unknown ids (e.g. the DEFAULT_ARTIFACT_PROJECT_ID fallback
 // namespace), blank contexts, and lookup failures all yield undefined so session setup proceeds
 // without an append.
 const createProjectAgentContextResolver = (repository: {
   get: (id: string) => Promise<{ agentContext?: string } | null>
-}): ((projectName: string) => Promise<string | undefined>) => {
-  return async (projectName) => {
+}): ((projectId: string) => Promise<string | undefined>) => {
+  return async (projectId) => {
     try {
-      const project = await repository.get(projectName)
+      const project = await repository.get(projectId)
       const context = project?.agentContext?.trim()
       return context ? context : undefined
     } catch (error) {
@@ -236,7 +236,7 @@ const createAcpRuntime = ({
               artifacts: {
                 configRoot,
                 dataRoot,
-                projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+                projectId: DEFAULT_ARTIFACT_PROJECT_ID,
                 mcpEntryPath,
                 repository,
                 runRegistry,
@@ -261,7 +261,7 @@ const createAcpRuntime = ({
             }
           : undefined,
         notebook: {
-          projectName: DEFAULT_ARTIFACT_PROJECT_NAME,
+          projectId: DEFAULT_ARTIFACT_PROJECT_ID,
           mcpEntryPath,
           getRpcConnection: ({ sessionId, projectId }) =>
             delegatedNotebookConnection

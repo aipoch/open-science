@@ -83,16 +83,16 @@ const assertSafeFilename = (filename: string): string => {
 const getArtifactMetadataPath = (directory: string, filename: string): string =>
   join(directory, METADATA_DIR, `${encodeURIComponent(filename)}.json`)
 
-const getProjectArtifactDir = (storageRoot: string, projectName: string): string =>
-  join(storageRoot, ARTIFACTS_DIR, assertSafePathSegment(projectName))
+const getProjectArtifactDir = (storageRoot: string, projectId: string): string =>
+  join(storageRoot, ARTIFACTS_DIR, assertSafePathSegment(projectId))
 
 const getArtifactCurrentRunFilePath = (
   storageRoot: string,
-  projectName: string,
+  projectId: string,
   sessionId: string
 ): string =>
   join(
-    getProjectArtifactDir(storageRoot, projectName),
+    getProjectArtifactDir(storageRoot, projectId),
     assertSafePathSegment(sessionId),
     PENDING_DIR,
     CURRENT_RUN_FILE
@@ -189,16 +189,16 @@ class ArtifactStorageAccess {
     readonly durability: ArtifactStorageAccessDurability
   ) {}
 
-  getProjectArtifactDir(projectName: string): string {
-    return getProjectArtifactDir(this.storageRoot, projectName)
+  getProjectArtifactDir(projectId: string): string {
+    return getProjectArtifactDir(this.storageRoot, projectId)
   }
 
-  getPendingRunDir(projectName: string, sessionId: string, runId: string): string {
-    return join(this.getProjectArtifactDir(projectName), sessionId, PENDING_DIR, runId)
+  getPendingRunDir(projectId: string, sessionId: string, runId: string): string {
+    return join(this.getProjectArtifactDir(projectId), sessionId, PENDING_DIR, runId)
   }
 
-  getMessageDir(projectName: string, sessionId: string, messageId: string): string {
-    return join(this.getProjectArtifactDir(projectName), sessionId, messageId)
+  getMessageDir(projectId: string, sessionId: string, messageId: string): string {
+    return join(this.getProjectArtifactDir(projectId), sessionId, messageId)
   }
 
   async renameIfPresent(sourcePath: string, targetPath: string): Promise<boolean> {
@@ -372,7 +372,7 @@ class ArtifactStorageAccess {
   }
 
   async createArtifactFile(request: {
-    projectName: string
+    projectId: string
     sessionId: string
     filename: string
     filePath: string
@@ -385,9 +385,7 @@ class ArtifactStorageAccess {
     const ownerId = request.messageId ?? request.runId ?? 'artifact'
     return {
       id: `${request.sessionId}:${ownerId}:${request.filename}`,
-      projectId: request.projectName,
-      // Compatibility output for an older renderer/main pair; this value is the Project id.
-      projectName: request.projectName,
+      projectId: request.projectId,
       sessionId: request.sessionId,
       messageId: request.messageId,
       runId: request.runId,
@@ -412,11 +410,11 @@ const createArtifactPublicationStorage = (
   assertSafePathSegment,
   assertSafeFilename,
   normalizeArtifactVersionIds,
-  getProjectArtifactDir: (projectName) => access.getProjectArtifactDir(projectName),
-  getPendingRunDir: (projectName, sessionId, runId) =>
-    access.getPendingRunDir(projectName, sessionId, runId),
-  getMessageDir: (projectName, sessionId, messageId) =>
-    access.getMessageDir(projectName, sessionId, messageId),
+  getProjectArtifactDir: (projectId) => access.getProjectArtifactDir(projectId),
+  getPendingRunDir: (projectId, sessionId, runId) =>
+    access.getPendingRunDir(projectId, sessionId, runId),
+  getMessageDir: (projectId, sessionId, messageId) =>
+    access.getMessageDir(projectId, sessionId, messageId),
   getArtifactMetadataPath,
   resolveAllowedImportFilePath,
   readFilePrefix,

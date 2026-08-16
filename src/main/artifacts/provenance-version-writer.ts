@@ -302,7 +302,7 @@ class ArtifactProvenanceVersionWriter {
     }
 
     const pendingFiles = await this.options.compatibilityRepository.listPendingRunFiles({
-      projectName: projectId,
+      projectId: projectId,
       sessionId: artifactStorageSessionId,
       runId: artifactRunId
     })

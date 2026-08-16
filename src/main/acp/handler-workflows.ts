@@ -291,9 +291,9 @@ const createAcpHandlerWorkflows = (
     try {
       const resume = (): Promise<AcpCreateSessionResponse> => runtime.resumeSession(request)
       const result = archiveAvailability
-        ? request.projectName
+        ? request.projectId
           ? await archiveAvailability.withSessionAvailable(
-              request.projectName,
+              request.projectId,
               request.sessionId,
               resume
             )

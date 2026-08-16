@@ -14,7 +14,7 @@ describe('NotebookSessionAggregate', () => {
     const started: string[] = []
     const session = new NotebookSessionAggregate({
       sessionId: 'session-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       cwd: '/workspace/data',
       notebookSessionRoot: '/workspace',
@@ -65,7 +65,7 @@ describe('NotebookSessionAggregate', () => {
     })
     const session = new NotebookSessionAggregate({
       sessionId: 'session-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       cwd: '/workspace/data',
       notebookSessionRoot: '/workspace',
@@ -111,7 +111,7 @@ describe('NotebookSessionAggregate', () => {
   it('returns snapshots that cannot mutate owned cell or kernel state', () => {
     const session = new NotebookSessionAggregate({
       sessionId: 'session-1',
-      projectName: 'default-project',
+      projectId: 'default-project',
       lane: createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1'),
       cwd: '/workspace/data',
       notebookSessionRoot: '/workspace',

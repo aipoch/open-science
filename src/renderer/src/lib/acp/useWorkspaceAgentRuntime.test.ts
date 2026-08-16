@@ -2506,7 +2506,6 @@ describe('workspace agent message sending', () => {
       text: 'Try a different interpretation',
       cwd: '/ignored-by-source-snapshot',
       projectId: 'wrong-project',
-      projectName: 'wrong-project',
       turnIntent: 'plan-first'
     })
 
@@ -3020,8 +3019,7 @@ describe('workspace agent message sending', () => {
 
     await sendWorkspaceMessage(runtime, {
       text: 'Clone a repository',
-      projectId: 'project-1',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
 
     expect(runtime.createSession).toHaveBeenCalledWith(undefined, 'project-1', 'ask', undefined)
@@ -3038,8 +3036,7 @@ describe('workspace agent message sending', () => {
 
     const sent = await sendWorkspaceMessage(runtime, {
       text: 'Clone a repository',
-      projectId: 'project-1',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     await flushRuntimeTasks()
 
@@ -3405,16 +3402,14 @@ describe('workspace agent message sending', () => {
 
     const first = await sendWorkspaceMessage(runtime, {
       text: 'Clone the repository',
-      projectId: 'project-1',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
     await flushRuntimeTasks()
 
     await sendWorkspaceMessage(runtime, {
       sessionId: first?.sessionId,
       text: 'Try again',
-      projectId: 'project-1',
-      projectName: 'project-1'
+      projectId: 'project-1'
     })
 
     expect(runtime.createSession).toHaveBeenNthCalledWith(

@@ -34,7 +34,7 @@ describe('AgentMcpHttpHost', () => {
 
   it('serves the artifact MCP tools over http and writes a file for the active run', async () => {
     root = await mkdtemp(join(tmpdir(), 'mcp-http-host-'))
-    const projectName = 'default-project'
+    const projectId = 'default-project'
     const artifactSessionId = 'artifact-session-1'
     const runId = 'artifact-run-1'
     // The artifact tool reads the active run id from this main-process-owned handoff file.
@@ -47,7 +47,7 @@ describe('AgentMcpHttpHost', () => {
 
     host.registerArtifact(artifactSessionId, {
       storageRoot: root,
-      projectName,
+      projectId,
       sessionId: artifactSessionId,
       currentRunFile,
       allowedImportRoots: [root]
@@ -76,7 +76,7 @@ describe('AgentMcpHttpHost', () => {
 
     // The file landed in the pending run through the same repository the stdio path uses.
     const files = await new ArtifactRepository(root).listPendingRunFiles({
-      projectName,
+      projectId,
       sessionId: artifactSessionId,
       runId
     })
@@ -85,7 +85,7 @@ describe('AgentMcpHttpHost', () => {
 
   it('accepts a JSON-stringified artifact source from an MCP model call', async () => {
     root = await mkdtemp(join(tmpdir(), 'mcp-http-host-'))
-    const projectName = 'default-project'
+    const projectId = 'default-project'
     const artifactSessionId = 'artifact-session-1'
     const runId = 'artifact-run-1'
     const currentRunFile = join(root, 'current-run.json')
@@ -95,7 +95,7 @@ describe('AgentMcpHttpHost', () => {
     const { token } = await host.ensureStarted()
     host.registerArtifact(artifactSessionId, {
       storageRoot: root,
-      projectName,
+      projectId,
       sessionId: artifactSessionId,
       currentRunFile,
       allowedImportRoots: [root]
@@ -121,7 +121,7 @@ describe('AgentMcpHttpHost', () => {
     await client.close()
 
     const files = await new ArtifactRepository(root).listPendingRunFiles({
-      projectName,
+      projectId,
       sessionId: artifactSessionId,
       runId
     })

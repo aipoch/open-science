@@ -1228,7 +1228,7 @@ describe('TaskRunner', () => {
           artifacts: [
             {
               id: 'artifact-file',
-              projectName: project.id,
+              projectId: project.id,
               sessionId: 'session-artifact',
               messageId: 'artifact-agent',
               name: 'result.txt',
@@ -1392,7 +1392,7 @@ describe('TaskRunner', () => {
             artifacts: [
               {
                 id: 'artifact-partial',
-                projectName: project.id,
+                projectId: project.id,
                 sessionId: 'session-partial',
                 messageId: 'partial-agent',
                 name: 'partial-report.md',

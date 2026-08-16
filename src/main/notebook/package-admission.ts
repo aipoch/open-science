@@ -217,8 +217,7 @@ class NotebookPackageAdmissionOwner {
         value: await this.options.loadSession({
           sessionId: request.sessionId,
           workspaceCwd: request.workspaceCwd,
-          projectId: request.projectId,
-          projectName: request.projectName
+          projectId: request.projectId
         })
       }
     }

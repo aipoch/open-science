@@ -236,7 +236,7 @@ class ArtifactProvenanceRepository {
 
     return this.compatibilityRepository.withPendingFileTransaction(
       {
-        projectName: request.projectId,
+        projectId: request.projectId,
         sessionId: request.artifactStorageSessionId,
         runId: request.artifactRunId,
         filename: request.filename,
@@ -745,8 +745,6 @@ class ArtifactProvenanceRepository {
       producerRunId: version.producerRunId ?? undefined,
       environment,
       projectId,
-      // Compatibility output for an older renderer/main pair; this value is the Project id.
-      projectName: projectId,
       sessionId: appSessionId,
       runId: version.artifactRunId,
       name: version.filename,

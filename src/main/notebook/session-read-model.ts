@@ -140,7 +140,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     historySummaryFrameId?: string
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const document = await this.options.repository.loadOrCreate({
-      projectName: session.projectId,
+      projectId: session.projectId,
       sessionId: session.sessionId,
       workspaceCwd: session.cwd,
       lane: session.lane
@@ -224,8 +224,6 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     return {
       sessionId: request.sessionId,
       projectId,
-      // Compatibility output for an older renderer/main pair; this value is the Project id.
-      projectName: projectId,
       workspaceCwd: rootDocument?.workspaceCwd ?? request.workspaceCwd,
       notebookSessionRoot,
       dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
@@ -238,8 +236,6 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     return {
       sessionId: session.sessionId,
       projectId: session.projectId,
-      // Compatibility output for an older renderer/main pair; this value is the Project id.
-      projectName: session.projectId,
       workspaceCwd: session.cwd,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,

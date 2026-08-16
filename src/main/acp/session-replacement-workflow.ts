@@ -17,7 +17,7 @@ import type {
 
 type AcpSessionReplacementWorkflowDependencies = Readonly<{
   defaultCwd: string
-  defaultProjectName: string
+  defaultProjectId: string
   currentCwd: () => string | undefined
   currentFrameworkId: () => AgentFrameworkId
   ensureConnected: (cwd: string) => Promise<ClientConnection>
@@ -49,7 +49,7 @@ export class AcpSessionReplacementWorkflow {
   // remain authoritative while the Adopter publishes the replacement provider Session.
   async reset(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
-    const projectName = request.projectName?.trim() || this.deps.defaultProjectName
+    const projectId = request.projectId?.trim() || this.deps.defaultProjectId
     const publishedSession = this.deps.registry.lookup(request.sessionId)?.attachment?.session
     const reserved = this.deps.reserveIdentity(
       request.sessionId,
@@ -93,7 +93,7 @@ export class AcpSessionReplacementWorkflow {
       return await this.deps.adopter.adopt(request.sessionId, {
         connection,
         cwd,
-        projectName,
+        projectId,
         identity,
         permissionProfile: request.permissionProfile,
         specialistId: request.specialistId
@@ -135,7 +135,7 @@ export class AcpSessionReplacementWorkflow {
       await this.reset({
         sessionId,
         cwd: snapshot.cwd,
-        projectName: snapshot.projectName,
+        projectId: snapshot.projectId,
         ...(snapshot.permissionProfile?.selectedProfile
           ? { permissionProfile: snapshot.permissionProfile.selectedProfile }
           : {})

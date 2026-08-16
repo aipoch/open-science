@@ -1875,7 +1875,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'artifact-version-1',
-      projectName: 'origin-project',
+      projectId: 'origin-project',
       sessionId: 'origin-session',
       name: 'sin.png',
       mimeType: 'image/png',
@@ -1949,7 +1949,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'child-version',
-      projectName: 'default',
+      projectId: 'default',
       sessionId: 'session-42',
       name: 'child.md',
       mimeType: 'text/markdown',
@@ -2129,7 +2129,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'child-version',
-      projectName: 'default',
+      projectId: 'default',
       sessionId: 'session-42',
       name: 'child.md',
       mimeType: 'text/markdown',
@@ -2248,7 +2248,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'child-version',
-      projectName: 'default',
+      projectId: 'default',
       sessionId: 'session-42',
       name: 'child.md',
       mimeType: 'text/markdown',
@@ -2390,7 +2390,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptorA: ArtifactVersionDescriptor = {
       id: 'version-1',
-      projectName: 'default',
+      projectId: 'default',
       sessionId: 'session-42',
       name: 'child-1.md',
       mimeType: 'text/markdown',
@@ -2572,7 +2572,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'artifact-version-1',
-      projectName: 'origin-project',
+      projectId: 'origin-project',
       sessionId: 'origin-session',
       name: 'sin.png',
       mimeType: 'image/png',
@@ -2633,7 +2633,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'artifact-version-1',
-      projectName: 'origin-project',
+      projectId: 'origin-project',
       sessionId: 'origin-session',
       name: 'sin.png',
       mimeType: 'image/png',
@@ -2692,7 +2692,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'artifact-version-1',
-      projectName: 'origin-project',
+      projectId: 'origin-project',
       sessionId: 'origin-session',
       name: 'sin.png',
       mimeType: 'image/png',

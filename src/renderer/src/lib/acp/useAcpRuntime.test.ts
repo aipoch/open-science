@@ -327,7 +327,7 @@ describe('useAcpRuntime payload construction', () => {
     expect(acpApi.resumeSession).toHaveBeenCalledWith({
       sessionId: 'session-1',
       cwd: '/workspace/project',
-      projectName: 'Project',
+      projectId: 'Project',
       permissionProfile: 'ask',
       previousFrameworkId: 'opencode',
       previousBackendId: 'opencode:provider-a',

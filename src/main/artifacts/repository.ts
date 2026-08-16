@@ -76,7 +76,7 @@ class ArtifactRepository {
   }
 
   async findPendingVersionRouting(request: {
-    projectName: string
+    projectId: string
     artifactId: string
     versionId: string
   }): Promise<PendingArtifactVersionRoute | undefined> {
@@ -84,7 +84,7 @@ class ArtifactRepository {
   }
 
   async findPendingFileForRun(request: {
-    projectName: string
+    projectId: string
     runId: string
     filename: string
     checksum: string
@@ -123,7 +123,7 @@ class ArtifactRepository {
   }
 
   async reconcilePendingArtifactPaths(request: {
-    projectName: string
+    projectId: string
     sessionId: string
     messageId: string
     pendingPaths: string[]
@@ -132,14 +132,14 @@ class ArtifactRepository {
   }
 
   async listProjectArtifacts(
-    projectName: string,
+    projectId: string,
     activeRunIds: ReadonlySet<string> = new Set()
   ): Promise<ArtifactFile[]> {
-    return this.compatibilityOwner.listProjectArtifacts(projectName, activeRunIds)
+    return this.compatibilityOwner.listProjectArtifacts(projectId, activeRunIds)
   }
 
-  async listPendingRunPublications(projectName: string): Promise<PendingArtifactRunPublication[]> {
-    return this.publicationOwner.listPendingRunPublications(projectName)
+  async listPendingRunPublications(projectId: string): Promise<PendingArtifactRunPublication[]> {
+    return this.publicationOwner.listPendingRunPublications(projectId)
   }
 
   async resolveManagedFilePath(request: OpenArtifactFileRequest): Promise<string> {
@@ -147,11 +147,11 @@ class ArtifactRepository {
   }
 
   async resolveSessionArtifactFilePath(
-    projectName: string,
+    projectId: string,
     sessionId: string,
     path: string
   ): Promise<string> {
-    return this.compatibilityOwner.resolveSessionArtifactFilePath(projectName, sessionId, path)
+    return this.compatibilityOwner.resolveSessionArtifactFilePath(projectId, sessionId, path)
   }
 
   async readManagedFilePreview(
@@ -161,10 +161,10 @@ class ArtifactRepository {
   }
 
   async findRunFinalizationMarker(
-    projectName: string,
+    projectId: string,
     runId: string
   ): Promise<(ArtifactRunFinalizationMarker & { sourceSessionId: string }) | undefined> {
-    return this.publicationOwner.findRunFinalizationMarker(projectName, runId)
+    return this.publicationOwner.findRunFinalizationMarker(projectId, runId)
   }
 }
 

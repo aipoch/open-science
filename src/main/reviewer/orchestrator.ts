@@ -279,7 +279,7 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
             session: {
               sessionId: mainSessionId,
               cwd: session.cwd,
-              projectName: session.projectId,
+              projectId: session.projectId,
               permissionProfile: session.permissionProfile,
               previousFrameworkId: session.agentFrameworkId,
               previousBackendId: session.agentBackendId,

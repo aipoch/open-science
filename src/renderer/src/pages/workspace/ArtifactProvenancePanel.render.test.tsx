@@ -91,7 +91,7 @@ const descriptor = {
   checksum: 'checksum-1',
   createdAt: '2026-07-27T20:00:00.000Z',
   state: 'finalized' as const,
-  projectName: 'project-1',
+  projectId: 'project-1',
   sessionId: 'session-1',
   runId: 'artifact-run-1',
   name: 'sin.png',

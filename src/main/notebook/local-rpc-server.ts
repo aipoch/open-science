@@ -1609,7 +1609,6 @@ class NotebookLocalRpcServer {
           ...resolvedParams,
           sessionId: authenticatedBinding.sessionId,
           projectId: authenticatedBinding.projectId,
-          projectName: authenticatedBinding.projectId,
           workspaceCwd: authenticatedBinding.delegatedNotebook.workspaceCwd,
           provenanceContext: authenticatedBinding.delegatedNotebook.provenanceContext,
           delegatedWorkAttemptId: authenticatedBinding.delegatedNotebook.attemptId

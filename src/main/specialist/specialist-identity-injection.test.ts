@@ -209,7 +209,7 @@ describe('specialist identity injection — Claude Code', () => {
         return { append: buildSpecialistIdentityAppend(profile), prefix: '' }
       },
       notebook: {
-        projectName: 'test',
+        projectId: 'test',
         mcpEntryPath: '/test/mcp.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1', token: 'test' }),
         registerSessionSpecialist
@@ -313,7 +313,7 @@ describe('specialist identity injection — Codex', () => {
         return { append: '', prefix: buildSpecialistIdentityPrefix(profile) }
       },
       notebook: {
-        projectName: 'test',
+        projectId: 'test',
         mcpEntryPath: '/test/mcp.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1', token: 'test' }),
         registerSessionSpecialist
@@ -378,7 +378,7 @@ describe('specialist identity injection — OpenCode', () => {
         return { append: '', prefix: buildSpecialistIdentityPrefix(profile) }
       },
       notebook: {
-        projectName: 'test',
+        projectId: 'test',
         mcpEntryPath: '/test/mcp.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1', token: 'test' }),
         registerSessionSpecialist
@@ -485,7 +485,7 @@ describe('specialist hot-switch — Claude Code', () => {
         missingSkillIds: []
       }),
       notebook: {
-        projectName: 'test',
+        projectId: 'test',
         mcpEntryPath: '/test/mcp.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1', token: 'test' }),
         registerSessionSpecialist
@@ -527,7 +527,7 @@ describe('specialist hot-switch — Claude Code', () => {
         prefix: ''
       }),
       notebook: {
-        projectName: 'test',
+        projectId: 'test',
         mcpEntryPath: '/test/mcp.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1', token: 'test' }),
         registerSessionSpecialist
@@ -664,7 +664,7 @@ describe('specialist hot-switch — Codex', () => {
           ? { append: '', prefix: buildSpecialistIdentityPrefix(profileA) }
           : { append: '', prefix: buildSpecialistIdentityPrefix(profileB) },
       notebook: {
-        projectName: 'test',
+        projectId: 'test',
         mcpEntryPath: '/test/mcp.js',
         getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1', token: 'test' }),
         registerSessionSpecialist

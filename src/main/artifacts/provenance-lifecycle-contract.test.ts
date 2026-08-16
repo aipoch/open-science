@@ -324,13 +324,13 @@ describe('artifact provenance durable lifecycle contract', () => {
     const request = versionRequest(session)
     const lane = createRootNotebookLane('project-1', 'session-1', request.rootFrameId)
     await value.notebookRepository.loadOrCreate({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       workspaceCwd: join(value.storageRoot, 'workspace'),
       lane
     })
     await value.notebookRepository.appendRun({
-      projectName: 'project-1',
+      projectId: 'project-1',
       sessionId: 'session-1',
       lane,
       run: {

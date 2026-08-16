@@ -71,7 +71,7 @@ describe('delegated Notebook lane capability', () => {
     const service = new NotebookRuntimeService({
       configRoot: storageRoot,
       dataRoot: storageRoot,
-      projectName: 'project-1',
+      projectId: 'project-1',
       repository: new NotebookRunRepository(storageRoot),
       executorFactory: () => ({
         execute: async (input) => ({
@@ -201,7 +201,7 @@ describe('delegated Notebook lane capability', () => {
     const service = new NotebookRuntimeService({
       configRoot: storageRoot,
       dataRoot: storageRoot,
-      projectName: 'project-1',
+      projectId: 'project-1',
       repository: new NotebookRunRepository(storageRoot),
       executorFactory: () => ({
         execute: async (input) => ({
@@ -278,7 +278,7 @@ describe('delegated Notebook lane capability', () => {
     const service = new NotebookRuntimeService({
       configRoot: storageRoot,
       dataRoot: storageRoot,
-      projectName: 'project-1',
+      projectId: 'project-1',
       repository: new NotebookRunRepository(storageRoot),
       executorFactory: () => {
         const executor = {
@@ -331,13 +331,13 @@ describe('delegated Notebook lane capability', () => {
       const [one, two] = await Promise.all([
         request(childOne, 'execute', {
           sessionId: 'forged',
-          projectName: 'forged',
+          projectId: 'forged',
           workspaceCwd: '/forged',
           code: 'producer = "one"'
         }),
         request(childTwo, 'execute', {
           sessionId: 'forged',
-          projectName: 'forged',
+          projectId: 'forged',
           workspaceCwd: '/forged',
           code: 'producer = "two"'
         })
@@ -393,7 +393,7 @@ describe('delegated Notebook lane capability', () => {
     const service = new NotebookRuntimeService({
       configRoot: storageRoot,
       dataRoot: storageRoot,
-      projectName: 'project-1',
+      projectId: 'project-1',
       repository: new NotebookRunRepository(storageRoot),
       executorFactory: () => ({
         execute: async (input) => ({

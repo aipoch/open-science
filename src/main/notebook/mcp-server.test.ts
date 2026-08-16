@@ -43,7 +43,7 @@ describe('notebook MCP server config', () => {
       entryPath: '/app/out/main/index.js',
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     })
@@ -57,7 +57,6 @@ describe('notebook MCP server config', () => {
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: 'http://127.0.0.1:4567' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
-        { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_NAME', value: 'default-project' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_SESSION_ID', value: 'session-1' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_WORKSPACE_CWD', value: '/workspace' }
       ]
@@ -93,7 +92,7 @@ describe('notebook MCP server config', () => {
       endpoint: 'http://localhost',
       socketPath: '\\\\.\\pipe\\open-science-notebook',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: 'C:\\workspace'
     })
@@ -341,7 +340,7 @@ describe('notebook_execute tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }
@@ -389,7 +388,7 @@ describe('notebook_execute tool', () => {
       const environment = {
         endpoint: 'http://127.0.0.1:4567',
         token: 'secret-token',
-        projectName: 'default-project',
+        projectId: 'default-project',
         sessionId: 'session-1',
         workspaceCwd: '/workspace'
       }
@@ -537,7 +536,7 @@ describe('repl_execute tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }
@@ -615,7 +614,7 @@ describe('bash_execute tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }
@@ -997,7 +996,7 @@ describe('manage_environments tool', () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
-      projectName: 'default-project',
+      projectId: 'default-project',
       sessionId: 'session-1',
       workspaceCwd: '/workspace'
     }

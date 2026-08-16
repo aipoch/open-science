@@ -1,7 +1,6 @@
 import type { ProjectIdScope } from './project-scope'
 
-// Renderer-safe description of one generated file without embedding file contents. `projectName`
-// remains a rolling/historical transport alias whose value is a Project id, never a display name.
+// Renderer-safe description of one generated file without embedding file contents.
 export type ArtifactFile = ProjectIdScope & {
   id: string
   sessionId: string
@@ -75,12 +74,12 @@ export type ArtifactSourceFileObservation = {
   mtimeMs: number
 }
 
-// Default logical project bucket used until the app exposes user-selected project names.
-export const DEFAULT_ARTIFACT_PROJECT_NAME = 'default-project'
+// Default logical Project id used when no concrete Project owns compatibility data.
+export const DEFAULT_ARTIFACT_PROJECT_ID = 'default-project'
 
 // Repository write request for files that are still scoped to an active assistant run.
 export type WritePendingArtifactFileRequest = {
-  projectName: string
+  projectId: string
   sessionId: string
   runId: string
   filename: string
@@ -131,7 +130,7 @@ export type ArtifactPreviewResult = {
 
 // Repository request that moves pending run files into a durable message directory.
 export type MovePendingRunArtifactsRequest = {
-  projectName: string
+  projectId: string
   sessionId: string
   sourceSessionId?: string
   runId: string
@@ -148,19 +147,19 @@ export type MovePendingRunArtifactsRequest = {
 
 // Repository request for files written during a run before the renderer finalizes them.
 export type ListPendingRunArtifactsRequest = {
-  projectName: string
+  projectId: string
   sessionId: string
   runId: string
 }
 
-// Public message-file list request shape before the project name is resolved.
+// Public message-file list request shape before the Project id is resolved.
 export type ListMessageArtifactsRequest = {
   sessionId: string
   messageId: string
 }
 
 // Renderer request to enumerate every finalized artifact on disk for one project, so the file library
-// can surface files whose owning session was deleted (the project name matches the durable project id).
+// can surface files whose owning Session was deleted.
 export type ListProjectArtifactsRequest = ProjectIdScope
 
 // A copied conversation stores native generated-file Version ids in its messages, not paths or a
@@ -187,5 +186,5 @@ export type ReconcilePendingArtifactsRequest = ProjectIdScope & {
 
 // Internal repository list request after the app has resolved the logical project bucket.
 export type ListProjectMessageArtifactsRequest = ListMessageArtifactsRequest & {
-  projectName: string
+  projectId: string
 }

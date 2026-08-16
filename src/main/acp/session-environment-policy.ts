@@ -1,4 +1,4 @@
-import { DEFAULT_UPLOAD_PROJECT_NAME } from '../../shared/uploads'
+import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import type { AcpSessionCapabilityOwner } from './session-capability-owner'
 import {
@@ -16,7 +16,7 @@ type AcpSessionEnvironmentPolicyOptions = Readonly<{
   >
   presentation: Pick<AcpSessionPresentationPolicy, 'applicationSystemPromptAppends'>
   registry: Pick<AcpSessionRegistry, 'lookup'>
-  defaultProjectName?: string
+  defaultProjectId?: string
   planSystemPromptAppend?: string
   capabilityPolicy?: SessionCapabilityPolicy
 }>
@@ -57,11 +57,11 @@ class AcpSessionEnvironmentPolicy {
     ])
   }
 
-  projectName(sessionId: string): string {
+  projectId(sessionId: string): string {
     return (
-      this.options.registry.lookup(sessionId)?.aggregate.snapshot().projectName ??
-      this.options.defaultProjectName ??
-      DEFAULT_UPLOAD_PROJECT_NAME
+      this.options.registry.lookup(sessionId)?.aggregate.snapshot().projectId ??
+      this.options.defaultProjectId ??
+      DEFAULT_UPLOAD_PROJECT_ID
     )
   }
 }
