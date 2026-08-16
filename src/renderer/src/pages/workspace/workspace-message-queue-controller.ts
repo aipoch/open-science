@@ -457,8 +457,14 @@ const useWorkspaceMessageQueueController = (
           }
           const latest = itemsFor(sessionId)
           const remaining = latest.filter((candidate) => candidate.id !== item.id)
-          if (remaining.length === 0) owner.queues.delete(sessionId)
-          else owner.queues.set(sessionId, remaining)
+          if (remaining.length === 0) {
+            owner.queues.delete(sessionId)
+            if (owner.dispatches.get(sessionId) === activeDispatch) {
+              owner.dispatches.delete(sessionId)
+            }
+          } else {
+            owner.queues.set(sessionId, remaining)
+          }
           emit('Queued message sent.')
         } catch (error) {
           if (owner.dispatches.get(sessionId) === activeDispatch) {

@@ -193,6 +193,7 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
     workspace.returnToWorkspace()
     await vi.waitFor(() => expect(workspace.result.current.items).toEqual([]))
+    expect(workspace.result.current.lifecycle.blocksImmediateSend(currentSession.id)).toBe(false)
   })
 
   it('resumes background draining when a Specialist barrier settles', async () => {
