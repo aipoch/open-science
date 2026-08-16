@@ -2633,5 +2633,19 @@
   "Input (uncached)": "輸入（未命中快取）",
   "Start a conversation to see token usage here.": "開始一個對話後即可在這裡檢視 Token 用量。",
   "No token usage has been reported in the last 30 days.": "最近 30 天內沒有已回報的 Token 用量。",
-  "Stacked daily token usage for the last 30 days": "最近 30 天每日 Token 用量堆疊圖"
+  "Stacked daily token usage for the last 30 days": "最近 30 天每日 Token 用量堆疊圖",
+  "Project recovery needs attention": "專案復原需要處理",
+  "Open Science could not finish recovering a previous project deletion. Retry recovery before archiving or deleting projects.": "Open Science 無法完成先前專案刪除的復原。請先重試復原，再封存或刪除專案。",
+  "Retry recovery": "重試復原",
+  "Project archive needs attention": "專案封存需要處理",
+  "{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project._other": "已移出 {{count}} 個損壞的已儲存對話。由於無法驗證它們的狀態，專案封存仍無法使用。你仍可永久刪除該專案。",
+  "Project index needs repair": "專案索引需要修復",
+  "Saved conversations loaded, but the project index could not be rebuilt. Repair the index before archiving projects.": "已儲存的對話已載入，但無法重建專案索引。請先修復索引，再封存專案。",
+  "Some saved conversations could not be indexed. Repair the index before archiving projects.": "部分已儲存的對話無法建立索引。請先修復索引，再封存專案。",
+  "Repair index": "修復索引",
+  "Retry project recovery before archiving.": "封存前請先重試專案復原。",
+  "Project archive is unavailable because a damaged conversation cannot be verified.": "由於無法驗證損壞的對話，專案封存無法使用。",
+  "Repair the project index before archiving.": "封存前請先修復專案索引。",
+  "Retry project recovery before deleting projects.": "刪除專案前請先重試專案復原。",
+  "Finish or stop active sessions before archiving this project.": "封存專案前，請先完成或停止進行中的工作階段。"
 }

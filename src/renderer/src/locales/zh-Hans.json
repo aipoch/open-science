@@ -2633,5 +2633,19 @@
   "Input (uncached)": "输入（未命中缓存）",
   "Start a conversation to see token usage here.": "开始一个会话后即可在这里查看 Token 用量。",
   "No token usage has been reported in the last 30 days.": "近 30 天内没有已报告的 Token 用量。",
-  "Stacked daily token usage for the last 30 days": "近 30 天每日 Token 用量叠加图"
+  "Stacked daily token usage for the last 30 days": "近 30 天每日 Token 用量叠加图",
+  "Project recovery needs attention": "项目恢复需要处理",
+  "Open Science could not finish recovering a previous project deletion. Retry recovery before archiving or deleting projects.": "Open Science 无法完成之前项目删除的恢复。请先重试恢复，再归档或删除项目。",
+  "Retry recovery": "重试恢复",
+  "Project archive needs attention": "项目归档需要处理",
+  "{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project._other": "已移出 {{count}} 个损坏的已保存会话。由于无法验证它们的状态，项目归档仍不可用。你仍可永久删除该项目。",
+  "Project index needs repair": "项目索引需要修复",
+  "Saved conversations loaded, but the project index could not be rebuilt. Repair the index before archiving projects.": "已保存的会话已加载，但无法重建项目索引。请先修复索引，再归档项目。",
+  "Some saved conversations could not be indexed. Repair the index before archiving projects.": "部分已保存的会话无法建立索引。请先修复索引，再归档项目。",
+  "Repair index": "修复索引",
+  "Retry project recovery before archiving.": "归档前请先重试项目恢复。",
+  "Project archive is unavailable because a damaged conversation cannot be verified.": "由于无法验证损坏的会话，项目归档不可用。",
+  "Repair the project index before archiving.": "归档前请先修复项目索引。",
+  "Retry project recovery before deleting projects.": "删除项目前请先重试项目恢复。",
+  "Finish or stop active sessions before archiving this project.": "归档项目前，请先完成或停止活动会话。"
 }

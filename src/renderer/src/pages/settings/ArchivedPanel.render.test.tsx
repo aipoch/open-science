@@ -195,4 +195,76 @@ describe('ArchivedPanel', () => {
     expect(window.api.acp.deleteSession).not.toHaveBeenCalled()
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'list' })
   })
+
+  it('shows Project recovery in Settings and keeps deletion unavailable until retry succeeds', async () => {
+    const archivedProject = { ...project, archivedAt: 2 }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [archivedProject],
+      isLoaded: true,
+      deleteProject
+    })
+    const onRetryCatalogRecovery = vi.fn()
+
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'project', projectId: archivedProject.id }}
+          onNavigate={vi.fn()}
+          canDeleteProjects={false}
+          hasCompleteSessionCatalog={false}
+          catalogRecovery={{ kind: 'project-deletion-recovery' }}
+          onRetryCatalogRecovery={onRetryCatalogRecovery}
+        />
+      )
+    )
+
+    expect(container.textContent).toContain('Project recovery needs attention')
+    const retry = container.querySelector<HTMLButtonElement>(
+      '[data-testid="session-persistence-retry"]'
+    )
+    await act(async () => retry?.click())
+    expect(onRetryCatalogRecovery).toHaveBeenCalledOnce()
+
+    const deleteButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    expect(deleteButton?.disabled).toBe(true)
+  })
+
+  it('keeps whole-Project deletion available with conservative copy for damaged authority', async () => {
+    const archivedProject = { ...project, archivedAt: 2 }
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [archivedProject],
+      isLoaded: true,
+      deleteProject
+    })
+
+    await act(async () =>
+      root.render(
+        <ArchivedPanel
+          view={{ kind: 'project', projectId: archivedProject.id }}
+          onNavigate={vi.fn()}
+          canDeleteProjects
+          hasCompleteSessionCatalog={false}
+          catalogRecovery={{
+            kind: 'damaged-authority',
+            affectedFileCount: 1
+          }}
+        />
+      )
+    )
+
+    const openDelete = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Delete project')
+    )
+    expect(openDelete?.disabled).toBe(false)
+    await act(async () => openDelete?.click())
+
+    const dialog = document.body.querySelector<HTMLElement>('[role="alertdialog"]')
+    expect(dialog?.textContent).toContain(
+      'all of its saved conversations, including any that could not be loaded during recovery'
+    )
+  })
 })

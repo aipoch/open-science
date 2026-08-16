@@ -13,6 +13,7 @@ import { LegacyDataMoveDialog } from '@/components/LegacyDataMoveDialog'
 import { LifecycleToast } from '@/components/LifecycleToast'
 import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import { PermissionUndoSnackbar } from '@/components/PermissionUndoSnackbar'
+import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { UpdateDialog } from '@/components/UpdateDialog'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
@@ -583,7 +584,12 @@ const AppContent = (): React.JSX.Element | null => {
         aria-hidden={isBasePresentationActive ? undefined : true}
       >
         <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
-        {sessionPersistence.loadError ? (
+        {sessionPersistence.catalogRecovery.kind !== 'ready' ? (
+          <SessionCatalogRecoveryAlert
+            recovery={sessionPersistence.catalogRecovery}
+            onRetry={sessionPersistence.retryLoad}
+          />
+        ) : sessionPersistence.loadError ? (
           <SessionPersistenceAlert
             title={t('Saved conversations could not be loaded')}
             message={sessionPersistence.loadError}
@@ -608,6 +614,7 @@ const AppContent = (): React.JSX.Element | null => {
             <HomePage
               canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
               hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+              catalogRecovery={sessionPersistence.catalogRecovery}
               onOpenGlobalSearch={() => {
                 if (appShellPresentation.allowsShortcut('globalSearch')) {
                   setIsGlobalSearchOpen(true)
@@ -639,6 +646,10 @@ const AppContent = (): React.JSX.Element | null => {
         open={activePresentation === 'settings'}
         onClose={closeSettings}
         onOpenSession={openPermissionSession}
+        canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
+        hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+        catalogRecovery={sessionPersistence.catalogRecovery}
+        onRetryCatalogRecovery={sessionPersistence.retryLoad}
       />
       <ConnectorApprovalDialog
         active={activePresentation === 'connectorApproval'}

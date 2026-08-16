@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
+import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -91,8 +92,12 @@ type HomeSessionUpdate = {
 type HomePageProps = {
   canDeleteProjects: boolean
   hasCompleteSessionCatalog: boolean
+  catalogRecovery?: SessionCatalogRecovery
   onOpenGlobalSearch: () => void
 }
+
+const INCOMPLETE_PROJECT_SESSION_CATALOG_ERROR =
+  'Cannot archive a Project while its Session catalog is incomplete.'
 
 // Optional warnings (currently Python and reduced key protection) never create a Home alert. Only a
 // failed check that blocks the core flow asks an existing user to revisit environment setup.
@@ -136,6 +141,7 @@ const rowActionClassName =
 const HomePage = ({
   canDeleteProjects,
   hasCompleteSessionCatalog,
+  catalogRecovery,
   onOpenGlobalSearch
 }: HomePageProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -179,6 +185,9 @@ const HomePage = ({
   const [markReadErrorSessionIds, setMarkReadErrorSessionIds] = useState<Set<string>>(
     () => new Set()
   )
+  const effectiveCatalogRecovery: SessionCatalogRecovery =
+    catalogRecovery ??
+    (hasCompleteSessionCatalog ? { kind: 'ready' } : { kind: 'repairable', reason: 'session-scan' })
 
   const activeProjects = useMemo(
     () => projects.filter((project) => project.archivedAt === undefined),
@@ -394,6 +403,19 @@ const HomePage = ({
           session.status === 'waiting-plan-approval')
     )
 
+  const archiveUnavailableReason = (project: Project): string | undefined => {
+    if (!canDeleteProjects) return t('Retry project recovery before archiving.')
+    if (!hasCompleteSessionCatalog) {
+      return effectiveCatalogRecovery.kind === 'damaged-authority'
+        ? t('Project archive is unavailable because a damaged conversation cannot be verified.')
+        : t('Repair the project index before archiving.')
+    }
+    if (!canArchiveProject(project)) {
+      return t('Finish or stop active sessions before archiving this project.')
+    }
+    return undefined
+  }
+
   const archiveProject = (project: Project): void => {
     if (!canArchiveProject(project) || archivingProjectIds.has(project.id)) return
 
@@ -403,7 +425,11 @@ const HomePage = ({
       .then((archived) => enqueueProjectArchive(archived))
       .catch((error: unknown) =>
         setProjectActionError(
-          error instanceof Error ? error.message : t('Could not archive project.')
+          error instanceof Error && error.message.includes(INCOMPLETE_PROJECT_SESSION_CATALOG_ERROR)
+            ? t('Repair the project index before archiving.')
+            : error instanceof Error
+              ? error.message
+              : t('Could not archive project.')
         )
       )
       .finally(() => {
@@ -878,6 +904,7 @@ const HomePage = ({
                             disabled={
                               !canArchiveProject(project) || archivingProjectIds.has(project.id)
                             }
+                            title={archiveUnavailableReason(project)}
                             onSelect={() => archiveProject(project)}
                           >
                             <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
@@ -890,6 +917,11 @@ const HomePage = ({
                           <DropdownMenuItem
                             className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
                             disabled={!canDeleteProjects}
+                            title={
+                              canDeleteProjects
+                                ? undefined
+                                : t('Retry project recovery before deleting projects.')
+                            }
                             onSelect={() => openDeleteDialog(project)}
                           >
                             <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />

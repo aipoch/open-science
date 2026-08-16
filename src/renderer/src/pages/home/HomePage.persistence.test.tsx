@@ -194,6 +194,38 @@ describe('HomePage persistence recovery', () => {
     expect(container.textContent).not.toContain('1 session')
   })
 
+  it('maps a raced incomplete-catalog archive rejection to index repair guidance', async () => {
+    const updateProjectArchive = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Error invoking remote method 'projects:update-archive': Error: Cannot archive a Project while its Session catalog is incomplete."
+        )
+      )
+    useProjectStore.setState({ updateProjectArchive } as never)
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const archive = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Archive'
+    )
+    await act(async () => archive?.click())
+
+    expect(updateProjectArchive).toHaveBeenCalledWith({
+      id: project.id,
+      archived: true,
+      expectedArchivedAt: null
+    })
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Repair the project index before archiving.'
+    )
+    expect(container.textContent).not.toContain('Session catalog is incomplete')
+  })
+
   it('guards confirmation when persistence becomes unavailable after the dialog opens', async () => {
     await act(async () =>
       root.render(
