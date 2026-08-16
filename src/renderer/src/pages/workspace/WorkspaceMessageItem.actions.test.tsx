@@ -149,7 +149,7 @@ afterEach(() => {
 })
 
 describe('WorkspaceMessageItem user message actions', () => {
-  it('keeps Branch in new session first in a completed Agent Message footer', async () => {
+  it('keeps Copy before Branch in a completed Agent Message footer', async () => {
     const onBranchInNewSession = vi.fn()
     await renderItem(
       createMessage({
@@ -162,13 +162,19 @@ describe('WorkspaceMessageItem user message actions', () => {
     )
 
     const footer = container.querySelector('[data-slot="assistant-message-footer"]')
+    const copyButton = getButton('Copy message')
     const branchButton = getButton('Branch in new session')
     const completedTime = footer?.querySelector('time')
     if (!footer || !completedTime) throw new Error('completed Agent Message footer not found')
 
     expect(
+      copyButton.compareDocumentPosition(branchButton) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(
       branchButton.compareDocumentPosition(completedTime) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    await click(copyButton)
+    expect(writeText).toHaveBeenCalledWith('Completed analysis')
     await click(branchButton)
     expect(onBranchInNewSession).toHaveBeenCalledWith('agent-message')
   })

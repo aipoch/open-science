@@ -889,7 +889,7 @@ const WorkspaceMessageItemImpl = ({
     []
   )
 
-  // Copies the prompt text and briefly swaps the icon to confirm the clipboard write succeeded.
+  // Copies the message text and briefly swaps the icon to confirm the clipboard write succeeded.
   const handleCopyMessage = (): void => {
     void navigator.clipboard.writeText(message.content).then(() => {
       setCopied(true)
@@ -1162,6 +1162,20 @@ const WorkspaceMessageItemImpl = ({
               >
                 {message.status === 'complete' && onBranchInNewSession ? (
                   <TooltipProvider delayDuration={200}>
+                    <UserMessageActionTooltip label={copied ? t('Copied') : t('Copy message')}>
+                      <button
+                        type="button"
+                        className={userMessageActionButtonClassName}
+                        aria-label={copied ? t('Copied') : t('Copy message')}
+                        onClick={handleCopyMessage}
+                      >
+                        {copied ? (
+                          <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        ) : (
+                          <Copy className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        )}
+                      </button>
+                    </UserMessageActionTooltip>
                     <UserMessageActionTooltip label={t('Branch in new session')}>
                       <button
                         type="button"
