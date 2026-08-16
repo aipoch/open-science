@@ -83,7 +83,6 @@ import {
 } from './lifecycle-shutdown'
 import { registerLifecycleIpcHandlers } from './lifecycle-broadcast'
 import { createLogsCommandOwner, registerLogsIpcHandlers } from './logs-ipc'
-import { registerNetworkIpcHandlers } from './network-ipc'
 import { registerWindowIpcHandlers } from './window-ipc'
 import { registerWindowFindIpcHandlers } from './window-find-ipc'
 import { TaskNotificationService } from './notifications/task-notifications'
@@ -1828,7 +1827,6 @@ const createApplicationModules = async (
     registerFileSaveHandlers({ resolveManagedFilePath, resolveSessionArtifactFilePath })
     registerLogsIpcHandlers(logsCommandOwner)
     registerGithubIpcHandlers({}, githubCommandOwner)
-    registerNetworkIpcHandlers()
     registerCliInstallIpcHandlers(cliCommandOwner)
     registerWindowIpcHandlers()
     registerWindowFindIpcHandlers()

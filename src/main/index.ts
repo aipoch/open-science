@@ -247,6 +247,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         { createDesktopBadgeAdapter, createWindowsBadgeBitmap },
         { wireNotificationInboxController },
         { registerUnreadTaskIpc },
+        { registerNetworkIpcHandlers },
         { createDatabaseStartupLogging },
         { createDatabaseStartupOwner },
         { installDatabaseStartupQuitGuard, registerDatabaseStartupIpc },
@@ -271,6 +272,7 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         import('./notifications/desktop-badge'),
         import('./notifications/notification-inbox-controller'),
         import('./notifications/unread-task-ipc'),
+        import('./network-ipc'),
         import('./database/database-startup-logging'),
         import('./database/database-startup-owner'),
         import('./database/database-startup-ipc'),
@@ -305,6 +307,10 @@ async function startElectronApp(mainEntryPath: string): Promise<void> {
         }
       })
       const startupWindowCloseOptions = createStartupWindowCloseOptions(() => app.quit())
+      // The renderer probes connectivity as soon as it mounts, before the full application runtime
+      // is composed. Install these handlers before creating the first BrowserWindow so that startup
+      // probe cannot race the desktop utility adapter installation.
+      registerNetworkIpcHandlers()
       const disposeDatabaseStartupIpc = registerDatabaseStartupIpc({
         ipcMain,
         owner: databaseStartupOwner,

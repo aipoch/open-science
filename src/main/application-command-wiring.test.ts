@@ -181,6 +181,16 @@ describe('production application command wiring', () => {
     expect(runtimeSource).toContain("await modules.dispose('rollback')")
   })
 
+  it('registers startup network IPC before creating the first renderer window', () => {
+    const preWindowStartup = compact(
+      between(indexSource, 'await app.whenReady()', 'const startupWindow = webMode.headless')
+    )
+
+    expect(preWindowStartup).toContain('registerNetworkIpcHandlers()')
+    expect(legacyAdapterBlock).not.toContain('registerNetworkIpcHandlers()')
+    expect(occurrences(indexSource + ipcSource, 'registerNetworkIpcHandlers()')).toBe(1)
+  })
+
   it('late-binds the unique Remote Access owner and passes only narrow views to Web and Task', () => {
     const startup = compact(
       between(
