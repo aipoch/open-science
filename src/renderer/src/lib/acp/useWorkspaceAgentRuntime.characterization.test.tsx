@@ -59,6 +59,7 @@ const createSnapshot = (overrides: Partial<AcpStateSnapshot> = {}): AcpStateSnap
 
 type RuntimeMock = {
   state: AcpStateSnapshot
+  reconcileSnapshot: Mock
   actionError: string | null
   isConnecting: boolean
   createSession: Mock
@@ -76,6 +77,7 @@ type RuntimeMock = {
 
 const createRuntime = (state: AcpStateSnapshot): RuntimeMock => ({
   state,
+  reconcileSnapshot: vi.fn(),
   actionError: null as string | null,
   isConnecting: false,
   createSession: vi.fn(),
@@ -334,7 +336,13 @@ describe('workspace Agent Runtime hook contract', () => {
     const runtime = createRuntime(createSnapshot())
     runtime.resumeSession.mockReturnValue(resume.promise)
     runtimeMock.current = runtime
-    const getState = vi.fn().mockResolvedValue(createSnapshot({ sessionIds: ['session-1'] }))
+    const reconciledSnapshot = createSnapshot({
+      revision: 2,
+      sessionIds: ['session-1'],
+      promptInFlight: false,
+      promptInFlightSessionIds: []
+    })
+    const getState = vi.fn().mockResolvedValue(reconciledSnapshot)
     window.api = { acp: { getState } } as never
     await render()
 
@@ -361,6 +369,7 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(getState.mock.invocationCallOrder[0]).toBeLessThan(
       runtime.sendPrompt.mock.invocationCallOrder[0]
     )
+    expect(runtime.reconcileSnapshot).toHaveBeenCalledWith(reconciledSnapshot)
   })
 
   it('routes permission commands through the runtime and persists its committed profile', async () => {

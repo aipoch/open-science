@@ -11,6 +11,7 @@ import {
   type AcpStateSnapshot,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
+import { useCallback } from 'react'
 import { useSessionStore } from '../../stores/session-store'
 import {
   acceptAcpRuntimeSnapshotRevision,
@@ -520,12 +521,27 @@ const refreshDelegatedWorkSessions = async (
   }
 }
 
-const drainWorkspaceRuntimeEventsForPersistence = async (sessionId?: string): Promise<void> => {
+const drainWorkspaceRuntimeEventsForPersistence = async (
+  sessionId?: string,
+  reconcileRuntimeSnapshot?: (snapshot: AcpStateSnapshot) => void
+): Promise<void> => {
   const snapshot = await window.api.acp.getState()
   const accepted = await ingestWorkspaceRuntimeSnapshot(snapshot, false)
+  // A persistence drain shares the global revision watermark with the live React projection.
+  // Reconcile the same accepted snapshot so the drain cannot strand that projection behind it.
+  if (accepted) reconcileRuntimeSnapshot?.(snapshot)
   await liveWorkspaceRuntimeEventProcessor.drain(sessionId)
   if (accepted) syncWorkspaceContextUsage(snapshot.sessionIds, snapshot.contextUsageBySession)
 }
+
+const useWorkspaceRuntimeEventDrain = (
+  reconcileRuntimeSnapshot: (snapshot: AcpStateSnapshot) => void
+): ((sessionId?: string) => Promise<void>) =>
+  useCallback(
+    (sessionId?: string) =>
+      drainWorkspaceRuntimeEventsForPersistence(sessionId, reconcileRuntimeSnapshot),
+    [reconcileRuntimeSnapshot]
+  )
 
 export {
   createWorkspaceRuntimeEventProcessor,
@@ -540,5 +556,6 @@ export {
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
-  syncWorkspacePermissionState
+  syncWorkspacePermissionState,
+  useWorkspaceRuntimeEventDrain
 }

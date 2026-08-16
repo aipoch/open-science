@@ -42,6 +42,7 @@ const getErrorMessage = (error: unknown): string => {
 // Centralizes renderer access to the main-process runtime IPC surface.
 const useAcpRuntime = (): {
   state: AcpStateSnapshot
+  reconcileSnapshot: (snapshot: AcpStateSnapshot) => void
   actionError: string | null
   isConnecting: boolean
   isDisconnecting: boolean
@@ -420,6 +421,7 @@ const useAcpRuntime = (): {
 
   return {
     state,
+    reconcileSnapshot: applySnapshot,
     actionError,
     isConnecting,
     isDisconnecting,

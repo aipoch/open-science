@@ -45,7 +45,8 @@ import {
   syncWorkspaceContextUsage,
   syncWorkspaceElicitationState,
   syncWorkspaceInteractionState,
-  syncWorkspacePermissionState
+  syncWorkspacePermissionState,
+  useWorkspaceRuntimeEventDrain
 } from './workspace-runtime-event-owner'
 import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
 import {
@@ -127,7 +128,6 @@ type WorkspaceAgentRuntime = {
 
 const WorkspaceAgentRuntimeContext = createContext<WorkspaceAgentRuntime | null>(null)
 const RuntimeProvider = WorkspaceAgentRuntimeContext.Provider
-
 const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
   const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
@@ -222,7 +222,7 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
     },
     []
   )
-  const drainRuntimeEvents = drainWorkspaceRuntimeEventsForPersistence
+  const drainRuntimeEvents = useWorkspaceRuntimeEventDrain(runtime.reconcileSnapshot)
   const previousStatusRef = useRef(runtime.state.status)
   const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
   const previousDurablePermissionSessionIdsRef = useRef<ReadonlySet<string>>(new Set())
