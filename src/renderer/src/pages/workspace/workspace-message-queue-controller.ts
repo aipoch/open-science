@@ -17,12 +17,18 @@ import {
   type PermissionProfileId
 } from '../../../../shared/permission-profiles'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import {
   useWorkspaceAgentRuntime,
   type WorkspaceAgentRuntime
 } from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import { docToArtifactRefs } from './composer/composer-doc'
+import {
+  isWorkspaceSpecialistBarrierInFlight,
+  subscribeWorkspaceSpecialistBarriers
+} from './workspace-specialist-barrier'
+import { useOpenSideChatParentSessionIds } from './use-side-chat-controller'
 import type { ComposerSendSnapshot } from './workspace-composer-controller'
 
 type MessageQueuePhase = 'queued' | 'interrupting' | 'sending' | 'error'
@@ -73,7 +79,7 @@ type WorkspaceMessageQueueControllerOptions = {
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
-  sideChatOpen: boolean
+  isSideChatOpen: (sessionId: string) => boolean
   composer: {
     setError: (error: string | null) => void
     restoreQueuedDraft: (snapshot: ComposerSendSnapshot) => boolean
@@ -115,6 +121,9 @@ type WorkspaceMessageQueueRuntimeOptions = Pick<
   | 'sendPreparationInFlightSessionIds'
   | 'saveAsSkillInFlightSessionIds'
   | 'runtime'
+  | 'isBarrierInFlight'
+  | 'isSpecialistReady'
+  | 'isSideChatOpen'
   | 'hasPendingPermissionRequest'
   | 'abortFixLoop'
   | 'getSession'
@@ -144,6 +153,8 @@ class WorkspaceMessageQueueOwner {
   }
 
   getSnapshot = (): MessageQueueSnapshot => this.snapshot
+
+  requestDrain = (): void => this.sessionSubscription?.drain()
 
   createQueueItemId(): string {
     this.nextQueueId += 1
@@ -230,19 +241,45 @@ const useProvidedWorkspaceMessageQueueOwner = (): WorkspaceMessageQueueOwner => 
 
 const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactElement => {
   const [owner] = useState(() => new WorkspaceMessageQueueOwner())
-  useEffect(() => () => owner.dispose(), [owner])
+  useEffect(() => {
+    const unsubscribeBarriers = subscribeWorkspaceSpecialistBarriers(owner.requestDrain)
+    return () => {
+      unsubscribeBarriers()
+      owner.dispose()
+    }
+  }, [owner])
   return createElement(WorkspaceMessageQueueContext.Provider, { value: owner }, children)
 }
 
 const WorkspaceMessageQueueRuntimeBridge = (): null => {
   const owner = useProvidedWorkspaceMessageQueueOwner()
   const runtime = useWorkspaceAgentRuntime()
+  const specialistCatalogLoaded = useSpecialistStore((state) => state.isLoaded)
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
+  const openSideChatParentSessionIds = useOpenSideChatParentSessionIds()
   useLayoutEffect(() => {
     owner.updateRuntime({
       promptInFlightSessionIds: runtime.promptInFlightSessionIds,
       sendPreparationInFlightSessionIds: runtime.sendPreparationInFlightSessionIds,
       saveAsSkillInFlightSessionIds: runtime.saveAsSkillInFlightSessionIds,
       runtime,
+      isBarrierInFlight: isWorkspaceSpecialistBarrierInFlight,
+      isSpecialistReady: (sessionId) => {
+        const session = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === sessionId)
+        if (!session) return false
+        if (session.specialistId === undefined) return true
+        if (!specialistCatalogLoaded) {
+          void loadSpecialists()
+          return false
+        }
+        return specialistItems.some(
+          (item) => item.kind === 'custom' && item.enabled && item.id === session.specialistId
+        )
+      },
+      isSideChatOpen: (sessionId) => openSideChatParentSessionIds.has(sessionId),
       hasPendingPermissionRequest: (sessionId) =>
         runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
       abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
@@ -250,7 +287,14 @@ const WorkspaceMessageQueueRuntimeBridge = (): null => {
         useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
       subscribeSessionChanges: useSessionStore.subscribe
     })
-  }, [owner, runtime])
+  }, [
+    loadSpecialists,
+    openSideChatParentSessionIds,
+    owner,
+    runtime,
+    specialistCatalogLoaded,
+    specialistItems
+  ])
   return null
 }
 
@@ -287,7 +331,7 @@ const queueSessionIsSendable = (
   !session.conversationGraphSyncBlocked &&
   !session.compacting &&
   !options.isBarrierInFlight(session.id) &&
-  !(options.activeSession?.id === session.id && options.sideChatOpen)
+  !options.isSideChatOpen(session.id)
 
 const useWorkspaceMessageQueueController = (
   options: WorkspaceMessageQueueControllerOptions

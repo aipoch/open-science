@@ -13,6 +13,10 @@ import {
   type WorkspaceMessageQueueController,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-controller'
+import {
+  isWorkspaceSpecialistBarrierInFlight,
+  setWorkspaceSpecialistBarrier
+} from './workspace-specialist-barrier'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -75,7 +79,7 @@ const options = (
   promptInFlightSessionIds: activeSession.status === 'running' ? ['session-a'] : [],
   sendPreparationInFlightSessionIds: [],
   saveAsSkillInFlightSessionIds: [],
-  sideChatOpen: false,
+  isSideChatOpen: vi.fn(() => false),
   composer: {
     setError: vi.fn(),
     restoreQueuedDraft: vi.fn(() => true),
@@ -144,6 +148,7 @@ const mounted: Hook[] = []
 
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
+  setWorkspaceSpecialistBarrier('session-a', false)
   vi.restoreAllMocks()
 })
 
@@ -188,6 +193,35 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
     workspace.returnToWorkspace()
     await vi.waitFor(() => expect(workspace.result.current.items).toEqual([]))
+  })
+
+  it('resumes background draining when a Specialist barrier settles', async () => {
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    setWorkspaceSpecialistBarrier(currentSession.id, true)
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      isBarrierInFlight: isWorkspaceSpecialistBarrierInFlight,
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      }
+    })
+    const workspace = renderController(input)
+    mounted.push(workspace)
+
+    act(() => workspace.result.current.lifecycle.enqueue(admission('send after barrier')))
+    workspace.leaveWorkspace()
+    currentSession = session('idle')
+    act(() => notifySessionChanged?.())
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+
+    act(() => setWorkspaceSpecialistBarrier(currentSession.id, false))
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
   })
 
   it('reorders, restores for editing, and discards removed snapshots', () => {

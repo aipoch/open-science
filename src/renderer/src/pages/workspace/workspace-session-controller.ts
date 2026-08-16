@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent
+} from 'react'
 
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import type {
@@ -14,6 +21,13 @@ import type {
   DeleteWorkspaceSessionOptions,
   WorkspaceSessionDeletionResult
 } from '@/lib/acp/workspace-session-deletion'
+
+import {
+  getWorkspaceSpecialistBarrierSnapshot,
+  isWorkspaceSpecialistBarrierInFlight,
+  setWorkspaceSpecialistBarrier,
+  subscribeWorkspaceSpecialistBarriers
+} from './workspace-specialist-barrier'
 
 type ReconfigureError = {
   sessionId: string
@@ -166,8 +180,11 @@ const useWorkspaceSessionController = ({
     {}
   )
   const [reconfigureError, setReconfigureError] = useState<ReconfigureError | null>(null)
-  const [barrierInFlightIds, setBarrierInFlightIds] = useState<ReadonlySet<string>>(new Set())
-  const barrierInFlightRef = useRef(new Set<string>())
+  const barrierInFlightIds = useSyncExternalStore(
+    subscribeWorkspaceSpecialistBarriers,
+    getWorkspaceSpecialistBarrierSnapshot,
+    getWorkspaceSpecialistBarrierSnapshot
+  )
   const specialistItemsRef = useRef(specialistItems)
 
   const [exportError, setExportError] = useState<string | null>(null)
@@ -216,14 +233,7 @@ const useWorkspaceSessionController = ({
   )
 
   const setBarrier = useCallback((sessionId: string, inFlight: boolean): void => {
-    if (inFlight) barrierInFlightRef.current.add(sessionId)
-    else barrierInFlightRef.current.delete(sessionId)
-    setBarrierInFlightIds((current) => {
-      const next = new Set(current)
-      if (inFlight) next.add(sessionId)
-      else next.delete(sessionId)
-      return next
-    })
+    setWorkspaceSpecialistBarrier(sessionId, inFlight)
   }, [])
 
   const clearPending = useCallback((sessionId: string): void => {
@@ -363,7 +373,7 @@ const useWorkspaceSessionController = ({
       return
     }
     const sessionId = activeSession.id
-    if (barrierInFlightRef.current.has(sessionId)) return
+    if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return
     const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
@@ -389,7 +399,7 @@ const useWorkspaceSessionController = ({
       const session = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
-      if (!session || barrierInFlightRef.current.has(sessionId)) return false
+      if (!session || isWorkspaceSpecialistBarrierInFlight(sessionId)) return false
       if (session.specialistId === undefined) return true
       if (!specialistCatalogLoaded) {
         void loadSpecialists()
@@ -400,7 +410,7 @@ const useWorkspaceSessionController = ({
       )
     }
     if (!activeSession) return !newConversationSpecialistUnavailable
-    if (barrierInFlightRef.current.has(activeSession.id)) return false
+    if (isWorkspaceSpecialistBarrierInFlight(activeSession.id)) return false
     if (activeSession.specialistId === undefined) return specialistSendAvailable
     if (!specialistCatalogLoaded) {
       void loadSpecialists()
@@ -429,7 +439,7 @@ const useWorkspaceSessionController = ({
     sessionId: string,
     specialistId: string | undefined
   ): Promise<boolean> => {
-    if (barrierInFlightRef.current.has(sessionId)) return false
+    if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return false
     setBarrier(sessionId, true)
     try {
       const result = await window.api?.specialist?.setSessionSpecialist?.({
@@ -480,7 +490,7 @@ const useWorkspaceSessionController = ({
     if (!activeSession || !reconfigureError) return
     const sessionId = activeSession.id
     const setter = window.api?.specialist?.setSessionSpecialist
-    if (!setter || barrierInFlightRef.current.has(sessionId)) return
+    if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
@@ -632,7 +642,7 @@ const useWorkspaceSessionController = ({
       canStartSend,
       captureSendIntent,
       prepareSpecialistSend,
-      isBarrierInFlight: (sessionId: string) => barrierInFlightRef.current.has(sessionId)
+      isBarrierInFlight: isWorkspaceSpecialistBarrierInFlight
     }
   }
 }

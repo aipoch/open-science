@@ -218,7 +218,8 @@ const useWorkspaceConversationController = (
     promptInFlightSessionIds: options.promptInFlightSessionIds,
     sendPreparationInFlightSessionIds: options.sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds: options.saveAsSkillInFlightSessionIds,
-    sideChatOpen: options.sideChatOpen,
+    isSideChatOpen: (sessionId) =>
+      optionsRef.current.activeSession?.id === sessionId && optionsRef.current.sideChatOpen,
     composer: {
       setError: options.composer.actions.setError,
       restoreQueuedDraft: (snapshot) =>
