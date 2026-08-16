@@ -63,6 +63,10 @@ export const SESSION_MANIFEST_VERSION = 1
 
 export type PersistedSessionStatus =
   'idle' | 'running' | 'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
+export type SessionWaitReason = Extract<
+  PersistedSessionStatus,
+  'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval'
+>
 export type PersistedMessageRole = 'user' | 'agent'
 export type PersistedMessageStatus = 'complete' | 'streaming' | 'error'
 export type MessageAttribution = Readonly<{

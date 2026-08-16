@@ -20,7 +20,7 @@ import {
 } from './migration-service'
 
 const futureTestMigration = (): MigrationManifestEntry => {
-  const id = '0007_test_suffix'
+  const id = '0008_test_suffix'
   const statements = [`UPDATE "Project" SET "name" = "name" WHERE 0`] as const
   const verifiers = [{ kind: 'table-exists', version: 1, table: 'Project' }] as const
   return {
@@ -34,7 +34,10 @@ const futureTestMigration = (): MigrationManifestEntry => {
 }
 
 const createDatabaseAtMigration0005 = async (client: PrismaClient): Promise<void> => {
-  const prefix = MIGRATION_MANIFEST.slice(0, -1)
+  const migration0006Index = MIGRATION_MANIFEST.findIndex(
+    (migration) => migration.id === '0006_database_domain_constraints'
+  )
+  const prefix = MIGRATION_MANIFEST.slice(0, migration0006Index)
   for (const migration of prefix) {
     if ('operations' in migration && migration.operations.length > 0) {
       throw new Error(`Unexpected operation in ${migration.id} test prefix.`)
@@ -214,10 +217,11 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ],
       from: null,
-      to: '0006_database_domain_constraints'
+      to: '0007_notification_attention_metadata'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -230,8 +234,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0006_database_domain_constraints',
-      to: '0006_database_domain_constraints'
+      from: '0007_notification_attention_metadata',
+      to: '0007_notification_attention_metadata'
     })
   })
 
@@ -249,14 +253,13 @@ describe('application database migrations', () => {
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
     await client.$executeRawUnsafe('DROP INDEX "ComputeJob_status_idx"')
-    await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" = '0006_database_domain_constraints'`
-    )
+    await client.$executeRawUnsafe(`DELETE FROM "_open_science_migrations"
+      WHERE "id" IN ('0006_database_domain_constraints', '0007_notification_attention_metadata')`)
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0006_database_domain_constraints'],
+      applied: ['0006_database_domain_constraints', '0007_notification_attention_metadata'],
       from: '0005_project_preview_state_owner_fk',
-      to: '0006_database_domain_constraints'
+      to: '0007_notification_attention_metadata'
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
   })
@@ -312,9 +315,9 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0006_database_domain_constraints'],
+      applied: ['0006_database_domain_constraints', '0007_notification_attention_metadata'],
       from: '0005_project_preview_state_owner_fk',
-      to: '0006_database_domain_constraints'
+      to: '0007_notification_attention_metadata'
     })
     await expect(
       client.$queryRaw<
@@ -413,7 +416,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0006_database_domain_constraints'
+      migrationId: '0007_notification_attention_metadata'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -429,9 +432,9 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).resolves.toEqual({
       adoptedLegacy: false,
-      applied: ['0007_test_suffix'],
-      from: '0006_database_domain_constraints',
-      to: '0007_test_suffix'
+      applied: ['0008_test_suffix'],
+      from: '0007_notification_attention_metadata',
+      to: '0008_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ id: string }>>`
@@ -444,7 +447,8 @@ describe('application database migrations', () => {
       { id: '0004_review_assessment_snapshots' },
       { id: '0005_project_preview_state_owner_fk' },
       { id: '0006_database_domain_constraints' },
-      { id: '0007_test_suffix' }
+      { id: '0007_notification_attention_metadata' },
+      { id: '0008_test_suffix' }
     ])
   })
 
@@ -502,10 +506,11 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0006_database_domain_constraints'
+      to: '0007_notification_attention_metadata'
     })
     expect(backupEvents).toEqual([
       {
@@ -531,6 +536,11 @@ describe('application database migrations', () => {
       {
         migrationId: '0006_database_domain_constraints',
         path: `${databasePath}.before-0006_database_domain_constraints.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0007_notification_attention_metadata',
+        path: `${databasePath}.before-0007_notification_attention_metadata.backup`,
         reused: false
       }
     ])
@@ -564,7 +574,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0007_test_suffix'
+      migrationId: '0008_test_suffix'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -582,7 +592,8 @@ describe('application database migrations', () => {
       { id: '0003_granted_local_roots' },
       { id: '0004_review_assessment_snapshots' },
       { id: '0005_project_preview_state_owner_fk' },
-      { id: '0006_database_domain_constraints' }
+      { id: '0006_database_domain_constraints' },
+      { id: '0007_notification_attention_metadata' }
     ])
   })
 
@@ -604,7 +615,7 @@ describe('application database migrations', () => {
       migrateApplicationDatabaseWithManifest(client, [...MIGRATION_MANIFEST, future])
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0007_test_suffix'
+      migrationId: '0008_test_suffix'
     })
   })
 
@@ -636,9 +647,10 @@ describe('application database migrations', () => {
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
         '0006_database_domain_constraints',
-        '0007_test_suffix'
+        '0007_notification_attention_metadata',
+        '0008_test_suffix'
       ],
-      to: '0007_test_suffix'
+      to: '0008_test_suffix'
     })
     await expect(
       client.project.findUniqueOrThrow({ where: { id: 'legacy-project' } })
@@ -783,7 +795,7 @@ describe('application database migrations', () => {
     await client.project.create({ data: { id: 'project-1', name: 'Preserved' } })
     await client.$executeRaw`
       INSERT INTO "_open_science_migrations" ("id", "checksum")
-      VALUES (${'0006_future_schema'}, ${'f'.repeat(64)})
+      VALUES (${'0008_future_schema'}, ${'f'.repeat(64)})
     `
 
     await expect(migrateApplicationDatabase(client)).rejects.toMatchObject({
@@ -857,7 +869,8 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ]
     })
     await expect(
@@ -899,7 +912,8 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -954,7 +968,8 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ]
     })
     await expect(
@@ -1012,7 +1027,8 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ]
     })
     await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
@@ -1104,7 +1120,8 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ]
     })
     await expect(
@@ -1149,7 +1166,8 @@ describe('application database migrations', () => {
         '0003_granted_local_roots',
         '0004_review_assessment_snapshots',
         '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints'
+        '0006_database_domain_constraints',
+        '0007_notification_attention_metadata'
       ]
     })
     expect(backupEvents).toEqual([
@@ -1181,6 +1199,11 @@ describe('application database migrations', () => {
       {
         migrationId: '0006_database_domain_constraints',
         path: `${databasePath}.before-0006_database_domain_constraints.backup`,
+        reused: false
+      },
+      {
+        migrationId: '0007_notification_attention_metadata',
+        path: `${databasePath}.before-0007_notification_attention_metadata.backup`,
         reused: false
       }
     ])
@@ -1579,6 +1602,11 @@ describe('application database migrations', () => {
         migrationId: '0006_database_domain_constraints',
         path: `${databasePath}.before-0006_database_domain_constraints.backup`,
         reused: false
+      }),
+      expect.objectContaining({
+        migrationId: '0007_notification_attention_metadata',
+        path: `${databasePath}.before-0007_notification_attention_metadata.backup`,
+        reused: false
       })
     ])
     expect(retired).toEqual([
@@ -1599,6 +1627,10 @@ describe('application database migrations', () => {
       {
         migrationId: '0006_database_domain_constraints',
         path: `${databasePath}.before-0006_database_domain_constraints.backup`
+      },
+      {
+        migrationId: '0007_notification_attention_metadata',
+        path: `${databasePath}.before-0007_notification_attention_metadata.backup`
       }
     ])
     await expect(access(backupPath)).rejects.toMatchObject({ code: 'ENOENT' })

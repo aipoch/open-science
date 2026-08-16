@@ -53,6 +53,7 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "dedupeKey" TEXT NOT NULL,
     "kind" TEXT NOT NULL,
     "source" TEXT,
+    "attentionReason" TEXT,
     "projectId" TEXT,
     "sessionId" TEXT,
     "originId" TEXT NOT NULL,
@@ -61,7 +62,10 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "readAt" DATETIME,
     "actionState" TEXT,
-    "settledAt" DATETIME
+    "settledAt" DATETIME,
+    "targetInvalidatedAt" DATETIME,
+    CONSTRAINT "NotificationInboxItem_source_check" CHECK ("source" IS NULL OR "source" IN ('agent-tool', 'agent-question', 'agent-runtime', 'connector', 'compute', 'skill-import', 'session-plan')),
+    CONSTRAINT "NotificationInboxItem_attentionReason_check" CHECK ("attentionReason" IS NULL OR "attentionReason" IN ('waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'task-max-tokens', 'task-max-turn-requests', 'task-refusal', 'task-unclean-stop'))
 );`,
   `CREATE TABLE IF NOT EXISTS "Review" (
     "id" TEXT NOT NULL PRIMARY KEY,

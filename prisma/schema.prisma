@@ -85,6 +85,7 @@ model NotificationInboxItem {
   dedupeKey   String    @unique
   kind        String
   source      String?
+  attentionReason String?
   projectId   String?
   sessionId   String?
   originId    String
@@ -94,6 +95,7 @@ model NotificationInboxItem {
   readAt      DateTime?
   actionState String?
   settledAt   DateTime?
+  targetInvalidatedAt DateTime?
 
   @@index([readAt, sequence])
   @@index([sessionId])

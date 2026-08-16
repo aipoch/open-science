@@ -1,4 +1,5 @@
 import type { ChatSession, SessionStatus } from './session-store-persistence-owner'
+import type { SessionWaitReason } from '../../../shared/session-persistence'
 
 export type SessionInteractionState = Readonly<{
   permission: boolean
@@ -6,10 +7,7 @@ export type SessionInteractionState = Readonly<{
   plan: boolean
 }>
 
-export type SessionWaitReason = Extract<
-  SessionStatus,
-  'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval'
->
+export type { SessionWaitReason } from '../../../shared/session-persistence'
 
 export type SessionBlockingInteraction = 'permission' | 'elicitation' | 'plan'
 

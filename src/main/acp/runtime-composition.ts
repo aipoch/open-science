@@ -360,6 +360,7 @@ const createAcpRuntime = ({
                           dedupeKey: `authorization:session-plan:${request.artifactVersionId}`,
                           kind: 'authorization.required',
                           source: 'session-plan',
+                          attentionReason: 'waiting-plan-approval',
                           projectId: request.projectId,
                           sessionId: request.sessionId,
                           originId: request.artifactVersionId,

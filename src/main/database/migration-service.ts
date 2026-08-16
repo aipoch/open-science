@@ -20,6 +20,7 @@ import { grantedLocalRootsMigration } from './migrations/0003-granted-local-root
 import { reviewAssessmentSnapshotsMigration } from './migrations/0004-review-assessment-snapshots'
 import { projectPreviewStateOwnerFkMigration } from './migrations/0005-project-preview-state-owner-fk'
 import { databaseDomainConstraintsMigration } from './migrations/0006-database-domain-constraints'
+import { notificationAttentionMetadataMigration } from './migrations/0007-notification-attention-metadata'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -174,12 +175,28 @@ const DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
   databaseDomainConstraintsMigration.verifiers,
   databaseDomainConstraintsMigration.operations
 )
+const NOTIFICATION_ATTENTION_METADATA_CHECKSUM = checksumMigrationPayload(
+  notificationAttentionMetadataMigration.id,
+  notificationAttentionMetadataMigration.statements,
+  notificationAttentionMetadataMigration.verifiers,
+  notificationAttentionMetadataMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
     Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
   ])
 )
+const NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints =
+  Object.fromEntries(
+    notificationAttentionMetadataMigration.verifiers
+      .filter((verifier) => verifier.kind === 'check-constraints-exist')
+      .flatMap((verifier) => verifier.tables)
+      .map(({ table, constraints }) => [
+        table,
+        Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+      ])
+  )
 const MIGRATION_MANIFEST = [
   {
     ...runtimeSchemaBaselineMigration,
@@ -214,6 +231,12 @@ const MIGRATION_MANIFEST = [
   {
     ...databaseDomainConstraintsMigration,
     checksum: DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...notificationAttentionMetadataMigration,
+    checksum: NOTIFICATION_ATTENTION_METADATA_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1012,11 +1035,17 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === databaseDomainConstraintsMigration.id &&
       candidate.checksum === DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM
   )
+  const adoptsNotificationAttentionMetadata = manifest.some(
+    (candidate) =>
+      candidate.id === notificationAttentionMetadataMigration.id &&
+      candidate.checksum === NOTIFICATION_ATTENTION_METADATA_CHECKSUM
+  )
   const applied: string[] = []
   const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
-  const allowedSuffixChecks = adoptsDatabaseDomainConstraints
-    ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS
-    : {}
+  const allowedSuffixChecks = {
+    ...(adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {}),
+    ...(adoptsNotificationAttentionMetadata ? NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS : {})
+  }
 
   let nextIndex = appliedCount
   if (nextIndex === 0) {
@@ -1053,6 +1082,7 @@ export {
   BASELINE_CHECKSUM,
   PROJECT_AGENT_CONTEXT_CHECKSUM,
   DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM,
+  NOTIFICATION_ATTENTION_METADATA_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

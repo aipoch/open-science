@@ -1,6 +1,16 @@
 {
   "constraints": [
     {
+      "tableName": "NotificationInboxItem",
+      "name": "NotificationInboxItem_source_check",
+      "expression": "\"source\" IS NULL OR \"source\" IN ('agent-tool', 'agent-question', 'agent-runtime', 'connector', 'compute', 'skill-import', 'session-plan')"
+    },
+    {
+      "tableName": "NotificationInboxItem",
+      "name": "NotificationInboxItem_attentionReason_check",
+      "expression": "\"attentionReason\" IS NULL OR \"attentionReason\" IN ('waiting-for-user', 'waiting-permission', 'waiting-plan-approval', 'task-max-tokens', 'task-max-turn-requests', 'task-refusal', 'task-unclean-stop')"
+    },
+    {
       "tableName": "PermissionGrant",
       "name": "PermissionGrant_capabilityKind_check",
       "expression": "\"capabilityKind\" IN ('customize_mutation', 'mcp_tool', 'execution', 'file_operation', 'skill_operation', 'builtin_tool')"

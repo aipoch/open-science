@@ -243,7 +243,7 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items[0]?.originId).toBe(String(MAX_NOTIFICATION_INBOX_ITEMS))
   })
 
-  it('acknowledges archive history and removes deleted targets independently', async () => {
+  it('acknowledges archive history and retains deleted targets as invalidated', async () => {
     const repository = await createRepository()
     await record(repository, 'archive')
     await record(repository, 'delete')
@@ -260,18 +260,50 @@ describe('NotificationInboxDbRepository', () => {
     })
 
     await repository.markSessionsRead(['session-archive'], 5000)
-    await repository.deleteSessions(['session-delete'])
+    await repository.invalidateSessions(['session-delete'], 5500)
 
     await expect(repository.snapshot()).resolves.toMatchObject({
       unreadCount: 0,
       items: [
         { sessionId: 'session-archive', readAt: 5000 },
+        { sessionId: 'session-delete', readAt: 5500, targetInvalidatedAt: 5500 },
         { sessionId: 'session-archive', readAt: 5000 }
       ]
     })
   })
 
-  it('chunks multi-id read, deletion, and catalog mutations inside transactions', async () => {
+  it('invalidates once without settling a pending request', async () => {
+    const repository = await createRepository()
+    await repository.record({
+      id: 'approval-deleted',
+      dedupeKey: 'authorization:connector:deleted',
+      kind: 'authorization.required',
+      source: 'connector',
+      attentionReason: 'waiting-permission',
+      sessionId: 'session-deleted',
+      originId: 'deleted',
+      title: 'Approval needed',
+      summary: 'A connector request needs your approval.',
+      actionState: 'pending'
+    })
+
+    await repository.invalidateSessions(['session-deleted'], 5500)
+    await repository.invalidateSessions(['session-deleted'], 6500)
+
+    await expect(repository.snapshot()).resolves.toMatchObject({
+      unreadCount: 0,
+      items: [
+        {
+          actionState: 'pending',
+          attentionReason: 'waiting-permission',
+          readAt: 5500,
+          targetInvalidatedAt: 5500
+        }
+      ]
+    })
+  })
+
+  it('chunks multi-id read and invalidation mutations inside transactions', async () => {
     const updateMany = vi.fn(async () => ({ count: 1 }))
     const deleteMany = vi.fn(async () => ({ count: 1 }))
     const sessionIds = Array.from({ length: 501 }, (_, index) => `session-${index}`)
@@ -292,10 +324,10 @@ describe('NotificationInboxDbRepository', () => {
     await repository.markSessionsRead(sessionIds, 6000)
     await repository.markSessionTaskOutcomesRead(sessionIds, 6000)
     await repository.markSessionCompletionsRead(sessionIds, 6000)
-    await repository.deleteSessions(sessionIds)
-    await repository.reconcileSessionCatalog([])
+    await repository.invalidateSessions(sessionIds, 6000)
+    await repository.reconcileSessionCatalog([], 6000)
 
-    expect(updateMany).toHaveBeenCalledTimes(8)
-    expect(deleteMany).toHaveBeenCalledTimes(4)
+    expect(updateMany).toHaveBeenCalledTimes(16)
+    expect(deleteMany).not.toHaveBeenCalled()
   })
 })

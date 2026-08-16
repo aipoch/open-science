@@ -1,3 +1,5 @@
+import type { SessionWaitReason } from './session-persistence'
+
 // The conversation a desktop-notification click should open. Main holds it (consume-once) until
 // the renderer pulls it via 'notifications:take-pending-open-session' once its session store is
 // hydrated — a push sent before the renderer's listener exists would be lost. Token uniquely
@@ -20,7 +22,20 @@ export type NotificationKind =
   'task.completed' | 'task.needs-attention' | 'task.failed' | 'authorization.required'
 
 export type NotificationSource =
-  'agent-tool' | 'agent-question' | 'connector' | 'compute' | 'skill-import' | 'session-plan'
+  | 'agent-tool'
+  | 'agent-question'
+  | 'agent-runtime'
+  | 'connector'
+  | 'compute'
+  | 'skill-import'
+  | 'session-plan'
+
+export type NotificationAttentionReason =
+  | SessionWaitReason
+  | 'task-max-tokens'
+  | 'task-max-turn-requests'
+  | 'task-refusal'
+  | 'task-unclean-stop'
 
 export type NotificationActionState = 'pending' | 'resolved' | 'rejected' | 'expired' | 'cancelled'
 
@@ -30,6 +45,7 @@ export type NotificationInboxItem = Readonly<{
   dedupeKey: string
   kind: NotificationKind
   source?: NotificationSource
+  attentionReason?: NotificationAttentionReason
   projectId?: string
   sessionId?: string
   originId: string
@@ -39,6 +55,7 @@ export type NotificationInboxItem = Readonly<{
   readAt?: number
   actionState?: NotificationActionState
   settledAt?: number
+  targetInvalidatedAt?: number
 }>
 
 export type NotificationInboxSnapshot = Readonly<{

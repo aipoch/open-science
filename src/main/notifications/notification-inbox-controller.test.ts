@@ -33,7 +33,7 @@ const repository = (
       unreadCount: 0,
       latestSequence: 1
     })),
-    deleteSessions: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 0 })),
+    invalidateSessions: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 0 })),
     reconcileSessionCatalog: vi.fn(async () => ({
       changed: false,
       unreadCount: 0,

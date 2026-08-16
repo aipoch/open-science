@@ -35,14 +35,12 @@ import { cn } from '@/lib/utils'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
+import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import { NotificationBell } from '@/components/NotificationBell'
 
-import {
-  projectPresentedSessionActionability,
-  sessionWaitReasonLabelKeys
-} from './session-wait-reason'
+import { projectPresentedSessionActionability } from './session-wait-reason'
 
 type WorkspaceSidebarProps = {
   projectName: string

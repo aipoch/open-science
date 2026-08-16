@@ -11,12 +11,6 @@ import { hasAnswerableDelegatedQuestion } from './subagent-release-projection'
 
 export type SessionWaitReason = StoreSessionWaitReason
 
-export const sessionWaitReasonLabelKeys = {
-  'waiting-for-user': 'Waiting for your answer',
-  'waiting-permission': 'Waiting for permission',
-  'waiting-plan-approval': 'Waiting for plan approval'
-} as const satisfies Record<SessionWaitReason, string>
-
 export { isSessionWaitReason }
 
 export const projectPresentedSessionActionability = (

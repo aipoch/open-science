@@ -28,6 +28,10 @@ const EXPECTED_MIGRATION_LEDGER = [
   {
     id: '0006_database_domain_constraints',
     checksum: '3cb84b96954d412b7d68bf3b2b21a5de8ad428b1e6b5d57c69919118e660b904'
+  },
+  {
+    id: '0007_notification_attention_metadata',
+    checksum: 'fad3ef7da9f26b7d6da2321ca44674d5c96238ab65515714b51dfe76df7fe10a'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'

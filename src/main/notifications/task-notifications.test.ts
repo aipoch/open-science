@@ -355,6 +355,7 @@ describe('TaskNotificationService', () => {
       expect.objectContaining({
         dedupeKey: 'authorization:agent-tool:req-1',
         kind: 'authorization.required',
+        attentionReason: 'waiting-permission',
         summary: 'A tool request needs your approval.',
         actionState: 'pending'
       })
@@ -364,6 +365,7 @@ describe('TaskNotificationService', () => {
       expect.objectContaining({
         dedupeKey: 'authorization:session-plan:plan-version-1',
         source: 'session-plan',
+        attentionReason: 'waiting-plan-approval',
         summary: 'A plan needs your approval.'
       })
     )
@@ -372,6 +374,7 @@ describe('TaskNotificationService', () => {
       expect.objectContaining({
         dedupeKey: 'task:event-1',
         kind: 'task.completed',
+        source: 'agent-runtime',
         summary: 'A task completed.'
       })
     )
@@ -415,6 +418,7 @@ describe('TaskNotificationService', () => {
         dedupeKey: 'input:agent-question:choice-1',
         kind: 'task.needs-attention',
         source: 'agent-question',
+        attentionReason: 'waiting-for-user',
         actionState: 'pending'
       })
     )
@@ -664,6 +668,38 @@ describe('TaskNotificationService', () => {
       )
       expect(record).not.toHaveBeenCalledWith(
         expect.objectContaining({ summary: expect.stringContaining('Rate limit reached') })
+      )
+    }
+  )
+
+  it.each([
+    ['max_tokens', 'task-max-tokens'],
+    ['max_turn_requests', 'task-max-turn-requests'],
+    ['refusal', 'task-refusal'],
+    ['future_provider_reason', 'task-unclean-stop']
+  ] as const)(
+    'maps stop reason %s into bounded inbox metadata',
+    async (stopReason, attentionReason) => {
+      const record = vi.fn(async () => undefined)
+      const { service } = createService({
+        inbox: {
+          record,
+          settleAction: vi.fn(async () => undefined),
+          settleAuthorization: vi.fn(async () => undefined)
+        }
+      })
+
+      service.trackPrompt({ sessionId: 'session-1', text: 'Task' })
+      await service.handleRuntimeEvent(stopEvent(stopReason))
+
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'agent-runtime',
+          attentionReason
+        })
+      )
+      expect(record).not.toHaveBeenCalledWith(
+        expect.objectContaining({ attentionReason: stopReason })
       )
     }
   )

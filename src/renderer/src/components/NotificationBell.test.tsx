@@ -145,6 +145,98 @@ describe('NotificationBell', () => {
     expect(document.body.textContent).not.toContain('Needs approval')
   })
 
+  it.each([
+    ['waiting-for-user', 'Waiting for your answer'],
+    ['waiting-permission', 'Waiting for permission'],
+    ['waiting-plan-approval', 'Waiting for plan approval']
+  ] as const)('uses the shared Home label for %s', async (attentionReason, label) => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item ? [{ ...item, attentionReason }] : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    expect(document.body.textContent).toContain(label)
+    expect(document.body.textContent).not.toContain('Needs approval')
+    expect(document.body.textContent).not.toContain('Needs response')
+  })
+
+  it('shows the settled action state instead of the original wait reason', async () => {
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      items: item
+        ? [
+            {
+              ...item,
+              source: 'agent-question',
+              attentionReason: 'waiting-for-user',
+              actionState: 'resolved'
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+
+    expect(document.body.textContent).toContain('Answered')
+    expect(document.body.textContent).not.toContain('Waiting for your answer')
+  })
+
+  it('makes target invalidation override pending labels, replay, and navigation', async () => {
+    const replayConnectorApproval = vi.fn(async (): Promise<ConnectorApprovalRequest> => ({
+      id: 'request-1',
+      connector: 'pubchem',
+      method: 'search',
+      argsPreview: '{}',
+      availableScopes: ['once']
+    }))
+    const openSessionById = vi.fn()
+    const openProject = vi.fn()
+    const markRead = vi.fn(async () => undefined)
+    window.api.settings.replayConnectorApproval = replayConnectorApproval
+    useNavigationStore.setState({ openSessionById, openProject })
+    const item = useNotificationInboxStore.getState().items[0]
+    useNotificationInboxStore.setState({
+      markRead,
+      items: item
+        ? [
+            {
+              ...item,
+              projectId: 'project-1',
+              sessionId: 'session-1',
+              attentionReason: 'waiting-permission',
+              targetInvalidatedAt: Date.now()
+            }
+          ]
+        : []
+    })
+    await act(async () => root.render(<NotificationBell />))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Messages,"]')?.click()
+    )
+    const message = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Approval needed')
+    )
+    expect(message?.disabled).toBe(true)
+    expect(message?.textContent).toContain('Session no longer available')
+    expect(message?.textContent).not.toContain('Needs approval')
+
+    if (message) message.disabled = false
+    await act(async () => message?.click())
+    expect(replayConnectorApproval).not.toHaveBeenCalled()
+    expect(openSessionById).not.toHaveBeenCalled()
+    expect(openProject).not.toHaveBeenCalled()
+    expect(markRead).not.toHaveBeenCalled()
+  })
+
   it('keeps opening passive and marks messages only through explicit actions', async () => {
     const markRead = vi.fn(async () => undefined)
     const markAllRead = vi.fn(async () => undefined)

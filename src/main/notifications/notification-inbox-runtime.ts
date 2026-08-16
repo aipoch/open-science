@@ -4,7 +4,7 @@ import type { NotificationInboxController } from './notification-inbox-controlle
 type NotificationInboxDeletionRuntimeDependencies = Readonly<{
   inbox: Pick<
     NotificationInboxController,
-    'deleteSessions' | 'markSessionsRead' | 'reconcileSessionCatalog'
+    'invalidateSessions' | 'markSessionsRead' | 'reconcileSessionCatalog'
   >
   sessionPersistenceCoordinator: {
     setSessionDeletionHandlers(handlers: SessionDeletionHandlers): void
@@ -13,14 +13,14 @@ type NotificationInboxDeletionRuntimeDependencies = Readonly<{
 }>
 
 // Session JSON remains authoritative for target existence. Archive acknowledges related messages
-// while retaining bounded history; durable deletion removes them and blocks late terminal races.
+// while retaining bounded history; durable deletion invalidates them and blocks late terminal races.
 export const bindNotificationInboxDeletionRuntime = (
   dependencies: NotificationInboxDeletionRuntimeDependencies
 ): void => {
   dependencies.sessionPersistenceCoordinator.setSessionDeletionHandlers({
     commit: async (sessionIds) => {
       await Promise.all([
-        dependencies.inbox.deleteSessions(sessionIds),
+        dependencies.inbox.invalidateSessions(sessionIds),
         dependencies.onSessionsDeleted?.(sessionIds)
       ])
     },

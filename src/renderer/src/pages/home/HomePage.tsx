@@ -45,6 +45,7 @@ import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
+import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import { APP } from '../../../../shared/app-config'
 import { earliestCurrentDelegatedAttemptStartedAt } from '../../../../shared/delegated-work-projection'
 import type { Project } from '../../../../shared/projects'
@@ -53,7 +54,6 @@ import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
 import {
   isSessionWaitReason,
   projectPresentedSessionActionability,
-  sessionWaitReasonLabelKeys,
   type SessionWaitReason
 } from '../workspace/session-wait-reason'
 

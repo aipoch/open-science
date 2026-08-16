@@ -19,6 +19,7 @@ import type { NotificationInboxItem } from '../../../shared/notifications'
 
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { relativeTimeParts } from '@/lib/format-relative-time'
+import { sessionWaitReasonLabelKeys } from '@/lib/session-wait-reason-labels'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -46,6 +47,19 @@ const actionLabel = (
   item: NotificationInboxItem,
   t: ReturnType<typeof useTranslation>['t']
 ): string | undefined => {
+  if (item.targetInvalidatedAt !== undefined) return t('Session no longer available')
+  if (
+    item.actionState === 'pending' &&
+    (item.attentionReason === 'waiting-for-user' ||
+      item.attentionReason === 'waiting-permission' ||
+      item.attentionReason === 'waiting-plan-approval')
+  ) {
+    return t(sessionWaitReasonLabelKeys[item.attentionReason])
+  }
+  if (item.attentionReason === 'task-max-tokens') return t('Length limit reached')
+  if (item.attentionReason === 'task-max-turn-requests') return t('Turn limit reached')
+  if (item.attentionReason === 'task-refusal') return t('Request declined')
+  if (item.attentionReason === 'task-unclean-stop') return t('Task stopped unexpectedly')
   if (item.source === 'agent-question') {
     if (item.actionState === 'pending') return t('Needs response')
     if (item.actionState === 'resolved') return t('Answered')
@@ -218,6 +232,7 @@ const NotificationBell = ({
   }, [open, updatePanelPosition])
 
   const openItem = async (item: NotificationInboxItem): Promise<void> => {
+    if (item.targetInvalidatedAt !== undefined) return
     if (item.readAt === undefined) await markRead([item.id])
     const replayedApproval = await replayPendingApproval(item)
     if (item.sessionId) {
@@ -363,10 +378,13 @@ const NotificationBell = ({
                           key={item.id}
                           type="button"
                           onClick={() => void openItem(item)}
+                          disabled={item.targetInvalidatedAt !== undefined}
                           className={cn(
                             'group flex w-full items-start gap-2.5 rounded-lg px-2.5 text-left transition-colors duration-150 ease-out hover:bg-bg-300 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
                             isMobile ? 'py-3' : 'py-2.5',
-                            item.readAt === undefined && 'bg-bg-100/70'
+                            item.readAt === undefined && 'bg-bg-100/70',
+                            item.targetInvalidatedAt !== undefined &&
+                              'cursor-default hover:bg-transparent active:bg-transparent'
                           )}
                         >
                           <span

@@ -2,6 +2,7 @@ import type { NotificationInboxItem as DbNotificationInboxItem, PrismaClient } f
 
 import type {
   NotificationActionState,
+  NotificationAttentionReason,
   NotificationInboxItem,
   NotificationKind,
   NotificationSource
@@ -23,6 +24,7 @@ type NotificationRecordInput = Readonly<{
   dedupeKey: string
   kind: NotificationKind
   source?: NotificationSource
+  attentionReason?: NotificationAttentionReason
   projectId?: string
   sessionId?: string
   originId: string
@@ -60,12 +62,35 @@ const mutateInChunks = async <Value>(
   return count
 }
 
+const invalidateSessionRows = async (
+  client: Pick<NotificationInboxClient, 'notificationInboxItem'>,
+  sessionIds: readonly string[],
+  invalidatedAt: Date
+): Promise<number> => {
+  const invalidated = await mutateInChunks(sessionIds, (sessionIdsChunk) =>
+    client.notificationInboxItem.updateMany({
+      where: { sessionId: { in: sessionIdsChunk }, targetInvalidatedAt: null },
+      data: { targetInvalidatedAt: invalidatedAt }
+    })
+  )
+  const acknowledged = await mutateInChunks(sessionIds, (sessionIdsChunk) =>
+    client.notificationInboxItem.updateMany({
+      where: { sessionId: { in: sessionIdsChunk }, readAt: null },
+      data: { readAt: invalidatedAt }
+    })
+  )
+  return invalidated + acknowledged
+}
+
 const toInboxItem = (row: DbNotificationInboxItem): NotificationInboxItem => ({
   id: row.id,
   sequence: row.sequence,
   dedupeKey: row.dedupeKey,
   kind: row.kind as NotificationKind,
   ...(row.source ? { source: row.source as NotificationSource } : {}),
+  ...(row.attentionReason
+    ? { attentionReason: row.attentionReason as NotificationAttentionReason }
+    : {}),
   ...(row.projectId ? { projectId: row.projectId } : {}),
   ...(row.sessionId ? { sessionId: row.sessionId } : {}),
   originId: row.originId,
@@ -74,7 +99,8 @@ const toInboxItem = (row: DbNotificationInboxItem): NotificationInboxItem => ({
   createdAt: row.createdAt.getTime(),
   ...(row.readAt ? { readAt: row.readAt.getTime() } : {}),
   ...(row.actionState ? { actionState: row.actionState as NotificationActionState } : {}),
-  ...(row.settledAt ? { settledAt: row.settledAt.getTime() } : {})
+  ...(row.settledAt ? { settledAt: row.settledAt.getTime() } : {}),
+  ...(row.targetInvalidatedAt ? { targetInvalidatedAt: row.targetInvalidatedAt.getTime() } : {})
 })
 
 const stateFor = async (
@@ -132,6 +158,7 @@ export class NotificationInboxDbRepository {
             dedupeKey: input.dedupeKey,
             kind: input.kind,
             source: input.source,
+            attentionReason: input.attentionReason,
             projectId: input.projectId,
             sessionId: input.sessionId,
             originId: input.originId,
@@ -234,31 +261,35 @@ export class NotificationInboxDbRepository {
     })
   }
 
-  deleteSessions(sessionIds: readonly string[]): Promise<NotificationRepositoryState> {
+  invalidateSessions(
+    sessionIds: readonly string[],
+    invalidatedAt: number
+  ): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
     if (normalized.length === 0) return this.currentState()
     return this.enqueue(async () => {
       const client = await this.getClient()
       return client.$transaction(async (transaction) => {
-        const count = await mutateInChunks(normalized, (sessionIdsChunk) =>
-          transaction.notificationInboxItem.deleteMany({
-            where: { sessionId: { in: sessionIdsChunk } }
-          })
+        const changed = await invalidateSessionRows(
+          transaction,
+          normalized,
+          new Date(invalidatedAt)
         )
-        return stateFor(transaction, count > 0)
+        return stateFor(transaction, changed > 0)
       })
     })
   }
 
   reconcileSessionCatalog(
-    existingSessionIds: readonly string[]
+    existingSessionIds: readonly string[],
+    invalidatedAt: number
   ): Promise<NotificationRepositoryState> {
     const existing = new Set(normalizeIds(existingSessionIds))
     return this.enqueue(async () => {
       const client = await this.getClient()
       return client.$transaction(async (transaction) => {
         const rows = await transaction.notificationInboxItem.findMany({
-          where: { sessionId: { not: null } },
+          where: { sessionId: { not: null }, targetInvalidatedAt: null },
           select: { sessionId: true }
         })
         const removed = normalizeIds(
@@ -266,12 +297,8 @@ export class NotificationInboxDbRepository {
             row.sessionId && !existing.has(row.sessionId) ? [row.sessionId] : []
           )
         )
-        const count = await mutateInChunks(removed, (sessionIdsChunk) =>
-          transaction.notificationInboxItem.deleteMany({
-            where: { sessionId: { in: sessionIdsChunk } }
-          })
-        )
-        return stateFor(transaction, count > 0)
+        const changed = await invalidateSessionRows(transaction, removed, new Date(invalidatedAt))
+        return stateFor(transaction, changed > 0)
       })
     })
   }
