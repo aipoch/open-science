@@ -62,6 +62,7 @@ import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
 import { useWorkspaceSessionController } from './workspace-session-controller'
+import { useWorkspaceBranchSwitchGuard } from './use-workspace-branch-switch-guard'
 import { useSideChatController } from './use-side-chat-controller'
 import { isSaveAsSkillRunning, resolveSaveAsSkillAvailability } from './save-as-skill-availability'
 
@@ -489,7 +490,8 @@ const WorkspacePage = ({
     },
     abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
     getSession: (sessionId) =>
-      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
+      useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
+    subscribeSessionChanges: useSessionStore.subscribe
   })
   // "Request review" is disabled when:
   //   - there is no active session or no completed agent turn yet, OR
@@ -559,14 +561,10 @@ const WorkspacePage = ({
     pendingArtifactMention
   ])
   const canEditMessage = conversation.availability.revise
-  useEffect(() => {
-    const sessionId = activeSession?.id
-    if (!sessionId) return
-    useSessionStore
-      .getState()
-      .setBranchSwitchBlocked(sessionId, !canEditMessage || activeSessionSaveAsSkillPending)
-    return () => useSessionStore.getState().setBranchSwitchBlocked(sessionId, false)
-  }, [activeSession?.id, activeSessionSaveAsSkillPending, canEditMessage])
+  useWorkspaceBranchSwitchGuard(
+    activeSession?.id,
+    !canEditMessage || activeSessionSaveAsSkillPending || conversation.queue.items.length > 0
+  )
   const canChangeAgentControls =
     isSessionPersistenceReady &&
     activeSessionActionability?.actions.changeAgentControls.allowed !== false &&

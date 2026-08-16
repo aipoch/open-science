@@ -567,9 +567,27 @@ colors communicate a successful or failed probe/migration result.
 - Icon buttons: `Button variant="ghost" size="icon"`, `size-8`.
 - Workspace composer shell: `px-4 pb-2`; center content in `mx-auto w-full max-w-4xl`, then use `px-1 md:px-3` so the composer text track aligns with the message content after the form's own `px-3`.
 - Workspace composer form: `relative z-10 flex flex-col gap-2 rounded-2xl bg-bg-000 px-3 py-2 shadow-card-opaque`.
+- During a normal running root turn, the primary composer submit action captures the current doc,
+  attachments, permission profile, Specialist, Session, Agent Frame, and Message Branch into a
+  renderer-memory queue instead of overlapping the active runtime prompt. The queue drains one item
+  at a time after the bound Session becomes sendable.
+- Show the queue disclosure at the right edge of the Notebook chrome above the ordinary composer.
+  Expanded rows render as a compact list at the top of the form using its existing surface with
+  hairline separators rather than nested cards. Dragging over another row moves neighboring rows
+  aside to preview whether the item will land before or after it. Each row also supports Arrow
+  Up/Arrow Down keyboard reordering, Edit, Remove, and Send now. Edit moves an item back into an
+  unchanged empty composer; Send now promotes the item, waits for cancellation and prompt admission
+  to settle, then sends it. Cancellation or admission failures keep the row and show a recoverable
+  inline error.
+- Queued messages are transient and Session-scoped. They are not persisted across renderer restart.
+  Bind each item to its admission Message Branch and block branch switching while that Session has
+  queued work so a later dispatch cannot silently retarget it.
 - Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
   approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
   any still-pending Permission approval instead of interrupting the Side Chat in progress.
+- Hide both the Notebook-chrome queue disclosure and its expanded composer rows while Side Chat,
+  Permission, Ask User, or Plan owns the lane; keep the transient queue in memory so it reappears when
+  the ordinary composer returns.
 - Permission approval uses the shared bottom resize handle and replaces the ordinary composer while
   pending. Its embedded content uses the panel's single border rather than nesting another card. The
   panel can grow upward only by the amount of currently hidden scroll overflow, never beyond

@@ -30,6 +30,8 @@ const ownerPaths = {
   layout: resolve(workspaceDirectory, 'workspace-panel-layout.tsx'),
   composer: resolve(workspaceDirectory, 'workspace-composer-controller.ts'),
   conversation: resolve(workspaceDirectory, 'workspace-conversation-controller.ts'),
+  messageQueue: resolve(workspaceDirectory, 'workspace-message-queue-controller.ts'),
+  branchSwitchGuard: resolve(workspaceDirectory, 'use-workspace-branch-switch-guard.ts'),
   sideChat: resolve(workspaceDirectory, 'use-side-chat-controller.ts'),
   session: resolve(workspaceDirectory, 'workspace-session-controller.ts')
 } as const
@@ -144,6 +146,8 @@ describe('workspace page architecture', () => {
       ownerPaths.layout,
       ownerPaths.composer,
       ownerPaths.conversation,
+      ownerPaths.messageQueue,
+      ownerPaths.branchSwitchGuard,
       ownerPaths.sideChat,
       ownerPaths.session
     ]) {
@@ -155,8 +159,14 @@ describe('workspace page architecture', () => {
     expect(importersOf(ownerPaths.composer)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',
+      'pages/workspace/workspace-conversation-controller.ts',
+      'pages/workspace/workspace-message-queue-controller.ts'
+    ])
+    expect(importersOf(ownerPaths.messageQueue)).toEqual([
+      'pages/workspace/ComposerMessageQueue.tsx',
       'pages/workspace/workspace-conversation-controller.ts'
     ])
+    expect(importersOf(ownerPaths.branchSwitchGuard)).toEqual(['pages/workspace/WorkspacePage.tsx'])
     expect(importersOf(ownerPaths.session)).toEqual([
       'pages/workspace/ConversationPanel.tsx',
       'pages/workspace/WorkspacePage.tsx',

@@ -42,6 +42,39 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
   ...overrides
 })
 
+const runningSession = (): ChatSession =>
+  session({
+    status: 'running',
+    conversationGraph: {
+      schemaVersion: 1,
+      rootFrameId: 'root',
+      activeFrameId: 'root',
+      frames: [
+        {
+          id: 'root',
+          originBindingState: 'root',
+          kind: 'root',
+          status: 'running',
+          activeBranchId: 'branch-a',
+          createdAt: 1
+        }
+      ],
+      branches: [
+        {
+          id: 'branch-a',
+          agentFrameId: 'root',
+          headMessageId: 'message-user-a',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      messages: [],
+      activities: [],
+      activityGroups: [],
+      runtimeSegments: []
+    }
+  })
+
 const options = (
   overrides: Partial<WorkspaceConversationControllerOptions> = {}
 ): WorkspaceConversationControllerOptions => {
@@ -72,7 +105,8 @@ const options = (
           attachments: []
         })),
         clearDraft: vi.fn(),
-        restoreFailedSend: vi.fn()
+        restoreFailedSend: vi.fn(() => true),
+        discardSnapshot: vi.fn()
       }
     },
     session: {
@@ -108,6 +142,7 @@ const options = (
     resetNewConversationSettings: vi.fn(),
     abortFixLoop: vi.fn(() => Promise.resolve()),
     getSession: (sessionId) => (sessionId === 'session-a' ? session() : undefined),
+    subscribeSessionChanges: () => () => undefined,
     ...overrides
   }
 }
@@ -344,6 +379,29 @@ describe('workspace conversation controller', () => {
     mounted.push(hook)
 
     expect(hook.result.current.availability).toMatchObject({ submit: true, revise: true })
+  })
+
+  it('queues an ordinary submit during a running turn without overlapping the runtime prompt', () => {
+    const running = runningSession()
+    const input = options({
+      activeSession: running,
+      promptInFlightSessionIds: [running.id],
+      getSession: () => running
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability).toMatchObject({
+      submit: true,
+      submitMode: 'queue'
+    })
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: ['skill-a'] }))
+
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
+    expect(hook.result.current.queue.items).toEqual([
+      expect.objectContaining({ text: 'hello', phase: 'queued' })
+    ])
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
   it('blocks submit and revision while Save as skill owns prompt admission', () => {

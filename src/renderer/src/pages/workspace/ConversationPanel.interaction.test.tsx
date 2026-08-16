@@ -386,6 +386,7 @@ const createPanelDefaults = (): PanelProps => ({
   conversation: {
     availability: {
       submit: false,
+      submitMode: undefined,
       revise: true,
       resume: true,
       branch: true
@@ -401,6 +402,17 @@ const createPanelDefaults = (): PanelProps => ({
       resume: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn(),
       delete: vi.fn()
+    },
+    queue: {
+      items: [],
+      announcement: '',
+      actions: {
+        move: vi.fn(),
+        moveTo: vi.fn(),
+        remove: vi.fn(),
+        edit: vi.fn(),
+        sendNow: vi.fn().mockResolvedValue(undefined)
+      }
     }
   },
   sideChat: {
@@ -3732,6 +3744,32 @@ describe('ConversationPanel fix loop lock', () => {
     expect(onCancelRun).toHaveBeenCalledTimes(1)
   })
 
+  it('uses the running composer submit action to add the draft to the queue', () => {
+    const onQueueMessage = vi.fn()
+    const runningSession: ChatSession = {
+      ...idleSession,
+      status: 'running',
+      activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
+    }
+    renderPanel({
+      view: { activeSession: runningSession },
+      composer: { view: { doc: { nodes: [{ type: 'text', text: 'next prompt' }] } } },
+      conversation: {
+        availability: { submit: true, submitMode: 'queue' },
+        actions: {
+          submit: { draft: routeDraftSubmit({ send: onQueueMessage }) }
+        }
+      }
+    })
+
+    const queueSubmit = container.querySelector(
+      '[data-testid="composer-queue-submit"]'
+    ) as HTMLButtonElement
+    expect(queueSubmit.disabled).toBe(false)
+    act(() => queueSubmit.click())
+    expect(onQueueMessage).toHaveBeenCalledWith([])
+  })
+
   it('keeps Send and branch-scoped Stop together after a timed Main turn settles', () => {
     const onCancelRun = vi.fn()
     const onStopSubagents = vi.fn()
@@ -3920,7 +3958,7 @@ describe('ConversationPanel fix loop lock', () => {
       '[data-testid="composer-running-control-slot"]'
     ) as HTMLDivElement
     expect(slot.className.split(' ')).toEqual(
-      expect.arrayContaining(['w-16', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
+      expect.arrayContaining(['w-24', 'justify-end', '[@media(pointer:coarse)]:mx-3'])
     )
     expect(slot.querySelector('[aria-label="Cancel run"]')).not.toBeNull()
   })
@@ -4065,6 +4103,29 @@ describe('ConversationPanel notebook bar', () => {
     expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
   })
 
+  it('keeps the Notebook chrome available when queued work exists before a notebook reference', () => {
+    renderPanel({
+      view: { activeSession: session },
+      conversation: {
+        queue: {
+          items: [
+            {
+              id: 'queued-a',
+              text: 'Analyze the next sample',
+              attachmentCount: 0,
+              phase: 'queued'
+            }
+          ]
+        }
+      }
+    })
+
+    const queueTrigger = container.querySelector('[data-testid="composer-queue-trigger"]')
+    expect(queueTrigger).not.toBeNull()
+    expect(queueTrigger?.parentElement?.classList.contains('min-h-[68px]')).toBe(true)
+    expect(container.querySelector('[aria-label="Open notebook"]')).toBeNull()
+  })
+
   it('shows only the Notebook button when notebookReference exists and no running job', () => {
     mockHasRunningJobs = false
     renderPanel({
@@ -4078,6 +4139,34 @@ describe('ConversationPanel notebook bar', () => {
 
     expect(container.querySelector('[aria-label="Open notebook"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="remote-job-badge"]')).toBeNull()
+  })
+
+  it('places the queue disclosure at the right edge of the Notebook bar', () => {
+    renderPanel({
+      view: { activeSession: session },
+      sessionTools: { notebookReference },
+      conversation: {
+        queue: {
+          items: [
+            {
+              id: 'queued-a',
+              text: 'Analyze the next sample',
+              attachmentCount: 0,
+              phase: 'queued'
+            }
+          ]
+        }
+      }
+    })
+
+    const notebookBar = container.querySelector('[aria-label="Open notebook"]')?.parentElement
+    const queueTrigger = container.querySelector('[data-testid="composer-queue-trigger"]')
+    expect(queueTrigger?.parentElement).toBe(notebookBar)
+    expect(notebookBar?.lastElementChild).toBe(queueTrigger)
+    expect(getComposerForm().contains(queueTrigger)).toBe(false)
+
+    act(() => (queueTrigger as HTMLButtonElement).click())
+    expect(getComposerForm().querySelector('[data-testid="composer-queue-item"]')).not.toBeNull()
   })
 
   it('animates the notebook bar upward when it appears', () => {

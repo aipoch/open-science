@@ -71,6 +71,7 @@ import { appendArtifactMention, docToSkillIds } from './composer/composer-doc'
 import { ComposerAgentControlsMenu } from './ComposerAgentControlsMenu'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ComposerContextUsage } from './ComposerContextUsage'
+import { ComposerMessageQueueContent, ComposerMessageQueueTrigger } from './ComposerMessageQueue'
 import { ContextWindowDialog } from './ContextWindowDialog'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { ComposerYourFilesMenu } from './ComposerYourFilesMenu'
@@ -335,6 +336,7 @@ const ConversationPanel = ({
   const {
     availability: {
       submit: canSendMessage,
+      submitMode,
       revise: canEditMessage,
       resume: canResumeSession,
       branch: canBranchInNewSession
@@ -346,7 +348,8 @@ const ConversationPanel = ({
       sideChat: { start: onStartSideChat },
       resume: onResumeSession,
       cancel: onCancelRun
-    }
+    },
+    queue: messageQueue
   } = conversation
   const {
     view: sideChat,
@@ -427,6 +430,7 @@ const ConversationPanel = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const stopSubmissionPendingRef = useRef(false)
   const [isStopping, setIsStopping] = useState(false)
+  const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
   const [stopError, setStopError] = useState<string>()
   const setElicitationDraftAnswers = useSessionStore((state) => state.setElicitationDraftAnswers)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -883,14 +887,21 @@ const ConversationPanel = ({
                 !pendingElicitation &&
                 !pendingPlan &&
                 (notebookReference ||
+                  messageQueue.items.length > 0 ||
                   hasAnyJobs ||
                   hasSubagents ||
                   (activeBranchPlan ? isPlanProgressVisible(activeBranchPlan) : false)) ? (
                   <div
-                    key={notebookReference ? `notebook-${notebookReference.sessionId}` : 'jobs'}
+                    key={
+                      notebookReference
+                        ? `notebook-${notebookReference.sessionId}`
+                        : messageQueue.items.length > 0
+                          ? 'message-queue'
+                          : 'jobs'
+                    }
                     className={cn(
                       'flex px-2',
-                      notebookReference
+                      notebookReference || messageQueue.items.length > 0
                         ? 'relative -mb-8 min-h-[68px] items-start rounded-2xl bg-bg-200 pt-1 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200 motion-safe:ease-out'
                         : 'mb-2 min-h-9 items-center rounded-lg border border-border-200 bg-bg-000 shadow-card'
                     )}
@@ -935,6 +946,11 @@ const ConversationPanel = ({
                         }
                       />
                     ) : null}
+                    <ComposerMessageQueueTrigger
+                      items={messageQueue.items}
+                      expanded={messageQueueExpanded}
+                      onExpandedChange={setMessageQueueExpanded}
+                    />
                   </div>
                 ) : null}
 
@@ -1094,6 +1110,10 @@ const ConversationPanel = ({
                     {isDragging ? (
                       <FileDropOverlay label={t('Drop files to attach')} className="rounded-2xl" />
                     ) : null}
+                    <ComposerMessageQueueContent
+                      {...messageQueue}
+                      expanded={messageQueueExpanded}
+                    />
                     <div className="flex flex-col gap-2">
                       {attachments.length > 0 || attachmentTransfers.length > 0 ? (
                         <div className="flex max-h-[92px] flex-wrap gap-2 overflow-y-auto border-b border-border-200 pb-2">
@@ -1534,8 +1554,18 @@ const ConversationPanel = ({
                           // reachable across the whole loop, not just the agent-fix running turn.
                           <div
                             data-testid="composer-running-control-slot"
-                            className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
+                            className="flex w-24 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
                           >
+                            <button
+                              type="button"
+                              onClick={handleSubmit}
+                              disabled={!effectiveCanSend || submitMode !== 'queue'}
+                              className={composerIconButtonClassName}
+                              aria-label={t('Add message to queue')}
+                              data-testid="composer-queue-submit"
+                            >
+                              <ArrowUp className="size-4" strokeWidth={2.2} aria-hidden="true" />
+                            </button>
                             <button
                               type="button"
                               onClick={handleStop}

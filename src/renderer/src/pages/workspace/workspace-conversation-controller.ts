@@ -14,6 +14,10 @@ import {
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import { respondToSessionPlan } from './session-plan/respond-to-session-plan'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
+import {
+  useWorkspaceMessageQueueController,
+  type WorkspaceMessageQueueController
+} from './workspace-message-queue-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
 import { hasMainConversation } from './use-side-chat-controller'
 
@@ -38,7 +42,7 @@ type ConversationComposer = {
   actions: Pick<WorkspaceComposerController['actions'], 'setError'>
   lifecycle: Pick<
     WorkspaceComposerController['lifecycle'],
-    'captureSend' | 'clearDraft' | 'restoreFailedSend'
+    'captureSend' | 'clearDraft' | 'restoreFailedSend' | 'discardSnapshot'
   >
 }
 
@@ -83,11 +87,13 @@ type WorkspaceConversationControllerOptions = {
   resetNewConversationSettings: () => void
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
+  subscribeSessionChanges: (listener: () => void) => () => void
 }
 
 type WorkspaceConversationController = {
   availability: {
     submit: boolean
+    submitMode: 'send' | 'queue' | undefined
     revise: boolean
     resume: boolean
     branch: boolean
@@ -104,6 +110,7 @@ type WorkspaceConversationController = {
     cancel: () => Promise<void>
     delete: () => void
   }
+  queue: Omit<WorkspaceMessageQueueController, 'lifecycle'>
 }
 
 const errorMessage = (error: unknown): string =>
@@ -119,7 +126,7 @@ const hasRuntimeInteraction = (options: WorkspaceConversationControllerOptions):
   )
 }
 
-const canSubmit = (options: WorkspaceConversationControllerOptions): boolean => {
+const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): boolean => {
   const { activeSession, composer, session } = options
   return (
     options.isPersistenceReady &&
@@ -132,6 +139,24 @@ const canSubmit = (options: WorkspaceConversationControllerOptions): boolean => 
     !activeSession?.conversationGraphSyncBlocked &&
     !activeSession?.compacting &&
     !session.view.specialist.barrierInFlight
+  )
+}
+
+const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean => {
+  const { activeSession, composer, session } = options
+  return Boolean(
+    options.isPersistenceReady &&
+    !options.sideChatOpen &&
+    activeSession?.status === 'running' &&
+    composer.view.transfers.length === 0 &&
+    (!docIsEmpty(composer.view.doc) || composer.view.attachments.length > 0) &&
+    !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&
+    !options.saveAsSkillInFlightSessionIds.includes(activeSession.id) &&
+    !options.hasBlockingRootPermissionRequest &&
+    !activeSession.fixLoopActive &&
+    !activeSession.conversationGraphSyncBlocked &&
+    !activeSession.compacting &&
+    !session.lifecycle.isBarrierInFlight(activeSession.id)
   )
 }
 
@@ -188,12 +213,31 @@ const useWorkspaceConversationController = (
     optionsRef.current = options
   }, [options])
   const inFlightDraftKeysRef = useRef(new Set<string>())
+  const messageQueue = useWorkspaceMessageQueueController({
+    activeSession: options.activeSession,
+    promptInFlightSessionIds: options.promptInFlightSessionIds,
+    sendPreparationInFlightSessionIds: options.sendPreparationInFlightSessionIds,
+    saveAsSkillInFlightSessionIds: options.saveAsSkillInFlightSessionIds,
+    sideChatOpen: options.sideChatOpen,
+    composer: {
+      setError: options.composer.actions.setError,
+      restoreQueuedDraft: (snapshot) =>
+        options.composer.lifecycle.restoreFailedSend(snapshot, true),
+      discardSnapshot: options.composer.lifecycle.discardSnapshot
+    },
+    runtime: options.runtime,
+    isBarrierInFlight: options.session.lifecycle.isBarrierInFlight,
+    abortFixLoop: options.abortFixLoop,
+    getSession: options.getSession,
+    subscribeSessionChanges: options.subscribeSessionChanges
+  })
   const [actions] = useState<WorkspaceConversationController['actions']>(() => {
     const submitDraft = ({ forcedSkillIds, mode = 'continue' }: DraftSubmitIntent): void => {
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
       if (mode === 'retry-reconfigure' && !session.actions.beginReconfigureRetry()) return
-      if (!canSubmit(current)) return
+      const queueDraft = mode === 'continue' && canQueueDraft(current)
+      if (!queueDraft && !canSubmitImmediately(current)) return
 
       const branchInNewSession = mode === 'branch'
       if (branchInNewSession && !activeSession) return
@@ -205,6 +249,25 @@ const useWorkspaceConversationController = (
         composer.actions.setError('The selected model is not configured for image input.')
         return
       }
+      if (queueDraft && activeSession) {
+        const { draftSpecialistId, hasPendingSwitch } = session.lifecycle.captureSendIntent(false)
+        if (hasPendingSwitch) return
+        const snapshot = composer.lifecycle.captureSend()
+        if (
+          messageQueue.lifecycle.enqueue({
+            session: activeSession,
+            snapshot,
+            text: docToText(snapshot.doc),
+            forcedSkillIds,
+            permissionProfile: current.permissionProfile,
+            specialistId: draftSpecialistId
+          })
+        ) {
+          composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
+        }
+        return
+      }
+
       if (!session.lifecycle.canStartSend()) return
 
       const snapshot = composer.lifecycle.captureSend()
@@ -353,14 +416,23 @@ const useWorkspaceConversationController = (
     }
   })
 
+  const submitImmediately = canSubmitImmediately(options)
+  const queueDraft = canQueueDraft(options)
+
   return {
     availability: {
-      submit: canSubmit(options),
+      submit: submitImmediately || queueDraft,
+      submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options),
       resume: options.isPersistenceReady && !options.sideChatOpen,
       branch: canBranch(options)
     },
-    actions
+    actions,
+    queue: {
+      items: messageQueue.items,
+      announcement: messageQueue.announcement,
+      actions: messageQueue.actions
+    }
   }
 }
 
