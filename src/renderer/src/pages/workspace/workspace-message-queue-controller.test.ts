@@ -240,7 +240,7 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(order).toEqual(['cancel', 'send']))
   })
 
-  it('does not strand an in-flight item when Send now promotes another item', async () => {
+  it('serializes Send now behind an in-flight admission', async () => {
     let currentSession = session('idle')
     const completions: Array<() => void> = []
     const sendMessage = vi.fn(
@@ -251,30 +251,41 @@ describe('workspace message queue controller', () => {
     )
     const input = options(currentSession, {
       getSession: () => currentSession,
-      runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+      runtime: {
+        cancelRun: vi.fn(async () => {
+          currentSession = session('idle')
+        }),
+        sendMessage
+      }
     })
     const hook = renderController(input)
     mounted.push(hook)
 
-    act(() => hook.result.current.lifecycle.enqueue({ ...admission('first'), session: currentSession }))
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('first'), session: currentSession })
+    )
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
-    act(() => hook.result.current.lifecycle.enqueue({ ...admission('second'), session: currentSession }))
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('second'), session: currentSession })
+    )
 
     const secondId = hook.result.current.items[1].id
-    await act(async () => hook.result.current.actions.sendNow(secondId))
-    expect(sendMessage).toHaveBeenCalledTimes(2)
+    let sendNow!: Promise<void>
+    act(() => {
+      sendNow = hook.result.current.actions.sendNow(secondId)
+    })
+    expect(sendMessage).toHaveBeenCalledOnce()
 
     currentSession = session('running')
-    hook.rerender(
-      options(currentSession, {
-        ...input,
-        activeSession: currentSession,
-        getSession: () => currentSession
-      })
-    )
-    await act(async () => completions[0]())
+    await act(async () => {
+      completions[0]()
+      await sendNow
+    })
+    expect(input.runtime.cancelRun).toHaveBeenCalledWith('session-a')
+    expect(sendMessage).toHaveBeenCalledTimes(2)
     expect(hook.result.current.items.map((item) => item.text)).toEqual(['second'])
 
+    currentSession = session('running')
     await act(async () => completions[1]())
     expect(hook.result.current.items).toEqual([])
   })

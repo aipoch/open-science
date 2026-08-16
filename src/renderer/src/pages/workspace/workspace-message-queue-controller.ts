@@ -44,6 +44,12 @@ type MessageQueueAdmission = {
   specialistId: string | null | undefined
 }
 
+type MessageQueueDispatch = {
+  itemId: string
+  settled: boolean
+  completion: Promise<void>
+}
+
 type WorkspaceMessageQueueControllerOptions = {
   activeSession: ChatSession | undefined
   promptInFlightSessionIds: string[]
@@ -119,7 +125,7 @@ const useWorkspaceMessageQueueController = (
     optionsRef.current = options
   }, [options])
   const queueBySessionRef = useRef(new Map<string, MessageQueueItem[]>())
-  const dispatchingItemBySessionRef = useRef(new Map<string, string>())
+  const dispatchBySessionRef = useRef(new Map<string, MessageQueueDispatch>())
   const nextQueueIdRef = useRef(0)
   const [queueSnapshot, setQueueSnapshot] = useState(new Map<string, MessageQueueItem[]>())
   const [announcement, setAnnouncement] = useState('')
@@ -160,10 +166,11 @@ const useWorkspaceMessageQueueController = (
   const dispatch = useCallback(
     (sessionId: string): void => {
       const current = optionsRef.current
-      if (dispatchingItemBySessionRef.current.has(sessionId)) {
+      const existingDispatch = dispatchBySessionRef.current.get(sessionId)
+      if (existingDispatch) {
         const session = current.getSession(sessionId)
-        if (session && !queueSessionIsSendable(current, session)) {
-          dispatchingItemBySessionRef.current.delete(sessionId)
+        if (existingDispatch.settled && session && !queueSessionIsSendable(current, session)) {
+          dispatchBySessionRef.current.delete(sessionId)
         }
         return
       }
@@ -183,39 +190,50 @@ const useWorkspaceMessageQueueController = (
       }
       if (!queueSessionIsSendable(current, session)) return
 
-      dispatchingItemBySessionRef.current.set(sessionId, item.id)
       replaceItem(sessionId, item.id, { phase: 'sending', error: undefined })
-      void current.runtime
-        .sendMessage({
-          sessionId,
-          text: item.text,
-          attachments: item.snapshot.attachments,
-          referencedArtifacts: docToArtifactRefs(item.snapshot.doc),
-          parts: item.snapshot.doc.nodes,
-          cwd: item.cwd,
-          projectId: item.projectId,
-          projectName: item.projectId,
-          permissionProfile: item.permissionProfile,
-          forcedSkillIds: item.forcedSkillIds,
-          specialistId: item.specialistId
+      let resolveCompletion!: () => void
+      const activeDispatch: MessageQueueDispatch = {
+        itemId: item.id,
+        settled: false,
+        completion: new Promise((resolve) => {
+          resolveCompletion = resolve
         })
-        .then((result) => {
+      }
+      dispatchBySessionRef.current.set(sessionId, activeDispatch)
+      void (async (): Promise<void> => {
+        try {
+          const result = await current.runtime.sendMessage({
+            sessionId,
+            text: item.text,
+            attachments: item.snapshot.attachments,
+            referencedArtifacts: docToArtifactRefs(item.snapshot.doc),
+            parts: item.snapshot.doc.nodes,
+            cwd: item.cwd,
+            projectId: item.projectId,
+            projectName: item.projectId,
+            permissionProfile: item.permissionProfile,
+            forcedSkillIds: item.forcedSkillIds,
+            specialistId: item.specialistId
+          })
           if (!result) throw new Error('The queued message was not admitted.')
           const latest = itemsFor(sessionId)
           const remaining = latest.filter((candidate) => candidate.id !== item.id)
           if (remaining.length === 0) queueBySessionRef.current.delete(sessionId)
           else queueBySessionRef.current.set(sessionId, remaining)
           emit('Queued message sent.')
-        })
-        .catch((error: unknown) => {
-          if (dispatchingItemBySessionRef.current.get(sessionId) === item.id) {
-            dispatchingItemBySessionRef.current.delete(sessionId)
+        } catch (error) {
+          if (dispatchBySessionRef.current.get(sessionId) === activeDispatch) {
+            dispatchBySessionRef.current.delete(sessionId)
           }
           replaceItem(sessionId, item.id, {
             phase: 'error',
             error: { kind: 'send', detail: errorMessage(error) }
           })
-        })
+        } finally {
+          activeDispatch.settled = true
+          resolveCompletion()
+        }
+      })()
     },
     [discardSession, emit, itemsFor, replaceItem]
   )
@@ -319,7 +337,6 @@ const useWorkspaceMessageQueueController = (
   )
   const sendNow = useCallback(
     async (itemId: string): Promise<void> => {
-      const current = optionsRef.current
       const queue = currentSessionQueue()
       if (!queue) return
       const item = queue.items.find((candidate) => candidate.id === itemId)
@@ -329,8 +346,13 @@ const useWorkspaceMessageQueueController = (
         ...queue.items.filter((candidate) => candidate.id !== itemId)
       ])
       emit('Stopping the current run before sending the queued message.')
-      const session = current.getSession(queue.sessionId)
       try {
+        const displacedDispatch = dispatchBySessionRef.current.get(queue.sessionId)
+        if (displacedDispatch && displacedDispatch.itemId !== itemId) {
+          await displacedDispatch.completion
+        }
+        const current = optionsRef.current
+        const session = current.getSession(queue.sessionId)
         if (session?.fixLoopActive) {
           await current.abortFixLoop({
             projectId: session.projectId,
@@ -344,8 +366,8 @@ const useWorkspaceMessageQueueController = (
         ) {
           await current.runtime.cancelRun(queue.sessionId)
         }
-        if (dispatchingItemBySessionRef.current.get(queue.sessionId) !== itemId) {
-          dispatchingItemBySessionRef.current.delete(queue.sessionId)
+        if (dispatchBySessionRef.current.get(queue.sessionId) === displacedDispatch) {
+          dispatchBySessionRef.current.delete(queue.sessionId)
         }
         drainQueues()
       } catch (error) {
