@@ -35,7 +35,12 @@ const SessionReviewerContent = ({
   const { t } = useTranslation()
   const sessionId = item.reviewerSessionId ?? ''
   const reviews = useReviewStore((state) =>
-    selectProjectSessionReviewSnapshot(state.reviewsBySession, projectId, sessionId)
+    selectProjectSessionReviewSnapshot(
+      state.reviewsBySession,
+      projectId,
+      sessionId,
+      state.loadedReviewSessions
+    )
   )
   const loadError = useReviewStore((state) =>
     selectProjectSessionReviewLoadError(state.loadErrorsBySession, projectId, sessionId)

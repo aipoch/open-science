@@ -20,12 +20,14 @@ vi.mock('@/stores/review-store', () => ({
   useReviewStore: <T,>(
     selector: (state: {
       reviewsBySession: Record<string, never[]>
+      loadedReviewSessions: Record<string, boolean>
       loadErrorsBySession: Record<string, string>
       loadReviewsForSession: ReturnType<typeof vi.fn>
     }) => T
   ): T =>
     selector({
       reviewsBySession: {},
+      loadedReviewSessions: {},
       loadErrorsBySession: {},
       loadReviewsForSession: vi.fn(() => Promise.resolve())
     })

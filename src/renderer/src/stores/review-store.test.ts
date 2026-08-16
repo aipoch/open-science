@@ -109,9 +109,11 @@ describe('review store', () => {
   })
 
   it('distinguishes an unloaded session from a loaded empty review snapshot', () => {
-    expect(selectProjectSessionReviewSnapshot({}, 'project-1', 'session-1')).toBeUndefined()
+    expect(selectProjectSessionReviewSnapshot({}, 'project-1', 'session-1', {})).toBeUndefined()
     expect(
-      selectProjectSessionReviewSnapshot({ 'project-1\0session-1': [] }, 'project-1', 'session-1')
+      selectProjectSessionReviewSnapshot({ 'project-1\0session-1': [] }, 'project-1', 'session-1', {
+        'project-1\0session-1': true
+      })
     ).toEqual([])
   })
 
@@ -122,6 +124,38 @@ describe('review store', () => {
     const stored = useReviewStore.getState().getReviewsForSession('session-1')
     expect(stored).toHaveLength(1)
     expect(stored[0]).toBe(review)
+  })
+
+  it('keeps push-only reviews provisional until persisted history loads', async () => {
+    const pushed = makeReview({ id: 'pushed-newest', createdAt: 2_000, updatedAt: 2_000 })
+    useReviewStore.getState().handleReviewUpdate({ review: pushed })
+
+    const pushOnlyState = useReviewStore.getState()
+    expect(
+      selectProjectSessionReviewSnapshot(
+        pushOnlyState.reviewsBySession,
+        'project-1',
+        'session-1',
+        pushOnlyState.loadedReviewSessions
+      )
+    ).toBeUndefined()
+
+    const persisted = makeReview({ id: 'persisted-older', createdAt: 1_000, updatedAt: 1_000 })
+    const getForSession = vi.fn().mockResolvedValue([persisted])
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+
+    const loadedState = useReviewStore.getState()
+    expect(
+      selectProjectSessionReviewSnapshot(
+        loadedState.reviewsBySession,
+        'project-1',
+        'session-1',
+        loadedState.loadedReviewSessions
+      )?.map((review) => review.id)
+    ).toEqual(['pushed-newest', 'persisted-older'])
+    vi.unstubAllGlobals()
   })
 
   it('replaces a review with the same id instead of appending a duplicate', () => {

@@ -22,18 +22,24 @@ vi.mock('@/stores/review-store', () => ({
   selectProjectSessionReviewSnapshot: (
     _reviewsBySession: Record<string, never[]>,
     projectId: string | undefined,
-    sessionId: string
-  ) => mocks.getReviewSnapshot(sessionId, projectId),
+    sessionId: string,
+    loadedReviewSessions: Record<string, boolean>
+  ) => {
+    void loadedReviewSessions
+    return mocks.getReviewSnapshot(sessionId, projectId)
+  },
   selectProjectSessionReviewLoadError: () => mocks.loadError,
   useReviewStore: <T,>(
     selector: (state: {
       reviewsBySession: Record<string, never[]>
+      loadedReviewSessions: Record<string, boolean>
       loadErrorsBySession: Record<string, string>
       loadReviewsForSession: () => Promise<void>
     }) => T
   ): T =>
     selector({
       reviewsBySession: {},
+      loadedReviewSessions: {},
       loadErrorsBySession: {},
       loadReviewsForSession: mocks.loadReviewsForSession
     })

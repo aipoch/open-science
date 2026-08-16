@@ -8,6 +8,8 @@ import type { ReviewWithChecks, ReviewUpdateEvent } from '../../../shared/review
 type ReviewStoreData = {
   // Map from projectId + sessionId to that session's reviews (newest first).
   reviewsBySession: Record<string, ReviewWithChecks[]>
+  // Successful history loads, tracked separately because a push can create a provisional review list.
+  loadedReviewSessions: Record<string, boolean>
   loadErrorsBySession: Record<string, string>
 }
 
@@ -75,6 +77,7 @@ const mergeLoadedReviews = (
 
 export const createInitialReviewState = (): ReviewStoreData => ({
   reviewsBySession: {},
+  loadedReviewSessions: {},
   loadErrorsBySession: {}
 })
 
@@ -94,18 +97,21 @@ export const selectProjectSessionReviews = (
   sessionId: string | undefined
 ): ReviewWithChecks[] => {
   if (!sessionId) return EMPTY_REVIEWS
-  return selectProjectSessionReviewSnapshot(reviewsBySession, projectId, sessionId) ?? EMPTY_REVIEWS
+  return reviewsBySession[reviewSessionKey(projectId ?? '', sessionId)] ?? EMPTY_REVIEWS
 }
 
 // Unlike selectProjectSessionReviews, this preserves the distinction between a Session that has
-// loaded an empty review snapshot and one that has not loaded at all.
+// loaded an empty review snapshot and one that only has provisional reviews delivered by a push.
 export const selectProjectSessionReviewSnapshot = (
   reviewsBySession: Record<string, ReviewWithChecks[]>,
   projectId: string | undefined,
-  sessionId: string | undefined
+  sessionId: string | undefined,
+  loadedReviewSessions: Record<string, boolean>
 ): ReviewWithChecks[] | undefined => {
   if (!sessionId) return undefined
-  return reviewsBySession[reviewSessionKey(projectId ?? '', sessionId)]
+  const key = reviewSessionKey(projectId ?? '', sessionId)
+  if (loadedReviewSessions[key] !== true) return undefined
+  return reviewsBySession[key] ?? EMPTY_REVIEWS
 }
 
 export const selectProjectSessionReviewLoadError = (
@@ -167,6 +173,10 @@ export const useReviewStore = create<ReviewStore>((set, get) => ({
           reviewsBySession: {
             ...state.reviewsBySession,
             [key]: mergeLoadedReviews(state.reviewsBySession[key] ?? [], reviews)
+          },
+          loadedReviewSessions: {
+            ...state.loadedReviewSessions,
+            [key]: true
           },
           loadErrorsBySession
         }
