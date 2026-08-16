@@ -558,6 +558,38 @@ afterEach(async () => {
 })
 
 describe('production delegated-work composition', () => {
+  it('lets a legacy Session without delegated history establish its durable framework identity', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-legacy-identity-'))
+    const harness = await createCompositionHarness(root, 'claude-code')
+    const legacy = structuredClone(harness.session)
+    delete legacy.agentFrameworkId
+    harness.replaceDurable(legacy)
+
+    await expect(harness.composition.root.wakeMessages?.(legacy.id)).resolves.toBeUndefined()
+    expect(harness.selected).toEqual([])
+
+    harness.replaceDurable({ ...harness.durable(), agentFrameworkId: 'claude-code' })
+    await expect(harness.composition.root.wakeMessages?.(legacy.id)).resolves.toBeUndefined()
+    expect(harness.selected).toEqual(['claude-code'])
+  })
+
+  it('rejects a missing framework identity when delegated history already exists', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-invalid-identity-'))
+    const harness = await createCompositionHarness(root, 'opencode')
+    const invalid = structuredClone(harness.session)
+    delete invalid.agentFrameworkId
+    invalid.runtimeContext = {
+      version: 1,
+      revision: 1,
+      delegatedWork: { records: [] }
+    }
+    harness.replaceDurable(invalid)
+
+    await expect(harness.composition.root.wakeMessages?.(invalid.id)).rejects.toThrow(
+      'Delegated Work requires a durable Session framework identity.'
+    )
+  })
+
   it('rejects a removed own context field before reservation, workspace, or durable mutation', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-removed-context-'))
     const harness = await createCompositionHarness(root, 'codex')
