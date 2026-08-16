@@ -146,7 +146,7 @@ const createWebServiceController = (
       try {
         await close()
       } finally {
-        tasks.dispose()
+        await tasks.dispose()
       }
     })()
     return disposal

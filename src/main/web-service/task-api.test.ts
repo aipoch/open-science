@@ -129,7 +129,7 @@ describe('HeadlessTaskApi adapter', () => {
         expectedRevision: 3
       }
     ])
-    api.dispose()
+    await api.dispose()
   })
   it('exposes Task Run progress through one subscription seam', async () => {
     const invoke = vi.fn(async (channel: string) => {
@@ -162,7 +162,7 @@ describe('HeadlessTaskApi adapter', () => {
       'completed'
     ])
     unsubscribe()
-    api.dispose()
+    await api.dispose()
   })
 
   it('maps public query and artifact commands to the compatibility façade', async () => {
@@ -520,7 +520,83 @@ describe('HeadlessTaskApi adapter', () => {
     expect(invoke).toHaveBeenCalledWith('reviewer:abort', expect.anything(), [
       { projectId: project.id, appSessionId: 'session-review-cancel' }
     ])
-    api.dispose()
+    await api.dispose()
+  })
+
+  it('awaits Reviewer cleanup before completing Task API disposal', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markAbortStarted: (() => void) | undefined
+    let releaseAbort: (() => void) | undefined
+    const abortStarted = new Promise<void>((resolve) => {
+      markAbortStarted = resolve
+    })
+    const abortGate = new Promise<void>((resolve) => {
+      releaseAbort = resolve
+    })
+    const invoke = vi.fn(async (channel: string) => {
+      if (channel === 'projects:list') return [project]
+      if (channel === 'sessions:load-all') return { sessions: [], manifest: { version: 1 } }
+      if (channel === 'sessions:save-session') return undefined
+      if (channel === 'reviewer:run') return { started: true }
+      if (channel === 'reviewer:get-for-session') {
+        return [{ id: 'review-1', turnMessageId: 'dispose-agent', lifecycle: 'running' }]
+      }
+      if (channel === 'reviewer:abort') {
+        markAbortStarted?.()
+        await abortGate
+        return undefined
+      }
+      throw new Error(`Unexpected RPC channel: ${channel}`)
+    })
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-review-dispose' })),
+      prompt: vi.fn(async () => {
+        emitEvent?.({
+          id: 'dispose-message-event',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          sessionId: 'session-review-dispose',
+          role: 'assistant',
+          text: 'Review before disposal.'
+        })
+      })
+    })
+    const ids = ['dispose-user', 'dispose-run', 'dispose-agent']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent },
+      {
+        createId: () => ids.shift() ?? 'generated-id',
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    await api.startRun({
+      project: project.id,
+      prompt: 'Produce and review before disposal.',
+      autoReviewEnabled: true
+    })
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('reviewer:get-for-session', expect.anything(), [
+        { projectId: project.id, appSessionId: 'session-review-dispose' }
+      ])
+    )
+    let disposed = false
+    const disposal = api.dispose().then(() => {
+      disposed = true
+    })
+    await abortStarted
+
+    expect(disposed).toBe(false)
+    releaseAbort?.()
+    await disposal
+    expect(disposed).toBe(true)
+    expect(invoke).toHaveBeenCalledWith('reviewer:abort', expect.anything(), [
+      { projectId: project.id, appSessionId: 'session-review-dispose' }
+    ])
   })
 
   it('does not enter the direct Agent port for cancellation after authorization expires', async () => {

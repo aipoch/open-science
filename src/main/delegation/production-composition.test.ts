@@ -624,6 +624,51 @@ describe('production delegated-work composition', () => {
     ])
   })
 
+  it('rechecks authoritative delegation policy inside durable child admission', async () => {
+    root = await mkdtemp(join(tmpdir(), 'delegated-production-policy-race-'))
+    const harness = await createCompositionHarness(root, 'codex')
+    let firstRead = true
+    const racingComposition = createProductionDelegatedWorkComposition({
+      dataRoot: root,
+      sessions: {
+        commands: harness.commands,
+        readSession: async () => {
+          const snapshot = structuredClone(harness.durable())
+          if (firstRead) {
+            firstRead = false
+            harness.replaceDurable({ ...snapshot, delegationPolicy: 'deny' })
+          }
+          return snapshot
+        }
+      },
+      resolveInput: async () => {
+        throw new Error('no inputs')
+      },
+      frameworks: {
+        async forSession(current) {
+          return {
+            frameworkId: current.agentFrameworkId!,
+            execution: harness.execution,
+            assertAvailable: async () => undefined
+          }
+        }
+      },
+      resolveExecutionModel: async () => testExecutionModel('codex')
+    })
+
+    await expect(
+      racingComposition.host.delegate(
+        harness.caller,
+        { task: 'racing child', name: 'racing child' },
+        { wait: false }
+      )
+    ).rejects.toMatchObject({
+      code: 'admission_rejection',
+      message: expect.stringMatching(/delegation is disabled/i)
+    })
+    expect(harness.durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
+  })
+
   it('rejects a removed own context field before reservation, workspace, or durable mutation', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-production-removed-context-'))
     const harness = await createCompositionHarness(root, 'codex')

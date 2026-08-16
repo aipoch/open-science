@@ -371,6 +371,8 @@ class TaskRunner {
   private readonly activeRunBySession = new Map<string, string>()
   private readonly progressListeners = new Set<(event: TaskRunProgressEvent) => void>()
   private readonly unsubscribeEvents: () => void
+  private disposed = false
+  private disposal: Promise<void> | undefined
 
   constructor(private readonly dependencies: TaskRunnerDependencies) {
     this.unsubscribeEvents = dependencies.runtimeEvents.subscribe((event) =>
@@ -378,10 +380,20 @@ class TaskRunner {
     )
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal
+    this.disposed = true
     this.unsubscribeEvents()
-    for (const run of this.runs.values()) this.stopHeartbeat(run)
+    const activeReviewCompletions: Promise<void>[] = []
+    for (const run of this.runs.values()) {
+      this.stopHeartbeat(run)
+      if (!run.reviewAbortController) continue
+      run.reviewAbortController.abort()
+      activeReviewCompletions.push(run.completion)
+    }
     this.progressListeners.clear()
+    this.disposal = Promise.allSettled(activeReviewCompletions).then(() => undefined)
+    return this.disposal
   }
 
   subscribeProgress(listener: (event: TaskRunProgressEvent) => void): () => void {
@@ -844,7 +856,7 @@ class TaskRunner {
       await this.failRun(run, acceptedSession, completed, error)
       return
     }
-    if (!run.cancellation && completed!.session.autoReviewEnabled === true) {
+    if (!this.disposed && !run.cancellation && completed!.session.autoReviewEnabled === true) {
       const reviewedMessage = [...completed!.session.messages]
         .reverse()
         .find(

@@ -170,16 +170,20 @@ describe('Host application commands', () => {
   it('defines the exact 52 request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
-    ).map(({ capability, contracts }) => ({
-      capability,
-      channels: contracts
+    ).map(({ capability, contracts }) => {
+      const rendererChannels = contracts
         .filter(
           ({ kind, surfaceInstallation }) =>
             kind === 'method' && surfaceInstallation.localWeb === 'web-rpc'
         )
         .map(({ channel }) => channel)
         .filter((channel): channel is string => channel !== null)
-    }))
+      return {
+        capability,
+        channels:
+          capability === 'reviewer' ? ['reviewer:abort', ...rendererChannels] : rendererChannels
+      }
+    })
 
     expect(expected.flatMap(({ channels }) => channels)).toHaveLength(52)
     expect(

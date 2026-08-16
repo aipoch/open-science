@@ -29,6 +29,7 @@ import type {
 } from '../delegation/session-records'
 import { canonicalStructuredOutputEqual } from '../delegation/structured-output'
 import { allocateDelegateNames } from '../delegation/delegated-work-admission'
+import { DurableDelegatedWorkError } from '../delegation/durable-delegated-work-error'
 import {
   DelegatedWorkAttemptConflictError,
   SessionMessageDeliveryPersistenceOwner
@@ -76,7 +77,14 @@ class SessionDelegatedWorkPersistenceOwner implements DelegatedWorkRecordCommand
     key: SessionKey,
     input: CreateChildrenInput
   ): Promise<readonly CreatedNamedChild[]> {
-    return this.store.mutate(key, input.expectedRevision, (graph, records) => {
+    return this.store.mutate(key, input.expectedRevision, (graph, records, session) => {
+      if (session.delegationPolicy === 'deny') {
+        throw new DurableDelegatedWorkError(
+          'admission_rejection',
+          'delegation is disabled for this Session',
+          'Delegation is disabled for this Session. Enable delegation before creating a Subagent.'
+        )
+      }
       if (input.children.length === 0)
         throw new Error('Child creation requires at least one child.')
       const parent = graph.frames.find((frame) => frame.id === input.parentFrameId)

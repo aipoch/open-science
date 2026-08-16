@@ -650,6 +650,81 @@ describe('TaskRunner', () => {
     expect(review.mock.calls[0]?.[2].aborted).toBe(true)
   })
 
+  it('aborts and awaits an in-flight automatic review when disposed', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let markReviewStarted: (() => void) | undefined
+    let releaseReviewCleanup: (() => void) | undefined
+    const reviewStarted = new Promise<void>((resolve) => {
+      markReviewStarted = resolve
+    })
+    const reviewCleanup = new Promise<void>((resolve) => {
+      releaseReviewCleanup = resolve
+    })
+    const review = vi.fn(
+      (_session: PersistedChatSession, _turnMessageId: string, signal: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          markReviewStarted?.()
+          const rejectAfterCleanup = (): void => {
+            void reviewCleanup.then(() => reject(new Error('review disposed')))
+          }
+          if (signal.aborted) rejectAfterCleanup()
+          else signal.addEventListener('abort', rejectAfterCleanup, { once: true })
+        })
+    )
+    const ids = ['dispose-user', 'dispose-run', 'dispose-agent']
+    const runner = createRunner({
+      sessions: {
+        list: async () => [],
+        save: async () => undefined
+      },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'session-review-dispose' }),
+        resumeSession: async (request) => ({ sessionId: request.sessionId }),
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => {
+          emitEvent?.({
+            id: 'dispose-message-event',
+            timestamp: 10,
+            kind: 'message',
+            level: 'info',
+            sessionId: 'session-review-dispose',
+            role: 'assistant',
+            text: 'Review before disposal.'
+          })
+        }
+      },
+      reviewer: { review },
+      runtimeEvents: {
+        subscribe: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      },
+      createId: () => ids.shift() ?? 'generated-id'
+    })
+
+    await runner.startRun({
+      project: project.id,
+      prompt: 'Produce and review before disposal.',
+      autoReviewEnabled: true
+    })
+    await reviewStarted
+    let disposed = false
+    const disposal = runner.dispose().then(() => {
+      disposed = true
+    })
+
+    expect(review.mock.calls[0]?.[2].aborted).toBe(true)
+    await Promise.resolve()
+    expect(disposed).toBe(false)
+    releaseReviewCleanup?.()
+    await disposal
+    expect(disposed).toBe(true)
+  })
+
   it('uses the dedicated policy mutation for an existing Session', async () => {
     const existing = { ...session, delegationPolicy: 'allow' as const }
     const setDelegationPolicy = vi.fn(async () => undefined)
@@ -816,7 +891,7 @@ describe('TaskRunner', () => {
     ])
 
     unsubscribe()
-    runner.dispose()
+    await runner.dispose()
   })
 
   it('marks provider acceptance before the first visible provider event', async () => {
@@ -866,7 +941,7 @@ describe('TaskRunner', () => {
       'first-visible-output',
       'completed'
     ])
-    runner.dispose()
+    await runner.dispose()
   })
 
   it('emits liveness heartbeats until the first visible provider event', async () => {
@@ -909,7 +984,7 @@ describe('TaskRunner', () => {
       await vi.advanceTimersByTimeAsync(20_000)
       expect(progress).toHaveLength(countAfterCompletion)
     } finally {
-      runner.dispose()
+      await runner.dispose()
       vi.useRealTimers()
     }
   })
@@ -923,7 +998,7 @@ describe('TaskRunner', () => {
     const started = await runner.startRun({ project: project.id, prompt: 'Research this.' })
 
     await expect(runner.waitForRun(started.id)).resolves.toMatchObject({ status: 'completed' })
-    runner.dispose()
+    await runner.dispose()
   })
 
   it('stops liveness heartbeats after the first visible provider event', async () => {
@@ -1020,7 +1095,7 @@ describe('TaskRunner', () => {
       const completed = await runner.waitForRun(started.id)
       expect(completed.output).toBe('Working on it.')
     } finally {
-      runner.dispose()
+      await runner.dispose()
       vi.useRealTimers()
     }
   })
@@ -2212,7 +2287,7 @@ describe('TaskRunner', () => {
     })
   })
 
-  it('releases its runtime-event subscription when disposed', () => {
+  it('releases its runtime-event subscription when disposed', async () => {
     let unsubscribeCount = 0
     const runner = createRunner({
       runtimeEvents: {
@@ -2222,7 +2297,7 @@ describe('TaskRunner', () => {
       }
     })
 
-    runner.dispose()
+    await runner.dispose()
 
     expect(unsubscribeCount).toBe(1)
   })

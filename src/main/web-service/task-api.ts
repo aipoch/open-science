@@ -131,9 +131,9 @@ class HeadlessTaskApi {
     } satisfies TaskRunnerDependencies)
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     try {
-      this.runner.dispose()
+      await this.runner.dispose()
     } finally {
       this.commandClient.dispose()
     }

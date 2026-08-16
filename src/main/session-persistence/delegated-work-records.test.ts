@@ -132,6 +132,27 @@ const child = (
 })
 
 describe('delegated-work Session records', () => {
+  it('rejects child admission when the authoritative Session policy is deny', async () => {
+    const { coordinator, durable, repository } = createHarness({
+      ...createRootSession(),
+      delegationPolicy: 'deny'
+    })
+
+    await expect(
+      coordinator.createChildren(key, {
+        expectedRevision: 0,
+        parentFrameId: durable().conversationGraph!.rootFrameId,
+        originMessageId: rootPrompt.id,
+        children: [child(1)]
+      })
+    ).rejects.toMatchObject({
+      code: 'admission_rejection',
+      message: expect.stringMatching(/delegation is disabled/i)
+    })
+    expect(repository.saveSession).not.toHaveBeenCalled()
+    expect(durable().runtimeContext?.delegatedWork?.records ?? []).toEqual([])
+  })
+
   it('publishes durable child start and finish projections after each repository commit', async () => {
     const published: PersistedChatSession[] = []
     const { coordinator, durable } = createHarness(createRootSession(), (session) => {
