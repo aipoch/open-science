@@ -364,9 +364,9 @@ A: Yes. Install it in one click from **Settings → General → Command line too
 # Start the service in the background
 open-science start --no-open
 
-# Create a project and run a task, wait for completion
-open-science project create "Systematic review"
-open-science run --project "Systematic review" \
+# Create a project, copy its id from the JSON output, and run a task
+open-science project create "Systematic review" --json
+open-science run --project <project-id> \
   --prompt-file ./task.md \
   --approval-profile auto \
   --skill literature-review \
