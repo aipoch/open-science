@@ -325,6 +325,7 @@ const respondToWorkspaceElicitation = async (
           }
         : undefined
     )
+    useSessionStore.getState().setElicitationPending(session.id, true)
     session = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === restoredRequest.sessionId)

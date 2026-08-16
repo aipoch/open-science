@@ -3,7 +3,9 @@ import type {
   AcpRuntimeEvent,
   AcpStateSnapshot
 } from '../../../../shared/acp'
+import type { HistoryReplayTarget } from '../../../../shared/history-preamble'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type { AgentFrameworkId } from '../../../../shared/settings'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1221,60 +1223,92 @@ describe('workspace durable elicitation', () => {
     })
   })
 
-  it('reattaches a restored session before submitting its durable answer', async () => {
-    const resumeSession = vi.fn().mockResolvedValue({
-      sessionId: 'session-choice-1',
-      cwd: '/workspace/project',
-      contextReset: false,
-      frameworkId: 'opencode',
-      backendId: 'opencode:provider-1'
-    })
-    const respondToElicitation = vi.fn().mockResolvedValue(createSnapshot(['session-choice-1']))
-    const response = {
-      requestId: 'choice-1',
-      action: 'accept' as const,
-      answers: [{ fieldId: 'question_0', value: 'Minimal' }],
-      request: {
-        requestId: 'choice-1',
+  it.each<readonly [string, AgentFrameworkId, string, HistoryReplayTarget]>([
+    ['Claude Code', 'claude-code', 'claude-code:anthropic', 'claude-code'],
+    ['OpenCode', 'opencode', 'opencode:provider-1', 'opencode'],
+    ['Codex Responses', 'codex', 'codex:responses-provider', 'codex-response'],
+    ['Codex Bridge', 'codex', 'codex:bridge-provider', 'codex-bridge']
+  ])(
+    'reattaches a restored session before submitting its durable answer through %s',
+    async (_path, frameworkId, backendId, historyReplayTarget) => {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          agentFrameworkId: frameworkId,
+          agentBackendId: backendId
+        }))
+      }))
+      const resumeSession = vi.fn().mockResolvedValue({
         sessionId: 'session-choice-1',
-        toolCallId: 'tool-choice-1',
-        message: 'Choose an approach',
-        fields: [
-          {
-            id: 'question_0',
-            label: 'Approach',
-            kind: 'single-select' as const,
-            options: [
-              { value: 'Minimal', label: 'Minimal' },
-              { value: 'Expanded', label: 'Expanded' }
-            ]
-          }
-        ],
-        durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+        cwd: '/workspace/project',
+        contextReset: true,
+        frameworkId,
+        backendId
+      })
+      const response = {
+        requestId: 'choice-1',
+        action: 'accept' as const,
+        answers: [{ fieldId: 'question_0', value: 'Minimal' }],
+        request: {
+          requestId: 'choice-1',
+          sessionId: 'session-choice-1',
+          toolCallId: 'tool-choice-1',
+          message: 'Choose an approach',
+          fields: [
+            {
+              id: 'question_0',
+              label: 'Approach',
+              kind: 'single-select' as const,
+              options: [
+                { value: 'Minimal', label: 'Minimal' },
+                { value: 'Expanded', label: 'Expanded' }
+              ]
+            }
+          ],
+          durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+        }
       }
+      useSessionStore.getState().setElicitationPending(response.request.sessionId, true)
+      const respondToElicitation = vi.fn(async () => {
+        const persisted = useSessionStore
+          .getState()
+          .sessions.find((session) => session.id === response.request.sessionId)
+        if (persisted?.status !== 'waiting-for-user') {
+          throw new Error('Durable elicitation no longer matches the pending Session activity.')
+        }
+        return createSnapshot(['session-choice-1'])
+      })
+
+      await respondToWorkspaceElicitation(
+        { state: createSnapshot(), resumeSession, respondToElicitation },
+        response,
+        { historyReplayDescriptor: { target: historyReplayTarget } }
+      )
+
+      expect(resumeSession).toHaveBeenCalledWith(
+        'session-choice-1',
+        '/workspace/project',
+        'project-1',
+        'ask',
+        frameworkId,
+        backendId,
+        undefined,
+        undefined,
+        undefined
+      )
+      expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
+        respondToElicitation.mock.invocationCallOrder[0]
+      )
+      expect(respondToElicitation).toHaveBeenCalledWith({
+        ...response,
+        historyReplay: {
+          historyPreamble: expect.stringContaining('Build something'),
+          historyAttachments: [],
+          historyImages: []
+        }
+      })
     }
-
-    await respondToWorkspaceElicitation(
-      { state: createSnapshot(), resumeSession, respondToElicitation },
-      response
-    )
-
-    expect(resumeSession).toHaveBeenCalledWith(
-      'session-choice-1',
-      '/workspace/project',
-      'project-1',
-      'ask',
-      'opencode',
-      'opencode:provider-1',
-      undefined,
-      undefined,
-      undefined
-    )
-    expect(resumeSession.mock.invocationCallOrder[0]).toBeLessThan(
-      respondToElicitation.mock.invocationCallOrder[0]
-    )
-    expect(respondToElicitation).toHaveBeenCalledWith(response)
-  })
+  )
 
   it('replays prior history when restoring the provider resets its context', async () => {
     const resumeSession = vi.fn().mockResolvedValue({
