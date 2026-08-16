@@ -138,7 +138,8 @@ const composeAcpRuntimeLifecycleOwners = (
       session.contextUsagePolicy.resolve(sessionId).estimateInput,
     emitState: () => session.publication.emitState(),
     requestReconnect: () => base.connectionTransitions.requestProviderReconnect(),
-    recoverFailedReconnect: () => connectionClose.recoverFailedDeferredDisconnect(),
+    recoverFailedReconnect: (disconnectedGeneration) =>
+      connectionClose.recoverFailedDeferredDisconnect(disconnectedGeneration),
     reportReconnectFailure: (error) =>
       safeLogError('model-change reconnect failed', errorLogFields(error)),
     diagnosticContext
@@ -160,7 +161,8 @@ const composeAcpRuntimeLifecycleOwners = (
     modelChanges,
     connectionClose: {
       disconnect: (emitClosedStatus) => host.disconnect(emitClosedStatus),
-      recoverFailedDeferredDisconnect: () => connectionClose.recoverFailedDeferredDisconnect()
+      recoverFailedDeferredDisconnect: (disconnectedGeneration) =>
+        connectionClose.recoverFailedDeferredDisconnect(disconnectedGeneration)
     },
     publishIdle: () => setStatus('idle')
   })

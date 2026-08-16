@@ -147,6 +147,7 @@ const createHarness = (): WorkflowHarness => {
 
   const setBridgeReasoningEffort = vi.fn()
   const connectionResources = {
+    epoch: 1,
     get connection() {
       return connected ? connection : undefined
     },
@@ -166,6 +167,7 @@ const createHarness = (): WorkflowHarness => {
     setBridgeReasoningEffort
   } as Pick<
     AcpConnectionResourceOwner,
+    | 'epoch'
     | 'connection'
     | 'isShuttingDown'
     | 'anthropicBridgeAvailable'
@@ -318,6 +320,7 @@ describe('ACP model-change workflow', () => {
 
     expect(harness.reportReconnectFailure).toHaveBeenCalledWith(failure)
     expect(harness.recoverFailedReconnect).toHaveBeenCalledOnce()
+    expect(harness.recoverFailedReconnect).toHaveBeenCalledWith(1)
     expect(harness.workflow.barrier).toBeUndefined()
   })
 

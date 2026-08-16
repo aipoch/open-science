@@ -210,14 +210,14 @@ class AcpConnectionCloseWorkflow {
     await this.options.modelChanges.cancelAndDrain()
     await this.options.transitions.requestRetirement()
   }
-  recoverFailedDeferredDisconnect(): void {
+  recoverFailedDeferredDisconnect(disconnectedGeneration: number): void {
     const teardownGeneration = this.options.resources.supersede()
     this.options.backendGeneration.supersede(teardownGeneration - 1)
     void this.options.resources
       .teardown(teardownGeneration, (stage, error) => {
         this.reportFailure(`${stage} cleanup after failed deferred disconnect failed`, error)
       })
-      .finally(() => this.options.state.clearPromptContent(teardownGeneration - 1))
+      .finally(() => this.options.state.clearPromptContent(disconnectedGeneration))
     this.options.state.transitionStatus('closed')
     try {
       this.options.state.emitState()

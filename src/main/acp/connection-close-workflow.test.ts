@@ -227,7 +227,7 @@ describe('AcpConnectionCloseWorkflow', () => {
         })
     )
 
-    workflow.recoverFailedDeferredDisconnect()
+    workflow.recoverFailedDeferredDisconnect(2)
     await vi.waitFor(() => expect(resources.teardown).toHaveBeenCalledOnce())
     advanceGeneration()
     finishTeardown?.()
