@@ -134,11 +134,11 @@ const AUTHORIZATION_INBOX_SUMMARY = {
 
 const AGENT_QUESTION_INBOX_SUMMARY = 'The agent is waiting for your response.'
 
-const TASK_ATTENTION_REASON_BY_STOP = {
+const TASK_ATTENTION_REASON_BY_STOP: Readonly<Record<string, NotificationAttentionReason>> = {
   max_tokens: 'task-max-tokens',
   max_turn_requests: 'task-max-turn-requests',
   refusal: 'task-refusal'
-} as const satisfies Record<string, NotificationAttentionReason>
+}
 
 // Strips control characters, folds whitespace, and turns underscores into spaces so an arbitrary
 // stop-reason text (or one from a future ACP extension) reads naturally and can't smuggle newlines
