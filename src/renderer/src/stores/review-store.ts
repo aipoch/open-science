@@ -94,7 +94,18 @@ export const selectProjectSessionReviews = (
   sessionId: string | undefined
 ): ReviewWithChecks[] => {
   if (!sessionId) return EMPTY_REVIEWS
-  return reviewsBySession[reviewSessionKey(projectId ?? '', sessionId)] ?? EMPTY_REVIEWS
+  return selectProjectSessionReviewSnapshot(reviewsBySession, projectId, sessionId) ?? EMPTY_REVIEWS
+}
+
+// Unlike selectProjectSessionReviews, this preserves the distinction between a Session that has
+// loaded an empty review snapshot and one that has not loaded at all.
+export const selectProjectSessionReviewSnapshot = (
+  reviewsBySession: Record<string, ReviewWithChecks[]>,
+  projectId: string | undefined,
+  sessionId: string | undefined
+): ReviewWithChecks[] | undefined => {
+  if (!sessionId) return undefined
+  return reviewsBySession[reviewSessionKey(projectId ?? '', sessionId)]
 }
 
 export const selectProjectSessionReviewLoadError = (

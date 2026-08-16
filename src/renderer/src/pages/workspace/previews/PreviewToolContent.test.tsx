@@ -1,11 +1,17 @@
+// @vitest-environment jsdom
+
+import { act } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { createRoot } from 'react-dom/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewToolItem } from '@/stores/preview-workbench-store'
 
 const mocks = vi.hoisted(() => ({
   activeProjectId: 'project-1' as string | undefined,
-  getReviewsForSession: vi.fn()
+  getReviewSnapshot: vi.fn(),
+  loadError: undefined as string | undefined,
+  loadReviewsForSession: vi.fn<() => Promise<void>>()
 }))
 
 vi.mock('@/stores/navigation-store', () => ({
@@ -13,13 +19,24 @@ vi.mock('@/stores/navigation-store', () => ({
     selector({ activeProjectId: mocks.activeProjectId })
 }))
 vi.mock('@/stores/review-store', () => ({
-  selectProjectSessionReviews: (
+  selectProjectSessionReviewSnapshot: (
     _reviewsBySession: Record<string, never[]>,
     projectId: string | undefined,
     sessionId: string
-  ) => mocks.getReviewsForSession(sessionId, projectId),
-  useReviewStore: <T,>(selector: (state: { reviewsBySession: Record<string, never[]> }) => T): T =>
-    selector({ reviewsBySession: {} })
+  ) => mocks.getReviewSnapshot(sessionId, projectId),
+  selectProjectSessionReviewLoadError: () => mocks.loadError,
+  useReviewStore: <T,>(
+    selector: (state: {
+      reviewsBySession: Record<string, never[]>
+      loadErrorsBySession: Record<string, string>
+      loadReviewsForSession: () => Promise<void>
+    }) => T
+  ): T =>
+    selector({
+      reviewsBySession: {},
+      loadErrorsBySession: {},
+      loadReviewsForSession: mocks.loadReviewsForSession
+    })
 }))
 vi.mock('../NotebookPreview', () => ({
   NotebookPreview: ({ item }: { item: PreviewToolItem }): React.JSX.Element => (
@@ -59,7 +76,9 @@ const render = (item: PreviewToolItem): string =>
 describe('PreviewToolContent', () => {
   beforeEach(() => {
     mocks.activeProjectId = 'project-1'
-    mocks.getReviewsForSession.mockReturnValue([])
+    mocks.getReviewSnapshot.mockReturnValue([])
+    mocks.loadError = undefined
+    mocks.loadReviewsForSession.mockReset().mockResolvedValue(undefined)
   })
 
   it('routes project file tools through a project-scoped remount boundary', () => {
@@ -69,12 +88,78 @@ describe('PreviewToolContent', () => {
   it('shows the reviewer empty state when the requested session has no reviews', () => {
     const html = render(createItem({ toolKind: 'reviewer', reviewerSessionId: 'review-session' }))
 
-    expect(mocks.getReviewsForSession).toHaveBeenCalledWith('review-session', 'project-1')
+    expect(mocks.getReviewSnapshot).toHaveBeenCalledWith('review-session', 'project-1')
     expect(html).toContain('No review available for this session.')
   })
 
+  it('does not report a missing review before the artifact source session is loaded', () => {
+    mocks.getReviewSnapshot.mockReturnValue(undefined)
+
+    const html = render(
+      createItem({
+        toolKind: 'reviewer',
+        reviewerSessionId: 'artifact-source-session',
+        reviewerReviewId: 'review-from-artifact-provenance'
+      })
+    )
+
+    expect(html).toContain('Loading review history…')
+    expect(html).not.toContain('No review available for this session.')
+  })
+
+  it('loads review history for the artifact source session', async () => {
+    mocks.getReviewSnapshot.mockReturnValue(undefined)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <PreviewToolContent
+          item={createItem({
+            toolKind: 'reviewer',
+            reviewerSessionId: 'artifact-source-session',
+            reviewerReviewId: 'review-from-artifact-provenance'
+          })}
+        />
+      )
+    })
+
+    expect(mocks.loadReviewsForSession).toHaveBeenCalledWith('artifact-source-session', 'project-1')
+
+    act(() => root.unmount())
+  })
+
+  it('shows a working retry action when the artifact source review history fails to load', async () => {
+    mocks.getReviewSnapshot.mockReturnValue(undefined)
+    mocks.loadError = 'read failed'
+    const container = document.createElement('div')
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <PreviewToolContent
+          item={createItem({
+            toolKind: 'reviewer',
+            reviewerSessionId: 'artifact-source-session',
+            reviewerReviewId: 'review-from-artifact-provenance'
+          })}
+        />
+      )
+    })
+
+    expect(container.textContent).toContain('Could not load review history.')
+    expect(container.textContent).not.toContain('No review available for this session.')
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button')?.click()
+    })
+    expect(mocks.loadReviewsForSession).toHaveBeenCalledWith('artifact-source-session', 'project-1')
+
+    act(() => root.unmount())
+  })
+
   it('selects the requested review and forwards the active finding', () => {
-    mocks.getReviewsForSession.mockReturnValue([{ id: 'older' }, { id: 'target' }])
+    mocks.getReviewSnapshot.mockReturnValue([{ id: 'older' }, { id: 'target' }])
 
     const html = render(
       createItem({

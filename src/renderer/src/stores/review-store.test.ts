@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewCheck, ReviewWithChecks, TurnScope } from '../../../shared/reviewer'
 import {
   createInitialReviewState,
-  selectReviewRunsForMessage,
   selectProjectSessionReviewLoadError,
+  selectProjectSessionReviewSnapshot,
+  selectReviewRunsForMessage,
   useReviewStore
 } from './review-store'
 
@@ -105,6 +106,13 @@ describe('review store', () => {
   it('starts empty and returns [] for an unknown session', () => {
     expect(useReviewStore.getState().reviewsBySession).toEqual({})
     expect(useReviewStore.getState().getReviewsForSession('missing')).toEqual([])
+  })
+
+  it('distinguishes an unloaded session from a loaded empty review snapshot', () => {
+    expect(selectProjectSessionReviewSnapshot({}, 'project-1', 'session-1')).toBeUndefined()
+    expect(
+      selectProjectSessionReviewSnapshot({ 'project-1\0session-1': [] }, 'project-1', 'session-1')
+    ).toEqual([])
   })
 
   it('stores a pushed review under its session id', () => {
