@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs'
 import { mkdir, realpath, stat } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 
 import {
   DEFAULT_UPLOAD_PROJECT_ID,
@@ -50,6 +50,13 @@ type RemoveVerifiedLegacyCopyInput = {
   filename: string
   legacyPath?: string
 }
+
+const UPLOAD_TRANSACTION_OPTIONS = { maxWait: 10_000 } as const
+
+const runUploadTransaction = <Result>(
+  client: PrismaClient,
+  operation: (transaction: Prisma.TransactionClient) => Promise<Result>
+): Promise<Result> => client.$transaction(operation, UPLOAD_TRANSACTION_OPTIONS)
 
 type StagedPublicationDependencies = {
   resolver: ManagedUploadResolver
@@ -265,7 +272,7 @@ class StagedPublicationOwner {
         ? (requestedCreatedAt ?? new Date())
         : undefined
 
-    const registered = await client.$transaction(async (tx) => {
+    const registered = await runUploadTransaction(client, async (tx) => {
       await tx.fileOriginSession.upsert({
         where: { projectId_sessionId: { projectId, sessionId } },
         create: { projectId, sessionId },
@@ -303,5 +310,5 @@ class StagedPublicationOwner {
   }
 }
 
-export { OrphanLegacyUploadAuthorityMissingError, StagedPublicationOwner }
+export { OrphanLegacyUploadAuthorityMissingError, runUploadTransaction, StagedPublicationOwner }
 export type { PublicationOptions, UploadVersionRecord }

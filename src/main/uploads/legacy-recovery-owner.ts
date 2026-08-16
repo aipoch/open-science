@@ -16,6 +16,7 @@ import {
 import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
 import {
   OrphanLegacyUploadAuthorityMissingError,
+  runUploadTransaction,
   type PublicationOptions,
   type UploadVersionRecord
 } from './staged-publication-owner'
@@ -384,7 +385,7 @@ class LegacyRecoveryOwner {
       }
       if (!sourcePath || !(await validateContent(sourcePath))) {
         const client = await this.options.getClient!()
-        await client.$transaction(async (tx) => {
+        await runUploadTransaction(client, async (tx) => {
           await tx.uploadVersion.deleteMany({ where: { id: version.id, state: 'staging' } })
           await tx.uploadFile.deleteMany({
             where: { id: version.uploadFileId, versions: { none: {} } }
@@ -412,7 +413,7 @@ class LegacyRecoveryOwner {
 
     await rm(`${finalPath}${LIVE_COPY_TEMP_SUFFIX}`, { force: true })
     const client = await this.options.getClient!()
-    const ready = await client.$transaction(async (tx) => {
+    const ready = await runUploadTransaction(client, async (tx) => {
       const updated =
         version.state === 'ready'
           ? version
