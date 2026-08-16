@@ -474,7 +474,7 @@ model ComputeHost {
   sshOverrides     String? // JSON: { user?, port?, identityFile? } — never credentials
   scratchRoot      String?
   scratchPinned    Boolean   @default(false)
-  concurrencyLimit Int? // provider admission ceiling; null uses the default of 10
+  concurrencyLimit Int? // stored but not enforced in Phase 1
   probeResult      String? // JSON probe snapshot, written by a later issue
   detailsDoc       String    @default("") // markdown notes, <= 32768 chars
   detailsUpdatedAt DateTime?
