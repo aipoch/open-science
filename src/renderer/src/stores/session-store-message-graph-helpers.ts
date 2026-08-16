@@ -434,6 +434,7 @@ export const canBranchInNewSession = (session: ChatSession): boolean =>
   session.status !== 'running' &&
   session.status !== 'waiting-for-user' &&
   session.status !== 'waiting-permission' &&
+  session.status !== 'waiting-plan-approval' &&
   !session.fixLoopActive &&
   !session.compacting &&
   !session.branchSwitchBlocked &&

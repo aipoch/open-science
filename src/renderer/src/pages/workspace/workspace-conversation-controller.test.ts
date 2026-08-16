@@ -195,6 +195,18 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
+  it('disables Agent Message branching while the source Session awaits Plan approval', () => {
+    const input = options({
+      activeSession: session({ status: 'waiting-plan-approval' })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('disables Agent Message branching while the Specialist barrier is in flight', () => {
     const input = options()
     input.session.view.specialist.barrierInFlight = true
@@ -297,6 +309,16 @@ describe('workspace conversation controller', () => {
     act(() => hook.result.current.actions.revise('message-a', textDoc('changed')))
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
     expect(input.runtime.resendEditedMessage).not.toHaveBeenCalled()
+  })
+
+  it('blocks submit while a selected branched Session is still binding', () => {
+    const input = options({ activeSession: session({ isPending: true }) })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.submit).toBe(false)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
   it('blocks submit and revision while Save as skill owns prompt admission', () => {

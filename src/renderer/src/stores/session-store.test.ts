@@ -5061,6 +5061,28 @@ describe('branchInNewSession', () => {
     ).toBeUndefined()
     expect(useSessionStore.getState().sessions).toEqual([sourceBefore])
   })
+
+  it('refuses a source that is waiting for Plan approval', () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'prepare a Plan'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === 'source-session' ? { ...session, status: 'waiting-plan-approval' } : session
+      )
+    }))
+    const sourceBefore = structuredClone(useSessionStore.getState().sessions[0])
+
+    expect(
+      useSessionStore.getState().branchInNewSession({
+        sourceSessionId: 'source-session',
+        content: 'bypass the pending Plan'
+      })
+    ).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toEqual([sourceBefore])
+  })
 })
 
 describe('truncateSessionFromMessage', () => {

@@ -126,6 +126,7 @@ const canSubmit = (options: WorkspaceConversationControllerOptions): boolean => 
     !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     (!docIsEmpty(composer.view.doc) || composer.view.attachments.length > 0) &&
+    !activeSession?.isPending &&
     activeSession?.status !== 'running' &&
     activeSession?.status !== 'waiting-for-user' &&
     (activeSession?.status !== 'waiting-permission' || !options.hasBlockingRootPermissionRequest) &&
@@ -164,6 +165,7 @@ const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
     options.activeSession.status !== 'running' &&
     options.activeSession.status !== 'waiting-for-user' &&
     options.activeSession.status !== 'waiting-permission' &&
+    options.activeSession.status !== 'waiting-plan-approval' &&
     !options.activeSession.fixLoopActive &&
     !options.activeSession.compacting &&
     !options.activeSession.branchSwitchBlocked &&

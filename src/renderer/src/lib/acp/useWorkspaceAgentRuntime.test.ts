@@ -2635,6 +2635,62 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().selectedSessionId).toBe('branched-session')
   })
 
+  it('rejects a prompt while an idle branched Session is still binding', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the original data',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    const firstAnswer = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-event',
+      content: 'The original analysis is complete.'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const created = createDeferred<{ sessionId: string; cwd?: string }>()
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn(() => created.promise),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      deleteSession: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const branchPromise = sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      branchSourceMessageId: firstAnswer?.messageId ?? '',
+      text: ''
+    })
+    await vi.waitFor(() => expect(runtime.createSession).toHaveBeenCalledOnce())
+    const pending = useSessionStore.getState().sessions.find((session) => session.isPending)
+    expect(pending).toBeDefined()
+    if (!pending) throw new Error('Expected a pending branched Session')
+
+    const immediateSend = await sendWorkspaceMessage(runtime, {
+      sessionId: pending.id,
+      text: 'Follow up before binding completes'
+    })
+
+    expect(immediateSend).toBeUndefined()
+    expect(pending.messages.map((message) => message.content)).toEqual([
+      'Inspect the original data',
+      'The original analysis is complete.'
+    ])
+    expect(runtime.createSession).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+
+    created.resolve({ sessionId: 'branched-session', cwd: '/workspace/project' })
+    await expect(branchPromise).resolves.toEqual({
+      sessionId: 'branched-session',
+      messageId: firstAnswer?.messageId
+    })
+  })
+
   it('omits history images when branching into a text-only model', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',

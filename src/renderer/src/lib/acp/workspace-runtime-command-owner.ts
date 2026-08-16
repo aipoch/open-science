@@ -432,6 +432,7 @@ const sendWorkspaceMessage = async (
     if (isWorkspacePromptPreparationInFlight(sessionId)) return undefined
     if (
       runtime.state.promptInFlightSessionIds.includes(sessionId) ||
+      (session?.isPending && session.status === 'idle' && Boolean(session.branchSource)) ||
       (session?.compacting && !input.allowCompactionRecovery) ||
       session?.status === 'running' ||
       session?.status === 'waiting-for-user' ||
