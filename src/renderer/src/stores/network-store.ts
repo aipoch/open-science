@@ -64,7 +64,14 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
           // Bridge failure keeps the last known state rather than crying wolf. Announced probes
           // still honor the minimum Checking… presentation before restoring that state.
           await holdAnnouncedState()
-          if (announce && probeGeneration === generation && lastKnownConnectivity !== undefined) {
+          const currentState = get()
+          if (
+            announce &&
+            probeGeneration === generation &&
+            currentState.isOnline &&
+            currentState.connectivity === 'unknown' &&
+            lastKnownConnectivity !== undefined
+          ) {
             set({ connectivity: lastKnownConnectivity })
           }
           return
@@ -73,7 +80,7 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     }
 
     await holdAnnouncedState()
-    if (probeGeneration === generation) {
+    if (probeGeneration === generation && (get().isOnline || !reachable)) {
       const connectivity = reachable ? 'reachable' : 'unreachable'
       lastKnownConnectivity = connectivity
       set({ connectivity })
