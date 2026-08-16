@@ -332,10 +332,14 @@ describe('post-merge Windows validation', () => {
     expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
     expect(released.run).toContain('f12fd1f871022c7a9b771d193202d9ecf98aca96')
     expect(released.run)
-      .toContain(`git merge-base --is-ancestor $artifactReservationCommit $releasedSha
-if ($LASTEXITCODE -eq 0) {
+      .toContain(`$artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
+  Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
+  exit 1
+}
+if ($artifactReservationBase -eq $artifactReservationCommit) {
   $artifactRpcContract = 'reservation'
-} elseif ($LASTEXITCODE -eq 1) {
+} else {
   $artifactRpcContract = 'legacy'
 }`)
     expect(released.run).toContain('"artifact_rpc_contract=$artifactRpcContract"')

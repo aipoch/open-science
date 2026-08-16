@@ -65,14 +65,15 @@ jobs:
             }
           }
           $artifactReservationCommit = 'f12fd1f871022c7a9b771d193202d9ecf98aca96'
-          git merge-base --is-ancestor $artifactReservationCommit $releasedSha
-          if ($LASTEXITCODE -eq 0) {
-            $artifactRpcContract = 'reservation'
-          } elseif ($LASTEXITCODE -eq 1) {
-            $artifactRpcContract = 'legacy'
-          } else {
+          $artifactReservationBase = git merge-base $artifactReservationCommit $releasedSha
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactReservationBase)) {
             Write-Error "Could not resolve the released Artifact RPC contract at $releasedSha."
             exit 1
+          }
+          if ($artifactReservationBase -eq $artifactReservationCommit) {
+            $artifactRpcContract = 'reservation'
+          } else {
+            $artifactRpcContract = 'legacy'
           }
           "sha=$releasedSha" >> $env:GITHUB_OUTPUT
           "migration_count=$($migrationFiles.Count)" >> $env:GITHUB_OUTPUT
