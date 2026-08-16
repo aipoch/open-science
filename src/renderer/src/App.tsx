@@ -537,7 +537,12 @@ const AppContent = (): React.JSX.Element | null => {
   }
 
   if (startupView === 'onboarding') {
-    return <OnboardingWizard loadStorageInfo={loadStorageInfo} />
+    return (
+      <>
+        <EnvStatusBanner ui={envUi} onRetry={() => void retryEnv()} />
+        <OnboardingWizard loadStorageInfo={loadStorageInfo} />
+      </>
+    )
   }
 
   if (!isSessionPersistenceHydrated && isSessionPersistenceLoading) {

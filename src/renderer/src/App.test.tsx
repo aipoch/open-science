@@ -303,7 +303,9 @@ vi.mock('@/pages/settings/SettingsPage', () => ({
   )
 }))
 vi.mock('@/pages/workspace/EnvStatusBanner', () => ({
-  EnvStatusBanner: (): React.JSX.Element => <div data-testid="env-banner" />
+  EnvStatusBanner: ({ onRetry }: { onRetry?: () => void }): React.JSX.Element => (
+    <button type="button" data-testid="env-banner" onClick={onRetry} />
+  )
 }))
 vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
@@ -380,6 +382,8 @@ describe('App startup routing', () => {
     mocks.preview.panelState = 'collapsed'
     mocks.deepLinkNavigation.mockClear()
     mocks.lifecycleSync.mockClear()
+    mocks.environment.init.mockClear()
+    mocks.environment.retry.mockClear()
     mocks.syncWindowFindAppearance.mockClear()
     mocks.syncUnreadTaskView.mockClear()
     mocks.getInfo.mockReset().mockResolvedValue({
@@ -968,6 +972,10 @@ describe('App startup routing', () => {
     await render()
 
     expect(container.querySelector('[data-testid="onboarding-page"]')).not.toBeNull()
+    const envBanner = container.querySelector<HTMLButtonElement>('[data-testid="env-banner"]')
+    expect(envBanner).not.toBeNull()
+    await act(async () => envBanner?.click())
+    expect(mocks.environment.retry).toHaveBeenCalledOnce()
     expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
   })
 

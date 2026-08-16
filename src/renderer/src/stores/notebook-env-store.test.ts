@@ -115,6 +115,50 @@ describe('notebook-env-store', () => {
     expect(api.getStatus).toHaveBeenCalledTimes(2)
   })
 
+  it('ignores an older status failure after a newer refresh succeeds', async () => {
+    let rejectOlder!: (error: Error) => void
+    let resolveNewer!: (status: ProvisionStatus) => void
+    const older = new Promise<ProvisionStatus>((_resolve, reject) => {
+      rejectOlder = reject
+    })
+    const newer = new Promise<ProvisionStatus>((resolve) => {
+      resolveNewer = resolve
+    })
+    installApi({ getStatus: vi.fn().mockReturnValueOnce(older).mockReturnValueOnce(newer) })
+
+    const olderInit = useNotebookEnvStore.getState().init()
+    const newerInit = useNotebookEnvStore.getState().init()
+    resolveNewer(READY)
+    await newerInit
+    rejectOlder(new Error('stale failure'))
+    await olderInit
+
+    expect(useNotebookEnvStore.getState().status).toEqual(READY)
+    expect(useNotebookEnvStore.getState().statusError).toBeUndefined()
+  })
+
+  it('ignores an older status success after a newer refresh fails', async () => {
+    let resolveOlder!: (status: ProvisionStatus) => void
+    let rejectNewer!: (error: Error) => void
+    const older = new Promise<ProvisionStatus>((resolve) => {
+      resolveOlder = resolve
+    })
+    const newer = new Promise<ProvisionStatus>((_resolve, reject) => {
+      rejectNewer = reject
+    })
+    installApi({ getStatus: vi.fn().mockReturnValueOnce(older).mockReturnValueOnce(newer) })
+
+    const olderInit = useNotebookEnvStore.getState().init()
+    const newerInit = useNotebookEnvStore.getState().init()
+    rejectNewer(new Error('current failure'))
+    await newerInit
+    resolveOlder(READY)
+    await olderInit
+
+    expect(useNotebookEnvStore.getState().status.pythonReady).toBe(false)
+    expect(useNotebookEnvStore.getState().statusError).toBe('current failure')
+  })
+
   it('records the scope and forwards provision(lang) to the bridge', async () => {
     const { api } = installApi()
     await useNotebookEnvStore.getState().provision('r')

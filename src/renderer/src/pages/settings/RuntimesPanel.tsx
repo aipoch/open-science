@@ -96,6 +96,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   const provisionEnv = useNotebookEnvStore((state) => state.provision)
   const cancelEnv = useNotebookEnvStore((state) => state.cancel)
   const resetEnv = useNotebookEnvStore((state) => state.reset)
+  const statusError = useNotebookEnvStore((state) => state.statusError)
   // Per-language provisioning state: python and R each track their own progress/preparing/error, so
   // requesting one never makes the other's card look cancelled (the provisioner serializes the runs).
   const byLang = useNotebookEnvStore((state) => state.byLang)
@@ -310,6 +311,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   }
 
   const provisionManaged = async (language: NotebookLanguage): Promise<void> => {
+    if (statusError) return
     // Provisioning deliberately avoids the panel-wide busy flag. Per-language store state marks only
     // the active runtime as preparing and leaves its Cancel action available throughout the download.
     setManagedOperations((current) => ({ ...current, [language]: true }))
@@ -329,6 +331,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
   // Explicit recovery for a recovery-BLOCKED runtime (a prior setup's worker couldn't be confirmed
   // stopped, so plain provision keeps refusing). Reset force-clears the quarantine and rebuilds.
   const resetManaged = async (language: NotebookLanguage): Promise<void> => {
+    if (statusError) return
     setManagedOperations((current) => ({ ...current, [language]: true }))
     setError(null)
     try {
@@ -568,7 +571,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             variant="default"
                             size="sm"
                             className="shrink-0"
-                            disabled={busy}
+                            disabled={busy || Boolean(statusError)}
                             onClick={() => void resetManaged(id)}
                           >
                             {t('Reset runtime')}
@@ -652,7 +655,7 @@ const RuntimesPanel = ({ title, description }: RuntimesPanelProps): React.JSX.El
                             variant="default"
                             size="sm"
                             className="shrink-0"
-                            disabled={busy}
+                            disabled={busy || Boolean(statusError)}
                             onClick={() =>
                               langError?.includes('RUNTIME_RECOVERY_BLOCKED')
                                 ? void resetManaged(id)

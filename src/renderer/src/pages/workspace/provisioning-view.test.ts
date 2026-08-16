@@ -97,6 +97,11 @@ describe('notebookGated', () => {
     expect(notebookGated(s, deriveProvisionUi(s, undefined, undefined, undefined))).toBe(true)
   })
 
+  it('keeps the gate closed when an active upgrade status refresh fails', () => {
+    const s = status({ pythonReady: true, provisioning: true })
+    expect(notebookGated(s, { kind: 'error', message: 'status unavailable' })).toBe(true)
+  })
+
   it('does NOT gate while only R is preparing (Python stays usable)', () => {
     const s = status({ pythonReady: true, provisioning: true })
     expect(notebookGated(s, deriveProvisionUi(s, 'r', undefined, undefined))).toBe(false)

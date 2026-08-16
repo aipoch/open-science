@@ -359,6 +359,23 @@ describe('RuntimesPanel', () => {
     expect(registerInterpreter).not.toHaveBeenCalled()
   })
 
+  it('blocks app-managed setup while the authoritative environment status is unavailable', async () => {
+    ;(window.api.notebookEnv.getStatus as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('status unavailable')
+    )
+    useNotebookEnvStore.setState({ statusError: 'status unavailable' })
+    await render()
+
+    const rSection = container.querySelector('section[aria-label="R runtime"]')
+    const setupButton = Array.from(rSection?.querySelectorAll('button') ?? []).find((button) =>
+      /download and set up/i.test(button.textContent ?? '')
+    )
+
+    expect(setupButton?.disabled).toBe(true)
+    await click(setupButton ?? null)
+    expect(provision).not.toHaveBeenCalled()
+  })
+
   it('shows a determinate progress bar + Cancel in the app-managed setup card while downloading', async () => {
     await render()
     // R has no provisioned managed env, so its section shows the app-managed SETUP card (which carries

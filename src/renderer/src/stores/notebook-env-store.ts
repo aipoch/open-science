@@ -82,6 +82,7 @@ const subscribedBridges = new WeakSet<object>()
 export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   type ExplicitRun = { operationId: string; startProgressRevision: number }
   type ProgressCursor = { revision: number; operationId?: string; terminal: boolean }
+  let statusRefreshRevision = 0
   const latestProgress = new Map<NotebookLanguage, ProgressCursor>()
   const explicitRuns = new Map<NotebookLanguage, ExplicitRun[]>()
   const localOperationIds = new Map<NotebookLanguage, Set<string>>()
@@ -188,12 +189,15 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
   const refreshStatus = async (
     bridge: typeof window.api.notebookEnv
   ): Promise<ProvisionStatus | undefined> => {
+    const revision = ++statusRefreshRevision
     try {
       const status = await bridge.getStatus()
+      if (revision !== statusRefreshRevision) return undefined
       applyUi({ status, statusError: undefined })
       applyRecoveryBlocks(status)
       return status
     } catch (e) {
+      if (revision !== statusRefreshRevision) return undefined
       applyUi({ statusError: errorText(e) })
       return undefined
     }
