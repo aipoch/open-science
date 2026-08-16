@@ -1776,6 +1776,87 @@ describe('workspace agent message sending', () => {
     })
   })
 
+  it('rejects an ordinary runtime prompt while Plan approval owns the Session', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Create a plan',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-plan-approval'
+      }))
+    }))
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'start another turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(sent).toBeUndefined()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('admits a main runtime prompt while only a delegated Permission is pending', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Delegate research',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        status: 'waiting-permission',
+        interactionState: { permission: true, elicitation: false, plan: false }
+      }))
+    }))
+    const snapshot = createSnapshot(['transport-session-1'])
+    snapshot.pendingPermissions = [
+      {
+        requestId: 'delegated-permission',
+        sessionId: 'transport-session-1',
+        toolCallId: 'delegated-tool',
+        title: 'Run delegated command',
+        options: [],
+        delegated: {
+          frameId: 'child-frame',
+          attemptId: 'attempt-1',
+          childTitle: 'Researcher',
+          riskScope: 'This call only'
+        }
+      }
+    ]
+    const runtime = {
+      state: snapshot,
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn().mockResolvedValue(snapshot)
+    }
+
+    const sent = await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'continue the main work',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+
+    expect(sent).toMatchObject({ sessionId: 'transport-session-1' })
+    expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
   it('keeps the original Specialist replay clearing when the provider rejects the prompt', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',

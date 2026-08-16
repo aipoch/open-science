@@ -1,4 +1,9 @@
-import type { ChatMessage, ChatSession, ToolActivity } from '@/stores/session-store'
+import {
+  projectSessionActionability,
+  type ChatMessage,
+  type ChatSession,
+  type ToolActivity
+} from '@/stores/session-store'
 
 type TimelinePosition = {
   updatedAt: number
@@ -61,12 +66,16 @@ const getAgentThinkingStartedAt = (session: ChatSession | undefined): number | u
 // own indicator phases.
 const getAgentLoadingPhase = (session: ChatSession | undefined): AgentLoadingPhase => {
   if (!session) return 'hidden'
-  if (session.status === 'waiting-for-user') return 'waiting-for-response'
-  if (session.status === 'waiting-permission' || session.status === 'waiting-plan-approval') {
+  const actionability = projectSessionActionability(session)
+  if (actionability.waitReason === 'waiting-for-user') return 'waiting-for-response'
+  if (
+    actionability.waitReason === 'waiting-permission' ||
+    actionability.waitReason === 'waiting-plan-approval'
+  ) {
     return 'waiting-for-approval'
   }
 
-  const hasLocalRun = Boolean(session.activeRun) && session.status === 'running'
+  const hasLocalRun = Boolean(session.activeRun) && actionability.activity === 'running'
   if (!hasLocalRun && !session.agentPromptInFlight) return 'hidden'
 
   const { prompt, tools: currentRunTools } = getCurrentRunTimeline(session)

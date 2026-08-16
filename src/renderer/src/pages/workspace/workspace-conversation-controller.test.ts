@@ -3,8 +3,11 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { ChatSession } from '@/stores/session-store'
-import { useSessionStore } from '@/stores/session-store'
+import {
+  projectSessionActionability,
+  type ChatSession,
+  useSessionStore
+} from '@/stores/session-store'
 
 import type { ComposerDoc } from './composer/composer-doc'
 import {
@@ -43,8 +46,9 @@ const options = (
   overrides: Partial<WorkspaceConversationControllerOptions> = {}
 ): WorkspaceConversationControllerOptions => {
   const doc = textDoc('hello')
+  const activeSession = overrides.activeSession ?? session()
   return {
-    activeSession: session(),
+    activeSession,
     projectId: 'project-a',
     currentDraftKey: 'session-a',
     isPersistenceReady: true,
@@ -54,7 +58,7 @@ const options = (
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
     saveAsSkillInFlightSessionIds: [],
-    hasBlockingRootPermissionRequest: false,
+    actionability: projectSessionActionability(activeSession),
     newConversationAutoReviewEnabled: false,
     newConversationEnabledComputeHosts: [],
     composer: {
@@ -312,13 +316,34 @@ describe('workspace conversation controller', () => {
   })
 
   it('blocks submit while a selected branched Session is still binding', () => {
-    const input = options({ activeSession: session({ isPending: true }) })
+    const pendingSession = session({ isPending: true })
+    const input = options({
+      activeSession: pendingSession,
+      actionability: projectSessionActionability(pendingSession)
+    })
     const hook = renderController(input)
     mounted.push(hook)
 
     expect(hook.result.current.availability.submit).toBe(false)
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps the main Turn available for a delegated Permission', () => {
+    const delegatedWait = session({
+      status: 'waiting-permission',
+      interactionState: { permission: true, elicitation: false, plan: false }
+    })
+    const input = options({
+      activeSession: delegatedWait,
+      actionability: projectSessionActionability(delegatedWait, {
+        rootPermissionPending: false
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability).toMatchObject({ submit: true, revise: true })
   })
 
   it('blocks submit and revision while Save as skill owns prompt admission', () => {
@@ -512,6 +537,7 @@ describe('workspace conversation controller', () => {
     const blocked = options({
       ...input,
       activeSession: session({ status: 'running' }),
+      actionability: projectSessionActionability(session({ status: 'running' })),
       runtime: input.runtime,
       composer: input.composer,
       session: input.session

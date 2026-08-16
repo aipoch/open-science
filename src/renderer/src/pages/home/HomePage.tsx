@@ -46,16 +46,13 @@ import { NotificationBell } from '@/components/NotificationBell'
 import { ThemePreferenceMenu } from '@/components/ThemeControls'
 import { UpdateCapsule } from '@/components/UpdateCapsule'
 import { APP } from '../../../../shared/app-config'
-import {
-  earliestCurrentDelegatedAttemptStartedAt,
-  hasCurrentRunningDelegatedAttempt
-} from '../../../../shared/delegated-work-projection'
+import { earliestCurrentDelegatedAttemptStartedAt } from '../../../../shared/delegated-work-projection'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
 import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
 import {
   isSessionWaitReason,
-  resolveSessionWaitReason,
+  projectPresentedSessionActionability,
   sessionWaitReasonLabelKeys,
   type SessionWaitReason
 } from '../workspace/session-wait-reason'
@@ -117,9 +114,9 @@ const getRequiredEnvironmentFailures = (
 ): EnvironmentCheckItem[] => environment?.checks.filter((check) => check.status === 'failed') ?? []
 
 const getHomeSessionActivity = (session: ChatSession): HomeSessionActivity | undefined => {
-  const waitReason = resolveSessionWaitReason(session)
-  if (waitReason) return waitReason
-  if (session.status === 'running' || hasCurrentRunningDelegatedAttempt(session)) return 'running'
+  const actionability = projectPresentedSessionActionability(session)
+  if (actionability.waitReason) return actionability.waitReason
+  if (actionability.activity === 'running') return 'running'
   return undefined
 }
 
@@ -403,11 +400,7 @@ const HomePage = ({
     !sessions.some(
       (session) =>
         session.projectId === project.id &&
-        (hasCurrentRunningDelegatedAttempt(session) ||
-          session.status === 'running' ||
-          session.status === 'waiting-for-user' ||
-          session.status === 'waiting-permission' ||
-          session.status === 'waiting-plan-approval')
+        projectPresentedSessionActionability(session).activity !== 'inactive'
     )
 
   const archiveUnavailableReason = (project: Project): string | undefined => {

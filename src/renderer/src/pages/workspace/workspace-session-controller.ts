@@ -8,7 +8,7 @@ import type {
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
-import type { ChatSession } from '@/stores/session-store'
+import { projectSessionActionability, type ChatSession } from '@/stores/session-store'
 import { useSessionStore } from '@/stores/session-store'
 
 type ReconfigureError = {
@@ -192,9 +192,7 @@ const useWorkspaceSessionController = ({
   const activeHasPendingSwitch = Boolean(
     activeSession &&
     activeHasPending &&
-    (activeSession.status === 'running' ||
-      activeSession.status === 'waiting-for-user' ||
-      activeSession.status === 'waiting-permission')
+    projectSessionActionability(activeSession).activity !== 'inactive'
   )
 
   const setBarrier = useCallback((sessionId: string, inFlight: boolean): void => {
@@ -225,11 +223,9 @@ const useWorkspaceSessionController = ({
     !promptInFlightSessionIds.includes(session.id) &&
     !sendPreparationInFlightSessionIds.includes(session.id) &&
     !saveAsSkillInFlightSessionIds.includes(session.id) &&
-    session.status !== 'running' &&
-    session.status !== 'waiting-for-user' &&
-    session.status !== 'waiting-permission' &&
-    session.status !== 'waiting-plan-approval' &&
-    !hasCurrentRunningDelegatedAttempt(session) &&
+    projectSessionActionability(session, {
+      hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
+    }).actions.archive.allowed &&
     !hasUnfinishedTransfers(session.id)
 
   const openRename = (session: ChatSession): void => {
@@ -309,10 +305,7 @@ const useWorkspaceSessionController = ({
     }
     const sessionId = activeSession.id
     if (barrierInFlightRef.current.has(sessionId)) return
-    const running =
-      activeSession.status === 'running' ||
-      activeSession.status === 'waiting-for-user' ||
-      activeSession.status === 'waiting-permission'
+    const running = projectSessionActionability(activeSession).activity !== 'inactive'
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
     } else {

@@ -57,7 +57,11 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useFileDropZone } from '@/hooks/useFileDropZone'
 import { cn } from '@/lib/utils'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import {
+  projectSessionActionability,
+  useSessionStore,
+  type ChatSession
+} from '@/stores/session-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -486,14 +490,6 @@ const ConversationPanel = ({
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
   const effectiveCanSend = canSendMessage && !isStopping
-  const rootTurnBusy =
-    activeSession?.status === 'running' ||
-    activeSession?.status === 'waiting-for-user' ||
-    (activeSession?.status === 'waiting-permission' &&
-      (pendingPermissions.length === 0 ||
-        pendingPermissions.some((permission) => !permission.delegated))) ||
-    activeSession?.compacting === true ||
-    activeSession?.fixLoopActive === true
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   const activePendingPlanKey = activePendingPlan
     ? `${activePendingPlan.artifactVersionId}:${activePendingPlan.revision}`
@@ -577,10 +573,38 @@ const ConversationPanel = ({
             state: 'pending'
           }
         : undefined
-  const hasPendingPermission = pendingPermissions.length > 0
+  const rootPermissionRequests = pendingPermissions.filter((request) => !request.delegated)
+  const rootPermissionPending =
+    rootPermissionRequests.length > 0 ? true : pendingPermissions.length > 0 ? false : undefined
+  const actionability = activeSession
+    ? projectSessionActionability(activeSession, {
+        rootPermissionPending,
+        elicitationPending: pendingElicitation ? true : undefined,
+        planPending:
+          pendingPlan !== undefined
+            ? true
+            : activePendingPlanKey && resolvedPlanKey === activePendingPlanKey
+              ? false
+              : undefined
+      })
+    : undefined
+  const blockingInteraction =
+    actionability?.blockingInteraction ??
+    (rootPermissionRequests.length > 0
+      ? 'permission'
+      : pendingElicitation
+        ? 'elicitation'
+        : pendingPlan
+          ? 'plan'
+          : undefined)
+  const hasPendingPermission = blockingInteraction === 'permission'
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
-  const ordinaryComposerBlocked = Boolean(
-    sideChat || hasPendingPermission || pendingElicitation || pendingPlan
+  const ordinaryComposerBlocked = Boolean(sideChat || blockingInteraction)
+  const rootTurnBusy = Boolean(
+    blockingInteraction ||
+    actionability?.activity === 'running' ||
+    activeSession?.compacting ||
+    activeSession?.fixLoopActive
   )
 
   // Re-attaches the interrupted session; on success the banner unmounts, so guard the state update.
@@ -654,9 +678,7 @@ const ConversationPanel = ({
   const canStartSideChat =
     Boolean(activeSession) &&
     hasMainConversation(activeSession) &&
-    activeSession?.status !== 'waiting-for-user' &&
-    activeSession?.status !== 'waiting-permission' &&
-    activeSession?.status !== 'waiting-plan-approval' &&
+    actionability?.actions.startSideChat.allowed !== false &&
     canEditDraft &&
     hasTextDraft &&
     attachments.length === 0 &&
@@ -1009,9 +1031,9 @@ const ConversationPanel = ({
                       }
                     />
                   ) : hasPendingPermission ? (
-                    <ResizablePermissionComposer key={pendingPermissions[0]?.requestId}>
+                    <ResizablePermissionComposer key={rootPermissionRequests[0]?.requestId}>
                       <PermissionApprovalControls
-                        requests={pendingPermissions}
+                        requests={rootPermissionRequests}
                         onRespond={onRespondToPermission}
                         embedded
                         notebookLookup={

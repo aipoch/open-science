@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession, SessionActionabilityProjection } from '@/stores/session-store'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import {
@@ -71,7 +71,7 @@ type WorkspaceConversationControllerOptions = {
   promptInFlightSessionIds: string[]
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
-  hasBlockingRootPermissionRequest: boolean
+  actionability: SessionActionabilityProjection | undefined
   newConversationAutoReviewEnabled: boolean
   newConversationEnabledComputeHosts: string[]
   composer: ConversationComposer
@@ -126,10 +126,7 @@ const canSubmit = (options: WorkspaceConversationControllerOptions): boolean => 
     !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
     (!docIsEmpty(composer.view.doc) || composer.view.attachments.length > 0) &&
-    !activeSession?.isPending &&
-    activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-for-user' &&
-    (activeSession?.status !== 'waiting-permission' || !options.hasBlockingRootPermissionRequest) &&
+    (options.actionability?.actions.startTurn.allowed ?? true) &&
     !hasRuntimeInteraction(options) &&
     !activeSession?.fixLoopActive &&
     !activeSession?.conversationGraphSyncBlocked &&
@@ -144,9 +141,7 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
     options.isPersistenceReady &&
     !options.sideChatOpen &&
     composer.view.transfers.length === 0 &&
-    activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-for-user' &&
-    activeSession?.status !== 'waiting-permission' &&
+    (options.actionability?.actions.revise.allowed ?? true) &&
     !hasRuntimeInteraction(options) &&
     !options.isReviewing &&
     !activeSession?.fixLoopActive &&
@@ -160,12 +155,8 @@ const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
   Boolean(
     options.isPersistenceReady &&
     options.activeSession &&
-    !options.activeSession.isPending &&
     !options.activeSession.activeRun &&
-    options.activeSession.status !== 'running' &&
-    options.activeSession.status !== 'waiting-for-user' &&
-    options.activeSession.status !== 'waiting-permission' &&
-    options.activeSession.status !== 'waiting-plan-approval' &&
+    options.actionability?.actions.branchFromMessage.allowed !== false &&
     !options.activeSession.fixLoopActive &&
     !options.activeSession.compacting &&
     !options.activeSession.branchSwitchBlocked &&
@@ -183,9 +174,7 @@ const canStartSideChat = (options: WorkspaceConversationControllerOptions): bool
     hasMainConversation(options.activeSession) &&
     !options.sideChatOpen &&
     options.isPersistenceReady &&
-    options.activeSession.status !== 'waiting-for-user' &&
-    options.activeSession.status !== 'waiting-permission' &&
-    options.activeSession.status !== 'waiting-plan-approval' &&
+    options.actionability?.actions.startSideChat.allowed !== false &&
     options.composer.view.transfers.length === 0 &&
     options.composer.view.attachments.length === 0 &&
     docToText(options.composer.view.doc).trim()

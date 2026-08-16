@@ -19,7 +19,11 @@ import {
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { useSessionStore } from '@/stores/session-store'
+import {
+  projectSessionActionability,
+  resolveRootPermissionPending,
+  useSessionStore
+} from '@/stores/session-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { selectProjectSessionReviews, useReviewStore } from '@/stores/review-store'
 import {
@@ -51,10 +55,7 @@ import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { JobDetailModal } from '@/components/JobDetailModal'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
-import {
-  getVisiblePermissionRequests,
-  hasBlockingRootPermissionRequest
-} from './session-permissions'
+import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
 import { useJobAnalysisEffect } from '@/lib/compute/useJobAnalysisEffect'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
@@ -421,6 +422,11 @@ const WorkspacePage = ({
     () => pendingWorkspaceElicitations(activeSession),
     [activeSession]
   )
+  const activeSessionActionability = activeSession
+    ? projectSessionActionability(activeSession, {
+        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id)
+      })
+    : undefined
   const activeNotebookReference = activeSession ? notebookReferences[activeSession.id] : undefined
   const activePermissionProfile =
     activeSession?.permissionProfile ?? newConversationPermissionProfile
@@ -468,10 +474,7 @@ const WorkspacePage = ({
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
-    hasBlockingRootPermissionRequest: hasBlockingRootPermissionRequest(
-      pendingPermissions,
-      activeSession?.id
-    ),
+    actionability: activeSessionActionability,
     newConversationAutoReviewEnabled,
     newConversationEnabledComputeHosts,
     composer,
@@ -566,9 +569,7 @@ const WorkspacePage = ({
   }, [activeSession?.id, activeSessionSaveAsSkillPending, canEditMessage])
   const canChangeAgentControls =
     isSessionPersistenceReady &&
-    activeSession?.status !== 'running' &&
-    activeSession?.status !== 'waiting-for-user' &&
-    activeSession?.status !== 'waiting-permission' &&
+    activeSessionActionability?.actions.changeAgentControls.allowed !== false &&
     !activeSessionHasRuntimeInteraction &&
     !activeSession?.compacting
   const canChangePermissionProfile =

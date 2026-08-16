@@ -677,6 +677,46 @@ describe('ConversationPanel composer intake', () => {
     expect(getComposerForm().contains(getComposerEditor())).toBe(true)
   })
 
+  it('keeps delegated Permission in the transcript without taking the main Composer lane', () => {
+    const activeSession: ChatSession = {
+      id: 'session-delegated-permission',
+      projectId: 'project-a',
+      title: 'Delegated permission',
+      cwd: '/workspace',
+      status: 'waiting-permission',
+      interactionState: { permission: true, elicitation: false, plan: false },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    renderPanel({
+      view: { activeSession },
+      conversation: { availability: { submit: true } },
+      permissions: {
+        requests: [
+          {
+            requestId: 'permission-delegated',
+            sessionId: activeSession.id,
+            toolCallId: 'tool-delegated',
+            title: 'Run delegated command',
+            options: [],
+            delegated: {
+              frameId: 'child-frame',
+              attemptId: 'attempt-1',
+              childTitle: 'Researcher',
+              riskScope: 'This call only'
+            }
+          }
+        ]
+      }
+    })
+
+    expect(container.querySelector('[data-testid="permission-composer"]')).toBeNull()
+    expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
+    expect(getComposerForm().hidden).toBe(false)
+    expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
+  })
+
   it('advances to the next Subagent request after Finish and removes an empty queue', async () => {
     const firstSession = delegatedQuestionSession()
     const graph = firstSession.conversationGraph!

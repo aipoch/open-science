@@ -28,6 +28,7 @@ import type { ActivePlanProjection } from '../../../shared/session-plan/contract
 import { createLinearConversationGraph } from '../../../shared/conversation-graph'
 import {
   createInitialSessionState,
+  projectSessionActionability,
   toPersistedSession,
   useSessionStore,
   type ChatMessage,
@@ -103,6 +104,144 @@ describe('session store', () => {
   it('starts empty so New can stay outside store state', () => {
     expect(useSessionStore.getState().sessions).toEqual([])
     expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+  })
+
+  it('projects one priority for simultaneous Session interactions', () => {
+    const actionability = projectSessionActionability({
+      id: 'session-actionability',
+      projectId: 'project-1',
+      title: 'Actionability',
+      cwd: '/workspace',
+      status: 'waiting-plan-approval',
+      interactionState: { permission: true, elicitation: true, plan: true },
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    } as ChatSession)
+
+    expect(actionability).toMatchObject({
+      presentedStatus: 'waiting-permission',
+      activity: 'waiting',
+      attentionOwner: 'user',
+      waitReason: 'waiting-permission',
+      blockingInteraction: 'permission',
+      actions: {
+        startTurn: { allowed: false, disabledReason: 'permission-pending' },
+        revise: { allowed: false, disabledReason: 'permission-pending' },
+        branchFromMessage: { allowed: false, disabledReason: 'permission-pending' },
+        startSideChat: { allowed: false, disabledReason: 'permission-pending' }
+      }
+    })
+  })
+
+  it('keeps delegated Permission actionable without giving it the main Composer lane', () => {
+    const actionability = projectSessionActionability(
+      {
+        id: 'session-delegated-permission',
+        projectId: 'project-1',
+        title: 'Delegated permission',
+        cwd: '/workspace',
+        status: 'waiting-permission',
+        interactionState: { permission: true, elicitation: false, plan: false },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      } as ChatSession,
+      { rootPermissionPending: false }
+    )
+
+    expect(actionability).toMatchObject({
+      activity: 'waiting',
+      attentionOwner: 'user',
+      waitReason: 'waiting-permission',
+      blockingInteraction: undefined,
+      actions: {
+        startTurn: { allowed: true },
+        revise: { allowed: true },
+        branchFromMessage: { allowed: false, disabledReason: 'permission-pending' },
+        startSideChat: { allowed: false, disabledReason: 'permission-pending' }
+      }
+    })
+  })
+
+  it('projects a pending Session as unavailable for a new Turn or Message branch', () => {
+    const actionability = projectSessionActionability({
+      id: 'session-pending',
+      projectId: 'project-1',
+      title: 'Pending Session',
+      cwd: '/workspace',
+      status: 'idle',
+      isPending: true,
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1
+    } as ChatSession)
+
+    expect(actionability.actions).toMatchObject({
+      startTurn: { allowed: false, disabledReason: 'session-pending' },
+      revise: { allowed: true },
+      branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
+    })
+  })
+
+  it('keeps restored durable root Permission authoritative over a delegated live hint', () => {
+    const actionability = projectSessionActionability(
+      {
+        id: 'session-restored-root-permission',
+        projectId: 'project-1',
+        title: 'Restored root permission',
+        cwd: '/workspace',
+        status: 'waiting-permission',
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          permission: {
+            state: 'pending',
+            request: {
+              requestId: 'permission-root',
+              sessionId: 'session-restored-root-permission',
+              toolCallId: 'tool-root',
+              title: 'Run root command',
+              options: []
+            },
+            originatingPromptMessageId: 'prompt-root',
+            fingerprint: 'a'.repeat(64),
+            createdAt: 1
+          }
+        },
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      } as ChatSession,
+      { rootPermissionPending: false }
+    )
+
+    expect(actionability).toMatchObject({
+      blockingInteraction: 'permission',
+      actions: { startTurn: { allowed: false, disabledReason: 'permission-pending' } }
+    })
+  })
+
+  it('gives a projected user wait priority over concurrent delegated work', () => {
+    const actionability = projectSessionActionability(
+      {
+        id: 'session-delegated-question',
+        projectId: 'project-1',
+        title: 'Delegated question',
+        cwd: '/workspace',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      } as ChatSession,
+      { presentedWaitReason: 'waiting-for-user', hasRunningWork: true }
+    )
+
+    expect(actionability).toMatchObject({
+      presentedStatus: 'waiting-for-user',
+      activity: 'waiting',
+      attentionOwner: 'user'
+    })
   })
 
   it('keeps a Side chat relay distinct from a local user message with matching text', () => {
@@ -4490,6 +4629,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
+      'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-project-artifact-files.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',

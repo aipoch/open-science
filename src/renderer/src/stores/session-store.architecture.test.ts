@@ -106,6 +106,9 @@ const publicValueExports = [
   'createInitialSessionState',
   'createSessionStore',
   'isExternallyHydratedSession',
+  'isSessionWaitReason',
+  'projectSessionActionability',
+  'resolveRootPermissionPending',
   'toPersistedSession',
   'useSessionStore'
 ].sort()
@@ -116,10 +119,16 @@ const publicTypeExports = [
   'ChatMessageRole',
   'ChatMessageStatus',
   'ChatSession',
+  'SessionActionAvailability',
+  'SessionActionDisabledReason',
+  'SessionActionabilityFacts',
+  'SessionActionabilityProjection',
+  'SessionBlockingInteraction',
   'SessionHydrationSelection',
   'SessionStatus',
   'SessionStore',
   'SessionStoreApi',
+  'SessionWaitReason',
   'ToolActivity',
   'ToolActivityStatus'
 ].sort()

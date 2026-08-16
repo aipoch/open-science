@@ -1,10 +1,8 @@
 import type { AcpPermissionRequest } from '../../../../shared/acp'
 import { describe, expect, it } from 'vitest'
+import { resolveRootPermissionPending } from '@/stores/session-store'
 
-import {
-  getVisiblePermissionRequests,
-  hasBlockingRootPermissionRequest
-} from './session-permissions'
+import { getVisiblePermissionRequests } from './session-permissions'
 import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 
 // Creates a permission request with ids derived from the target session.
@@ -84,9 +82,10 @@ describe('workspace session permissions', () => {
         riskScope: 'This call only'
       }
     }
-    expect(hasBlockingRootPermissionRequest([delegated], 'session-1')).toBe(false)
-    expect(
-      hasBlockingRootPermissionRequest([createPermissionRequest('session-1')], 'session-1')
-    ).toBe(true)
+    expect(resolveRootPermissionPending([delegated], 'session-1')).toBe(false)
+    expect(resolveRootPermissionPending([createPermissionRequest('session-1')], 'session-1')).toBe(
+      true
+    )
+    expect(resolveRootPermissionPending([], 'session-1')).toBeUndefined()
   })
 })

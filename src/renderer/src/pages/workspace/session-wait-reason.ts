@@ -1,14 +1,15 @@
-import type {
-  PersistedChatSession,
-  PersistedSessionStatus
-} from '../../../../shared/session-persistence'
+import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import {
+  isSessionWaitReason,
+  projectSessionActionability,
+  type SessionActionabilityProjection,
+  type SessionWaitReason as StoreSessionWaitReason
+} from '@/stores/session-store'
+import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 
 import { hasAnswerableDelegatedQuestion } from './subagent-release-projection'
 
-export type SessionWaitReason = Extract<
-  PersistedSessionStatus,
-  'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval'
->
+export type SessionWaitReason = StoreSessionWaitReason
 
 export const sessionWaitReasonLabelKeys = {
   'waiting-for-user': 'Waiting for your answer',
@@ -16,14 +17,16 @@ export const sessionWaitReasonLabelKeys = {
   'waiting-plan-approval': 'Waiting for plan approval'
 } as const satisfies Record<SessionWaitReason, string>
 
-export const isSessionWaitReason = (status: string): status is SessionWaitReason =>
-  status === 'waiting-for-user' ||
-  status === 'waiting-permission' ||
-  status === 'waiting-plan-approval'
+export { isSessionWaitReason }
+
+export const projectPresentedSessionActionability = (
+  session: PersistedChatSession
+): SessionActionabilityProjection =>
+  projectSessionActionability(session, {
+    presentedWaitReason: hasAnswerableDelegatedQuestion(session) ? 'waiting-for-user' : undefined,
+    hasRunningWork: hasCurrentRunningDelegatedAttempt(session)
+  })
 
 export const resolveSessionWaitReason = (
   session: PersistedChatSession
-): SessionWaitReason | undefined => {
-  if (isSessionWaitReason(session.status)) return session.status
-  return hasAnswerableDelegatedQuestion(session) ? 'waiting-for-user' : undefined
-}
+): SessionWaitReason | undefined => projectPresentedSessionActionability(session).waitReason

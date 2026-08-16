@@ -39,7 +39,10 @@ import type { ChatSession, SessionStatus } from '@/stores/session-store'
 import type { ConversationExportFormat } from '../../../../shared/conversation-export'
 import { NotificationBell } from '@/components/NotificationBell'
 
-import { resolveSessionWaitReason, sessionWaitReasonLabelKeys } from './session-wait-reason'
+import {
+  projectPresentedSessionActionability,
+  sessionWaitReasonLabelKeys
+} from './session-wait-reason'
 
 type WorkspaceSidebarProps = {
   projectName: string
@@ -113,16 +116,11 @@ const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
 const getPresentedSessionStatus = (session: ChatSession): SessionStatus =>
-  resolveSessionWaitReason(session) ?? session.status
+  projectPresentedSessionActionability(session).presentedStatus
 
 const isLiveSession = (session: ChatSession): boolean => {
-  const status = getPresentedSessionStatus(session)
-  return (
-    status === 'running' ||
-    status === 'waiting-for-user' ||
-    status === 'waiting-permission' ||
-    status === 'waiting-plan-approval'
-  )
+  const activity = projectPresentedSessionActionability(session).activity
+  return activity === 'running' || activity === 'waiting'
 }
 
 // The label is English source text that travels to the header as data, so it is translated where it

@@ -22,7 +22,7 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import {
-  isWorkspacePromptPreparationInFlight,
+  canPrepareExistingWorkspacePrompt,
   prepareExistingWorkspacePrompt
 } from './workspace-runtime-prompt-preparation-owner'
 import {
@@ -428,17 +428,15 @@ const sendWorkspaceMessage = async (
     const sessionId = input.sessionId
     const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
     if (input.requireExistingSession && !session) return undefined
-    if (isWorkspacePromptPreparationInFlight(sessionId)) return undefined
     if (
-      runtime.state.promptInFlightSessionIds.includes(sessionId) ||
-      (session?.isPending && session.status === 'idle' && Boolean(session.branchSource)) ||
-      (session?.compacting && !input.allowCompactionRecovery) ||
-      session?.status === 'running' ||
-      session?.status === 'waiting-for-user' ||
-      session?.status === 'waiting-permission'
-    ) {
+      !canPrepareExistingWorkspacePrompt({
+        sessionId,
+        session,
+        runtimeState: runtime.state,
+        allowCompactionRecovery: input.allowCompactionRecovery === true
+      })
+    )
       return undefined
-    }
     const projectId = input.projectId ?? session?.projectId
     if (input.planContinuation && !projectId) return undefined
 
