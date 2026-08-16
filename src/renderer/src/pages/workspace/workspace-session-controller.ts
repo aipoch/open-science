@@ -58,6 +58,7 @@ type WorkspaceSessionController = {
       unavailable: boolean
       hasPendingSwitch: boolean
       barrierInFlight: boolean
+      sendAvailable: boolean
       reconfigureError: ReconfigureError | null
     }
   }
@@ -184,6 +185,10 @@ const useWorkspaceSessionController = ({
         (item) => item.kind === 'custom' && item.enabled && item.id === activeSession.specialistId
       )
     : newConversationSpecialistUnavailable
+  const specialistSendAvailable = activeSession
+    ? activeSession.specialistId === undefined ||
+      (specialistCatalogLoaded && (activeHasPending || !activeSpecialistUnavailable))
+    : !newConversationSpecialistUnavailable
   const activeHasPendingSwitch = Boolean(
     activeSession &&
     activeHasPending &&
@@ -330,12 +335,12 @@ const useWorkspaceSessionController = ({
   const canStartSend = (): boolean => {
     if (!activeSession) return !newConversationSpecialistUnavailable
     if (barrierInFlightRef.current.has(activeSession.id)) return false
-    if (activeSession.specialistId === undefined) return true
+    if (activeSession.specialistId === undefined) return specialistSendAvailable
     if (!specialistCatalogLoaded) {
       void loadSpecialists()
       return false
     }
-    return activeHasPending || !activeSpecialistUnavailable
+    return specialistSendAvailable
   }
 
   const captureSendIntent = (branchInNewSession: boolean): SpecialistSendIntent => {
@@ -524,6 +529,7 @@ const useWorkspaceSessionController = ({
         unavailable: activeSpecialistUnavailable,
         hasPendingSwitch: activeHasPendingSwitch,
         barrierInFlight: barrierInFlightIds.has(activeSession?.id ?? ''),
+        sendAvailable: specialistSendAvailable && !barrierInFlightIds.has(activeSession?.id ?? ''),
         reconfigureError:
           reconfigureError?.sessionId === activeSession?.id ? reconfigureError : null
       }

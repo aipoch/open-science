@@ -45,7 +45,10 @@ type ConversationComposer = {
 type ConversationSession = {
   view: {
     deletingIds: WorkspaceSessionController['view']['deletingIds']
-    specialist: Pick<WorkspaceSessionController['view']['specialist'], 'barrierInFlight'>
+    specialist: Pick<
+      WorkspaceSessionController['view']['specialist'],
+      'barrierInFlight' | 'sendAvailable'
+    >
   }
   actions: Pick<
     WorkspaceSessionController['actions'],
@@ -87,6 +90,7 @@ type WorkspaceConversationController = {
     submit: boolean
     revise: boolean
     resume: boolean
+    branch: boolean
   }
   actions: {
     submit: {
@@ -94,6 +98,7 @@ type WorkspaceConversationController = {
       restoredPlan: (response: RestoredPlanResponse) => Promise<void>
     }
     revise: (messageId: string, doc: ComposerDoc) => void
+    branch: (messageId: string) => void
     sideChat: { start: () => void }
     resume: () => Promise<void>
     cancel: () => Promise<void>
@@ -149,6 +154,25 @@ const canRevise = (options: WorkspaceConversationControllerOptions): boolean => 
     !session.view.deletingIds.has(activeSession?.id ?? '')
   )
 }
+
+const canBranch = (options: WorkspaceConversationControllerOptions): boolean =>
+  Boolean(
+    options.isPersistenceReady &&
+    options.activeSession &&
+    !options.activeSession.isPending &&
+    !options.activeSession.activeRun &&
+    options.activeSession.status !== 'running' &&
+    options.activeSession.status !== 'waiting-for-user' &&
+    options.activeSession.status !== 'waiting-permission' &&
+    !options.activeSession.fixLoopActive &&
+    !options.activeSession.compacting &&
+    !options.activeSession.branchSwitchBlocked &&
+    !options.activeSession.conversationGraphSyncBlocked &&
+    !options.session.view.specialist.barrierInFlight &&
+    options.session.view.specialist.sendAvailable &&
+    !hasRuntimeInteraction(options) &&
+    !options.session.view.deletingIds.has(options.activeSession.id)
+  )
 
 const canStartSideChat = (options: WorkspaceConversationControllerOptions): boolean =>
   Boolean(
@@ -287,6 +311,22 @@ const useWorkspaceConversationController = (
           referencedArtifacts: docToArtifactRefs(doc)
         })
       },
+      branch: (messageId): void => {
+        const current = optionsRef.current
+        const sourceSessionId = current.activeSession?.id
+        if (!sourceSessionId || !canBranch(current)) return
+        if (current.session.lifecycle.isBarrierInFlight(sourceSessionId)) return
+        if (!current.session.lifecycle.canStartSend()) return
+        const { draftSpecialistId } = current.session.lifecycle.captureSendIntent(true)
+        void current.runtime
+          .sendMessage({
+            branchSourceSessionId: sourceSessionId,
+            branchSourceMessageId: messageId,
+            text: '',
+            specialistId: draftSpecialistId
+          })
+          .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
+      },
       sideChat: {
         start: (): void => {
           const current = optionsRef.current
@@ -327,7 +367,8 @@ const useWorkspaceConversationController = (
     availability: {
       submit: canSubmit(options),
       revise: canRevise(options),
-      resume: options.isPersistenceReady && !options.sideChatOpen
+      resume: options.isPersistenceReady && !options.sideChatOpen,
+      branch: canBranch(options)
     },
     actions
   }

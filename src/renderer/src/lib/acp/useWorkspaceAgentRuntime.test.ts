@@ -2557,6 +2557,84 @@ describe('workspace agent message sending', () => {
     )
   })
 
+  it('creates and persists an idle branched Session without sending a prompt', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Inspect the original data',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    const firstAnswer = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'source-stream',
+      eventId: 'source-event',
+      content: 'The original analysis is complete.'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'Continue in the source Session'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'later-stream',
+      eventId: 'later-event',
+      content: 'Later answer'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    const saveSession = vi.fn(async (session: PersistedChatSession) => session)
+    vi.stubGlobal('window', { api: { sessions: { saveSession } } })
+    const runtime = {
+      state: createSnapshot(['source-session']),
+      createSession: vi.fn().mockResolvedValue({
+        sessionId: 'branched-session',
+        cwd: '/workspace/project'
+      }),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      deleteSession: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    const branched = await sendWorkspaceMessage(runtime, {
+      branchSourceSessionId: 'source-session',
+      branchSourceMessageId: firstAnswer?.messageId ?? '',
+      text: '',
+      agentFrameworkId: 'codex',
+      agentBackendId: 'codex:shared',
+      agentModel: 'gpt-5.4',
+      specialistId: 'specialist-b'
+    })
+
+    expect(branched).toEqual({
+      sessionId: 'branched-session',
+      messageId: firstAnswer?.messageId
+    })
+    expect(runtime.createSession).toHaveBeenCalledWith(
+      '/workspace/project',
+      'project-1',
+      'ask',
+      'specialist-b'
+    )
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(saveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'branched-session',
+        status: 'idle',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:shared',
+        agentModel: 'gpt-5.4',
+        specialistId: 'specialist-b',
+        pendingHistoryReplay: { kind: 'all' },
+        messages: [
+          expect.objectContaining({ content: 'Inspect the original data' }),
+          expect.objectContaining({ content: 'The original analysis is complete.' })
+        ]
+      })
+    )
+    expect(useSessionStore.getState().selectedSessionId).toBe('branched-session')
+  })
+
   it('omits history images when branching into a text-only model', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'source-session',

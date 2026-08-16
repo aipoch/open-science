@@ -329,10 +329,16 @@ const ConversationPanel = ({
     }
   } = composer
   const {
-    availability: { submit: canSendMessage, revise: canEditMessage, resume: canResumeSession },
+    availability: {
+      submit: canSendMessage,
+      revise: canEditMessage,
+      resume: canResumeSession,
+      branch: canBranchInNewSession
+    },
     actions: {
       submit: { draft: submitDraft, restoredPlan: onRespondToRestoredPlan },
       revise: onSendEditedMessage,
+      branch: onBranchFromAgentMessage,
       sideChat: { start: onStartSideChat },
       resume: onResumeSession,
       cancel: onCancelRun
@@ -739,6 +745,8 @@ const ConversationPanel = ({
             isResumingSession={isResuming}
             notebookReference={notebookReference}
             onSendEditedMessage={onSendEditedMessage}
+            canBranchInNewSession={canBranchInNewSession}
+            onBranchInNewSession={onBranchFromAgentMessage}
             pendingElicitations={sideChat ? [] : sessionPendingElicitations}
             handoffLifecycleSource={workspaceHandoffLifecycleClient}
             onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}

@@ -387,7 +387,8 @@ const createPanelDefaults = (): PanelProps => ({
     availability: {
       submit: false,
       revise: true,
-      resume: true
+      resume: true,
+      branch: true
     },
     actions: {
       submit: {
@@ -395,6 +396,7 @@ const createPanelDefaults = (): PanelProps => ({
         restoredPlan: vi.fn().mockResolvedValue(undefined)
       },
       revise: vi.fn(),
+      branch: vi.fn(),
       sideChat: { start: vi.fn() },
       resume: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn(),
@@ -417,6 +419,7 @@ const createPanelDefaults = (): PanelProps => ({
         unavailable: false,
         hasPendingSwitch: false,
         barrierInFlight: false,
+        sendAvailable: true,
         reconfigureError: null
       }
     },

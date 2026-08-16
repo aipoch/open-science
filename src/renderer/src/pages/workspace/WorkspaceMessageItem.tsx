@@ -80,6 +80,8 @@ type WorkspaceMessageItemProps = {
   // Embedded transcript surfaces can supply their own horizontal gutter without changing live chat.
   contentPaddingClassName?: string
   onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
+  canBranchInNewSession?: boolean
+  onBranchInNewSession?: (messageId: string) => void
   // Prompt send time for an Agent response; paired with its completion time for elapsed duration.
   turnStartedAt?: number
   // Per-turn runtime codes come from the Conversation Graph; names and icons resolve from Settings.
@@ -817,6 +819,8 @@ const WorkspaceMessageItemImpl = ({
   showUserActions = true,
   contentPaddingClassName,
   onSendEditedMessage,
+  canBranchInNewSession = false,
+  onBranchInNewSession,
   turnStartedAt,
   runtimeIdentity,
   showAssistantFooter = true,
@@ -1156,6 +1160,21 @@ const WorkspaceMessageItemImpl = ({
                 data-slot="assistant-message-footer"
                 className="mt-3 flex items-center gap-x-3 whitespace-nowrap text-[11px] leading-4 text-text-000/70 tabular-nums"
               >
+                {message.status === 'complete' && onBranchInNewSession ? (
+                  <TooltipProvider delayDuration={200}>
+                    <UserMessageActionTooltip label={t('Branch in new session')}>
+                      <button
+                        type="button"
+                        className={userMessageActionButtonClassName}
+                        aria-label={t('Branch in new session')}
+                        disabled={!canBranchInNewSession}
+                        onClick={() => onBranchInNewSession(message.id)}
+                      >
+                        <GitBranch className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      </button>
+                    </UserMessageActionTooltip>
+                  </TooltipProvider>
+                ) : null}
                 {terminalDate ? (
                   <MessageTimestamp label={terminalLabel} date={terminalDate} />
                 ) : null}
@@ -1243,6 +1262,8 @@ const areWorkspaceMessageItemPropsEqual = (
   previous.onOpenSkillMention === next.onOpenSkillMention &&
   previous.onPreviewMentionArtifact === next.onPreviewMentionArtifact &&
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
+  previous.onBranchInNewSession === next.onBranchInNewSession &&
   (previous.canEditMessage ?? false) === (next.canEditMessage ?? false) &&
   (previous.showUserActions ?? true) === (next.showUserActions ?? true) &&
   previous.contentPaddingClassName === next.contentPaddingClassName &&

@@ -91,6 +91,8 @@ type WorkspaceMessageScrollerProps = {
   isResumingSession?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: (messageId: string, doc: ComposerDoc) => void
+  canBranchInNewSession?: boolean
+  onBranchInNewSession?: (messageId: string) => void
   trailingContent?: ReactNode
   pendingElicitations?: PendingElicitationRequest[]
   // Events are read-only projections; retry sends an intent that main validates against its state.
@@ -336,6 +338,8 @@ const WorkspaceMessageScrollerImpl = ({
   isResumingSession = false,
   notebookReference,
   onSendEditedMessage,
+  canBranchInNewSession = false,
+  onBranchInNewSession,
   trailingContent,
   pendingElicitations = [],
   handoffLifecycleSource,
@@ -1103,6 +1107,8 @@ const WorkspaceMessageScrollerImpl = ({
                     onOpenSkillMention,
                     onPreviewMentionArtifact,
                     onSendEditedMessage,
+                    canBranchInNewSession,
+                    onBranchInNewSession,
                     turnStartedAt: item.message.responseToMessageId
                       ? messageCreatedAtById.get(item.message.responseToMessageId)
                       : undefined,
@@ -1426,6 +1432,8 @@ const areWorkspaceMessageScrollerPropsEqual = (
   next: WorkspaceMessageScrollerProps
 ): boolean =>
   previous.onSendEditedMessage === next.onSendEditedMessage &&
+  (previous.canBranchInNewSession ?? false) === (next.canBranchInNewSession ?? false) &&
+  previous.onBranchInNewSession === next.onBranchInNewSession &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
   previous.notebookReference?.sessionId === next.notebookReference?.sessionId &&

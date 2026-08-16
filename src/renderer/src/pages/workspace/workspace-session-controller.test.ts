@@ -195,6 +195,19 @@ describe('workspace session controller', () => {
     expect(hook.result.current.view.specialist.hasPendingSwitch).toBe(true)
   })
 
+  it('exposes Specialist send admission while the active catalog is unresolved', () => {
+    const active = session({ specialistId: 'specialist-a' })
+    const hook = renderController({
+      activeSession: active,
+      specialistCatalogLoaded: false,
+      specialistItems: []
+    })
+    mounted.push(hook)
+
+    expect(hook.result.current.view.specialist.sendAvailable).toBe(false)
+    expect(hook.result.current.lifecycle.canStartSend()).toBe(false)
+  })
+
   it('archives durably before enqueueing undo and clearing the active selection', async () => {
     const active = session()
     const order: string[] = []

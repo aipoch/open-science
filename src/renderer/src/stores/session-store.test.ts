@@ -4443,6 +4443,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
       'src/renderer/src/lib/active-session-display.ts',
@@ -4638,6 +4639,57 @@ describe('branchInNewSession', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     useSessionStore.setState(createInitialSessionState())
+  })
+
+  it('copies history through a completed Agent Message into a selected idle Session', () => {
+    const firstPrompt = useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'first question',
+      cwd: '/workspace/project',
+      projectId: 'default-project'
+    })
+    const firstAnswer = useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'first-stream',
+      eventId: 'first-event',
+      content: 'first answer'
+    })
+    useSessionStore.getState().finishRun('source-session')
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'source-session',
+      content: 'second question'
+    })
+    useSessionStore.getState().appendAgentMessageChunk({
+      sessionId: 'source-session',
+      streamId: 'second-stream',
+      eventId: 'second-event',
+      content: 'second answer'
+    })
+    useSessionStore.getState().finishRun('source-session')
+
+    const result = useSessionStore.getState().branchInNewSession({
+      sourceSessionId: 'source-session',
+      sourceMessageId: firstAnswer?.messageId ?? ''
+    })
+
+    expect(result).toEqual({ sessionId: expect.stringMatching(/^pending-session-/) })
+    expect(useSessionStore.getState().selectedSessionId).toBe(result?.sessionId)
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      id: result?.sessionId,
+      isPending: true,
+      title: 'first question',
+      status: 'idle',
+      pendingHistoryReplay: { kind: 'all' },
+      branchSource: {
+        sessionId: 'source-session',
+        headMessageId: firstAnswer?.messageId
+      }
+    })
+    expect(useSessionStore.getState().sessions[0].activeRun).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].messages.map((message) => message.id)).toEqual([
+      firstPrompt?.messageId,
+      firstAnswer?.messageId
+    ])
   })
 
   it('copies only the active path into a fresh pending graph without mutating the source', () => {

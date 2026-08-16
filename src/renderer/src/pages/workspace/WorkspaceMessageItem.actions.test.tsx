@@ -51,6 +51,8 @@ const renderItem = async (
     canEditMessage?: boolean
     showUserActions?: boolean
     onSendEditedMessage?: (messageId: string, doc: ComposerDoc) => void
+    canBranchInNewSession?: boolean
+    onBranchInNewSession?: (messageId: string) => void
     subsequentTurns?: number
     revisionNavigation?: {
       index: number
@@ -72,6 +74,8 @@ const renderItem = async (
         canEditMessage={options.canEditMessage ?? false}
         showUserActions={options.showUserActions}
         onSendEditedMessage={options.onSendEditedMessage}
+        canBranchInNewSession={options.canBranchInNewSession}
+        onBranchInNewSession={options.onBranchInNewSession}
         subsequentTurns={options.subsequentTurns ?? 0}
         revisionNavigation={options.revisionNavigation}
         reviewerCorrectionActive={options.reviewerCorrectionActive}
@@ -145,6 +149,43 @@ afterEach(() => {
 })
 
 describe('WorkspaceMessageItem user message actions', () => {
+  it('keeps Branch in new session first in a completed Agent Message footer', async () => {
+    const onBranchInNewSession = vi.fn()
+    await renderItem(
+      createMessage({
+        id: 'agent-message',
+        role: 'agent',
+        content: 'Completed analysis',
+        completedAt: 1710000001000
+      }),
+      { canBranchInNewSession: true, onBranchInNewSession }
+    )
+
+    const footer = container.querySelector('[data-slot="assistant-message-footer"]')
+    const branchButton = getButton('Branch in new session')
+    const completedTime = footer?.querySelector('time')
+    if (!footer || !completedTime) throw new Error('completed Agent Message footer not found')
+
+    expect(
+      branchButton.compareDocumentPosition(completedTime) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    await click(branchButton)
+    expect(onBranchInNewSession).toHaveBeenCalledWith('agent-message')
+  })
+
+  it('keeps the completed Agent Message branch action visible but disabled when unavailable', async () => {
+    const onBranchInNewSession = vi.fn()
+    await renderItem(
+      createMessage({ role: 'agent', content: 'Completed analysis', completedAt: 1710000001000 }),
+      { canBranchInNewSession: false, onBranchInNewSession }
+    )
+
+    const branchButton = getButton('Branch in new session')
+    expect(branchButton.disabled).toBe(true)
+    await click(branchButton)
+    expect(onBranchInNewSession).not.toHaveBeenCalled()
+  })
+
   it('presents a settled Reviewer Correction as a compact content-free status row', async () => {
     await renderItem(
       createMessage({

@@ -72,7 +72,10 @@ const options = (
       }
     },
     session: {
-      view: { deletingIds: new Set(), specialist: { barrierInFlight: false } },
+      view: {
+        deletingIds: new Set(),
+        specialist: { barrierInFlight: false, sendAvailable: true }
+      },
       actions: {
         beginReconfigureRetry: vi.fn(() => true),
         resetNewConversationSpecialist: vi.fn(),
@@ -140,6 +143,92 @@ afterEach(() => {
 })
 
 describe('workspace conversation controller', () => {
+  it('branches from a completed Agent Message without consuming the composer draft', async () => {
+    const input = options()
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(true)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith({
+      branchSourceSessionId: 'session-a',
+      branchSourceMessageId: 'agent-message-a',
+      text: '',
+      specialistId: undefined
+    })
+    expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
+  })
+
+  it('uses the pending Specialist intent for the branched child Session', async () => {
+    const input = options()
+    input.session.lifecycle.captureSendIntent = vi.fn(() => ({
+      draftSpecialistId: 'specialist-b',
+      hasPendingSwitch: false,
+      pendingSpecialistId: 'specialist-b'
+    }))
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+
+    expect(input.session.lifecycle.captureSendIntent).toHaveBeenCalledWith(true)
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ specialistId: 'specialist-b' })
+    )
+  })
+
+  it('disables Agent Message branching while the source Session is running', () => {
+    const input = options({
+      activeSession: session({
+        status: 'running',
+        activeRun: { promptMessageId: 'message-user-a', startedAt: 2 }
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('disables Agent Message branching while the Specialist barrier is in flight', () => {
+    const input = options()
+    input.session.view.specialist.barrierInFlight = true
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('checks Specialist admission again before creating the branched Session', () => {
+    const input = options()
+    input.session.lifecycle.canStartSend = vi.fn(() => false)
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(true)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.session.lifecycle.canStartSend).toHaveBeenCalledOnce()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('disables Agent Message branching when the Specialist is not ready to send', () => {
+    const input = options()
+    input.session.view.specialist.sendAvailable = false
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    expect(hook.result.current.availability.branch).toBe(false)
+    act(() => hook.result.current.actions.branch('agent-message-a'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('submits a restored Plan approval through the human-gated Plan command', async () => {
     const pendingPlan = {
       artifactId: 'artifact-plan-a',
