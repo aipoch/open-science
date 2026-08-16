@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import type { PermissionProfileId } from '../../../../shared/permission-profiles'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId
+} from '../../../../shared/permission-profiles'
 import type { ChatSession } from '@/stores/session-store'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
@@ -170,13 +173,19 @@ const useWorkspaceMessageQueueController = (
     (sessionId: string): void => {
       const current = optionsRef.current
       const existingDispatch = dispatchBySessionRef.current.get(sessionId)
+      const session = current.getSession(sessionId)
+      if (!session) {
+        if (existingDispatch && !existingDispatch.settled) return
+        dispatchBySessionRef.current.delete(sessionId)
+        discardSession(sessionId)
+        return
+      }
       if (existingDispatch) {
-        const session = current.getSession(sessionId)
         if (!existingDispatch.settled) return
-        if (session?.status === 'error') {
+        if (session.status === 'error') {
           dispatchBySessionRef.current.delete(sessionId)
         } else {
-          if (session && !queueSessionIsSendable(current, session)) {
+          if (!queueSessionIsSendable(current, session)) {
             dispatchBySessionRef.current.delete(sessionId)
           }
           return
@@ -184,16 +193,15 @@ const useWorkspaceMessageQueueController = (
       }
       const item = itemsFor(sessionId)[0]
       if (!item || item.phase === 'sending' || item.phase === 'error') return
-      const session = current.getSession(sessionId)
-      if (!session) {
-        discardSession(sessionId)
-        return
-      }
       if (!queueBranchMatches(session, item)) {
         replaceItem(sessionId, item.id, {
           phase: 'error',
           error: { kind: 'branch' }
         })
+        return
+      }
+      if ((session.permissionProfile ?? DEFAULT_PERMISSION_PROFILE) !== item.permissionProfile) {
+        replaceItem(sessionId, item.id, { phase: 'error', error: { kind: 'send' } })
         return
       }
       if (session.specialistId !== item.specialistId) {

@@ -23,6 +23,7 @@ const session = (status: ChatSession['status'] = 'running'): ChatSession => ({
   title: 'Session A',
   cwd: '/workspace/project-a',
   status,
+  permissionProfile: 'full',
   messages: [],
   createdAt: 1,
   updatedAt: 1,
@@ -329,6 +330,52 @@ describe('workspace message queue controller', () => {
 
     await vi.waitFor(() => expect(hook.result.current.items[0].phase).toBe('error'))
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('retains a queued prompt when its captured permission profile changes', async () => {
+    const running = { ...session('running'), permissionProfile: 'full' as const }
+    let currentSession: ChatSession = running
+    const input = options(running, { getSession: () => currentSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('keep permissions'),
+        session: running,
+        permissionProfile: 'full'
+      })
+    )
+    currentSession = { ...running, status: 'idle', permissionProfile: 'auto' }
+    hook.rerender(options(currentSession, { ...input, getSession: () => currentSession }))
+
+    await vi.waitFor(() => expect(hook.result.current.items[0].phase).toBe('error'))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('discards remaining snapshots when a settled dispatch loses its Session', async () => {
+    const idle = session('idle')
+    let currentSession: ChatSession | undefined = idle
+    const input = options(idle, { getSession: () => currentSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => {
+      hook.result.current.lifecycle.enqueue({ ...admission('first'), session: idle })
+      hook.result.current.lifecycle.enqueue({ ...admission('second'), session: idle })
+    })
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(hook.result.current.items.map((item) => item.text)).toEqual(['second'])
+    )
+
+    currentSession = undefined
+    hook.rerender(options(idle, { ...input, getSession: () => currentSession }))
+
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+    expect(input.composer.discardSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ doc: textDoc('second') })
+    )
   })
 
   it('waits for cancellation before Send now dispatches', async () => {

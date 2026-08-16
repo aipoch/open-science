@@ -26,6 +26,7 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
   title: 'Session A',
   cwd: '/workspace/project-a',
   status: 'idle',
+  permissionProfile: 'full',
   messages: [
     {
       id: 'message-user-a',
