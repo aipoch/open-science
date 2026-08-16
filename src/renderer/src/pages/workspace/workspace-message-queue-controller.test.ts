@@ -240,6 +240,45 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(order).toEqual(['cancel', 'send']))
   })
 
+  it('does not strand an in-flight item when Send now promotes another item', async () => {
+    let currentSession = session('idle')
+    const completions: Array<() => void> = []
+    const sendMessage = vi.fn(
+      () =>
+        new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+          completions.push(() => resolve({ sessionId: 'session-a', messageId: 'message-sent' }))
+        })
+    )
+    const input = options(currentSession, {
+      getSession: () => currentSession,
+      runtime: { cancelRun: vi.fn(async () => undefined), sendMessage }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+
+    act(() => hook.result.current.lifecycle.enqueue({ ...admission('first'), session: currentSession }))
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    act(() => hook.result.current.lifecycle.enqueue({ ...admission('second'), session: currentSession }))
+
+    const secondId = hook.result.current.items[1].id
+    await act(async () => hook.result.current.actions.sendNow(secondId))
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+
+    currentSession = session('running')
+    hook.rerender(
+      options(currentSession, {
+        ...input,
+        activeSession: currentSession,
+        getSession: () => currentSession
+      })
+    )
+    await act(async () => completions[0]())
+    expect(hook.result.current.items.map((item) => item.text)).toEqual(['second'])
+
+    await act(async () => completions[1]())
+    expect(hook.result.current.items).toEqual([])
+  })
+
   it('retains the item with a recoverable error when cancellation fails', async () => {
     const input = options(session(), {
       runtime: {

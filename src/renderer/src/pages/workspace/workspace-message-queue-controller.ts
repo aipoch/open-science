@@ -119,7 +119,7 @@ const useWorkspaceMessageQueueController = (
     optionsRef.current = options
   }, [options])
   const queueBySessionRef = useRef(new Map<string, MessageQueueItem[]>())
-  const dispatchingSessionIdsRef = useRef(new Set<string>())
+  const dispatchingItemBySessionRef = useRef(new Map<string, string>())
   const nextQueueIdRef = useRef(0)
   const [queueSnapshot, setQueueSnapshot] = useState(new Map<string, MessageQueueItem[]>())
   const [announcement, setAnnouncement] = useState('')
@@ -160,10 +160,10 @@ const useWorkspaceMessageQueueController = (
   const dispatch = useCallback(
     (sessionId: string): void => {
       const current = optionsRef.current
-      if (dispatchingSessionIdsRef.current.has(sessionId)) {
+      if (dispatchingItemBySessionRef.current.has(sessionId)) {
         const session = current.getSession(sessionId)
         if (session && !queueSessionIsSendable(current, session)) {
-          dispatchingSessionIdsRef.current.delete(sessionId)
+          dispatchingItemBySessionRef.current.delete(sessionId)
         }
         return
       }
@@ -183,7 +183,7 @@ const useWorkspaceMessageQueueController = (
       }
       if (!queueSessionIsSendable(current, session)) return
 
-      dispatchingSessionIdsRef.current.add(sessionId)
+      dispatchingItemBySessionRef.current.set(sessionId, item.id)
       replaceItem(sessionId, item.id, { phase: 'sending', error: undefined })
       void current.runtime
         .sendMessage({
@@ -202,14 +202,15 @@ const useWorkspaceMessageQueueController = (
         .then((result) => {
           if (!result) throw new Error('The queued message was not admitted.')
           const latest = itemsFor(sessionId)
-          if (latest[0]?.id !== item.id) return
-          const remaining = latest.slice(1)
+          const remaining = latest.filter((candidate) => candidate.id !== item.id)
           if (remaining.length === 0) queueBySessionRef.current.delete(sessionId)
           else queueBySessionRef.current.set(sessionId, remaining)
           emit('Queued message sent.')
         })
         .catch((error: unknown) => {
-          dispatchingSessionIdsRef.current.delete(sessionId)
+          if (dispatchingItemBySessionRef.current.get(sessionId) === item.id) {
+            dispatchingItemBySessionRef.current.delete(sessionId)
+          }
           replaceItem(sessionId, item.id, {
             phase: 'error',
             error: { kind: 'send', detail: errorMessage(error) }
@@ -342,6 +343,9 @@ const useWorkspaceMessageQueueController = (
           session?.status === 'waiting-permission'
         ) {
           await current.runtime.cancelRun(queue.sessionId)
+        }
+        if (dispatchingItemBySessionRef.current.get(queue.sessionId) !== itemId) {
+          dispatchingItemBySessionRef.current.delete(queue.sessionId)
         }
         drainQueues()
       } catch (error) {
