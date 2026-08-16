@@ -643,7 +643,10 @@ describe('workspace runtime architecture', () => {
       }
     }
     expect(unsupportedFacadeImports).toEqual([])
-    expect(hookConsumers).toEqual(['pages/workspace/WorkspacePage.tsx'])
+    expect(hookConsumers).toEqual([
+      'pages/workspace/WorkspacePage.tsx',
+      'pages/workspace/workspace-message-queue-controller.ts'
+    ])
   })
   it('keeps the delegated runtime transport subscription in the App-level owner', () => {
     expect(
