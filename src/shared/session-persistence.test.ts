@@ -187,6 +187,38 @@ const createHistoricalPlan = (): ActivePlanProjection => ({
 })
 
 describe('conversation graph materialization diagnostics', () => {
+  it('writes a canonical graph while retaining flat messages as the active projection', () => {
+    const session: PersistedChatSession = {
+      id: 'session-1',
+      projectId: 'project-a',
+      title: 'Historical flat session',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'user',
+          content: 'Persist me',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const written = createSessionFile(session)
+
+    expect(written.version).toBe(SESSION_FILE_VERSION)
+    expect(written.session.conversationGraph.schemaVersion).toBe(1)
+    expect(written.session.messages).toEqual(session.messages)
+    expect(written.session.conversationGraph.messages).toEqual([
+      expect.objectContaining({ id: 'message-1', content: 'Persist me' })
+    ])
+  })
+
   it('identifies message synchronization failures without exposing the raw graph error', () => {
     const session: PersistedChatSession = {
       id: 'session-1',
