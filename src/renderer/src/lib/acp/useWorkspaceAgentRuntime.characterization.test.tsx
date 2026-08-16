@@ -372,6 +372,20 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(runtime.reconcileSnapshot).toHaveBeenCalledWith(reconciledSnapshot)
   })
 
+  it('does not reconcile an unordered legacy drain snapshot into live runtime state', async () => {
+    const legacySnapshot = createSnapshot({
+      sessionIds: ['session-1'],
+      promptInFlight: true,
+      promptInFlightSessionIds: ['session-1']
+    })
+    const reconcileSnapshot = vi.fn()
+    window.api = { acp: { getState: vi.fn().mockResolvedValue(legacySnapshot) } } as never
+
+    await drainWorkspaceRuntimeEventsForPersistence(undefined, reconcileSnapshot)
+
+    expect(reconcileSnapshot).not.toHaveBeenCalled()
+  })
+
   it('routes permission commands through the runtime and persists its committed profile', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
