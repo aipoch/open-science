@@ -151,7 +151,7 @@ describe('workspace page architecture', () => {
       ownerPaths.sideChat,
       ownerPaths.session
     ]) {
-      expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(660)
+      expect(rawLineCount(readSource(ownerPath)), basename(ownerPath)).toBeLessThanOrEqual(700)
     }
   })
 

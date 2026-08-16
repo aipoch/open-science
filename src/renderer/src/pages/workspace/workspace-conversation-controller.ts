@@ -241,8 +241,8 @@ const useWorkspaceConversationController = (
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
       if (mode === 'retry-reconfigure' && !session.actions.beginReconfigureRetry()) return
-      if (!session.lifecycle.canStartSend()) return
       const queueDraft = mode === 'continue' && canQueueDraft(current)
+      if (!queueDraft && !session.lifecycle.canStartSend()) return
       const queueBlocksImmediateSend = Boolean(
         activeSession && messageQueue.lifecycle.blocksImmediateSend(activeSession.id)
       )

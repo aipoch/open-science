@@ -406,7 +406,7 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
-  it('does not queue while the selected Specialist is not ready', () => {
+  it('queues without dispatching while the selected Specialist is not ready', () => {
     const running = runningSession()
     const input = options({ activeSession: running, getSession: () => running })
     input.session.lifecycle.canStartSend = vi.fn(() => false)
@@ -415,8 +415,10 @@ describe('workspace conversation controller', () => {
 
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
 
-    expect(hook.result.current.queue.items).toEqual([])
-    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    expect(hook.result.current.queue.items).toEqual([
+      expect.objectContaining({ text: 'hello', phase: 'queued' })
+    ])
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
