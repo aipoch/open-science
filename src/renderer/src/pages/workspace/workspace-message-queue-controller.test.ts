@@ -8,6 +8,7 @@ import type { ChatSession } from '@/stores/session-store'
 import { type ComposerDoc } from './composer/composer-doc'
 import {
   useWorkspaceMessageQueueController,
+  WorkspaceMessageQueueProvider,
   type MessageQueueAdmission,
   type WorkspaceMessageQueueController,
   type WorkspaceMessageQueueControllerOptions
@@ -96,23 +97,43 @@ const options = (
 type Hook = {
   result: { current: WorkspaceMessageQueueController }
   rerender: (next: WorkspaceMessageQueueControllerOptions) => void
+  leaveWorkspace: () => void
+  returnToWorkspace: () => void
   unmount: () => void
 }
 
 const renderController = (initial: WorkspaceMessageQueueControllerOptions): Hook => {
   let current = initial
+  let workspaceOpen = true
   const root: Root = createRoot(document.createElement('div'))
   const result = { current: undefined as unknown as WorkspaceMessageQueueController }
   const Harness = (): null => {
     result.current = useWorkspaceMessageQueueController(current)
     return null
   }
-  const render = (): void => act(() => root.render(createElement(Harness)))
+  const render = (): void =>
+    act(() =>
+      root.render(
+        createElement(
+          WorkspaceMessageQueueProvider,
+          null,
+          workspaceOpen ? createElement(Harness) : null
+        )
+      )
+    )
   render()
   return {
     result,
     rerender: (next): void => {
       current = next
+      render()
+    },
+    leaveWorkspace: (): void => {
+      workspaceOpen = false
+      render()
+    },
+    returnToWorkspace: (): void => {
+      workspaceOpen = true
       render()
     },
     unmount: (): void => act(() => root.unmount())
@@ -127,6 +148,48 @@ afterEach(() => {
 })
 
 describe('workspace message queue controller', () => {
+  it('retains queued messages when the Workspace unmounts for Project navigation', () => {
+    const input = options(session())
+    const workspace = renderController(input)
+    mounted.push(workspace)
+
+    act(() => workspace.result.current.lifecycle.enqueue(admission('keep across navigation')))
+    workspace.leaveWorkspace()
+    workspace.returnToWorkspace()
+
+    expect(workspace.result.current.items.map((item) => item.text)).toEqual([
+      'keep across navigation'
+    ])
+    expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('continues draining queued messages while Project navigation is open', async () => {
+    let currentSession = session()
+    let notifySessionChanged: (() => void) | undefined
+    const input = options(currentSession, {
+      promptInFlightSessionIds: [],
+      getSession: () => currentSession,
+      subscribeSessionChanges: (listener) => {
+        notifySessionChanged = listener
+        return () => {
+          notifySessionChanged = undefined
+        }
+      }
+    })
+    const workspace = renderController(input)
+    mounted.push(workspace)
+
+    act(() => workspace.result.current.lifecycle.enqueue(admission('send in background')))
+    workspace.leaveWorkspace()
+
+    currentSession = session('idle')
+    act(() => notifySessionChanged?.())
+
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    workspace.returnToWorkspace()
+    await vi.waitFor(() => expect(workspace.result.current.items).toEqual([]))
+  })
+
   it('reorders, restores for editing, and discards removed snapshots', () => {
     const input = options(session())
     const hook = renderController(input)

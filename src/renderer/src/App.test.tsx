@@ -236,7 +236,13 @@ vi.mock('@/components/PermissionUndoSnackbar', () => ({
   PermissionUndoSnackbar: (): React.JSX.Element => <div data-testid="permission-undo" />
 }))
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
-  WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children
+  WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children,
+  useWorkspaceAgentRuntime: () => ({
+    pendingPermissions: [],
+    promptInFlightSessionIds: [],
+    sendPreparationInFlightSessionIds: [],
+    saveAsSkillInFlightSessionIds: []
+  })
 }))
 vi.mock('@/pages/home/HomePage', () => ({
   HomePage: ({

@@ -30,6 +30,10 @@ import { SettingsPage, type SettingsPageHandle } from '@/pages/settings/Settings
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import { WorkspacePage } from '@/pages/workspace/WorkspacePage'
 import {
+  WorkspaceMessageQueueProvider,
+  WorkspaceMessageQueueRuntimeBridge
+} from '@/pages/workspace/workspace-message-queue-controller'
+import {
   SideChatProvider,
   useOpenSideChatParentSessionIds
 } from '@/pages/workspace/use-side-chat-controller'
@@ -619,25 +623,28 @@ const AppContent = (): React.JSX.Element | null => {
         ) : null}
         {sessionPersistence.catalogRecovery.kind !== 'ready' ? writeErrorAlert : null}
         <WorkspaceAgentRuntimeProvider>
-          {view === 'home' ? (
-            <HomePage
-              canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
-              hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
-              catalogRecovery={sessionPersistence.catalogRecovery}
-              onOpenGlobalSearch={() => {
-                if (appShellPresentation.allowsShortcut('globalSearch')) {
-                  setIsGlobalSearchOpen(true)
-                }
-              }}
-            />
-          ) : (
-            <WorkspacePage
-              isSessionPersistenceHydrated={isSessionPersistenceHydrated}
-              isSessionPersistenceReady={isSessionPersistenceReady}
-              canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
-              isPreviewPresentationActive={isBasePresentationActive}
-            />
-          )}
+          <WorkspaceMessageQueueProvider>
+            <WorkspaceMessageQueueRuntimeBridge />
+            {view === 'home' ? (
+              <HomePage
+                canDeleteProjects={sessionPersistence.canDeleteSessionsAndProjects}
+                hasCompleteSessionCatalog={sessionPersistence.hasCompleteSessionCatalog}
+                catalogRecovery={sessionPersistence.catalogRecovery}
+                onOpenGlobalSearch={() => {
+                  if (appShellPresentation.allowsShortcut('globalSearch')) {
+                    setIsGlobalSearchOpen(true)
+                  }
+                }}
+              />
+            ) : (
+              <WorkspacePage
+                isSessionPersistenceHydrated={isSessionPersistenceHydrated}
+                isSessionPersistenceReady={isSessionPersistenceReady}
+                canDeleteConversations={sessionPersistence.canDeleteSessionsAndProjects}
+                isPreviewPresentationActive={isBasePresentationActive}
+              />
+            )}
+          </WorkspaceMessageQueueProvider>
         </WorkspaceAgentRuntimeProvider>
         <LifecycleToast
           notice={lifecycleSync.notice}

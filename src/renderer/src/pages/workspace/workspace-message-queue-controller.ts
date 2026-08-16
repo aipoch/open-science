@@ -1,11 +1,26 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type PropsWithChildren,
+  type ReactElement
+} from 'react'
 
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
 } from '../../../../shared/permission-profiles'
-import type { ChatSession } from '@/stores/session-store'
-import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import {
+  useWorkspaceAgentRuntime,
+  type WorkspaceAgentRuntime
+} from '@/lib/acp/useWorkspaceAgentRuntime'
 
 import { docToArtifactRefs } from './composer/composer-doc'
 import type { ComposerSendSnapshot } from './workspace-composer-controller'
@@ -89,6 +104,151 @@ type WorkspaceMessageQueueController = {
   }
 }
 
+type MessageQueueSnapshot = {
+  queues: Map<string, MessageQueueItem[]>
+  announcement: string
+}
+
+type WorkspaceMessageQueueRuntimeOptions = Pick<
+  WorkspaceMessageQueueControllerOptions,
+  | 'promptInFlightSessionIds'
+  | 'sendPreparationInFlightSessionIds'
+  | 'saveAsSkillInFlightSessionIds'
+  | 'runtime'
+  | 'hasPendingPermissionRequest'
+  | 'abortFixLoop'
+  | 'getSession'
+  | 'subscribeSessionChanges'
+>
+
+class WorkspaceMessageQueueOwner {
+  readonly queues = new Map<string, MessageQueueItem[]>()
+  readonly dispatches = new Map<string, MessageQueueDispatch>()
+  nextQueueId = 0
+  private listeners = new Set<() => void>()
+  private snapshot: MessageQueueSnapshot = { queues: new Map(), announcement: '' }
+  private sessionSubscription:
+    | {
+        source: WorkspaceMessageQueueControllerOptions['subscribeSessionChanges']
+        drain: () => void
+        unsubscribe: () => void
+      }
+    | undefined
+  private discardSnapshot:
+    WorkspaceMessageQueueControllerOptions['composer']['discardSnapshot'] | undefined
+  private runtimeOptions: WorkspaceMessageQueueRuntimeOptions | undefined
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  getSnapshot = (): MessageQueueSnapshot => this.snapshot
+
+  emit = (announcement?: string): void => {
+    this.snapshot = {
+      queues: new Map(this.queues),
+      announcement: announcement ?? this.snapshot.announcement
+    }
+    for (const listener of this.listeners) listener()
+  }
+
+  connect(
+    source: WorkspaceMessageQueueControllerOptions['subscribeSessionChanges'],
+    drain: () => void,
+    discardSnapshot: WorkspaceMessageQueueControllerOptions['composer']['discardSnapshot']
+  ): void {
+    this.discardSnapshot = discardSnapshot
+    const liveSource = this.runtimeOptions?.subscribeSessionChanges ?? source
+    if (
+      this.sessionSubscription?.source === liveSource &&
+      this.sessionSubscription.drain === drain
+    ) {
+      return
+    }
+    this.sessionSubscription?.unsubscribe()
+    this.sessionSubscription = { source: liveSource, drain, unsubscribe: liveSource(drain) }
+  }
+
+  updateRuntime(options: WorkspaceMessageQueueRuntimeOptions): void {
+    this.runtimeOptions = options
+    const current = this.sessionSubscription
+    if (current && current.source !== options.subscribeSessionChanges) {
+      current.unsubscribe()
+      this.sessionSubscription = {
+        source: options.subscribeSessionChanges,
+        drain: current.drain,
+        unsubscribe: options.subscribeSessionChanges(current.drain)
+      }
+    }
+    this.sessionSubscription?.drain()
+  }
+
+  resolveOptions(
+    fallback: WorkspaceMessageQueueControllerOptions
+  ): WorkspaceMessageQueueControllerOptions {
+    return this.runtimeOptions ? { ...fallback, ...this.runtimeOptions } : fallback
+  }
+
+  dispose(): void {
+    this.sessionSubscription?.unsubscribe()
+    this.sessionSubscription = undefined
+    this.runtimeOptions = undefined
+    for (const items of this.queues.values()) {
+      for (const item of items) {
+        if (item.phase !== 'sending') this.discardSnapshot?.(item.snapshot)
+      }
+    }
+    this.queues.clear()
+    this.dispatches.clear()
+    this.emit()
+  }
+}
+
+const WorkspaceMessageQueueContext = createContext<WorkspaceMessageQueueOwner | null>(null)
+
+const useWorkspaceMessageQueueOwner = (): WorkspaceMessageQueueOwner => {
+  const providedOwner = useContext(WorkspaceMessageQueueContext)
+  const [localOwner] = useState(() => new WorkspaceMessageQueueOwner())
+  useEffect(
+    () => (providedOwner ? undefined : () => localOwner.dispose()),
+    [localOwner, providedOwner]
+  )
+  return providedOwner ?? localOwner
+}
+
+const useProvidedWorkspaceMessageQueueOwner = (): WorkspaceMessageQueueOwner => {
+  const owner = useContext(WorkspaceMessageQueueContext)
+  if (!owner) throw new Error('Workspace message queue provider is missing.')
+  return owner
+}
+
+const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactElement => {
+  const [owner] = useState(() => new WorkspaceMessageQueueOwner())
+  useEffect(() => () => owner.dispose(), [owner])
+  return createElement(WorkspaceMessageQueueContext.Provider, { value: owner }, children)
+}
+
+const WorkspaceMessageQueueRuntimeBridge = (): null => {
+  const owner = useProvidedWorkspaceMessageQueueOwner()
+  const runtime = useWorkspaceAgentRuntime()
+  useLayoutEffect(() => {
+    owner.updateRuntime({
+      promptInFlightSessionIds: runtime.promptInFlightSessionIds,
+      sendPreparationInFlightSessionIds: runtime.sendPreparationInFlightSessionIds,
+      saveAsSkillInFlightSessionIds: runtime.saveAsSkillInFlightSessionIds,
+      runtime,
+      hasPendingPermissionRequest: (sessionId) =>
+        runtime.pendingPermissions.some((request) => request.sessionId === sessionId),
+      abortFixLoop: (request) => window.api.reviewer.abortFixLoop(request),
+      getSession: (sessionId) =>
+        useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId),
+      subscribeSessionChanges: useSessionStore.subscribe
+    })
+  }, [owner, runtime])
+  return null
+}
+
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
@@ -127,24 +287,27 @@ const queueSessionIsSendable = (
 const useWorkspaceMessageQueueController = (
   options: WorkspaceMessageQueueControllerOptions
 ): WorkspaceMessageQueueController => {
+  const owner = useWorkspaceMessageQueueOwner()
   const { subscribeSessionChanges } = options
   const optionsRef = useRef(options)
   useLayoutEffect(() => {
     optionsRef.current = options
   }, [options])
-  const queueBySessionRef = useRef(new Map<string, MessageQueueItem[]>())
-  const dispatchBySessionRef = useRef(new Map<string, MessageQueueDispatch>())
-  const nextQueueIdRef = useRef(0)
-  const [queueSnapshot, setQueueSnapshot] = useState(new Map<string, MessageQueueItem[]>())
-  const [announcement, setAnnouncement] = useState('')
+  const { queues: queueSnapshot, announcement } = useSyncExternalStore(
+    owner.subscribe,
+    owner.getSnapshot,
+    owner.getSnapshot
+  )
 
-  const emit = useCallback((message?: string): void => {
-    if (message) setAnnouncement(message)
-    setQueueSnapshot(new Map(queueBySessionRef.current))
-  }, [])
+  const emit = useCallback(
+    (message?: string): void => {
+      owner.emit(message)
+    },
+    [owner]
+  )
   const itemsFor = useCallback(
-    (sessionId: string): MessageQueueItem[] => queueBySessionRef.current.get(sessionId) ?? [],
-    []
+    (sessionId: string): MessageQueueItem[] => owner.queues.get(sessionId) ?? [],
+    [owner]
   )
   const replaceItem = useCallback(
     (
@@ -157,38 +320,38 @@ const useWorkspaceMessageQueueController = (
       if (index < 0) return
       const next = [...items]
       next[index] = { ...next[index], ...update }
-      queueBySessionRef.current.set(sessionId, next)
+      owner.queues.set(sessionId, next)
       emit()
     },
-    [emit, itemsFor]
+    [emit, itemsFor, owner]
   )
   const discardSession = useCallback(
     (sessionId: string): void => {
-      const current = optionsRef.current
+      const current = owner.resolveOptions(optionsRef.current)
       for (const item of itemsFor(sessionId)) current.composer.discardSnapshot(item.snapshot)
-      queueBySessionRef.current.delete(sessionId)
+      owner.queues.delete(sessionId)
       emit()
     },
-    [emit, itemsFor]
+    [emit, itemsFor, owner]
   )
   const dispatch = useCallback(
     (sessionId: string): void => {
-      const current = optionsRef.current
-      const existingDispatch = dispatchBySessionRef.current.get(sessionId)
+      const current = owner.resolveOptions(optionsRef.current)
+      const existingDispatch = owner.dispatches.get(sessionId)
       const session = current.getSession(sessionId)
       if (!session) {
         if (existingDispatch && !existingDispatch.settled) return
-        dispatchBySessionRef.current.delete(sessionId)
+        owner.dispatches.delete(sessionId)
         discardSession(sessionId)
         return
       }
       if (existingDispatch) {
         if (!existingDispatch.settled) return
         if (session.status === 'error') {
-          dispatchBySessionRef.current.delete(sessionId)
+          owner.dispatches.delete(sessionId)
         } else {
           if (!queueSessionIsSendable(current, session)) {
-            dispatchBySessionRef.current.delete(sessionId)
+            owner.dispatches.delete(sessionId)
           }
           return
         }
@@ -225,7 +388,7 @@ const useWorkspaceMessageQueueController = (
           resolveCompletion = resolve
         })
       }
-      dispatchBySessionRef.current.set(sessionId, activeDispatch)
+      owner.dispatches.set(sessionId, activeDispatch)
       void (async (): Promise<void> => {
         try {
           const result = await current.runtime.sendMessage({
@@ -245,12 +408,12 @@ const useWorkspaceMessageQueueController = (
           }
           const latest = itemsFor(sessionId)
           const remaining = latest.filter((candidate) => candidate.id !== item.id)
-          if (remaining.length === 0) queueBySessionRef.current.delete(sessionId)
-          else queueBySessionRef.current.set(sessionId, remaining)
+          if (remaining.length === 0) owner.queues.delete(sessionId)
+          else owner.queues.set(sessionId, remaining)
           emit('Queued message sent.')
         } catch (error) {
-          if (dispatchBySessionRef.current.get(sessionId) === activeDispatch) {
-            dispatchBySessionRef.current.delete(sessionId)
+          if (owner.dispatches.get(sessionId) === activeDispatch) {
+            owner.dispatches.delete(sessionId)
           }
           replaceItem(sessionId, item.id, {
             phase: 'error',
@@ -259,20 +422,20 @@ const useWorkspaceMessageQueueController = (
         } finally {
           activeDispatch.settled = true
           resolveCompletion()
-          if (!optionsRef.current.getSession(sessionId)) {
-            if (dispatchBySessionRef.current.get(sessionId) === activeDispatch) {
-              dispatchBySessionRef.current.delete(sessionId)
+          if (!owner.resolveOptions(optionsRef.current).getSession(sessionId)) {
+            if (owner.dispatches.get(sessionId) === activeDispatch) {
+              owner.dispatches.delete(sessionId)
             }
             discardSession(sessionId)
           }
         }
       })()
     },
-    [discardSession, emit, itemsFor, replaceItem]
+    [discardSession, emit, itemsFor, owner, replaceItem]
   )
   const drainQueues = useCallback((): void => {
-    for (const sessionId of queueBySessionRef.current.keys()) dispatch(sessionId)
-  }, [dispatch])
+    for (const sessionId of owner.queues.keys()) dispatch(sessionId)
+  }, [dispatch, owner])
   const currentSessionQueue = useCallback(():
     { sessionId: string; items: MessageQueueItem[] } | undefined => {
     const sessionId = optionsRef.current.activeSession?.id
@@ -280,16 +443,19 @@ const useWorkspaceMessageQueueController = (
   }, [itemsFor])
   const blocksImmediateSend = useCallback(
     (sessionId: string): boolean => {
-      const activeDispatch = dispatchBySessionRef.current.get(sessionId)
+      const activeDispatch = owner.dispatches.get(sessionId)
       return (
         itemsFor(sessionId).length > 0 ||
         Boolean(
           activeDispatch &&
-          !(activeDispatch.settled && optionsRef.current.getSession(sessionId)?.status === 'error')
+          !(
+            activeDispatch.settled &&
+            owner.resolveOptions(optionsRef.current).getSession(sessionId)?.status === 'error'
+          )
         )
       )
     },
-    [itemsFor]
+    [itemsFor, owner]
   )
 
   const enqueue = useCallback(
@@ -302,7 +468,7 @@ const useWorkspaceMessageQueueController = (
         return false
       }
       const item: MessageQueueItem = {
-        id: `queued-message-${Date.now()}-${++nextQueueIdRef.current}`,
+        id: `queued-message-${Date.now()}-${++owner.nextQueueId}`,
         sessionId: session.id,
         ...identity,
         snapshot,
@@ -312,11 +478,11 @@ const useWorkspaceMessageQueueController = (
         phase: 'queued',
         ...intent
       }
-      queueBySessionRef.current.set(session.id, [...itemsFor(session.id), item])
+      owner.queues.set(session.id, [...itemsFor(session.id), item])
       emit('Message added to queue.')
       return true
     },
-    [emit, itemsFor]
+    [emit, itemsFor, owner]
   )
   const move = useCallback(
     (itemId: string, direction: 'up' | 'down'): void => {
@@ -327,10 +493,10 @@ const useWorkspaceMessageQueueController = (
       const target = direction === 'up' ? index - 1 : index + 1
       if (index < 0 || target < 0 || target >= items.length) return
       ;[items[index], items[target]] = [items[target], items[index]]
-      queueBySessionRef.current.set(queue.sessionId, items)
+      owner.queues.set(queue.sessionId, items)
       emit(`Queued message moved ${direction}.`)
     },
-    [currentSessionQueue, emit]
+    [currentSessionQueue, emit, owner]
   )
   const moveTo = useCallback(
     (itemId: string, targetId: string, edge: 'before' | 'after'): void => {
@@ -342,10 +508,10 @@ const useWorkspaceMessageQueueController = (
       const [moved] = items.splice(from, 1)
       const target = items.findIndex((item) => item.id === targetId)
       items.splice(edge === 'after' ? target + 1 : target, 0, moved)
-      queueBySessionRef.current.set(queue.sessionId, items)
+      owner.queues.set(queue.sessionId, items)
       emit('Queued messages reordered.')
     },
-    [currentSessionQueue, emit]
+    [currentSessionQueue, emit, owner]
   )
   const remove = useCallback(
     (itemId: string): void => {
@@ -355,11 +521,11 @@ const useWorkspaceMessageQueueController = (
       if (!item || item.phase === 'sending' || item.phase === 'interrupting') return
       optionsRef.current.composer.discardSnapshot(item.snapshot)
       const remaining = queue.items.filter((candidate) => candidate.id !== itemId)
-      if (remaining.length === 0) queueBySessionRef.current.delete(queue.sessionId)
-      else queueBySessionRef.current.set(queue.sessionId, remaining)
+      if (remaining.length === 0) owner.queues.delete(queue.sessionId)
+      else owner.queues.set(queue.sessionId, remaining)
       emit('Queued message removed.')
     },
-    [currentSessionQueue, emit]
+    [currentSessionQueue, emit, owner]
   )
   const edit = useCallback(
     (itemId: string): void => {
@@ -375,11 +541,11 @@ const useWorkspaceMessageQueueController = (
         return
       }
       const remaining = queue.items.filter((candidate) => candidate.id !== itemId)
-      if (remaining.length === 0) queueBySessionRef.current.delete(queue.sessionId)
-      else queueBySessionRef.current.set(queue.sessionId, remaining)
+      if (remaining.length === 0) owner.queues.delete(queue.sessionId)
+      else owner.queues.set(queue.sessionId, remaining)
       emit('Queued message moved to the composer for editing.')
     },
-    [currentSessionQueue, emit, replaceItem]
+    [currentSessionQueue, emit, owner, replaceItem]
   )
   const sendNow = useCallback(
     async (itemId: string): Promise<void> => {
@@ -387,17 +553,17 @@ const useWorkspaceMessageQueueController = (
       if (!queue) return
       const item = queue.items.find((candidate) => candidate.id === itemId)
       if (!item) return
-      queueBySessionRef.current.set(queue.sessionId, [
+      owner.queues.set(queue.sessionId, [
         { ...item, phase: 'interrupting', error: undefined },
         ...queue.items.filter((candidate) => candidate.id !== itemId)
       ])
       emit('Stopping the current run before sending the queued message.')
       try {
-        const displacedDispatch = dispatchBySessionRef.current.get(queue.sessionId)
+        const displacedDispatch = owner.dispatches.get(queue.sessionId)
         if (displacedDispatch && displacedDispatch.itemId !== itemId) {
           await displacedDispatch.completion
         }
-        const current = optionsRef.current
+        const current = owner.resolveOptions(optionsRef.current)
         const session = current.getSession(queue.sessionId)
         if (session?.fixLoopActive) {
           await current.abortFixLoop({
@@ -412,8 +578,8 @@ const useWorkspaceMessageQueueController = (
         ) {
           await current.runtime.cancelRun(queue.sessionId)
         }
-        if (dispatchBySessionRef.current.get(queue.sessionId) === displacedDispatch) {
-          dispatchBySessionRef.current.delete(queue.sessionId)
+        if (owner.dispatches.get(queue.sessionId) === displacedDispatch) {
+          owner.dispatches.delete(queue.sessionId)
         }
         drainQueues()
       } catch (error) {
@@ -423,22 +589,14 @@ const useWorkspaceMessageQueueController = (
         })
       }
     },
-    [currentSessionQueue, drainQueues, emit, replaceItem]
+    [currentSessionQueue, drainQueues, emit, owner, replaceItem]
   )
 
-  useEffect(() => subscribeSessionChanges(drainQueues), [drainQueues, subscribeSessionChanges])
-  useEffect(() => drainQueues(), [drainQueues, options, queueSnapshot])
   useEffect(
-    () => () => {
-      for (const items of queueBySessionRef.current.values()) {
-        for (const item of items) {
-          if (item.phase !== 'sending') optionsRef.current.composer.discardSnapshot(item.snapshot)
-        }
-      }
-      queueBySessionRef.current.clear()
-    },
-    []
+    () => owner.connect(subscribeSessionChanges, drainQueues, options.composer.discardSnapshot),
+    [drainQueues, options.composer.discardSnapshot, owner, subscribeSessionChanges]
   )
+  useEffect(() => drainQueues(), [drainQueues, options, queueSnapshot])
 
   const activeItems = options.activeSession
     ? (queueSnapshot.get(options.activeSession.id) ?? [])
@@ -457,7 +615,11 @@ const useWorkspaceMessageQueueController = (
   }
 }
 
-export { useWorkspaceMessageQueueController }
+export {
+  useWorkspaceMessageQueueController,
+  WorkspaceMessageQueueProvider,
+  WorkspaceMessageQueueRuntimeBridge
+}
 export type {
   MessageQueueAdmission,
   MessageQueueItemView,
