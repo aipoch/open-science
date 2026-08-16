@@ -1173,6 +1173,7 @@ run <- base::local({
       }
     }
     error <- NULL
+    interrupt_ack <- FALSE
     error_line <- NA_integer_
     stdout_path <- tempfile("open-science-r-stdout-")
     stdout_connection <- file(stdout_path, open = "wb")
@@ -1214,7 +1215,10 @@ run <- base::local({
               error_line <<- as.integer(refs[[idx]][1])
             }
           },
-          interrupt = function(cnd) error <<- "interrupted")
+          interrupt = function(cnd) {
+            error <<- "interrupted"
+            interrupt_ack <<- TRUE
+          })
         }
       }
     }
@@ -1268,6 +1272,7 @@ run <- base::local({
       list()
     }
     list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
+         interrupt_ack = isTRUE(interrupt_ack),
          error_line = if (is.na(error_line)) NULL else error_line,
          result = NA, cwd = getwd(), figures = figures,
          output_truncated = isTRUE(capture_state$output_truncated),
