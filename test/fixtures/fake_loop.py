@@ -91,6 +91,8 @@ def main():
         req_id = request.get("req_id")
         if late_interrupt_pending:
             if code == "Sys.sleep(0.05)" and sys_sleep_masked:
+                late_interrupt_pending = False
+                namespace_value = None
                 _respond(req_id, code, error="user-masked Sys.sleep was invoked")
                 continue
             late_interrupt_pending = False
