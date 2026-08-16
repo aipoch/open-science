@@ -530,6 +530,15 @@ class TaskRunner {
         )
       }
     }
+    if (
+      existing?.status === 'waiting-plan-approval' &&
+      existing.runtimeContext?.plan?.approval === 'pending'
+    ) {
+      throw new TaskRunnerError(
+        'session_busy',
+        `Session is waiting for Plan approval: ${existing.id}`
+      )
+    }
     const userMessageId = this.dependencies.createId()
     const runId = this.dependencies.createId()
     if (existing) this.reserveSession(existing.id, runId)

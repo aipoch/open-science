@@ -1148,6 +1148,52 @@ describe('TaskRunner', () => {
     }
   })
 
+  it('rejects a new authored turn while a restored Plan awaits approval', async () => {
+    const existing: PersistedChatSession = {
+      ...session,
+      id: 'session-plan-pending',
+      status: 'waiting-plan-approval',
+      runtimeContext: {
+        version: 1,
+        revision: 3,
+        plan: {
+          artifactId: 'plan-artifact',
+          artifactVersionId: 'plan-version',
+          artifactChecksum: 'plan-checksum',
+          approval: 'pending',
+          stepStatuses: {}
+        }
+      }
+    }
+    const resumeSession = vi.fn(async () => ({ sessionId: existing.id }))
+    const save = vi.fn(async () => undefined)
+    const runner = createRunner({
+      sessions: { list: async () => [existing], save },
+      agent: {
+        withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
+        listAttachedSessionIds: async () => [],
+        createSession: async () => ({ sessionId: 'unused' }),
+        resumeSession,
+        setPermissionProfile: async () => undefined,
+        cancelPrompt: async () => undefined,
+        prompt: async () => undefined
+      }
+    })
+
+    await expect(
+      runner.startRun({
+        project: project.id,
+        sessionId: existing.id,
+        prompt: 'Start another turn.'
+      })
+    ).rejects.toMatchObject({
+      code: 'session_busy',
+      message: `Session is waiting for Plan approval: ${existing.id}`
+    })
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+  })
+
   it('checks archive admission before an existing session is resumed or saved', async () => {
     const existing = { ...session, id: 'session-archived' }
     const resumeSession = async (): Promise<never> => {

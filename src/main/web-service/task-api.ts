@@ -286,10 +286,14 @@ class HeadlessTaskApi {
     if (!started.started) return started
 
     for (;;) {
-      const reviews = (await this.invoke('reviewer:get-for-session', {
-        projectId: session.projectId,
-        appSessionId: session.id
-      })) as ReviewWithChecks[]
+      // Polling is lifecycle work for an admitted review. Keep it independent from the originating
+      // request lease, which may expire while the separate Reviewer runtime is still working.
+      const reviews = (await this.commandClient.invoke(
+        this.ports.commands,
+        'reviewer:get-for-session',
+        TASK_CALLER_CONTEXT,
+        [{ projectId: session.projectId, appSessionId: session.id }]
+      )) as ReviewWithChecks[]
       const review = [...reviews]
         .reverse()
         .find((candidate) => candidate.turnMessageId === turnMessageId)

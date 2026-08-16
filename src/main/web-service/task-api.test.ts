@@ -523,6 +523,74 @@ describe('HeadlessTaskApi adapter', () => {
     await api.dispose()
   })
 
+  it('keeps admitted automatic-review polling alive after remote authorization expires', async () => {
+    let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
+    let authorizationCurrent = true
+    const context = createTaskCallerContext({
+      location: 'remote',
+      isAuthorizationCurrent: () => authorizationCurrent
+    })
+    const invoke = vi.fn(
+      async (channel: string, callerContext: CallerContext): Promise<unknown> => {
+        if (channel === 'projects:list') return [project]
+        if (channel === 'sessions:load-all') {
+          return { sessions: [], manifest: { version: 1 } }
+        }
+        if (channel === 'sessions:save-session') return undefined
+        if (channel === 'reviewer:run') {
+          expect(callerContext).toBe(context)
+          authorizationCurrent = false
+          return { started: true }
+        }
+        if (channel === 'reviewer:get-for-session') {
+          expect(callerContext).toEqual(taskCallerContext())
+          expect(callerContext.isAuthorizationCurrent()).toBe(true)
+          return [{ id: 'review-expired', turnMessageId: 'expired-agent', lifecycle: 'completed' }]
+        }
+        throw new Error(`Unexpected RPC channel: ${channel}`)
+      }
+    )
+    const agent = createAgent({
+      createSession: vi.fn(async () => ({ sessionId: 'session-review-expired' })),
+      prompt: vi.fn(async () => {
+        emitEvent?.({
+          id: 'expired-message-event',
+          timestamp: 10,
+          kind: 'message',
+          level: 'info',
+          sessionId: 'session-review-expired',
+          role: 'assistant',
+          text: 'Review after authorization expiry.'
+        })
+      })
+    })
+    const ids = ['expired-user', 'expired-run', 'expired-agent']
+    const api = new HeadlessTaskApi(
+      { commands: commandsFrom(invoke), agent },
+      {
+        createId: () => ids.shift() ?? 'generated-id',
+        subscribeEvents: (listener) => {
+          emitEvent = listener
+          return () => undefined
+        }
+      }
+    )
+
+    const run = await api.runWithCallerContext(context, () =>
+      api.startRun({
+        project: project.id,
+        prompt: 'Produce and review after authorization expiry.',
+        autoReviewEnabled: true
+      })
+    )
+    await expect(api.waitForRun(run.id)).resolves.toMatchObject({
+      status: 'completed',
+      review: { started: true, id: 'review-expired', lifecycle: 'completed' }
+    })
+    expect(authorizationCurrent).toBe(false)
+    await api.dispose()
+  })
+
   it('awaits Reviewer cleanup before completing Task API disposal', async () => {
     let emitEvent: ((event: AcpRuntimeEvent) => void) | undefined
     let markAbortStarted: (() => void) | undefined
