@@ -31,7 +31,7 @@ import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effo
 import { incompatibilityReason } from './composer-model-picker-utils'
 
 const triggerClassName =
-  'flex h-8 max-w-[220px] items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
+  'flex h-8 min-w-0 max-w-[220px] shrink items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
 
 // Label for an option: the model name, or the provider name when the option carries no concrete model.
 const optionLabel = (option: ConfiguredModelCatalogEntry): string => option.label

@@ -402,7 +402,7 @@ describe('ComposerModelPicker', () => {
     expect(trigger?.textContent).not.toContain('OpenAI')
   })
 
-  it('keeps the effort suffix fully visible and ellipsizes only the model name on the trigger', () => {
+  it('lets the trigger shrink while preserving the effort suffix and ellipsizing the model', () => {
     // Long model names must not swallow the effort suffix: the model span truncates, the suffix
     // span is shrink-protected and never wraps.
     useSettingsStore.setState({
@@ -424,6 +424,10 @@ describe('ComposerModelPicker', () => {
     const trigger = container.querySelector('[aria-label="Select model"]')
     expect(trigger).not.toBeNull()
     expect(trigger?.textContent).toContain('· High')
+    const triggerClasses = trigger?.className.split(/\s+/) ?? []
+    expect(triggerClasses).toContain('min-w-0')
+    expect(triggerClasses).toContain('shrink')
+    expect(triggerClasses).not.toContain('shrink-0')
     const suffix = Array.from(trigger!.querySelectorAll('span')).find(
       (el) => el.textContent?.trim() === '· High'
     )
