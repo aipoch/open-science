@@ -331,4 +331,43 @@ describe('LocationStep', () => {
     expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledTimes(1)
     expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
   })
+
+  it('closing the confirm dialog keeps the chosen path without completing onboarding', async () => {
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+    await renderStep()
+    await clickButton(/browse/i)
+    await clickButton(/finish/i)
+
+    const closeButton = document.body.querySelector<HTMLButtonElement>('button[aria-label="Close"]')
+    expect(closeButton).not.toBeNull()
+    await act(async () => {
+      closeButton?.click()
+    })
+
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('/mnt/data/OpenScience')
+  })
+
+  it('pressing Escape keeps the chosen path without completing onboarding', async () => {
+    window.api.storage.pickDirectory = vi.fn().mockResolvedValue('/mnt/data')
+    window.api.storage.inspectDataRoot = vi
+      .fn()
+      .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
+    await renderStep()
+    await clickButton(/browse/i)
+    await clickButton(/finish/i)
+
+    expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull()
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('/mnt/data/OpenScience')
+  })
 })

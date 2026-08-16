@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog } from 'radix-ui'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -66,11 +66,6 @@ const LocationStep = ({
   const { chosenParent, chosenDataRoot, chosenKind } = locationDraft
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
-  // Guards against handleKeepDefault's completeOnboarding firing spuriously after Restart:
-  // AlertDialog.Action fires onOpenChange(false) on click (same as Cancel), and closures inside
-  // that handler can't see isRelaunching's update from the same synchronous batch, so a ref is
-  // used instead of state for this check.
-  const isRestartingRef = useRef(false)
 
   const handleBrowseLocation = async (): Promise<void> => {
     setLocationError(undefined)
@@ -127,18 +122,11 @@ const LocationStep = ({
   }
 
   const handleKeepDefault = async (): Promise<void> => {
-    // AlertDialog.Action also fires onOpenChange(false) on click (it closes the dialog like Cancel
-    // does), which would otherwise call this a second time right after handleRestart. A ref (not
-    // isRelaunching state) is required here: both handlers run synchronously in the same click
-    // event, so a state-based check would still read the pre-update closure value.
-    if (isRestartingRef.current) return
-
     setConfirmRestart(false)
     await completeWithDefaultLocation()
   }
 
   const handleRestart = async (): Promise<void> => {
-    isRestartingRef.current = true
     setConfirmRestart(false)
     onRelaunchErrorChange(undefined)
     setIsRelaunching(true)
@@ -155,11 +143,9 @@ const LocationStep = ({
 
       // The app is not relaunching; the gate was never flipped, so we're still on the wizard -
       // surface the error here and let the user retry or fall back to Keep default.
-      isRestartingRef.current = false
       setIsRelaunching(false)
       onRelaunchErrorChange(result.error ?? 'Could not restart to apply the new location.')
     } catch (error) {
-      isRestartingRef.current = false
       setIsRelaunching(false)
       onRelaunchErrorChange(
         onboardingErrorMessage(error, 'Could not restart to apply the new location.')
@@ -279,12 +265,7 @@ const LocationStep = ({
         </Button>
       </CardFooter>
 
-      <AlertDialog.Root
-        open={confirmRestart}
-        onOpenChange={(open) => {
-          if (!open) void handleKeepDefault()
-        }}
-      >
+      <AlertDialog.Root open={confirmRestart} onOpenChange={setConfirmRestart}>
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content
@@ -321,7 +302,7 @@ const LocationStep = ({
 
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
-                <Button type="button" variant="outline">
+                <Button type="button" variant="outline" onClick={() => void handleKeepDefault()}>
                   {t('Keep default')}
                 </Button>
               </AlertDialog.Cancel>
