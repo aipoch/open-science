@@ -212,7 +212,15 @@ describe('release and scheduled workflow topology', () => {
     expect(checkout.with).not.toHaveProperty('ref')
     const released = step(smoke, 'Resolve released revision')
     expect(released.run).toContain('git rev-parse "$($env:CURRENT_TAG)^{commit}"')
+    expect(released.run).toContain('git merge-base --is-ancestor $releasedSha $env:GITHUB_SHA')
+    expect(released.run).toContain(
+      'git ls-tree -r --name-only $releasedSha -- src/main/database/migrations'
+    )
+    expect(released.run).toContain('$migrationPattern')
+    expect(released.run).toContain('Unexpected released migration path')
+    expect(released.run).toContain('Released migrations are not a continuous prefix')
     expect(released.run).toContain('"sha=$releasedSha"')
+    expect(released.run).toContain('"migration_count=$($migrationFiles.Count)"')
     const updaterRoot = step(smoke, 'Certify Windows electron-updater differential update').env
       ?.OPEN_SCIENCE_E2E_STORAGE_ROOT
     const installerRoot = step(
@@ -222,6 +230,9 @@ describe('release and scheduled workflow topology', () => {
     expect(updaterRoot).toBe('${{ runner.temp }}\\open-science-updater-certification')
     expect(installerRoot).toBe('${{ runner.temp }}\\open-science-installer-certification')
     expect(updaterRoot).not.toBe(installerRoot)
+    expect(
+      step(smoke, 'Drill Windows silent upgrade, process lock, rollback, and restart').run
+    ).toContain("--expected-migration-count '${{ steps.current.outputs.migration_count }}'")
     expect(step(smoke, 'Record Windows update-drill evidence')).toMatchObject({
       env: { GITHUB_SHA: '${{ steps.current.outputs.sha }}' }
     })

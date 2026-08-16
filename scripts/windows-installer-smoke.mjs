@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
@@ -35,6 +35,13 @@ const RPC_SMOKE_ROOT_PREFIX = 'open-science-rpc-smoke-'
 const UPGRADE_SENTINEL_PREFIX = 'installer-smoke-upgrade-sentinel-'
 const UPGRADE_SENTINEL_CONTENT = 'previous-version-profile-preserved\n'
 const RPC_SMOKE_CONTENT = 'windows-rpc-smoke\n'
+const RPC_SMOKE_RESERVATION_ID = 'installer-smoke-reservation'
+const RPC_SMOKE_ARTIFACT_SCOPE = {
+  projectId: 'installer-smoke-project',
+  appSessionId: 'installer-smoke-session',
+  artifactStorageSessionId: 'installer-smoke-session',
+  artifactRunId: 'installer-smoke-artifact-run'
+}
 
 const delay = (milliseconds) =>
   new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds))
@@ -404,6 +411,74 @@ const sendJson = (response, statusCode, payload) => {
   response.end(JSON.stringify(payload))
 }
 
+const assertPackagedArtifactScope = (params, requireWriteOperationId) => {
+  if (
+    Object.entries(RPC_SMOKE_ARTIFACT_SCOPE).some(
+      ([key, expectedValue]) => params[key] !== expectedValue
+    ) ||
+    (requireWriteOperationId &&
+      !/^artifact-write-[0-9a-f]{64}$/.test(params.writeOperationId ?? ''))
+  ) {
+    throw new Error('Unexpected packaged Artifact write scope.')
+  }
+}
+
+const packagedArtifactSmokeRpcResult = (body, workspace) => {
+  const params = body.params ?? {}
+  const fileBytes = Buffer.byteLength(RPC_SMOKE_CONTENT)
+  if (body.method === 'artifactReserveWrite') {
+    assertPackagedArtifactScope(params, true)
+    if (params.filename !== 'windows-rpc-smoke.txt' || params.fileBytes !== fileBytes) {
+      throw new Error('Unexpected packaged Artifact write reservation request.')
+    }
+    return {
+      id: RPC_SMOKE_RESERVATION_ID,
+      fileBytes,
+      expiresAt: Date.now() + PROCESS_TIMEOUT_MS
+    }
+  }
+  if (body.method === 'artifactCreateVersion') {
+    assertPackagedArtifactScope(params, true)
+    const checksum = createHash('sha256').update(RPC_SMOKE_CONTENT).digest('hex')
+    if (
+      params.resourceReservationId !== RPC_SMOKE_RESERVATION_ID ||
+      params.resourceSizeBytes !== fileBytes ||
+      params.resourceChecksum !== checksum
+    ) {
+      throw new Error('Unexpected packaged Artifact Version reservation metadata.')
+    }
+    return {
+      id: 'installer-smoke-version',
+      artifactId: 'installer-smoke-artifact',
+      versionId: 'installer-smoke-version',
+      versionNumber: 1,
+      checksum,
+      createdAt: new Date(0).toISOString(),
+      projectName: 'installer-smoke-project',
+      sessionId: 'installer-smoke-session',
+      runId: 'installer-smoke-artifact-run',
+      name: 'windows-rpc-smoke.txt',
+      path: join(workspace, 'windows-rpc-smoke.txt'),
+      fileUrl: 'file:///windows-rpc-smoke.txt',
+      mimeType: 'text/plain',
+      size: fileBytes,
+      mtimeMs: 0,
+      producerRunId: 'installer-smoke-shell-run'
+    }
+  }
+  if (body.method === 'artifactReleaseWrite') {
+    assertPackagedArtifactScope(params, false)
+    if (params.reservationId !== RPC_SMOKE_RESERVATION_ID) {
+      throw new Error('Unexpected packaged Artifact reservation release request.')
+    }
+    return { released: true }
+  }
+  return undefined
+}
+
+const releasedMigrationCountForPhase = (phase, expectedMigrationCount) =>
+  phase === 'current' || phase === 'restart' ? expectedMigrationCount : undefined
+
 const toolResultText = (result) =>
   result.content
     .filter((item) => item.type === 'text')
@@ -495,27 +570,9 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
         })
         return
       }
-      if (body.method === 'artifactCreateVersion') {
-        sendJson(response, 200, {
-          result: {
-            id: 'installer-smoke-version',
-            artifactId: 'installer-smoke-artifact',
-            versionId: 'installer-smoke-version',
-            versionNumber: 1,
-            checksum: 'a'.repeat(64),
-            createdAt: new Date(0).toISOString(),
-            projectName: 'installer-smoke-project',
-            sessionId: 'installer-smoke-session',
-            runId: 'installer-smoke-artifact-run',
-            name: 'windows-rpc-smoke.txt',
-            path: join(workspace, 'windows-rpc-smoke.txt'),
-            fileUrl: 'file:///windows-rpc-smoke.txt',
-            mimeType: 'text/plain',
-            size: Buffer.byteLength(RPC_SMOKE_CONTENT),
-            mtimeMs: 0,
-            producerRunId: 'installer-smoke-shell-run'
-          }
-        })
+      const artifactResult = packagedArtifactSmokeRpcResult(body, workspace)
+      if (artifactResult !== undefined) {
+        sendJson(response, 200, { result: artifactResult })
         return
       }
       sendJson(response, 400, { error: `Unexpected installer smoke RPC method: ${body.method}` })
@@ -612,7 +669,12 @@ const runPackagedLocalRpcSmoke = async ({ installDirectory, env }) => {
     )
     assertToolResult('write_artifact_file', artifact, 'installer-smoke-version')
 
-    const expectedMethods = ['state', 'executeShell', 'artifactCreateVersion']
+    const expectedMethods = [
+      'state',
+      'executeShell',
+      'artifactReserveWrite',
+      'artifactCreateVersion'
+    ]
     if (JSON.stringify(methods) !== JSON.stringify(expectedMethods)) {
       throw new Error(`Unexpected packaged local RPC sequence: ${methods.join(' -> ')}`)
     }
@@ -736,6 +798,7 @@ const launchAndProbe = async ({
   env,
   legacyConfigRoots,
   verifyLedger = false,
+  expectedMigrationCount,
   onSqliteVersion
 }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
@@ -781,7 +844,7 @@ const launchAndProbe = async ({
     await requestPackagedAppShutdown(endpoint, auth)
     const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
-    if (verifyLedger) await verifyDatabaseMigrationLedger(configRoot)
+    if (verifyLedger) await verifyDatabaseMigrationLedger(configRoot, expectedMigrationCount)
     if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
     return configRoot
   } catch (error) {
@@ -897,6 +960,7 @@ const installAndProbe = async ({
   phase,
   env,
   legacyConfigRoots,
+  expectedMigrationCount,
   onSqliteVersion
 }) => {
   console.log(`Smoke testing ${phase} installer: ${basename(installer)}`)
@@ -910,6 +974,7 @@ const installAndProbe = async ({
     env,
     legacyConfigRoots,
     verifyLedger: phase !== 'previous',
+    expectedMigrationCount,
     onSqliteVersion
   })
 }
@@ -922,6 +987,7 @@ const installOverRunningApp = async ({
   env,
   legacyConfigRoots,
   launchInstalledApp = true,
+  expectedMigrationCount,
   onSqliteVersion
 }) => {
   const running = await launchForProcessLock({
@@ -948,6 +1014,7 @@ const installOverRunningApp = async ({
     env,
     legacyConfigRoots,
     verifyLedger: true,
+    expectedMigrationCount,
     onSqliteVersion
   })
 }
@@ -986,12 +1053,29 @@ const parseArguments = (argv) => {
   }
   const installerDirectory = valueFor('--installer-dir')
   if (!installerDirectory)
-    throw new Error('Usage: --installer-dir <path> [--previous-installer-dir <path>]')
+    throw new Error(
+      'Usage: --installer-dir <path> [--previous-installer-dir <path>] [--expected-migration-count <count>]'
+    )
+  const expectedMigrationCountIndex = argv.indexOf('--expected-migration-count')
+  const expectedMigrationCountValue =
+    expectedMigrationCountIndex === -1 ? undefined : argv[expectedMigrationCountIndex + 1]
+  if (
+    expectedMigrationCountIndex !== -1 &&
+    (expectedMigrationCountValue === undefined || !/^[1-9]\d*$/.test(expectedMigrationCountValue))
+  ) {
+    throw new Error('Expected migration count must be a positive integer.')
+  }
+  const expectedMigrationCount =
+    expectedMigrationCountValue === undefined ? undefined : Number(expectedMigrationCountValue)
+  if (expectedMigrationCount !== undefined && !Number.isSafeInteger(expectedMigrationCount)) {
+    throw new Error('Expected migration count must be a positive safe integer.')
+  }
   return {
     installerDirectory: resolve(installerDirectory),
     previousInstallerDirectory: valueFor('--previous-installer-dir')
       ? resolve(valueFor('--previous-installer-dir'))
-      : undefined
+      : undefined,
+    expectedMigrationCount
   }
 }
 
@@ -1049,6 +1133,10 @@ const main = async () => {
               installDirectory,
               env,
               legacyConfigRoots,
+              expectedMigrationCount: releasedMigrationCountForPhase(
+                cycle.phase,
+                options.expectedMigrationCount
+              ),
               onSqliteVersion: cycle.phase === 'rollback' ? undefined : onSqliteVersion
             })
           : await installAndProbe({
@@ -1056,6 +1144,10 @@ const main = async () => {
               installDirectory,
               env,
               legacyConfigRoots,
+              expectedMigrationCount: releasedMigrationCountForPhase(
+                cycle.phase,
+                options.expectedMigrationCount
+              ),
               onSqliteVersion: cycle.phase === 'previous' ? undefined : onSqliteVersion
             })
         if (cycle.phase === 'rollback' && upgradeProfileGuard.shouldExpectDowngradeBlock()) {
@@ -1072,6 +1164,7 @@ const main = async () => {
           expectedVersion: installerVersion(currentInstaller),
           env: isolatedEnv,
           verifyLedger: true,
+          expectedMigrationCount: options.expectedMigrationCount,
           onSqliteVersion
         })
         if (resolve(configRoot).toLowerCase() !== resolve(storageRoot).toLowerCase()) {
@@ -1134,12 +1227,15 @@ export {
   launchAndExpectDatabaseBlocked,
   installAndProbe,
   launchAndProbe,
+  packagedArtifactSmokeRpcResult,
   packagedMainEntryPath,
   observeChildClose,
+  parseArguments,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
   requestPackagedAppShutdown,
+  releasedMigrationCountForPhase,
   runProcess,
   terminateProcessTree,
   uninstallAndVerify,

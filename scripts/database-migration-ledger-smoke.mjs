@@ -29,10 +29,21 @@ const EXPECTED_MIGRATION_LEDGER = [
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'
 const SQLITE_VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 
-const assertApplicationMigrationLedger = (rows) => {
+const assertApplicationMigrationLedger = (
+  rows,
+  expectedMigrationCount = EXPECTED_MIGRATION_LEDGER.length
+) => {
   if (
-    rows.length !== EXPECTED_MIGRATION_LEDGER.length ||
-    EXPECTED_MIGRATION_LEDGER.some(
+    !Number.isSafeInteger(expectedMigrationCount) ||
+    expectedMigrationCount < 1 ||
+    expectedMigrationCount > EXPECTED_MIGRATION_LEDGER.length
+  ) {
+    throw new Error('Expected migration count is outside the supported application ledger.')
+  }
+  const expectedLedger = EXPECTED_MIGRATION_LEDGER.slice(0, expectedMigrationCount)
+  if (
+    rows.length !== expectedLedger.length ||
+    expectedLedger.some(
       (expected, index) =>
         rows[index]?.id !== expected.id || rows[index]?.checksum !== expected.checksum
     )
@@ -59,10 +70,10 @@ const readDatabaseMigrationLedger = async (configRoot) => {
   }
 }
 
-const verifyDatabaseMigrationLedger = async (configRoot) => {
+const verifyDatabaseMigrationLedger = async (configRoot, expectedMigrationCount) => {
   const rows = await readDatabaseMigrationLedger(configRoot)
   if (!rows) throw new Error('Packaged application did not create the database migration ledger.')
-  assertApplicationMigrationLedger(rows)
+  assertApplicationMigrationLedger(rows, expectedMigrationCount)
 }
 
 const seedLegacyDatabase = async (configRoot) => {

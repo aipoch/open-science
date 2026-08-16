@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,10 +19,13 @@ import {
   findSetupInstaller,
   installerVersion,
   observeChildClose,
+  packagedArtifactSmokeRpcResult,
   packagedMainEntryPath,
   packagedResourcePaths,
+  parseArguments,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
+  releasedMigrationCountForPhase,
   requestPackagedAppShutdown,
   runProcess,
   terminateProcessTree,
@@ -50,6 +54,133 @@ describe('Windows installer smoke plan', () => {
     expect(installerVersion('aipoch-open-science-0.8.0-nightly.abc1234-win-x64-setup.exe')).toBe(
       '0.8.0-nightly.abc1234'
     )
+  })
+
+  it('parses an optional positive released migration count', () => {
+    expect(parseArguments(['--installer-dir', 'dist']).expectedMigrationCount).toBeUndefined()
+    expect(
+      parseArguments([
+        '--installer-dir',
+        'dist',
+        '--previous-installer-dir',
+        'previous',
+        '--expected-migration-count',
+        '4'
+      ]).expectedMigrationCount
+    ).toBe(4)
+    for (const value of [
+      undefined,
+      '0',
+      '-1',
+      '1.5',
+      'not-a-number',
+      String(Number.MAX_SAFE_INTEGER + 1)
+    ]) {
+      expect(() =>
+        parseArguments([
+          '--installer-dir',
+          'dist',
+          '--expected-migration-count',
+          ...(value === undefined ? [] : [value])
+        ])
+      ).toThrow(/migration count must be a positive/)
+    }
+  })
+
+  it('models the packaged Artifact reservation, Version, and release RPC contract', () => {
+    const workspace = 'C:\\smoke\\workspace'
+    const fileBytes = Buffer.byteLength('windows-rpc-smoke\n')
+    const checksum = createHash('sha256').update('windows-rpc-smoke\n').digest('hex')
+    const artifactScope = {
+      projectId: 'installer-smoke-project',
+      appSessionId: 'installer-smoke-session',
+      artifactStorageSessionId: 'installer-smoke-session',
+      artifactRunId: 'installer-smoke-artifact-run'
+    }
+    const writeOperationId = `artifact-write-${'a'.repeat(64)}`
+    const reservation = packagedArtifactSmokeRpcResult(
+      {
+        method: 'artifactReserveWrite',
+        params: {
+          ...artifactScope,
+          writeOperationId,
+          filename: 'windows-rpc-smoke.txt',
+          fileBytes
+        }
+      },
+      workspace
+    )
+    expect(reservation).toMatchObject({
+      id: 'installer-smoke-reservation',
+      fileBytes,
+      expiresAt: expect.any(Number)
+    })
+
+    const version = packagedArtifactSmokeRpcResult(
+      {
+        method: 'artifactCreateVersion',
+        params: {
+          ...artifactScope,
+          writeOperationId,
+          resourceReservationId: reservation.id,
+          resourceSizeBytes: fileBytes,
+          resourceChecksum: checksum
+        }
+      },
+      workspace
+    )
+    expect(version).toMatchObject({
+      versionId: 'installer-smoke-version',
+      path: join(workspace, 'windows-rpc-smoke.txt'),
+      size: fileBytes
+    })
+    expect(
+      packagedArtifactSmokeRpcResult(
+        {
+          method: 'artifactReleaseWrite',
+          params: { ...artifactScope, reservationId: reservation.id }
+        },
+        workspace
+      )
+    ).toEqual({ released: true })
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          method: 'artifactCreateVersion',
+          params: {
+            ...artifactScope,
+            writeOperationId,
+            resourceReservationId: 'wrong-reservation',
+            resourceSizeBytes: fileBytes,
+            resourceChecksum: checksum
+          }
+        },
+        workspace
+      )
+    ).toThrow(/reservation metadata/)
+    expect(() =>
+      packagedArtifactSmokeRpcResult(
+        {
+          method: 'artifactReserveWrite',
+          params: {
+            ...artifactScope,
+            appSessionId: 'wrong-session',
+            writeOperationId,
+            filename: 'windows-rpc-smoke.txt',
+            fileBytes
+          }
+        },
+        workspace
+      )
+    ).toThrow(/write scope/)
+  })
+
+  it('uses the released migration prefix only for current-version launch phases', () => {
+    expect(
+      ['previous', 'current', 'rollback', 'restart'].map((phase) =>
+        releasedMigrationCountForPhase(phase, 4)
+      )
+    ).toEqual([undefined, 4, undefined, 4])
   })
 
   it('drills upgrade, process-lock rollback without old-app health, and final restart', async () => {

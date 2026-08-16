@@ -22,6 +22,36 @@ describe('packaged database migration ledger smoke', () => {
     )
   })
 
+  it('accepts only an explicitly selected immutable released migration prefix', () => {
+    const releasedLedger = MIGRATION_MANIFEST.slice(0, -1)
+    expect(() =>
+      assertApplicationMigrationLedger(releasedLedger, releasedLedger.length)
+    ).not.toThrow()
+    expect(() => assertApplicationMigrationLedger(releasedLedger)).toThrow(
+      /expected application database migration ledger/
+    )
+    expect(() =>
+      assertApplicationMigrationLedger(
+        releasedLedger.map((entry, index) =>
+          index === releasedLedger.length - 1 ? { ...entry, checksum: '0'.repeat(64) } : entry
+        ),
+        releasedLedger.length
+      )
+    ).toThrow(/expected application database migration ledger/)
+    expect(() =>
+      assertApplicationMigrationLedger(MIGRATION_MANIFEST, releasedLedger.length)
+    ).toThrow(/expected application database migration ledger/)
+  })
+
+  it.each([0, 1.5, Number.NaN, MIGRATION_MANIFEST.length + 1])(
+    'rejects unsupported expected migration count %s',
+    (expectedMigrationCount) => {
+      expect(() =>
+        assertApplicationMigrationLedger(MIGRATION_MANIFEST, expectedMigrationCount)
+      ).toThrow(/migration count is outside the supported application ledger/)
+    }
+  )
+
   it('records the packaged SQLite compatibility floor and certified matrix', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-smoke-evidence-'))
     const output = join(root, 'database-migration-certification.json')
