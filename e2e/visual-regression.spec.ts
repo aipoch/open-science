@@ -331,7 +331,7 @@ test('keeps representative conversation, project, and recovery states visually s
   await setVisualState(page, { theme: 'Light', width: 1280 })
   const recoveryAlert = page
     .getByRole('alert')
-    .filter({ hasText: 'Saved conversation data was damaged' })
+    .filter({ hasText: 'Project archive needs attention' })
   await expect(recoveryAlert).toBeVisible()
   const completedSessionDismiss = page.getByRole('button', {
     name: /Mark completed session .* as read/
