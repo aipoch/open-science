@@ -193,7 +193,7 @@ const readJsonBody = async (request: IncomingMessage): Promise<unknown> => {
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'invalid_request') return 400
-  if (error.code === 'project_ambiguous' || error.code === 'session_busy') return 409
+  if (error.code === 'session_busy') return 409
   return 404
 }
 

@@ -268,7 +268,7 @@ describe('OpenScienceClient', () => {
 
     await client.listProjects()
     await client.createProject({ name: 'Created' })
-    await client.listSessions('Research / Lab')
+    await client.listSessions('project-1')
     await client.getSession('session/1')
     await client.listArtifacts('session/1')
     expect(await (await client.downloadArtifact('artifact/1')).text()).toBe('file bytes')
@@ -281,7 +281,7 @@ describe('OpenScienceClient', () => {
     ).toEqual([
       '/api/v1/projects',
       '/api/v1/projects',
-      '/api/v1/sessions?project=Research%20%2F%20Lab',
+      '/api/v1/sessions?project=project-1',
       '/api/v1/sessions/session%2F1',
       '/api/v1/sessions/session%2F1/artifacts',
       '/api/v1/artifacts/artifact%2F1/content'

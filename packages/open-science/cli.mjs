@@ -30,7 +30,7 @@ Commands:
   codex login [--force]
   project list
   project create <name> [--description <text>]
-  run --project <id-or-name> (--prompt <text> | --prompt-file <path>) [--wait]
+  run --project <id> (--prompt <text> | --prompt-file <path>) [--wait]
   run status <run-id>
   run cancel <run-id>
   session status <session-id>
@@ -43,7 +43,7 @@ Options:
   --app-path <path>      Installed Open Science executable
   --config-root <path>   Config directory override
   --data-root <path>     Current Data Root override (rollback only)
-  --project <id-or-name> Project id or exact name
+  --project <id>         Project id
   --session <id>         Resume an existing session
   --cwd <path>           Working directory for a new or matching existing session
   --prompt <text>        Prompt text (or read stdin when omitted)

@@ -26,6 +26,7 @@ export type TaskRunProgressEvent = {
 }
 
 export type StartTaskRunRequest = {
+  /** Project ID. The external field name remains `project`. */
   project: string
   prompt: string
   sessionId?: string
@@ -75,7 +76,6 @@ export type AcquiredTaskArtifact = {
 export type TaskApiErrorCode =
   | 'invalid_request'
   | 'project_not_found'
-  | 'project_ambiguous'
   | 'session_not_found'
   | 'session_busy'
   | 'run_not_found'

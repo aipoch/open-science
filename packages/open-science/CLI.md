@@ -109,17 +109,18 @@ open-science project create "Systematic review" --description "Evidence review w
 open-science project list --json
 ```
 
-Commands that accept `--project` allow either a project ID or an exact project name.
+Commands that accept `--project` require the project ID returned by `project list`. Project display
+names are not accepted as routing identifiers.
 
 ## Run a task
 
 Provide a prompt directly, read it from a UTF-8 file, or pipe it through stdin:
 
 ```bash
-open-science run --project "Systematic review" --prompt "Summarize the evidence" --wait
-open-science run --project "Systematic review" --prompt-file ./task.md --wait --json
-open-science run --project "Systematic review" --cwd ./research --prompt-file ./task.md --wait --json
-printf '%s\n' "Summarize the evidence" | open-science run --project "Systematic review" --wait --json
+open-science run --project <project-id> --prompt "Summarize the evidence" --wait
+open-science run --project <project-id> --prompt-file ./task.md --wait --json
+open-science run --project <project-id> --cwd ./research --prompt-file ./task.md --wait --json
+printf '%s\n' "Summarize the evidence" | open-science run --project <project-id> --wait --json
 ```
 
 `--cwd <path>` selects an externally owned working directory for the Session. The CLI resolves a
@@ -137,7 +138,7 @@ Without `--wait`, the command returns as soon as the run starts. Use the returne
 to poll its state:
 
 ```bash
-open-science run --project "Systematic review" --prompt-file ./task.md --json
+open-science run --project <project-id> --prompt-file ./task.md --json
 open-science run status <run-id> --json
 open-science run cancel <run-id> --json
 open-science session status <session-id> --json
@@ -156,7 +157,7 @@ Pass an existing session ID to continue a conversation. Approval profiles are `a
 
 ```bash
 open-science run \
-  --project "Systematic review" \
+  --project <project-id> \
   --session <session-id> \
   --prompt-file ./follow-up.md \
   --approval-profile auto \
@@ -184,7 +185,7 @@ stream.
 
 ```bash
 open-science run \
-  --project "Systematic review" \
+  --project <project-id> \
   --prompt-file ./task.md \
   --approval-profile auto \
   --wait \

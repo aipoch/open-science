@@ -1495,11 +1495,11 @@ describe('startWebHttpServer', () => {
       description: 'A new project'
     })
 
-    const sessions = await fetch(`${base}/api/v1/sessions?project=Research%20%2F%20Lab`, {
+    const sessions = await fetch(`${base}/api/v1/sessions?project=project-1`, {
       headers
     })
     expect(await sessions.json()).toEqual({ data: [{ id: 'session/1', title: 'Review' }] })
-    expect(tasks.listSessions).toHaveBeenCalledWith('Research / Lab')
+    expect(tasks.listSessions).toHaveBeenCalledWith('project-1')
 
     const session = await fetch(`${base}/api/v1/sessions/session%2F1`, { headers })
     expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })

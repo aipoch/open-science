@@ -155,7 +155,7 @@ describe('HeadlessTaskApi adapter', () => {
       id: 'project-created',
       name: 'Created'
     })
-    await expect(api.listSessions(project.name)).resolves.toEqual([
+    await expect(api.listSessions(project.id)).resolves.toEqual([
       expect.objectContaining({ id: session.id, artifactCount: 1 })
     ])
     await expect(api.getSession(session.id)).resolves.toMatchObject({ title: session.title })

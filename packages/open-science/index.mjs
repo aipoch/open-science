@@ -49,8 +49,8 @@ export class OpenScienceClient {
     })
   }
 
-  listSessions(project) {
-    const query = project ? `?project=${encodeURIComponent(project)}` : ''
+  listSessions(projectId) {
+    const query = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
     return this.request(`/api/v1/sessions${query}`)
   }
 

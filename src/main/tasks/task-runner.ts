@@ -371,10 +371,10 @@ class TaskRunner {
     return this.dependencies.projects.create(request)
   }
 
-  async listSessions(project?: string): Promise<TaskSessionSummary[]> {
+  async listSessions(projectId?: string): Promise<TaskSessionSummary[]> {
     const sessions = await this.dependencies.sessions.list()
-    if (!project) return sessions.map(summarizeSession)
-    const resolved = await this.resolveProject(project)
+    if (!projectId) return sessions.map(summarizeSession)
+    const resolved = await this.resolveProject(projectId)
     return sessions.filter((session) => session.projectId === resolved.id).map(summarizeSession)
   }
 
@@ -1011,17 +1011,12 @@ class TaskRunner {
     }
   }
 
-  private async resolveProject(identifier: string): Promise<Project> {
-    const normalized = typeof identifier === 'string' ? identifier.trim() : ''
-    if (!normalized) throw new TaskRunnerError('invalid_request', 'Project is required.')
+  private async resolveProject(projectId: string): Promise<Project> {
+    const normalized = typeof projectId === 'string' ? projectId.trim() : ''
+    if (!normalized) throw new TaskRunnerError('invalid_request', 'Project id is required.')
     const projects = await this.listProjects()
-    const byId = projects.find((project) => project.id === normalized)
-    if (byId) return byId
-    const byName = projects.filter((project) => project.name === normalized)
-    if (byName.length === 1) return byName[0]
-    if (byName.length > 1) {
-      throw new TaskRunnerError('project_ambiguous', `Project name is ambiguous: ${normalized}`)
-    }
+    const project = projects.find((candidate) => candidate.id === normalized)
+    if (project) return project
     throw new TaskRunnerError('project_not_found', `Project not found: ${normalized}`)
   }
 

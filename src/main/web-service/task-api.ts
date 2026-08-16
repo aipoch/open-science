@@ -135,8 +135,8 @@ class HeadlessTaskApi {
     return this.runner.createProject(request)
   }
 
-  listSessions(project?: string): Promise<TaskSessionSummary[]> {
-    return this.runner.listSessions(project)
+  listSessions(projectId?: string): Promise<TaskSessionSummary[]> {
+    return this.runner.listSessions(projectId)
   }
 
   getSession(sessionId: string): Promise<TaskSessionSummary> {

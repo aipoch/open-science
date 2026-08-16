@@ -22,6 +22,9 @@ const result = await client.waitForRun(run.id)
 console.log(result.output)
 ```
 
+The `project` request field and the `listSessions(projectId)` argument both require a Project ID.
+Project display names are not accepted as routing identifiers.
+
 SDK and HTTP callers must supply an absolute `cwd`. Open Science canonicalizes and validates it,
 persists it as the Session working directory, and returns the effective path on every Run. Supplying
 `cwd` with `sessionId` is allowed only when both paths resolve to the same directory. Omit `cwd` to
