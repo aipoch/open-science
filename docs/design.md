@@ -495,8 +495,8 @@ colors communicate a successful or failed probe/migration result.
 - Treat the bell as a user-attention surface, not a general activity feed or audit viewer. Items are
   limited to user-initiated task outcomes and requests that need a decision; ordinary Project and
   Session create, rename, archive, restore, and delete operations do not generate unread items.
-- Place the shared bell before Settings on Home, beside Settings in the desktop Workspace footer,
-  and in the always-visible mobile conversation header when the sidebar is hidden.
+- Place the shared bell before Settings on Home, immediately after Settings in the desktop Workspace
+  footer, and in the always-visible mobile conversation header when the sidebar is hidden.
 - Show a red dot when unread items exist. Opening the panel does not mark items read; opening one
   item marks that item read, and the header provides an explicit mark-all action.
 - Show authorization lifecycle state separately from read state. Resolving, rejecting, expiring, or
