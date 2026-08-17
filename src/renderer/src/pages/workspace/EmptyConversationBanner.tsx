@@ -13,7 +13,7 @@ const EmptyConversationBanner = (): React.JSX.Element => {
   return (
     <div
       data-testid="empty-conversation-banner"
-      className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center"
+      className="pointer-events-none absolute inset-x-0 top-[42%] flex -translate-y-1/2 flex-col items-center gap-4 px-6 text-center"
     >
       <svg
         aria-hidden="true"
