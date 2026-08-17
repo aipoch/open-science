@@ -1823,6 +1823,7 @@ const ConversationPanel = ({
         <ContextWindowDialog
           open={isContextWindowOpen}
           session={activeSession}
+          contextUsage={contextUsage}
           onOpenChange={setIsContextWindowOpen}
         />
       </section>

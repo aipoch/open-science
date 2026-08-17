@@ -21,42 +21,63 @@ import {
   Brain,
   CheckCircle2,
   CircleStop,
+  Scissors,
   X,
   type LucideIcon
 } from 'lucide-react'
 import { Dialog } from 'radix-ui'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AcpPromptStopReason } from '../../../../shared/acp'
-import { resolveSessionProviderId } from './error-report'
+import type {
+  AcpContextUsage,
+  AcpContextUsageCategory,
+  AcpContextUsageCategoryKey,
+  AcpPromptStopReason
+} from '../../../../shared/acp'
 import {
   selectContextWindowTrendPoints,
   type ContextWindowTrendPoint
 } from './context-window-trend'
+import { resolveSessionProviderId } from './error-report'
 
 type ContextWindowDialogProps = {
   open: boolean
   session: ChatSession | undefined
+  contextUsage?: AcpContextUsage
   onOpenChange: (open: boolean) => void
 }
 
 const tokenFormatter = new Intl.NumberFormat('en-US')
 const formatTokens = (tokens: number): string => {
-  if (tokens >= 1_000_000) {
+  const absolute = Math.abs(tokens)
+  if (absolute >= 1_000_000) {
     const value = tokens / 1_000_000
-    return `${value >= 10 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}M`
+    return `${Math.abs(value) >= 10 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}M`
   }
-  if (tokens >= 1_000) {
+  if (absolute >= 1_000) {
     const value = tokens / 1_000
-    return `${value >= 100 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}K`
+    return `${Math.abs(value) >= 100 || Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}K`
   }
   return tokenFormatter.format(tokens)
 }
 
-// Catalog keys, not resolved copy: the map is module-level, so resolving here would freeze the
-// label at import time and survive a language switch. `satisfies` keeps an upstream-added stop
-// reason from silently falling through to a raw key.
+// Catalog keys stay unresolved at module scope so changing locale updates every render site.
+const categoryPresentation: Record<AcpContextUsageCategoryKey, { label: string; color: string }> = {
+  system: { label: 'System prompt', color: 'bg-emerald-500' },
+  tools: { label: 'Tools and agents', color: 'bg-amber-400' },
+  messages: { label: 'Messages', color: 'bg-violet-500' },
+  mcp: { label: 'Connectors and MCP', color: 'bg-cyan-400' },
+  skills: { label: 'Skills', color: 'bg-blue-500' },
+  other: { label: 'Agent/framework overhead', color: 'bg-slate-400' }
+}
+
+const visibleCategories = (usage: AcpContextUsage): AcpContextUsageCategory[] =>
+  usage.breakdown?.categories.filter((category) => category.tokens > 0) ?? []
+
+const signedTokens = (tokens: number): string => `${tokens > 0 ? '+' : ''}${formatTokens(tokens)}`
+
+// Catalog keys, not resolved copy. `satisfies` makes an upstream-added reason a compile failure.
 const stopReasonLabel = {
   end_turn: 'Completed',
   max_tokens: 'Max tokens',
@@ -69,7 +90,7 @@ type PointPresentation = Readonly<{
   label: string
   code: string
   color: string
-  marker: string
+  ring: string
   icon: LucideIcon
 }>
 
@@ -80,7 +101,7 @@ const pointState = (point: ContextWindowTrendPoint): PointPresentation => {
       label: 'Error',
       code: 'error',
       color: 'text-danger-000',
-      marker: 'fill-danger-000 stroke-danger-000',
+      ring: 'ring-danger-000',
       icon: AlertCircle
     }
   }
@@ -89,17 +110,170 @@ const pointState = (point: ContextWindowTrendPoint): PointPresentation => {
     label: stopReasonLabel[termination.stopReason],
     code: termination.stopReason,
     color: interrupted ? 'text-warning-900' : 'text-muted-foreground',
-    marker: interrupted ? 'fill-warning-900 stroke-warning-900' : 'fill-primary stroke-primary',
+    ring: interrupted ? 'ring-warning-900' : 'ring-transparent',
     icon: interrupted ? CircleStop : CheckCircle2
   }
 }
 
-// Catalog keys; resolved at each render site for the same reason as stopReasonLabel.
 const sourceLabel = {
   'provider-response': 'Provider response',
   'provider-update': 'Provider update',
   'local-estimate': 'Local estimate'
 } as const
+
+const CompositionStrip = ({ usage }: { usage: AcpContextUsage }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const categories = visibleCategories(usage)
+  const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
+  const visualTotal = Math.max(usage.used, categoryTotal)
+  const occupancy = usage.size ? Math.min(100, (visualTotal / usage.size) * 100) : 100
+
+  return (
+    <div
+      className="flex h-2.5 overflow-hidden rounded-full bg-muted"
+      data-slot="context-composition-strip"
+      aria-label={
+        usage.size
+          ? t('Estimated category occupancy: {{used}} of {{size}} tokens', {
+              used: formatTokens(visualTotal),
+              size: formatTokens(usage.size)
+            })
+          : t('Estimated category distribution: {{used}} tokens', {
+              used: formatTokens(visualTotal)
+            })
+      }
+    >
+      {categories.map((category) => (
+        <span
+          key={category.key}
+          className={cn(
+            'h-full border-r border-background/80 last:border-r-0',
+            categoryPresentation[category.key].color
+          )}
+          style={{ width: `${categoryTotal ? (category.tokens / categoryTotal) * occupancy : 0}%` }}
+          title={`${t(categoryPresentation[category.key].label)}: ${formatTokens(category.tokens)}`}
+        />
+      ))}
+    </div>
+  )
+}
+
+const CategoryLegend = ({ usage }: { usage: AcpContextUsage }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const categories = visibleCategories(usage)
+  const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
+
+  return (
+    <div className="grid min-w-0 grid-cols-1 gap-x-5 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+      {categories.map((category) => (
+        <div
+          key={category.key}
+          className="flex min-w-0 items-center justify-between gap-3 text-[11px]"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span
+              className={cn(
+                'size-2 shrink-0 rounded-full',
+                categoryPresentation[category.key].color
+              )}
+              aria-hidden="true"
+            />
+            <span className="truncate text-foreground">
+              {t(categoryPresentation[category.key].label)}
+            </span>
+          </span>
+          <span className="shrink-0 tabular-nums text-muted-foreground">
+            {category.estimated ? '~' : ''}
+            {formatTokens(category.tokens)}{' '}
+            {categoryTotal ? `${Math.round((category.tokens / categoryTotal) * 100)}%` : '0%'}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const BreakdownDiagnostics = ({ usage }: { usage: AcpContextUsage }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const breakdown = usage.breakdown
+  if (!breakdown) return null
+
+  return (
+    <div className="text-[11px] leading-4 text-muted-foreground" data-slot="context-diagnostics">
+      {breakdown.status === 'reconciled' ? (
+        <span className="tabular-nums">
+          {t('Local {{local}} · Agent {{agent}} · Δ {{difference}}', {
+            local: formatTokens(breakdown.estimatedTokens),
+            agent: formatTokens(usage.used),
+            difference: signedTokens(breakdown.difference)
+          })}
+        </span>
+      ) : usage.agentUsed !== undefined ? (
+        <span className="tabular-nums">
+          {t('Local {{local}} · Latest Agent {{agent}}', {
+            local: formatTokens(breakdown.estimatedTokens),
+            agent: formatTokens(usage.agentUsed)
+          })}
+        </span>
+      ) : (
+        <span>{t('Local estimate updates while the Agent is generating.')}</span>
+      )}
+    </div>
+  )
+}
+
+const CurrentComposition = ({
+  usage,
+  model
+}: {
+  usage: AcpContextUsage
+  model?: string
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const categories = visibleCategories(usage)
+  const percent = usage.size ? Math.round((usage.used / usage.size) * 100) : undefined
+
+  return (
+    <section
+      aria-labelledby="current-composition-title"
+      className="rounded-lg border border-border bg-card p-4"
+      data-slot="current-composition"
+    >
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h3 id="current-composition-title" className="text-sm font-medium text-foreground">
+          {t('Current composition')}
+        </h3>
+        {model ? (
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{model}</span>
+        ) : null}
+      </div>
+      <div className="mt-2 flex min-w-0 flex-wrap items-baseline gap-x-2">
+        <span className="text-2xl font-semibold tabular-nums text-foreground">
+          {formatTokens(usage.used)}
+        </span>
+        <span className="text-sm tabular-nums text-muted-foreground">
+          {usage.size ? t('/ {{size}} tokens', { size: formatTokens(usage.size) }) : t('tokens')}
+          {percent === undefined ? '' : ` (${percent}%)`}
+        </span>
+      </div>
+      <div className="mt-3">
+        <CompositionStrip usage={usage} />
+      </div>
+      {categories.length ? (
+        <div className="mt-3">
+          <CategoryLegend usage={usage} />
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {t('Category breakdown is unavailable for this snapshot.')}
+        </p>
+      )}
+      <div className="mt-2">
+        <BreakdownDiagnostics usage={usage} />
+      </div>
+    </section>
+  )
+}
 
 const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -113,6 +287,8 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
   const provider = providers.find((candidate) => candidate.id === providerId)
   const frameworkLabel = framework?.displayName ?? point.runtime?.frameworkId
   const providerLabel = provider?.name ?? point.runtime?.backendId
+  const usage = point.sample.contextWindow
+  const categories = visibleCategories(usage)
   const modelStepUsage = point.sample.modelStepUsage
   const recoverableCodexCacheRead =
     point.runtime?.frameworkId === 'codex' &&
@@ -120,7 +296,7 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
     modelStepUsage !== undefined &&
     modelStepUsage.cachedReadTokens === undefined &&
     Number.isSafeInteger(modelStepUsage.inputTokens + modelStepUsage.cacheTokens) &&
-    point.sample.contextWindow.used === modelStepUsage.inputTokens + modelStepUsage.cacheTokens
+    usage.used === modelStepUsage.inputTokens + modelStepUsage.cacheTokens
       ? modelStepUsage.cacheTokens
       : undefined
   const cachedReadTokens = modelStepUsage?.cachedReadTokens ?? recoverableCodexCacheRead
@@ -135,18 +311,18 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
       : undefined
 
   return (
-    <div className="min-w-0 text-xs" data-slot="context-window-point-details">
+    <section
+      className="min-w-0 rounded-lg border border-border bg-card p-4 text-xs"
+      data-slot="context-window-point-details"
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div
-            className="whitespace-nowrap font-medium text-foreground"
-            data-slot="context-window-point-title"
-          >
+          <h3 className="font-medium text-foreground" data-slot="context-window-point-title">
             {t('Run {{runNumber}} · Message {{messageNumber}}', {
               runNumber: point.runNumber,
               messageNumber: point.messageNumber
             })}
-          </div>
+          </h3>
           <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={point.prompt}>
             {point.prompt || t('Empty prompt')}
           </div>
@@ -157,44 +333,46 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
         </span>
       </div>
 
-      <div className="mt-3 border-y border-border py-2.5">
-        <div className="flex items-baseline justify-between gap-4">
-          <span className="text-muted-foreground">{t('Window used')}</span>
-          <span className="font-medium tabular-nums text-foreground">
-            {formatTokens(point.sample.contextWindow.used)}
-            {point.sample.contextWindow.size ? (
-              <span className="font-normal text-muted-foreground">
-                {' '}
-                / {formatTokens(point.sample.contextWindow.size)}
-              </span>
-            ) : null}
-          </span>
+      <div className="mt-3 grid min-w-0 gap-4 border-y border-border py-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(15rem,0.65fr)]">
+        <div className="min-w-0">
+          <div className="flex items-baseline justify-between gap-4">
+            <span className="text-muted-foreground">{t('Window used')}</span>
+            <span className="font-medium tabular-nums text-foreground">
+              {formatTokens(usage.used)}
+              {usage.size ? (
+                <span className="font-normal text-muted-foreground">
+                  {' '}
+                  / {formatTokens(usage.size)}
+                </span>
+              ) : null}
+            </span>
+          </div>
+          <div className="mt-2">
+            <CompositionStrip usage={usage} />
+          </div>
+          {categories.length ? (
+            <div className="mt-3">
+              <CategoryLegend usage={usage} />
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              {t('Category breakdown is unavailable for this run.')}
+            </p>
+          )}
+          <div className="mt-2">
+            <BreakdownDiagnostics usage={usage} />
+          </div>
+          {cacheReadPercent === undefined ? null : (
+            <div className="mt-1 text-[10px] tabular-nums text-muted-foreground">
+              {t('cache-read {{cached}}% · uncached {{uncached}}%', {
+                cached: cacheReadPercent,
+                uncached: 100 - cacheReadPercent
+              })}
+            </div>
+          )}
         </div>
-        {point.sample.contextWindow.size ? (
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-            <div
-              className="h-full rounded-full bg-primary"
-              style={{
-                width: `${Math.min(100, (point.sample.contextWindow.used / point.sample.contextWindow.size) * 100)}%`
-              }}
-            />
-          </div>
-        ) : null}
-        {cacheReadPercent === undefined ? null : (
-          <div className="mt-2 text-[10px] tabular-nums text-muted-foreground">
-            {t('cache-read {{cached}}% · uncached {{uncached}}%', {
-              cached: cacheReadPercent,
-              uncached: 100 - cacheReadPercent
-            })}
-          </div>
-        )}
-      </div>
 
-      {frameworkLabel || point.agentName || point.runtime?.model || providerLabel ? (
-        <div
-          className="mt-2.5 space-y-1 text-[11px] leading-4 text-muted-foreground"
-          data-slot="context-window-point-metadata"
-        >
+        <div className="min-w-0 space-y-1 text-[11px] leading-4 text-muted-foreground">
           {frameworkLabel || point.agentName ? (
             <div className="flex min-w-0 items-center gap-1.5">
               <Bot className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
@@ -213,47 +391,34 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
               </span>
             </div>
           ) : null}
+          <div className="flex items-center justify-between gap-3 pt-1 text-[10px]">
+            <span>{t(sourceLabel[point.sample.source])}</span>
+            <span className="shrink-0 tabular-nums">{formatDate(point.sample.timestamp)}</span>
+          </div>
         </div>
-      ) : null}
-
-      <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
-        <span>{t(sourceLabel[point.sample.source])}</span>
-        <span className="shrink-0 tabular-nums">{formatDate(point.sample.timestamp)}</span>
       </div>
       <div className="sr-only">
         {t('Terminal state code:')} {state.code}
       </div>
-    </div>
+    </section>
   )
 }
 
-const ContextTrendChart = ({
-  points
+const ContextHistoryChart = ({
+  points,
+  activeIndex,
+  pinnedIndex,
+  onPreview,
+  onSelect
 }: {
   points: ContextWindowTrendPoint[]
+  activeIndex: number
+  pinnedIndex: number
+  onPreview: (index: number | undefined) => void
+  onSelect: (index: number) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState(720)
-  const [hoveredIndex, setHoveredIndex] = useState<number>()
-
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-
-    const measure = (): void => {
-      if (container.clientWidth > 0) setWidth(Math.max(280, Math.floor(container.clientWidth)))
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined') return
-
-    const observer = new ResizeObserver(measure)
-    observer.observe(container)
-    return () => observer.disconnect()
-  }, [])
-
-  const height = 300
-  const plot = { left: width < 480 ? 42 : 52, right: width - 18, top: 26, bottom: 252 }
+  const scrollerRef = useRef<HTMLDivElement>(null)
   const maximum = Math.max(
     1,
     ...points.flatMap((point) => [
@@ -261,208 +426,202 @@ const ContextTrendChart = ({
       point.sample.contextWindow.size ?? 0
     ])
   )
-  const x = (index: number): number =>
-    points.length === 1
-      ? (plot.left + plot.right) / 2
-      : plot.left + (index / (points.length - 1)) * (plot.right - plot.left)
-  const y = (value: number): number =>
-    plot.bottom - Math.min(1, value / maximum) * (plot.bottom - plot.top)
-  const actualCoordinates = points.map((point, index) => ({
-    x: x(index),
-    y: y(point.sample.contextWindow.used)
-  }))
-  const windowCoordinates = points.flatMap((point, index) =>
-    point.sample.contextWindow.size ? [{ x: x(index), y: y(point.sample.contextWindow.size) }] : []
-  )
-  const actualLine = actualCoordinates.map(({ x, y }) => `${x},${y}`).join(' ')
-  const actualArea = `${plot.left},${plot.bottom} ${actualLine} ${plot.right},${plot.bottom}`
-  const windowLine = windowCoordinates.map(({ x, y }) => `${x},${y}`).join(' ')
-  const activeIndex = hoveredIndex
-  const active = activeIndex === undefined ? undefined : points[activeIndex]
-  const activeCoordinate = activeIndex === undefined ? undefined : actualCoordinates[activeIndex]
-  const labelStep = Math.max(1, Math.ceil(points.length / Math.max(2, Math.floor(width / 56))))
+  const chartWidth = Math.max(560, points.length * 52 + 32)
+
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (scroller) scroller.scrollLeft = scroller.scrollWidth
+  }, [points.length])
 
   return (
-    <div
-      ref={containerRef}
-      className="relative min-h-[300px] overflow-hidden"
-      data-slot="context-window-trend-chart"
-    >
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="block h-[300px] w-full"
-        role="group"
-        aria-label={t('Context window chart across {{count}} terminal outcomes', {
-          count: points.length
-        })}
+    <div className="flex min-w-0" data-slot="context-window-trend-chart">
+      <div
+        className="flex h-60 w-12 shrink-0 flex-col justify-between border-r border-border py-2 pr-2 text-right text-[10px] tabular-nums text-muted-foreground"
+        aria-hidden="true"
       >
-        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-          const tickY = plot.bottom - ratio * (plot.bottom - plot.top)
-          return (
-            <g key={ratio}>
-              <line
-                x1={plot.left}
-                x2={plot.right}
-                y1={tickY}
-                y2={tickY}
-                className="stroke-border"
-                strokeWidth="1"
-              />
-              <text
-                x={plot.left - 10}
-                y={tickY + 4}
-                textAnchor="end"
-                className="fill-muted-foreground text-[10px]"
-              >
-                {formatTokens(maximum * ratio)}
-              </text>
-            </g>
-          )
-        })}
-
-        {windowCoordinates.length === 1 ? (
-          <line
-            x1={plot.left}
-            x2={plot.right}
-            y1={windowCoordinates[0].y}
-            y2={windowCoordinates[0].y}
-            className="stroke-success-000"
-            strokeWidth="1.5"
-            strokeDasharray="6 5"
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : windowCoordinates.length > 1 ? (
-          <polyline
-            points={windowLine}
-            fill="none"
-            className="stroke-success-000"
-            strokeWidth="1.5"
-            strokeDasharray="6 5"
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : null}
-        {actualCoordinates.length > 1 ? (
-          <>
-            <polygon points={actualArea} className="fill-primary/10" />
-            <polyline
-              points={actualLine}
-              fill="none"
-              className="stroke-primary"
-              strokeWidth="2.5"
-              vectorEffect="non-scaling-stroke"
-            />
-          </>
-        ) : null}
-
-        {activeCoordinate ? (
-          <line
-            x1={activeCoordinate.x}
-            x2={activeCoordinate.x}
-            y1={plot.top}
-            y2={plot.bottom}
-            className="stroke-border-200"
-            strokeWidth="1"
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : null}
-
-        {points.map((point, index) => {
-          const coordinate = actualCoordinates[index]
-          const state = pointState(point)
-          return (
-            <g
-              key={point.sample.id}
-              role="img"
-              tabIndex={0}
-              data-slot="context-window-point"
-              aria-label={t('Run {{run}}, {{state}}, {{tokens}} context-window tokens', {
-                run: point.runNumber,
-                state: t(state.label),
-                tokens: tokenFormatter.format(point.sample.contextWindow.used)
-              })}
-              onPointerEnter={() => setHoveredIndex(index)}
-              onPointerLeave={() => setHoveredIndex(undefined)}
-              onFocus={() => setHoveredIndex(index)}
-              onBlur={() => setHoveredIndex(undefined)}
-              className="outline-none [&:focus-visible>circle:first-of-type]:stroke-ring [&:focus-visible>circle:first-of-type]:stroke-[4]"
-            >
-              <circle
-                cx={coordinate.x}
-                cy={coordinate.y}
-                r="4.5"
-                className={state.marker}
-                strokeWidth="2"
-              />
-              <circle
-                cx={coordinate.x}
-                cy={coordinate.y}
-                r="22"
-                className="fill-transparent stroke-transparent focus-visible:stroke-ring"
-              />
-              {index % labelStep === 0 || index === points.length - 1 ? (
-                <text
-                  x={coordinate.x}
-                  y={plot.bottom + 23}
-                  textAnchor="middle"
-                  className="fill-muted-foreground text-[10px]"
-                >
-                  {point.runNumber}
-                </text>
-              ) : null}
-            </g>
-          )
-        })}
-        <text
-          x={(plot.left + plot.right) / 2}
-          y={height - 4}
-          textAnchor="middle"
-          className="fill-muted-foreground text-[10px]"
-        >
-          {t('Run')}
-        </text>
-      </svg>
-
-      {active && activeCoordinate ? (
+        <span>{formatTokens(maximum)}</span>
+        <span>{formatTokens(maximum / 2)}</span>
+        <span>0</span>
+      </div>
+      <div ref={scrollerRef} className="min-w-0 flex-1 overflow-x-auto pb-1">
         <div
-          className={cn(
-            'pointer-events-none absolute inset-x-3 bottom-3 z-10 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-menu sm:inset-x-auto sm:left-[var(--tooltip-left)] sm:w-64',
-            activeCoordinate.x > width * 0.72
-              ? 'sm:-translate-x-full'
-              : activeCoordinate.x > width * 0.28
-                ? 'sm:-translate-x-1/2'
-                : '',
-            activeCoordinate.y < 140
-              ? 'sm:bottom-auto sm:top-[calc(var(--tooltip-top)+0.75rem)]'
-              : 'sm:bottom-3 sm:top-auto'
-          )}
-          style={
-            {
-              '--tooltip-left': `${activeCoordinate.x}px`,
-              '--tooltip-top': `${activeCoordinate.y}px`
-            } as CSSProperties
-          }
-          data-slot="context-window-chart-tooltip"
+          className="relative h-60"
+          style={{ width: `${chartWidth}px` }}
+          role="group"
+          aria-label={t('Context window chart across {{count}} terminal outcomes', {
+            count: points.length
+          })}
         >
-          <PointDetails point={active} />
+          <div
+            className="pointer-events-none absolute inset-x-0 inset-y-2 flex flex-col justify-between"
+            aria-hidden="true"
+          >
+            <span className="border-t border-border" />
+            <span className="border-t border-border" />
+            <span className="border-t border-border" />
+          </div>
+          <div className="absolute inset-0 flex items-end gap-1 px-2">
+            {points.map((point, index) => {
+              const usage = point.sample.contextWindow
+              const categories = visibleCategories(usage)
+              const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
+              const state = pointState(point)
+              const isActive = activeIndex === index
+              const isPinned = pinnedIndex === index
+              return (
+                <div
+                  key={point.sample.id}
+                  className="relative flex h-full w-12 shrink-0 items-end justify-center pb-7 pt-2"
+                >
+                  <button
+                    type="button"
+                    data-slot="context-window-point"
+                    data-active={isActive ? 'true' : undefined}
+                    aria-pressed={isPinned}
+                    aria-label={t('Run {{run}}, {{state}}, {{tokens}} context-window tokens', {
+                      run: point.runNumber,
+                      state: t(state.label),
+                      tokens: tokenFormatter.format(usage.used)
+                    })}
+                    onPointerEnter={() => onPreview(index)}
+                    onPointerLeave={() => onPreview(undefined)}
+                    onFocus={() => onPreview(index)}
+                    onBlur={() => onPreview(undefined)}
+                    onClick={() => onSelect(index)}
+                    className={cn(
+                      'group relative flex h-full w-11 items-end justify-center rounded-md outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 active:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
+                      isActive && 'bg-muted/50'
+                    )}
+                  >
+                    {usage.size ? (
+                      <span
+                        className="pointer-events-none absolute inset-x-1 border-t border-dashed border-success-000"
+                        style={{ bottom: `${Math.min(100, (usage.size / maximum) * 100)}%` }}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                    <span
+                      className={cn(
+                        'relative flex min-h-0 w-7 flex-col-reverse overflow-hidden rounded-t-[3px] bg-primary ring-2',
+                        state.ring,
+                        isPinned && 'ring-ring'
+                      )}
+                      style={{ height: `${Math.max(2, (usage.used / maximum) * 100)}%` }}
+                      aria-hidden="true"
+                    >
+                      {categories.map((category) => (
+                        <span
+                          key={category.key}
+                          className={cn('w-full', categoryPresentation[category.key].color)}
+                          style={{
+                            height: `${categoryTotal ? (category.tokens / categoryTotal) * 100 : 0}%`
+                          }}
+                        />
+                      ))}
+                    </span>
+                  </button>
+                  <span className="pointer-events-none absolute inset-x-0 bottom-1 text-center text-[10px] tabular-nums text-muted-foreground">
+                    {point.runNumber}
+                  </span>
+                  {point.compactedAfter ? (
+                    <span
+                      className="absolute -right-2.5 bottom-1 z-10 grid size-5 place-items-center rounded-full border border-border bg-background text-muted-foreground"
+                      data-slot="context-window-compaction-marker"
+                      role="img"
+                      title={t('Context compacted after run {{run}}', { run: point.runNumber })}
+                      aria-label={t('Context compacted after run {{run}}', {
+                        run: point.runNumber
+                      })}
+                    >
+                      <Scissors className="size-3" aria-hidden="true" />
+                    </span>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
         </div>
-      ) : null}
+      </div>
     </div>
+  )
+}
+
+const ContextHistory = ({ points }: { points: ContextWindowTrendPoint[] }): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [pinnedSampleId, setPinnedSampleId] = useState<string>()
+  const [previewIndex, setPreviewIndex] = useState<number>()
+  const selectedIndex = pinnedSampleId
+    ? points.findIndex((point) => point.sample.id === pinnedSampleId)
+    : -1
+  const pinnedIndex = selectedIndex >= 0 ? selectedIndex : points.length - 1
+  const activeIndex = previewIndex ?? pinnedIndex
+  const activePoint = points[activeIndex] ?? points.at(-1)
+
+  return (
+    <section aria-labelledby="context-window-history-title" data-slot="context-window-history">
+      <div className="flex flex-wrap items-end justify-between gap-3 pb-3">
+        <div className="min-w-0">
+          <h3 id="context-window-history-title" className="text-sm font-medium text-foreground">
+            {t('History')}
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(
+              'One bar per terminal run; hover or focus to preview, then select to keep details visible.'
+            )}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-3 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5 whitespace-nowrap">
+            <span className="h-2.5 w-4 rounded-[2px] bg-primary" aria-hidden="true" />
+            {t('Window used')}
+          </span>
+          {points.some((point) => point.sample.contextWindow.size) ? (
+            <span className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className="w-4 border-t border-dashed border-success-000" aria-hidden="true" />
+              {t('Capacity')}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <ContextHistoryChart
+          points={points}
+          activeIndex={activeIndex}
+          pinnedIndex={pinnedIndex}
+          onPreview={setPreviewIndex}
+          onSelect={(index) =>
+            setPinnedSampleId((current) =>
+              current === points[index]?.sample.id || index === points.length - 1
+                ? undefined
+                : points[index]?.sample.id
+            )
+          }
+        />
+      </div>
+      <div className="mt-4">{activePoint ? <PointDetails point={activePoint} /> : null}</div>
+    </section>
   )
 }
 
 const ContextWindowDialog = ({
   open,
   session,
+  contextUsage,
   onOpenChange
 }: ContextWindowDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
   const messages = session?.messages
+  const activities = session?.activities
   const conversationGraph = session?.conversationGraph
   const points = useMemo(
     () =>
-      messages === undefined ? [] : selectContextWindowTrendPoints({ conversationGraph, messages }),
-    [conversationGraph, messages]
+      messages === undefined
+        ? []
+        : selectContextWindowTrendPoints({ activities, conversationGraph, messages }),
+    [activities, conversationGraph, messages]
   )
+  const latestPoint = points.at(-1)
+  const currentUsage = contextUsage ?? latestPoint?.sample.contextWindow
   const contentRef = useRef<HTMLDivElement>(null)
 
   return (
@@ -478,7 +637,7 @@ const ContextWindowDialog = ({
             contentRef.current?.focus()
           }}
           className={dialogPanelClassName(
-            'flex max-h-[min(760px,calc(100dvh-1.5rem))] w-[min(940px,calc(100vw-1.5rem))] flex-col overflow-hidden p-0'
+            'flex max-h-[min(820px,calc(100dvh-1.5rem))] w-[min(1040px,calc(100vw-1.5rem))] flex-col overflow-hidden p-0'
           )}
         >
           <div className={dialogHeaderClassName} data-slot="context-window-dialog-header">
@@ -486,10 +645,10 @@ const ContextWindowDialog = ({
               <Dialog.Title className={dialogTitleClassName}>{t('Context window')}</Dialog.Title>
               <Dialog.Description
                 id="context-window-description"
-                className={cn(dialogDescriptionClassName, 'min-[960px]:whitespace-nowrap')}
+                className={dialogDescriptionClassName}
               >
                 {t(
-                  'Final context window for each completed message on the active branch; interrupted and failed attempts remain separate.'
+                  'Current composition and terminal-run history for the active branch. Category values are estimates.'
                 )}
               </Dialog.Description>
             </div>
@@ -507,57 +666,34 @@ const ContextWindowDialog = ({
           </div>
 
           <div
-            className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto`}
+            className={cn(dialogBodyClassName, 'min-h-0 flex-1 overflow-y-auto')}
             data-slot="context-window-dialog-body"
           >
-            {points.length === 0 ? (
-              <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
-                <div className="max-w-sm">
-                  <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
-                  <h3 className="mt-3 text-sm font-medium text-foreground">
-                    {t('No run history yet')}
-                  </h3>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {t(
-                      'A point appears after a run completes, is interrupted, or ends with an error. Older sessions remain compatible and may not contain trend data.'
-                    )}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <section aria-labelledby="context-window-chart-title">
-                <div className="flex flex-wrap items-end justify-between gap-4 pb-4">
-                  <div>
-                    <h3
-                      id="context-window-chart-title"
-                      className="text-xs font-medium text-foreground"
-                    >
-                      {t('CONTEXT PER RUN')}
+            <div className="space-y-6">
+              {currentUsage ? (
+                <CurrentComposition
+                  usage={currentUsage}
+                  model={session?.agentModel ?? latestPoint?.runtime?.model}
+                />
+              ) : null}
+              {points.length ? (
+                <ContextHistory points={points} />
+              ) : (
+                <div className="grid min-h-64 place-items-center rounded-lg border border-dashed border-border bg-bg-100/40 px-6 text-center">
+                  <div className="max-w-sm">
+                    <Activity className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+                    <h3 className="mt-3 text-sm font-medium text-foreground">
+                      {t('No run history yet')}
                     </h3>
-                  </div>
-                  <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <span
-                        className="h-2.5 w-4 rounded-[2px] border-t-2 border-primary bg-primary/10"
-                        aria-hidden="true"
-                      />
-                      {t('Window used (actual)')}
-                    </span>
-                    {points.some((point) => point.sample.contextWindow.size) ? (
-                      <span className="flex items-center gap-1.5">
-                        <>
-                          <span className="w-4 border-t border-dashed border-success-000" />{' '}
-                          {t('Capacity')}
-                        </>
-                      </span>
-                    ) : null}
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {t(
+                        'A bar appears after a run completes, is interrupted, or ends with an error. Older sessions remain compatible and may not contain history data.'
+                      )}
+                    </p>
                   </div>
                 </div>
-                <div className="border-y border-border">
-                  <ContextTrendChart points={points} />
-                </div>
-              </section>
-            )}
+              )}
+            </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
