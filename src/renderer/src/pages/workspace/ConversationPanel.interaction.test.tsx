@@ -3004,7 +3004,11 @@ describe('ConversationPanel + menu', () => {
         ?.click()
     })
     expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
-    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('tool:session-plan:plan')
+    // The pending card's Open must reuse the version-scoped Plan tab id, so the bottom
+    // progress chip and the "view plan" menu entry land on this same tab instead of a duplicate.
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
+      `tool:${session.id}:plan:${completedPlanProjection.artifactVersionId}`
+    )
 
     await act(async () => {
       ;[...container.querySelectorAll<HTMLButtonElement>('button')]

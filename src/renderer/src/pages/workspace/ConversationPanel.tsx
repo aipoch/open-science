@@ -699,11 +699,14 @@ const ConversationPanel = ({
 
   const openPendingPlan = (): void => {
     if (!activeSession || !pendingPlan) return
-    usePreviewWorkbenchStore
-      .getState()
-      .upsertAndActivateItem(
-        createSessionPlanPreviewItem(activeSession.id, activeSession.projectId)
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
+      createSessionPlanPreviewItem(
+        activeSession.id,
+        activeSession.projectId,
+        // Version-scoped id keeps this tab identical to the progress chip / "view plan" entry.
+        pendingPlan.artifactVersionId
       )
+    )
   }
 
   const hasTextDraft = draftDoc.nodes.some(

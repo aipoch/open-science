@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getUploadedAttachmentPath } from '../../../shared/uploads'
 
+import { planTestProjection } from '../pages/workspace/session-plan/plan-test-fixtures'
+
+import { useSessionStore } from './session-store'
 import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
@@ -20,6 +23,7 @@ describe('preview workbench store', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-04T08:00:00.000Z'))
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    useSessionStore.setState({ sessions: [] })
   })
 
   it('starts with the preview panel collapsed', () => {
@@ -592,5 +596,56 @@ describe('preview workbench store', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(
       'file:session-1:/workspace/project/report.md'
     )
+  })
+
+  // Single version identity shared by the file item, the stored projection, and the assertions.
+  const planArtifactVersionId = 'version-1'
+  const planArtifactFileItem = {
+    id: 'file-plan',
+    sessionId: 'session-1',
+    type: 'file' as const,
+    title: `plan-${planArtifactVersionId}.json`,
+    path: `artifact-version:project-a/session-1/artifact-1/${planArtifactVersionId}`,
+    format: 'json' as const,
+    name: 'plan-cedc6ffa.json',
+    selectedVersionId: planArtifactVersionId
+  }
+  const expectedPlanTabId = `tool:${planArtifactFileItem.sessionId}:plan:${planArtifactVersionId}`
+
+  it('activates the Session Plan tool tab when a stored Plan artifact file is opened', () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: planArtifactFileItem.sessionId,
+          projectId: 'project-a',
+          activePlanProjection: planTestProjection(planArtifactVersionId)
+        } as never
+      ]
+    })
+
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(planArtifactFileItem)
+
+    const state = usePreviewWorkbenchStore.getState()
+    // One Plan, one tab: the file entry reuses the same version-scoped tab as "view plan".
+    expect(state.activeItemId).toBe(expectedPlanTabId)
+    expect(state.items.map((item) => item.id)).toEqual([expectedPlanTabId])
+  })
+
+  it('keeps unmatched plan-like files as ordinary file previews', () => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: planArtifactFileItem.sessionId,
+          projectId: 'project-a',
+          activePlanProjection: planTestProjection('version-unrelated')
+        } as never
+      ]
+    })
+
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(planArtifactFileItem)
+
+    const state = usePreviewWorkbenchStore.getState()
+    expect(state.activeItemId).toBe(planArtifactFileItem.id)
+    expect(state.items.map((item) => item.id)).toEqual([planArtifactFileItem.id])
   })
 })

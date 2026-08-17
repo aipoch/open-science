@@ -161,11 +161,17 @@ export const PreviewToolContent = ({
   if (item.toolKind === 'plan') {
     if (!planProjection || !planSession) return null
     const stale = planProjection.artifactVersionId !== activePlanProjection?.artifactVersionId
+    // The Plan's real artifact filename from the Session's artifact metadata; absent when the
+    // artifact entry has not been loaded, in which case the header shows the label only.
+    const planFilename = planSession.artifacts?.find(
+      (artifact) => artifact.versionId === planProjection.artifactVersionId
+    )?.name
     return (
       <PlanPreviewSurface
         projection={planProjection}
         stale={stale}
         isFullScreen={isPlanExpanded}
+        planFilename={planFilename}
         onRespond={canRespondToPlan ? respondPlan : undefined}
         onToggleFullScreen={() => setToolItemExpanded(isPlanExpanded ? null : item.id)}
       />

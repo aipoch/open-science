@@ -4624,10 +4624,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
       'src/renderer/src/pages/workspace/preview-file-item.ts',
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
+      'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
       'src/renderer/src/pages/workspace/project-files-library.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/active-branch-plan.ts',
+      'src/renderer/src/pages/workspace/session-plan/plan-file-projection.ts',
       'src/renderer/src/pages/workspace/session-plan/respond-to-session-plan.ts',
       'src/renderer/src/pages/workspace/session-wait-reason.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
@@ -4645,7 +4647,8 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-tool-activity-style.ts',
       'src/renderer/src/pages/workspace/workspace-web-search-details.ts',
       'src/renderer/src/stores/archive-undo-store.ts',
-      'src/renderer/src/stores/navigation-store.ts'
+      'src/renderer/src/stores/navigation-store.ts',
+      'src/renderer/src/stores/preview-workbench-store.ts'
     ])
   })
 
