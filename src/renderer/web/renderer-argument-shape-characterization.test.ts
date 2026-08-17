@@ -204,7 +204,7 @@ describe('renderer argument-shape characterization', () => {
     expect(actualPaths).toEqual(expectedPaths)
   })
 
-  it('records the nine known Runtime deviations without treating them as equivalences', async () => {
+  it('keeps Runtime request arguments equivalent across Electron and Web', async () => {
     const selection = { kind: 'interpreter', path: '/opt/python' }
     const cases = [
       {
@@ -271,11 +271,11 @@ describe('renderer argument-shape characterization', () => {
         channel: testCase.channel,
         args: testCase.electronArgs
       })
-      expect(web, `${testCase.path}: Web currently forwards positional arguments`).toEqual({
+      expect(web, `${testCase.path}: Web wraps the same request object`).toEqual({
         channel: testCase.channel,
-        args: testCase.args
+        args: testCase.electronArgs
       })
-      expect(web.args, `${testCase.path}: known deviation must remain explicit`).not.toEqual(
+      expect(web.args, `${testCase.path}: renderer transports stay equivalent`).toEqual(
         electron.args
       )
     }

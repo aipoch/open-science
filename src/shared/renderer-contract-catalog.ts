@@ -277,32 +277,29 @@ export const RENDERER_CONTRACT_GROUPS = Object.freeze([
     ['abortFixLoop', 'reviewer:abort-fix-loop'], ['getForSession', 'reviewer:get-for-session'], ['run', 'reviewer:run'],
   ]),
   group('runtime', 'runtime', [
-    ['describeUsage', 'runtime:describe-usage', WEB, RUNTIME_LANGUAGE_ENV, POSITIONAL],
-    ['getEnablement', 'runtime:get-enablement', WEB, RUNTIME_LANGUAGE, POSITIONAL], ['listEnvironments', 'runtime:list-environments'],
-    ['listPackageCounts', 'runtime:list-package-counts', WEB, RUNTIME_LANGUAGE, POSITIONAL],
-    ['listPackages', 'runtime:list-packages', WEB, RUNTIME_LANGUAGE_ENV, POSITIONAL], ['pickInterpreter', 'runtime:pick-interpreter', LOCAL],
-    ['registerInterpreter', 'runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER, POSITIONAL],
+    ['describeUsage', 'runtime:describe-usage', WEB, RUNTIME_LANGUAGE_ENV],
+    ['getEnablement', 'runtime:get-enablement', WEB, RUNTIME_LANGUAGE], ['listEnvironments', 'runtime:list-environments'],
+    ['listPackageCounts', 'runtime:list-package-counts', WEB, RUNTIME_LANGUAGE],
+    ['listPackages', 'runtime:list-packages', WEB, RUNTIME_LANGUAGE_ENV], ['pickInterpreter', 'runtime:pick-interpreter', LOCAL],
+    ['registerInterpreter', 'runtime:register-interpreter', LOCAL, RUNTIME_INTERPRETER],
     [
       'setEnvironmentEnabled',
       'runtime:set-environment-enabled',
       LOCAL,
-      RUNTIME_ENABLEMENT,
-      POSITIONAL
+      RUNTIME_ENABLEMENT
     ],
     [
       'setInstallAuthorized',
       'runtime:set-install-authorized',
       LOCAL,
-      RUNTIME_INSTALL_AUTH,
-      POSITIONAL
+      RUNTIME_INSTALL_AUTH
     ],
-    ['setSelection', 'runtime:set-selection', LOCAL, RUNTIME_SELECTION, POSITIONAL], ['survey', 'runtime:survey'],
+    ['setSelection', 'runtime:set-selection', LOCAL, RUNTIME_SELECTION], ['survey', 'runtime:survey'],
     [
       'unregisterInterpreter',
       'runtime:unregister-interpreter',
       LOCAL,
-      RUNTIME_INTERPRETER,
-      POSITIONAL
+      RUNTIME_INTERPRETER
     ],
   ]),
   group('sessions', 'sessions', [

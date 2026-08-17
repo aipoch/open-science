@@ -32,6 +32,18 @@ const transformArguments = (contract: RendererContractDescriptor, args: unknown[
       return [{ parent: args[0] }]
     case 'storage-data-root-object':
       return [{ parent: args[0], markOnboarding: args[1] }]
+    case 'runtime-selection-object':
+      return [{ language: args[0], selection: args[1] }]
+    case 'runtime-language-environment-object':
+      return [{ language: args[0], envId: args[1] }]
+    case 'runtime-language-object':
+      return [{ language: args[0] }]
+    case 'runtime-enablement-object':
+      return [{ language: args[0], envId: args[1], enabled: args[2], force: args[3] }]
+    case 'runtime-install-authorization-object':
+      return [{ language: args[0], envId: args[1], authorized: args[2] }]
+    case 'runtime-interpreter-path-object':
+      return [{ language: args[0], path: args[1] }]
     default:
       return args
   }

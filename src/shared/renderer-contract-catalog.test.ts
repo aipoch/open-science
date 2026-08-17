@@ -99,21 +99,7 @@ describe('renderer contract catalog', () => {
           surfaceInstallation.localWeb === 'web-rpc' &&
           parameterCodec.electron !== parameterCodec.web
       )
-    ).toEqual([
-      'acp.connect',
-      'acp.createSession',
-      'notebookEnv.cancel',
-      'runtime.describeUsage',
-      'runtime.getEnablement',
-      'runtime.listPackageCounts',
-      'runtime.listPackages',
-      'runtime.registerInterpreter',
-      'runtime.setEnvironmentEnabled',
-      'runtime.setInstallAuthorized',
-      'runtime.setSelection',
-      'runtime.unregisterInterpreter',
-      'sessions.saveSession'
-    ])
+    ).toEqual(['acp.connect', 'acp.createSession', 'notebookEnv.cancel', 'sessions.saveSession'])
 
     const explicitEquivalentTransforms = paths(
       ({ parameterCodec }) =>
@@ -123,6 +109,15 @@ describe('renderer contract catalog', () => {
         parameterCodec.web !== 'surface-native'
     )
     expect(explicitEquivalentTransforms).toEqual([
+      'runtime.describeUsage',
+      'runtime.getEnablement',
+      'runtime.listPackageCounts',
+      'runtime.listPackages',
+      'runtime.registerInterpreter',
+      'runtime.setEnvironmentEnabled',
+      'runtime.setInstallAuthorized',
+      'runtime.setSelection',
+      'runtime.unregisterInterpreter',
       'storage.commitAndRelaunch',
       'storage.discardMigratedCopy',
       'storage.inspectDataRoot',
