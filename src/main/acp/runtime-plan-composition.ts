@@ -216,18 +216,18 @@ const composeAcpRuntimePlanWorkflow = (
         )
       )
     }
-    const projection = await service.getProjection(input.projectId, input.sessionId, {
-      interactionIsLive: sessionInteractions.current(input.sessionId) !== undefined
-    })
-    if (!projection) throw new Error('The Session has no active Plan.')
-    await assertVisibleToDurableBranch(input.projectId, input.sessionId, projection)
-    const identity = {
-      projectId: input.projectId,
-      sessionId: input.sessionId,
-      artifactVersionId: projection.artifactVersionId,
-      expectedRevision: projection.revision
-    }
     if (input.operation === 'approve' || input.operation === 'reject') {
+      const projection = await service.getProjection(input.projectId, input.sessionId, {
+        interactionIsLive: sessionInteractions.current(input.sessionId) !== undefined
+      })
+      if (!projection) throw new Error('The Session has no active Plan.')
+      await assertVisibleToDurableBranch(input.projectId, input.sessionId, projection)
+      const identity = {
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        artifactVersionId: projection.artifactVersionId,
+        expectedRevision: projection.revision
+      }
       const interaction = sessionInteractions.current(input.sessionId)
       const interactionIsLive = interaction !== undefined
       const decision = input.operation === 'approve' ? 'approved' : 'rejected'
@@ -352,43 +352,57 @@ const composeAcpRuntimePlanWorkflow = (
       notes?: string
       expectedArtifactVersionId?: string
     }
-    if (projection.approval !== 'approved') {
-      throw new PlanCommandError(
-        'plan-not-approved',
-        'The Plan is still pending. Interpret the user Message, then call generate_plan with decision:"approved" or decision:"rejected" before updating steps.'
-      )
+    let result: Awaited<ReturnType<NonNullable<typeof service>['updateStepStatus']>>
+    try {
+      result = await service.updateStepStatus({
+        projectId: input.projectId,
+        sessionId: input.sessionId,
+        title: update.title,
+        status: update.status,
+        ...(update.notes ? { notes: update.notes } : {}),
+        authorizeUpdate: async (projection) => {
+          await assertVisibleToDurableBranch(input.projectId, input.sessionId, projection)
+          if (projection.approval !== 'approved') {
+            throw new PlanCommandError(
+              'plan-not-approved',
+              'The Plan is still pending. Interpret the user Message, then call generate_plan with decision:"approved" or decision:"rejected" before updating steps.'
+            )
+          }
+          const currentInteraction = sessionInteractions.current(input.sessionId)
+          const currentBinding = interactions.executionBindingFor(input.sessionId)
+          if (!currentBinding) {
+            throw new PlanCommandError(
+              'continuation-required',
+              'Continuing this Plan requires an explicit user continuation.'
+            )
+          }
+          if (
+            !currentInteraction ||
+            currentBinding.interactionSequence !== currentInteraction.sequence
+          ) {
+            throw new PlanCommandError(
+              'interaction-mismatch',
+              'This interaction is not authorized to execute the active Plan.'
+            )
+          }
+          if (
+            currentBinding.artifactVersionId !== projection.artifactVersionId ||
+            (update.expectedArtifactVersionId !== undefined &&
+              update.expectedArtifactVersionId !== currentBinding.artifactVersionId)
+          ) {
+            throw new PlanCommandError(
+              'interaction-mismatch',
+              'This interaction is bound to a different Plan Artifact Version.'
+            )
+          }
+        }
+      })
+    } catch (error) {
+      if (error instanceof PlanCommandError && error.code === 'no-active-plan') {
+        throw new Error('The Session has no active Plan.')
+      }
+      throw error
     }
-    const interaction = sessionInteractions.current(input.sessionId)
-    const binding = interactions.executionBindingFor(input.sessionId)
-    if (!binding) {
-      throw new PlanCommandError(
-        'continuation-required',
-        'Continuing this Plan requires an explicit user continuation.'
-      )
-    }
-    if (!interaction || binding.interactionSequence !== interaction.sequence) {
-      throw new PlanCommandError(
-        'interaction-mismatch',
-        'This interaction is not authorized to execute the active Plan.'
-      )
-    }
-    if (
-      binding.artifactVersionId !== projection.artifactVersionId ||
-      (update.expectedArtifactVersionId !== undefined &&
-        update.expectedArtifactVersionId !== binding.artifactVersionId)
-    ) {
-      throw new PlanCommandError(
-        'interaction-mismatch',
-        'This interaction is bound to a different Plan Artifact Version.'
-      )
-    }
-    const result = await service.updateStepStatus({
-      ...identity,
-      artifactVersionId: update.expectedArtifactVersionId ?? identity.artifactVersionId,
-      title: update.title,
-      status: update.status,
-      ...(update.notes ? { notes: update.notes } : {})
-    })
     safeLogInfo('Session Plan step status updated', {
       projectId: input.projectId,
       sessionId: input.sessionId,

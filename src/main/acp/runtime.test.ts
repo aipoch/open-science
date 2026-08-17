@@ -3876,7 +3876,7 @@ describe('ACP runtime session management', () => {
 
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
     expect(fakeAgent.prompts[0]?.text).toContain('approved the pending Session Plan')
-    expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
+    expect(fakeAgent.prompts[0]?.text).toContain('approval=approved lifecycle=approved')
     expect(promptAttempts).toEqual([undefined])
     await vi.waitFor(() => expect(runtimeContext.plan?.continuation).toBeUndefined())
   })
@@ -4253,7 +4253,8 @@ describe('ACP runtime session management', () => {
         expectedRevision: 4
       })
     )
-    expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-1')
+    expect(fakeAgent.prompts[0]?.text).toContain('approval=approved lifecycle=approved')
+    expect(fakeAgent.prompts[0]?.text).not.toContain('artifact_version_id=')
     expect(events).toContainEqual(
       expect.objectContaining({
         kind: 'plan',
@@ -5201,14 +5202,13 @@ describe('ACP runtime session management', () => {
     const planPrompt = fakeAgent.prompts[0].text
     expect(planPrompt).toContain('## Plan mode (ACTIVE — MANDATORY)')
     expect(planPrompt).toContain(
-      'Review the Skills available in the current session to confirm the catalog has what the task needs.'
+      'Review the Skills available in the current session to confirm the catalog covers the task.'
     )
     expect(planPrompt).toContain('directly ask the user in an ordinary response')
     expect(planPrompt).toContain('complete revised plan')
-    expect(planPrompt).toContain('creates a new immutable plan and re-requests approval')
-    expect(planPrompt).toContain(
-      'Do NOT run code without an approved plan. Always call `mcp__open-science-plan__generate_plan` first.'
-    )
+    expect(planPrompt).toContain('short exact `title`')
+    expect(planPrompt).toContain('Execution starts only after approval.')
+    expect(planPrompt).not.toContain('The plan is presented to the user for review')
     for (const forbidden of [
       'search_skills',
       'ask_user',
@@ -17291,7 +17291,8 @@ describe('ACP runtime session management', () => {
         expectedRevision: 11
       })
       expect(fakeAgent.prompts[0]?.text).toContain('<open_science_protected_plan_context>')
-      expect(fakeAgent.prompts[0]?.text).toContain('artifact_version_id=version-7')
+      expect(fakeAgent.prompts[0]?.text).toContain('approval=approved lifecycle=approved')
+      expect(fakeAgent.prompts[0]?.text).not.toContain('artifact_version_id=')
       expect(fakeAgent.prompts[0]?.text).toContain('Analyze data: not_started')
       expect(fakeAgent.prompts[0]?.text).toContain('continue')
     }

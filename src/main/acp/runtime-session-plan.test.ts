@@ -62,7 +62,14 @@ const createRuntimeHarness = (options: {
   const generated = projection('version-1')
   const approved = { ...generated, approval: 'approved' as const, lifecycle: 'approved' as const }
   let currentProjection = options.activeProjection ?? generated
-  const updateStepStatus = vi.fn(async () => ({ projection: approved, changed: true }))
+  const updateStepStatus = vi.fn(
+    async (input: {
+      authorizeUpdate?: (projection: ActivePlanProjection) => void | Promise<void>
+    }) => {
+      await input.authorizeUpdate?.(currentProjection)
+      return { projection: approved, changed: true }
+    }
+  )
   const interactions = new SessionPlanInteractionOwner()
   const service = {
     generate: vi.fn(async () => ({ projection: generated, pauseInteraction: true as const })),
@@ -449,7 +456,7 @@ describe('AcpRuntime Session Plan seam', () => {
         }
       })
     ).rejects.toMatchObject({ code: 'interaction-mismatch' })
-    expect(updateStepStatus).not.toHaveBeenCalled()
+    expect(updateStepStatus).toHaveBeenCalledOnce()
   })
 
   it('rejects an MCP Plan decision when the Plan originated on a sibling Message Branch', async () => {
@@ -543,7 +550,7 @@ describe('AcpRuntime Session Plan seam', () => {
         input: { title: 'Analyze the data', status: 'in_progress' }
       })
     ).rejects.toMatchObject({ code: 'continuation-required' })
-    expect(updateStepStatus).not.toHaveBeenCalled()
+    expect(updateStepStatus).toHaveBeenCalledOnce()
   })
 
   it('rejects a Plan version bound to a different interaction', async () => {
@@ -569,7 +576,7 @@ describe('AcpRuntime Session Plan seam', () => {
         input: { title: 'Analyze the data', status: 'in_progress' }
       })
     ).rejects.toMatchObject({ code: 'interaction-mismatch' })
-    expect(updateStepStatus).not.toHaveBeenCalled()
+    expect(updateStepStatus).toHaveBeenCalledOnce()
   })
 
   it('does not release a successor execution when an older rejection finishes late', async () => {
@@ -1005,7 +1012,7 @@ describe('AcpRuntime Session Plan seam', () => {
         input: { title: 'Analyze the data', status: 'in_progress' }
       })
     ).rejects.toMatchObject({ code: 'plan-not-approved' })
-    expect(updateStepStatus).not.toHaveBeenCalled()
+    expect(updateStepStatus).toHaveBeenCalledOnce()
   })
 
   it('marks approval as passive when restart left no in-process approval waiter', async () => {

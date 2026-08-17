@@ -24,7 +24,7 @@ describe('Plan command errors', () => {
 })
 
 describe('protected Plan context', () => {
-  it('retains immutable identity, approval, lifecycle, and the latest step notes', () => {
+  it('keeps decision state and exact step titles without model-irrelevant storage identity', () => {
     const summary = formatPlanProtectedContext({
       artifactId: 'artifact-1',
       artifactVersionId: 'version-3',
@@ -41,7 +41,10 @@ describe('protected Plan context', () => {
             delegations: [
               {
                 name: 'Main Agent',
-                steps: [{ title: 'Analyze', description: 'Analyze the data.' }]
+                steps: [
+                  { title: 'Inspect exact input title', description: 'Inspect the data.' },
+                  { title: 'Analyze', description: 'Analyze the data.' }
+                ]
               }
             ]
           }
@@ -49,16 +52,35 @@ describe('protected Plan context', () => {
         desired_outputs: ['Result'],
         feasibility: { confidence: 'high', rationale: 'Ready.' }
       }),
-      stepStatuses: { Analyze: { status: 'blocked', updatedAt: 42, notes: 'Input missing' } },
-      stepStates: { Analyze: { status: 'blocked', notes: 'Input missing' } },
-      counts: { phases: 1, delegations: 1, steps: 1, completed: 0, inProgress: 0 }
+      stepStatuses: {
+        'Inspect exact input title': {
+          status: 'completed',
+          updatedAt: 41,
+          notes: 'A long completed-step implementation log that is no longer actionable.'
+        },
+        Analyze: { status: 'blocked', updatedAt: 42, notes: 'Input missing' }
+      },
+      stepStates: {
+        'Inspect exact input title': {
+          status: 'completed',
+          notes: 'A long completed-step implementation log that is no longer actionable.'
+        },
+        Analyze: { status: 'blocked', notes: 'Input missing' }
+      },
+      counts: { phases: 1, delegations: 1, steps: 2, completed: 1, inProgress: 0 }
     })
 
-    expect(summary).toContain('artifact_id=artifact-1')
-    expect(summary).toContain('artifact_version_id=version-3')
-    expect(summary).toContain('revision=8 approval=approved lifecycle=blocked')
-    expect(summary).toContain('Analyze: blocked — Input missing')
-    expect(summary).toContain('Do not execute this Plan without interaction-bound authority')
+    expect(summary).toBe(
+      [
+        '<open_science_protected_plan_context>',
+        'approval=approved lifecycle=blocked',
+        'task=Analyze data',
+        '- Inspect exact input title: completed',
+        '- Analyze: blocked — Input missing',
+        'Do not execute this Plan without interaction-bound authority from Open Science.',
+        '</open_science_protected_plan_context>'
+      ].join('\n')
+    )
   })
 })
 

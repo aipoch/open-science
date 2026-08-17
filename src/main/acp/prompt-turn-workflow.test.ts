@@ -724,7 +724,9 @@ describe('AcpPromptTurnWorkflow', () => {
 
     expect(harness.preparation).toHaveBeenCalledWith(
       expect.objectContaining({
-        protectedContext: expect.stringContaining('artifact_version_id=plan-version-1'),
+        protectedContext: expect.stringContaining(
+          'approval=approved lifecycle=approved\ntask=Analyze the result\n- Analyze: not_started'
+        ),
         turnPromptReminders: [expect.stringContaining('Plan mode (ACTIVE')]
       })
     )

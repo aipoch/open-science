@@ -9,9 +9,10 @@ import {
   isPlanCommandErrorCode,
   PlanCommandError,
   type GeneratePlanContent,
+  type PlanLifecycle,
   type PlanCommandErrorCode
 } from '../../shared/session-plan/contract'
-import type { SessionPlanStepStatus } from '../../shared/session-persistence'
+import type { SessionPlanApproval, SessionPlanStepStatus } from '../../shared/session-persistence'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import {
   fetchLocalRpc,
@@ -32,11 +33,36 @@ const generatePlanToolSchema = {
   ...generatePlanContentToolSchema.shape
 }
 
+const sessionPlanStepStatusSchema = z.enum([
+  'in_progress',
+  'completed',
+  'blocked',
+  'skipped'
+] satisfies readonly SessionPlanStepStatus[])
+
 const updateStepStatusToolSchema = {
   title: z.string().min(1),
-  status: z.enum(['in_progress', 'completed', 'blocked', 'skipped']),
+  status: sessionPlanStepStatusSchema,
   notes: z.string().min(1).optional()
 }
+
+const sessionPlanApprovalSchema = z.enum([
+  'pending',
+  'approved',
+  'rejected'
+] satisfies readonly SessionPlanApproval[])
+
+const planLifecycleSchema = z.enum([
+  'awaiting_approval',
+  'approved',
+  'in_progress',
+  'interrupted',
+  'blocked',
+  'completed',
+  'rejected'
+] satisfies readonly PlanLifecycle[])
+
+const planRevisionSchema = z.number().int().nonnegative()
 
 type PlanMcpHandler = Readonly<{
   generate: (content: GeneratePlanContent, signal?: AbortSignal) => Promise<unknown>
@@ -69,7 +95,7 @@ type PlanToolCallResult = Readonly<{
 }>
 
 const toolResult = (result: unknown): PlanToolCallResult => ({
-  content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }]
+  content: [{ type: 'text' as const, text: JSON.stringify(result) }]
 })
 
 const structuredPlanErrorResult = (error: PlanCommandError): PlanToolCallResult => {
@@ -81,12 +107,103 @@ const structuredPlanErrorResult = (error: PlanCommandError): PlanToolCallResult 
   }
 }
 
-const handlePlanToolCall = async (call: () => Promise<unknown>): Promise<PlanToolCallResult> => {
+const handlePlanToolCall = async (
+  call: () => Promise<unknown>,
+  present: (result: unknown) => unknown = (result) => result
+): Promise<PlanToolCallResult> => {
   try {
-    return toolResult(await call())
+    return toolResult(present(await call()))
   } catch (error) {
     if (error instanceof PlanCommandError) return structuredPlanErrorResult(error)
     throw error
+  }
+}
+
+const recordOf = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined
+
+const invalidPlanToolSuccess = (): PlanCommandError =>
+  new PlanCommandError(
+    'invalid-plan',
+    'The Session Plan service returned an invalid success result.'
+  )
+
+const requirePlanToolState = (
+  result: unknown
+): Readonly<{
+  outcome: Record<string, unknown>
+  projection: Record<string, unknown>
+  changed: boolean
+  revision: number
+  approval: SessionPlanApproval
+  lifecycle: PlanLifecycle
+}> => {
+  const outcome = recordOf(result)
+  const projection = recordOf(outcome?.projection)
+  const approval = sessionPlanApprovalSchema.safeParse(projection?.approval)
+  const revision = planRevisionSchema.safeParse(projection?.revision)
+  const lifecycle = planLifecycleSchema.safeParse(projection?.lifecycle)
+  if (
+    !outcome ||
+    !projection ||
+    typeof outcome.changed !== 'boolean' ||
+    !approval.success ||
+    !revision.success ||
+    !lifecycle.success
+  ) {
+    throw invalidPlanToolSuccess()
+  }
+  return {
+    outcome,
+    projection,
+    changed: outcome.changed,
+    revision: revision.data,
+    approval: approval.data,
+    lifecycle: lifecycle.data
+  }
+}
+
+type PlanToolOutcomeContext =
+  | Readonly<{
+      kind: 'step-update'
+      title: string
+      status: SessionPlanStepStatus
+    }>
+  | Readonly<{ kind: 'decision'; decision: 'approved' | 'rejected' }>
+  | Readonly<{ kind: 'generation-result' }>
+
+const presentPlanToolOutcome = (result: unknown, context: PlanToolOutcomeContext): unknown => {
+  const outcome = recordOf(result)
+  if (context.kind === 'generation-result') {
+    if (outcome?.kind === 'feedback' && typeof outcome.text === 'string') {
+      return { kind: 'feedback', text: outcome.text }
+    }
+  }
+  const { projection, changed, revision, approval, lifecycle } = requirePlanToolState(result)
+  const state = { changed, revision, lifecycle }
+  if (context.kind === 'step-update') {
+    const step = recordOf(recordOf(projection.stepStates)?.[context.title])
+    const stepStatus = sessionPlanStepStatusSchema.safeParse(step?.status)
+    if (approval !== 'approved' || !stepStatus.success || stepStatus.data !== context.status) {
+      throw invalidPlanToolSuccess()
+    }
+    return {
+      ...state,
+      step: { title: context.title, status: context.status }
+    }
+  }
+  if (context.kind === 'generation-result') {
+    const decision = approval
+    if (decision === 'approved' || decision === 'rejected') {
+      return { kind: 'decision', decision, ...state }
+    }
+    return { kind: 'plan', ...state }
+  }
+  if (approval !== context.decision) throw invalidPlanToolSuccess()
+  return {
+    kind: 'decision',
+    decision: context.decision,
+    ...state
   }
 }
 
@@ -128,33 +245,40 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
       }
       const resolvedDecision = decision ?? (approve === true ? 'approved' : undefined)
       if (resolvedDecision !== undefined) {
-        return handlePlanToolCall(async () => {
-          if (hasContent) {
-            throw new PlanCommandError(
-              'invalid-plan',
-              'A Plan decision cannot be combined with Plan content.'
-            )
-          }
-          const result =
-            resolvedDecision === 'approved' ? await handler.approve() : await handler.reject()
-          executionArtifactVersionId =
-            resolvedDecision === 'approved'
-              ? (projectionVersionId(result) ?? executionArtifactVersionId)
-              : undefined
-          return result
-        })
+        return handlePlanToolCall(
+          async () => {
+            if (hasContent) {
+              throw new PlanCommandError(
+                'invalid-plan',
+                'A Plan decision cannot be combined with Plan content.'
+              )
+            }
+            const result =
+              resolvedDecision === 'approved' ? await handler.approve() : await handler.reject()
+            executionArtifactVersionId =
+              resolvedDecision === 'approved'
+                ? (projectionVersionId(result) ?? executionArtifactVersionId)
+                : undefined
+            return result
+          },
+          (result) =>
+            presentPlanToolOutcome(result, { kind: 'decision', decision: resolvedDecision })
+        )
       }
-      return handlePlanToolCall(async () => {
-        const document = createPlanDocumentV1({
-          task_summary,
-          phases,
-          desired_outputs,
-          feasibility
-        })
-        const result = await handler.generate(document, extra.signal)
-        executionArtifactVersionId = projectionVersionId(result) ?? executionArtifactVersionId
-        return result
-      })
+      return handlePlanToolCall(
+        async () => {
+          const document = createPlanDocumentV1({
+            task_summary,
+            phases,
+            desired_outputs,
+            feasibility
+          })
+          const result = await handler.generate(document, extra.signal)
+          executionArtifactVersionId = projectionVersionId(result) ?? executionArtifactVersionId
+          return result
+        },
+        (result) => presentPlanToolOutcome(result, { kind: 'generation-result' })
+      )
     }
   )
   server.registerTool(
@@ -165,11 +289,18 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
       inputSchema: updateStepStatusToolSchema
     },
     async (input) =>
-      handlePlanToolCall(() =>
-        handler.updateStepStatus({
-          ...input,
-          expectedArtifactVersionId: executionArtifactVersionId
-        })
+      handlePlanToolCall(
+        () =>
+          handler.updateStepStatus({
+            ...input,
+            expectedArtifactVersionId: executionArtifactVersionId
+          }),
+        (result) =>
+          presentPlanToolOutcome(result, {
+            kind: 'step-update',
+            title: input.title,
+            status: input.status
+          })
       )
   )
   return server

@@ -147,10 +147,15 @@ const createHarness = (): {
           }
     return { projection: current, changed: true, continuationCommandId: 'receipt-1' }
   })
-  const updateStepStatus = vi.fn(async () => {
-    current = approvedProjection(current.revision + 1)
-    return { projection: current, changed: true }
-  })
+  const updateStepStatus = vi.fn(
+    async (input: {
+      authorizeUpdate?: (projection: ActivePlanProjection) => void | Promise<void>
+    }) => {
+      await input.authorizeUpdate?.(current)
+      current = approvedProjection(current.revision + 1)
+      return { projection: current, changed: true }
+    }
+  )
   const queueSettledDecisionContinuation = vi.fn(async () => {
     current = { ...current, continuationState: 'queued' as const }
     return { projection: current, changed: true }
@@ -580,6 +585,206 @@ describe('ACP Session Plan approval causality', () => {
 })
 
 describe('ACP Runtime Session Plan composition', () => {
+  it('loads the authoritative Plan once when updating a step', async () => {
+    const interactions = new SessionPlanInteractionOwner()
+    const sessionInteractions = new AcpSessionInteractionOwner()
+    const interaction = sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'prompt-1'
+    })
+    const document = approvedProjection(4).document
+    const content = JSON.stringify(document)
+    const checksum = createHash('sha256').update(content).digest('hex')
+    let context: SessionRuntimeContext = {
+      version: 1,
+      revision: 4,
+      plan: {
+        artifactId: 'artifact-1',
+        artifactVersionId: 'version-1',
+        artifactChecksum: checksum,
+        originatingPromptMessageId: 'prompt-1',
+        materializedAt: 1,
+        approval: 'approved',
+        stepStatuses: {}
+      }
+    }
+    const readRuntimeContext = vi.fn(async () => context)
+    const readArtifactVersion = vi.fn(async () => ({ content, checksum }))
+    const service = new PlanService({
+      interactions,
+      writeArtifactForExecution: vi.fn(),
+      readArtifactVersion,
+      readRuntimeContext,
+      patchRuntimeContext: vi.fn(async ({ expectedRevision, plan }) => {
+        if (expectedRevision !== context.revision) throw new Error('revision conflict')
+        context = { version: 1, revision: context.revision + 1, plan }
+        return context
+      }),
+      isRevisionConflict: (error) =>
+        error instanceof Error && error.message === 'revision conflict',
+      persistUserMessage: vi.fn(),
+      now: () => 42
+    })
+    interactions.bindExecution({
+      sessionId: 'session-1',
+      interactionSequence: interaction.sequence,
+      artifactVersionId: 'version-1'
+    })
+    const publication = { pushEvent: vi.fn() }
+    const workflow = composeAcpRuntimePlanWorkflow(
+      {
+        plan: { sessions: { containsMessageOnActiveBranch: vi.fn(async () => true) } }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+      {
+        planService: service,
+        planInteractions: interactions,
+        sessionInteractions
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+      {
+        publication,
+        sessionEnvironment: { projectId: vi.fn(() => 'project-1') }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+    )
+
+    await expect(
+      workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'updateStepStatus',
+        input: { title: 'private-step-title-marker', status: 'in_progress' }
+      })
+    ).resolves.toMatchObject({
+      changed: true,
+      projection: {
+        revision: 5,
+        stepStatuses: { 'private-step-title-marker': { status: 'in_progress' } }
+      }
+    })
+    expect(readRuntimeContext).toHaveBeenCalledOnce()
+    expect(readArtifactVersion).toHaveBeenCalledOnce()
+    expect(publication.pushEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'plan',
+        planProjection: expect.objectContaining({ revision: 5 })
+      })
+    )
+  })
+
+  it('publishes the latest Plan after an authorized terminal update becomes idempotent concurrently', async () => {
+    const interactions = new SessionPlanInteractionOwner()
+    const sessionInteractions = new AcpSessionInteractionOwner()
+    const interaction = sessionInteractions.claim({
+      sessionId: 'session-1',
+      kind: 'prompt',
+      promptMessageId: 'prompt-1'
+    })
+    const document = approvedProjection(4).document
+    const content = JSON.stringify(document)
+    const checksum = createHash('sha256').update(content).digest('hex')
+    const completedStatus = { status: 'completed' as const, updatedAt: 40 }
+    let context: SessionRuntimeContext = {
+      version: 1,
+      revision: 4,
+      plan: {
+        artifactId: 'artifact-1',
+        artifactVersionId: 'version-1',
+        artifactChecksum: checksum,
+        originatingPromptMessageId: 'prompt-1',
+        materializedAt: 1,
+        approval: 'approved',
+        stepStatuses: { 'private-step-title-marker': completedStatus }
+      }
+    }
+    const readRuntimeContext = vi.fn(async () => context)
+    const readArtifactVersion = vi.fn(async () => ({ content, checksum }))
+    const patchRuntimeContext = vi.fn()
+    const service = new PlanService({
+      interactions,
+      writeArtifactForExecution: vi.fn(),
+      readArtifactVersion,
+      readRuntimeContext,
+      patchRuntimeContext,
+      isRevisionConflict: (error) =>
+        error instanceof Error && error.message === 'revision conflict',
+      persistUserMessage: vi.fn(),
+      now: () => 42
+    })
+    interactions.bindExecution({
+      sessionId: 'session-1',
+      interactionSequence: interaction.sequence,
+      artifactVersionId: 'version-1'
+    })
+    const containsMessageOnActiveBranch = vi.fn(async () => {
+      context = {
+        ...context,
+        revision: 5,
+        plan: {
+          ...context.plan!,
+          stepStatuses: {
+            'private-step-title-marker': {
+              ...completedStatus,
+              notes: 'Recorded by the concurrent writer.'
+            }
+          }
+        }
+      }
+      return true
+    })
+    const publication = { pushEvent: vi.fn() }
+    const workflow = composeAcpRuntimePlanWorkflow(
+      {
+        plan: { sessions: { containsMessageOnActiveBranch } }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[0],
+      {
+        planService: service,
+        planInteractions: interactions,
+        sessionInteractions
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[1],
+      {
+        publication,
+        sessionEnvironment: { projectId: vi.fn(() => 'project-1') }
+      } as unknown as Parameters<typeof composeAcpRuntimePlanWorkflow>[2]
+    )
+
+    await expect(
+      workflow.call({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        operation: 'updateStepStatus',
+        input: { title: 'private-step-title-marker', status: 'completed' }
+      })
+    ).resolves.toMatchObject({
+      changed: false,
+      projection: {
+        revision: 5,
+        stepStatuses: {
+          'private-step-title-marker': {
+            status: 'completed',
+            notes: 'Recorded by the concurrent writer.'
+          }
+        }
+      }
+    })
+    expect(readRuntimeContext).toHaveBeenCalledTimes(2)
+    expect(readArtifactVersion).toHaveBeenCalledOnce()
+    expect(patchRuntimeContext).not.toHaveBeenCalled()
+    expect(context.revision).toBe(5)
+    expect(publication.pushEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'plan',
+        planProjection: expect.objectContaining({
+          revision: 5,
+          stepStatuses: {
+            'private-step-title-marker': expect.objectContaining({
+              notes: 'Recorded by the concurrent writer.'
+            })
+          }
+        })
+      })
+    )
+  })
+
   it('atomically records detached feedback before allowing a revised Plan generation', async () => {
     const interactions = new SessionPlanInteractionOwner()
     const sessionInteractions = new AcpSessionInteractionOwner()

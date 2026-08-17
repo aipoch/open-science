@@ -121,15 +121,13 @@ const compactPlanContextText = (value: string): string =>
 export const formatPlanProtectedContext = (projection: ActivePlanProjection): string => {
   const steps = planStepTitles(projection.document).map((title) => {
     const state = projection.stepStates[title] ?? { status: 'not_started' as const }
-    const notes = state.notes ? ` — ${compactPlanContextText(state.notes)}` : ''
+    const notes =
+      state.status !== 'completed' && state.notes ? ` — ${compactPlanContextText(state.notes)}` : ''
     return `- ${compactPlanContextText(title)}: ${state.status}${notes}`
   })
   return [
     '<open_science_protected_plan_context>',
-    `artifact_id=${projection.artifactId}`,
-    `artifact_version_id=${projection.artifactVersionId}`,
-    `artifact_checksum=${projection.artifactChecksum}`,
-    `revision=${projection.revision} approval=${projection.approval} lifecycle=${projection.lifecycle}`,
+    `approval=${projection.approval} lifecycle=${projection.lifecycle}`,
     `task=${compactPlanContextText(projection.document.task_summary)}`,
     ...steps,
     'Do not execute this Plan without interaction-bound authority from Open Science.',

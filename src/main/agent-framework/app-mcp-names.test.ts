@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { PRE_REGISTERED_PERMISSION_IDENTITIES } from '../permission-grants/identity-catalog'
-import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
+import {
+  PLAN_FIRST_TURN_PROMPT_REMINDER,
+  SESSION_PLAN_SYSTEM_PROMPT_APPEND
+} from '../session-plan/guidance'
 import {
   appMcpToolIdentities,
   appMcpServerAliases,
@@ -42,6 +45,29 @@ describe('resolveCanonicalMcpToolIdentity', () => {
     )
   })
 
+  it('keeps Plan-first guidance focused on turn-specific preparation', () => {
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).toContain('Plan mode (ACTIVE')
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).toContain('Review the Skills available')
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).toContain('Assess feasibility')
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).toContain('Clarify requirements')
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).toContain('Identify desired outputs')
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).toContain('complete revised plan')
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).not.toContain(
+      'The plan is presented to the user for review'
+    )
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).not.toContain('Only after the user approves the plan')
+    expect(PLAN_FIRST_TURN_PROMPT_REMINDER).not.toContain(
+      'Do NOT run code without an approved plan'
+    )
+  })
+
+  it('states the feedback-to-decision policy once in stable Plan guidance', () => {
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND.match(/kind: feedback/g)).toHaveLength(1)
+    expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).toContain(
+      'for ambiguous or conditional language, do not grant execution authority'
+    )
+  })
+
   it('keeps Conversation Turn completion independent from Session Plan status', () => {
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain('Do not call `end_turn`')
     expect(SESSION_PLAN_SYSTEM_PROMPT_APPEND).not.toContain('do not end the turn')
@@ -67,7 +93,7 @@ describe('resolveCanonicalMcpToolIdentity', () => {
       expect(guidance).toContain('discover applicable skills before generating')
       expect(guidance).toContain(generateTool)
       expect(guidance).toContain(updateTool)
-      expect(guidance).toContain('Do not generate a Plan for simple')
+      expect(guidance).toContain('not for simple lookups')
       expect(guidance).not.toContain('get_active_plan')
       expect(guidance).not.toContain('Plan mode')
     }
