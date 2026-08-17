@@ -179,7 +179,7 @@ const parseEvidence = (raw: string): ImageEvidence => {
     regions,
     entities,
     relations,
-    uncertainty: stringArray(value.uncertainty ?? [])
+    uncertainty: stringArray(value.uncertainty === null ? [] : value.uncertainty)
   })
 }
 

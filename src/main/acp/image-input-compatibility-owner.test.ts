@@ -141,6 +141,31 @@ describe('ImageInputCompatibilityOwner', () => {
     ])
   })
 
+  it('rejects Vision evidence with a missing uncertainty field', async () => {
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: vi.fn(async () => target),
+      runner: {
+        run: vi.fn(async () => ({
+          text: JSON.stringify({
+            summary: 'An incomplete response.',
+            findings: [],
+            transcription: '',
+            regions: [],
+            entities: [],
+            relations: []
+          }),
+          frameworkId: 'opencode' as const,
+          model: 'vision-model',
+          stopReason: 'end_turn' as const
+        }))
+      }
+    })
+
+    await expect(
+      owner.prepare({ content: [image], supportsImageInput: false })
+    ).rejects.toMatchObject({ code: 'invalid-evidence' })
+  })
+
   it('bypasses the relay for a native visual active model', async () => {
     const captureTarget = vi.fn(async () => target)
     const run = vi.fn()
