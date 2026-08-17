@@ -2069,6 +2069,32 @@ describe('SessionPersistenceCoordinator', () => {
     expect(provenance.captureFinalizedMessages).toHaveBeenCalledWith(result)
   })
 
+  it('advances the session revision when a specialist binding first becomes pending', async () => {
+    const authoritativeSession = createSession({
+      specialistId: 'specialist-old',
+      updatedAt: 7
+    })
+    const repository = createSessionRepository({
+      loadSessionWithDiagnostics: vi
+        .fn()
+        .mockResolvedValue({ status: 'found', session: authoritativeSession })
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    const result = await coordinator.saveSessionSpecialistBinding(
+      authoritativeSession,
+      'specialist-new',
+      true
+    )
+
+    expect(result).toMatchObject({
+      specialistId: 'specialist-new',
+      specialistBindingPending: true
+    })
+    expect(result.updatedAt).toBeGreaterThan(authoritativeSession.updatedAt)
+    expect(repository.saveSession).toHaveBeenCalledWith(result)
+  })
+
   it('rebases a specialist binding onto the latest durable graph after a conflict', async () => {
     const authoritativeSession = createSession({
       specialistId: 'specialist-old',

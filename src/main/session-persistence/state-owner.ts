@@ -560,6 +560,11 @@ class SessionPersistenceStateOwner {
     const specialistBindingOwnedByCaller =
       options.conflictRebaseFields?.includes('specialistId') === true &&
       options.conflictRebaseFields.includes('specialistBindingPending')
+    const specialistBindingChanged =
+      authority !== undefined &&
+      specialistBindingOwnedByCaller &&
+      (rendererOwnedSession.specialistId !== authority.specialistId ||
+        rendererOwnedSession.specialistBindingPending !== authority.specialistBindingPending)
     // The renderer mirrors these fields for interaction state, but only Main's dedicated binding
     // transaction may change an existing durable Session. Preserve both desired and pending across
     // unrelated whole-session renderer saves so they cannot be split by a stale projection.
@@ -612,6 +617,7 @@ class SessionPersistenceStateOwner {
         mainOwnedStatus ||
         authority?.enabledComputeHosts !== undefined ||
         authority?.specialistBindingPending !== undefined ||
+        specialistBindingChanged ||
         delegationPolicyChanged
           ? Math.max(rendererOwnedSession.updatedAt, (authority?.updatedAt ?? -1) + 1, Date.now())
           : rendererOwnedSession.updatedAt
