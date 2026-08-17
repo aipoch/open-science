@@ -2,7 +2,7 @@ import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
-import type { AcpMessageImage } from '../../shared/acp'
+import type { AcpReplayMessageImage } from '../../shared/acp'
 import type { FileReference } from '../../shared/artifacts'
 import { estimateHistoryTokens, truncateTextToEstimatedTokens } from '../../shared/history-preamble'
 import {
@@ -37,6 +37,7 @@ import {
   mimeEssence
 } from './attachment-content'
 import type { FileReferenceResolver } from './file-reference-resolver'
+import type { VisionEvidenceSource } from './vision-evidence-repository'
 
 type CodexSkillInput = {
   name: string
@@ -54,7 +55,7 @@ type PrepareAcpPromptContentInput = {
   projectId: string
   connectionGeneration?: number
   text: string
-  historyImages: ReadonlyArray<AcpMessageImage>
+  historyImages: ReadonlyArray<AcpReplayMessageImage>
   historyUploads: ReadonlyArray<UploadedAttachment>
   currentUploads: ReadonlyArray<UploadedAttachment>
   references: ReadonlyArray<FileReference>
@@ -74,6 +75,7 @@ type AcpPromptTurnInputs = {
 type PreparedAcpPromptContent = {
   content: string | ContentBlock[]
   historyImageCount: number
+  imageSources?: ReadonlyArray<VisionEvidenceSource | undefined>
   turnInputs?: AcpPromptTurnInputs
 }
 
@@ -120,6 +122,7 @@ class AcpPromptContentOwner {
     const hasUploads = input.historyUploads.length > 0 || input.currentUploads.length > 0
     let promptUploads: UploadedAttachment[] = []
     let historyImageCount = 0
+    const imageSources: Array<VisionEvidenceSource | undefined> = []
 
     let content: string | ContentBlock[]
     if (!hasUploads && input.references.length === 0 && input.historyImages.length === 0) {
@@ -134,7 +137,11 @@ class AcpPromptContentOwner {
         remaining: totalFileTextBudget,
         perFileLimit: Math.max(1, Math.floor(totalFileTextBudget / 2))
       }
-      const appendBlock = (block: ContentBlock, overflowFallback?: ContentBlock): boolean => {
+      const appendBlock = (
+        block: ContentBlock,
+        overflowFallback?: ContentBlock,
+        source?: VisionEvidenceSource
+      ): boolean => {
         if (block.type === 'image' && !input.imageCompatibilityRelay) {
           try {
             imageBudget = consumeInlineImageBudget(imageBudget, {
@@ -146,18 +153,36 @@ class AcpPromptContentOwner {
               error instanceof ImageContentError &&
               error.code === 'IMAGE_TOTAL_BUDGET_EXCEEDED'
             ) {
-              if (overflowFallback) contentBlocks.push(overflowFallback)
+              if (overflowFallback) {
+                contentBlocks.push(overflowFallback)
+                if (isImageBlock(overflowFallback)) imageSources.push(source)
+              }
               return false
             }
             throw error
           }
         }
         contentBlocks.push(block)
+        if (isImageBlock(block)) imageSources.push(source)
         return true
       }
 
       for (const image of input.historyImages) {
-        if (appendBlock({ type: 'image', data: image.data, mimeType: image.mimeType })) {
+        const source =
+          image.sourceMessageId && image.sourceImageId
+            ? {
+                kind: 'message-image' as const,
+                messageId: image.sourceMessageId,
+                imageId: image.sourceImageId
+              }
+            : undefined
+        if (
+          appendBlock(
+            { type: 'image', data: image.data, mimeType: image.mimeType },
+            undefined,
+            source
+          )
+        ) {
           historyImageCount += 1
         }
       }
@@ -200,7 +225,10 @@ class AcpPromptContentOwner {
           for (const block of blocks) {
             const appended = appendBlock(
               block,
-              this.imageOverflowResourceLink(block, attachment.originalName, attachment.size)
+              this.imageOverflowResourceLink(block, attachment.originalName, attachment.size),
+              attachment.versionId
+                ? { kind: 'upload-version', uploadVersionId: attachment.versionId }
+                : undefined
             )
             if (index < input.historyUploads.length && isImageBlock(block) && appended) {
               historyImageCount += 1
@@ -232,6 +260,7 @@ class AcpPromptContentOwner {
     return {
       content: preparedContent,
       historyImageCount,
+      ...(imageSources.length > 0 ? { imageSources } : {}),
       ...(hasTurnInputs
         ? {
             turnInputs: {

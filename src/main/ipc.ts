@@ -42,6 +42,7 @@ import { createAcpTaskAgentPort } from './acp/task-agent-port'
 import { ArtifactCodeReconstructionRunner } from './acp/artifact-code-reconstruction-runner'
 import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
 import { ImageInputCompatibilityOwner } from './acp/image-input-compatibility-owner'
+import { VisionEvidenceRepository } from './acp/vision-evidence-repository'
 import { ArtifactTurnOwner } from './acp/artifact-turn-owner'
 import { ArchiveCoordinator } from './archive/coordinator'
 import { ArtifactCodeReconstructionService } from './artifacts/code-reconstruction'
@@ -796,13 +797,20 @@ const createApplicationModules = async (
     notificationInbox.markSessionsRead(sessionIds)
   )
   const sessionEnabledComputeHostsOwnerRef: { current?: SessionEnabledComputeHostsOwner } = {}
+  const visionEvidenceRepository = new VisionEvidenceRepository(() =>
+    getProjectDbClient(configRoot)
+  )
   bindNotificationInboxDeletionRuntime({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
-      await sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds)
-      await (sideChatOwnerRef.current?.invalidateParents(sessionIds) ?? Promise.resolve())
-    }
+      await Promise.all([
+        sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
+        sideChatOwnerRef.current?.invalidateParents(sessionIds),
+        visionEvidenceRepository.deleteSessions(sessionIds)
+      ])
+    },
+    onSessionsReconciled: (sessionIds) => visionEvidenceRepository.reconcileSessions(sessionIds)
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request)
@@ -1763,7 +1771,8 @@ const createApplicationModules = async (
   const imageInputCompatibility = await modules.add(
     new ImageInputCompatibilityOwner({
       captureTarget: () => settingsService.admitVisionModel(),
-      runner: visionInferenceRunner
+      runner: visionInferenceRunner,
+      evidenceRepository: visionEvidenceRepository
     }),
     (owner) => ({
       name: 'image-input-compatibility',

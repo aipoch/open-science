@@ -6709,7 +6709,9 @@ describe('resendEditedWorkspaceMessage', () => {
     await flushRuntimeTasks()
 
     expect(resent).toBe(true)
-    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([originalImage])
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([
+      { ...originalImage, sourceMessageId: 'user-1', sourceImageId: 'img-1' }
+    ])
     expect(useSessionStore.getState().sessions[0].messages[0].images).toEqual([originalImage])
   })
 
@@ -7067,6 +7069,8 @@ describe('sendWorkspaceMessage replay image filtering', () => {
 
     expect(sent).toBeDefined()
     expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
-    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([originalImage])
+    expect(runtime.sendPrompt.mock.calls[0]?.[7]).toEqual([
+      { ...originalImage, sourceMessageId: 'user-1', sourceImageId: 'img-1' }
+    ])
   })
 })

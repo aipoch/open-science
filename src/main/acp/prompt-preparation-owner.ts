@@ -223,8 +223,10 @@ class AcpPromptPreparationOwner {
       const providerContent = this.options.imageInputCompatibility
         ? await this.options.imageInputCompatibility.prepare({
             content: prepared.content,
-            focus: input.request.text,
             supportsImageInput: input.backend.context.supportsImageInput,
+            projectId: input.projectId,
+            sessionId: input.request.sessionId,
+            imageSources: prepared.imageSources,
             historyImageCount: prepared.historyImageCount,
             signal: input.signal
           })

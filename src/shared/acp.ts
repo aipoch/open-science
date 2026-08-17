@@ -48,6 +48,13 @@ export type AcpMessageImage = {
   byteLength: number
 }
 
+// Replay-only identity. These optional locators are derived from persisted Session messages and
+// never become part of provider image content or the durable Session JSON shape.
+export type AcpReplayMessageImage = AcpMessageImage & {
+  sourceMessageId?: string
+  sourceImageId?: string
+}
+
 export type ElicitationResponse = BaseElicitationResponse & {
   delegatedQuestion?: Readonly<{
     projectId: string
@@ -61,7 +68,7 @@ export type ElicitationResponse = BaseElicitationResponse & {
   historyReplay?: {
     historyPreamble?: string
     historyAttachments?: UploadedAttachment[]
-    historyImages?: AcpMessageImage[]
+    historyImages?: AcpReplayMessageImage[]
   }
 }
 
@@ -790,7 +797,7 @@ export type AcpPromptRequest = {
   // message), so a freshly-adopted session after a framework switch keeps conversational continuity.
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
-  historyImages?: AcpMessageImage[]
+  historyImages?: AcpReplayMessageImage[]
   // Transient prompt-boundary signal: the provider context was replaced, so live application state
   // must be handed off even when there are no replayable transcript turns. Never persisted.
   contextReset?: boolean
@@ -799,7 +806,7 @@ export type AcpPromptRequest = {
   resumeFallback?: {
     historyPreamble?: string
     historyAttachments?: UploadedAttachment[]
-    historyImages?: AcpMessageImage[]
+    historyImages?: AcpReplayMessageImage[]
   }
 }
 

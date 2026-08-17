@@ -351,6 +351,41 @@
       "expression": "\"probeResult\" IS NULL OR (json_valid(\"probeResult\") AND json_type(\"probeResult\") = 'object')"
     },
     {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_sourceKind_check",
+      "expression": "\"sourceKind\" IN ('upload-version', 'message-image')"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_sourceIdentity_check",
+      "expression": "((\"sourceKind\" = 'upload-version' AND \"uploadVersionId\" IS NOT NULL AND \"sourceMessageId\" IS NULL AND \"sourceImageId\" IS NULL) OR (\"sourceKind\" = 'message-image' AND \"uploadVersionId\" IS NULL AND \"sourceMessageId\" IS NOT NULL AND \"sourceImageId\" IS NOT NULL))"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_schemaVersion_check",
+      "expression": "\"evidenceSchemaVersion\" >= 1"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_imageChecksum_check",
+      "expression": "length(\"imageChecksum\") = 64 AND \"imageChecksum\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_extractorFingerprint_check",
+      "expression": "length(\"extractorFingerprint\") = 64 AND \"extractorFingerprint\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_evidenceChecksum_check",
+      "expression": "length(\"evidenceChecksum\") = 64 AND \"evidenceChecksum\" NOT GLOB '*[^0-9a-f]*'"
+    },
+    {
+      "tableName": "VisionEvidence",
+      "name": "VisionEvidence_evidenceJson_check",
+      "expression": "json_valid(\"evidenceJson\") AND json_type(\"evidenceJson\") = 'object'"
+    },
+    {
       "tableName": "GrantedLocalRoot",
       "name": "GrantedLocalRoot_access_check",
       "expression": "\"access\" IN ('ro', 'rw')"

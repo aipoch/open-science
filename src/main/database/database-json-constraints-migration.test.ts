@@ -140,9 +140,9 @@ describe('database JSON constraints migration', () => {
 
     await expect(migrateApplicationDatabase(client, { databasePath })).resolves.toEqual({
       adoptedLegacy: false,
-      applied: [MIGRATION_ID],
+      applied: [MIGRATION_ID, '0009_vision_evidence'],
       from: '0007_notification_attention_metadata',
-      to: MIGRATION_ID
+      to: '0009_vision_evidence'
     })
     await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
 

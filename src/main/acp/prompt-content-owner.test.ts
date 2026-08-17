@@ -432,6 +432,7 @@ describe('AcpPromptContentOwner', () => {
       onSkillImportAttachmentEligible: vi.fn()
     })
     expect(contentBlocks(relay.content).at(-1)?.type).toBe('image')
+    expect(relay.imageSources).toEqual([undefined])
 
     owner.resetSession('session-1')
     const afterReset = await prepareImage('after-reset.png')
@@ -475,7 +476,7 @@ describe('AcpPromptContentOwner', () => {
       projectId: 'default-project',
       text: 'inspect history',
       historyImages: [],
-      historyUploads: [historyImage],
+      historyUploads: [{ ...historyImage, versionId: 'history-version-1' }],
       currentUploads: [],
       references: [],
       codexSkillInputs: [],
@@ -488,6 +489,9 @@ describe('AcpPromptContentOwner', () => {
     expect(contentBlocks(prepared.content)).toEqual([
       { type: 'text', text: 'inspect history' },
       expect.objectContaining({ type: 'resource_link', name: 'oversized.png' })
+    ])
+    expect(prepared.imageSources).toEqual([
+      { kind: 'upload-version', uploadVersionId: 'history-version-1' }
     ])
   })
 

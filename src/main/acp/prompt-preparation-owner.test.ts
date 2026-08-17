@@ -261,7 +261,8 @@ describe('AcpPromptPreparationOwner', () => {
       expect.objectContaining({
         supportsImageInput: false,
         historyImageCount: 1,
-        focus: 'Analyze the result.'
+        projectId: 'project-1',
+        sessionId: 'session-1'
       })
     )
     expect(handle.content).toBe('validated visual evidence')

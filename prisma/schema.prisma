@@ -31,6 +31,7 @@ model Project {
   updatedAt   DateTime @updatedAt
   permissionGrants PermissionGrant[]
   previewState     ProjectPreviewState?
+  visionEvidence   VisionEvidence[]
 }
 
 model PermissionGrant {
@@ -264,9 +265,36 @@ model UploadVersion {
   updatedAt         DateTime               @updatedAt
   uploadFile        UploadFile             @relation(fields: [uploadFileId], references: [id], onDelete: Cascade)
   sourceInputs      ArtifactVersionInput[] @relation("UploadVersionSourceInputs")
+  visionEvidence    VisionEvidence[]
 
   @@unique([uploadFileId, versionNumber])
   @@index([uploadFileId, state, registeredAt])
+}
+
+// Canonical, reusable image analysis. Session transcripts keep only their existing upload/image
+// metadata; this derived record is independently invalidated by its extractor fingerprint.
+model VisionEvidence {
+  id                    String         @id
+  projectId             String
+  sessionId             String
+  sourceKind            String
+  uploadVersionId       String?
+  sourceMessageId       String?
+  sourceImageId         String?
+  imageChecksum         String
+  mimeType              String
+  extractorFingerprint  String
+  evidenceSchemaVersion Int
+  evidenceJson          String
+  evidenceChecksum      String
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  project               Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadVersion         UploadVersion? @relation(fields: [uploadVersionId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, sessionId])
+  @@index([sessionId])
+  @@index([uploadVersionId])
 }
 
 model ArtifactMessageSnapshot {

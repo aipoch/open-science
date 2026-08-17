@@ -22,6 +22,7 @@ import { projectPreviewStateOwnerFkMigration } from './migrations/0005-project-p
 import { databaseDomainConstraintsMigration } from './migrations/0006-database-domain-constraints'
 import { notificationAttentionMetadataMigration } from './migrations/0007-notification-attention-metadata'
 import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
+import { visionEvidenceMigration } from './migrations/0009-vision-evidence'
 import {
   applySqliteMigrationOperations,
   type SqliteMigrationOperation
@@ -188,6 +189,12 @@ const DATABASE_JSON_CONSTRAINTS_CHECKSUM = checksumMigrationPayload(
   databaseJsonConstraintsMigration.verifiers,
   databaseJsonConstraintsMigration.operations
 )
+const VISION_EVIDENCE_CHECKSUM = checksumMigrationPayload(
+  visionEvidenceMigration.id,
+  visionEvidenceMigration.statements,
+  visionEvidenceMigration.verifiers,
+  visionEvidenceMigration.operations
+)
 const DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseDomainConstraintsMigration.verifiers[0].tables.map(({ table, constraints }) => [
     table,
@@ -206,6 +213,15 @@ const NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraint
   )
 const DATABASE_JSON_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
   databaseJsonConstraintsMigration.verifiers
+    .filter((verifier) => verifier.kind === 'check-constraints-exist')
+    .flatMap((verifier) => verifier.tables)
+    .map(({ table, constraints }) => [
+      table,
+      Object.fromEntries(constraints.map(({ name, expression }) => [name, expression]))
+    ])
+)
+const VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS: AllowedSuffixCheckConstraints = Object.fromEntries(
+  visionEvidenceMigration.verifiers
     .filter((verifier) => verifier.kind === 'check-constraints-exist')
     .flatMap((verifier) => verifier.tables)
     .map(({ table, constraints }) => [
@@ -270,6 +286,12 @@ const MIGRATION_MANIFEST = [
   {
     ...databaseJsonConstraintsMigration,
     checksum: DATABASE_JSON_CONSTRAINTS_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...visionEvidenceMigration,
+    checksum: VISION_EVIDENCE_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1078,12 +1100,17 @@ const migrateApplicationDatabaseWithManifest = async (
       candidate.id === databaseJsonConstraintsMigration.id &&
       candidate.checksum === DATABASE_JSON_CONSTRAINTS_CHECKSUM
   )
+  const adoptsVisionEvidence = manifest.some(
+    (candidate) =>
+      candidate.id === visionEvidenceMigration.id && candidate.checksum === VISION_EVIDENCE_CHECKSUM
+  )
   const applied: string[] = []
   const adoptedLegacy = appliedCount === 0 && hadApplicationTablesAtStart
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
     adoptsDatabaseDomainConstraints ? DATABASE_DOMAIN_ALLOWED_SUFFIX_CHECKS : {},
     adoptsNotificationAttentionMetadata ? NOTIFICATION_ATTENTION_ALLOWED_SUFFIX_CHECKS : {},
-    adoptsDatabaseJsonConstraints ? DATABASE_JSON_ALLOWED_SUFFIX_CHECKS : {}
+    adoptsDatabaseJsonConstraints ? DATABASE_JSON_ALLOWED_SUFFIX_CHECKS : {},
+    adoptsVisionEvidence ? VISION_EVIDENCE_ALLOWED_SUFFIX_CHECKS : {}
   )
 
   let nextIndex = appliedCount
@@ -1123,6 +1150,7 @@ export {
   DATABASE_DOMAIN_CONSTRAINTS_CHECKSUM,
   NOTIFICATION_ATTENTION_METADATA_CHECKSUM,
   DATABASE_JSON_CONSTRAINTS_CHECKSUM,
+  VISION_EVIDENCE_CHECKSUM,
   DatabaseMigrationError,
   checksumMigrationPayload,
   classifyDatabaseFailure,

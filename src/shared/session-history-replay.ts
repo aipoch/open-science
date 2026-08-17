@@ -1,7 +1,7 @@
 import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
-  type AcpMessageImage
+  type AcpReplayMessageImage
 } from './acp'
 import { buildHistoryReplay, type HistoryReplayDescriptor } from './history-preamble'
 import type { PersistedChatMessage } from './session-persistence'
@@ -15,15 +15,15 @@ import {
 export type SessionHistoryReplay = {
   historyPreamble: string
   historyAttachments: UploadedAttachment[]
-  historyImages: AcpMessageImage[]
+  historyImages: AcpReplayMessageImage[]
 }
 
 const buildSessionHistoryReplayMedia = (
   messages: PersistedChatMessage[],
   projectId?: string,
   supportsImageInput?: boolean
-): { attachments: UploadedAttachment[]; images: AcpMessageImage[] } => {
-  const images: AcpMessageImage[] = []
+): { attachments: UploadedAttachment[]; images: AcpReplayMessageImage[] } => {
+  const images: AcpReplayMessageImage[] = []
   let imageBytes = 0
 
   const uploads = messages.flatMap((message) => message.uploads ?? [])
@@ -52,7 +52,11 @@ const buildSessionHistoryReplayMedia = (
         images.length < MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE &&
         imageBytes + image.byteLength <= MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE
       ) {
-        images.unshift(image)
+        images.unshift({
+          ...image,
+          sourceMessageId: message.id,
+          sourceImageId: image.id
+        })
         imageBytes += image.byteLength
       }
     }

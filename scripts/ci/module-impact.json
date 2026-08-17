@@ -57,6 +57,31 @@
       "capabilityOverlays": ["renderer_state"],
       "fallbackCapability": "renderer_view"
     },
+    "image_input_compatibility": {
+      "ownerPaths": [
+        "src/main/acp/image-input-compatibility-owner.ts",
+        "src/main/acp/vision-evidence-repository.ts"
+      ],
+      "interfacePaths": ["src/main/acp/image-input-compatibility-owner.ts"],
+      "consumerModules": ["workspace_runtime"],
+      "testFiles": {
+        "owner": [
+          "src/main/acp/image-input-compatibility-owner.test.ts",
+          "src/main/acp/vision-evidence-repository.test.ts"
+        ],
+        "contract": [
+          "src/main/acp/prompt-content-owner.test.ts",
+          "src/main/acp/prompt-preparation-owner.test.ts",
+          "src/main/acp/restricted-inference-runner.test.ts"
+        ],
+        "consumer": [
+          "src/renderer/src/lib/acp/history-preamble.test.ts",
+          "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts"
+        ]
+      },
+      "capabilityOverlays": [],
+      "fallbackCapability": "main_runtime"
+    },
     "project_files_view": {
       "ownerPaths": [
         "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
