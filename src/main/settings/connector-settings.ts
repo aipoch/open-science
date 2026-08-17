@@ -364,13 +364,13 @@ class ConnectorSettingsModule {
     request: RemoveCustomServerRequest,
     afterPersistedRemoval: (serverId: string) => Promise<void>
   ): Promise<ConnectorsSnapshot> {
-    const existing = (await this.repository.getSettings()).connectors?.customMcpServers?.find(
-      (server) => server.id === request.id
-    )
+    const connectors = (await this.repository.getSettings()).connectors
+    const existing = connectors?.customMcpServers?.find((server) => server.id === request.id)
+    const pending = connectors?.pendingCustomServerDeletionIds?.includes(request.id) ?? false
     await this.repository.removeCustomServer(request.id)
-    if (existing) {
-      await afterPersistedRemoval(existing.id)
-      await this.repository.completeCustomServerDeletion(existing.id)
+    if (existing || pending) {
+      await afterPersistedRemoval(request.id)
+      await this.repository.completeCustomServerDeletion(request.id)
     }
 
     return this.connectorsSnapshot()

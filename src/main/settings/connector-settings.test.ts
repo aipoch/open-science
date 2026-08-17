@@ -222,6 +222,12 @@ describe('ConnectorSettingsModule', () => {
     expect(replacement.customServers[0].id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
     )
+
+    const retryCleanup = vi.fn(async () => undefined)
+    const retried = await service.removeCustomServer({ id }, retryCleanup)
+    expect(retryCleanup).toHaveBeenCalledWith(id)
+    expect(retried.reservedCustomServerIds).toEqual([])
+    expect(retried.customServers).toEqual(replacement.customServers)
   })
 
   it('uses a valid user-provided custom server ID', async () => {
