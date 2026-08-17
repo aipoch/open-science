@@ -90,8 +90,8 @@ class ConnectorSettingsWorkflows {
     const serverId = (await this.settings.getConnectors())?.customMcpServers?.find(
       (server) => server.id === request.id
     )?.id
-    const snapshot = await this.settings.removeCustomServer(request)
     if (serverId) await this.effects.pruneCustomServerPermissions(serverId)
+    const snapshot = await this.settings.removeCustomServer(request)
     this.connectorsChanged()
     return snapshot
   }

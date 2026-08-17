@@ -650,7 +650,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ])
   })
 
-  it('awaits custom-server prune before refreshing and skips refresh when prune fails', async () => {
+  it('prunes custom-server permissions before persistence and stops deletion when prune fails', async () => {
     const calls: string[] = []
     const { store, capability } = fakeStore()
     store.getConnectors.mockResolvedValue({
@@ -679,12 +679,12 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ).connectors
 
     await workflows.removeCustomServer({ id: 'server' })
-    expect(calls).toEqual(['persist', 'prune', 'invalidate', 'refresh'])
+    expect(calls).toEqual(['prune', 'persist', 'invalidate', 'refresh'])
 
     calls.length = 0
     pruneCustomServerPermissions.mockRejectedValue(new Error('prune failed'))
     await expect(workflows.removeCustomServer({ id: 'server' })).rejects.toThrow('prune failed')
-    expect(calls).toEqual(['persist'])
+    expect(calls).toEqual([])
   })
 
   it('owns the security-sensitive update barrier and rolls it back when prune fails', async () => {
