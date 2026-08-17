@@ -58,6 +58,7 @@ import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompact
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { parseGeneratePlanDocument } from './generate-plan-activity-projection'
 import { WorkspaceAgentLoadingRow } from './WorkspaceAgentLoadingRow'
+import { EmptyConversationBanner } from './EmptyConversationBanner'
 import { WorkspaceMessageItem } from './WorkspaceMessageItem'
 import { WorkspaceRunMarks } from './WorkspaceRunMarks'
 import type { ArtifactMentionPart } from './WorkspaceMessageItem'
@@ -512,6 +513,9 @@ const WorkspaceMessageScrollerImpl = ({
     presentationBarrierIndex >= 0
       ? conversationItems.slice(0, presentationBarrierIndex + 1)
       : conversationItems
+  // Brand-new conversation (nothing presented, no resume in flight): invite the first prompt with
+  // a centered placeholder banner over the empty transcript area.
+  const showEmptyConversationBanner = presentedConversationItems.length === 0 && !isResumingSession
   const visibleMessageIds = presentedConversationItems.flatMap((item) =>
     item.type === 'message' ? [item.message.id] : []
   )
@@ -998,6 +1002,7 @@ const WorkspaceMessageScrollerImpl = ({
             aria-hidden="true"
             className="pointer-events-none absolute inset-x-0 top-0 z-10 h-6 bg-gradient-to-b from-bg-10 to-bg-10/0"
           />
+          {showEmptyConversationBanner ? <EmptyConversationBanner /> : null}
           <MessageScrollerViewport
             ref={handleMessageScrollerViewportRef}
             aria-label={t('Conversation')}

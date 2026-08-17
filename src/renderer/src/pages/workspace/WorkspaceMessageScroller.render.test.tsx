@@ -227,6 +227,36 @@ describe('WorkspaceMessageScroller Run Marks render', () => {
   })
 })
 
+describe('WorkspaceMessageScroller empty conversation banner', () => {
+  it('shows the banner for a new conversation with no messages', async () => {
+    const html = await renderScroller(createSession({}))
+
+    expect(html).toContain('data-testid="empty-conversation-banner"')
+    expect(html).toContain('What will you research in Open Science?')
+  })
+
+  it('hides the banner once the conversation has messages', async () => {
+    const html = await renderScroller(
+      createSession({ messages: [createMessage({ id: 'prompt-1', content: 'First prompt' })] })
+    )
+
+    expect(html).not.toContain('data-testid="empty-conversation-banner"')
+  })
+
+  it('hides the banner while a session is resuming', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const html = renderToStaticMarkup(
+      <WorkspaceMessageScroller
+        activeSession={createSession({})}
+        isResumingSession
+        onSendEditedMessage={vi.fn()}
+      />
+    )
+
+    expect(html).not.toContain('data-testid="empty-conversation-banner"')
+  })
+})
+
 describe('WorkspaceMessageScroller Reviewer load error', () => {
   it('renders an alert with a retry action', async () => {
     reviewStoreMock.loadError = 'db down'
