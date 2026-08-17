@@ -29,7 +29,7 @@ import {
   SlidersHorizontal,
   X
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
 
@@ -98,6 +98,7 @@ type ComposerAgentControlsMenuProps = {
   specialistUnavailable?: boolean
   specialistReadOnly?: boolean
   onSpecialistChange?: (specialistId: string | undefined) => void
+  openRequest?: number
 }
 
 // `as const` (rather than a widened annotation) keeps the catalog keys as literals so t() stays
@@ -159,11 +160,14 @@ const ComposerAgentControlsMenu = ({
   specialistId,
   specialistUnavailable = false,
   specialistReadOnly = false,
-  onSpecialistChange
+  onSpecialistChange,
+  openRequest
 }: ComposerAgentControlsMenuProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const [mobilePermissionOpen, setMobilePermissionOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const previousOpenRequest = useRef(openRequest)
   const isMobile = useMediaQuery('(max-width: 767px)')
   const selectedProfile = permissionProfiles.find((candidate) => candidate.id === profile)!
   const SelectedIcon = selectedProfile.icon
@@ -172,6 +176,12 @@ const ComposerAgentControlsMenu = ({
   const hasGrants = (grants?.length ?? 0) > 0
   // Anything other than the defaults (ask + auto-review off) gets a dot on the trigger.
   const isNonDefault = profile !== DEFAULT_PERMISSION_PROFILE || autoReviewEnabled
+
+  useEffect(() => {
+    if (openRequest === undefined || openRequest === previousOpenRequest.current) return
+    previousOpenRequest.current = openRequest
+    setMenuOpen(true)
+  }, [openRequest])
 
   const selectProfile = (next: PermissionProfileId): void => {
     if (next === profile) return
@@ -194,6 +204,7 @@ const ComposerAgentControlsMenu = ({
   const sshHosts = hosts.filter((host) => host.sshAlias)
 
   const handleOpenChange = (open: boolean): void => {
+    setMenuOpen(open)
     if (!open) setMobilePermissionOpen(false)
     if (open && !isLoaded) {
       void loadHosts()
@@ -290,7 +301,7 @@ const ComposerAgentControlsMenu = ({
 
   return (
     <>
-      <DropdownMenu onOpenChange={handleOpenChange}>
+      <DropdownMenu open={menuOpen} onOpenChange={handleOpenChange}>
         {/* The trigger stays enabled in read-only mode so the menu (and its submenu)
             remains browsable while a session is running; only the controls are disabled. */}
         <DropdownMenuTrigger asChild>

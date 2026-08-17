@@ -28,13 +28,12 @@ import {
   setWorkspaceSpecialistBarrier,
   subscribeWorkspaceSpecialistBarriers
 } from './workspace-specialist-barrier'
-
-type ReconfigureError = {
-  sessionId: string
-  specialistName: string
-  message: string
-  committed: boolean
-}
+import {
+  compareHandoffEventOrder,
+  pendingSpecialistReconfigureError,
+  specialistNameFor,
+  type WorkspaceSpecialistReconfigureError as ReconfigureError
+} from './workspace-specialist-reconfiguration'
 
 type WorkspaceSessionControllerOptions = {
   activeSession: ChatSession | undefined
@@ -124,31 +123,6 @@ type WorkspaceSessionController = {
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
-
-const specialistNameFor = (
-  items: readonly SpecialistListItem[],
-  specialistId: string | undefined
-): string => {
-  if (specialistId === undefined) return 'Main Agent'
-  const item = items.find(
-    (candidate) => candidate.kind === 'custom' && candidate.id === specialistId
-  )
-  return item?.kind === 'custom' ? item.name : 'the selected specialist'
-}
-
-const compareHandoffEventOrder = (
-  left: Pick<CompletionHandoffLifecycleEvent, 'commitOrder' | 'observedAt' | 'sequence' | 'id'>,
-  right: Pick<CompletionHandoffLifecycleEvent, 'commitOrder' | 'observedAt' | 'sequence' | 'id'>
-): number =>
-  (left.commitOrder !== undefined || right.commitOrder !== undefined
-    ? left.commitOrder === undefined
-      ? -1
-      : right.commitOrder === undefined
-        ? 1
-        : left.commitOrder - right.commitOrder
-    : left.observedAt - right.observedAt) ||
-  left.sequence - right.sequence ||
-  left.id.localeCompare(right.id)
 
 // Owns Workspace session transactions and Specialist identity without taking over message dispatch.
 const useWorkspaceSessionController = ({
@@ -390,12 +364,9 @@ const useWorkspaceSessionController = ({
           if (result?.status === 'pending') {
             setSessionSpecialistId(sessionId, specialistId, true)
             setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
-            setReconfigureError({
-              sessionId,
-              specialistName: specialistNameFor(specialistItems, specialistId),
-              message: 'The selection is saved, but the Agent runtime has not applied it yet.',
-              committed: true
-            })
+            setReconfigureError(
+              pendingSpecialistReconfigureError(sessionId, specialistItems, specialistId)
+            )
             return
           }
           setSessionSpecialistId(sessionId, specialistId)
@@ -482,36 +453,17 @@ const useWorkspaceSessionController = ({
       })
       if (result?.status === 'pending') {
         setSessionSpecialistId(sessionId, specialistId, true)
-        const pendingProfile = specialistItems.find(
-          (item) => item.kind === 'custom' && item.id === specialistId
+        setReconfigureError(
+          pendingSpecialistReconfigureError(sessionId, specialistItems, specialistId)
         )
-        setReconfigureError({
-          sessionId,
-          specialistName:
-            specialistId === undefined
-              ? 'Main Agent'
-              : pendingProfile?.kind === 'custom'
-                ? pendingProfile.name
-                : 'the selected specialist',
-          message: 'The selection is saved, but the Agent runtime has not applied it yet.',
-          committed: true
-        })
         setBarrier(sessionId, false)
         return false
       }
       if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
     } catch (error: unknown) {
-      const pendingProfile = specialistItems.find(
-        (item) => item.kind === 'custom' && item.id === specialistId
-      )
       setReconfigureError({
         sessionId,
-        specialistName:
-          specialistId === undefined
-            ? 'Main Agent'
-            : pendingProfile?.kind === 'custom'
-              ? pendingProfile.name
-              : 'the selected specialist',
+        specialistName: specialistNameFor(specialistItems, specialistId),
         message: errorMessage(error),
         committed: previous?.specialistBindingPending === true
       })
@@ -551,12 +503,9 @@ const useWorkspaceSessionController = ({
         if (result?.status === 'pending') {
           setSessionSpecialistId(sessionId, undefined, true)
           setPendingSpecialists((current) => ({ ...current, [sessionId]: undefined }))
-          setReconfigureError({
-            sessionId,
-            specialistName: 'Main Agent',
-            message: 'The selection is saved, but the Agent runtime has not applied it yet.',
-            committed: true
-          })
+          setReconfigureError(
+            pendingSpecialistReconfigureError(sessionId, specialistItems, undefined)
+          )
           return
         }
         if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
@@ -583,12 +532,11 @@ const useWorkspaceSessionController = ({
     setReconfigureError((current) =>
       current?.sessionId === activeSession.id
         ? current
-        : {
-            sessionId: activeSession.id,
-            specialistName: specialistNameFor(specialistItems, activeSession.specialistId),
-            message: 'The selection is saved, but the Agent runtime has not applied it yet.',
-            committed: true
-          }
+        : pendingSpecialistReconfigureError(
+            activeSession.id,
+            specialistItems,
+            activeSession.specialistId
+          )
     )
   }, [activeSession, specialistItems])
 

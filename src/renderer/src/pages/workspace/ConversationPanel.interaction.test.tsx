@@ -92,6 +92,7 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
     grantActionsReadOnly?: boolean
     autoReviewDisabled?: boolean
     specialistReadOnly?: boolean
+    openRequest?: number
   }): React.JSX.Element => (
     <button
       type="button"
@@ -101,6 +102,7 @@ vi.mock('./ComposerAgentControlsMenu', () => ({
       data-grants-read-only={String(props.grantActionsReadOnly === true)}
       data-auto-review-disabled={String(props.autoReviewDisabled === true)}
       data-specialist-read-only={String(props.specialistReadOnly === true)}
+      data-open-request={props.openRequest ?? 0}
     >
       Agent controls
     </button>
@@ -3727,6 +3729,63 @@ describe('ConversationPanel fix loop lock', () => {
     }
     // The doc change is still fired (composing is allowed)
     expect(onDraftDocChange).toHaveBeenCalled()
+  })
+
+  it('explains an unavailable Specialist and opens Agent controls to choose another', () => {
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'deleted-specialist' }
+      },
+      conversation: {
+        availability: {
+          submit: false
+        }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            unavailable: true
+          }
+        }
+      }
+    })
+
+    const notice = container.querySelector('[data-testid="specialist-unavailable-notice"]')
+    expect(notice?.textContent).toContain('This Specialist is no longer available')
+    expect(notice?.textContent).toContain('Choose another Specialist before sending a message.')
+    expect(notice?.textContent).toContain('Your draft is preserved.')
+    expect(
+      container
+        .querySelector('[data-testid="composer-card-backdrop"]')
+        ?.classList.contains('hidden')
+    ).toBe(true)
+
+    const controls = container.querySelector('[data-testid="mock-agent-controls"]')
+    const chooseButton = notice?.querySelector<HTMLButtonElement>('button')
+    expect(chooseButton?.parentElement).toBe(notice)
+    expect(chooseButton?.classList.contains('ml-auto')).toBe(true)
+    expect(controls?.getAttribute('data-open-request')).toBe('0')
+    act(() => {
+      chooseButton?.click()
+    })
+    expect(controls?.getAttribute('data-open-request')).toBe('1')
+  })
+
+  it('does not show a Specialist unavailable notice for an available session', () => {
+    renderPanel({
+      view: {
+        activeSession: { ...idleSession, specialistId: 'available-specialist' }
+      },
+      specialist: {
+        view: {
+          specialist: {
+            unavailable: false
+          }
+        }
+      }
+    })
+
+    expect(container.querySelector('[data-testid="specialist-unavailable-notice"]')).toBeNull()
   })
 
   it('cancel button is visible when session is running and calls onCancelRun', () => {

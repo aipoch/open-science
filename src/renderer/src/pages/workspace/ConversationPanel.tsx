@@ -475,6 +475,7 @@ const ConversationPanel = ({
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
   const [composerRestoreFocusRequest, setComposerRestoreFocusRequest] = useState<number>()
+  const [agentControlsOpenRequest, setAgentControlsOpenRequest] = useState(0)
 
   const openReportDialog = (): void => {
     setReportDialogEpoch((epoch) => epoch + 1)
@@ -1012,9 +1013,46 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (sideChat || hasPendingPermission || pendingElicitation) && 'hidden'
+                      (sideChat ||
+                        hasPendingPermission ||
+                        pendingElicitation ||
+                        specialistUnavailable) &&
+                        'hidden'
                     )}
                   />
+
+                  {!sideChat && activeSession && specialistUnavailable ? (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      data-testid="specialist-unavailable-notice"
+                      className="relative z-10 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2"
+                    >
+                      <AlertTriangle
+                        className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12px] font-medium leading-5 text-amber-700 dark:text-amber-300">
+                          {t('This Specialist is no longer available')}
+                        </div>
+                        <div className="text-[11px] leading-4 text-text-100">
+                          {t('Choose another Specialist before sending a message.')}{' '}
+                          {t('Your draft is preserved.')}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        className="ml-auto border-amber-500/30 bg-transparent text-amber-700 hover:bg-amber-500/10 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
+                        onClick={() => setAgentControlsOpenRequest((request) => request + 1)}
+                      >
+                        {t('Choose Specialist')}
+                      </Button>
+                    </div>
+                  ) : null}
 
                   {/* Reconfigure failure banner: shown directly above the composer when a pre-send
                       specialist reconfigure failed. Draft is preserved; three recovery actions. */}
@@ -1574,6 +1612,7 @@ const ConversationPanel = ({
                           specialistId={specialistId}
                           specialistUnavailable={specialistUnavailable}
                           onSpecialistChange={onSpecialistChange}
+                          openRequest={agentControlsOpenRequest}
                         />
 
                         {/* Compatibility indicator for an explicit user selection while a turn is
