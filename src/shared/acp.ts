@@ -682,9 +682,9 @@ export type AcpCreateSessionRequest = {
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
   projectId?: string
   permissionProfile?: PermissionProfileId
-  // Immutable Specialist UUID to bind on first turn. Main process resolves the latest Profile at
+  // Immutable Specialist ID to bind on first turn. Main process resolves the latest Profile at
   // session-creation time — the renderer MUST NOT send systemPrompt or capability data, only the
-  // stable UUID. Absent or undefined means no specialist; use Main Agent.
+  // stable ID. Absent or undefined means no specialist; use Main Agent.
   specialistId?: string
 }
 

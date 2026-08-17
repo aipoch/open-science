@@ -250,7 +250,7 @@ export class AgentsService {
         return await this.runSwitch(params, context)
       }
       // host.agents.delete(name, { revision }) — privileged (issue 04). Routes through the injected
-      // approval gateway, re-resolves name -> UUID, verifies the reviewed revision, deletes via
+      // approval gateway, re-resolves name -> ID, verifies the reviewed revision, deletes via
       // ProfileService, verifies absence, invalidates the catalog, and returns the read-back. Bound
       // conversations are NOT silently switched to Main Agent (design.md §10).
       if (opName === 'delete') return await this.runDelete(params, context)
@@ -313,8 +313,8 @@ export class AgentsService {
   }
 
   // host.agents.delete(name, { revision }) — privileged (issue 04). Approves via the injected gateway,
-  // re-resolves name -> UUID, verifies the reviewed revision, deletes via ProfileService, verifies
-  // absence, invalidates the catalog, and returns `{ status: "deleted", name }`. Session UUID bindings
+  // re-resolves name -> ID, verifies the reviewed revision, deletes via ProfileService, verifies
+  // absence, invalidates the catalog, and returns `{ status: "deleted", name }`. Session ID bindings
   // are NEVER cleared or rewritten — bound conversations resolve unavailable later (design.md §10).
   // The trusted calling session is threaded from server context (mirroring runSwitch) so the
   // ACP-backed approval gateway can park the delete card on the CALLING session — without it the

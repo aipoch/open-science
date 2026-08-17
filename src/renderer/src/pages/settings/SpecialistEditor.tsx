@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { X } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -8,8 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { cn } from '@/lib/utils'
 import {
   SPECIALIST_DESCRIPTION_MAX_LENGTH,
+  SPECIALIST_ID_MAX_LENGTH,
   SPECIALIST_NAME_MAX_LENGTH,
   SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH,
+  inferSpecialistId,
   validateCreateSpecialistInput,
   validateSpecialistPackageVersion,
   validateUpdateSpecialistInput,
@@ -31,6 +33,7 @@ type SpecialistEditorProps = {
   onCancel: () => void
   onSave: (input: CreateSpecialistInput) => Promise<void>
   existingNames?: string[]
+  existingIds?: string[]
   // Edit mode: when provided, the form is prefilled from this profile and Save
   // calls onSaveEdit (with id + revision for optimistic concurrency) instead of
   // onSave.
@@ -43,6 +46,7 @@ type SpecialistEditorProps = {
 }
 
 type FormState = {
+  id: string
   name: string
   packageVersion: string
   description: string
@@ -102,6 +106,7 @@ const SpecialistEditor = ({
   onSaveEdit,
   onReload,
   existingNames = [],
+  existingIds = [],
   editSpecialist,
   initialInput
 }: SpecialistEditorProps): React.JSX.Element => {
@@ -116,6 +121,7 @@ const SpecialistEditor = ({
   const [form, setForm] = useState<FormState>(() =>
     editSpecialist
       ? {
+          id: editSpecialist.id,
           name: editSpecialist.displayName ?? editSpecialist.name,
           packageVersion: editSpecialist.packageVersion ?? '0.1.0',
           description: editSpecialist.description,
@@ -132,6 +138,7 @@ const SpecialistEditor = ({
           baseRevision: editSpecialist.revision
         }
       : {
+          id: initialInput?.id ?? '',
           name: initialInput?.name ?? '',
           packageVersion: '0.1.0',
           description: initialInput?.description ?? '',
@@ -146,12 +153,15 @@ const SpecialistEditor = ({
           baseRevision: 0
         }
   )
+  const [idTouched, setIdTouched] = useState(initialInput?.id !== undefined)
+  const [fallbackId] = useState(() => crypto.randomUUID())
   const [fieldErrors, setFieldErrors] = useState<SpecialistFieldError[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | undefined>()
   // Tracks a revision conflict that requires the user to reload before saving.
   const [hasConflict, setHasConflict] = useState(false)
   const [isReloading, setIsReloading] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(initialInput?.id !== undefined)
   const [activeCapTab, setActiveCapTab] = useState<'skills' | 'connectors'>('skills')
   const [skillSearchQuery, setSkillSearchQuery] = useState('')
   const [connectorSearchQuery, setConnectorSearchQuery] = useState('')
@@ -371,6 +381,24 @@ const SpecialistEditor = ({
     fieldErrors.find((e) => e.field === field)?.message
 
   const isFullAccess = form.capabilityMode === 'full'
+  const inferredId = inferSpecialistId(form.name)
+  const generatedId = inferredId && !existingIds.includes(inferredId) ? inferredId : fallbackId
+  const currentId = idTouched ? form.id : generatedId
+  const submittedId = idTouched
+    ? form.id.trim()
+    : generatedId === fallbackId
+      ? fallbackId
+      : undefined
+  const idError = getFieldError('id')
+  const advancedVisible = advancedOpen || Boolean(idError)
+  const translatedIdError =
+    idError === 'ID may only contain lowercase letters, numbers, and hyphens.'
+      ? t('ID may only contain lowercase letters, numbers, and hyphens.')
+      : idError === 'IDs starting with os- or mcp- are reserved.'
+        ? t('IDs starting with os- or mcp- are reserved.')
+        : idError === 'ID is already in use.'
+          ? t('ID is already in use.')
+          : idError
 
   const validate = (): boolean => {
     // Client-side validation using the shared validator.
@@ -384,12 +412,15 @@ const SpecialistEditor = ({
         })
       : validateCreateSpecialistInput(
           {
+            ...(currentId.trim() ? { id: currentId.trim() } : {}),
             name: form.name,
             displayName: form.name,
             description: form.description || undefined,
             systemPrompt: form.systemPrompt || undefined
           },
-          existingNames
+          existingNames,
+          undefined,
+          existingIds
         )
     if (isEdit) {
       const packageVersionError = validateSpecialistPackageVersion(form.packageVersion)
@@ -448,7 +479,11 @@ const SpecialistEditor = ({
         // Advance the base revision only after a confirmed save.
         setForm((prev) => ({ ...prev, baseRevision: prev.baseRevision + 1 }))
       } else {
-        await onSave({ name: form.name.trim(), ...trimmed })
+        await onSave({
+          ...(submittedId ? { id: submittedId } : {}),
+          name: form.name.trim(),
+          ...trimmed
+        })
       }
     } catch (error) {
       const message =
@@ -480,6 +515,7 @@ const SpecialistEditor = ({
       const fresh = await onReload()
       if (fresh) {
         setForm({
+          id: fresh.id,
           name: fresh.displayName ?? fresh.name,
           packageVersion: fresh.packageVersion ?? '0.1.0',
           description: fresh.description,
@@ -716,6 +752,62 @@ const SpecialistEditor = ({
               </p>
             ) : null}
           </div>
+
+          {!isEdit ? (
+            <div className="mt-4">
+              <button
+                type="button"
+                aria-expanded={advancedVisible}
+                aria-controls="specialist-advanced-settings"
+                onClick={() => setAdvancedOpen((open) => !open)}
+                className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <ChevronDown
+                  className={cn(
+                    'size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none',
+                    !advancedVisible && '-rotate-90'
+                  )}
+                  aria-hidden="true"
+                />
+                {t('Advanced settings')}
+              </button>
+
+              {advancedVisible ? (
+                <div id="specialist-advanced-settings" className="mt-3">
+                  <label htmlFor="sp-specialist-id" className="mb-1.5 block text-sm font-medium">
+                    {t('Specialist ID')}{' '}
+                    <span className="font-normal text-muted-foreground">{t('(optional)')}</span>
+                  </label>
+                  <Input
+                    id="sp-specialist-id"
+                    value={currentId}
+                    maxLength={SPECIALIST_ID_MAX_LENGTH}
+                    className={cn('font-mono', idError && 'border-destructive')}
+                    aria-invalid={idError ? true : undefined}
+                    aria-describedby="sp-specialist-id-help"
+                    onChange={(event) => {
+                      setIdTouched(true)
+                      setForm((previous) => ({ ...previous, id: event.target.value }))
+                      setFieldErrors((previous) => previous.filter((error) => error.field !== 'id'))
+                    }}
+                  />
+                  <p
+                    id="sp-specialist-id-help"
+                    className={cn(
+                      'mt-1 text-xs',
+                      idError ? 'text-destructive' : 'text-muted-foreground'
+                    )}
+                    role={idError ? 'alert' : undefined}
+                  >
+                    {translatedIdError ??
+                      t(
+                        'Generated from the name when possible. Edit it now or leave it blank to generate automatically; it cannot be changed after creation.'
+                      )}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {isEdit && editSpecialist ? (
             <div className="mt-4 grid gap-4 sm:grid-cols-2">

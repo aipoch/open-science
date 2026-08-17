@@ -350,6 +350,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     return (
       <SpecialistEditor
         existingNames={customItems.map((item) => item.name)}
+        existingIds={items.map((item) => item.id)}
         initialInput={view.draft}
         onCancel={() => onNavigate({ kind: 'list' })}
         onSave={async (input: CreateSpecialistInput) => {

@@ -129,10 +129,60 @@ describe('ProfileService.create', () => {
     await expect(guarded.delete('reviewer')).rejects.toMatchObject(reviewerError)
   })
 
-  it('creates a specialist with immutable UUID', async () => {
+  it('creates a specialist with an ID inferred from its public name', async () => {
     const view = await service.create({ name: 'RNA-seq Reviewer' })
-    expect(view.id).toBeTruthy()
-    expect(typeof view.id).toBe('string')
+    expect(view.id).toBe('rna-seq-reviewer')
+  })
+
+  it('uses a valid custom ID instead of the inferred ID', async () => {
+    const view = await service.create({ id: 'transcriptomics-reviewer', name: 'RNA Reviewer' })
+    expect(view.id).toBe('transcriptomics-reviewer')
+  })
+
+  it('falls back to a UUID when the inferred ID is already in use', async () => {
+    await service.create({ id: 'rna-reviewer', name: 'Transcriptomics Reviewer' })
+
+    const view = await service.create({ name: 'RNA Reviewer' })
+
+    expect(view.id).not.toBe('rna-reviewer')
+    expect(view.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  })
+
+  it('falls back to a UUID when concurrent names infer the same ID', async () => {
+    const created = await Promise.all([
+      service.create({ name: 'RNA Reviewer' }),
+      service.create({ name: 'RNA_Reviewer' })
+    ])
+
+    expect(new Set(created.map((specialist) => specialist.id)).size).toBe(2)
+    expect(created.some((specialist) => specialist.id === 'rna-reviewer')).toBe(true)
+  })
+
+  it('does not replace a user-provided ID after a concurrent conflict', async () => {
+    const results = await Promise.allSettled([
+      service.create({ id: 'rna-reviewer', name: 'RNA Reviewer' }),
+      service.create({ id: 'rna-reviewer', name: 'RNA_Reviewer' })
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: expect.objectContaining({ message: expect.stringContaining('already exists') })
+    })
+  })
+
+  it('falls back to a UUID when the public name cannot produce a valid ID', async () => {
+    const view = await service.create({ name: '中文专家' })
+
+    expect(view.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+  })
+
+  it('rejects a custom ID that is already in use', async () => {
+    await service.create({ id: 'rna-reviewer', name: 'Transcriptomics Reviewer' })
+
+    await expect(service.create({ id: 'rna-reviewer', name: 'Another Reviewer' })).rejects.toThrow(
+      'ID is already in use.'
+    )
   })
 
   it('stores the provided name verbatim', async () => {
@@ -197,6 +247,14 @@ describe('ProfileService.create', () => {
   it('rejects non-string optional identity fields before persisting the profile', async () => {
     await expect(service.create({ name: 'My Bot', description: 42 } as never)).rejects.toThrow(
       /description must be a string/i
+    )
+
+    expect(await service.list()).toEqual([])
+  })
+
+  it('rejects a non-string custom ID before persisting the profile', async () => {
+    await expect(service.create({ id: 42, name: 'My Bot' } as never)).rejects.toThrow(
+      /id must be a string/i
     )
 
     expect(await service.list()).toEqual([])

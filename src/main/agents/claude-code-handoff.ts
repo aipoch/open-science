@@ -115,7 +115,7 @@ export class ClaudeCodeCompletionGateRuntime implements CompletionGateRuntime {
     if (!replacement.contextReset) {
       throw new Error('Claude Code handoff did not replace the agent session.')
     }
-    // targetName is intentionally not resolved here: the durable UUID binding is the runtime authority.
+    // targetName is intentionally not resolved here: the durable ID binding is the runtime authority.
     void handoff
   }
 

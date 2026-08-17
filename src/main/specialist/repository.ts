@@ -21,6 +21,13 @@ const SPECIALISTS_FILE = 'specialists.json'
 
 const log = createLogger('specialist.repository')
 
+export class SpecialistIdConflictError extends Error {
+  constructor(readonly specialistId: string) {
+    super(`Specialist with id ${specialistId} already exists.`)
+    this.name = 'SpecialistIdConflictError'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Sanitization helpers (untrusted disk data → safe in-memory shapes)
 // ---------------------------------------------------------------------------
@@ -234,7 +241,7 @@ export class SpecialistRepository {
     return this.mutate((doc) => {
       // Check uniqueness of id and name.
       if (doc.specialists.some((s) => s.id === specialist.id)) {
-        throw new Error(`Specialist with id ${specialist.id} already exists.`)
+        throw new SpecialistIdConflictError(specialist.id)
       }
       if (doc.specialists.some((s) => s.name === specialist.name)) {
         throw new Error(`Specialist with name "${specialist.name}" already exists.`)

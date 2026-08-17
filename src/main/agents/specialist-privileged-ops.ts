@@ -8,12 +8,12 @@
 // implementation modules. Issue 08 composes it into the dispatcher.
 //
 // Design rules mirrored from design.md §8/§10 and the issue 04 acceptance criteria:
-//  - Approval re-resolves the PUBLIC NAME to the UUID and verifies the REVIEWED REVISION immediately
+//  - Approval re-resolves the PUBLIC NAME to the ID and verifies the REVIEWED REVISION immediately
 //    before committing. Pre-card resolution is never mutation authority.
 //  - A stale, renamed, deleted, or otherwise changed target after card creation FAILS CLOSED
 //    without applying any part of the patch (sanitized `host.agents.<method>:` error).
 //  - Delete verifies ABSENCE and returns `{ status: "deleted", name }` WITHOUT clearing or rewriting
-//    session UUID bindings. Bound conversations resolve unavailable later (design.md §10).
+//    session ID bindings. Bound conversations resolve unavailable later (design.md §10).
 //  - Decline returns a structured camelCase result such as `{ status: "declined", operation: "delete" }`
 //    and produces NO mutation, invalidation, binding, runtime, or renderer state change.
 //  - Catalog invalidation occurs ONLY after a successful mutation.
@@ -62,7 +62,7 @@ export type AgentDeclinedResult = {
 export type DeleteResult = AgentDeletedResult | AgentDeclinedResult
 
 // ---------------------------------------------------------------------------
-// Shared re-resolution: name -> UUID + revision verification immediately before mutation
+// Shared re-resolution: name -> ID + revision verification immediately before mutation
 // ---------------------------------------------------------------------------
 
 // Resolves the public name to the live Profile and verifies the reviewed revision still matches.
@@ -117,17 +117,17 @@ export type PrivilegedOpDeps = {
 export type ApplyDeleteDeps = PrivilegedOpDeps & {
   currentName: string
   reviewedRevision: number
-  // OPTIONAL sink that, IF provided, lets a caller (issue 08) observe the deleted UUID. This module
-  // NEVER invokes it: delete keeps stable UUID bindings so bound conversations resolve unavailable
+  // OPTIONAL sink that, IF provided, lets a caller (issue 08) observe the deleted Specialist ID.
+  // This module NEVER invokes it: delete keeps stable ID bindings so bound conversations resolve unavailable
   // later (design.md §10). It exists only so the contract is testable — a test asserts it is never
   // called. Clearing/rewriting bindings is explicitly forbidden behavior.
   clearSessionBindings?: (specialistId: string) => Promise<void> | void
   deleteSpecialist?: (request: SpecialistDeleteRequest) => Promise<SpecialistDeleteResult>
 }
 
-// Approves and deletes a Specialist. On approval, re-resolves name -> UUID, verifies the reviewed
+// Approves and deletes a Specialist. On approval, re-resolves name -> ID, verifies the reviewed
 // revision, deletes through ProfileService, verifies absence, invalidates the catalog, and returns
-// `{ status: "deleted", name }`. Session UUID bindings are NEVER cleared or rewritten. On decline,
+// `{ status: "deleted", name }`. Session ID bindings are NEVER cleared or rewritten. On decline,
 // returns `{ status: "declined", operation: "delete" }` with NO mutation. On drift/failure, throws a
 // sanitized `host.agents.delete:` error.
 export const applyDelete = async (deps: ApplyDeleteDeps): Promise<DeleteResult> => {

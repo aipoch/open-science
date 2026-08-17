@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  inferSpecialistId,
   validateSpecialistName,
   validateSpecialistDescription,
   validateCreateSpecialistInput,
@@ -12,6 +13,18 @@ import {
   resolveEffectiveSpecialistSkills,
   filterSpecialistConnectorSkills
 } from './specialist'
+
+describe('inferSpecialistId', () => {
+  it('normalizes a compatible public name into a stable Specialist ID', () => {
+    expect(inferSpecialistId(' RNA-seq Reviewer ')).toBe('rna-seq-reviewer')
+    expect(inferSpecialistId('Data_Analysis')).toBe('data-analysis')
+  })
+
+  it('returns no inferred ID when the name cannot become a safe public ID', () => {
+    expect(inferSpecialistId('中文专家')).toBeUndefined()
+    expect(inferSpecialistId('MCP Research')).toBeUndefined()
+  })
+})
 
 describe('validateSpecialistName', () => {
   it('accepts normal names', () => {
@@ -72,6 +85,24 @@ describe('validateCreateSpecialistInput', () => {
     expect(
       validateCreateSpecialistInput({ name: '<bad>' }, []).map((error) => error.message)
     ).toContain('Name may only contain letters, digits, spaces, hyphens, and underscores.')
+  })
+
+  it('rejects an invalid custom Specialist ID', () => {
+    const errors = validateCreateSpecialistInput({ name: 'RNA Reviewer', id: 'RNA Reviewer' }, [])
+    expect(errors).toContainEqual({
+      field: 'id',
+      message: 'ID may only contain lowercase letters, numbers, and hyphens.'
+    })
+  })
+
+  it('rejects a custom Specialist ID that is already in use', () => {
+    const errors = validateCreateSpecialistInput(
+      { name: 'RNA Reviewer', id: 'rna-reviewer' },
+      [],
+      undefined,
+      ['rna-reviewer']
+    )
+    expect(errors).toContainEqual({ field: 'id', message: 'ID is already in use.' })
   })
 
   it('rejects blank or oversized display names on create and update', () => {

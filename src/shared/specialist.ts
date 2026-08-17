@@ -244,7 +244,7 @@ export type SpecialistListItem =
 // Resolution of a session's specialist binding at send time (requires SpecialistProfileView above).
 // 'main'        — no binding, main agent is used.
 // 'bound'       — a valid enabled profile was found.
-// 'unavailable' — the bound UUID is unknown, disabled, or corrupt (send must be blocked).
+// 'unavailable' — the bound Specialist ID is unknown, disabled, or corrupt (send must be blocked).
 export type SessionSpecialistResolution =
   | { kind: 'main' }
   | { kind: 'bound'; profile: SpecialistProfileView }
@@ -252,6 +252,9 @@ export type SessionSpecialistResolution =
 
 // Input for creating a new specialist.
 export type CreateSpecialistInput = {
+  // Optional immutable public ID. Omission lets the main process infer one from `name` and fall back
+  // to a UUID when the inferred value is unsafe or already used.
+  id?: string
   name: string
   displayName?: string
   description?: string
@@ -299,7 +302,7 @@ export type DuplicateSpecialistRequest = { id: string }
 
 // Validation error for a single field.
 export type SpecialistFieldError = {
-  field: 'name' | 'description' | 'systemPrompt' | 'packageVersion'
+  field: 'id' | 'name' | 'description' | 'systemPrompt' | 'packageVersion'
   message: string
 }
 
@@ -311,8 +314,33 @@ export type SpecialistFieldError = {
 // the three never drift apart.
 export const SPECIALIST_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DISPLAY_NAME_MAX_LENGTH = 80
+export const SPECIALIST_ID_MAX_LENGTH = 128
 export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 200
 export const SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH = 32_768
+
+const SPECIALIST_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/
+const SPECIALIST_ID_RESERVED_PREFIXES = ['os-', 'mcp-'] as const
+
+export const validateSpecialistId = (id: string): string | undefined => {
+  if (!SPECIALIST_ID_PATTERN.test(id)) {
+    return 'ID may only contain lowercase letters, numbers, and hyphens.'
+  }
+  if (SPECIALIST_ID_RESERVED_PREFIXES.some((prefix) => id.startsWith(prefix))) {
+    return 'IDs starting with os- or mcp- are reserved.'
+  }
+  return undefined
+}
+
+export const inferSpecialistId = (name: string): string | undefined => {
+  const id = name
+    .normalize('NFKC')
+    .trim()
+    .toLocaleLowerCase('en-US')
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return validateSpecialistId(id) === undefined ? id : undefined
+}
 
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
@@ -395,9 +423,18 @@ export const validateSpecialistSystemPrompt = (systemPrompt: string): string | u
 export const validateCreateSpecialistInput = (
   input: CreateSpecialistInput,
   existingNames: string[],
-  existingIds?: Map<string, string>
+  existingIds?: Map<string, string>,
+  usedSpecialistIds: readonly string[] = []
 ): SpecialistFieldError[] => {
   const errors: SpecialistFieldError[] = []
+
+  if (input.id !== undefined) {
+    const idError = validateSpecialistId(input.id)
+    if (idError) errors.push({ field: 'id', message: idError })
+    else if (usedSpecialistIds.includes(input.id)) {
+      errors.push({ field: 'id', message: 'ID is already in use.' })
+    }
+  }
 
   const nameError = validateSpecialistName(input.name, existingNames, undefined, existingIds)
   if (nameError) errors.push({ field: 'name', message: nameError })

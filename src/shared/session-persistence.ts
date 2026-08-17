@@ -515,9 +515,9 @@ export type PersistedChatSession = {
   // Main-owned reversible visibility state. Whole-session renderer saves must preserve the durable
   // value; only the dedicated archive command changes it.
   archivedAt?: number
-  // Immutable Specialist UUID bound at session creation. Absent means no specialist binding (Main
+  // Immutable Specialist ID bound at session creation. Absent means no specialist binding (Main
   // Agent). Written once when the session is created and never changed; the Profile is resolved
-  // fresh from ProfileService before every turn via the UUID.
+  // fresh from ProfileService before every turn via the ID.
   specialistId?: string
   // Last known context-window usage. A live attached runtime replaces or clears this snapshot; a
   // detached restored Session keeps it so the indicator survives an app restart.
@@ -3446,7 +3446,7 @@ const sanitizeSession = (
   if (activities.length > 0) sanitized.activities = activities
   if (activityGroups.length > 0) sanitized.activityGroups = activityGroups
   if (enabledComputeHosts.length > 0) sanitized.enabledComputeHosts = enabledComputeHosts
-  // Specialist UUID: accept any non-empty string. The main process validates it against ProfileService
+  // Specialist ID: accept any non-empty string. The main process validates it against ProfileService
   // at send time; the sanitizer only ensures the value is safe to re-persist.
   const specialistId = asString(session.specialistId)
   if (specialistId) sanitized.specialistId = specialistId
