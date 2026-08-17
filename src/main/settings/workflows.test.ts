@@ -671,11 +671,15 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     const resetCustomServerClient = vi.fn(async () => {
       calls.push('reset')
     })
+    const clearCustomServerFailure = vi.fn(() => {
+      calls.push('clear')
+    })
     const workflows = createSettingsWorkflows(
       capability,
       testEffects({
         pruneCustomServerPermissions,
         resetCustomServerClient,
+        clearCustomServerFailure,
         invalidatePermissionProjection: () => calls.push('invalidate'),
         refreshConnectorSkillDocs: async () => {
           calls.push('refresh')
@@ -684,7 +688,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
     ).connectors
 
     await workflows.removeCustomServer({ id: 'server' })
-    expect(calls).toEqual(['persist', 'reset', 'prune', 'invalidate', 'refresh'])
+    expect(calls).toEqual(['persist', 'reset', 'clear', 'prune', 'invalidate', 'refresh'])
 
     calls.length = 0
     pruneCustomServerPermissions.mockImplementation(async () => {
@@ -692,7 +696,7 @@ describe('SettingsWorkflows catalog and appearance effects', () => {
       throw new Error('prune failed')
     })
     await expect(workflows.removeCustomServer({ id: 'server' })).rejects.toThrow('prune failed')
-    expect(calls).toEqual(['persist', 'reset', 'prune', 'invalidate', 'refresh'])
+    expect(calls).toEqual(['persist', 'reset', 'clear', 'prune', 'invalidate', 'refresh'])
 
     calls.length = 0
     resetCustomServerClient.mockImplementationOnce(async () => {
