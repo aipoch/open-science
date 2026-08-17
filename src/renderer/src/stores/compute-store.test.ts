@@ -183,4 +183,21 @@ describe('compute store - approval replay', () => {
 
     expect(useComputeStore.getState().pendingApprovals).toEqual([request])
   })
+
+  it('dismisses a settled approval idempotently', () => {
+    const first: ComputeApprovalRequest = {
+      id: 'approval-1',
+      provider_id: 'ssh:lab',
+      provider_name: 'Lab',
+      shape: 'direct_ssh',
+      intent: 'Run analysis'
+    }
+    const second = { ...first, id: 'approval-2' }
+
+    useComputeStore.setState({ pendingApprovals: [first, second] })
+    useComputeStore.getState().dismissApproval('approval-1')
+    useComputeStore.getState().dismissApproval('approval-1')
+
+    expect(useComputeStore.getState().pendingApprovals).toEqual([second])
+  })
 })

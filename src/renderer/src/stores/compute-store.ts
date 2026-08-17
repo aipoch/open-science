@@ -36,6 +36,8 @@ type ComputeStore = ComputeStoreData & {
   setConcurrency: (providerId: string, limit: number) => Promise<void>
   // Queues an incoming approval request (from the main-process compute gate).
   enqueueApproval: (request: ComputeApprovalRequest) => void
+  // Removes a request after Main reports response, timeout, or cancellation settlement.
+  dismissApproval: (id: string) => void
   // Sends the user's approval decision back to main and removes the request from the queue.
   respondApproval: (id: string, decision: ComputeApprovalDecision) => Promise<void>
 }
@@ -178,6 +180,12 @@ export const useComputeStore = create<ComputeStore>((set) => ({
         ? state
         : { pendingApprovals: [...state.pendingApprovals, request] }
     )
+  },
+
+  dismissApproval: (id) => {
+    set((state) => ({
+      pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
+    }))
   },
 
   // Sends the user's scoped decision back to main and removes the head request from the queue.

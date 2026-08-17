@@ -467,7 +467,7 @@ describe('Compute service architecture', () => {
     const computeContracts = RENDERER_CONTRACT_CATALOG.filter(
       ({ channel }) => channel?.startsWith('compute:') === true
     )
-    expect(computeContracts).toHaveLength(24)
+    expect(computeContracts).toHaveLength(26)
     const remoteRestricted = computeContracts.filter(
       ({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub'
     )

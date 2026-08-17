@@ -71,6 +71,10 @@ export class ApprovalBroker {
     return this.pending.get(id)?.request ?? null
   }
 
+  replayPending(): void {
+    for (const entry of this.pending.values()) this.deps.broadcast(entry.request)
+  }
+
   // Called from the IPC handler when the renderer responds. Unknown ids are ignored (already settled).
   respond(id: string, decision: ApprovalDecision): void {
     this.settle(id, decision, decision === 'deny' ? 'rejected' : 'resolved')
@@ -119,6 +123,10 @@ export class ApprovalBroker {
     if (entry.timer !== undefined) this.clearTimer(entry.timer)
     this.pending.delete(id)
     entry.resolve(decision)
-    this.deps.onSettled?.(id, state)
+    try {
+      this.deps.onSettled?.(id, state)
+    } catch {
+      // Renderer/event projection cannot roll back the broker decision or keep the call parked.
+    }
   }
 }

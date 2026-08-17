@@ -55,6 +55,7 @@ const createDependencies = (): ComputeApplicationCommandDependencies => ({
     revealInFolder: vi.fn(() => undefined),
     approvalRespond: vi.fn(() => undefined),
     approvalReplay: vi.fn(() => null),
+    approvalReplayPending: vi.fn(() => undefined),
     jobsList: vi.fn(async () => []),
     jobsPendingNotification: vi.fn(async () => []),
     jobsMarkConsumed: vi.fn(async () => undefined)
@@ -84,14 +85,14 @@ const invocation = <Args extends readonly unknown[]>(
 }
 
 describe('Compute application commands', () => {
-  it('defines exactly the 22 public Compute commands without session-internal handlers', () => {
+  it('defines exactly the 23 public Compute commands without session-internal handlers', () => {
     const publicComputeChannels = RENDERER_CONTRACT_GROUPS.find(
       (group) => group.capability === 'compute'
     )
       ?.contracts.filter((contract) => contract.kind === 'method')
       .map((contract) => contract.channel)
 
-    expect(publicComputeChannels).toHaveLength(22)
+    expect(publicComputeChannels).toHaveLength(23)
     expect(computeApplicationCommandGroup.commands.map(({ name }) => name)).toEqual(
       publicComputeChannels
     )
@@ -154,6 +155,7 @@ describe('Compute application commands', () => {
       computeApplicationCommands.approvalReplay,
       invocation(['approval-1'])
     )
+    await router.dispatcher.invoke(computeApplicationCommands.approvalReplayPending, invocation([]))
     const filter = { sessionId: 'session-1', status: ['done'] }
     await router.dispatcher.invoke(computeApplicationCommands.jobsList, invocation([filter]))
     await router.dispatcher.invoke(
@@ -196,6 +198,7 @@ describe('Compute application commands', () => {
     )
     expect(dependencies.compute.approvalRespond).toHaveBeenCalledWith('approval-1', 'once')
     expect(dependencies.compute.approvalReplay).toHaveBeenCalledWith('approval-1')
+    expect(dependencies.compute.approvalReplayPending).toHaveBeenCalledOnce()
     expect(dependencies.compute.jobsList).toHaveBeenCalledWith(filter)
     expect(dependencies.compute.jobsMarkConsumed).toHaveBeenCalledWith('session-1', ['job-1'])
     expect(dependencies.enabledHosts.set).toHaveBeenCalledWith('session-1', ['ssh:cluster'])
@@ -299,6 +302,12 @@ describe('Compute application commands', () => {
           invocation(['approval-1'], callerContext)
         )
       ).resolves.toBeNull()
+      await expect(
+        router.dispatcher.invoke(
+          computeApplicationCommands.approvalReplayPending,
+          invocation([], callerContext)
+        )
+      ).resolves.toBeUndefined()
     }
 
     const deniedCallers = [
@@ -327,6 +336,12 @@ describe('Compute application commands', () => {
           invocation(['approval-1'], callerContext)
         )
       ).rejects.toThrow('Only a current human caller can reopen compute approval requests.')
+      await expect(
+        router.dispatcher.invoke(
+          computeApplicationCommands.approvalReplayPending,
+          invocation([], callerContext)
+        )
+      ).rejects.toThrow('Only a current human caller can reopen compute approval requests.')
     }
     await expect(
       router.dispatcher.invoke(
@@ -337,5 +352,6 @@ describe('Compute application commands', () => {
 
     expect(dependencies.compute.approvalRespond).toHaveBeenCalledTimes(allowedCallers.length)
     expect(dependencies.compute.approvalReplay).toHaveBeenCalledTimes(allowedCallers.length)
+    expect(dependencies.compute.approvalReplayPending).toHaveBeenCalledTimes(allowedCallers.length)
   })
 })

@@ -169,6 +169,7 @@ type ComputeHandlers = {
   // 'conversation' and 'project' scopes in addition to 'once' and 'deny' (issue 05).
   approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
   approvalReplay: (id: string) => ComputeApprovalRequest | null
+  approvalReplayPending: () => void
   approvalPauseSession: (sessionId: string) => void
   approvalResumeSession: (sessionId: string) => void
   // Returns JobSummary[] for a session, optionally filtered by status (renderer feed, issue 05).
@@ -234,9 +235,15 @@ const createComputeHandlers = (
               })
             }
           },
-      onSettled: taskNotifications
-        ? (id, state) => void taskNotifications.settleAuthorization('compute', id, state)
-        : undefined,
+      onSettled: (id, state) => {
+        try {
+          broadcastToRenderers('compute:approval-settled', id)
+        } finally {
+          if (taskNotifications) {
+            void taskNotifications.settleAuthorization('compute', id, state)
+          }
+        }
+      },
       // Isolated/no-Registry callers retain the former settings-backed Project grant behavior.
       checkProjectGrant:
         legacyComputeGrants && !permissionGrantRegistry
@@ -400,6 +407,7 @@ const createComputeHandlers = (
     concurrencyManager,
     approvalRespond: (id, decision) => broker.respond(id, decision),
     approvalReplay: (id) => broker.getPending(id),
+    approvalReplayPending: () => broker.replayPending(),
     approvalPauseSession: (sessionId) => broker.pauseSession(sessionId),
     approvalResumeSession: (sessionId) => broker.resumeSession(sessionId),
     jobsList: async (filter) => {

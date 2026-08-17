@@ -100,6 +100,7 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
   ipcMainHandle('compute:approval-replay', (_event, id: unknown) =>
     typeof id === 'string' ? handlers.approvalReplay(id) : null
   )
+  ipcMainHandle('compute:approval-replay-pending', () => handlers.approvalReplayPending())
   // Returns all jobs for a session as JobSummary[], optionally filtered by status (Phase 3d).
   ipcMainHandle(
     COMPUTE_JOBS_LIST_CHANNEL,

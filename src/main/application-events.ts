@@ -55,10 +55,12 @@ export type ApplicationEventMap = {
   'project-files:changed': ProjectFilesChangedEvent
   'permissions:changed': PermissionGrantsChangedEvent
   'connectors:approval-request': ConnectorApprovalRequest
+  'connectors:approval-settled': string
   'skills:conversation-import-request': ConversationSkillImportApprovalRequest
   'skills:conversation-import-settled': string
   'skills:catalog-changed': undefined
   'compute:approval-request': ComputeApprovalRequest
+  'compute:approval-settled': string
   'compute:job-updated': JobSummary
   'specialist:catalog-changed': undefined
   'specialist:pending-switch': PendingSwitchBroadcast

@@ -1155,7 +1155,13 @@ const createApplicationModules = async (
   // pre-allowed or skip-approved is held here until the user decides (or it auto-denies on timeout).
   const approvalBroker = new ApprovalBroker({
     generateId: () => randomUUID(),
-    onSettled: (id, state) => void taskNotifications.settleAuthorization('connector', id, state),
+    onSettled: (id, state) => {
+      try {
+        broadcastToRenderers('connectors:approval-settled', id)
+      } finally {
+        void taskNotifications.settleAuthorization('connector', id, state)
+      }
+    },
     broadcast: buildConnectorApprovalBroadcast({
       broadcastToRenderers,
       taskNotifications,
@@ -1808,6 +1814,7 @@ const createApplicationModules = async (
     ipcMainHandle('connectors:approval-replay', (_event, id: unknown) =>
       typeof id === 'string' ? approvalBroker.getPending(id) : null
     )
+    ipcMainHandle('connectors:approval-replay-pending', () => approvalBroker.replayPending())
     ipcMainHandle(
       'skills:conversation-import-respond',
       (_event, response: ConversationSkillImportApprovalResponse) => {

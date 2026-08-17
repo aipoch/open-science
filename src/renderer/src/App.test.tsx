@@ -24,13 +24,18 @@ const mocks = vi.hoisted(() => {
       isSettingsLoaded: true,
       pendingApprovals: [] as unknown[],
       enqueueApproval: vi.fn(),
+      dismissApproval: vi.fn(),
       load: vi.fn().mockResolvedValue(true),
       checkEnvironment: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
       closeSettings: vi.fn()
     },
     skillImport: { enqueue: vi.fn(), dismiss: vi.fn(), pending: [] as unknown[] },
-    compute: { enqueueApproval: vi.fn(), pendingApprovals: [] as unknown[] },
+    compute: {
+      enqueueApproval: vi.fn(),
+      dismissApproval: vi.fn(),
+      pendingApprovals: [] as unknown[]
+    },
     navigation: { view: 'home' as 'home' | 'workspace', userNavigationRevision: 0 },
     sessions: [] as Array<{ id: string }>,
     appendRoutedUserMessage: vi.fn(),
@@ -364,8 +369,12 @@ describe('App startup routing', () => {
     mocks.settings.checkEnvironment.mockReset().mockResolvedValue(undefined)
     mocks.settings.openSettings.mockClear()
     mocks.settings.closeSettings.mockClear()
+    mocks.settings.enqueueApproval.mockClear()
+    mocks.settings.dismissApproval.mockClear()
     mocks.skillImport.enqueue.mockClear()
     mocks.skillImport.dismiss.mockClear()
+    mocks.compute.enqueueApproval.mockClear()
+    mocks.compute.dismissApproval.mockClear()
     mocks.navigation.view = 'home'
     mocks.startupView = 'app'
     mocks.sessionPersistence.isReady = true
@@ -407,6 +416,8 @@ describe('App startup routing', () => {
       storage: { getInfo: mocks.getInfo },
       settings: {
         onConnectorApprovalRequest: vi.fn(() => vi.fn()),
+        onConnectorApprovalSettled: vi.fn(() => vi.fn()),
+        replayPendingConnectorApprovals: vi.fn().mockResolvedValue(undefined),
         onSkillImportApprovalRequest: vi.fn(() => vi.fn()),
         onSkillImportApprovalSettled: vi.fn(() => vi.fn()),
         replayPendingSkillImportApprovals: vi.fn().mockResolvedValue(undefined)
@@ -414,6 +425,8 @@ describe('App startup routing', () => {
       notifications: mocks.notifications,
       compute: {
         onApprovalRequest: vi.fn(() => vi.fn()),
+        onApprovalSettled: vi.fn(() => vi.fn()),
+        replayPendingApprovals: vi.fn().mockResolvedValue(undefined),
         onJobUpdated: vi.fn(() => vi.fn()),
         enabledHostsSet: vi.fn(() => Promise.resolve())
       },
@@ -1210,6 +1223,68 @@ describe('App startup routing', () => {
 
     expect(window.api.settings.replayPendingSkillImportApprovals).toHaveBeenCalledOnce()
     expect(mocks.skillImport.enqueue).toHaveBeenCalledWith(pending)
+  })
+
+  it('recovers and settles pending Connector and Compute approvals after the renderer starts', async () => {
+    const connector = {
+      id: 'connector-recovered',
+      connector: 'pubmed',
+      method: 'search',
+      argsPreview: '{}'
+    }
+    const compute = {
+      id: 'compute-recovered',
+      provider_id: 'ssh:cluster',
+      provider_name: 'Cluster',
+      shape: 'direct_ssh',
+      intent: 'Inspect the host',
+      command_preview: 'pwd',
+      command_full: 'pwd'
+    }
+    let connectorRequestListener: ((request: typeof connector) => void) | undefined
+    let connectorSettledListener: ((id: string) => void) | undefined
+    let computeRequestListener: ((request: typeof compute) => void) | undefined
+    let computeSettledListener: ((id: string) => void) | undefined
+
+    window.api.settings.onConnectorApprovalRequest = vi.fn((listener) => {
+      connectorRequestListener = listener
+      return () => undefined
+    })
+    window.api.settings.onConnectorApprovalSettled = vi.fn((listener) => {
+      connectorSettledListener = listener
+      return () => undefined
+    })
+    window.api.settings.replayPendingConnectorApprovals = vi.fn(async () => {
+      connectorRequestListener?.(connector)
+    })
+    window.api.compute.onApprovalRequest = vi.fn((listener) => {
+      computeRequestListener = listener
+      return () => undefined
+    })
+    window.api.compute.onApprovalSettled = vi.fn((listener) => {
+      computeSettledListener = listener
+      return () => undefined
+    })
+    window.api.compute.replayPendingApprovals = vi.fn(async () => {
+      computeRequestListener?.(compute)
+    })
+
+    await render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(window.api.settings.replayPendingConnectorApprovals).toHaveBeenCalledOnce()
+    expect(window.api.compute.replayPendingApprovals).toHaveBeenCalledOnce()
+    expect(mocks.settings.enqueueApproval).toHaveBeenCalledWith(connector)
+    expect(mocks.compute.enqueueApproval).toHaveBeenCalledWith(compute)
+
+    act(() => {
+      connectorSettledListener?.(connector.id)
+      computeSettledListener?.(compute.id)
+    })
+    expect(mocks.settings.dismissApproval).toHaveBeenCalledWith(connector.id)
+    expect(mocks.compute.dismissApproval).toHaveBeenCalledWith(compute.id)
   })
 
   it('waits for persisted settings before checking the selected agent environment', async () => {

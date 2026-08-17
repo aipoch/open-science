@@ -72,13 +72,18 @@ const computePaths = [
   'compute.listDir',
   'compute.probe',
   'compute.replayApproval',
+  'compute.replayPendingApprovals',
   'compute.respondApproval',
   'compute.revealInFolder',
   'compute.scratchSet',
   'compute.sshConfigAliases'
 ] as const
 
-const computeEventPaths = ['compute.onApprovalRequest', 'compute.onJobUpdated'] as const
+const computeEventPaths = [
+  'compute.onApprovalRequest',
+  'compute.onApprovalSettled',
+  'compute.onJobUpdated'
+] as const
 
 const pathsWithPrefix = (paths: readonly string[], prefix: string): string[] =>
   paths.filter((path) => path.startsWith(prefix)).sort()
@@ -243,6 +248,7 @@ describe('renderer surface compatibility matrix', () => {
     expect(pathsWithPrefix(eventPaths, 'compute.')).toEqual(computeEventPaths)
     expect(computeEventPaths.map((path) => WEB_EVENT_CHANNELS[path])).toEqual([
       'compute:approval-request',
+      'compute:approval-settled',
       'compute:job-updated'
     ])
 

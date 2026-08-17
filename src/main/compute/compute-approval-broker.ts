@@ -124,6 +124,10 @@ export class ComputeApprovalBroker {
     }
   }
 
+  replayPending(): void {
+    for (const entry of this.pending.values()) this.deps.broadcast(entry.request, entry.context)
+  }
+
   // Like request(), but checks conversation and project grants first. If a grant matches, resolves
   // immediately without broadcasting. When the user responds with a scope that has memory, records it.
   requestWithContext(
@@ -320,6 +324,10 @@ export class ComputeApprovalBroker {
     if (entry.timer !== undefined) this.clearTimer(entry.timer)
     this.pending.delete(id)
     entry.resolve(decision)
-    this.deps.onSettled?.(id, state)
+    try {
+      this.deps.onSettled?.(id, state)
+    } catch {
+      // Renderer/event projection cannot roll back the broker decision or keep the call parked.
+    }
   }
 }

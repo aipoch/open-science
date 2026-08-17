@@ -137,6 +137,40 @@ describe('ComputeApprovalDialog', () => {
     expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, decision)
   })
 
+  it('disables decisions while submitting and keeps a failed response retryable', async () => {
+    let rejectResponse!: (error: Error) => void
+    const respondApproval = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise<void>((_, reject) => {
+          rejectResponse = reject
+        })
+      )
+      .mockResolvedValueOnce(undefined)
+    useComputeStore.setState({ pendingApprovals: [request], respondApproval })
+    act(() => root.render(<ComputeApprovalDialog />))
+
+    act(() => findButton('Once')?.click())
+
+    for (const label of ['Deny', 'Once', 'This session', 'This project', 'Always']) {
+      expect(findButton(label)?.disabled).toBe(true)
+    }
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-busy')).toBe('true')
+
+    await act(async () => {
+      rejectResponse(new Error('IPC unavailable'))
+      await Promise.resolve()
+    })
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not submit this approval. Try again.'
+    )
+    expect(findButton('Once')?.disabled).toBe(false)
+
+    act(() => findButton('Once')?.click())
+    expect(respondApproval).toHaveBeenCalledTimes(2)
+  })
+
   it.each([
     ['This project', 'project', 'for this project'],
     ['Always', 'global', 'globally']

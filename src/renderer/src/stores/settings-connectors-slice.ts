@@ -38,6 +38,7 @@ export type SettingsConnectorsActions = {
   setCustomServerEnabled: (id: string, enabled: boolean) => Promise<void>
   removeCustomServer: (id: string) => Promise<void>
   enqueueApproval: (request: ConnectorApprovalRequest) => void
+  dismissApproval: (id: string) => void
   respondApproval: (id: string, decision: ApprovalDecision) => Promise<void>
 }
 
@@ -299,6 +300,11 @@ export const createSettingsConnectorsSlice = ({
           ? state
           : { pendingApprovals: [...state.pendingApprovals, request] }
       )
+    },
+    dismissApproval: (id) => {
+      setState((state) => ({
+        pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
+      }))
     },
     respondApproval: async (id, decision) => {
       await getCommands().respondConnectorApproval({ id, decision })

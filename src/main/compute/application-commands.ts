@@ -32,6 +32,7 @@ type ComputeCommandOwner = Pick<
   | 'revealInFolder'
   | 'approvalRespond'
   | 'approvalReplay'
+  | 'approvalReplayPending'
   | 'jobsList'
   | 'jobsPendingNotification'
   | 'jobsMarkConsumed'
@@ -135,6 +136,11 @@ const computeApplicationCommands = Object.freeze({
     readonly [id: string],
     OwnerResult<ComputeCommandOwner, 'approvalReplay'>
   >('compute:approval-replay'),
+  approvalReplayPending: defineApplicationCommand<
+    'compute:approval-replay-pending',
+    readonly [],
+    OwnerResult<ComputeCommandOwner, 'approvalReplayPending'>
+  >('compute:approval-replay-pending'),
   jobsList: defineApplicationCommand<
     'compute:jobs:list',
     OwnerArgs<ComputeCommandOwner, 'jobsList'>,
@@ -191,6 +197,7 @@ const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', 
   computeApplicationCommands.listDir,
   computeApplicationCommands.probe,
   computeApplicationCommands.approvalReplay,
+  computeApplicationCommands.approvalReplayPending,
   computeApplicationCommands.approvalRespond,
   computeApplicationCommands.revealInFolder,
   computeApplicationCommands.scratchSet,
@@ -266,6 +273,12 @@ const registerComputeApplicationCommands = (
           throw new Error('Only a current human caller can reopen compute approval requests.')
         }
         return dependencies.compute.approvalReplay(args[0])
+      },
+      'compute:approval-replay-pending': ({ callerContext }) => {
+        if (!canSatisfyHumanApproval(callerContext)) {
+          throw new Error('Only a current human caller can reopen compute approval requests.')
+        }
+        return dependencies.compute.approvalReplayPending()
       },
       'compute:jobs:list': ({ args }) => dependencies.compute.jobsList(args[0]),
       'compute:jobs:pending-notification': ({ args }) =>

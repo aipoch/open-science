@@ -337,6 +337,8 @@ const api: OpenScienceAPI = {
     // Fires when a connector call needs the user's approval (external data-egress gate).
     onConnectorApprovalRequest: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorApprovalRequest', listener),
+    onConnectorApprovalSettled: (listener) =>
+      electronRendererContracts.subscribe('settings.onConnectorApprovalSettled', listener),
     onConnectorRuntimeChanged: (listener) =>
       electronRendererContracts.subscribe('settings.onConnectorRuntimeChanged', listener),
     onSkillCatalogChanged: (listener) =>
@@ -349,6 +351,8 @@ const api: OpenScienceAPI = {
       electronRendererContracts.invoke('settings.replayPendingSkillImportApprovals'),
     replayConnectorApproval: (id: string) =>
       electronRendererContracts.invoke('settings.replayConnectorApproval', id),
+    replayPendingConnectorApprovals: () =>
+      electronRendererContracts.invoke('settings.replayPendingConnectorApprovals'),
     respondSkillImportApproval: (response) =>
       electronRendererContracts.invoke('settings.respondSkillImportApproval', response),
     respondConnectorApproval: (request: RespondApprovalRequest) =>
@@ -525,10 +529,14 @@ const api: OpenScienceAPI = {
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest: (listener: (request: ComputeApprovalRequest) => void) =>
       electronRendererContracts.subscribe('compute.onApprovalRequest', listener),
+    onApprovalSettled: (listener: (id: string) => void) =>
+      electronRendererContracts.subscribe('compute.onApprovalSettled', listener),
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval: (request: { id: string; decision: ComputeApprovalDecision }) =>
       electronRendererContracts.invoke('compute.respondApproval', request),
     replayApproval: (id: string) => electronRendererContracts.invoke('compute.replayApproval', id),
+    replayPendingApprovals: () =>
+      electronRendererContracts.invoke('compute.replayPendingApprovals'),
     listDir: (providerId, path) =>
       electronRendererContracts.invoke('compute.listDir', providerId, path),
     bookmarksGet: (providerId) =>

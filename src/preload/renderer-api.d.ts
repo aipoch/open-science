@@ -540,6 +540,7 @@ export interface OpenScienceAPI {
     cancelCustomServerAuthentication(request: AuthenticateCustomServerRequest): Promise<void>
     retryCustomServer(request: AuthenticateCustomServerRequest): Promise<ConnectorsSnapshot>
     onConnectorApprovalRequest(listener: AcpListener<ConnectorApprovalRequest>): RemoveListener
+    onConnectorApprovalSettled?(listener: AcpListener<string>): RemoveListener
     onConnectorRuntimeChanged(listener: AcpListener<undefined>): RemoveListener
     onSkillCatalogChanged(listener: AcpListener<undefined>): RemoveListener
     onSkillImportApprovalRequest(
@@ -548,6 +549,7 @@ export interface OpenScienceAPI {
     onSkillImportApprovalSettled(listener: AcpListener<string>): RemoveListener
     replayPendingSkillImportApprovals(): Promise<void>
     replayConnectorApproval(id: string): Promise<ConnectorApprovalRequest | null>
+    replayPendingConnectorApprovals?(): Promise<void>
     respondSkillImportApproval(response: ConversationSkillImportApprovalResponse): Promise<void>
     respondConnectorApproval(request: RespondApprovalRequest): Promise<void>
     onInstallLog(listener: AcpListener<ClaudeInstallEvent>): RemoveListener
@@ -688,9 +690,11 @@ export interface OpenScienceAPI {
     concurrencySet(providerId: string, limit: number): Promise<void>
     // Fires when a compute call needs user approval (runs before any SSH is made).
     onApprovalRequest(listener: (request: ComputeApprovalRequest) => void): () => void
+    onApprovalSettled?(listener: (id: string) => void): () => void
     // Renderer sends back the user's decision (once / conversation / project / deny).
     respondApproval(request: { id: string; decision: ComputeApprovalDecision }): Promise<void>
     replayApproval(id: string): Promise<ComputeApprovalRequest | null>
+    replayPendingApprovals?(): Promise<void>
     // Lists a remote directory (browse experience).
     listDir(providerId: string, path: string): Promise<DirListing>
     // Downloads a remote file to OS Downloads or project artifact. No approval gate for UI actions.

@@ -172,6 +172,11 @@ const settingsIntegrationApplicationCommands = Object.freeze({
     readonly [id: string],
     ReturnType<ApprovalBroker['getPending']>
   >('connectors:approval-replay'),
+  replayPendingConnectorApprovals: defineApplicationCommand<
+    'connectors:approval-replay-pending',
+    readonly [],
+    ReturnType<ApprovalBroker['replayPending']>
+  >('connectors:approval-replay-pending'),
   respondSkillImportApproval: defineApplicationCommand<
     'skills:conversation-import-respond',
     readonly [response: ConversationSkillImportApprovalResponse],
@@ -218,6 +223,7 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
   [
     settingsIntegrationApplicationCommands.respondConnectorApproval,
     settingsIntegrationApplicationCommands.replayConnectorApproval,
+    settingsIntegrationApplicationCommands.replayPendingConnectorApprovals,
     settingsIntegrationApplicationCommands.respondSkillImportApproval,
     settingsIntegrationApplicationCommands.replayPendingSkillImportApprovals
   ] as const
@@ -226,7 +232,7 @@ const settingsApprovalApplicationCommandGroup = defineApplicationCommandGroup(
 type IntegrationSettingsApplicationCommandDependencies = Readonly<{
   skills: SkillIntegrationWorkflows
   connectors: ConnectorIntegrationWorkflows
-  connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'respond'>
+  connectorApprovals: Pick<ApprovalBroker, 'getPending' | 'replayPending' | 'respond'>
   skillImportApprovals: Pick<SkillImportApprovalBroker, 'respond' | 'replayPending'>
 }>
 
@@ -293,6 +299,12 @@ const registerIntegrationSettingsApplicationCommands = (
           throw new Error('Only a current human caller can reopen connector approval requests.')
         }
         return dependencies.connectorApprovals.getPending(args[0])
+      },
+      'connectors:approval-replay-pending': ({ callerContext }) => {
+        if (!canSatisfyHumanApproval(callerContext)) {
+          throw new Error('Only a current human caller can reopen connector approval requests.')
+        }
+        return dependencies.connectorApprovals.replayPending()
       },
       'skills:conversation-import-respond': ({ args, callerContext }) => {
         if (!canSatisfyHumanApproval(callerContext)) {

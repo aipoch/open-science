@@ -75,6 +75,7 @@ describe('Web RPC contract', () => {
       'compute.listDir',
       'compute.probe',
       'compute.replayApproval',
+      'compute.replayPendingApprovals',
       'compute.respondApproval',
       'compute.revealInFolder',
       'compute.scratchSet',
@@ -88,6 +89,7 @@ describe('Web RPC contract', () => {
     ).toBe(true)
     expect(eventPaths.filter((path) => path.startsWith('compute.'))).toEqual([
       'compute.onApprovalRequest',
+      'compute.onApprovalSettled',
       'compute.onJobUpdated'
     ])
   })
