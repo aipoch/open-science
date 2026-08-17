@@ -10,6 +10,27 @@ const LONG_STREAM_FINAL_SEGMENT = 'Segment 3 paragraph 7'
 const SCROLL_STEPS = 20
 const RAF_FALLBACK_MS = 500
 
+type StreamingMetricsSnapshot = {
+  acpChunkEventsReceived: number
+  agentMessageChunkCommits: number
+  agentMessageChunksCommitted: number
+}
+
+// The app's own streaming pipeline counters (src/renderer/src/lib/streaming-metrics.ts), exposed
+// as window.__streamingMetrics in dev and e2e builds. Cross-checks the rAF/longtask sampling
+// against what the pipeline actually committed; null in builds that gate the handle off.
+const readStreamingMetrics = (page: Page): Promise<StreamingMetricsSnapshot | null> =>
+  page.evaluate(() => {
+    const metrics = (window as unknown as { __streamingMetrics?: StreamingMetricsSnapshot })
+      .__streamingMetrics
+    if (!metrics) return null
+    return {
+      acpChunkEventsReceived: metrics.acpChunkEventsReceived,
+      agentMessageChunkCommits: metrics.agentMessageChunkCommits,
+      agentMessageChunksCommitted: metrics.agentMessageChunksCommitted
+    }
+  })
+
 type SeedMessage = {
   id: string
   role: 'user' | 'agent'
@@ -313,9 +334,22 @@ for (const messageCount of [500, 2000]) {
     await page.getByRole('button', { name: 'Send message' }).click()
     // Start collecting after the click so Playwright's actionability checks stay out of the
     // window; the fixed wait covers the deterministic ~2.5s fake-agent stream without polling.
+    const metricsBefore = await readStreamingMetrics(page)
     await startStreamingCollector(page)
     await page.waitForTimeout(4_000)
     const streaming = await stopStreamingCollector(page)
+    const metricsAfter = await readStreamingMetrics(page)
+    const streamingMetrics =
+      metricsBefore && metricsAfter
+        ? {
+            acpChunkEventsReceived:
+              metricsAfter.acpChunkEventsReceived - metricsBefore.acpChunkEventsReceived,
+            agentMessageChunkCommits:
+              metricsAfter.agentMessageChunkCommits - metricsBefore.agentMessageChunkCommits,
+            agentMessageChunksCommitted:
+              metricsAfter.agentMessageChunksCommitted - metricsBefore.agentMessageChunksCommitted
+          }
+        : null
     await expect(page.getByText(LONG_STREAM_FINAL_SEGMENT)).toBeVisible({ timeout: 120_000 })
 
     console.log(
@@ -333,7 +367,8 @@ for (const messageCount of [500, 2000]) {
         streaming: {
           frames: summarizeFrames(streaming.frames),
           longTasks: summarizeLongTasks(streaming.longTasks)
-        }
+        },
+        streamingMetrics
       })}`
     )
 
