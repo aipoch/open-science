@@ -79,8 +79,15 @@ type AcpProviderSessionResumerDependencies = Readonly<{
 export class AcpProviderSessionResumer {
   private readonly policy = new AcpSessionResumePolicy()
   private readonly presentation = new AcpSessionPresentationPolicy()
+  private readonly progressObservers = new Map<string, Set<() => void>>()
 
   constructor(private readonly deps: AcpProviderSessionResumerDependencies) {}
+
+  observeProgress(providerSessionId: string): void {
+    const observers = this.progressObservers.get(providerSessionId)
+    if (!observers) return
+    for (const observer of observers) observer()
+  }
 
   async resume(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
@@ -96,8 +103,9 @@ export class AcpProviderSessionResumer {
       const connection = await this.withTimeout(() => this.deps.ensureConnected(cwd))
       this.deps.assertCurrentConnection(connection)
       identity.renew()
-      return await this.withTimeout(() =>
-        this.resumeConnected(request, connection, cwd, projectId, identity)
+      return await this.withTimeout(
+        () => this.resumeConnected(request, connection, cwd, projectId, identity),
+        this.progressSessionIds(request)
       )
     } finally {
       identity.release()
@@ -155,15 +163,27 @@ export class AcpProviderSessionResumer {
     }
   }
 
-  private async withTimeout<Result>(operation: () => Promise<Result>): Promise<Result> {
+  private async withTimeout<Result>(
+    operation: () => Promise<Result>,
+    progressSessionIds: readonly string[] = []
+  ): Promise<Result> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
+    let settled = false
+    let rejectTimeout!: (error: Error) => void
     const timeout = new Promise<never>((_resolve, reject) => {
+      rejectTimeout = reject
+    })
+    const renewTimeout = (): void => {
+      if (settled || timedOut) return
+      if (timer !== undefined) this.deps.clearTimer(timer)
       timer = this.deps.setTimer(() => {
         timedOut = true
-        reject(new Error('ACP session resume timed out.'))
+        rejectTimeout(new Error('ACP session resume timed out.'))
       }, this.deps.resumeTimeoutMs)
-    })
+    }
+    const unsubscribe = this.subscribeToProgress(progressSessionIds, renewTimeout)
+    renewTimeout()
 
     try {
       return await Promise.race([operation(), timeout])
@@ -171,7 +191,35 @@ export class AcpProviderSessionResumer {
       if (timedOut) await this.deps.disconnectTimedOutConnection()
       throw error
     } finally {
+      settled = true
+      unsubscribe()
       if (timer !== undefined) this.deps.clearTimer(timer)
+    }
+  }
+
+  private progressSessionIds(request: AcpResumeSessionRequest): string[] {
+    const registeredProviderSessionId = this.deps.registry
+      .lookup(request.sessionId)
+      ?.aggregate.snapshot().providerSessionId
+    return [request.sessionId, request.providerSessionId, registeredProviderSessionId].filter(
+      (sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.length > 0
+    )
+  }
+
+  private subscribeToProgress(sessionIds: readonly string[], observer: () => void): () => void {
+    const subscribedIds = [...new Set(sessionIds)]
+    for (const sessionId of subscribedIds) {
+      const observers = this.progressObservers.get(sessionId) ?? new Set<() => void>()
+      observers.add(observer)
+      this.progressObservers.set(sessionId, observers)
+    }
+    return () => {
+      for (const sessionId of subscribedIds) {
+        const observers = this.progressObservers.get(sessionId)
+        if (!observers) continue
+        observers.delete(observer)
+        if (observers.size === 0) this.progressObservers.delete(sessionId)
+      }
     }
   }
 

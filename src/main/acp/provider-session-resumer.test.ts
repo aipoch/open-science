@@ -67,6 +67,7 @@ type ResumerHarness = {
   attachSession: ReturnType<typeof vi.fn>
   commit: ReturnType<typeof vi.fn>
   clearLivePermissionProfile: ReturnType<typeof vi.fn>
+  clearTimer: ReturnType<typeof vi.fn>
   configure: ReturnType<typeof vi.fn>
   configurePermissionProfile: ReturnType<typeof vi.fn>
   connection: ClientConnection
@@ -74,6 +75,7 @@ type ResumerHarness = {
   fireTimeout: () => void
   identityClaimedAtAdoption: () => boolean
   order: string[]
+  observeProgress: (providerSessionId: string) => void
   providerSession: ActiveSession
   provision: ReturnType<typeof vi.fn>
   registry: AcpSessionRegistry
@@ -211,6 +213,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     timerCallback = callback
     return {} as ReturnType<typeof setTimeout>
   })
+  const clearTimer = vi.fn()
   const assertCurrentConnection = vi.fn()
   const clearLivePermissionProfile = vi.fn()
   const provision = vi.fn(async () => {
@@ -271,7 +274,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     },
     resumeTimeoutMs: 60_000,
     setTimer,
-    clearTimer: () => undefined,
+    clearTimer,
     diagnosticContext: () => ({})
   })
   const resume = (
@@ -291,6 +294,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     backend: capturingBackend,
     commit,
     clearLivePermissionProfile,
+    clearTimer,
     configure,
     configurePermissionProfile,
     connection,
@@ -298,6 +302,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     fireTimeout: () => timerCallback?.(),
     identityClaimedAtAdoption: () => identityClaimedAtAdoption,
     order,
+    observeProgress: (providerSessionId) => resumer.observeProgress(providerSessionId),
     providerSession,
     provision,
     registry,
@@ -501,6 +506,39 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.setTimer).toHaveBeenNthCalledWith(1, expect.any(Function), 60_000)
     expect(harness.setTimer).toHaveBeenNthCalledWith(2, expect.any(Function), 60_000)
     expect(harness.disconnectTimedOutConnection).toHaveBeenCalledOnce()
+  })
+
+  it('renews only the matching provider resume inactivity budget', async () => {
+    const harness = createHarness()
+    const finishResume = Promise.withResolvers<{ sessionId: string }>()
+    harness.request.mockImplementationOnce(() => finishResume.promise)
+
+    const resumed = harness.resume({ providerSessionId: 'provider-session' })
+    await vi.waitFor(() => expect(harness.request).toHaveBeenCalledOnce())
+    expect(harness.setTimer).toHaveBeenCalledTimes(2)
+
+    harness.observeProgress('unrelated-session')
+    expect(harness.setTimer).toHaveBeenCalledTimes(2)
+
+    harness.observeProgress('provider-session')
+    expect(harness.setTimer).toHaveBeenCalledTimes(3)
+    expect(harness.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 60_000)
+
+    finishResume.resolve({ sessionId: 'provider-session' })
+    await expect(resumed).resolves.toMatchObject({ sessionId: 'stable-app-session' })
+  })
+
+  it('stops observing provider progress after resume settles', async () => {
+    const harness = createHarness()
+
+    await harness.resume({ providerSessionId: 'provider-session' })
+    const timerCount = harness.setTimer.mock.calls.length
+    const clearCount = harness.clearTimer.mock.calls.length
+
+    harness.observeProgress('provider-session')
+
+    expect(harness.setTimer).toHaveBeenCalledTimes(timerCount)
+    expect(harness.clearTimer).toHaveBeenCalledTimes(clearCount)
   })
 
   it('transfers its reservation to fresh adoption when Resume Policy rejects the backend', async () => {

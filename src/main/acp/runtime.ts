@@ -215,8 +215,9 @@ type AcpRuntimeOptions = {
   // Local http host for app-owned session MCP servers, used for frameworks that reject stdio MCP.
   // Absent ⇒ those frameworks run without the corresponding app tooling.
   mcpHttpHost?: AgentMcpHttpHost
-  // Bounds the network-bound reconnect+resume so Resume always resolves; the fast attached-session
-  // path is never timed. Injectable timer mirrors the approval broker so tests stay deterministic.
+  // Bounds inactivity while reconnecting or resuming. Target-session provider events renew the
+  // resume deadline; the fast attached-session path is never timed. Injectable timers keep tests
+  // deterministic.
   resumeTimeoutMs?: number
   cancelTimeoutMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -986,8 +987,10 @@ class AcpRuntime {
     const hooks: AcpAgentConnectionHooks = {
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
       requestPermission: (params) => this.clientInteractions.requestPermission(params),
-      observeSessionUpdate: (notification) =>
-        this.permissionContext.observeProviderUpdate(notification),
+      observeSessionUpdate: (notification) => {
+        this.providerSessionResumer.observeProgress(notification.sessionId)
+        this.permissionContext.observeProviderUpdate(notification)
+      },
       observeClaudeSdkMessage: (params) => this.observeClaudeSdkMessage(params),
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
@@ -2101,6 +2104,9 @@ class AcpRuntime {
   }
 
   private observeClaudeSdkMessage(params: Record<string, unknown>): void {
+    if (typeof params.sessionId === 'string') {
+      this.providerSessionResumer.observeProgress(params.sessionId)
+    }
     this.providerPromptExecutor.observeProviderMessage(params)
   }
 

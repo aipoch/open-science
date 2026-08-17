@@ -15804,6 +15804,94 @@ describe('ACP runtime session management', () => {
     expect(process.killed).toBe(true)
   })
 
+  it.each(['session-update', 'claude-sdk-message'] as const)(
+    'keeps a pending session/resume alive on %s progress',
+    async (progressKind) => {
+      const process = new FakeAgentProcess()
+      const resumeReceived = createDeferred()
+      const emitProgress = createDeferred()
+      const progressSent = createDeferred()
+      const finishResume = createDeferred<Record<string, never>>()
+
+      acp
+        .agent({ name: 'progressing-agent' })
+        .onRequest(acp.methods.agent.initialize, () => ({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          agentCapabilities: {
+            loadSession: false,
+            sessionCapabilities: { close: {}, resume: {} }
+          },
+          authMethods: []
+        }))
+        .onRequest(acp.methods.agent.session.resume, async (ctx) => {
+          resumeReceived.resolve(undefined)
+          await emitProgress.promise
+          if (progressKind === 'session-update') {
+            await ctx.client.notify(acp.methods.client.session.update, {
+              sessionId: ctx.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: 'restoring history' }
+              }
+            })
+          } else {
+            await ctx.client.notify('_claude/sdkMessage', {
+              sessionId: ctx.params.sessionId,
+              message: { type: 'progress', text: 'restoring history' }
+            })
+          }
+          progressSent.resolve(undefined)
+          return finishResume.promise
+        })
+        .connect(
+          acp.ndJsonStream(
+            Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+            Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+          )
+        )
+
+      let now = 0
+      const timers: Array<{ active: boolean; deadline: number; fire: () => void }> = []
+      const advanceBy = (elapsedMs: number): void => {
+        now += elapsedMs
+        for (const timer of timers) {
+          if (timer.active && timer.deadline <= now) {
+            timer.active = false
+            timer.fire()
+          }
+        }
+      }
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        resumeTimeoutMs: 1000,
+        setTimer: (fire, timeoutMs) => {
+          const handle = timers.length
+          timers.push({ active: true, deadline: now + timeoutMs, fire })
+          return handle as unknown as ReturnType<typeof setTimeout>
+        },
+        clearTimer: (handle) => {
+          const timer = timers[handle as unknown as number]
+          if (timer) timer.active = false
+        }
+      })
+
+      const resume = runtime.resumeSession({ sessionId: 'streaming-session', cwd: '/workspace' })
+      await resumeReceived.promise
+      advanceBy(900)
+      emitProgress.resolve(undefined)
+      await progressSent.promise
+
+      // The original deadline has passed, but provider activity renewed the inactivity budget.
+      advanceBy(200)
+      finishResume.resolve({})
+
+      await expect(resume).resolves.toMatchObject({ sessionId: 'streaming-session' })
+      expect(process.killed).toBe(false)
+    }
+  )
+
   it('adopts a fresh session under the same id when a replaced agent no longer holds it', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['adopted-session-1'], { resumeNotFound: true })
