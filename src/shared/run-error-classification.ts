@@ -35,7 +35,7 @@ export const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
 // App-owned Vision relay failures cross Electron's invoke boundary as Error text, so public error
 // identity is kept in shared constants instead of depending on non-enumerable Error properties.
 export const VISION_MODEL_NOT_CONFIGURED_MESSAGE =
-  'Configure a Vision model in Settings > Model before sending images to this model.'
+  "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
 export const VISION_IMAGE_TOO_LARGE_MESSAGE =
   'The attached image is too large to prepare for the Vision model.'
 export const VISION_IMAGE_INVALID_MESSAGE = 'The attached image is invalid.'

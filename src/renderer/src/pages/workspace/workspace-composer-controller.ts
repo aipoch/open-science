@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import { buildCustomizePrefillDoc } from '@/lib/customize-chat'
 import type { CustomizePrefillIntent } from '@/stores/navigation-store'
 
@@ -416,7 +417,7 @@ const useWorkspaceComposerController = ({
     (files: File[]): void => {
       if (!canStageAttachments || files.length === 0) return
       if (files.some((file) => file.type.startsWith('image/')) && supportsImageInput !== true) {
-        setError('The selected model is not configured for image input.')
+        setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
       }
       const intake = planComposerAttachmentIntake(files, attachments.length + transfers.length)

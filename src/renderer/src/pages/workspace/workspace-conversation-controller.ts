@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import type { ChatSession, SessionActionabilityProjection } from '@/stores/session-store'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
@@ -256,7 +257,7 @@ const useWorkspaceConversationController = (
         current.supportsImageInput !== true &&
         composer.view.attachments.some((attachment) => attachment.mimeType?.startsWith('image/'))
       ) {
-        composer.actions.setError('The selected model is not configured for image input.')
+        composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
       }
       if (queueDraft && activeSession) {

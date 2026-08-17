@@ -19,6 +19,7 @@ import type {
 import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
 import {
   isReportableRunFailure,
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
   visionRunFailureMessage
 } from '../../../../shared/run-error-classification'
 import {
@@ -111,8 +112,10 @@ const localizeVisionRunFailure = (
   t: TFunction
 ): string | undefined => {
   switch (visionRunFailureMessage(error)) {
-    case 'Configure a Vision model in Settings > Model before sending images to this model.':
-      return t('Configure a Vision model in Settings > Model before sending images to this model.')
+    case VISION_MODEL_NOT_CONFIGURED_MESSAGE:
+      return t(
+        "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+      )
     case 'The attached image is too large to prepare for the Vision model.':
       return t('The attached image is too large to prepare for the Vision model.')
     case 'The attached image is invalid.':
@@ -453,6 +456,7 @@ const ConversationPanel = ({
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const settingsLoaded = useSettingsStore((state) => state.isLoaded)
   const openSettings = useSettingsStore((state) => state.openSettings)
+  const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const stopSubmissionPendingRef = useRef(false)
   const [isStopping, setIsStopping] = useState(false)
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
@@ -537,6 +541,9 @@ const ConversationPanel = ({
     localizeVisionRunFailure(activeSession?.error, t) ??
     normalizeRunFailureError(activeSession?.error)
   const resolvedActionError = localizeVisionRunFailure(actionError, t) ?? actionError
+  const showVisionModelSettings =
+    visionRunFailureMessage(actionError) === VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
+    visionRunFailureMessage(activeSession?.error) === VISION_MODEL_NOT_CONFIGURED_MESSAGE
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
   // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
@@ -868,6 +875,17 @@ const ConversationPanel = ({
                             {t('Report error')}
                           </button>
                         ) : null}
+                      </div>
+                    ) : null}
+                    {showVisionModelSettings ? (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => openSettingsToPanel('model')}
+                          className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
+                        >
+                          {t('Model settings')}
+                        </button>
                       </div>
                     ) : null}
                   </div>

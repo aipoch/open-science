@@ -1965,7 +1965,7 @@
   "Version": "版本",
   "Version unavailable": "版本不可用",
   "View": "查看",
-  "Configure a Vision model in Settings > Model before sending images to this model.": "请先在“设置 > 模型”中配置视觉模型，再向此模型发送图片。",
+  "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support.": "当前所选模型不支持图片。请在“设置 > 模型”中配置视觉模型以启用图片支持。",
   "The attached image is invalid.": "附加的图片无效。",
   "The attached image is too large to prepare for the Vision model.": "附加的图片过大，无法交给视觉模型处理。",
   "The current images exceed the Vision evidence request budget.": "当前图片超过了视觉证据请求限额。",

@@ -14,6 +14,15 @@ const TURN_CONTINUITY_APPEND = [
   '</open_science_turn_continuity_instructions>'
 ].join('\n')
 
+const VISION_EVIDENCE_APPEND = [
+  '<open_science_vision_evidence_instructions>',
+  'A populated `<attached-image-evidence>` block is the application-prepared representation of an attached image for a text-only model.',
+  'When the user request can be answered only by inspecting, transcribing, summarizing, or explaining that image, answer directly from the supplied evidence.',
+  'Do not use filesystem, shell, Notebook, MCP, Skill, plugin, or network tools merely to find, open, read, or parse the image again.',
+  'Use tools when the user request independently requires work beyond reading the image, such as comparing project files, running an analysis, or creating an output.',
+  '</open_science_vision_evidence_instructions>'
+].join('\n')
+
 const LARGE_DATA_FILE_APPEND = [
   '<open_science_large_file_instructions>',
   'Large attached data files (CSV, TSV, TXT, JSON, FASTA/FASTQ, VCF, and similar tabular or text data) are provided as a file reference plus a short preview, not as full inline content.',
@@ -47,6 +56,7 @@ describe('ACP Session presentation policy', () => {
 
     expect(appends).toEqual([
       TURN_CONTINUITY_APPEND,
+      VISION_EVIDENCE_APPEND,
       LARGE_DATA_FILE_APPEND,
       ARTIFACT_FILE_APPEND,
       NOTEBOOK_SYSTEM_PROMPT_APPEND,
@@ -62,7 +72,11 @@ describe('ACP Session presentation policy', () => {
       skillImport: false
     })
 
-    expect(appends).toEqual([TURN_CONTINUITY_APPEND, LARGE_DATA_FILE_APPEND])
+    expect(appends).toEqual([
+      TURN_CONTINUITY_APPEND,
+      VISION_EVIDENCE_APPEND,
+      LARGE_DATA_FILE_APPEND
+    ])
     expect(appends.join('\n\n')).not.toContain('<open_science_skill_privacy_instructions>')
   })
 
@@ -77,6 +91,7 @@ describe('ACP Session presentation policy', () => {
     })
     const exactAppend = [
       TURN_CONTINUITY_APPEND,
+      VISION_EVIDENCE_APPEND,
       LARGE_DATA_FILE_APPEND,
       'Backend connector guidance.',
       'Specialist identity.'
@@ -120,6 +135,25 @@ describe('ACP Session presentation policy', () => {
     expect(Object.isFrozen(presentation.metaArg)).toBe(true)
     expect(Object.isFrozen(presentation.metaArg._meta)).toBe(true)
   })
+
+  it.each([
+    ['Claude Code', claudeCodeFramework],
+    ['OpenCode', opencodeFramework],
+    ['Codex Responses', codexFramework],
+    ['Codex Bridge', codexFramework]
+  ] as const)(
+    'delivers conditional Vision evidence guidance through the %s setup path',
+    (_, framework) => {
+      const presentation = policy.buildSessionSetup({
+        framework,
+        tooling: { artifacts: false, notebook: false, skillImport: false }
+      })
+
+      expect(presentation.persistentSystemPrompt ?? presentation.promptPrefix).toContain(
+        '<open_science_vision_evidence_instructions>'
+      )
+    }
+  )
 
   it('grants an explicit Skill runtime scope only on primary Session setup', () => {
     const buildSessionSetup = vi.fn(() => ({}))

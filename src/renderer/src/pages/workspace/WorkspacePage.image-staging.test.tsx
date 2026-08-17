@@ -23,6 +23,7 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { UploadedAttachment } from '../../../../shared/uploads'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 
 // Capture the ConversationPanel props the page computes on each render.
 let conversationProps: Parameters<(typeof import('./ConversationPanel'))['ConversationPanel']>[0]
@@ -109,7 +110,7 @@ const createProvider = (supportsImageInput: boolean): ProviderView => ({
 const imageFile = (): File =>
   new File([new Uint8Array([1, 2, 3])], 'pic.png', { type: 'image/png' })
 
-const IMAGE_BLOCKED_MESSAGE = 'The selected model is not configured for image input.'
+const IMAGE_BLOCKED_MESSAGE = VISION_MODEL_NOT_CONFIGURED_MESSAGE
 
 describe('WorkspacePage image attachment gating', () => {
   let container: HTMLDivElement

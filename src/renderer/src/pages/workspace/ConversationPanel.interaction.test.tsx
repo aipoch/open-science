@@ -18,6 +18,8 @@ import {
 import type { ChatSession } from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import type { DelegatedQuestionRequest } from '../../../../shared/session-persistence'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 
 // React's act() refuses to run unless the environment opts in to act-aware scheduling.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -591,6 +593,7 @@ beforeEach(() => {
   onStageAttachmentFiles.mockClear()
   respondToSessionPlanMock.mockReset().mockResolvedValue(undefined)
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  useSettingsStore.setState(createInitialSettingsState())
   mockHasRunningJobs = false
   mockAllJobs = []
 })
@@ -4397,6 +4400,25 @@ describe('ConversationPanel error box + report affordance', () => {
     })
     expect(errorBoxText()).toContain('Could not send message')
     expect(reportButton()).toBeNull()
+  })
+
+  it('opens Model settings from the image-support action error', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    renderPanel({
+      view: {
+        activeSession: { ...errorSession, status: 'idle', error: undefined },
+        actionError: VISION_MODEL_NOT_CONFIGURED_MESSAGE
+      }
+    })
+
+    expect(errorBoxText()).toContain("The selected model doesn't support images.")
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Model settings'
+    )
+    expect(button).toBeDefined()
+    act(() => button?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('model')
   })
 
   it('shows both a transient actionError and the run failure, keeping the Report button', () => {
