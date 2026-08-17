@@ -22,6 +22,14 @@ const bindingService = (): SessionBindingService =>
     resolveRunnableById: vi.fn().mockResolvedValue(profile)
   } as unknown as ProfileService)
 
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void
+  const promise = new Promise<void>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
 describe('SessionSpecialistReconfiguration', () => {
   it('commits pending before runtime application and clears it only after success', async () => {
     const binding = bindingService()
@@ -107,5 +115,44 @@ describe('SessionSpecialistReconfiguration', () => {
       reason: 'pending-state-clear-failed'
     })
     await expect(owner.assertUserPromptReady('session-1')).rejects.toThrow(/has not been applied/)
+  })
+
+  it('invalidates in-flight and queued switches when the Session is deleted', async () => {
+    const binding = bindingService()
+    const persistEntered = deferred()
+    const releasePersist = deferred()
+    let pendingBindingStashed = false
+    const discardPendingBinding = vi.fn(() => {
+      pendingBindingStashed = false
+    })
+    const persistBinding = vi.fn(async () => {
+      persistEntered.resolve()
+      await releasePersist.promise
+      pendingBindingStashed = true
+    })
+    const applyRuntime = vi.fn(async () => ({ contextReset: false }))
+    const owner = new SessionSpecialistReconfiguration({
+      sessionBinding: binding,
+      loadBinding: async () => undefined,
+      persistBinding,
+      discardPendingBinding,
+      applyRuntime
+    })
+
+    const inFlight = owner.requestSwitch('session-1', profile.id)
+    await persistEntered.promise
+    const queued = owner.requestSwitch('session-1', profile.id)
+
+    owner.clearSession('session-1')
+    releasePersist.resolve()
+
+    await expect(inFlight).rejects.toThrow(/deleted/)
+    await expect(queued).rejects.toThrow(/deleted/)
+    expect(persistBinding).toHaveBeenCalledOnce()
+    expect(applyRuntime).not.toHaveBeenCalled()
+    expect(discardPendingBinding).toHaveBeenCalledWith('session-1')
+    expect(discardPendingBinding.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(pendingBindingStashed).toBe(false)
+    expect(binding.getBinding('session-1')).toBeUndefined()
   })
 })

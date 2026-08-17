@@ -1084,6 +1084,9 @@ const createApplicationModules = async (
     sessionBinding: sessionBindingService,
     loadBinding: loadSessionSpecialistBinding,
     persistBinding: persistSessionSpecialistBinding,
+    discardPendingBinding: (sessionId) => {
+      pendingSpecialistBindings.take(sessionId)
+    },
     applyRuntime: async (sessionId, specialistId) => {
       const runtime = runtimeRef.current
       if (!runtime) throw new Error('Agent runtime is not initialized.')

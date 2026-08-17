@@ -15,6 +15,7 @@ type SessionSpecialistReconfigurationDeps = Readonly<{
     specialistId: string | undefined,
     pending: boolean
   ) => Promise<void>
+  discardPendingBinding?: (sessionId: string) => void
   applyRuntime?: (
     sessionId: string,
     specialistId: string | undefined
@@ -32,6 +33,7 @@ export const SPECIALIST_RECONFIGURATION_PENDING_ERROR =
 export class SessionSpecialistReconfiguration {
   private readonly processPending = new Map<string, string | undefined>()
   private readonly tails = new Map<string, Promise<void>>()
+  private readonly deletedSessions = new Set<string>()
 
   constructor(private readonly deps: SessionSpecialistReconfigurationDeps) {}
 
@@ -73,17 +75,21 @@ export class SessionSpecialistReconfiguration {
   completeResume(sessionId: string, specialistId: string | undefined): Promise<void> {
     return this.enqueue(sessionId, async () => {
       await this.assertDesiredBinding(sessionId, specialistId)
+      this.assertSessionActive(sessionId)
       this.deps.sessionBinding.setBinding(sessionId, specialistId)
       await this.deps.persistBinding(sessionId, specialistId, false)
+      this.assertSessionActive(sessionId)
       this.processPending.delete(sessionId)
     })
   }
 
   async assertUserPromptReady(sessionId: string): Promise<void> {
+    this.assertSessionActive(sessionId)
     if (this.processPending.has(sessionId)) {
       throw new Error(SPECIALIST_RECONFIGURATION_PENDING_ERROR)
     }
     const persisted = await this.deps.loadBinding(sessionId)
+    this.assertSessionActive(sessionId)
     if (persisted?.specialistBindingPending === true) {
       this.processPending.set(sessionId, persisted.specialistId)
       throw new Error(SPECIALIST_RECONFIGURATION_PENDING_ERROR)
@@ -91,8 +97,10 @@ export class SessionSpecialistReconfiguration {
   }
 
   clearSession(sessionId: string): void {
+    this.deletedSessions.add(sessionId)
     this.processPending.delete(sessionId)
     this.tails.delete(sessionId)
+    this.deps.discardPendingBinding?.(sessionId)
     this.deps.sessionBinding.clearSession(sessionId)
   }
 
@@ -100,7 +108,9 @@ export class SessionSpecialistReconfiguration {
     sessionId: string,
     specialistId: string | undefined
   ): Promise<void> {
+    this.assertSessionActive(sessionId)
     await this.deps.persistBinding(sessionId, specialistId, true)
+    this.assertSessionActive(sessionId)
     this.processPending.set(sessionId, specialistId)
     this.deps.sessionBinding.setBinding(sessionId, specialistId)
   }
@@ -110,12 +120,15 @@ export class SessionSpecialistReconfiguration {
     specialistId: string | undefined,
     throwAfterCommit: boolean
   ): Promise<SetSessionSpecialistResponse> {
+    this.assertSessionActive(sessionId)
     let contextReset = false
     try {
       if (this.deps.applyRuntime) {
         contextReset = (await this.deps.applyRuntime(sessionId, specialistId)).contextReset
       }
+      this.assertSessionActive(sessionId)
     } catch (error) {
+      if (this.deletedSessions.has(sessionId)) this.assertSessionActive(sessionId)
       log.error('failed to apply durable Specialist binding to runtime', {
         sessionId,
         specialistId,
@@ -127,7 +140,9 @@ export class SessionSpecialistReconfiguration {
 
     try {
       await this.deps.persistBinding(sessionId, specialistId, false)
+      this.assertSessionActive(sessionId)
     } catch (error) {
+      if (this.deletedSessions.has(sessionId)) this.assertSessionActive(sessionId)
       log.error('runtime applied Specialist binding but pending marker could not be cleared', {
         sessionId,
         specialistId,
@@ -142,8 +157,10 @@ export class SessionSpecialistReconfiguration {
   }
 
   private async validateTarget(sessionId: string, specialistId: string | undefined): Promise<void> {
+    this.assertSessionActive(sessionId)
     if (specialistId === undefined) return
     const resolution = await this.deps.sessionBinding.resolve(sessionId, specialistId)
+    this.assertSessionActive(sessionId)
     if (resolution.kind === 'unavailable') throw new Error(resolution.reason)
   }
 
@@ -152,6 +169,7 @@ export class SessionSpecialistReconfiguration {
     specialistId: string | undefined
   ): Promise<void> {
     const persisted = await this.deps.loadBinding(sessionId)
+    this.assertSessionActive(sessionId)
     const processPendingMatches =
       this.processPending.has(sessionId) && this.processPending.get(sessionId) === specialistId
     if (
@@ -167,7 +185,14 @@ export class SessionSpecialistReconfiguration {
 
   private enqueue<Result>(sessionId: string, operation: () => Promise<Result>): Promise<Result> {
     const previous = this.tails.get(sessionId) ?? Promise.resolve()
-    const result = previous.catch(() => undefined).then(operation)
+    const result = previous
+      .catch(() => undefined)
+      .then(async () => {
+        this.assertSessionActive(sessionId)
+        const value = await operation()
+        this.assertSessionActive(sessionId)
+        return value
+      })
     const tail = result.then(
       () => undefined,
       () => undefined
@@ -177,5 +202,13 @@ export class SessionSpecialistReconfiguration {
       if (this.tails.get(sessionId) === tail) this.tails.delete(sessionId)
     })
     return result
+  }
+
+  private assertSessionActive(sessionId: string): void {
+    if (!this.deletedSessions.has(sessionId)) return
+    this.processPending.delete(sessionId)
+    this.deps.discardPendingBinding?.(sessionId)
+    this.deps.sessionBinding.clearSession(sessionId)
+    throw new Error('The Session was deleted before Specialist reconfiguration completed.')
   }
 }
