@@ -108,6 +108,12 @@ type PendingSessionDrain = {
   resolve: () => void
 }
 
+type PendingResumeReconciliation = {
+  runtime: AcpRuntime
+  response: AcpCreateSessionResponse
+  specialistId: string | undefined
+}
+
 type RootAdmissionLease = {
   release: () => void
 }
@@ -156,6 +162,7 @@ class AcpRuntimeCoordinator {
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
+  private readonly pendingResumeReconciliations = new Map<string, PendingResumeReconciliation>()
   private readonly pendingSessionDrains = new Map<string, PendingSessionDrain>()
   // The latest user-originated prompt is retained only long enough to construct an app-owned
   // continuation for an approved handoff. The continuation keeps its provenance context but never
@@ -472,6 +479,21 @@ class AcpRuntimeCoordinator {
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     const owner = this.findRuntimeForSession(request.sessionId)
+    const pendingReconciliation = this.pendingResumeReconciliations.get(request.sessionId)
+    if (
+      pendingReconciliation &&
+      pendingReconciliation.runtime === owner &&
+      request.specialistBindingPending === true &&
+      request.specialistId === pendingReconciliation.specialistId
+    ) {
+      await this.sessionResumeObserver?.(request, pendingReconciliation.response)
+      if (this.pendingResumeReconciliations.get(request.sessionId) === pendingReconciliation) {
+        this.pendingResumeReconciliations.delete(request.sessionId)
+      }
+      await this.delegatedWork?.wakeMessages?.(pendingReconciliation.response.sessionId)
+      return pendingReconciliation.response
+    }
+    if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = owner && !this.retiredRuntimes.has(owner) ? owner : this.getActiveRuntime()
     const transfersOwnership = runtime !== owner
 
@@ -527,7 +549,18 @@ class AcpRuntimeCoordinator {
     this.sessionConnectionStatuses.set(response.sessionId, runtime.getSnapshot().status)
     this.lastRuntime = runtime
     if (transfersOwnership) this.callbacks.onStateChanged?.(this.getSnapshot())
-    await this.sessionResumeObserver?.(request, response)
+    try {
+      await this.sessionResumeObserver?.(request, response)
+    } catch (error) {
+      if (request.specialistBindingPending === true) {
+        this.pendingResumeReconciliations.set(request.sessionId, {
+          runtime,
+          response,
+          specialistId: request.specialistId
+        })
+      }
+      throw error
+    }
     await this.delegatedWork?.wakeMessages?.(response.sessionId)
     return response
   }
@@ -972,6 +1005,7 @@ class AcpRuntimeCoordinator {
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpStateSnapshot> {
     this.invalidateSessionTurn(request.sessionId)
     this.activePromptRequests.delete(request.sessionId)
+    this.pendingResumeReconciliations.delete(request.sessionId)
     const runtime = this.runtimeForSession(request.sessionId)
     const ownedBeforeDelete = this.sessionRuntimes.get(request.sessionId) === runtime
     await this.delegatedWork?.deleteSession(request.sessionId)
@@ -1459,6 +1493,7 @@ class AcpRuntimeCoordinator {
       if (owner !== runtime || attached.has(sessionId)) continue
 
       this.sessionRuntimes.delete(sessionId)
+      this.pendingResumeReconciliations.delete(sessionId)
       if (snapshot.status === 'closed' || snapshot.status === 'error') {
         this.sessionConnectionStatuses.set(sessionId, snapshot.status)
       } else {
@@ -1492,6 +1527,9 @@ class AcpRuntimeCoordinator {
     }
     for (const [sessionId, incoming] of this.pendingSessionAdoptions) {
       if (incoming === runtime) this.pendingSessionAdoptions.delete(sessionId)
+    }
+    for (const [sessionId, pending] of this.pendingResumeReconciliations) {
+      if (pending.runtime === runtime) this.pendingResumeReconciliations.delete(sessionId)
     }
     for (const [sessionId, pending] of this.pendingSessionDrains) {
       if (pending.runtime !== runtime) continue
@@ -1631,6 +1669,7 @@ class AcpRuntimeCoordinator {
     this.retiredRuntimes.clear()
     this.sessionRuntimes.clear()
     this.pendingSessionAdoptions.clear()
+    this.pendingResumeReconciliations.clear()
     for (const pending of this.pendingSessionDrains.values()) pending.resolve()
     this.pendingSessionDrains.clear()
     this.sessionConnectionStatuses.clear()

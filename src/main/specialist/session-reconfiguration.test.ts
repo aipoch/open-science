@@ -61,6 +61,76 @@ describe('SessionSpecialistReconfiguration', () => {
     await expect(owner.assertUserPromptReady('session-1')).resolves.toBeUndefined()
   })
 
+  it('blocks prompts while the durable pending binding is still being written', async () => {
+    const binding = bindingService()
+    const persistEntered = deferred()
+    const releasePersist = deferred()
+    let persisted: { specialistId?: string; specialistBindingPending?: true } = {}
+    const owner = new SessionSpecialistReconfiguration({
+      sessionBinding: binding,
+      loadBinding: async () => persisted,
+      persistBinding: async (_sessionId, specialistId, pending) => {
+        if (pending) {
+          persistEntered.resolve()
+          await releasePersist.promise
+        }
+        persisted = {
+          specialistId,
+          ...(pending ? { specialistBindingPending: true as const } : {})
+        }
+      },
+      applyRuntime: async () => ({ contextReset: false })
+    })
+
+    const switching = owner.requestSwitch('session-1', profile.id)
+    await persistEntered.promise
+
+    await expect(owner.assertUserPromptReady('session-1')).rejects.toThrow(/has not been applied/)
+
+    releasePersist.resolve()
+    await expect(switching).resolves.toEqual({ status: 'applied', contextReset: false })
+    await expect(owner.assertUserPromptReady('session-1')).resolves.toBeUndefined()
+  })
+
+  it('rechecks the switch barrier after reading the persisted binding', async () => {
+    const binding = bindingService()
+    const loadEntered = deferred()
+    const releaseLoad = deferred()
+    const persistEntered = deferred()
+    const releasePersist = deferred()
+    let persisted: { specialistId?: string; specialistBindingPending?: true } = {}
+    const owner = new SessionSpecialistReconfiguration({
+      sessionBinding: binding,
+      loadBinding: async () => {
+        loadEntered.resolve()
+        await releaseLoad.promise
+        return persisted
+      },
+      persistBinding: async (_sessionId, specialistId, pending) => {
+        if (pending) {
+          persistEntered.resolve()
+          await releasePersist.promise
+        }
+        persisted = {
+          specialistId,
+          ...(pending ? { specialistBindingPending: true as const } : {})
+        }
+      },
+      applyRuntime: async () => ({ contextReset: false })
+    })
+
+    const promptAdmission = owner.assertUserPromptReady('session-1')
+    await loadEntered.promise
+    const switching = owner.requestSwitch('session-1', profile.id)
+    await persistEntered.promise
+    releaseLoad.resolve()
+
+    await expect(promptAdmission).rejects.toThrow(/has not been applied/)
+
+    releasePersist.resolve()
+    await expect(switching).resolves.toEqual({ status: 'applied', contextReset: false })
+  })
+
   it('keeps the durable marker, blocks prompts, and supports runtime retry after failure', async () => {
     const binding = bindingService()
     let persisted: { specialistId?: string; specialistBindingPending?: true } = {}

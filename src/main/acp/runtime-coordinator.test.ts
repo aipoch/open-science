@@ -390,6 +390,39 @@ describe('AcpRuntimeCoordinator', () => {
     expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
   })
 
+  it('retries pending binding reconciliation without resuming the attached provider twice', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const observer = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('pending marker clear failed'))
+      .mockResolvedValueOnce(undefined)
+    coordinator.setSessionResumeObserver(observer)
+    const request = {
+      sessionId: 'session-1',
+      cwd: '/workspace',
+      specialistId: 'specialist-new',
+      specialistBindingPending: true as const
+    }
+
+    await expect(coordinator.resumeSession(request)).rejects.toThrow('pending marker clear failed')
+    await expect(coordinator.resumeSession(request)).resolves.toMatchObject({
+      sessionId: 'session-1'
+    })
+
+    expect(created[0].resumeSession).toHaveBeenCalledOnce()
+    expect(observer).toHaveBeenCalledTimes(2)
+    expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
+  })
+
   it('projects delegated permissions and cascades root permission and Stop controls', async () => {
     const rootPermission: AcpPermissionRequest = {
       requestId: 'delegated:permission-1',

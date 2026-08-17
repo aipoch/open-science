@@ -32,6 +32,7 @@ export const SPECIALIST_RECONFIGURATION_PENDING_ERROR =
 // pending marker survives restart and Main rejects user prompts until runtime and disk converge.
 export class SessionSpecialistReconfiguration {
   private readonly processPending = new Map<string, string | undefined>()
+  private readonly reconfigurationsInFlight = new Map<string, number>()
   private readonly tails = new Map<string, Promise<void>>()
   private readonly deletedSessions = new Set<string>()
 
@@ -85,11 +86,14 @@ export class SessionSpecialistReconfiguration {
 
   async assertUserPromptReady(sessionId: string): Promise<void> {
     this.assertSessionActive(sessionId)
-    if (this.processPending.has(sessionId)) {
+    if (this.processPending.has(sessionId) || this.reconfigurationsInFlight.has(sessionId)) {
       throw new Error(SPECIALIST_RECONFIGURATION_PENDING_ERROR)
     }
     const persisted = await this.deps.loadBinding(sessionId)
     this.assertSessionActive(sessionId)
+    if (this.processPending.has(sessionId) || this.reconfigurationsInFlight.has(sessionId)) {
+      throw new Error(SPECIALIST_RECONFIGURATION_PENDING_ERROR)
+    }
     if (persisted?.specialistBindingPending === true) {
       this.processPending.set(sessionId, persisted.specialistId)
       throw new Error(SPECIALIST_RECONFIGURATION_PENDING_ERROR)
@@ -99,6 +103,7 @@ export class SessionSpecialistReconfiguration {
   clearSession(sessionId: string): void {
     this.deletedSessions.add(sessionId)
     this.processPending.delete(sessionId)
+    this.reconfigurationsInFlight.delete(sessionId)
     this.tails.delete(sessionId)
     this.deps.discardPendingBinding?.(sessionId)
     this.deps.sessionBinding.clearSession(sessionId)
@@ -184,6 +189,10 @@ export class SessionSpecialistReconfiguration {
   }
 
   private enqueue<Result>(sessionId: string, operation: () => Promise<Result>): Promise<Result> {
+    this.reconfigurationsInFlight.set(
+      sessionId,
+      (this.reconfigurationsInFlight.get(sessionId) ?? 0) + 1
+    )
     const previous = this.tails.get(sessionId) ?? Promise.resolve()
     const result = previous
       .catch(() => undefined)
@@ -201,7 +210,11 @@ export class SessionSpecialistReconfiguration {
     void tail.then(() => {
       if (this.tails.get(sessionId) === tail) this.tails.delete(sessionId)
     })
-    return result
+    return result.finally(() => {
+      const remaining = (this.reconfigurationsInFlight.get(sessionId) ?? 1) - 1
+      if (remaining > 0) this.reconfigurationsInFlight.set(sessionId, remaining)
+      else this.reconfigurationsInFlight.delete(sessionId)
+    })
   }
 
   private assertSessionActive(sessionId: string): void {
