@@ -1166,14 +1166,17 @@ class AcpRuntimeCoordinator {
             ? { previousFrameworkId: session.previousFrameworkId }
             : {}),
           ...(session.previousBackendId ? { previousBackendId: session.previousBackendId } : {}),
+          ...(session.specialistId ? { specialistId: session.specialistId } : {}),
+          ...(session.specialistBindingPending === true ? { specialistBindingPending: true } : {}),
           ...(session.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
           ...(session.providerContinuityToken
             ? { providerContinuityToken: session.providerContinuityToken }
             : {})
         }
-        resumeInFlight = runtime.resumeSession(resumeRequest).then((response) => {
+        resumeInFlight = runtime.resumeSession(resumeRequest).then(async (response) => {
           this.sessionRuntimes.set(response.sessionId, runtime)
           this.lastRuntime = runtime
+          await this.sessionResumeObserver?.(resumeRequest, response)
           return Boolean(response.contextReset)
         })
       }
@@ -1191,6 +1194,7 @@ class AcpRuntimeCoordinator {
       sendPrompt: async (request) => {
         this.assertPromptAdmissionOpen()
         const contextReset = await ensureActivitySession(request.sessionId)
+        await this.promptAdmissionGuard?.(request.sessionId)
         const historyPreamble = options.session?.historyPreamble
         return this.dispatchPrompt(
           contextReset
@@ -1210,6 +1214,7 @@ class AcpRuntimeCoordinator {
         this.linearizeRootAdmission(request.sessionId, async () => {
           this.assertPromptAdmissionOpen()
           const contextReset = await ensureActivitySession(request.sessionId)
+          await this.promptAdmissionGuard?.(request.sessionId)
           const historyPreamble = options.session?.historyPreamble
           return this.dispatchPrompt(
             contextReset

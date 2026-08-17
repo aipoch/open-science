@@ -16195,7 +16195,8 @@ describe('ACP runtime session management', () => {
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process)
+      spawnAgent: () => asAgentProcess(process),
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: '' })
     })
     const session = await runtime.createSession({ cwd: '/workspace' })
     await runtime.sendPrompt({

@@ -319,6 +319,19 @@ describe('AcpProviderSessionAdopter', () => {
     )
   })
 
+  it('rejects an authoritative Specialist adoption when its identity cannot be resolved', async () => {
+    const harness = createHarness()
+
+    await expect(harness.adopt('specialist-1', true)).rejects.toThrow(
+      'The bound specialist is unavailable.'
+    )
+
+    expect(harness.registry.lookup('stable-app-session')).toBeUndefined()
+    expect(harness.connection.agent.buildSession).not.toHaveBeenCalled()
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+  })
+
   it('clears detached Specialist affinity when a pending binding explicitly selects Main', async () => {
     const harness = createHarness()
     harness.registry

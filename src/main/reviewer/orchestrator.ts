@@ -283,6 +283,8 @@ export const runReview = async (options: RunReviewOptions): Promise<ReviewWithCh
               permissionProfile: session.permissionProfile,
               previousFrameworkId: session.agentFrameworkId,
               previousBackendId: session.agentBackendId,
+              specialistId: session.specialistId,
+              specialistBindingPending: session.specialistBindingPending,
               providerSessionId: session.providerSessionId,
               providerContinuityToken: session.providerContinuityToken,
               historyPreamble: buildHistoryPreamble(session.messages)

@@ -234,11 +234,16 @@ export class AcpProviderSessionAdopter {
     specialistId: string | undefined,
     backend: AcpBackendGenerationView
   ): Promise<{ append: string; prefix: string } | undefined> {
-    if (!specialistId || !this.deps.resolveSpecialistIdentity) return undefined
+    if (!specialistId) return undefined
+    if (!this.deps.resolveSpecialistIdentity) {
+      throw new Error('The bound specialist is unavailable.')
+    }
     try {
-      return await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+      const identity = await this.deps.resolveSpecialistIdentity(specialistId, backend.framework.id)
+      if (!identity) throw new Error('The bound specialist is unavailable.')
+      return identity
     } catch {
-      return undefined
+      throw new Error('The bound specialist is unavailable.')
     }
   }
 
