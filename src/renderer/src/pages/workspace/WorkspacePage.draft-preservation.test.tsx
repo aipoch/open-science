@@ -552,6 +552,14 @@ describe('WorkspacePage draft preservation', () => {
         }
       ]
     })
+    window.api = {
+      ...window.api,
+      specialist: {
+        setSessionSpecialist: vi.fn(() =>
+          Promise.resolve({ status: 'applied', contextReset: false })
+        )
+      }
+    } as never
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((candidate) =>
         candidate.id === 'sess-a'
