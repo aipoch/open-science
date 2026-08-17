@@ -4472,6 +4472,22 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(reportButton()).toBeNull()
   })
 
+  it('unwraps and localizes an app-owned Vision relay failure', () => {
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          error:
+            "Error invoking remote method 'acp:send-prompt': Error: The Vision model returned invalid image evidence."
+        }
+      }
+    })
+
+    expect(errorBoxText()).toContain('The Vision model returned invalid image evidence.')
+    expect(errorBoxText()).not.toContain('Error invoking remote method')
+    expect(reportButton()).toBeNull()
+  })
+
   it('hides the Report button for a model-provider error (tagged non-reportable at the ACP layer)', () => {
     // A provider/model failure is tagged structurally (errorReportable: false), not by its text —
     // the raw provider message is kept visible but is not a bug worth a GitHub issue.

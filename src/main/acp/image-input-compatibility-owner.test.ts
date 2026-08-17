@@ -340,6 +340,119 @@ describe('ImageInputCompatibilityOwner', () => {
     expect(run).toHaveBeenCalledTimes(2)
   })
 
+  it('shares one in-flight extraction for concurrent requests with the same identity', async () => {
+    let resolveRun:
+      | ((value: {
+          text: string
+          frameworkId: 'opencode'
+          model: string
+          stopReason: 'end_turn'
+        }) => void)
+      | undefined
+    const run = vi.fn(
+      () =>
+        new Promise<{
+          text: string
+          frameworkId: 'opencode'
+          model: string
+          stopReason: 'end_turn'
+        }>((resolve) => {
+          resolveRun = resolve
+        })
+    )
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: vi.fn(async () => target),
+      runner: { run }
+    })
+    const input = { content: [image], supportsImageInput: false }
+
+    const first = owner.prepare(input)
+    const second = owner.prepare(input)
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+    resolveRun?.({
+      text: JSON.stringify({
+        summary: 'Shared evidence.',
+        findings: [],
+        transcription: '',
+        regions: [],
+        entities: [],
+        relations: [],
+        uncertainty: []
+      }),
+      frameworkId: 'opencode',
+      model: 'vision-model',
+      stopReason: 'end_turn'
+    })
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    expect(run).toHaveBeenCalledOnce()
+    expect(firstResult).toEqual(secondResult)
+  })
+
+  it('does not share cancellation across requests with different signals', async () => {
+    const resolvers: Array<
+      (value: {
+        text: string
+        frameworkId: 'opencode'
+        model: string
+        stopReason: 'end_turn'
+      }) => void
+    > = []
+    const run = vi.fn(
+      ({ signal }: { signal?: AbortSignal }) =>
+        new Promise<{
+          text: string
+          frameworkId: 'opencode'
+          model: string
+          stopReason: 'end_turn'
+        }>((resolve, reject) => {
+          resolvers.push(resolve)
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: vi.fn(async () => target),
+      runner: { run }
+    })
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+
+    const first = owner.prepare({
+      content: [image],
+      supportsImageInput: false,
+      signal: firstController.signal
+    })
+    const second = owner.prepare({
+      content: [image],
+      supportsImageInput: false,
+      signal: secondController.signal
+    })
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+    firstController.abort(new Error('first request cancelled'))
+    await expect(first).rejects.toThrow('first request cancelled')
+    resolvers[1]?.({
+      text: JSON.stringify({
+        summary: 'Second request evidence.',
+        findings: [],
+        transcription: '',
+        regions: [],
+        entities: [],
+        relations: [],
+        uncertainty: []
+      }),
+      frameworkId: 'opencode',
+      model: 'vision-model',
+      stopReason: 'end_turn'
+    })
+
+    await expect(second).resolves.toEqual([
+      expect.objectContaining({
+        type: 'text',
+        text: expect.stringContaining('Second request evidence.')
+      })
+    ])
+  })
+
   it('reuses persisted canonical evidence after an owner restart and question change', async () => {
     const rows = new Map<string, string>()
     const evidenceRepository = {

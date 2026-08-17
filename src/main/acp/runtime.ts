@@ -225,6 +225,7 @@ type AcpRuntimeOptions = {
   // injectable so tests can drive the degrade-to-file path with small fixtures.
   inlineImageBudgetBytes?: number
   imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'isAvailable' | 'prepare'>
+  hasReplayableImageHistory?: (projectId: string, sessionId: string) => Promise<boolean>
   contextUsageTracker?: ContextUsageTracker
   // Injectable only for the authenticated OpenCode loopback usage snapshots; production uses fetch.
   opencodeUsageFetch?: typeof fetch

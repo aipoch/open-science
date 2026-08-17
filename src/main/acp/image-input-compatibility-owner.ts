@@ -6,6 +6,14 @@ import {
   sanitizeAcpMessageImage,
   type AcpMessageImage
 } from '../../shared/acp'
+import {
+  VISION_EVIDENCE_BUDGET_MESSAGE,
+  VISION_EVIDENCE_INVALID_MESSAGE,
+  VISION_IMAGE_BUDGET_MESSAGE,
+  VISION_IMAGE_INVALID_MESSAGE,
+  VISION_IMAGE_TOO_LARGE_MESSAGE,
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE
+} from '../../shared/run-error-classification'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import type {
   RestrictedInferenceResult,
@@ -78,23 +86,17 @@ type ImageRelayBlock =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const stringValue = (value: unknown, field: string): string => {
+const stringValue = (value: unknown): string => {
   if (typeof value !== 'string') {
-    throw new ImageInputCompatibilityError(
-      'invalid-evidence',
-      `Vision evidence ${field} is invalid.`
-    )
+    throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_INVALID_MESSAGE)
   }
   return value
 }
 
-const stringArray = (value: unknown, field: string): readonly string[] => {
+const stringArray = (value: unknown): readonly string[] => {
   if (typeof value === 'string') return value ? [value] : []
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
-    throw new ImageInputCompatibilityError(
-      'invalid-evidence',
-      `Vision evidence ${field} is invalid.`
-    )
+    throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_INVALID_MESSAGE)
   }
   return value.slice(0, 64)
 }
@@ -111,16 +113,10 @@ const parseEvidence = (raw: string): ImageEvidence => {
   try {
     value = JSON.parse(json)
   } catch {
-    throw new ImageInputCompatibilityError(
-      'invalid-evidence',
-      'The Vision model returned invalid image evidence.'
-    )
+    throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_INVALID_MESSAGE)
   }
   if (!isRecord(value)) {
-    throw new ImageInputCompatibilityError(
-      'invalid-evidence',
-      'The Vision model returned invalid image evidence.'
-    )
+    throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_INVALID_MESSAGE)
   }
 
   const regions = Array.isArray(value.regions)
@@ -128,11 +124,11 @@ const parseEvidence = (raw: string): ImageEvidence => {
         if (!isRecord(entry)) {
           throw new ImageInputCompatibilityError(
             'invalid-evidence',
-            'Vision evidence regions are invalid.'
+            VISION_EVIDENCE_INVALID_MESSAGE
           )
         }
         return Object.freeze({
-          kind: stringValue(entry.kind, 'region kind'),
+          kind: stringValue(entry.kind),
           ...(optionalString(entry.text) === undefined ? {} : { text: optionalString(entry.text) }),
           ...(optionalString(entry.description) === undefined
             ? {}
@@ -145,11 +141,11 @@ const parseEvidence = (raw: string): ImageEvidence => {
         if (!isRecord(entry)) {
           throw new ImageInputCompatibilityError(
             'invalid-evidence',
-            'Vision evidence entities are invalid.'
+            VISION_EVIDENCE_INVALID_MESSAGE
           )
         }
         return Object.freeze({
-          name: stringValue(entry.name, 'entity name'),
+          name: stringValue(entry.name),
           ...(optionalString(entry.type) === undefined ? {} : { type: optionalString(entry.type) }),
           ...(optionalString(entry.description) === undefined
             ? {}
@@ -162,31 +158,28 @@ const parseEvidence = (raw: string): ImageEvidence => {
         if (!isRecord(entry)) {
           throw new ImageInputCompatibilityError(
             'invalid-evidence',
-            'Vision evidence relations are invalid.'
+            VISION_EVIDENCE_INVALID_MESSAGE
           )
         }
         return Object.freeze({
-          source: stringValue(entry.source, 'relation source'),
-          relation: stringValue(entry.relation, 'relation'),
-          target: stringValue(entry.target, 'relation target')
+          source: stringValue(entry.source),
+          relation: stringValue(entry.relation),
+          target: stringValue(entry.target)
         })
       })
     : undefined
 
   if (!regions || !entities || !relations) {
-    throw new ImageInputCompatibilityError(
-      'invalid-evidence',
-      'The Vision model returned incomplete image evidence.'
-    )
+    throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_INVALID_MESSAGE)
   }
   return Object.freeze({
-    summary: stringValue(value.summary, 'summary'),
-    findings: stringArray(value.findings ?? value.focusedFindings, 'findings'),
-    transcription: stringValue(value.transcription, 'transcription'),
+    summary: stringValue(value.summary),
+    findings: stringArray(value.findings ?? value.focusedFindings),
+    transcription: stringValue(value.transcription),
     regions,
     entities,
     relations,
-    uncertainty: stringArray(value.uncertainty, 'uncertainty')
+    uncertainty: stringArray(value.uncertainty)
   })
 }
 
@@ -312,10 +305,7 @@ const selectRelayImages = (
     selectedCount > MAX_RELAY_IMAGES_PER_REQUEST ||
     selectedBytes > MAX_RELAY_IMAGE_BYTES_PER_REQUEST
   ) {
-    throw new ImageInputCompatibilityError(
-      'invalid-image',
-      'The current images exceed the Vision evidence request budget.'
-    )
+    throw new ImageInputCompatibilityError('invalid-image', VISION_IMAGE_BUDGET_MESSAGE)
   }
   for (let index = historicalImageCount; index < images.length; index += 1) {
     selected[index] = true
@@ -337,6 +327,10 @@ const selectRelayImages = (
 
 class ImageInputCompatibilityOwner {
   private readonly cache = new Map<string, ImageEvidence>()
+  private readonly inFlight = new Map<
+    string,
+    Map<AbortSignal | undefined, Promise<ImageEvidence>>
+  >()
 
   constructor(private readonly options: ImageInputCompatibilityOwnerOptions) {}
 
@@ -365,10 +359,7 @@ class ImageInputCompatibilityOwner {
       if (historicalImageCount === images.length) {
         return this.replaceHistoricalImages(input.content)
       }
-      throw new ImageInputCompatibilityError(
-        'not-configured',
-        'Configure a Vision model in Settings > Model before sending images to this model.'
-      )
+      throw new ImageInputCompatibilityError('not-configured', VISION_MODEL_NOT_CONFIGURED_MESSAGE)
     }
     const selectedImages = selectRelayImages(images, historicalImageCount)
     const analyses = images.flatMap((block, index) =>
@@ -408,10 +399,7 @@ class ImageInputCompatibilityOwner {
       includedEvidence[index] = true
     }
     if (evidenceBytes > MAX_RELAY_EVIDENCE_BYTES_PER_REQUEST) {
-      throw new ImageInputCompatibilityError(
-        'invalid-evidence',
-        'The current Vision evidence exceeds the request budget.'
-      )
+      throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_BUDGET_MESSAGE)
     }
     for (let index = historicalImageCount - 1; index >= 0; index -= 1) {
       const rendered = renderedEvidence[index]
@@ -460,17 +448,14 @@ class ImageInputCompatibilityOwner {
     }>
   ): Promise<ImageEvidence> {
     if (block.type === 'resource_link') {
-      throw new ImageInputCompatibilityError(
-        'invalid-image',
-        'The attached image is too large to prepare for the Vision model.'
-      )
+      throw new ImageInputCompatibilityError('invalid-image', VISION_IMAGE_TOO_LARGE_MESSAGE)
     }
     const image = sanitizeAcpMessageImage({
       mimeType: block.mimeType,
       data: block.data
     })
     if (!image) {
-      throw new ImageInputCompatibilityError('invalid-image', 'The attached image is invalid.')
+      throw new ImageInputCompatibilityError('invalid-image', VISION_IMAGE_INVALID_MESSAGE)
     }
     const imageChecksum = createHash('sha256')
       .update(Buffer.from(image.data, 'base64'))
@@ -493,6 +478,48 @@ class ImageInputCompatibilityOwner {
       this.cache.set(key, cached)
       return cached
     }
+
+    const existingGroup = this.inFlight.get(key)
+    const pending = existingGroup?.get(context.signal)
+    if (pending) return pending
+
+    const analysis = this.loadOrAnalyze({
+      key,
+      identityKey,
+      image,
+      imageChecksum,
+      extractor,
+      target,
+      context
+    })
+    const group = existingGroup ?? new Map<AbortSignal | undefined, Promise<ImageEvidence>>()
+    group.set(context.signal, analysis)
+    this.inFlight.set(key, group)
+    try {
+      return await analysis
+    } finally {
+      if (group.get(context.signal) === analysis) group.delete(context.signal)
+      if (group.size === 0 && this.inFlight.get(key) === group) this.inFlight.delete(key)
+    }
+  }
+
+  private async loadOrAnalyze(
+    input: Readonly<{
+      key: string
+      identityKey?: string
+      image: AcpMessageImage
+      imageChecksum: string
+      extractor: string
+      target: VisionEvidenceTarget
+      context: Readonly<{
+        projectId?: string
+        sessionId?: string
+        source?: VisionEvidenceSource
+        signal?: AbortSignal
+      }>
+    }>
+  ): Promise<ImageEvidence> {
+    const { key, identityKey, image, imageChecksum, extractor, target, context } = input
 
     if (identityKey && this.options.evidenceRepository) {
       try {

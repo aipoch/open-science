@@ -360,7 +360,7 @@ const ProvidersPanel = ({
         title={t('Vision model')}
         aria-label={t('Vision model')}
         description={t(
-          'Reads attached images when the active model cannot. The selected provider receives the image and current question; the active model receives text evidence.'
+          'Reads attached images when the active model cannot. The selected provider receives only the image; the active model receives text evidence.'
         )}
         separated
       >

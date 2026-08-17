@@ -17,7 +17,10 @@ import type {
   SessionPermissionProfileState
 } from '../../../../shared/permission-profiles'
 import { MAX_UPLOAD_FILE_BYTES, formatUploadSizeLimit } from '../../../../shared/uploads'
-import { isReportableRunFailure } from '../../../../shared/run-error-classification'
+import {
+  isReportableRunFailure,
+  visionRunFailureMessage
+} from '../../../../shared/run-error-classification'
 import {
   AlertTriangle,
   ArrowUp,
@@ -102,6 +105,28 @@ import { hasMainConversation, type SideChatController } from './use-side-chat-co
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { WorkspaceConversationController } from './workspace-conversation-controller'
 import type { WorkspaceSessionController } from './workspace-session-controller'
+
+const localizeVisionRunFailure = (
+  error: string | null | undefined,
+  t: TFunction
+): string | undefined => {
+  switch (visionRunFailureMessage(error)) {
+    case 'Configure a Vision model in Settings > Model before sending images to this model.':
+      return t('Configure a Vision model in Settings > Model before sending images to this model.')
+    case 'The attached image is too large to prepare for the Vision model.':
+      return t('The attached image is too large to prepare for the Vision model.')
+    case 'The attached image is invalid.':
+      return t('The attached image is invalid.')
+    case 'The current images exceed the Vision evidence request budget.':
+      return t('The current images exceed the Vision evidence request budget.')
+    case 'The current Vision evidence exceeds the request budget.':
+      return t('The current Vision evidence exceeds the request budget.')
+    case 'The Vision model returned invalid image evidence.':
+      return t('The Vision model returned invalid image evidence.')
+    default:
+      return undefined
+  }
+}
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
@@ -505,7 +530,10 @@ const ConversationPanel = ({
     activeSession?.status === 'waiting-plan-approval'
       ? activePendingPlan
       : undefined
-  const resolvedRunError = normalizeRunFailureError(activeSession?.error)
+  const resolvedRunError =
+    localizeVisionRunFailure(activeSession?.error, t) ??
+    normalizeRunFailureError(activeSession?.error)
+  const resolvedActionError = localizeVisionRunFailure(actionError, t) ?? actionError
   // Only unknown/opaque ACP-layer failures offer the "Report error → GitHub issue" affordance. The
   // reportability is resolved at failure time and persisted on the session: a model-provider error is
   // tagged non-reportable at the ACP layer, and an app-crafted reminder is recognized by its own text.
@@ -812,12 +840,12 @@ const ConversationPanel = ({
                     <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
                     {t('Compacting conversation to fit the context limit…')}
                   </div>
-                ) : actionError || activeSession?.status === 'error' ? (
+                ) : resolvedActionError || activeSession?.status === 'error' ? (
                   <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
                     {/* Transient action errors and a run failure can coexist; show each on its own row
                         so the run's report affordance is never suppressed by a transient error. */}
-                    {actionError ? (
-                      <span className="min-w-0 break-words">{actionError}</span>
+                    {resolvedActionError ? (
+                      <span className="min-w-0 break-words">{resolvedActionError}</span>
                     ) : null}
                     {activeSession?.status === 'error' ? (
                       <div className="flex items-start gap-2">
