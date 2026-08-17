@@ -74,7 +74,11 @@ type PreviewApplicationCommandOwner = Readonly<{
   delete(request: PreviewState.DeletePreviewStateRequest): Promise<void>
 }>
 
-type SessionApplicationCommandOwner = SessionPersistenceHandlers
+type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  deleteSession(
+    request: SessionPersistence.DeleteSessionRequest
+  ): Promise<SessionPersistence.SessionDeletionResult>
+}
 
 type InvocationOwner<Owner> = Readonly<{
   [Method in keyof Owner]: Owner[Method] extends (...args: infer Args) => infer Result
@@ -496,11 +500,13 @@ const registerDataContentApplicationCommands = (
       }
     })
     scope.registerGroup(dataContentApplicationCommandGroups[6], {
-      'sessions:delete-session': ({ args }) =>
-        dependencies.withDataRootWrite(async () => {
-          await dependencies.sessions.deleteSession(args[0])
+      'sessions:delete-session': async ({ args }) => {
+        const result = await dependencies.sessions.deleteSession(args[0])
+        if (result.status === 'deleted') {
           publishLifecycle(dependencies.events, LIFECYCLE_CHANNELS.sessionDeleted, args[0])
-        }),
+        }
+        return result
+      },
       'sessions:export-conversation': (invocation) => {
         assertElectronCaller(
           invocation,

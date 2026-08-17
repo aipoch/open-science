@@ -13,6 +13,7 @@ import {
   registerDataContentApplicationCommands,
   type DataContentApplicationCommandDependencies
 } from './data-content-application-commands'
+import type { SessionDeletionResult } from '../shared/session-persistence'
 
 const callerContext = createCallerContext({
   clientId: 'renderer-1',
@@ -139,7 +140,10 @@ const createDependencies = () => {
     loadOne: vi.fn(),
     saveSession: vi.fn(async () => ({ created: true, session })),
     setDelegationPolicy: vi.fn(async () => session),
-    deleteSession: vi.fn(),
+    deleteSession: vi.fn(async (): Promise<SessionDeletionResult> => ({
+      status: 'deleted',
+      runtimeDetached: true
+    })),
     saveManifest: vi.fn(),
     updateArchive: vi.fn(async () => session)
   }
@@ -715,10 +719,12 @@ describe('Data and content application commands', () => {
       dataContentApplicationCommands.sessionSaveManifest,
       invocation([manifestRequest] as const)
     )
-    await router.dispatcher.invoke(
-      dataContentApplicationCommands.sessionDelete,
-      invocation([deleteSessionRequest] as const)
-    )
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionDelete,
+        invocation([deleteSessionRequest] as const)
+      )
+    ).resolves.toEqual({ status: 'deleted', runtimeDetached: true })
 
     expect(deps.projects.update).toHaveBeenCalledWith(updateRequest)
     expect(deps.projects.delete).toHaveBeenCalledWith('project-1')
@@ -726,12 +732,36 @@ describe('Data and content application commands', () => {
     expect(deps.sessions.loadOne).toHaveBeenCalledWith(deleteSessionRequest)
     expect(deps.sessions.saveManifest).toHaveBeenCalledWith(manifestRequest)
     expect(deps.sessions.deleteSession).toHaveBeenCalledWith(deleteSessionRequest)
-    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(4)
+    expect(deps.withDataRootWrite).toHaveBeenCalledTimes(3)
     expect(deps.events.publish).toHaveBeenCalledWith('project:updated', deps.project)
     expect(deps.events.publish).toHaveBeenCalledWith('project:deleted', {
       projectId: 'project-1'
     })
     expect(deps.events.publish).toHaveBeenCalledWith('session:deleted', deleteSessionRequest)
+  })
+
+  it('returns a failed Session deletion without publishing a committed lifecycle event', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    const result = {
+      status: 'failed' as const,
+      reason: 'runtime' as const,
+      runtimeDetached: false as const
+    }
+    deps.sessions.deleteSession.mockResolvedValueOnce(result)
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionDelete,
+        invocation([request] as const)
+      )
+    ).resolves.toEqual(result)
+
+    expect(deps.sessions.deleteSession).toHaveBeenCalledWith(request)
+    expect(deps.withDataRootWrite).not.toHaveBeenCalled()
+    expect(deps.events.publish).not.toHaveBeenCalledWith('session:deleted', request)
   })
 
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {

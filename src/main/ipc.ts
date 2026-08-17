@@ -2830,7 +2830,10 @@ const createApplicationModules = async (
       },
       projectFiles: projectFilesHandlers,
       projects: projectHandlers,
-      sessions: sessionPersistenceHandlers,
+      sessions: {
+        ...sessionPersistenceHandlers,
+        deleteSession: (request) => sessionDeletionOwner.delete(request)
+      },
       uploads: uploadCommandOwner,
       withDataRootWrite
     },

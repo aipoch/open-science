@@ -64,7 +64,12 @@ describe('production application command wiring', () => {
       [
         'sessionPersistenceHandlers',
         'reviewRepository, sessionPersistenceHandlers, async (session)',
-        'sessions: sessionPersistenceHandlers'
+        '...sessionPersistenceHandlers'
+      ],
+      [
+        'sessionDeletionOwner',
+        'registerSessionDeletionIpcHandler(sessionDeletionOwner)',
+        'deleteSession: (request) => sessionDeletionOwner.delete(request)'
       ],
       ['artifactHandlers', 'artifactHandlers )', 'artifacts: artifactHandlers'],
       [
