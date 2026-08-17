@@ -212,6 +212,7 @@ describe('Project-owned data catalog architecture', () => {
     expect(PROJECT_OWNED_DATA_CATALOG.map((entry) => entry.id)).toEqual([
       'permission-grants',
       'project-preview-state',
+      'vision-evidence',
       'notification-inbox-history',
       'review-persistence',
       'project-deletion-intent',

@@ -133,6 +133,35 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
     }
   },
   {
+    id: 'vision-evidence',
+    medium: 'sqlite',
+    resources: ['VisionEvidence'],
+    prismaModels: [
+      {
+        name: 'VisionEvidence',
+        ownerFields: [requiredOwner('projectId'), requiredOwner('sessionId')],
+        relationContracts: [
+          {
+            field: 'project',
+            target: 'Project',
+            fromFields: ['projectId'],
+            onDelete: 'Cascade'
+          },
+          {
+            field: 'uploadVersion',
+            target: 'UploadVersion',
+            fromFields: ['uploadVersionId'],
+            onDelete: 'Cascade'
+          }
+        ]
+      }
+    ],
+    policy: {
+      kind: 'foreign-key-cascade',
+      note: 'Project and Upload Version deletion cascade into this derived cache; Session catalog cleanup prunes message-image rows.'
+    }
+  },
+  {
     id: 'notification-inbox-history',
     medium: 'sqlite',
     resources: ['NotificationInboxItem'],
