@@ -20,7 +20,7 @@ import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
 import type * as PreviewResources from '../shared/preview-resources'
 import type * as PreviewState from '../shared/preview-state'
 import * as Projects from '../shared/projects'
-import type * as SessionPersistence from '../shared/session-persistence'
+import * as SessionPersistence from '../shared/session-persistence'
 import * as Uploads from '../shared/uploads'
 
 type OwnerArgs<Owner, Method extends keyof Owner> = Owner[Method] extends (
@@ -248,7 +248,11 @@ const dataContentApplicationCommands = Object.freeze({
     'update',
     Projects.projectApplicationCommandContracts.update
   ),
-  sessionDelete: sessionCommand('sessions:delete-session', 'deleteSession'),
+  sessionDelete: sessionCommand(
+    'sessions:delete-session',
+    'deleteSession',
+    SessionPersistence.sessionApplicationCommandContracts.delete
+  ),
   sessionExportConversation: electronCommand(
     'sessions:export-conversation',
     'exportConversationFromInvokingWindow'

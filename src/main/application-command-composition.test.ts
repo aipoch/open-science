@@ -186,7 +186,7 @@ const invocation = (
 }
 
 describe('application command composition', () => {
-  it('joins the six runtime-validated Project contracts into the Electron view', () => {
+  it('joins the runtime-validated contracts into the Electron view', () => {
     const composition = createApplicationCommandComposition(dependencies())
 
     expect(composition.electron.commandNames()).toEqual([
@@ -195,7 +195,8 @@ describe('application command composition', () => {
       'projects:get',
       'projects:list',
       'projects:update',
-      'projects:update-archive'
+      'projects:update-archive',
+      'sessions:delete-session'
     ])
   })
 

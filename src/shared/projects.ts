@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { validationCodec, type ApplicationCommandContract } from './application-command-contract'
+import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 
 // Shared project types crossing the main <-> renderer IPC boundary.
 //
@@ -67,27 +67,28 @@ export type UpdateProjectRequest = z.infer<typeof updateProjectRequestSchema>
 export type DeleteProjectRequest = z.infer<typeof deleteProjectRequestSchema>
 export type UpdateProjectArchiveRequest = z.infer<typeof updateProjectArchiveRequestSchema>
 
-const contract = <Args extends readonly unknown[], Result>(
-  args: ApplicationCommandContract<Args, Result>['args'],
-  result: ApplicationCommandContract<Args, Result>['result']
-): ApplicationCommandContract<Args, Result> => Object.freeze({ args, result })
-
 export const projectApplicationCommandContracts = Object.freeze({
-  list: contract(validationCodec(z.tuple([])), validationCodec(z.array(projectSchema))),
-  get: contract(validationCodec(z.tuple([z.string()])), validationCodec(projectSchema.nullable())),
-  create: contract(
+  list: defineApplicationCommandContract(
+    validationCodec(z.tuple([])),
+    validationCodec(z.array(projectSchema))
+  ),
+  get: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.string()])),
+    validationCodec(projectSchema.nullable())
+  ),
+  create: defineApplicationCommandContract(
     validationCodec(z.tuple([createProjectRequestSchema])),
     validationCodec(projectSchema)
   ),
-  update: contract(
+  update: defineApplicationCommandContract(
     validationCodec(z.tuple([updateProjectRequestSchema])),
     validationCodec(projectSchema)
   ),
-  updateArchive: contract(
+  updateArchive: defineApplicationCommandContract(
     validationCodec(z.tuple([updateProjectArchiveRequestSchema])),
     validationCodec(projectSchema)
   ),
-  delete: contract(
+  delete: defineApplicationCommandContract(
     validationCodec(z.tuple([deleteProjectRequestSchema])),
     validationCodec(z.undefined())
   )

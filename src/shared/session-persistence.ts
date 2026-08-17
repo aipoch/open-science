@@ -1,3 +1,6 @@
+import { z } from 'zod'
+
+import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import type { PersistedUploadedAttachment } from './uploads'
 import type { FileReference } from './artifacts'
 import {
@@ -3708,15 +3711,33 @@ export type LoadSessionRequest = {
   sessionId: string
 }
 
-export type DeleteSessionRequest = {
-  projectId: string
-  sessionId: string
-}
+export const deleteSessionRequestSchema = z
+  .object({ projectId: z.string(), sessionId: z.string() })
+  .strict()
 
-export type SessionDeletionResult =
-  | { status: 'deleted'; runtimeDetached: true }
-  | { status: 'failed'; reason: 'runtime'; runtimeDetached: false }
-  | { status: 'failed'; reason: 'persistence'; runtimeDetached: true }
+export type DeleteSessionRequest = z.infer<typeof deleteSessionRequestSchema>
+
+// zod v4 requires unique discriminator values, and both failure branches share status 'failed',
+// so this stays a plain union over the exact owner-produced shapes.
+export const sessionDeletionResultSchema = z.union([
+  z.object({ status: z.literal('deleted'), runtimeDetached: z.literal(true) }).strict(),
+  z
+    .object({
+      status: z.literal('failed'),
+      reason: z.literal('runtime'),
+      runtimeDetached: z.literal(false)
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal('failed'),
+      reason: z.literal('persistence'),
+      runtimeDetached: z.literal(true)
+    })
+    .strict()
+])
+
+export type SessionDeletionResult = z.infer<typeof sessionDeletionResultSchema>
 
 export type UpdateSessionArchiveRequest = {
   projectId: string
@@ -3729,3 +3750,13 @@ export type SaveSessionManifestRequest = {
   lastProjectId?: string
   lastSessionId?: string
 }
+
+// Runtime-validated contract for the Electron-facing terminal Session deletion command. The request
+// and result schemas double as the wire types so the router enforces exactly the union the
+// SessionDeletionOwner can produce.
+export const sessionApplicationCommandContracts = Object.freeze({
+  delete: defineApplicationCommandContract(
+    validationCodec(z.tuple([deleteSessionRequestSchema])),
+    validationCodec(sessionDeletionResultSchema)
+  )
+})

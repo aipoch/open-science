@@ -195,14 +195,15 @@ describe('renderer contract catalog', () => {
     })
   })
 
-  it('marks only the runtime-validated Project command slice', () => {
+  it('marks the runtime-validated command slice', () => {
     expect(paths(({ applicationCommand }) => applicationCommand === 'runtime-validated')).toEqual([
       'projects.create',
       'projects.delete',
       'projects.get',
       'projects.list',
       'projects.update',
-      'projects.updateArchive'
+      'projects.updateArchive',
+      'sessions.deleteSession'
     ])
     expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).toEqual([
       'projects:create',
@@ -210,7 +211,8 @@ describe('renderer contract catalog', () => {
       'projects:get',
       'projects:list',
       'projects:update',
-      'projects:update-archive'
+      'projects:update-archive',
+      'sessions:delete-session'
     ])
   })
 })

@@ -18,13 +18,14 @@ vi.mock('./ipc-handler-registry', () => ({
 }))
 import { registerApplicationCommandElectronAdapter } from './application-command-electron-adapter'
 
-const projectChannels = [
+const validatedChannels = [
   'projects:create',
   'projects:delete',
   'projects:get',
   'projects:list',
   'projects:update',
-  'projects:update-archive'
+  'projects:update-archive',
+  'sessions:delete-session'
 ] as const
 
 const eventWithLease = (): IpcMainInvokeEvent => {
@@ -42,7 +43,7 @@ const eventWithLease = (): IpcMainInvokeEvent => {
 const dispatcher = (
   invoke: ApplicationCommandByNameDispatcher['invoke']
 ): ApplicationCommandByNameDispatcher => ({
-  commandNames: () => projectChannels,
+  commandNames: () => validatedChannels,
   invoke
 })
 
@@ -52,14 +53,14 @@ beforeEach(() => {
 })
 
 describe('Electron Application Command adapter', () => {
-  it('installs the catalog-selected Project slice with caller context and lease', async () => {
+  it('installs the catalog-selected validated slice with caller context and lease', async () => {
     const result = [{ id: 'project-1' }]
     const invoke = vi.fn().mockResolvedValue(result)
     registerApplicationCommandElectronAdapter(dispatcher(invoke), { warn })
     const event = eventWithLease()
 
     await expect(handlers.get('projects:list')?.(event)).resolves.toEqual({ ok: true, result })
-    expect([...handlers.keys()]).toEqual(projectChannels)
+    expect([...handlers.keys()]).toEqual(validatedChannels)
     expect(invoke).toHaveBeenCalledWith(
       'projects:list',
       expect.objectContaining({

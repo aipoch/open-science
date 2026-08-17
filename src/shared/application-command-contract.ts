@@ -24,6 +24,13 @@ export type ApplicationCommandContract<Args extends readonly unknown[], Result> 
   result: RuntimeCodec<Result>
 }>
 
+// Domain modules compose runtime-validated command contracts with this helper so arg/result codecs
+// stay colocated with the shared domain types they parse.
+export const defineApplicationCommandContract = <Args extends readonly unknown[], Result>(
+  args: ApplicationCommandContract<Args, Result>['args'],
+  result: ApplicationCommandContract<Args, Result>['result']
+): ApplicationCommandContract<Args, Result> => Object.freeze({ args, result })
+
 export type ApplicationCommandErrorEnvelope = Readonly<{
   code: ApplicationCommandErrorCode
   message: string
