@@ -1264,6 +1264,8 @@ export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string
 
 // Add a custom MCP server. stdio requires `command`; the remote transports require `url`.
 export type AddCustomServerRequest = {
+  // Optional immutable local ID. Omission lets main infer one from `name` and fall back to a UUID.
+  id?: string
   name: string
   displayName: string
   description?: string

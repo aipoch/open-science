@@ -115,6 +115,76 @@ describe('ConnectorAddForm (local command)', () => {
     expect(onDone).toHaveBeenCalled()
   })
 
+  it('previews an ID from the name and submits a valid user override', async () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'RNA Reviewer')
+    openAdvancedSettings()
+
+    const idInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector ID"]')
+    expect(idInput?.value).toBe('rna-reviewer')
+
+    setValue('Connector ID', 'transcriptomics-reviewer')
+    checkTrust()
+    await act(async () => addButton()?.click())
+
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'transcriptomics-reviewer',
+        name: 'rna-reviewer',
+        displayName: 'RNA Reviewer'
+      })
+    )
+  })
+
+  it('validates a user-provided ID while typing', () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'RNA Reviewer')
+    openAdvancedSettings()
+    setValue('Connector ID', 'hello ee')
+
+    const idInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector ID"]')
+    expect(idInput?.getAttribute('aria-invalid')).toBe('true')
+    expect(document.body.textContent).toContain(
+      'ID may only contain lowercase letters, numbers, and hyphens.'
+    )
+
+    setValue('Connector ID', 'hello-ee')
+
+    expect(idInput?.getAttribute('aria-invalid')).toBeNull()
+    expect(document.body.textContent).not.toContain(
+      'ID may only contain lowercase letters, numbers, and hyphens.'
+    )
+  })
+
+  it('previews and submits a UUID when the name cannot produce a safe ID', async () => {
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'MCP Research')
+    openAdvancedSettings()
+
+    const generatedId = document.body.querySelector<HTMLInputElement>(
+      '[aria-label="Connector ID"]'
+    )!.value
+    expect(generatedId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+
+    checkTrust()
+    await act(async () => addButton()?.click())
+
+    expect(useSettingsStore.getState().addCustomServer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: generatedId, name: 'mcp-research' })
+    )
+  })
+
   it('keeps Add connector disabled until the trust checkbox is checked', () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
@@ -149,7 +219,13 @@ describe('ConnectorAddForm (local command)', () => {
     openAdvancedSettings()
 
     expect(advancedButton()?.getAttribute('aria-expanded')).toBe('true')
-    for (const label of ['Connector name', 'Description', 'Arguments', 'Environment variables']) {
+    for (const label of [
+      'Connector name',
+      'Connector ID',
+      'Description',
+      'Arguments',
+      'Environment variables'
+    ]) {
       expect(
         document.body
           .querySelector(`[aria-label="${label}"]`)
@@ -315,6 +391,9 @@ describe('ConnectorAddForm (edit)', () => {
     const nameInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector name"]')
     expect(nameInput?.value).toBe('my-mem')
     expect(nameInput?.disabled).toBe(true) // name is immutable and visibly disabled
+    const idInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector ID"]')
+    expect(idInput?.value).toBe('srv-1')
+    expect(idInput?.disabled).toBe(true)
     const displayNameInput = document.body.querySelector<HTMLInputElement>(
       '[aria-label="Display name"]'
     )
@@ -349,6 +428,33 @@ describe('ConnectorAddForm (edit)', () => {
       .calls[0][0]
     expect(call).not.toHaveProperty('name')
     expect(onDone).toHaveBeenCalled()
+  })
+
+  it('keeps a legacy Connector editable when its name matches another stored ID', () => {
+    useSettingsStore.setState({
+      ...createInitialSettingsState(),
+      customServers: [
+        editServer,
+        {
+          ...editServer,
+          id: 'my-mem',
+          name: 'other-server',
+          displayName: 'Other server'
+        }
+      ],
+      updateCustomServer: vi.fn().mockResolvedValue(undefined)
+    })
+    act(() => {
+      root.render(<ConnectorAddForm editServer={editServer} onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Save changes'
+    )
+    expect(document.body.textContent).not.toContain(
+      'A custom Connector with this name already exists.'
+    )
+    expect(save?.disabled).toBe(false)
   })
 
   it('reveals a stored Connector name error instead of hiding it in Advanced settings', () => {

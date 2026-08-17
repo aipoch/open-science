@@ -19,6 +19,7 @@ import type {
   ToolPermission,
   UpdateCustomServerRequest
 } from '../../shared/settings'
+import { inferResourceId, validateResourceId } from '../../shared/resource-id'
 import {
   customConnectorNameFromSkillName,
   isCustomConnectorName
@@ -30,6 +31,7 @@ import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { sanitizeCustomMcpServer, type SettingsRepository } from './repository'
 import type { StoredConnectors, StoredCustomMcpOAuthState, StoredCustomMcpServer } from './types'
 import { buildConnectorTemplateExport, parseConnectorTemplate } from './connector-template'
+import { CustomServerIdConflictError } from './custom-server-identity'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
@@ -292,8 +294,17 @@ class ConnectorSettingsModule {
     if (request.oauth && request.headers && Object.keys(request.headers).length > 0) {
       throw new Error('OAuth and static headers cannot be configured together')
     }
+    const inferredId = inferResourceId(name)
+    const usedIds = new Set([
+      ...CONNECTOR_CATALOG.map((connector) => connector.id),
+      ...existingServers.flatMap((server) => [server.id, server.name])
+    ])
+    const requestedId = request.id?.trim() || undefined
+    const idError = requestedId ? validateResourceId(requestedId) : undefined
+    if (idError) throw new Error(idError)
+    if (requestedId && usedIds.has(requestedId)) throw new Error('ID is already in use.')
     const candidate: StoredCustomMcpServer = {
-      id: randomUUID(),
+      id: requestedId ?? (inferredId && !usedIds.has(inferredId) ? inferredId : randomUUID()),
       name,
       displayName,
       transport: request.transport,
@@ -313,11 +324,19 @@ class ConnectorSettingsModule {
         ? { oauth: normalizeOAuthConfig(request.oauth) }
         : {})
     }
-    const server = sanitizeCustomMcpServer(candidate)
+    let server = sanitizeCustomMcpServer(candidate)
 
     if (!server) throw new Error('Invalid custom connector configuration')
 
-    await this.repository.addCustomServer(server)
+    try {
+      await this.repository.addCustomServer(server)
+    } catch (error) {
+      if (requestedId || !(error instanceof CustomServerIdConflictError)) {
+        throw error
+      }
+      server = { ...server, id: randomUUID() }
+      await this.repository.addCustomServer(server)
+    }
 
     return this.connectorsSnapshot()
   }

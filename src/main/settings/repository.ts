@@ -36,6 +36,7 @@ import {
 import { sanitizePackageMirror } from './record-codec'
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
+import { appendCustomServer } from './custom-server-identity'
 import {
   buildReviewerModelMutation,
   buildSubagentModelMutation,
@@ -582,7 +583,7 @@ class SettingsRepository {
   // Appends a fully-formed custom MCP server record.
   async addCustomServer(server: StoredCustomMcpServer): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
-      connectors.customMcpServers = [...(connectors.customMcpServers ?? []), server]
+      connectors.customMcpServers = appendCustomServer(connectors.customMcpServers, server)
     })
   }
 

@@ -1,6 +1,8 @@
 // Shared types and validation for Personal Specialist Profiles.
 // All mutation rules live here so Settings, SDK, and runtime share one contract.
 
+import { RESOURCE_ID_MAX_LENGTH, inferResourceId, validateResourceId } from './resource-id'
+
 // IPC channel names shared between main, preload, and renderer.
 export const SPECIALIST_IPC = {
   LIST: 'specialist:list',
@@ -314,33 +316,12 @@ export type SpecialistFieldError = {
 // the three never drift apart.
 export const SPECIALIST_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DISPLAY_NAME_MAX_LENGTH = 80
-export const SPECIALIST_ID_MAX_LENGTH = 128
+export const SPECIALIST_ID_MAX_LENGTH = RESOURCE_ID_MAX_LENGTH
 export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 200
 export const SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH = 32_768
 
-const SPECIALIST_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/
-const SPECIALIST_ID_RESERVED_PREFIXES = ['os-', 'mcp-'] as const
-
-export const validateSpecialistId = (id: string): string | undefined => {
-  if (!SPECIALIST_ID_PATTERN.test(id)) {
-    return 'ID may only contain lowercase letters, numbers, and hyphens.'
-  }
-  if (SPECIALIST_ID_RESERVED_PREFIXES.some((prefix) => id.startsWith(prefix))) {
-    return 'IDs starting with os- or mcp- are reserved.'
-  }
-  return undefined
-}
-
-export const inferSpecialistId = (name: string): string | undefined => {
-  const id = name
-    .normalize('NFKC')
-    .trim()
-    .toLocaleLowerCase('en-US')
-    .replace(/[\s_]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return validateSpecialistId(id) === undefined ? id : undefined
-}
+export const validateSpecialistId = validateResourceId
+export const inferSpecialistId = inferResourceId
 
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/

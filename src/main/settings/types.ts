@@ -101,6 +101,7 @@ export type StoredCustomMcpOAuthState = {
 // A user-added custom MCP server. Secret values are stored as safeStorage refs and decrypted only in
 // the main process when constructing the MCP transport.
 export type StoredCustomMcpServer = {
+  // Immutable local identity. New records infer it from `name` when safe and otherwise use a UUID.
   id: string
   // Immutable public invocation name used by host.mcp, Specialists, policy, and generated Skills.
   name: string

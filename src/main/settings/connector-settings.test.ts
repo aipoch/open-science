@@ -161,7 +161,7 @@ describe('ConnectorSettingsModule', () => {
       enabled: true,
       description: 'Memory server'
     })
-    expect(added.id).toBeTruthy()
+    expect(added.id).toBe('my-mem')
 
     snapshot = await service.setCustomServerEnabled({ id: added.id, enabled: false })
     expect(snapshot.customServers[0].enabled).toBe(false)
@@ -173,6 +173,101 @@ describe('ConnectorSettingsModule', () => {
     const afterRemoval = (await repository.getSettings()).connectors
     expect(afterRemoval?.autoAllowIds).not.toContain(added.name)
     expect(afterRemoval?.askToolIds ?? []).not.toContain(`${added.name}/lookup`)
+  })
+
+  it('uses a valid user-provided custom server ID', async () => {
+    const snapshot = await service.addCustomServer({
+      id: 'research-memory',
+      name: 'my-mem',
+      displayName: 'My memory',
+      transport: 'stdio',
+      command: 'npx'
+    })
+
+    expect(snapshot.customServers[0].id).toBe('research-memory')
+  })
+
+  it('falls back to a UUID when the inferred custom server ID is reserved', async () => {
+    const snapshot = await service.addCustomServer({
+      name: 'mcp-research',
+      displayName: 'MCP Research',
+      transport: 'stdio',
+      command: 'npx'
+    })
+
+    expect(snapshot.customServers[0].id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+  })
+
+  it('falls back to a UUID when concurrent names infer the same ID', async () => {
+    await Promise.all([
+      service.addCustomServer({
+        name: 'rna-reviewer',
+        displayName: 'RNA reviewer',
+        transport: 'stdio',
+        command: 'npx'
+      }),
+      service.addCustomServer({
+        name: 'rna--reviewer',
+        displayName: 'RNA double-hyphen reviewer',
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ])
+
+    const ids = (await service.listConnectors()).customServers.map((server) => server.id)
+    expect(ids).toContain('rna-reviewer')
+    expect(new Set(ids)).toHaveLength(2)
+    expect(ids.some((id) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/.test(id))).toBe(true)
+  })
+
+  it('rejects invalid or already-used custom server IDs', async () => {
+    await expect(
+      service.addCustomServer({
+        id: 'hello ee',
+        name: 'first-server',
+        displayName: 'First server',
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).rejects.toThrow('ID may only contain lowercase letters, numbers, and hyphens.')
+
+    await service.addCustomServer({
+      id: 'research-memory',
+      name: 'second-server',
+      displayName: 'Second server',
+      transport: 'stdio',
+      command: 'npx'
+    })
+    await expect(
+      service.addCustomServer({
+        id: 'research-memory',
+        name: 'third-server',
+        displayName: 'Third server',
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).rejects.toThrow('ID is already in use.')
+
+    await expect(
+      service.addCustomServer({
+        id: 'second-server',
+        name: 'fourth-server',
+        displayName: 'Fourth server',
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).rejects.toThrow('ID is already in use.')
+    await expect(
+      service.addCustomServer({
+        id: 'fifth-server',
+        name: 'research-memory',
+        displayName: 'Fifth server',
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).rejects.toThrow('already exists')
   })
 
   it('advertises only safe custom Connector Skills from the successful materialization projection', async () => {
@@ -305,7 +400,7 @@ describe('ConnectorSettingsModule', () => {
     ).rejects.toThrow('reserved by a built-in connector')
   })
 
-  it('separates the display name from the immutable host.mcp Connector ID', async () => {
+  it('separates the display name from the immutable invocation name', async () => {
     const snapshot = await addCustomServer({
       name: 'example-oauth-e2e',
       displayName: 'Example OAuth E2E',
@@ -328,7 +423,7 @@ describe('ConnectorSettingsModule', () => {
     ).rejects.toThrow('already exists')
   })
 
-  it('does not reserve display labels or UUIDs as routing aliases', async () => {
+  it('allows display labels to match stored local IDs', async () => {
     const existing = await addCustomServer({
       name: 'stable-route',
       displayName: 'legacy-route',
@@ -342,10 +437,9 @@ describe('ConnectorSettingsModule', () => {
       transport: 'stdio',
       command: 'example-mcp'
     })
-    expect(added.customServers.map((server) => server.name)).toEqual([
-      'legacy-route',
-      'stable-route'
-    ])
+    expect(added.customServers.map((server) => server.name)).toEqual(
+      expect.arrayContaining(['legacy-route', 'stable-route'])
+    )
   })
 
   it('fails closed when a legacy Connector derives a bundled route', async () => {
@@ -394,6 +488,7 @@ describe('ConnectorSettingsModule', () => {
 
   it('exports only credential names and validates imports against installed connectors', async () => {
     const snapshot = await addCustomServer({
+      id: 'internal-export-id',
       name: 'example-export',
       transport: 'stdio',
       command: 'npx',
@@ -405,7 +500,7 @@ describe('ConnectorSettingsModule', () => {
     expect(result.preview).toMatchObject({ ready: true, connectorId: snapshot.customServers[0].id })
     expect(result.contents).toContain('API_TOKEN')
     expect(result.contents).not.toContain('must-not-export')
-    expect(result.contents).not.toContain(snapshot.customServers[0].id)
+    expect(result.contents).not.toContain('internal-export-id')
 
     const imported = await service.previewCustomServerTemplateImport(result.contents!)
     expect(imported.ready).toBe(false)
