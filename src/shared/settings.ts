@@ -1254,6 +1254,8 @@ export type CustomServerView = {
 export type ConnectorsSnapshot = {
   connectors: ConnectorView[]
   customServers: CustomServerView[]
+  // Local IDs reserved until interrupted custom Connector deletion cleanup completes.
+  reservedCustomServerIds?: string[]
   ncbi: NcbiCredentialsView
 }
 

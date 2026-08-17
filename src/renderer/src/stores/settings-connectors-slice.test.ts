@@ -99,6 +99,7 @@ describe('settings Connectors slice', () => {
   it('loads the authoritative Connector, custom-server, and NCBI projection', async () => {
     const result: ConnectorsSnapshot = {
       ...snapshot([connector('pubmed')], [server('custom')]),
+      reservedCustomServerIds: ['pending-delete'],
       ncbi: { contactEmail: 'science@example.test', hasApiKey: true }
     }
     vi.mocked(commands.listConnectors).mockResolvedValue(result)

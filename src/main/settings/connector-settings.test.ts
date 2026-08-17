@@ -201,6 +201,7 @@ describe('ConnectorSettingsModule', () => {
     const persisted = (await repository.getSettings()).connectors
     expect(persisted?.customMcpServers ?? []).toEqual([])
     expect(persisted?.pendingCustomServerDeletionIds).toEqual([id])
+    expect((await service.listConnectors()).reservedCustomServerIds).toEqual([id])
     await expect(
       service.addCustomServer({
         id,

@@ -87,9 +87,10 @@ class ConnectorSettingsWorkflows {
     request: RemoveCustomServerRequest
   ): WorkflowResult<'removeCustomServer'> {
     return this.settings
-      .removeCustomServer(request, (serverId) =>
-        this.effects.pruneCustomServerPermissions(serverId)
-      )
+      .removeCustomServer(request, async (serverId) => {
+        await this.effects.resetCustomServerClient(serverId)
+        await this.effects.pruneCustomServerPermissions(serverId)
+      })
       .finally(() => this.connectorsChanged())
   }
 

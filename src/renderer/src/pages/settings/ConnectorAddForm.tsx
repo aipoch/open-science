@@ -118,6 +118,7 @@ export function ConnectorAddForm({
   const updateCustomServer = useSettingsStore((s) => s.updateCustomServer)
   const connectors = useSettingsStore((s) => s.connectors)
   const customServers = useSettingsStore((s) => s.customServers)
+  const reservedCustomServerIds = useSettingsStore((s) => s.reservedCustomServerIds ?? [])
   const isEdit = editServer !== undefined
 
   const [mode, setMode] = useState<ConnectorMode>(
@@ -144,9 +145,10 @@ export function ConnectorAddForm({
     () =>
       new Set([
         ...connectors.map((connector) => connector.id),
-        ...customServers.flatMap((server) => [server.id, server.name])
+        ...customServers.flatMap((server) => [server.id, server.name]),
+        ...reservedCustomServerIds
       ]),
-    [connectors, customServers]
+    [connectors, customServers, reservedCustomServerIds]
   )
   const inferredId = inferResourceId(currentName)
   const generatedId = inferredId && !usedIds.has(inferredId) ? inferredId : fallbackId

@@ -162,6 +162,26 @@ describe('ConnectorAddForm (local command)', () => {
     )
   })
 
+  it('treats a pending-deletion Connector ID as reserved', () => {
+    useSettingsStore.setState({ reservedCustomServerIds: ['rna-reviewer'] })
+    act(() => {
+      root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)
+    })
+
+    setValue('Display name', 'RNA Reviewer')
+    openAdvancedSettings()
+
+    const idInput = document.body.querySelector<HTMLInputElement>('[aria-label="Connector ID"]')
+    expect(idInput?.value).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
+
+    setValue('Connector ID', 'rna-reviewer')
+
+    expect(idInput?.getAttribute('aria-invalid')).toBe('true')
+    expect(document.body.textContent).toContain('ID is already in use.')
+  })
+
   it('previews and submits a UUID when the name cannot produce a safe ID', async () => {
     act(() => {
       root.render(<ConnectorAddForm initialTransport="local" onDone={vi.fn()} onCancel={vi.fn()} />)

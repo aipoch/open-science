@@ -606,6 +606,7 @@ class ConnectorSettingsModule {
     return {
       connectors: this.toConnectorViews(connectors),
       customServers: this.toCustomServerViews(connectors),
+      reservedCustomServerIds: connectors?.pendingCustomServerDeletionIds ?? [],
       ncbi: this.ncbiView(connectors)
     }
   }
