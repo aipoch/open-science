@@ -2827,6 +2827,14 @@ describe('ConversationPanel interrupted Session recovery', () => {
     await act(async () => resolveResume?.())
   })
 
+  it('does not show Session resume progress for a new conversation with no active Session', () => {
+    // Regression: `activeSession?.id === resumingSessionId` is true when both are undefined, which
+    // marked every brand-new conversation as "resuming" and suppressed the empty-state banner.
+    renderPanel()
+
+    expect(container.querySelector('[data-testid="resume-progress-indicator"]')).toBeNull()
+  })
+
   it('keeps Resume disabled while Session persistence is unavailable', () => {
     const onResumeSession = vi.fn().mockResolvedValue(undefined)
     const interruptedSession: ChatSession = {

@@ -437,7 +437,10 @@ const ConversationPanel = ({
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // Local so the interrupted banner can show a spinner and block a double-resume until the request settles.
   const [resumingSessionId, setResumingSessionId] = useState<string>()
-  const isResuming = activeSession?.id === resumingSessionId
+  const isResuming =
+    activeSession !== undefined &&
+    resumingSessionId !== undefined &&
+    activeSession.id === resumingSessionId
   // Opens the reviewable, consent-gated error report dialog for a failed run.
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [isContextWindowOpen, setIsContextWindowOpen] = useState(false)
