@@ -36,6 +36,8 @@ export const IMAGE_REPLAY_UNSUPPORTED_MESSAGE =
 // identity is kept in shared constants instead of depending on non-enumerable Error properties.
 export const VISION_MODEL_NOT_CONFIGURED_MESSAGE =
   "The selected model doesn't support images. Configure a Vision model in Settings > Model to enable image support."
+const LEGACY_VISION_MODEL_NOT_CONFIGURED_MESSAGE =
+  'Configure a Vision model in Settings > Model before sending images to this model.'
 export const VISION_IMAGE_TOO_LARGE_MESSAGE =
   'The attached image is too large to prepare for the Vision model.'
 export const VISION_IMAGE_INVALID_MESSAGE = 'The attached image is invalid.'
@@ -61,6 +63,12 @@ export const visionRunFailureMessage = (
 ): VisionRunFailureMessage | undefined => {
   const message = error?.trim()
   if (!message) return undefined
+  if (
+    message === LEGACY_VISION_MODEL_NOT_CONFIGURED_MESSAGE ||
+    message.endsWith(`Error: ${LEGACY_VISION_MODEL_NOT_CONFIGURED_MESSAGE}`)
+  ) {
+    return VISION_MODEL_NOT_CONFIGURED_MESSAGE
+  }
   return VISION_RUN_FAILURE_MESSAGES.find(
     (candidate) => message === candidate || message.endsWith(`Error: ${candidate}`)
   )

@@ -14,6 +14,7 @@ import {
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_WORKSPACE_MISSING_MESSAGE,
   VISION_EVIDENCE_INVALID_MESSAGE,
+  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
   isReportableRunFailure,
   visionRunFailureMessage
 } from './run-error-classification'
@@ -89,6 +90,16 @@ describe('isReportableRunFailure (text tier)', () => {
 
     expect(visionRunFailureMessage(wrapped)).toBe(VISION_EVIDENCE_INVALID_MESSAGE)
     expect(isReportableRunFailure(wrapped)).toBe(false)
+  })
+
+  it('maps the persisted legacy Vision configuration error to the current recovery message', () => {
+    const legacy =
+      'Configure a Vision model in Settings > Model before sending images to this model.'
+    const wrapped = `Error invoking remote method 'acp:send-prompt': Error: ${legacy}`
+
+    expect(visionRunFailureMessage(legacy)).toBe(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
+    expect(visionRunFailureMessage(wrapped)).toBe(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
+    expect(isReportableRunFailure(legacy)).toBe(false)
   })
 
   it('recognizes the provider resource-not-found message built by describePromptError', () => {

@@ -37,6 +37,15 @@ const VISION_SYSTEM_PROMPT = [
   'Use empty strings or arrays when evidence is absent. Do not invent facts.'
 ].join(' ')
 
+const VISION_EVIDENCE_USAGE_GUIDANCE = [
+  '<open_science_vision_evidence_instructions>',
+  'The populated `<attached-image-evidence>` blocks in this prompt are the application-prepared representation of attached images for the active text-only model.',
+  'When the user request can be answered only by inspecting, transcribing, summarizing, or explaining those images, answer directly from the supplied evidence.',
+  'Do not use filesystem, shell, Notebook, MCP, Skill, plugin, or network tools merely to find, open, read, or parse the images again.',
+  'Use tools when the user request independently requires work beyond reading the images, such as comparing project files, running an analysis, or creating an output.',
+  '</open_science_vision_evidence_instructions>'
+].join('\n')
+
 type ImageEvidence = Readonly<{
   summary: string
   findings: readonly string[]
@@ -410,15 +419,19 @@ class ImageInputCompatibilityOwner {
       includedEvidence[index] = true
     }
     let imageIndex = 0
+    let guidanceIncluded = false
     return input.content.map((block) => {
       if (!isImageRelayBlock(block)) return block
       const index = imageIndex
       imageIndex += 1
       if (!includedEvidence[index])
         return { type: 'text', text: renderHistoricalImageOmission(displayName(block, index)) }
+      const rendered = renderedEvidence[index]!
+      if (guidanceIncluded) return { type: 'text', text: rendered }
+      guidanceIncluded = true
       return {
         type: 'text',
-        text: renderedEvidence[index]!
+        text: `${VISION_EVIDENCE_USAGE_GUIDANCE}\n\n${rendered}`
       }
     })
   }

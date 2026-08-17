@@ -4421,6 +4421,27 @@ describe('ConversationPanel error box + report affordance', () => {
     expect(openSettingsToPanel).toHaveBeenCalledWith('model')
   })
 
+  it('keeps the Model settings recovery action for a persisted legacy Vision error', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({ openSettingsToPanel })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          error: 'Configure a Vision model in Settings > Model before sending images to this model.'
+        }
+      }
+    })
+
+    expect(errorBoxText()).toContain("The selected model doesn't support images.")
+    expect(reportButton()).toBeNull()
+    const button = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent === 'Model settings'
+    )
+    act(() => button?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('model')
+  })
+
   it('shows both a transient actionError and the run failure, keeping the Report button', () => {
     // Both present: each error gets its own row, and the run failure keeps its report entry — a
     // transient error must not suppress the ability to report the actual failure.

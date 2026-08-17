@@ -71,15 +71,6 @@ const TURN_CONTINUITY_SYSTEM_PROMPT_APPEND = [
   '</open_science_turn_continuity_instructions>'
 ].join('\n')
 
-const VISION_EVIDENCE_SYSTEM_PROMPT_APPEND = [
-  '<open_science_vision_evidence_instructions>',
-  'A populated `<attached-image-evidence>` block is the application-prepared representation of an attached image for a text-only model.',
-  'When the user request can be answered only by inspecting, transcribing, summarizing, or explaining that image, answer directly from the supplied evidence.',
-  'Do not use filesystem, shell, Notebook, MCP, Skill, plugin, or network tools merely to find, open, read, or parse the image again.',
-  'Use tools when the user request independently requires work beyond reading the image, such as comparing project files, running an analysis, or creating an output.',
-  '</open_science_vision_evidence_instructions>'
-].join('\n')
-
 const ARTIFACT_FILE_SYSTEM_PROMPT_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
@@ -109,7 +100,6 @@ class AcpSessionPresentationPolicy {
   applicationSystemPromptAppends(tooling: AcpSessionToolingAvailability): readonly string[] {
     return Object.freeze([
       TURN_CONTINUITY_SYSTEM_PROMPT_APPEND,
-      VISION_EVIDENCE_SYSTEM_PROMPT_APPEND,
       LARGE_DATA_FILE_SYSTEM_PROMPT_APPEND,
       ...(tooling.artifacts ? [ARTIFACT_FILE_SYSTEM_PROMPT_APPEND] : []),
       ...(tooling.notebook ? [NOTEBOOK_SYSTEM_PROMPT_APPEND] : []),
