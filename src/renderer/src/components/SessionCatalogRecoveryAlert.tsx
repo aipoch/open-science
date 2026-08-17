@@ -32,6 +32,23 @@ const SessionCatalogRecoveryAlert = ({
       />
     )
   }
+  if (recovery.kind === 'unsupported-version') {
+    return (
+      <SessionPersistenceAlert
+        title={t('Open Science update required')}
+        message={t(
+          '{{count}} saved conversations require a newer version of Open Science. Update the app before creating or saving conversations so those files stay unchanged.',
+          {
+            count: recovery.affectedFileCount,
+            defaultValue_one:
+              'A saved conversation requires a newer version of Open Science. Update the app before creating or saving conversations so those files stay unchanged.'
+          }
+        )}
+        variant="warning"
+        inline={inline}
+      />
+    )
+  }
   if (recovery.kind === 'damaged-authority') {
     return (
       <SessionPersistenceAlert

@@ -220,6 +220,10 @@ type SessionCatalogRecovery =
       kind: 'damaged-authority'
       affectedFileCount: number
     }
+  | {
+      kind: 'unsupported-version'
+      affectedFileCount: number
+    }
   | { kind: 'project-deletion-recovery' }
 
 const READY_SESSION_CATALOG_RECOVERY: SessionCatalogRecovery = Object.freeze({ kind: 'ready' })
@@ -233,6 +237,15 @@ const deriveSessionCatalogRecovery = (
   }
 
   const sessionWarnings = diagnostics.warnings.filter((warning) => 'projectId' in warning)
+  const unsupportedVersionWarnings = sessionWarnings.filter(
+    (warning) => warning.kind === 'unsupported-version'
+  )
+  if (unsupportedVersionWarnings.length > 0) {
+    return {
+      kind: 'unsupported-version',
+      affectedFileCount: unsupportedVersionWarnings.length
+    }
+  }
   if (diagnostics.isComplete === false) {
     return {
       kind: 'repairable',

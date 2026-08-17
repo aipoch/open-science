@@ -335,6 +335,40 @@ describe('session persistence startup', () => {
     expect(saveSession).not.toHaveBeenCalled()
   })
 
+  it('projects an unsupported Session version without starting persistence', async () => {
+    loadAll.mockReset().mockResolvedValue({
+      ...emptyLoadResult(),
+      diagnostics: {
+        isComplete: false,
+        isProjectDeletionRecoveryComplete: true,
+        warnings: [
+          {
+            kind: 'unsupported-version',
+            projectId: 'project-a',
+            fileName: 'future.json',
+            recovered: false
+          }
+        ]
+      }
+    })
+
+    await act(async () => root.render(<Probe />))
+
+    expect(container.querySelector('div')?.dataset.ready).toBe('false')
+    expect(container.querySelector('div')?.dataset.catalogRecovery).toBe('unsupported-version')
+
+    await act(async () => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-2',
+        content: 'Must not overwrite future Session authority',
+        cwd: '/workspace/project',
+        projectId: 'project-a'
+      })
+      await Promise.resolve()
+    })
+    expect(saveSession).not.toHaveBeenCalled()
+  })
+
   it('preserves a live session selection when retrying a partial recovery', async () => {
     const manifestSession = createPersistedSession({ id: 'manifest-session' })
     const selectedSession = createPersistedSession({

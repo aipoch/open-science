@@ -3569,6 +3569,16 @@ export type PersistedSessionFile = {
   session: MaterializedPersistedChatSession
 }
 
+type SessionFileReadOptions = {
+  preserveLegacyUploadPaths?: boolean
+  preserveRuntimeState?: boolean | ((sessionId: string) => boolean)
+}
+
+export type SessionFileDecodeResult =
+  | { status: 'ok'; session: PersistedChatSession }
+  | { status: 'invalid' }
+  | { status: 'unsupported-version' }
+
 // Wraps a session in the on-disk envelope written per file.
 export const createSessionFile = (session: PersistedChatSession): PersistedSessionFile => {
   const materialized = materializeSessionConversationGraph(session)
@@ -3578,24 +3588,32 @@ export const createSessionFile = (session: PersistedChatSession): PersistedSessi
   }
 }
 
-// Reads one session-file payload, tolerating either the envelope or a bare session object. Runtime
-// recovery is skipped only when the main process confirms that the owning prompt is still active.
-export const normalizeSessionFile = (
+// Decodes one Session file without treating a valid future envelope as corrupt. Bare Sessions and
+// v1 envelopes are released historical formats; every other past or malformed version fails closed.
+export const decodeSessionFile = (
   value: unknown,
-  options: {
-    preserveLegacyUploadPaths?: boolean
-    preserveRuntimeState?: boolean | ((sessionId: string) => boolean)
-  } = {}
-): PersistedChatSession | undefined => {
-  if (!isRecord(value)) return undefined
+  options: SessionFileReadOptions = {}
+): SessionFileDecodeResult => {
+  if (!isRecord(value)) return { status: 'invalid' }
 
-  const rawSession = isRecord(value.session) ? value.session : value
+  const hasEnvelopeField = Object.hasOwn(value, 'version') || Object.hasOwn(value, 'session')
+  if (hasEnvelopeField) {
+    const version = value.version
+    if (Number.isSafeInteger(version) && (version as number) > SESSION_FILE_VERSION) {
+      return { status: 'unsupported-version' }
+    }
+    if ((version !== 1 && version !== SESSION_FILE_VERSION) || !isRecord(value.session)) {
+      return { status: 'invalid' }
+    }
+  }
+
+  const rawSession = hasEnvelopeField ? (value.session as Record<string, unknown>) : value
 
   // A persisted Session needs one authoritative conversation representation. The compatibility
   // message list may be absent or malformed only when a canonical graph can replace it; otherwise
   // accepting the file would turn deterministic structural corruption into a valid empty Session.
   if (rawSession.conversationGraph === undefined && !Array.isArray(rawSession.messages)) {
-    return undefined
+    return { status: 'invalid' }
   }
 
   const sessionId = asString(rawSession.id)
@@ -3604,10 +3622,21 @@ export const normalizeSessionFile = (
       ? sessionId !== undefined && options.preserveRuntimeState(sessionId)
       : options.preserveRuntimeState
 
-  return sanitizeSession(rawSession, {
+  const session = sanitizeSession(rawSession, {
     preserveLegacyUploadPaths: options.preserveLegacyUploadPaths,
     preserveRuntimeState
   })
+  return session ? { status: 'ok', session } : { status: 'invalid' }
+}
+
+// Compatibility projection for callers that only need a readable Session. Runtime recovery is
+// skipped only when the main process confirms that the owning prompt is still active.
+export const normalizeSessionFile = (
+  value: unknown,
+  options: SessionFileReadOptions = {}
+): PersistedChatSession | undefined => {
+  const decoded = decodeSessionFile(value, options)
+  return decoded.status === 'ok' ? decoded.session : undefined
 }
 
 // Tiny app-level pointer restoring the last-open project + session after a restart.
@@ -3643,6 +3672,12 @@ export type SessionLoadWarning =
       projectId: string
       fileName: string
       recovered: boolean
+    }
+  | {
+      kind: 'unsupported-version'
+      projectId: string
+      fileName: string
+      recovered: false
     }
   | {
       kind: 'manifest-corrupt' | 'manifest-unreadable'

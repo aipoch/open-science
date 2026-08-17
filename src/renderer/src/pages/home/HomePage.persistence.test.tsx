@@ -58,13 +58,15 @@ vi.mock('radix-ui', () => ({
     Item: ({
       children,
       disabled,
+      title,
       onSelect
     }: {
       children: ReactNode
       disabled?: boolean
+      title?: string
       onSelect?: () => void
     }) => (
-      <button type="button" disabled={disabled} onClick={onSelect}>
+      <button type="button" disabled={disabled} title={title} onClick={onSelect}>
         {children}
       </button>
     ),
@@ -192,6 +194,25 @@ describe('HomePage persistence recovery', () => {
 
     expect(container.textContent).toContain('Session count unavailable')
     expect(container.textContent).not.toContain('1 session')
+  })
+
+  it('directs unsupported Session versions to an app update instead of index repair', async () => {
+    await act(async () =>
+      root.render(
+        <HomePage
+          canDeleteProjects
+          hasCompleteSessionCatalog={false}
+          catalogRecovery={{ kind: 'unsupported-version', affectedFileCount: 1 }}
+          onOpenGlobalSearch={vi.fn()}
+        />
+      )
+    )
+
+    const archive = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Archive'
+    )
+    expect(archive?.disabled).toBe(true)
+    expect(archive?.title).toBe('Update Open Science before archiving this project.')
   })
 
   it('maps a raced incomplete-catalog archive rejection to index repair guidance', async () => {

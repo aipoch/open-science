@@ -406,9 +406,15 @@ const HomePage = ({
   const archiveUnavailableReason = (project: Project): string | undefined => {
     if (!canDeleteProjects) return t('Retry project recovery before archiving.')
     if (!hasCompleteSessionCatalog) {
-      return effectiveCatalogRecovery.kind === 'damaged-authority'
-        ? t('Project archive is unavailable because a damaged conversation cannot be verified.')
-        : t('Repair the project index before archiving.')
+      if (effectiveCatalogRecovery.kind === 'damaged-authority') {
+        return t(
+          'Project archive is unavailable because a damaged conversation cannot be verified.'
+        )
+      }
+      if (effectiveCatalogRecovery.kind === 'unsupported-version') {
+        return t('Update Open Science before archiving this project.')
+      }
+      return t('Repair the project index before archiving.')
     }
     if (!canArchiveProject(project)) {
       return t('Finish or stop active sessions before archiving this project.')

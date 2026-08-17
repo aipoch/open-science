@@ -5,7 +5,7 @@ import { basename, join } from 'node:path'
 import {
   createEmptySessionManifest,
   createSessionFile,
-  normalizeSessionFile,
+  decodeSessionFile,
   sanitizeSessionUploadedAttachments,
   normalizeSessionManifest,
   type LoadAllSessionsResult,
@@ -928,12 +928,25 @@ class SessionRepository {
     if (options.scanMetrics) options.scanMetrics.sessionBytes += Buffer.byteLength(raw, 'utf8')
 
     try {
-      const session = normalizeSessionFile(JSON.parse(raw) as unknown, {
+      const decoded = decodeSessionFile(JSON.parse(raw) as unknown, {
         preserveLegacyUploadPaths: true,
         preserveRuntimeState: (sessionId) =>
           this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
       })
-      if (!session) {
+      if (decoded.status === 'unsupported-version') {
+        // A newer app still owns this authority. Leaving the primary file untouched and reporting an
+        // incomplete scan blocks reconciliation and all ordinary saving until a compatible app loads it.
+        return {
+          isComplete: false,
+          warning: {
+            kind: 'unsupported-version',
+            projectId,
+            fileName: basename(filePath),
+            recovered: false
+          }
+        }
+      }
+      if (decoded.status === 'invalid') {
         const wasQuarantined =
           options.quarantineInvalidFiles !== false && (await this.tryBackupInvalidFile(filePath))
         return {
@@ -947,6 +960,7 @@ class SessionRepository {
           }
         }
       }
+      const session = decoded.session
 
       // The file name is authoritative for global Session identity. Unlike the owning Project,
       // an id mismatch is corruption rather than a legacy field that may be repaired from the path.

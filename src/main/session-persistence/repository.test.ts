@@ -706,6 +706,39 @@ describe('session persistence repository (per-session files)', () => {
     await expect(readdir(projectDir)).resolves.toEqual(['foo.json'])
   })
 
+  it('leaves an unsupported future Session file in place and marks the scan incomplete', async () => {
+    const root = await createStorageRoot()
+    const projectDir = join(root, 'sessions', 'project-a')
+    const futurePath = join(projectDir, 'future.json')
+    const futureJson = JSON.stringify({
+      version: 3,
+      payload: { id: 'future', futureAuthority: { revision: 1 } }
+    })
+    const renameFile = vi.fn(rename)
+    const repository = new SessionRepository(root, { renameFile })
+    await mkdir(projectDir, { recursive: true })
+    await writeFile(futurePath, futureJson, 'utf8')
+
+    const scan = await repository.loadAllWithDiagnostics()
+
+    expect(scan.result.sessions).toEqual([])
+    expect(scan.isComplete).toBe(false)
+    expect(scan.warnings).toEqual([
+      {
+        kind: 'unsupported-version',
+        projectId: 'project-a',
+        fileName: 'future.json',
+        recovered: false
+      }
+    ])
+    await expect(repository.loadSessionWithDiagnostics('project-a', 'future')).resolves.toEqual({
+      status: 'unreadable'
+    })
+    await expect(readFile(futurePath, 'utf8')).resolves.toBe(futureJson)
+    await expect(readdir(projectDir)).resolves.toEqual(['future.json'])
+    expect(renameFile).not.toHaveBeenCalled()
+  })
+
   it('does not return a differently identified Session from a direct load', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     const projectDir = join(storageRoot!, 'sessions', 'project-a')

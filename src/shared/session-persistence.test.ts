@@ -6,6 +6,7 @@ import {
   SESSION_FILE_VERSION,
   createSessionFile,
   ConversationGraphMaterializationError,
+  decodeSessionFile,
   materializeSessionConversationGraph,
   isReviewerCorrectionAttribution,
   sanitizeActivityGroup,
@@ -39,6 +40,38 @@ const createSessionWithActivity = (activity: unknown): Record<string, unknown> =
   activities: [activity],
   createdAt: 1,
   updatedAt: 1
+})
+
+describe('Session file envelope versions', () => {
+  const legacySession = (): Record<string, unknown> => createSessionWithActivity(undefined)
+
+  it.each([
+    ['a bare historical Session', () => legacySession()],
+    ['a v1 envelope', () => ({ version: 1, session: legacySession() })],
+    ['the current envelope', () => ({ version: SESSION_FILE_VERSION, session: legacySession() })]
+  ])('accepts %s', (_label, createValue) => {
+    const decoded = decodeSessionFile(createValue())
+
+    expect(decoded.status).toBe('ok')
+    expect(decoded.status === 'ok' ? decoded.session.id : undefined).toBe('session-1')
+  })
+
+  it('rejects a future envelope before unknown authority can be discarded', () => {
+    const futureFile = {
+      version: SESSION_FILE_VERSION + 1,
+      payload: { futureAuthority: { revision: 1 } }
+    }
+
+    expect(decodeSessionFile(futureFile)).toEqual({ status: 'unsupported-version' })
+    expect(normalizeSessionFile(futureFile)).toBeUndefined()
+  })
+
+  it.each([undefined, 0, '2', 2.5])('treats an envelope with version %j as corrupt', (version) => {
+    const value = { version, session: legacySession() }
+
+    expect(decodeSessionFile(value)).toEqual({ status: 'invalid' })
+    expect(normalizeSessionFile(value)).toBeUndefined()
+  })
 })
 
 describe('artifact persistence', () => {

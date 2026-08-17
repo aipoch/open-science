@@ -77,6 +77,10 @@ const mocks = vi.hoisted(() => {
             kind: 'damaged-authority'
             affectedFileCount: number
           }
+        | {
+            kind: 'unsupported-version'
+            affectedFileCount: number
+          }
         | { kind: 'project-deletion-recovery' },
       canDeleteSessionsAndProjects: true,
       loadError: undefined as string | undefined,
