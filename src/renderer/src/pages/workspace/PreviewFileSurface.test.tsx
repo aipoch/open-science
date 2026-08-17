@@ -1137,7 +1137,7 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.querySelector('img')).toBeNull()
   })
 
-  it('renders each adjacent complex Markdown change block as one safe document fragment', async () => {
+  it('renders adjacent list item replacements as one safe document fragment', async () => {
     window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
       ok: true,
       value: {
@@ -1147,22 +1147,34 @@ describe('PreviewFileSurface managed text versions', () => {
           {
             kind: 'removed',
             oldLineNumber: 1,
-            segments: [{ kind: 'removed', text: '- old one' }]
-          },
-          {
-            kind: 'removed',
-            oldLineNumber: 2,
-            segments: [{ kind: 'removed', text: '- old two' }]
+            segments: [
+              { kind: 'context', text: '- ' },
+              { kind: 'removed', text: 'old one' }
+            ]
           },
           {
             kind: 'added',
             newLineNumber: 1,
-            segments: [{ kind: 'added', text: '- new one' }]
+            segments: [
+              { kind: 'context', text: '- ' },
+              { kind: 'added', text: 'new one' }
+            ]
+          },
+          {
+            kind: 'removed',
+            oldLineNumber: 2,
+            segments: [
+              { kind: 'context', text: '- ' },
+              { kind: 'removed', text: 'old two' }
+            ]
           },
           {
             kind: 'added',
             newLineNumber: 2,
-            segments: [{ kind: 'added', text: '- new two' }]
+            segments: [
+              { kind: 'context', text: '- ' },
+              { kind: 'added', text: 'new two' }
+            ]
           }
         ]
       }
@@ -1176,20 +1188,16 @@ describe('PreviewFileSurface managed text versions', () => {
       await Promise.resolve()
     })
 
-    expect(markdownSpy.mock.calls.map(([props]) => props.content)).toEqual([
-      '- old one\n- old two',
-      '- new one\n- new two'
-    ])
-    const removedBlock = container.querySelector('[data-diff-kind="removed"]')
-    const addedBlock = container.querySelector('[data-diff-kind="added"]')
-    expect(removedBlock?.className.split(/\s+/)).toContain('bg-diff-removed-surface')
-    expect(removedBlock?.firstElementChild?.className.split(/\s+/)).toContain(
-      'text-diff-removed-foreground'
+    expect(markdownSpy).toHaveBeenCalledTimes(1)
+    expect(markdownSpy.mock.calls[0]?.[0].content).toMatch(
+      /^- <managed-diff-removed-[a-z0-9]+>old one<\/managed-diff-removed-[a-z0-9]+><managed-diff-added-[a-z0-9]+>new one<\/managed-diff-added-[a-z0-9]+>\n- <managed-diff-removed-[a-z0-9]+>old two<\/managed-diff-removed-[a-z0-9]+><managed-diff-added-[a-z0-9]+>new two<\/managed-diff-added-[a-z0-9]+>$/u
     )
-    expect(addedBlock?.className.split(/\s+/)).toContain('bg-diff-added-surface')
-    expect(addedBlock?.firstElementChild?.className.split(/\s+/)).toContain(
-      'text-diff-added-foreground'
+    const mixedBlock = container.querySelector('[data-diff-kind="mixed"]')
+    expect(mixedBlock?.className).toContain(
+      '[&_[data-managed-diff=removed]]:bg-diff-removed-highlight'
     )
+    expect(mixedBlock?.className).toContain('[&_[data-managed-diff=added]]:bg-diff-added-highlight')
+    expect(mixedBlock?.className).not.toContain('grid')
   })
 
   it('keeps an entire fenced Markdown diff block together across plain code lines', async () => {
@@ -1271,40 +1279,7 @@ describe('PreviewFileSurface managed text versions', () => {
     })
   })
 
-  it('shows character-level markers inline for simple changed Markdown text', async () => {
-    window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
-      ok: true,
-      value: {
-        baseVersionId: 'upload-v1',
-        selectedVersionId: 'upload-v2',
-        lines: [
-          {
-            kind: 'added',
-            newLineNumber: 1,
-            segments: [
-              { kind: 'context', text: 'Sub title ' },
-              { kind: 'added', text: 'three' }
-            ]
-          }
-        ]
-      }
-    })
-    await act(async () => {
-      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
-      await Promise.resolve()
-    })
-    await click(container.querySelector('[aria-label="Compare README.md with its source version"]'))
-    await act(async () => {
-      await Promise.resolve()
-    })
-
-    const inline = container.querySelector('[data-diff-inline="true"]')
-    expect(inline?.textContent).toBe('Sub title three')
-    expect(inline?.querySelector('[data-diff-segment="added"]')?.textContent).toBe('three')
-    expect(markdownSpy).not.toHaveBeenCalled()
-  })
-
-  it('colors simple added and removed lines, markers, and inline changes by change type', async () => {
+  it('renders simple Markdown replacements with inline deletion and insertion semantics', async () => {
     window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
       ok: true,
       value: {
@@ -1339,24 +1314,124 @@ describe('PreviewFileSurface managed text versions', () => {
       await Promise.resolve()
     })
 
-    const removedLine = container.querySelector('[data-diff-kind="removed"]')
-    const addedLine = container.querySelector('[data-diff-kind="added"]')
-    expect(removedLine?.className.split(/\s+/)).toContain('bg-diff-removed-surface')
-    expect(
-      removedLine?.querySelector('[aria-label="Removed line"]')?.className.split(/\s+/)
-    ).toContain('text-diff-removed-foreground')
-    expect(
-      removedLine?.querySelector('[data-diff-segment="removed"]')?.className.split(/\s+/)
-    ).toEqual(
+    expect(markdownSpy).toHaveBeenCalledWith(expect.objectContaining({ allowMedia: false }))
+    expect(markdownSpy.mock.calls.at(-1)?.[0].content).toMatch(
+      /^Sub title <managed-diff-removed-[a-z0-9]+>two<\/managed-diff-removed-[a-z0-9]+><managed-diff-added-[a-z0-9]+>three<\/managed-diff-added-[a-z0-9]+>$/u
+    )
+    expect(container.querySelector('[data-diff-inline="true"]')).toBeNull()
+  })
+
+  it('keeps txt replacements inline while preserving whitespace', async () => {
+    window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        baseVersionId: 'upload-v1',
+        selectedVersionId: 'upload-v2',
+        lines: [
+          {
+            kind: 'removed',
+            oldLineNumber: 1,
+            segments: [
+              { kind: 'context', text: 'Hello ' },
+              { kind: 'removed', text: 'old' },
+              { kind: 'context', text: '  world' }
+            ]
+          },
+          {
+            kind: 'added',
+            newLineNumber: 1,
+            segments: [
+              { kind: 'context', text: 'Hello ' },
+              { kind: 'added', text: 'new' },
+              { kind: 'context', text: '  world' }
+            ]
+          }
+        ]
+      }
+    })
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...managedUploadItem, name: 'notes.txt', title: 'notes.txt', format: 'text' }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(container.querySelector('[aria-label="Compare notes.txt with its source version"]'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const mixed = container.querySelector('[data-diff-kind="mixed"]')
+    expect(mixed?.querySelector('pre')?.textContent).toContain('Hello ')
+    expect(mixed?.querySelector('pre')?.textContent).toContain('  world')
+    expect(mixed?.querySelector('del [data-managed-diff-content]')?.textContent).toBe('old')
+    expect(mixed?.querySelector('ins [data-managed-diff-content]')?.textContent).toBe('new')
+    expect(container.querySelectorAll('[data-diff-kind="removed"]')).toHaveLength(0)
+    expect(container.querySelectorAll('[data-diff-kind="added"]')).toHaveLength(0)
+  })
+
+  it('renders structured replacements with only changed characters highlighted', async () => {
+    window.api.managedFileVersions.diffText = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        baseVersionId: 'upload-v1',
+        selectedVersionId: 'upload-v2',
+        lines: [
+          {
+            kind: 'removed',
+            oldLineNumber: 1,
+            segments: [
+              { kind: 'context', text: 'Sub title ' },
+              { kind: 'removed', text: 'two' }
+            ]
+          },
+          {
+            kind: 'added',
+            newLineNumber: 1,
+            segments: [
+              { kind: 'context', text: 'Sub title ' },
+              { kind: 'added', text: 'three' }
+            ]
+          }
+        ]
+      }
+    })
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...managedUploadItem, name: 'analysis.sh', title: 'analysis.sh', format: 'code' }}
+          onClose={vi.fn()}
+        />
+      )
+      await Promise.resolve()
+    })
+    await click(
+      container.querySelector('[aria-label="Compare analysis.sh with its source version"]')
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    const mixedLine = container.querySelector('[data-diff-kind="mixed"]')
+    const stableText = mixedLine?.querySelector('pre > span')
+    const removed = mixedLine?.querySelector('del')
+    const added = mixedLine?.querySelector('ins')
+    expect(stableText?.textContent).toBe('Sub title ')
+    expect(removed?.querySelector('[data-managed-diff-content]')?.textContent).toBe('two')
+    expect(removed?.className.split(/\s+/)).toEqual(
       expect.arrayContaining(['bg-diff-removed-highlight', 'text-text-000', 'line-through'])
     )
-    expect(addedLine?.className.split(/\s+/)).toContain('bg-diff-added-surface')
-    expect(addedLine?.querySelector('[aria-label="Added line"]')?.className.split(/\s+/)).toContain(
-      'text-diff-added-foreground'
+    expect(added?.querySelector('[data-managed-diff-content]')?.textContent).toBe('three')
+    expect(added?.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['bg-diff-added-highlight', 'text-text-000', 'no-underline'])
     )
-    expect(addedLine?.querySelector('[data-diff-segment="added"]')?.className.split(/\s+/)).toEqual(
-      expect.arrayContaining(['bg-diff-added-highlight', 'text-text-000'])
-    )
+    expect(container.querySelector('[data-diff-kind="removed"]')).toBeNull()
+    expect(container.querySelector('[data-diff-kind="added"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Removed line"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Added line"]')).toBeNull()
+    expect(container.querySelector('[class*="grid-cols-[2rem"]')).toBeNull()
   })
 })
 

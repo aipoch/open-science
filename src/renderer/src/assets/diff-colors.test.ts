@@ -68,4 +68,13 @@ describe('diff color tokens', () => {
       expect(contrast(text, highlight)).toBeGreaterThanOrEqual(4.5)
     }
   })
+
+  it('limits semantic change markers to their direct list or table carrier', () => {
+    for (const kind of ['added', 'removed']) {
+      const marker = `[data-managed-diff-marker='${kind}']`
+      expect(css).toContain(`:is(li, td, th):has(> ${marker})`)
+      expect(css).toContain(`:is(li, td, th):has(> p > ${marker})`)
+      expect(css).not.toContain(`:is(li, td, th):has(${marker})`)
+    }
+  })
 })

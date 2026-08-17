@@ -8,7 +8,6 @@ import {
   Pencil,
   X
 } from 'lucide-react'
-import { marked } from 'marked'
 import {
   forwardRef,
   useCallback,
@@ -31,7 +30,6 @@ import type {
   ManagedFileVersionDiffResult,
   ManagedFileVersionInspectResult
 } from '../../../../shared/managed-file-versions'
-import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +47,7 @@ import {
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
+import { ManagedVersionDiffContent } from './ManagedVersionDiffContent'
 
 type PreviewFileSurfaceProps = {
   item: PreviewFileItem
@@ -371,296 +370,6 @@ const ManagedVersionNavigation = ({
     </div>
   )
 }
-
-const isSimpleMarkdownText = (content: string): boolean => {
-  const trimmed = content.trimStart()
-  return !(
-    /^(?:#{1,6}\s|>|[-+*]\s|\d+[.)]\s|```|~~~|\|)/.test(trimmed) ||
-    /(?:!\[|\[[^\]]*\]\(|<[^>]+>|`|\*\*|__|~~|\|)/.test(content)
-  )
-}
-
-const diffLineText = (line: ManagedFileVersionDiffResult['lines'][number]): string =>
-  line.segments.map((segment) => segment.text).join('')
-
-type IndexedDiffLine = {
-  index: number
-  line: ManagedFileVersionDiffResult['lines'][number]
-}
-
-type DiffRange = { start: number; end: number }
-
-const isComplexMarkdownToken = (type: string, raw: string): boolean =>
-  type !== 'space' &&
-  (type !== 'paragraph' || raw.split('\n').some((line) => !isSimpleMarkdownText(line)))
-
-const lineIndexAtOffset = (lineStarts: number[], offset: number): number => {
-  let low = 0
-  let high = lineStarts.length
-  while (low < high) {
-    const middle = low + Math.floor((high - low) / 2)
-    if (lineStarts[middle]! <= offset) low = middle + 1
-    else high = middle
-  }
-  return low - 1
-}
-
-const markdownSemanticRanges = (
-  entries: IndexedDiffLine[],
-  changedKind: 'added' | 'removed'
-): DiffRange[] => {
-  if (entries.length === 0) return []
-
-  const source = entries.map(({ line }) => diffLineText(line)).join('\n')
-  let tokens: ReturnType<typeof marked.lexer>
-  try {
-    tokens = marked.lexer(source)
-  } catch {
-    return []
-  }
-
-  const lineStarts: number[] = []
-  let lineStart = 0
-  for (const entry of entries) {
-    lineStarts.push(lineStart)
-    lineStart += diffLineText(entry.line).length + 1
-  }
-
-  const ranges: DiffRange[] = []
-  let tokenStart = 0
-  for (const token of tokens) {
-    const tokenEnd = tokenStart + token.raw.length
-    const contentEnd = tokenStart + token.raw.replace(/(?:\r?\n[ \t]*)+$/u, '').length
-    if (isComplexMarkdownToken(token.type, token.raw) && contentEnd > tokenStart) {
-      const start = lineIndexAtOffset(lineStarts, tokenStart)
-      const end = lineIndexAtOffset(lineStarts, contentEnd - 1)
-      if (
-        start >= 0 &&
-        end >= start &&
-        entries.slice(start, end + 1).some(({ line }) => line.kind === changedKind)
-      ) {
-        ranges.push({ start: entries[start]!.index, end: entries[end]!.index })
-      }
-    }
-    tokenStart = tokenEnd
-  }
-  return ranges
-}
-
-const mergeDiffRanges = (ranges: DiffRange[]): DiffRange[] => {
-  const sorted = [...ranges].sort((left, right) => left.start - right.start || left.end - right.end)
-  const merged: DiffRange[] = []
-  for (const range of sorted) {
-    const previous = merged.at(-1)
-    if (!previous || range.start > previous.end + 1) {
-      merged.push({ ...range })
-    } else {
-      previous.end = Math.max(previous.end, range.end)
-    }
-  }
-  return merged
-}
-
-type DiffRenderBlock =
-  | { kind: 'line'; line: ManagedFileVersionDiffResult['lines'][number]; index: number }
-  | {
-      kind: 'markdown'
-      changeKind: 'added' | 'removed'
-      lines: ManagedFileVersionDiffResult['lines']
-      startIndex: number
-    }
-
-const toDiffRenderBlocks = (
-  result: ManagedFileVersionDiffResult,
-  markdown: boolean
-): DiffRenderBlock[] => {
-  if (markdown) {
-    const before = result.lines
-      .map((line, index) => ({ line, index }))
-      .filter(({ line }) => line.kind !== 'added')
-    const after = result.lines
-      .map((line, index) => ({ line, index }))
-      .filter(({ line }) => line.kind !== 'removed')
-    const complexChangedRanges = result.lines.flatMap((line, index) =>
-      line.kind !== 'context' && !isSimpleMarkdownText(diffLineText(line))
-        ? [{ start: index, end: index }]
-        : []
-    )
-    const markdownRanges = mergeDiffRanges([
-      ...markdownSemanticRanges(before, 'removed'),
-      ...markdownSemanticRanges(after, 'added'),
-      ...complexChangedRanges
-    ])
-    if (markdownRanges.length > 0) {
-      const blocks: DiffRenderBlock[] = []
-      let rangeIndex = 0
-      for (let index = 0; index < result.lines.length; index += 1) {
-        const range = markdownRanges[rangeIndex]
-        if (!range || index < range.start) {
-          blocks.push({ kind: 'line', line: result.lines[index]!, index })
-          continue
-        }
-        if (index > range.end) {
-          rangeIndex += 1
-          index -= 1
-          continue
-        }
-        const lines = result.lines.slice(range.start, range.end + 1)
-        const removed = lines.filter((line) => line.kind !== 'added')
-        const added = lines.filter((line) => line.kind !== 'removed')
-        if (removed.some((line) => line.kind === 'removed')) {
-          blocks.push({
-            kind: 'markdown',
-            changeKind: 'removed',
-            lines: removed,
-            startIndex: range.start
-          })
-        }
-        if (added.some((line) => line.kind === 'added')) {
-          blocks.push({
-            kind: 'markdown',
-            changeKind: 'added',
-            lines: added,
-            startIndex: range.start
-          })
-        }
-        index = range.end
-        rangeIndex += 1
-      }
-      return blocks
-    }
-  }
-  const blocks: DiffRenderBlock[] = []
-  for (let index = 0; index < result.lines.length; index += 1) {
-    const line = result.lines[index]
-    if (markdown && line.kind !== 'context') {
-      const lines = [line]
-      while (index + 1 < result.lines.length && result.lines[index + 1]?.kind === line.kind) {
-        lines.push(result.lines[index + 1])
-        index += 1
-      }
-      const startIndex = index - lines.length + 1
-      if (
-        lines.some(
-          (candidate) =>
-            !isSimpleMarkdownText(candidate.segments.map((segment) => segment.text).join(''))
-        )
-      ) {
-        blocks.push({ kind: 'markdown', changeKind: line.kind, lines, startIndex })
-      } else {
-        lines.forEach((candidate, offset) =>
-          blocks.push({ kind: 'line', line: candidate, index: startIndex + offset })
-        )
-      }
-      continue
-    }
-    blocks.push({ kind: 'line', line, index })
-  }
-  return blocks
-}
-
-const DiffContent = ({
-  result,
-  markdown
-}: {
-  result: ManagedFileVersionDiffResult
-  markdown: boolean
-}): React.JSX.Element => (
-  <div
-    className="min-h-full bg-bg-000 py-2 font-mono text-xs text-text-000"
-    role="region"
-    aria-label="File version differences"
-  >
-    {toDiffRenderBlocks(result, markdown).map((block) => {
-      if (block.kind === 'markdown') {
-        const tone =
-          block.changeKind === 'added' ? 'bg-diff-added-surface' : 'bg-diff-removed-surface'
-        const markerTone =
-          block.changeKind === 'added'
-            ? 'text-diff-added-foreground'
-            : 'text-diff-removed-foreground'
-        const marker = block.changeKind === 'added' ? '+' : '-'
-        const content = block.lines
-          .map((line) => line.segments.map((segment) => segment.text).join(''))
-          .join('\n')
-        return (
-          <div
-            key={`markdown:${block.startIndex}:${block.changeKind}`}
-            className={`grid min-h-6 grid-cols-[2rem_3rem_3rem_minmax(0,1fr)] items-start ${tone}`}
-            data-diff-kind={block.changeKind}
-          >
-            <span className={`px-2 text-center ${markerTone}`}>{marker}</span>
-            <span className={`text-right ${markerTone}`}>
-              {block.changeKind === 'removed' ? block.lines[0]?.oldLineNumber : ''}
-            </span>
-            <span className={`pr-2 text-right ${markerTone}`}>
-              {block.changeKind === 'added' ? block.lines[0]?.newLineNumber : ''}
-            </span>
-            <div className="min-w-0 font-sans">
-              <AgentMarkdown content={content} allowMedia={false} />
-            </div>
-          </div>
-        )
-      }
-      const { line, index } = block
-      const marker = line.kind === 'added' ? '+' : line.kind === 'removed' ? '-' : ' '
-      const tone =
-        line.kind === 'added'
-          ? 'bg-diff-added-surface'
-          : line.kind === 'removed'
-            ? 'bg-diff-removed-surface'
-            : ''
-      const markerTone =
-        line.kind === 'added'
-          ? 'text-diff-added-foreground'
-          : line.kind === 'removed'
-            ? 'text-diff-removed-foreground'
-            : 'text-text-300'
-      return (
-        <div
-          key={`${index}:${line.oldLineNumber ?? ''}:${line.newLineNumber ?? ''}`}
-          className={`grid min-h-6 grid-cols-[2rem_3rem_3rem_minmax(0,1fr)] items-start ${tone}`}
-          data-diff-kind={line.kind}
-        >
-          <span
-            className={`px-2 text-center ${markerTone}`}
-            aria-label={
-              line.kind === 'added'
-                ? 'Added line'
-                : line.kind === 'removed'
-                  ? 'Removed line'
-                  : 'Unchanged line'
-            }
-          >
-            {marker}
-          </span>
-          <span className={`text-right ${markerTone}`}>{line.oldLineNumber ?? ''}</span>
-          <span className={`pr-2 text-right ${markerTone}`}>{line.newLineNumber ?? ''}</span>
-          <pre
-            className={`min-w-0 whitespace-pre-wrap break-words ${markdown ? 'font-sans' : 'font-mono'}`}
-            {...(markdown && line.kind !== 'context' ? { 'data-diff-inline': 'true' } : {})}
-          >
-            {line.segments.map((segment, segmentIndex) => (
-              <span
-                key={segmentIndex}
-                data-diff-segment={segment.kind}
-                className={
-                  segment.kind === 'added'
-                    ? 'bg-diff-added-highlight text-text-000'
-                    : segment.kind === 'removed'
-                      ? 'bg-diff-removed-highlight text-text-000 line-through'
-                      : undefined
-                }
-              >
-                {segment.text}
-              </span>
-            ))}
-          </pre>
-        </div>
-      )
-    })}
-  </div>
-)
 
 // The content slot is shared by both presentations so every supported file type follows the same
 // renderer path. Callers can temporarily suppress it while another surface owns the preview.
@@ -1226,9 +935,10 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
             </div>
           ) : mode === 'diff' ? (
             diffResult ? (
-              <DiffContent
+              <ManagedVersionDiffContent
                 result={diffResult}
-                markdown={resolvedPreviewItem.format === 'markdown'}
+                format={resolvedPreviewItem.format}
+                name={resolvedPreviewItem.name}
               />
             ) : (
               <div className="p-4 text-sm text-text-100">
@@ -1249,7 +959,5 @@ const PreviewFileSurface = forwardRef<PreviewFileSurfaceHandle, PreviewFileSurfa
 
 PreviewFileSurface.displayName = 'PreviewFileSurface'
 
-// The pure helper is exported for semantic Markdown diff tests.
-// eslint-disable-next-line react-refresh/only-export-components
-export { PreviewFileSurface, toDiffRenderBlocks }
+export { PreviewFileSurface }
 export type { PreviewFileSurfaceHandle }

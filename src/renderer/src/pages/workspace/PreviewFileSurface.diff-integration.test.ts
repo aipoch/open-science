@@ -1,23 +1,26 @@
 import { describe, expect, it } from 'vitest'
 
 import { ManagedTextDiffTaskRunner } from '../../../../main/managed-file-versions/diff-task'
-import { toDiffRenderBlocks } from './PreviewFileSurface'
+import { toDiffPresentationBlocks } from './managed-version-diff-presentation'
 
 const markdownContents = (
-  blocks: ReturnType<typeof toDiffRenderBlocks>
+  blocks: ReturnType<typeof toDiffPresentationBlocks>
 ): Array<{ kind: 'added' | 'removed'; content: string }> =>
   blocks.flatMap((block) =>
-    block.kind === 'markdown'
+    block.kind === 'markdown' && (block.changeKind === 'added' || block.changeKind === 'removed')
       ? [
           {
             kind: block.changeKind,
-            content: block.lines
-              .map((line) => line.segments.map((segment) => segment.text).join(''))
-              .join('\n')
+            content: block.content
           }
         ]
       : []
   )
+
+const markdownChange = (kind: 'added' | 'removed', content: string): string => {
+  const tag = `managed-diff-${kind}`
+  return `<${tag}>${content}</${tag}>`
+}
 
 describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
   it('groups an interleaved multi-line list replacement into complete before and after blocks', async () => {
@@ -29,12 +32,14 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(lines.map((line) => line.kind)).toEqual(['removed', 'added', 'removed', 'added'])
     expect(
-      markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
-      { kind: 'removed', content: '- old one\n- old two' },
-      { kind: 'added', content: '- new one\n- new two' }
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `- ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} one\n- ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} two`,
+        startIndex: 0
+      }
     ])
   })
 
@@ -46,17 +51,13 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
       {
-        kind: 'removed',
-        content: '| Name | Value |\n| --- | --- |\n| A | old |'
-      },
-      {
-        kind: 'added',
-        content: '| Name | Value |\n| --- | --- |\n| A | new |'
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `| Name | Value |\n| --- | --- |\n| A | ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} |`,
+        startIndex: 0
       }
     ])
   })
@@ -69,12 +70,14 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
-      { kind: 'removed', content: 'Name | Value\n--- | ---\nA | old' },
-      { kind: 'added', content: 'Name | Value\n--- | ---\nA | new' }
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `Name | Value\n--- | ---\nA | ${markdownChange('removed', 'old')}${markdownChange('added', 'new')}\n\nAfter table`,
+        startIndex: 0
+      }
     ])
   })
 
@@ -86,12 +89,14 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
-      { kind: 'removed', content: 'Old title\n===' },
-      { kind: 'added', content: 'New title\n===' }
+      {
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `${markdownChange('removed', 'Old')}${markdownChange('added', 'New')} title\n===\nAfter heading`,
+        startIndex: 0
+      }
     ])
   })
 
@@ -104,7 +109,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(
       markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
       )
     ).toEqual([
       {
@@ -126,17 +134,13 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
       {
-        kind: 'removed',
-        content: '- first item\n  old continuation\n  stable continuation\n- second item'
-      },
-      {
-        kind: 'added',
-        content: '- first item\n  new continuation\n  stable continuation\n- second item'
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `- first item\n  ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} continuation\n  stable continuation\n- second item`,
+        startIndex: 0
       }
     ])
   })
@@ -151,17 +155,13 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
     })
 
     expect(
-      markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
-      )
+      toDiffPresentationBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, 'markdown')
     ).toEqual([
       {
-        kind: 'removed',
-        content: '- first item\n\n  old continuation\n\n- second item\n\n  stable continuation'
-      },
-      {
-        kind: 'added',
-        content: '- first item\n\n  new continuation\n\n- second item\n\n  stable continuation'
+        kind: 'markdown',
+        changeKind: 'mixed',
+        content: `- first item\n\n  ${markdownChange('removed', 'old')}${markdownChange('added', 'new')} continuation\n\n- second item\n\n  stable continuation\n\nAfter list`,
+        startIndex: 0
       }
     ])
   })
@@ -175,7 +175,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(
       markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
       )
     ).toEqual([
       {
@@ -198,7 +201,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(
       markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
       )
     ).toEqual([
       { kind: 'removed', content: '> old quote' },
@@ -215,7 +221,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(
       markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
       )
     ).toEqual([
       { kind: 'removed', content: '> old quote' },
@@ -232,7 +241,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(
       markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
       )
     ).toEqual([
       { kind: 'removed', content: '> old quote\n2. stable lazy continuation' },
@@ -269,7 +281,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
       expect(
         markdownContents(
-          toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+          toDiffPresentationBlocks(
+            { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+            'markdown'
+          )
         )
       ).toEqual([
         { kind: 'removed', content: '> old quote' },
@@ -287,7 +302,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(
       markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
       )
     ).toEqual([
       {
@@ -312,7 +330,10 @@ describe('PreviewFileSurface real diff DTO Markdown grouping', () => {
 
     expect(
       markdownContents(
-        toDiffRenderBlocks({ baseVersionId: 'v1', selectedVersionId: 'v2', lines }, true)
+        toDiffPresentationBlocks(
+          { baseVersionId: 'v1', selectedVersionId: 'v2', lines },
+          'markdown'
+        )
       )
     ).toEqual([
       {
