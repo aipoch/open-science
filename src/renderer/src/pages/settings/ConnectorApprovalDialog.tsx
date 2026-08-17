@@ -20,6 +20,11 @@ import {
 } from '@/pages/workspace/PermissionScopeConfirmationDialog'
 import { useSettingsStore } from '@/stores/settings-store'
 
+type PendingBroadScope = Readonly<{
+  requestId: string
+  scope: BroadPermissionScope
+}>
+
 // A modal approval card for an un-trusted connector call. A connector tool sends data to an external
 // service, so a call that isn't pre-allowed or skip-approved is held until the user decides here.
 // Requests are answered one at a time (oldest first); the card can't be dismissed without a decision.
@@ -39,7 +44,7 @@ export function ConnectorApprovalDialog({
   const connectors = useSettingsStore((state) => state.connectors)
   const customServers = useSettingsStore((state) => state.customServers)
   const respondApproval = useSettingsStore((state) => state.respondApproval)
-  const [pendingBroadScope, setPendingBroadScope] = useState<BroadPermissionScope>()
+  const [pendingBroadScope, setPendingBroadScope] = useState<PendingBroadScope>()
   const [responding, setResponding] = useState(false)
   const [responseErrorRequestId, setResponseErrorRequestId] = useState<string>()
 
@@ -62,15 +67,16 @@ export function ConnectorApprovalDialog({
   }
   const allow = (scope: 'once' | 'session' | 'project' | 'global'): void => {
     if (scope === 'project' || scope === 'global') {
-      setPendingBroadScope(scope)
+      setPendingBroadScope({ requestId: request.id, scope })
       return
     }
     submitResponse(scope)
   }
   const confirmBroadScope = (): void => {
     if (!pendingBroadScope) return
-    const scope = pendingBroadScope
+    const { requestId, scope } = pendingBroadScope
     setPendingBroadScope(undefined)
+    if (request.id !== requestId) return
     submitResponse(scope)
   }
   const deny = (): void => submitResponse('deny')
@@ -173,9 +179,9 @@ export function ConnectorApprovalDialog({
       </Dialog.Portal>
       <PermissionScopeConfirmationDialog
         confirmation={
-          active && pendingBroadScope
+          active && pendingBroadScope && request.id === pendingBroadScope.requestId
             ? {
-                scope: pendingBroadScope,
+                scope: pendingBroadScope.scope,
                 subject: `${displayName} ${request.method}`,
                 codeExecution: false
               }

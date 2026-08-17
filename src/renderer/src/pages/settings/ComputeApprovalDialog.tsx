@@ -22,6 +22,11 @@ import {
 } from '@/pages/workspace/PermissionScopeConfirmationDialog'
 import { useComputeStore } from '@/stores/compute-store'
 
+type PendingBroadScope = Readonly<{
+  requestId: string
+  scope: BroadPermissionScope
+}>
+
 // A modal approval card for a pending compute call_command. The card cannot be dismissed without
 // a decision — the call is held open in main until the user responds (or a 5-minute timeout fires).
 //
@@ -46,7 +51,7 @@ export function ComputeApprovalDialog({
   )
   const respondApproval = useComputeStore((state) => state.respondApproval)
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null)
-  const [pendingBroadScope, setPendingBroadScope] = useState<BroadPermissionScope>()
+  const [pendingBroadScope, setPendingBroadScope] = useState<PendingBroadScope>()
   const [responding, setResponding] = useState(false)
   const [responseErrorRequestId, setResponseErrorRequestId] = useState<string>()
 
@@ -67,8 +72,9 @@ export function ComputeApprovalDialog({
   const approveSession = (): void => submitResponse('conversation')
   const confirmBroadScope = (): void => {
     if (!pendingBroadScope) return
-    const scope = pendingBroadScope
+    const { requestId, scope } = pendingBroadScope
     setPendingBroadScope(undefined)
+    if (request?.id !== requestId) return
     submitResponse(scope)
   }
 
@@ -180,14 +186,16 @@ export function ComputeApprovalDialog({
               type="button"
               variant="outline"
               disabled={responding}
-              onClick={() => setPendingBroadScope('project')}
+              onClick={() =>
+                setPendingBroadScope({ requestId: dialogRequest.id, scope: 'project' })
+              }
             >
               {t('This project')}
             </Button>
             <Button
               type="button"
               disabled={responding}
-              onClick={() => setPendingBroadScope('global')}
+              onClick={() => setPendingBroadScope({ requestId: dialogRequest.id, scope: 'global' })}
             >
               {t('Always')}
             </Button>
@@ -196,9 +204,9 @@ export function ComputeApprovalDialog({
       </Dialog.Portal>
       <PermissionScopeConfirmationDialog
         confirmation={
-          active && pendingBroadScope
+          active && pendingBroadScope && request?.id === pendingBroadScope.requestId
             ? {
-                scope: pendingBroadScope,
+                scope: pendingBroadScope.scope,
                 subject: t('remote commands on {{host}}', {
                   host: dialogRequest.provider_name
                 }),

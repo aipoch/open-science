@@ -191,4 +191,16 @@ describe('ComputeApprovalDialog', () => {
 
     expect(useComputeStore.getState().respondApproval).toHaveBeenCalledWith(request.id, decision)
   })
+
+  it('drops a broad-scope confirmation when its approval settles', () => {
+    const nextRequest = { ...request, id: 'approval-2' }
+    useComputeStore.setState({ pendingApprovals: [request] })
+    act(() => root.render(<ComputeApprovalDialog />))
+    act(() => findButton('This project')?.click())
+
+    act(() => useComputeStore.setState({ pendingApprovals: [nextRequest] }))
+
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(useComputeStore.getState().respondApproval).not.toHaveBeenCalled()
+  })
 })

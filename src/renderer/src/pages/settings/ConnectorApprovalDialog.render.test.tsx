@@ -211,6 +211,25 @@ describe('ConnectorApprovalDialog', () => {
     expect(useSettingsStore.getState().setConnectorAutoAllow).not.toHaveBeenCalled()
   })
 
+  it('drops a broad-scope confirmation when its approval settles', () => {
+    const first: ConnectorApprovalRequest = {
+      id: 'r1',
+      connector: 'biomart',
+      method: 'get_data',
+      argsPreview: '{}',
+      availableScopes: ['once', 'project']
+    }
+    const second = { ...first, id: 'r2' }
+    useSettingsStore.setState({ pendingApprovals: [first] })
+    act(() => root.render(<ConnectorApprovalDialog />))
+    act(() => button('This project')?.click())
+
+    act(() => useSettingsStore.setState({ pendingApprovals: [second] }))
+
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(useSettingsStore.getState().respondApproval).not.toHaveBeenCalled()
+  })
+
   it('Deny responds deny', () => {
     useSettingsStore.setState({
       pendingApprovals: [
