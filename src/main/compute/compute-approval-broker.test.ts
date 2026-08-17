@@ -218,10 +218,12 @@ describe('ComputeApprovalBroker', () => {
   it('replays pending requests with their renderer Session owner and omits settled requests', async () => {
     const timer = makeTimer()
     const broadcast = vi.fn()
+    const replay = vi.fn()
     let sequence = 0
     const broker = new ComputeApprovalBroker({
       generateId: () => `id-${++sequence}`,
       broadcast,
+      replay,
       setTimer: timer.set,
       clearTimer: timer.clear
     })
@@ -235,16 +237,17 @@ describe('ComputeApprovalBroker', () => {
 
     broker.replayPending()
 
-    expect(broadcast).toHaveBeenCalledWith(
+    expect(replay).toHaveBeenCalledWith(
       { id: 'id-1', ...request },
       expect.objectContaining({ sessionId: 'session-1' })
     )
+    expect(broadcast).not.toHaveBeenCalled()
 
     broker.respond('id-1', 'deny')
     await decision
-    broadcast.mockClear()
+    replay.mockClear()
     broker.replayPending()
-    expect(broadcast).not.toHaveBeenCalled()
+    expect(replay).not.toHaveBeenCalled()
   })
 
   it('denies a pending approval when its compute provider is invalidated', async () => {

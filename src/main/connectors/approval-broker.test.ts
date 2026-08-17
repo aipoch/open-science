@@ -137,10 +137,12 @@ describe('ApprovalBroker', () => {
   it('replays every pending request and omits requests after settlement', async () => {
     const timer = makeTimer()
     const broadcast = vi.fn()
+    const replay = vi.fn()
     let sequence = 0
     const broker = new ApprovalBroker({
       generateId: () => `id-${++sequence}`,
       broadcast,
+      replay,
       setTimer: timer.set,
       clearTimer: timer.clear
     })
@@ -150,15 +152,16 @@ describe('ApprovalBroker', () => {
 
     broker.replayPending()
 
-    expect(broadcast.mock.calls.map(([request]) => request.id)).toEqual(['id-1', 'id-2'])
+    expect(replay.mock.calls.map(([request]) => request.id)).toEqual(['id-1', 'id-2'])
+    expect(broadcast).not.toHaveBeenCalled()
 
     broker.respond('id-1', 'deny')
     await first
-    broadcast.mockClear()
+    replay.mockClear()
     broker.replayPending()
 
-    expect(broadcast).toHaveBeenCalledOnce()
-    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-2' }))
+    expect(replay).toHaveBeenCalledOnce()
+    expect(replay).toHaveBeenCalledWith(expect.objectContaining({ id: 'id-2' }))
 
     broker.respond('id-2', 'deny')
     await second

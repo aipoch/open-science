@@ -21,6 +21,8 @@ export type ComputeApprovalContext = {
 type ComputeApprovalBrokerDeps = {
   // Pushes a pending approval request to the renderer.
   broadcast: (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => void
+  // Reprojects an existing request without repeating first-delivery side effects such as notifications.
+  replay?: (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => void
   // Injectable for deterministic tests; defaults to crypto.randomUUID.
   generateId: () => string
   // How long to wait before auto-denying (default: 5 minutes).
@@ -125,7 +127,8 @@ export class ComputeApprovalBroker {
   }
 
   replayPending(): void {
-    for (const entry of this.pending.values()) this.deps.broadcast(entry.request, entry.context)
+    const replay = this.deps.replay ?? this.deps.broadcast
+    for (const entry of this.pending.values()) replay(entry.request, entry.context)
   }
 
   // Like request(), but checks conversation and project grants first. If a grant matches, resolves

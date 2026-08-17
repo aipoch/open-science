@@ -235,6 +235,11 @@ const createComputeHandlers = (
               })
             }
           },
+      replay: (request, context) =>
+        broadcastToRenderers('compute:approval-request', {
+          ...request,
+          ...(context?.sessionId ? { session_id: context.sessionId } : {})
+        }),
       onSettled: (id, state) => {
         try {
           broadcastToRenderers('compute:approval-settled', id)

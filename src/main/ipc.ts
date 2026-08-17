@@ -1167,7 +1167,8 @@ const createApplicationModules = async (
       taskNotifications,
       onNotificationError: (error) =>
         notificationsLog.warn('connector approval notification failed', errorLogFields(error))
-    })
+    }),
+    replay: (request) => broadcastToRenderers('connectors:approval-request', request)
   })
   // The late-bound app runtime also serves connector tools that attach a generated file to the current
   // turn. It is created below because it depends on the connector service.
