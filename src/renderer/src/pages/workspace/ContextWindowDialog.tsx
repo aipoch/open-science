@@ -130,7 +130,7 @@ const CompositionStrip = ({ usage }: { usage: AcpContextUsage }): React.JSX.Elem
 
   return (
     <div
-      className="flex h-2.5 overflow-hidden rounded-full bg-muted"
+      className="flex h-3 overflow-hidden rounded-full bg-muted"
       data-slot="context-composition-strip"
       aria-label={
         usage.size
@@ -185,7 +185,7 @@ const CategoryLegend = ({
           <span className="flex min-w-0 items-center gap-2">
             <span
               className={cn(
-                'size-2 shrink-0 rounded-full',
+                'size-2.5 shrink-0 rounded-[2px]',
                 categoryPresentation[category.key].color
               )}
               aria-hidden="true"
@@ -441,7 +441,7 @@ const ContextHistoryChart = ({
       point.sample.contextWindow.size ?? 0
     ])
   )
-  const chartWidth = Math.max(560, points.length * 52 + 32)
+  const chartWidth = Math.max(560, points.length * 38 + 16)
 
   useEffect(() => {
     const scroller = scrollerRef.current
@@ -475,7 +475,7 @@ const ContextHistoryChart = ({
             <span className="border-t border-border" />
             <span className="border-t border-border" />
           </div>
-          <div className="absolute inset-0 flex items-end justify-between gap-1 px-2">
+          <div className="absolute inset-0 flex items-end justify-start gap-0.5 px-2">
             {points.map((point, index) => {
               const usage = point.sample.contextWindow
               const categories = visibleCategories(usage)
@@ -486,7 +486,7 @@ const ContextHistoryChart = ({
               return (
                 <div
                   key={point.sample.id}
-                  className="relative flex h-full w-12 shrink-0 items-end justify-center pb-7 pt-2"
+                  className="relative flex h-full w-9 shrink-0 items-end justify-center pb-7 pt-2"
                 >
                   <button
                     type="button"
@@ -504,8 +504,7 @@ const ContextHistoryChart = ({
                     onBlur={() => onPreview(undefined)}
                     onClick={() => onSelect(index)}
                     className={cn(
-                      'group relative flex h-full w-11 items-end justify-center rounded-md outline-none transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 active:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50',
-                      isActive && 'bg-muted/50'
+                      'group relative flex h-full w-9 items-end justify-center rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50'
                     )}
                   >
                     {usage.size ? (
@@ -517,10 +516,12 @@ const ContextHistoryChart = ({
                     ) : null}
                     <span
                       className={cn(
-                        'relative flex min-h-0 w-7 flex-col-reverse overflow-hidden rounded-t-[3px] bg-primary ring-2',
+                        'relative flex min-h-0 w-8 flex-col-reverse overflow-hidden rounded-t-[2px] bg-primary ring-2 transition-shadow duration-150 motion-reduce:transition-none group-hover:ring-ring/40 group-focus-visible:ring-ring/60',
                         state.ring,
-                        isPinned && 'ring-ring'
+                        isActive && 'ring-ring/60',
+                        isPinned && 'ring-foreground'
                       )}
+                      data-slot="context-window-bar"
                       style={{ height: `${Math.max(2, (usage.used / maximum) * 100)}%` }}
                       aria-hidden="true"
                     >

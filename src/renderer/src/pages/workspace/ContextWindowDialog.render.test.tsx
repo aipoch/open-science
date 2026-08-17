@@ -207,10 +207,12 @@ describe('ContextWindowDialog', () => {
     ).toBe(true)
     expect(dialog?.querySelector('[role="group"]')?.className.includes('min-w-full')).toBe(true)
     expect(
-      dialog
-        ?.querySelector('[role="group"] > div:last-child')
-        ?.className.includes('justify-between')
+      dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('justify-start')
     ).toBe(true)
+    expect(
+      dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('gap-0.5')
+    ).toBe(true)
+    expect(dialog?.querySelector('[data-slot="context-window-bar"]')?.className).toContain('w-8')
   })
 
   it('uses the live session snapshot for current composition', () => {
