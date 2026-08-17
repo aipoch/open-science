@@ -327,6 +327,29 @@ describe('SpecialistRepository — data-loss guard', () => {
     expect(await readFile(filePath, 'utf8')).toBe(original)
   })
 
+  it.each(['not-a-number', 0, -1, 1.5])(
+    'blocks writes when revision %j would be normalized or retained as invalid',
+    async (revision) => {
+      const filePath = join(tmpDir, 'specialists.json')
+      const original = JSON.stringify(
+        { version: 2, specialists: [{ ...makeSpecialist(), revision }] },
+        null,
+        2
+      )
+      await writeFile(filePath, original, 'utf8')
+      const repo = new SpecialistRepository(tmpDir)
+
+      expect((await repo.getAllWithIntegrity()).integrity).toMatchObject({
+        status: 'degraded',
+        issues: [{ code: 'record-sanitized', recordIndex: 0 }]
+      })
+      await expect(repo.insert(makeSpecialist())).rejects.toBeInstanceOf(
+        SpecialistDocumentDegradedError
+      )
+      expect(await readFile(filePath, 'utf8')).toBe(original)
+    }
+  )
+
   it.each(['update', 'setEnabled', 'delete', 'replaceAll', 'replaceAllIfUnchanged'] as const)(
     'blocks %s when any record would be lost',
     async (operation) => {

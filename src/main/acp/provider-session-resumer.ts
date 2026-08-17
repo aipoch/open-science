@@ -437,7 +437,8 @@ export class AcpProviderSessionResumer {
       projectId,
       identity,
       permissionProfile: request.permissionProfile,
-      specialistId: request.specialistId
+      specialistId: request.specialistId,
+      specialistBindingPending: request.specialistBindingPending
     })
   }
 

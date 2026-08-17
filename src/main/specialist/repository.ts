@@ -52,8 +52,8 @@ const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v 
 
 const asBoolean = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined)
 
-const asNumber = (v: unknown): number | undefined =>
-  typeof v === 'number' && Number.isFinite(v) ? v : undefined
+const isStoredSpecialistRevision = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isSafeInteger(v) && v >= 1
 
 const asStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
@@ -136,6 +136,7 @@ const storedSpecialistWouldLoseData = (value: Record<string, unknown>): boolean 
     if (value[key] !== undefined && typeof value[key] !== 'string') return true
   }
   if (value.setupPending !== undefined && typeof value.setupPending !== 'boolean') return true
+  if (value.revision !== undefined && !isStoredSpecialistRevision(value.revision)) return true
   if (value.origin !== undefined && value.origin !== 'local' && value.origin !== 'imported') {
     return true
   }
@@ -261,7 +262,7 @@ export const sanitizeStoredSpecialist = (v: unknown): StoredSpecialist | undefin
     return undefined
   }
 
-  const revision = asNumber(v.revision) ?? 1
+  const revision = isStoredSpecialistRevision(v.revision) ? v.revision : 1
   const specialist: StoredSpecialist = {
     id,
     name,

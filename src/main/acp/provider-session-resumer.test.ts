@@ -583,6 +583,20 @@ describe('AcpProviderSessionResumer', () => {
     }
   )
 
+  it('passes an explicit pending Main binding to fresh adoption', async () => {
+    const harness = createHarness()
+
+    await harness.resume({ specialistBindingPending: true })
+
+    expect(harness.adopt).toHaveBeenCalledWith(
+      'stable-app-session',
+      expect.objectContaining({
+        specialistId: undefined,
+        specialistBindingPending: true
+      })
+    )
+  })
+
   it('releases only the failed Resume provision before adopting an unresumable session', async () => {
     const harness = createHarness({ resumeError: { code: -32002, message: 'Resource not found' } })
 
