@@ -2177,6 +2177,87 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')).not.toBeNull()
   })
 
+  it('uses a multi-level header breadcrumb for Marketplace Specialist details', async () => {
+    useSettingsStore.setState({ pendingSettingsPanel: 'specialists' })
+    Object.assign(window.api.specialist, {
+      listMarketplace: vi.fn().mockResolvedValue({
+        sources: [
+          {
+            id: 'official',
+            kind: 'official',
+            name: 'OpenScience Marketplace',
+            repositoryUrl: 'https://github.com/aipoch/marketplace',
+            ref: 'published',
+            trust: 'official',
+            keyId: 'key-1',
+            keyFingerprint: 'a'.repeat(64),
+            removable: false
+          }
+        ],
+        specialists: [
+          {
+            sourceId: 'official',
+            sourceName: 'OpenScience Marketplace',
+            sourceTrust: 'official',
+            id: 'example-specialist',
+            displayName: 'Example Specialist',
+            summary: 'Focused research workflows.',
+            publisher: { id: 'aipoch', name: 'Aipoch' },
+            version: '1.0.0'
+          }
+        ],
+        failures: []
+      }),
+      getMarketplaceRelease: vi.fn().mockResolvedValue({
+        sourceId: 'official',
+        specialistId: 'example-specialist',
+        displayName: 'Example Specialist',
+        summary: 'Focused research workflows.',
+        publisher: { id: 'aipoch', name: 'Aipoch' },
+        version: '1.0.0',
+        repository: 'https://github.com/aipoch/example',
+        commit: 'a'.repeat(40),
+        license: 'MIT',
+        compressedBytes: 100,
+        uncompressedBytes: 200,
+        fileCount: 2,
+        defaultSkillIds: [],
+        defaultConnectorIds: [],
+        skills: [],
+        connectors: []
+      })
+    })
+
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.trim() === 'Marketplace')
+        ?.click()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent?.includes('Example Specialist'))
+        ?.click()
+      await Promise.resolve()
+    })
+
+    const marketplaceCrumb = document.body.querySelector<HTMLButtonElement>(
+      '[aria-label="Back to Marketplace"]'
+    )
+    expect(marketplaceCrumb).not.toBeNull()
+    expect(marketplaceCrumb?.closest('div')?.textContent).toContain(
+      'Specialists›Marketplace›example-specialist'
+    )
+    expect(document.body.textContent).not.toContain('Back to Marketplace')
+
+    await act(async () => marketplaceCrumb?.click())
+    expect(document.body.querySelector('[aria-label="Search Marketplace"]')).not.toBeNull()
+  })
+
   it('pushes Agent after storage recovery so Back returns to Storage', async () => {
     const failedStorage = {
       checkedAt: 1,

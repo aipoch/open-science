@@ -47,12 +47,17 @@ import {
   buildVisionModelMutation
 } from './subagent-model-settings'
 
+type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
+
 // Stable semantic mutation facade. The injected document store owns arbitration and atomic IO; all
 // secret handling remains above this layer in crypto.ts and service.ts.
 class SettingsRepository {
   private readonly store: SettingsDocumentStore
 
-  constructor(storage: string | SettingsDocumentStore) {
+  constructor(
+    storage: string | SettingsDocumentStore,
+    private readonly guardSkillMutation?: SkillMutationGuard
+  ) {
     this.store = typeof storage === 'string' ? new SettingsDocumentStore(storage) : storage
   }
 
@@ -507,14 +512,13 @@ class SettingsRepository {
   }
 
   async setSkillsEnabled(ids: string[], enabled: boolean): Promise<StoredSettings> {
-    return this.mutate((settings) => {
-      const disabled = new Set(settings.disabledSkillIds ?? [])
-      for (const id of ids) {
-        if (enabled) disabled.delete(id)
-        else disabled.add(id)
-      }
-      return { ...settings, disabledSkillIds: disabled.size ? [...disabled] : undefined }
-    })
+    const update = (): Promise<StoredSettings> =>
+      this.mutate((settings) => {
+        const disabled = new Set(settings.disabledSkillIds ?? [])
+        for (const id of ids) enabled ? disabled.delete(id) : disabled.add(id)
+        return { ...settings, disabledSkillIds: disabled.size ? [...disabled] : undefined }
+      })
+    return this.guardSkillMutation ? this.guardSkillMutation(update) : update()
   }
 
   // Adds or removes a bundled connector id from the disabled set (default-on model).

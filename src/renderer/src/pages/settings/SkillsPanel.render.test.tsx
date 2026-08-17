@@ -9,6 +9,7 @@ import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { openRadixMenu } from './test-utils'
 
 let container: HTMLDivElement
@@ -153,6 +154,25 @@ beforeEach(() => {
       skills: []
     })
   })
+  useSpecialistStore.setState({
+    items: [
+      {
+        kind: 'custom',
+        id: 'literature-reviewer',
+        name: 'LITERATURE_REVIEWER',
+        displayName: 'Literature Reviewer',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: ['a', 'b'], connectorIds: [], connectorTools: [] },
+        revision: 1
+      }
+    ],
+    isLoaded: true,
+    load: vi.fn().mockResolvedValue(undefined)
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -295,6 +315,32 @@ describe('SkillsPanel (list view)', () => {
     expect(document.body.textContent).not.toContain('Alpha')
   })
 
+  it('shows Specialist usage separately from the Main Agent toggle', () => {
+    act(() => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const alphaRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('Alpha'))
+    const betaRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('Beta'))
+
+    expect(alphaRow?.textContent).toContain('Literature Reviewer')
+    expect(alphaRow?.textContent).toContain('Shared with Main')
+    expect(alphaRow?.textContent).toContain('Main Agent')
+    expect(betaRow?.textContent).toContain('Literature Reviewer')
+    expect(betaRow?.textContent).toContain('Specialist only')
+    expect(betaRow?.textContent).toContain('Main Agent')
+    expect(alphaRow?.querySelector('[aria-label="Toggle Alpha"]')?.getAttribute('data-state')).toBe(
+      'checked'
+    )
+    expect(betaRow?.querySelector('[aria-label="Toggle Beta"]')?.getAttribute('data-state')).toBe(
+      'unchecked'
+    )
+  })
+
   it('deletes a personal skill from its row control', () => {
     act(() => {
       root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
@@ -410,6 +456,42 @@ describe('SkillsPanel (list view)', () => {
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
       'Skill is referenced by rna-reviewer.'
     )
+  })
+
+  it('explains and blocks deletion for a Skill still owned by a Specialist', async () => {
+    const deleteSkill = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ deleteSkill })
+    useSpecialistStore.setState((state) => ({
+      items: state.items.map((item) =>
+        item.kind === 'custom'
+          ? {
+              ...item,
+              selectedCapabilities: {
+                ...item.selectedCapabilities,
+                skillIds: item.selectedCapabilities.skillIds.filter(
+                  (skillId) => skillId !== 'personal-mine'
+                )
+              },
+              ownedSkillIds: ['personal-mine']
+            }
+          : item
+      )
+    }))
+
+    await act(async () => {
+      root.render(<SkillsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    const remove = document.body.querySelector<HTMLButtonElement>('[aria-label="Delete Mine"]')
+    expect(remove?.getAttribute('aria-disabled')).toBe('true')
+
+    await act(async () => remove?.focus())
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toContain(
+      'Owned by Literature Reviewer. Delete this Skill when deleting that Specialist.'
+    )
+
+    act(() => remove?.click())
+    expect(deleteSkill).not.toHaveBeenCalled()
   })
 
   it('always offers installed-skill import, including for other frameworks', () => {

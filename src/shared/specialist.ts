@@ -348,7 +348,7 @@ export type SpecialistFieldError = {
 export const SPECIALIST_NAME_MAX_LENGTH = 80
 export const SPECIALIST_DISPLAY_NAME_MAX_LENGTH = 80
 export const SPECIALIST_ID_MAX_LENGTH = RESOURCE_ID_MAX_LENGTH
-export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 200
+export const SPECIALIST_DESCRIPTION_MAX_LENGTH = 1000
 export const SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH = 32_768
 
 export const validateSpecialistId = validateResourceId

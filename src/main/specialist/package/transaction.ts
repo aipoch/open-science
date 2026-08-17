@@ -127,7 +127,8 @@ export class SpecialistPackageTransaction {
     plan: Readonly<SpecialistPackageValidationPlan>,
     importedAt: Date,
     archiveDigest: string,
-    overwrite?: { expectedRevision: number }
+    overwrite?: { expectedRevision: number },
+    assertApprovedImpact?: (document: Readonly<StoredSpecialists>) => Promise<void>
   ): Promise<SpecialistProfileView> {
     const run = this.queue.then(async () => {
       await this.recover()
@@ -164,7 +165,10 @@ export class SpecialistPackageTransaction {
             ...(existing?.ownedSkillIds ?? []),
             ...plan.skills
               .filter(
-                (skill) => skill.disposition === 'install' || skill.disposition === 'reuse-owned'
+                (skill) =>
+                  skill.disposition === 'install' ||
+                  skill.disposition === 'reuse-owned' ||
+                  skill.disposition === 'replace-existing'
               )
               .map((skill) => skill.localId ?? skill.id)
           ])
@@ -204,7 +208,10 @@ export class SpecialistPackageTransaction {
           transactionId,
           plan.specialistId,
           plan.skills.filter(
-            (skill) => skill.disposition === 'install' || skill.disposition === 'reuse-owned'
+            (skill) =>
+              skill.disposition === 'install' ||
+              skill.disposition === 'reuse-owned' ||
+              skill.disposition === 'replace-existing'
           )
         )
         await this.writeTransactionData(before, after)
@@ -213,6 +220,7 @@ export class SpecialistPackageTransaction {
         await this.writeJournal(journal)
         await this.skillPort.beginMutation?.(transactionId, plan.specialistId, plan.skills)
         skillMutationBegun = true
+        await assertApprovedImpact?.(before)
         await this.repository.replaceAllIfUnchanged(before, after)
         specialistCommitted = true
         await this.skillPort.commit(transactionId)

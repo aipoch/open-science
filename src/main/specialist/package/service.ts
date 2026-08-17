@@ -13,6 +13,7 @@ import {
   type SpecialistDeleteResult,
   type SpecialistPackageInstallRequest,
   type SpecialistPackageInstallResult,
+  type SpecialistPackageSkillConflictResolution,
   type SpecialistExportPreview,
   type SpecialistExportRequest,
   SPECIALIST_PACKAGE_SCHEMA_VERSION,
@@ -24,7 +25,7 @@ import {
 } from '../../../shared/specialist'
 import { parseSkillDocument } from '../../../shared/skill-frontmatter'
 import { createLogger } from '../../logger'
-import type { StoredSpecialist } from '../types'
+import type { StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
 import { validateSpecialistZip } from './zip-adapter'
 import { compareSemver } from './semver'
@@ -51,7 +52,6 @@ type Candidate = {
   plan?: Readonly<SpecialistPackageValidationPlan>
   expiresAt: number
   archiveDigest: string
-  installable: boolean
   archiveBytes: Uint8Array
   overwrite?: { id: string; expectedRevision: number }
   report: SpecialistPackageReport
@@ -184,6 +184,8 @@ export class SpecialistSkillDeletionProtectedError extends Error {
   }
 }
 
+class SpecialistPackageImpactConflictError extends Error {}
+
 export class SpecialistPackageService {
   private readonly candidates = new Map<string, Candidate>()
   private readonly deletePreviews = new Map<string, SpecialistDeletePreview>()
@@ -207,8 +209,18 @@ export class SpecialistPackageService {
       this.options.catalog(),
       this.options.repository.getAll()
     ])
+    const catalogSkillIds = catalog.skills.map((skill) => skill.id)
     return {
       ...catalog,
+      skills: catalog.skills.map((skill) => ({
+        ...skill,
+        specialistIds: document.specialists
+          .filter((specialist) =>
+            referencedSkillIds(specialist, catalogSkillIds).includes(skill.id)
+          )
+          .map((specialist) => specialist.id)
+          .sort()
+      })),
       specialists: document.specialists.map(({ id, name }) => ({ id, name }))
     }
   }
@@ -440,7 +452,6 @@ export class SpecialistPackageService {
       plan: result.plan,
       expiresAt: this.now().getTime() + CANDIDATE_TTL_MS,
       archiveDigest: createHash('sha256').update(archiveBytes).digest('hex'),
-      installable,
       archiveBytes: Uint8Array.from(archiveBytes),
       ...(ownerId === undefined ? {} : { ownerId }),
       ...(overwriteTarget ? { overwrite: overwriteTarget } : {}),
@@ -708,7 +719,6 @@ export class SpecialistPackageService {
     this.candidates.set(token, {
       expiresAt: this.now().getTime() + CANDIDATE_TTL_MS,
       archiveDigest: '',
-      installable: false,
       archiveBytes: new Uint8Array(),
       ...(ownerId === undefined ? {} : { ownerId }),
       report: specialistPackageReportFromPreview(preview)
@@ -722,6 +732,16 @@ export class SpecialistPackageService {
     return candidate && candidate.ownerId === ownerId ? candidate.report : undefined
   }
 
+  candidateNewSkillIds(candidateToken: unknown, ownerId?: number): readonly string[] | undefined {
+    if (typeof candidateToken !== 'string') return undefined
+    const candidate = this.candidates.get(candidateToken)
+    return candidate && candidate.ownerId === ownerId
+      ? candidate.plan?.skills
+          .filter((skill) => skill.disposition === 'install')
+          .map((skill) => skill.localId ?? skill.id)
+      : undefined
+  }
+
   async install(
     request: SpecialistPackageInstallRequest,
     ownerId?: number
@@ -729,10 +749,13 @@ export class SpecialistPackageService {
     if (
       !request ||
       typeof request !== 'object' ||
-      Object.keys(request).some((key) => !['candidateToken', 'confirmOverwrite'].includes(key)) ||
+      Object.keys(request).some(
+        (key) => !['candidateToken', 'confirmOverwrite', 'skillConflictResolutions'].includes(key)
+      ) ||
       typeof request.candidateToken !== 'string' ||
       !request.candidateToken ||
-      (request.confirmOverwrite !== undefined && request.confirmOverwrite !== true)
+      (request.confirmOverwrite !== undefined && request.confirmOverwrite !== true) ||
+      !this.validSkillConflictResolutions(request.skillConflictResolutions)
     ) {
       return { status: 'failed', code: 'candidate-invalid' }
     }
@@ -744,8 +767,26 @@ export class SpecialistPackageService {
       this.candidates.delete(request.candidateToken)
       return { status: 'failed', code: 'candidate-expired' }
     }
-    if (!candidate.installable || !candidate.plan) {
+    if (!candidate.plan) {
       return { status: 'failed', code: 'candidate-not-installable' }
+    }
+    const previewConflicts = candidate.plan.skills.filter(
+      (skill) => skill.disposition === 'conflict'
+    )
+    const resolutions = new Map(
+      (request.skillConflictResolutions ?? []).map((resolution) => [
+        resolution.skillId,
+        resolution.resolution
+      ])
+    )
+    if (
+      resolutions.size !== (request.skillConflictResolutions?.length ?? 0) ||
+      [...resolutions.keys()].some((id) => !previewConflicts.some((skill) => skill.id === id))
+    ) {
+      return { status: 'failed', code: 'candidate-invalid' }
+    }
+    if (previewConflicts.some((skill) => !resolutions.has(skill.id))) {
+      return { status: 'failed', code: 'skill-conflict-resolution-required' }
     }
     if (candidate.overwrite && request.confirmOverwrite !== true) {
       return { status: 'failed', code: 'overwrite-confirmation-required' }
@@ -758,13 +799,50 @@ export class SpecialistPackageService {
       if (catalog.protectedSpecialistIds.includes(candidate.plan.specialistId)) {
         return { status: 'failed', code: 'protected-target' }
       }
-      if (!liveValidation.preview.installable || !liveValidation.plan)
-        return { status: 'failed', code: 'candidate-not-installable' }
+      if (!liveValidation.plan) return { status: 'failed', code: 'candidate-not-installable' }
+      const liveConflicts = liveValidation.plan.skills.filter(
+        (skill) => skill.disposition === 'conflict'
+      )
+      if (
+        liveConflicts.length !== previewConflicts.length ||
+        liveConflicts.some((skill) => {
+          const preview = previewConflicts.find((candidate) => candidate.id === skill.id)
+          return (
+            !preview ||
+            preview.conflict?.localId !== skill.conflict?.localId ||
+            preview.conflict?.installedVersion !== skill.conflict?.installedVersion ||
+            preview.conflict?.installedContentHash !== skill.conflict?.installedContentHash ||
+            preview.conflict?.mainEnabled !== skill.conflict?.mainEnabled ||
+            preview.conflict?.specialists.map(({ id }) => id).join('\0') !==
+              skill.conflict?.specialists.map(({ id }) => id).join('\0')
+          )
+        })
+      ) {
+        return { status: 'failed', code: 'stale-candidate' }
+      }
+      const resolvedPlan: SpecialistPackageValidationPlan = {
+        ...liveValidation.plan,
+        skills: liveValidation.plan.skills.flatMap((skill) => {
+          if (skill.disposition !== 'conflict') return [skill]
+          return [
+            {
+              ...skill,
+              disposition:
+                resolutions.get(skill.id) === 'use-incoming'
+                  ? ('replace-existing' as const)
+                  : ('reuse-existing' as const)
+            }
+          ]
+        })
+      }
       specialist = await this.transaction.install(
-        liveValidation.plan,
+        resolvedPlan,
         this.now(),
         candidate.archiveDigest,
-        candidate.overwrite ? { expectedRevision: candidate.overwrite.expectedRevision } : undefined
+        candidate.overwrite
+          ? { expectedRevision: candidate.overwrite.expectedRevision }
+          : undefined,
+        (document) => this.assertApprovedImpact(resolvedPlan, document)
       )
     } catch (error) {
       return {
@@ -772,11 +850,13 @@ export class SpecialistPackageService {
         code:
           error instanceof SpecialistPackageRecoveryError
             ? 'recovery-failed'
-            : error instanceof SpecialistPackageRevisionConflictError
-              ? 'revision-conflict'
-              : error instanceof SpecialistPackageRollbackError
-                ? 'rollback-failed'
-                : 'commit-failed'
+            : error instanceof SpecialistPackageImpactConflictError
+              ? 'stale-candidate'
+              : error instanceof SpecialistPackageRevisionConflictError
+                ? 'revision-conflict'
+                : error instanceof SpecialistPackageRollbackError
+                  ? 'rollback-failed'
+                  : 'commit-failed'
       }
     }
     try {
@@ -805,6 +885,52 @@ export class SpecialistPackageService {
   private clearCandidates(ownerId?: number): void {
     for (const [token, candidate] of this.candidates) {
       if (candidate.ownerId === ownerId) this.candidates.delete(token)
+    }
+  }
+
+  private validSkillConflictResolutions(
+    value: unknown
+  ): value is readonly SpecialistPackageSkillConflictResolution[] | undefined {
+    return (
+      value === undefined ||
+      (Array.isArray(value) &&
+        value.every(
+          (item) =>
+            typeof item === 'object' &&
+            item !== null &&
+            Object.keys(item).every((key) => key === 'skillId' || key === 'resolution') &&
+            Object.keys(item).length === 2 &&
+            'skillId' in item &&
+            typeof item.skillId === 'string' &&
+            'resolution' in item &&
+            (item.resolution === 'use-installed' || item.resolution === 'use-incoming')
+        ))
+    )
+  }
+
+  private async assertApprovedImpact(
+    plan: SpecialistPackageValidationPlan,
+    document: Readonly<StoredSpecialists>
+  ): Promise<void> {
+    const replacements = plan.skills.filter(
+      (skill) => skill.disposition === 'replace-existing' && skill.conflict
+    )
+    if (replacements.length === 0) return
+    const catalog = await this.options.catalog()
+    for (const skill of replacements) {
+      const localId = skill.localId ?? skill.id
+      const current = catalog.skills.find((candidate) => candidate.id === localId)
+      const actualSpecialistIds = document.specialists
+        .filter((specialist) => referencedSkillIds(specialist, [localId]).includes(localId))
+        .map((specialist) => specialist.id)
+        .sort()
+      const approvedSpecialistIds = skill.conflict!.specialists.map(({ id }) => id).sort()
+      if (
+        (current?.mainEnabled ?? false) !== skill.conflict!.mainEnabled ||
+        actualSpecialistIds.join('\0') !== approvedSpecialistIds.join('\0')
+      ) {
+        throw new SpecialistPackageImpactConflictError()
+      }
     }
   }
 }

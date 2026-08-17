@@ -278,8 +278,8 @@ const MAP: Record<string, (diagnostic: PackageDiagnostic) => SpecialistDiagnosti
     'This Skill contains script files. They are inspected as content only and are never executed.'
   ),
   'skill.existing-conflict': plain(
-    'Skill conflict',
-    'A Skill with this name is already installed with different content or version. Resolve the conflict and rebuild the ZIP.'
+    'Skill version choice required',
+    'A Skill with this name is already installed with different content or version. Choose which version to use below.'
   ),
 
   // ---- Export preview (package/service.ts) ----

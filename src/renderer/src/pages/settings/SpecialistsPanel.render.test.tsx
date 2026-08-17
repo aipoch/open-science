@@ -885,7 +885,10 @@ describe('SpecialistsPanel', () => {
         .find((button) => button.textContent === 'Overwrite and continue')
         ?.click()
     })
-    expect(installPackage).toHaveBeenCalledWith(true)
+    expect(installPackage).toHaveBeenCalledWith({
+      confirmOverwrite: true,
+      skillConflictResolutions: []
+    })
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'research-synth' })
   })
 
@@ -1054,11 +1057,9 @@ describe('SpecialistsPanel', () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={onNavigate} />)
     })
 
-    expect(document.body.textContent).toContain('Setup incomplete · Continue setup')
-    const toggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Complete setup before enabling RNA Reviewer"]'
-    )
-    expect(toggle?.disabled).toBe(true)
+    expect(document.body.textContent).toContain('Setup incomplete')
+    expect(document.body.textContent).toContain('Continue setup')
+    expect(document.body.querySelector('[aria-label="Toggle RNA Reviewer"]')).toBeNull()
     await act(async () => {
       document.body
         .querySelector<HTMLButtonElement>('[aria-label="Continue setup for RNA Reviewer"]')
@@ -1317,9 +1318,30 @@ describe('SpecialistsPanel', () => {
       document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
     )
     expect(checkboxes).toHaveLength(4)
+    const disabledCheckboxes = checkboxes.filter((input) => input.disabled)
     expect(checkboxes.filter((input) => !input.disabled)).toHaveLength(1)
+    expect(disabledCheckboxes).toHaveLength(3)
     expect(checkboxes.every((input) => !input.checked)).toBe(true)
-    await act(async () => checkboxes.find((input) => !input.disabled)?.click())
+    expect(disabledCheckboxes.every((input) => input.className.includes('disabled:bg-muted'))).toBe(
+      true
+    )
+    const disabledSkillTriggers = Array.from(
+      dialog?.querySelectorAll<HTMLElement>('[data-slot="specialist-delete-disabled-skill"]') ?? []
+    )
+    expect(disabledSkillTriggers).toHaveLength(3)
+    expect(disabledSkillTriggers.every((trigger) => trigger.tabIndex === 0)).toBe(true)
+    await act(async () => disabledSkillTriggers[0]?.focus())
+    expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe(
+      'Already exists independently and will be kept.'
+    )
+    const selectAll = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(
+      (button) => button.textContent === 'Select all'
+    )
+    expect(selectAll).not.toBeNull()
+    await act(async () => selectAll?.click())
+    expect(checkboxes.filter((input) => !input.disabled).every((input) => input.checked)).toBe(true)
+    expect(disabledCheckboxes.every((input) => !input.checked)).toBe(true)
+    expect(selectAll?.textContent).toBe('Clear selection')
 
     const confirmBtn = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
       (btn) =>

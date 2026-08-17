@@ -198,6 +198,48 @@ describe('UserSkillSpecialistPackageAdapter', () => {
     })
   })
 
+  it('replaces a legacy imported Skill in place after conflict confirmation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
+    roots.push(root)
+    const directory = join(root, 'skills', 'imported', 'analysis-tools')
+    await mkdir(directory, { recursive: true })
+    await writeFile(
+      join(directory, 'SKILL.md'),
+      '---\nname: analysis-tools\ndescription: Legacy\n---\nKeep until confirmed.'
+    )
+    const adapter = new UserSkillSpecialistPackageAdapter(root)
+    const [installed] = await adapter.snapshot()
+    const replacement: SpecialistPackageSkillPlan = {
+      ...plan(),
+      localId: 'imported-analysis-tools',
+      disposition: 'replace-existing',
+      conflict: {
+        localId: 'imported-analysis-tools',
+        installedVersion: installed.version,
+        installedContentHash: installed.contentHash,
+        mainEnabled: false,
+        specialists: []
+      }
+    }
+
+    await adapter.beginMutation('replace-legacy', 'research-synth', [replacement])
+    await adapter.prepare('replace-legacy', 'research-synth', [replacement])
+    await adapter.commit('replace-legacy')
+    await adapter.recover('replace-legacy', 'commit')
+    await adapter.endMutation('replace-legacy')
+
+    await expect(readFile(join(directory, 'SKILL.md'), 'utf8')).resolves.toContain(
+      'Use this Skill.'
+    )
+    await expect(
+      readFile(join(root, 'skills', 'personal', 'analysis-tools', 'SKILL.md'), 'utf8')
+    ).rejects.toThrow()
+    await expect(readSpecialistPackageSkillMetadata(directory)).resolves.toMatchObject({
+      id: 'imported-analysis-tools',
+      ownerIds: ['research-synth']
+    })
+  })
+
   it('keeps a legacy package sidecar ID while exporting the directory name', async () => {
     const root = await mkdtemp(join(tmpdir(), 'specialist-skill-adapter-'))
     roots.push(root)

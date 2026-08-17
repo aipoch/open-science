@@ -59,7 +59,7 @@ const validZip = (
     )
   })
 
-const bundledZip = (): Uint8Array =>
+const bundledZip = (overrides: { skillVersion?: string; skillBody?: string } = {}): Uint8Array =>
   zipSync({
     'manifest.json': encoder.encode(
       JSON.stringify({
@@ -79,7 +79,7 @@ const bundledZip = (): Uint8Array =>
       })
     ),
     'skills/analysis-tools/SKILL.md': encoder.encode(
-      '---\nname: analysis-tools\ndescription: Analyze data\nversion: 1.0.0\n---\nUse the tools.'
+      `---\nname: analysis-tools\ndescription: Analyze data\nversion: ${overrides.skillVersion ?? '1.0.0'}\n---\n${overrides.skillBody ?? 'Use the tools.'}`
     ),
     'skills/analysis-tools/scripts/run.sh': encoder.encode('exit 99')
   })
@@ -138,6 +138,154 @@ afterEach(async () => {
 })
 
 describe('SpecialistPackageService', () => {
+  it('requires a conflict decision and can keep the installed Skill', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const userSkills = new UserSkillRepository(storageDir)
+    const installedPlan = validateSpecialistZip(bundledZip(), catalog).plan!.skills[0]
+    await skillPort.prepare('seed-conflict', 'former-owner', [installedPlan])
+    await skillPort.commit('seed-conflict')
+    await skillPort.recover('seed-conflict', 'commit')
+    await repository.insert({
+      id: 'existing-user',
+      name: 'Existing User',
+      description: 'Uses the installed Skill.',
+      systemPrompt: 'Use the current Skill.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: ['personal-analysis-tools'],
+        connectorIds: [],
+        connectorTools: []
+      },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      catalog: async () => ({
+        ...catalog,
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false,
+          mainEnabled: true
+        }))
+      })
+    })
+
+    const preview = await service.preview(
+      bundledZip({ skillVersion: '2.0.0', skillBody: 'Use the replacement.' })
+    )
+    expect(preview.installable).toBe(false)
+    expect(preview.summary?.skills[0]).toMatchObject({
+      disposition: 'conflict',
+      conflict: {
+        localId: 'personal-analysis-tools',
+        installedVersion: '1.0.0',
+        mainEnabled: true,
+        specialists: [{ id: 'existing-user', name: 'Existing User' }]
+      }
+    })
+    expect(service.candidateNewSkillIds(preview.candidateToken)).toEqual([])
+    await expect(service.install({ candidateToken: preview.candidateToken })).resolves.toEqual({
+      status: 'failed',
+      code: 'skill-conflict-resolution-required'
+    })
+    await repository.insert({
+      id: 'late-user',
+      name: 'Late User',
+      description: 'Started using the Skill after preview.',
+      systemPrompt: 'Use the installed Skill.',
+      enabled: true,
+      capabilityMode: 'selected',
+      fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+      selectedCapabilities: {
+        skillIds: ['personal-analysis-tools'],
+        connectorIds: [],
+        connectorTools: []
+      },
+      revision: 1,
+      packageVersion: '1.0.0',
+      origin: 'local',
+      ownedSkillIds: []
+    })
+    await expect(
+      service.install({
+        candidateToken: preview.candidateToken,
+        skillConflictResolutions: [{ skillId: 'analysis-tools', resolution: 'use-installed' }]
+      })
+    ).resolves.toEqual({ status: 'failed', code: 'stale-candidate' })
+    const retriedPreview = await service.preview(
+      bundledZip({ skillVersion: '2.0.0', skillBody: 'Use the replacement.' })
+    )
+
+    const result = await service.install({
+      candidateToken: retriedPreview.candidateToken,
+      skillConflictResolutions: [{ skillId: 'analysis-tools', resolution: 'use-installed' }]
+    })
+    expect(result).toMatchObject({
+      status: 'installed',
+      specialist: {
+        selectedCapabilities: { skillIds: ['personal-analysis-tools'] },
+        ownedSkillIds: []
+      }
+    })
+    await expect(userSkills.body('personal-analysis-tools')).resolves.toContain('Use the tools.')
+  })
+
+  it('atomically replaces an installed Skill when the package version is selected', async () => {
+    const repository = new SpecialistRepository(storageDir)
+    const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)
+    const userSkills = new UserSkillRepository(storageDir)
+    const installedPlan = validateSpecialistZip(bundledZip(), catalog).plan!.skills[0]
+    await skillPort.prepare('seed-replacement', 'former-owner', [installedPlan])
+    await skillPort.commit('seed-replacement')
+    await skillPort.recover('seed-replacement', 'commit')
+    const service = new SpecialistPackageService({
+      storageDir,
+      repository,
+      skillPort,
+      catalog: async () => ({
+        ...catalog,
+        skills: (await skillPort.snapshot()).map((skill) => ({
+          ...skill,
+          name: skill.id.replace(/^personal-/, ''),
+          builtin: false
+        }))
+      })
+    })
+    const preview = await service.preview(
+      bundledZip({ skillVersion: '2.0.0', skillBody: 'Use the replacement.' })
+    )
+
+    const result = await service.install({
+      candidateToken: preview.candidateToken,
+      skillConflictResolutions: [{ skillId: 'analysis-tools', resolution: 'use-incoming' }]
+    })
+
+    expect(result).toMatchObject({
+      status: 'installed',
+      specialist: { ownedSkillIds: ['personal-analysis-tools'] }
+    })
+    await expect(userSkills.body('personal-analysis-tools')).resolves.toContain(
+      'Use the replacement.'
+    )
+    await expect(skillPort.snapshot()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'personal-analysis-tools',
+        version: '2.0.0',
+        standalone: false,
+        ownerIds: ['former-owner', 'research-synth']
+      })
+    ])
+  })
+
   it('coexists with a same-ID GitHub import that lands while package Skill preparation is paused', async () => {
     const repository = new SpecialistRepository(storageDir)
     const skillPort = new UserSkillSpecialistPackageAdapter(storageDir)

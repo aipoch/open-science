@@ -7,6 +7,7 @@ import type { ConnectorDetailView as ConnectorDetail } from '../../../../shared/
 import { ConnectorDetailView } from './ConnectorDetailView'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -67,6 +68,29 @@ beforeEach(() => {
     status: 'idle',
     error: undefined
   })
+  useSpecialistStore.setState({
+    items: [
+      {
+        kind: 'custom',
+        id: 'genomics-reviewer',
+        name: 'GENOMICS_REVIEWER',
+        displayName: 'Genomics Reviewer',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: {
+          skillIds: [],
+          connectorIds: ['ensembl'],
+          connectorTools: []
+        },
+        revision: 1
+      }
+    ],
+    isLoaded: true,
+    load: vi.fn().mockResolvedValue(undefined)
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -102,6 +126,9 @@ describe('ConnectorDetailView', () => {
     await render()
 
     expect(document.body.textContent).toContain('Ensembl')
+    expect(document.body.textContent).toContain('Availability')
+    expect(document.body.textContent).toContain('Shared with Main')
+    expect(document.body.textContent).toContain('Genomics Reviewer')
     expect(document.body.textContent).toContain('lookup_gene')
     expect(document.body.textContent).toContain('list_species')
 

@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SpecialistEditor } from './SpecialistEditor'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH } from '../../../../shared/specialist'
+import {
+  SPECIALIST_DESCRIPTION_MAX_LENGTH,
+  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH
+} from '../../../../shared/specialist'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -716,12 +719,14 @@ describe('SpecialistEditor', () => {
       root.render(<SpecialistEditor onCancel={vi.fn()} onSave={vi.fn()} />)
     })
     expect(document.body.querySelector<HTMLInputElement>('#sp-name')!.maxLength).toBe(80)
-    expect(document.body.querySelector<HTMLInputElement>('#sp-description')!.maxLength).toBe(200)
+    expect(document.body.querySelector<HTMLInputElement>('#sp-description')!.maxLength).toBe(
+      SPECIALIST_DESCRIPTION_MAX_LENGTH
+    )
     expect(document.body.querySelector<HTMLTextAreaElement>('#sp-system-prompt')!.maxLength).toBe(
       SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH
     )
     expect(document.body.textContent).toContain('/ 80')
-    expect(document.body.textContent).toContain('/ 200')
+    expect(document.body.textContent).toContain(`/ ${SPECIALIST_DESCRIPTION_MAX_LENGTH}`)
     expect(document.body.textContent).toContain(
       `/ ${SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH.toLocaleString()}`
     )

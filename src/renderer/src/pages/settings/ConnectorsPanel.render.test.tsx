@@ -249,7 +249,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(addConnector?.getAttribute('data-variant')).toBe('outline')
   })
 
-  it('orders the group filter before search and keeps the narrow toolbar contained', () => {
+  it('orders scope controls before search and lets the narrow toolbar wrap', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
@@ -259,19 +259,52 @@ describe('ConnectorsPanel (groups)', () => {
     const filter = document.body.querySelector<HTMLElement>(
       '[aria-label="Filter connectors by group"]'
     )
+    const scopeFilter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter Connectors by scope"]'
+    )
+    const specialistFilter = document.body.querySelector<HTMLElement>(
+      '[aria-label="Filter Connectors by Specialist"]'
+    )
     const addConnector = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('button')
     ).find((button) => button.textContent?.includes('Add connector'))
 
-    expect(toolbar?.className).toContain('grid-cols-[9rem_minmax(0,1fr)]')
-    expect(toolbar?.className).toContain('sm:grid-cols-[9rem_minmax(0,1fr)_auto]')
-    expect(filter?.compareDocumentPosition(search!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(toolbar?.className).toContain('flex-wrap')
+    expect(filter?.compareDocumentPosition(scopeFilter!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(scopeFilter?.compareDocumentPosition(specialistFilter!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(specialistFilter?.compareDocumentPosition(search!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
     expect(search?.compareDocumentPosition(addConnector!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(search?.parentElement?.className).toContain('min-w-0')
-    expect(search?.parentElement?.className).toContain('sm:col-start-2')
-    expect(filter?.className).toContain('w-full')
-    expect(addConnector?.className).toContain('col-span-2')
-    expect(addConnector?.className).toContain('w-full')
+    expect(search?.parentElement?.className).toContain('min-w-48')
+    expect(filter?.className).toContain('w-36')
+    expect(addConnector?.className).toContain('shrink-0')
+  })
+
+  it('shows each Connector scope without changing its Main Agent toggle', () => {
+    act(() => {
+      root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
+    })
+
+    const pubmedRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('PubMed'))
+    const europePmcRow = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes('Europe PMC'))
+
+    expect(pubmedRow?.textContent).toContain('Shared with Main')
+    expect(pubmedRow?.textContent).toContain('Main Agent')
+    expect(europePmcRow?.textContent).toContain('Specialist only')
+    expect(europePmcRow?.textContent).toContain('Main Agent')
+    expect(pubmedRow?.querySelector('[aria-label="PubMed"]')?.getAttribute('data-state')).toBe(
+      'checked'
+    )
+    expect(
+      europePmcRow?.querySelector('[aria-label="Europe PMC"]')?.getAttribute('data-state')
+    ).toBe('unchecked')
   })
 
   it('toggles a featured connector and navigates to its detail on row click', () => {

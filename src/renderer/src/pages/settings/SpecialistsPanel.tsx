@@ -53,8 +53,15 @@ import type {
   SpecialistDeleteResult
 } from '../../../../shared/specialist-package'
 import { SpecialistEditor } from './SpecialistEditor'
+import { SpecialistMarketplace, type SpecialistMarketplaceView } from './SpecialistMarketplace'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { SpecialistAvatar } from './specialist-avatar'
+import { SpecialistSkillConflictChoices } from './SpecialistSkillConflictChoices'
+import {
+  skillConflictResolutionList,
+  specialistSkillConflicts,
+  type SkillConflictResolutionMap
+} from './specialist-skill-conflicts'
 
 // Sub-view for the Specialists panel (parallels SkillsView).
 export type SpecialistsView =
@@ -64,6 +71,7 @@ export type SpecialistsView =
   | { kind: 'export'; id: string }
   | { kind: 'import' }
   | { kind: 'builtin'; id: string }
+  | SpecialistMarketplaceView
 
 type CategoryFilter = 'all' | 'custom' | 'builtin'
 
@@ -128,7 +136,15 @@ type SpecialistsPanelProps = {
   onNavigate: (view: SpecialistsView) => void
 }
 
-const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JSX.Element => {
+type InstalledSpecialistsView = Exclude<SpecialistsView, SpecialistMarketplaceView>
+
+const InstalledSpecialistsPanel = ({
+  view,
+  onNavigate
+}: {
+  view: InstalledSpecialistsView
+  onNavigate: (view: SpecialistsView) => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
 
   const items = useSpecialistStore((s) => s.items)
@@ -168,6 +184,8 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const [templateSaveError, setTemplateSaveError] = useState<string | undefined>()
   const [packageBusy, setPackageBusy] = useState(false)
   const [packageErrorCode, setPackageErrorCode] = useState<string | undefined>()
+  const [skillConflictResolutions, setSkillConflictResolutions] =
+    useState<SkillConflictResolutionMap>({})
   const [overwriteConfirmationOpen, setOverwriteConfirmationOpen] = useState(false)
   const [reportStatus, setReportStatus] = useState<string | undefined>()
   const [includedExportSkillIds, setIncludedExportSkillIds] = useState<string[]>([])
@@ -288,6 +306,10 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const visibleDeleteSkills = deletingItem?.preview.skills.filter(
     (skill) => skill.source !== 'featured'
   )
+  const deletableDeleteSkills = visibleDeleteSkills?.filter((skill) => skill.deletable) ?? []
+  const allDeletableDeleteSkillsSelected =
+    deletableDeleteSkills.length > 0 &&
+    deletableDeleteSkills.every((skill) => deleteSkillIds.has(skill.id))
 
   // Resolves the valid last-opened project (or the newest-existing fallback) against the live catalog.
   // Undefined means zero projects and the entry is disabled with explanatory help text.
@@ -586,6 +608,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   if (view.kind === 'import') {
     const summary = packagePreview?.summary
     const blocking = packagePreview?.diagnostics.some((item) => item.severity === 'error') ?? false
+    const skillConflicts = specialistSkillConflicts(summary?.skills)
+    const conflictsResolved = skillConflicts.every(
+      (skill) => skillConflictResolutions[skill.id] !== undefined
+    )
+    const canInstallPackage = Boolean(packagePreview && !blocking && conflictsResolved)
+    const conflictResolutionList = skillConflictResolutionList(
+      skillConflicts,
+      skillConflictResolutions
+    )
     const diagnosticsBySeverity = packagePreview
       ? {
           error: packagePreview.diagnostics.filter((item) => item.severity === 'error'),
@@ -602,20 +633,28 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             </p>
             <h2 className="mt-1 text-xl font-semibold">
               {packagePreview
-                ? packagePreview.installable
+                ? canInstallPackage
                   ? t('Ready to continue')
-                  : t('Cannot continue')
+                  : skillConflicts.length > 0 && !blocking
+                    ? t('Resolve Skill conflicts')
+                    : t('Cannot continue')
                 : t('Import a Specialist package')}
               {packagePreview ? (
                 <span
                   role="status"
                   className={`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                    packagePreview.installable
+                    canInstallPackage
                       ? 'bg-success-000/10 text-success-000'
-                      : 'bg-danger-000/10 text-danger-000'
+                      : blocking
+                        ? 'bg-danger-000/10 text-danger-000'
+                        : 'bg-warning-100/10 text-warning-100'
                   }`}
                 >
-                  {packagePreview.installable ? t('✓ Installable') : t('× Not installable')}
+                  {canInstallPackage
+                    ? t('✓ Installable')
+                    : blocking
+                      ? t('× Not installable')
+                      : t('Action required')}
                 </span>
               ) : null}
             </h2>
@@ -659,6 +698,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 type="button"
                 disabled={packageBusy}
                 onClick={() => {
+                  setSkillConflictResolutions({})
                   setPackageBusy(true)
                   void selectPackage().finally(() => setPackageBusy(false))
                 }}
@@ -730,6 +770,17 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                 </div>
               ) : null}
             </section>
+
+            <SpecialistSkillConflictChoices
+              conflicts={skillConflicts}
+              resolutions={skillConflictResolutions}
+              onChange={(skillId, resolution) =>
+                setSkillConflictResolutions((current) => ({
+                  ...current,
+                  [skillId]: resolution
+                }))
+              }
+            />
 
             {packagePreview.archive ? (
               <section className="rounded-xl border border-border p-4">
@@ -898,14 +949,14 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               </Button>
               <Button
                 type="button"
-                disabled={packageBusy || blocking || !packagePreview.installable}
+                disabled={packageBusy || !canInstallPackage}
                 onClick={() => {
                   if (packagePreview.overwrite) {
                     setOverwriteConfirmationOpen(true)
                     return
                   }
                   setPackageBusy(true)
-                  void installPackage(false)
+                  void installPackage({ skillConflictResolutions: conflictResolutionList })
                     .then(async (result) => {
                       if (result.status === 'installed') {
                         // Bundled Skills were just installed on disk; refresh the Skill catalog so the
@@ -1023,7 +1074,10 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         disabled={packageBusy}
                         onClick={() => {
                           setPackageBusy(true)
-                          void installPackage(true)
+                          void installPackage({
+                            confirmOverwrite: true,
+                            skillConflictResolutions: conflictResolutionList
+                          })
                             .then(async (result) => {
                               if (result.status === 'installed') {
                                 // Bundled Skills were just installed on disk; refresh the Skill catalog
@@ -1105,6 +1159,14 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     <div className="p-5">
       {/* Toolbar */}
       <div className="mb-4 flex items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0"
+          onClick={() => onNavigate({ kind: 'marketplace' })}
+        >
+          {t('Marketplace')}
+        </Button>
         <div
           className="flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
           role="tablist"
@@ -1315,7 +1377,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                             ) : null}
                             <span className="block text-[11px] text-muted-foreground">
                               {item.setupPending
-                                ? t('Setup incomplete · Continue setup')
+                                ? t('Setup incomplete')
                                 : item.capabilityMode === 'full'
                                   ? t('Full access')
                                   : t('Selected capabilities')}
@@ -1331,19 +1393,30 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                           </div>
                         </button>
 
-                        {/* Enabled toggle */}
-                        <SettingsToggle
-                          enabled={item.enabled}
-                          disabled={catalogReadOnly || item.setupPending}
-                          aria-label={
-                            item.setupPending
-                              ? t('Complete setup before enabling {{name}}', {
-                                  name: item.displayName ?? item.name
-                                })
-                              : t('Toggle {{name}}', { name: item.displayName ?? item.name })
-                          }
-                          onToggle={() => void setEnabled(item.id, !item.enabled)}
-                        />
+                        {item.setupPending ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            disabled={catalogReadOnly}
+                            aria-label={t('Continue setup for {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            onClick={() => onNavigate({ kind: 'edit', id: item.id })}
+                          >
+                            {t('Continue setup')}
+                          </Button>
+                        ) : (
+                          <SettingsToggle
+                            enabled={item.enabled}
+                            disabled={catalogReadOnly}
+                            aria-label={t('Toggle {{name}}', {
+                              name: item.displayName ?? item.name
+                            })}
+                            onToggle={() => void setEnabled(item.id, !item.enabled)}
+                          />
+                        )}
                         <DropdownMenu>
                           <TooltipProvider delayDuration={200}>
                             <Tooltip>
@@ -1535,13 +1608,31 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                   'This permanently deletes the Specialist. Conversations using it will no longer be able to use it.'
                 )}
               </AlertDialog.Description>
-              <div className="mt-4">
-                <p className="text-sm font-medium text-foreground">
+              <div className="mt-4 flex items-center justify-between gap-3">
+                <p className="min-w-0 text-sm font-medium text-foreground">
                   <Trans
                     i18nKey="Skills you can also delete <muted>(optional)</muted>"
                     components={{ muted: <span className="font-normal text-muted-foreground" /> }}
                   />
                 </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={deletableDeleteSkills.length === 0}
+                  onClick={() =>
+                    setDeleteSkillIds(
+                      allDeletableDeleteSkillsSelected
+                        ? new Set()
+                        : new Set(deletableDeleteSkills.map((skill) => skill.id))
+                    )
+                  }
+                >
+                  {t(allDeletableDeleteSkillsSelected ? 'Clear selection' : 'Select all')}
+                </Button>
+              </div>
+              <div>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {t(
                     'Only Skills used exclusively by this Specialist can be deleted. Other linked Skills will be kept automatically.'
@@ -1564,25 +1655,49 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         )
                         .join(' ') ||
                       t('Used only by this Specialist. Select to permanently delete it.')
+                    const checkbox = (
+                      <input
+                        type="checkbox"
+                        className="size-4 shrink-0 accent-primary disabled:pointer-events-none disabled:appearance-none disabled:rounded-[3px] disabled:border disabled:border-input disabled:bg-muted disabled:opacity-100"
+                        disabled={!skill.deletable}
+                        checked={deleteSkillIds.has(skill.id)}
+                        onChange={(event) =>
+                          setDeleteSkillIds((current) => {
+                            const next = new Set(current)
+                            if (event.target.checked) next.add(skill.id)
+                            else next.delete(skill.id)
+                            return next
+                          })
+                        }
+                      />
+                    )
                     return (
                       <label
                         key={skill.id}
                         className="flex items-start gap-3 border-b border-border py-3 last:border-b-0"
                       >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 size-4"
-                          disabled={!skill.deletable}
-                          checked={deleteSkillIds.has(skill.id)}
-                          onChange={(event) =>
-                            setDeleteSkillIds((current) => {
-                              const next = new Set(current)
-                              if (event.target.checked) next.add(skill.id)
-                              else next.delete(skill.id)
-                              return next
-                            })
-                          }
-                        />
+                        {skill.deletable ? (
+                          <span className="mt-0.5 inline-flex">{checkbox}</span>
+                        ) : (
+                          <TooltipProvider delayDuration={200}>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span
+                                  data-slot="specialist-delete-disabled-skill"
+                                  tabIndex={0}
+                                  aria-disabled="true"
+                                  aria-label={reasonText}
+                                  className="mt-0.5 inline-flex size-4 shrink-0 cursor-not-allowed rounded-[3px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                                >
+                                  {checkbox}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs leading-relaxed">
+                                {reasonText}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
                         <span className="min-w-0">
                           <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
                             <span>{skill.displayName}</span>
@@ -1672,5 +1787,14 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     </div>
   )
 }
+
+const SpecialistsPanel = (props: SpecialistsPanelProps): React.JSX.Element =>
+  props.view.kind === 'marketplace' ||
+  props.view.kind === 'marketplace-sources' ||
+  props.view.kind === 'marketplace-release' ? (
+    <SpecialistMarketplace view={props.view} onNavigate={props.onNavigate} />
+  ) : (
+    <InstalledSpecialistsPanel view={props.view} onNavigate={props.onNavigate} />
+  )
 
 export { SpecialistsPanel }

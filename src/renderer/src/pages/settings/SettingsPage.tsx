@@ -441,9 +441,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       nextCompute.kind === computeView.kind &&
       ('providerId' in nextCompute ? nextCompute.providerId : undefined) ===
         ('providerId' in computeView ? computeView.providerId : undefined) &&
-      nextSpecialists.kind === specialistsView.kind &&
-      ('id' in nextSpecialists ? nextSpecialists.id : undefined) ===
-        ('id' in specialistsView ? specialistsView.id : undefined) &&
+      JSON.stringify(nextSpecialists) === JSON.stringify(specialistsView) &&
       nextArchived.kind === archivedView.kind &&
       ('projectId' in nextArchived ? nextArchived.projectId : undefined) ===
         ('projectId' in archivedView ? archivedView.projectId : undefined)
@@ -505,6 +503,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const breadcrumb = ((): {
     rootLabelKey: DrillablePanelName
     rootTo: NavLocation
+    parents?: ReadonlyArray<{ label: string; to: NavLocation; ariaLabel: string }>
     leaf: string
   } | null => {
     if (activePanel === 'skills' && skillsView.kind !== 'list') {
@@ -599,6 +598,32 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       }
     }
     if (activePanel === 'specialists' && specialistsView.kind !== 'list') {
+      const rootTo: NavLocation = {
+        panel: 'specialists',
+        skills: currentLocation.skills,
+        model: currentLocation.model,
+        specialists: { kind: 'list' }
+      }
+      if (
+        specialistsView.kind === 'marketplace-sources' ||
+        specialistsView.kind === 'marketplace-release'
+      ) {
+        return {
+          rootLabelKey: 'Specialists',
+          rootTo,
+          parents: [
+            {
+              label: t('Marketplace'),
+              to: { ...rootTo, specialists: { kind: 'marketplace' } },
+              ariaLabel: t('Back to Marketplace')
+            }
+          ],
+          leaf:
+            specialistsView.kind === 'marketplace-sources'
+              ? t('Marketplace sources')
+              : specialistsView.id
+        }
+      }
       const editingSpecialist =
         specialistsView.kind === 'edit'
           ? specialistItems.find(
@@ -609,15 +634,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         specialistsView.kind === 'create'
           ? t('New specialist')
-          : (editingSpecialist?.name ?? t('Edit specialist'))
+          : specialistsView.kind === 'marketplace'
+            ? t('Marketplace')
+            : (editingSpecialist?.name ?? t('Edit specialist'))
       return {
         rootLabelKey: 'Specialists',
-        rootTo: {
-          panel: 'specialists',
-          skills: currentLocation.skills,
-          model: currentLocation.model,
-          specialists: { kind: 'list' }
-        },
+        rootTo,
         leaf
       }
     }
@@ -947,6 +969,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       >
                         {t(breadcrumb.rootLabelKey)}
                       </button>
+                      {breadcrumb.parents?.map((parent) => (
+                        <span key={parent.label} className="contents">
+                          <span className="shrink-0 text-muted-foreground" aria-hidden="true">
+                            ›
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => navigate(parent.to)}
+                            aria-label={parent.ariaLabel}
+                            className="shrink-0 text-muted-foreground transition-colors motion-reduce:transition-none hover:text-foreground"
+                          >
+                            {parent.label}
+                          </button>
+                        </span>
+                      ))}
                       <span className="shrink-0 text-muted-foreground" aria-hidden="true">
                         ›
                       </span>

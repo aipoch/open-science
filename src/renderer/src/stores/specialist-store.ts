@@ -12,7 +12,8 @@ import type {
   SpecialistExportPreview,
   SpecialistExportSaveResult,
   SpecialistDeletePreview,
-  SpecialistDeleteResult
+  SpecialistDeleteResult,
+  SpecialistPackageInstallRequest
 } from '../../../shared/specialist-package'
 
 type SpecialistStoreData = {
@@ -37,7 +38,9 @@ type SpecialistStoreActions = {
   ) => Promise<SpecialistDeleteResult>
   duplicate: (id: string) => Promise<CreateSpecialistInput>
   selectPackage: () => Promise<{ cancelled: true } | SpecialistPackageCandidatePreview>
-  installPackage: (confirmOverwrite?: boolean) => Promise<SpecialistPackageInstallResult>
+  installPackage: (
+    options?: Omit<SpecialistPackageInstallRequest, 'candidateToken'>
+  ) => Promise<SpecialistPackageInstallResult>
   cancelPackage: () => Promise<void>
   previewExport: (specialistId: string) => Promise<SpecialistExportPreview>
   exportSpecialist: (
@@ -152,7 +155,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     return result
   },
 
-  installPackage: async (confirmOverwrite = false) => {
+  installPackage: async (options = {}) => {
     if (useSpecialistStore.getState().integrity.status === 'degraded') {
       throw new Error(SPECIALIST_DOCUMENT_READ_ONLY_ERROR)
     }
@@ -160,7 +163,7 @@ const useSpecialistStore = create<SpecialistStore>((set) => ({
     if (!preview) return { status: 'failed', code: 'candidate-invalid' }
     const result = await window.api.specialist.installPackage({
       candidateToken: preview.candidateToken,
-      ...(confirmOverwrite ? { confirmOverwrite: true as const } : {})
+      ...options
     })
     if (result.status === 'installed') {
       await refreshCatalog(set)

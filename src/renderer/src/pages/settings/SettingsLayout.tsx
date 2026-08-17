@@ -157,6 +157,7 @@ type SettingsIconActionProps = Omit<
   label: string
   icon: LucideIcon
   danger?: boolean
+  tooltip?: string
 }
 
 // Keeps compact settings actions consistent and gives every icon-only control a visible name.
@@ -164,6 +165,7 @@ const SettingsIconAction = ({
   label,
   icon: Icon,
   danger = false,
+  tooltip,
   className,
   ...props
 }: SettingsIconActionProps): React.JSX.Element => (
@@ -185,7 +187,7 @@ const SettingsIconAction = ({
           <Icon className="size-3.5" strokeWidth={2} aria-hidden="true" />
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{tooltip ?? label}</TooltipContent>
     </Tooltip>
   </TooltipProvider>
 )

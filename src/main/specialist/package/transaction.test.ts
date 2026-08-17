@@ -104,6 +104,25 @@ describe('SpecialistPackageTransaction imported setup lifecycle', () => {
     })
   })
 
+  it('checks the approved impact against the authoritative pre-commit document', async () => {
+    const transaction = new SpecialistPackageTransaction(storageDir, repository)
+    const approvedImpactChanged = new Error('approved impact changed')
+
+    await expect(
+      transaction.install(
+        plan(),
+        new Date('2026-08-04T00:00:00.000Z'),
+        'archive-digest',
+        undefined,
+        async (document) => {
+          expect(document.specialists).toEqual([])
+          throw approvedImpactChanged
+        }
+      )
+    ).rejects.toBe(approvedImpactChanged)
+    await expect(repository.getAll()).resolves.toMatchObject({ specialists: [] })
+  })
+
   it('returns an overwritten Specialist to disabled pending setup and replaces local capabilities', async () => {
     await repository.insert({
       id: 'imported-specialist',

@@ -542,7 +542,7 @@ describe('validateSpecialistPackage', () => {
     )
   })
 
-  it('blocks an installed bundled Skill with different content', () => {
+  it('returns a resolvable decision for an installed bundled Skill with different content', () => {
     const skill = {
       path: 'skills/analysis/SKILL.md',
       bytes: encoder.encode('---\nname: analysis\n---\nBody')
@@ -551,14 +551,38 @@ describe('validateSpecialistPackage', () => {
       packageFiles(validManifest, validSpecialistJson, [skill]),
       {
         ...catalog,
-        skills: [{ id: 'analysis', version: '0.1.0', builtin: false, contentHash: 'different' }]
+        skills: [
+          {
+            id: 'analysis',
+            version: '0.1.0',
+            builtin: false,
+            contentHash: 'different',
+            mainEnabled: true,
+            specialistIds: ['another']
+          }
+        ],
+        specialists: [{ id: 'another', name: 'Another Specialist' }]
       },
       'zip'
     )
 
     expect(result.preview.installable).toBe(false)
     expect(result.preview.diagnostics).toContainEqual(
-      expect.objectContaining({ code: 'skill.existing-conflict', relatedId: 'analysis' })
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'skill.existing-conflict',
+        relatedId: 'analysis'
+      })
     )
+    expect(result.plan?.skills[0]).toMatchObject({
+      disposition: 'conflict',
+      conflict: {
+        localId: 'analysis',
+        installedVersion: '0.1.0',
+        installedContentHash: 'different',
+        mainEnabled: true,
+        specialists: [{ id: 'another', name: 'Another Specialist' }]
+      }
+    })
   })
 })

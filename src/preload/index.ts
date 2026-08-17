@@ -51,6 +51,15 @@ import type {
   SpecialistPackageInstallRequest
 } from '../shared/specialist-package'
 import type {
+  AddMarketplaceSourceRequest,
+  GetMarketplaceReleaseRequest,
+  InspectGitHubMarketplaceSourceRequest,
+  MarketplaceDownloadProgress,
+  MarketplaceInstallRequest,
+  PrepareMarketplaceInstallRequest,
+  RemoveMarketplaceSourceRequest
+} from '../shared/specialist-marketplace'
+import type {
   ReviewRunRequest,
   ReviewSessionRequest,
   ReviewSuppressionEvent
@@ -375,6 +384,21 @@ const api: OpenScienceAPI = {
   },
   specialist: {
     list: () => electronRendererContracts.invoke('specialist.list'),
+    listMarketplace: () => electronRendererContracts.invoke('specialist.listMarketplace'),
+    inspectGitHubMarketplaceSource: (request: InspectGitHubMarketplaceSourceRequest) =>
+      electronRendererContracts.invoke('specialist.inspectGitHubMarketplaceSource', request),
+    addMarketplaceSource: (request: AddMarketplaceSourceRequest) =>
+      electronRendererContracts.invoke('specialist.addMarketplaceSource', request),
+    removeMarketplaceSource: (request: RemoveMarketplaceSourceRequest) =>
+      electronRendererContracts.invoke('specialist.removeMarketplaceSource', request),
+    getMarketplaceRelease: (request: GetMarketplaceReleaseRequest) =>
+      electronRendererContracts.invoke('specialist.getMarketplaceRelease', request),
+    prepareMarketplaceInstall: (request: PrepareMarketplaceInstallRequest) =>
+      electronRendererContracts.invoke('specialist.prepareMarketplaceInstall', request),
+    onMarketplaceDownloadProgress: (listener: AcpListener<MarketplaceDownloadProgress>) =>
+      electronRendererContracts.subscribe('specialist.onMarketplaceDownloadProgress', listener),
+    installMarketplace: (request: MarketplaceInstallRequest) =>
+      electronRendererContracts.invoke('specialist.installMarketplace', request),
     create: (request: CreateSpecialistRequest) =>
       electronRendererContracts.invoke('specialist.create', request),
     update: (request: UpdateSpecialistRequest) =>

@@ -7,6 +7,7 @@ import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import type { StoredProvider } from './types'
+import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
 // module's top-level code so the vi.mock factory can reference the same spy instance.
@@ -1164,6 +1165,22 @@ describe('settings repository: v2 official providers & activeModel migration', (
 
     await repository.setSkillsEnabled(['imported-a', 'personal-b'], true)
     expect((await repository.getSettings()).disabledSkillIds).toBeUndefined()
+  })
+
+  it('serializes Main Skill enablement with package Skill replacement', async () => {
+    const root = await createStorageRoot()
+    const owner = skillMutationOwnerFor(root)
+    const repository = new SettingsRepository(root, (operation) => owner.runExclusive(operation))
+    const release = await owner.acquire()
+    let settled = false
+    const update = repository.setSkillEnabled('imported-a', false).finally(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled).toBe(false)
+
+    release()
+    await expect(update).resolves.toMatchObject({ disabledSkillIds: ['imported-a'] })
   })
 
   it('persists and clears only the encrypted GitHub token reference and display mask', async () => {

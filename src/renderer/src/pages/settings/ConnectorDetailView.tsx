@@ -8,10 +8,13 @@ import type {
 } from '../../../../shared/settings'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePermissionGrantsStore } from '@/stores/permission-grants-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 import { Button } from '@/components/ui/button'
 import { ConnectorGlyph } from './connector-icons'
 import { SettingsToggle } from './SettingsLayout'
 import { ToolPermissionControl } from './ToolPermissionControl'
+import { ResourceAvailability } from './ResourceAvailability'
+import { specialistsUsingConnector } from './specialist-resource-scope'
 
 type ConnectorDetailViewProps = {
   id: string
@@ -48,6 +51,8 @@ const ConnectorDetailView = ({
   // enabled/autoAllow from the store (falling back to the initial detail) keeps the two header
   // switches live after a toggle, mirroring how SkillDetailView derives enabled from the store.
   const storeConnector = useSettingsStore((state) => state.connectors.find((c) => c.id === id))
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
   const permissionGrants = usePermissionGrantsStore((state) => state.grants)
   const loadPermissionGrants = usePermissionGrantsStore((state) => state.load)
   const [detail, setDetail] = useState<ConnectorDetail | null>(null)
@@ -76,6 +81,10 @@ const ConnectorDetailView = ({
     void loadPermissionGrants()
   }, [loadPermissionGrants])
 
+  useEffect(() => {
+    void loadSpecialists()
+  }, [loadSpecialists])
+
   // Persist one tool's permission, folding the refreshed detail back into local state.
   const handleToolChange = async (toolId: string, permission: ToolPermission): Promise<void> => {
     await setToolPermission(toolId, permission).then(setDetail)
@@ -85,11 +94,12 @@ const ConnectorDetailView = ({
 
   const enabled = storeConnector?.enabled ?? detail.enabled
   const autoAllow = storeConnector?.autoAllow ?? detail.autoAllow
+  const usages = specialistsUsingConnector(specialistItems, storeConnector ?? detail)
 
   return (
     <div className="p-5">
-      {/* Header: icon + name + Featured badge + enable toggle, then description below. */}
-      <div className="flex items-start justify-between gap-3">
+      {/* Header: icon + name + Featured badge, then description below. */}
+      <div className="flex items-start gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <ConnectorGlyph size={28} />
           <div className="flex min-w-0 items-center gap-2">
@@ -101,11 +111,6 @@ const ConnectorDetailView = ({
             </span>
           </div>
         </div>
-        <SettingsToggle
-          enabled={enabled}
-          aria-label={t('Toggle {{name}}', { name: detail.displayName })}
-          onToggle={() => void setConnectorEnabled(id, !enabled).catch(() => undefined)}
-        />
       </div>
 
       {detail.description ? (
@@ -113,6 +118,13 @@ const ConnectorDetailView = ({
           {detail.description}
         </p>
       ) : null}
+
+      <ResourceAvailability
+        mainEnabled={enabled}
+        mainToggleLabel={t('Toggle {{name}}', { name: detail.displayName })}
+        usages={usages}
+        onToggleMain={() => void setConnectorEnabled(id, !enabled).catch(() => undefined)}
+      />
 
       {/* Skip approvals: allow every tool without a per-call approval card. */}
       <div className="mt-4 flex items-start justify-between gap-3">

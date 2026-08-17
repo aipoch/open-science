@@ -102,6 +102,8 @@ export type SpecialistPackageCatalogSnapshot = {
     contentHash?: string
     standalone?: boolean
     ownerIds?: readonly string[]
+    mainEnabled?: boolean
+    specialistIds?: readonly string[]
   }>
   connectorIds: readonly string[]
   /** Local Connector ID (including Custom Connector UUID) to portable invocation name. */
@@ -112,7 +114,21 @@ export type SpecialistPackageCatalogSnapshot = {
 }
 
 export type SpecialistPackageSkillDisposition =
-  'install' | 'reuse-builtin' | 'reuse-owned' | 'reuse-standalone' | 'conflict'
+  | 'install'
+  | 'reuse-builtin'
+  | 'reuse-owned'
+  | 'reuse-standalone'
+  | 'reuse-existing'
+  | 'conflict'
+  | 'replace-existing'
+
+export type SpecialistPackageSkillConflict = {
+  localId: string
+  installedVersion: string
+  installedContentHash: string
+  mainEnabled: boolean
+  specialists: ReadonlyArray<{ id: string; name: string }>
+}
 
 export type SpecialistPackageSkillPreview = {
   id: string
@@ -121,6 +137,7 @@ export type SpecialistPackageSkillPreview = {
   disposition: SpecialistPackageSkillDisposition
   files: readonly string[]
   reason?: string
+  conflict?: SpecialistPackageSkillConflict
 }
 
 export type SpecialistPackageSkillPlan = SpecialistPackageSkillPreview & {
@@ -193,6 +210,12 @@ export type SpecialistPackageCandidatePreview = SpecialistPackagePreview & {
 export type SpecialistPackageInstallRequest = {
   candidateToken: string
   confirmOverwrite?: true
+  skillConflictResolutions?: readonly SpecialistPackageSkillConflictResolution[]
+}
+
+export type SpecialistPackageSkillConflictResolution = {
+  skillId: string
+  resolution: 'use-installed' | 'use-incoming'
 }
 
 export type SpecialistPackageInstallResult =
@@ -204,6 +227,7 @@ export type SpecialistPackageInstallResult =
         | 'candidate-expired'
         | 'stale-candidate'
         | 'candidate-not-installable'
+        | 'skill-conflict-resolution-required'
         | 'overwrite-confirmation-required'
         | 'revision-conflict'
         | 'protected-target'

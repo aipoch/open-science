@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SkillDetailView } from './SkillDetailView'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 
 let container: HTMLDivElement
 let root: Root
@@ -42,6 +43,25 @@ beforeEach(() => {
     ],
     setSkillEnabled: vi.fn().mockResolvedValue(undefined)
   })
+  useSpecialistStore.setState({
+    items: [
+      {
+        kind: 'custom',
+        id: 'literature-reviewer',
+        name: 'LITERATURE_REVIEWER',
+        displayName: 'Literature Reviewer',
+        description: '',
+        systemPrompt: '',
+        enabled: true,
+        capabilityMode: 'selected',
+        fullAccess: { excludedSkillIds: [], excludedConnectorIds: [], connectorTools: [] },
+        selectedCapabilities: { skillIds: ['a'], connectorIds: [], connectorTools: [] },
+        revision: 1
+      }
+    ],
+    isLoaded: true,
+    load: vi.fn().mockResolvedValue(undefined)
+  })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -67,6 +87,9 @@ describe('SkillDetailView', () => {
     // Header: name + description below it.
     expect(document.body.textContent).toContain('Alpha')
     expect(document.body.textContent).toContain('First skill description.')
+    expect(document.body.textContent).toContain('Availability')
+    expect(document.body.textContent).toContain('Shared with Main')
+    expect(document.body.textContent).toContain('Literature Reviewer')
 
     // Files section renders the SKILL.md body.
     expect(document.body.textContent).toContain('Files')

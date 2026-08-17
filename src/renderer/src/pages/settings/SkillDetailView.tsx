@@ -5,7 +5,9 @@ import { useTranslation } from 'react-i18next'
 import type { SkillDetailView as SkillDetail } from '../../../../shared/settings'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSettingsStore } from '@/stores/settings-store'
-import { SettingsToggle } from './SettingsLayout'
+import { useSpecialistStore } from '@/stores/specialist-store'
+import { ResourceAvailability } from './ResourceAvailability'
+import { specialistsUsingSkill } from './specialist-resource-scope'
 
 type SkillDetailViewProps = {
   skillId: string
@@ -46,6 +48,8 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const { t } = useTranslation()
   const skill = useSettingsStore((state) => state.skills.find((item) => item.id === skillId))
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
+  const specialistItems = useSpecialistStore((state) => state.items)
+  const loadSpecialists = useSpecialistStore((state) => state.load)
   const [detail, setDetail] = useState<SkillDetail | null>(null)
 
   useEffect(() => {
@@ -57,6 +61,10 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
       active = false
     }
   }, [skillId])
+
+  useEffect(() => {
+    void loadSpecialists()
+  }, [loadSpecialists])
 
   const enabled = skill?.enabled ?? detail?.enabled ?? false
   const name = skill?.name ?? detail?.name ?? ''
@@ -78,11 +86,12 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
   const genericMetadata = Object.entries(detail?.metadata ?? {}).filter(
     ([key]) => !DEDICATED_METADATA_KEYS.has(key.toLowerCase())
   )
+  const usages = specialistsUsingSkill(specialistItems, skillId)
 
   return (
     <div className="p-5">
-      {/* Header: icon + name + Featured badge + toggle, then updated + description below. */}
-      <div className="flex items-start justify-between gap-3">
+      {/* Header: icon + name + source badge, then updated + description below. */}
+      <div className="flex items-start gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <ScrollText className="size-6 shrink-0 text-primary" aria-hidden="true" />
           <div className="flex min-w-0 items-center gap-2">
@@ -92,17 +101,19 @@ const SkillDetailView = ({ skillId }: SkillDetailViewProps): React.JSX.Element =
             </span>
           </div>
         </div>
-        <SettingsToggle
-          enabled={enabled}
-          aria-label={t('Toggle {{name}}', { name })}
-          onToggle={() => void setSkillEnabled(skillId, !enabled).catch(() => undefined)}
-        />
       </div>
 
       {updated ? <p className="mt-1 text-xs text-muted-foreground">{updated}</p> : null}
       {description ? (
         <p className="mt-2 text-sm text-muted-foreground [text-wrap:pretty]">{description}</p>
       ) : null}
+
+      <ResourceAvailability
+        mainEnabled={enabled}
+        mainToggleLabel={t('Toggle {{name}}', { name })}
+        usages={usages}
+        onToggleMain={() => void setSkillEnabled(skillId, !enabled).catch(() => undefined)}
+      />
 
       {/* Files: the rendered SKILL.md body. */}
       <section className="mt-6 border-t border-border pt-4">

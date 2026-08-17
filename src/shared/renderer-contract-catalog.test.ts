@@ -132,7 +132,7 @@ describe('renderer contract catalog', () => {
     const specialist = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('specialist.')
     )
-    expect(specialist).toHaveLength(22)
+    expect(specialist).toHaveLength(30)
     expect(
       specialist.every(
         ({ surfaceInstallation }) =>
