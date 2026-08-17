@@ -200,6 +200,15 @@ describe('ContextWindowDialog', () => {
     expect(dialog?.querySelector('[data-slot="context-window-trend-chart"]')?.className).toContain(
       'min-w-0'
     )
+    expect(
+      dialog
+        ?.querySelector('[data-slot="current-composition"] [data-slot="context-category-legend"]')
+        ?.className.includes('grid-flow-col')
+    ).toBe(true)
+    expect(dialog?.querySelector('[role="group"]')?.className.includes('min-w-full')).toBe(true)
+    expect(
+      dialog?.querySelector('[role="group"] > div:last-child')?.className.includes('justify-around')
+    ).toBe(true)
   })
 
   it('uses the live session snapshot for current composition', () => {
@@ -285,6 +294,9 @@ describe('ContextWindowDialog', () => {
     expect(
       document.body.querySelector('[data-slot="context-window-point-details"]')?.textContent
     ).toContain('cache-read 51% · uncached 49%')
+    expect(
+      document.body.querySelector('[data-slot="context-diagnostics-row"]')?.className
+    ).toContain('sm:flex-nowrap')
   })
 
   it('renders an honest empty history state while preserving live composition', () => {

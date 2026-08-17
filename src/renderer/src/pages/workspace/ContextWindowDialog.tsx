@@ -158,13 +158,25 @@ const CompositionStrip = ({ usage }: { usage: AcpContextUsage }): React.JSX.Elem
   )
 }
 
-const CategoryLegend = ({ usage }: { usage: AcpContextUsage }): React.JSX.Element => {
+const CategoryLegend = ({
+  usage,
+  singleRow = false
+}: {
+  usage: AcpContextUsage
+  singleRow?: boolean
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const categories = visibleCategories(usage)
   const categoryTotal = categories.reduce((sum, category) => sum + category.tokens, 0)
 
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-x-5 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+    <div
+      className={cn(
+        'grid min-w-0 gap-x-5 gap-y-1.5',
+        singleRow ? 'grid-flow-col auto-cols-fr' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+      )}
+      data-slot="context-category-legend"
+    >
       {categories.map((category) => (
         <div
           key={category.key}
@@ -261,7 +273,7 @@ const CurrentComposition = ({
       </div>
       {categories.length ? (
         <div className="mt-3">
-          <CategoryLegend usage={usage} />
+          <CategoryLegend usage={usage} singleRow />
         </div>
       ) : (
         <p className="mt-2 text-xs text-muted-foreground">
@@ -359,17 +371,20 @@ const PointDetails = ({ point }: { point: ContextWindowTrendPoint }): React.JSX.
               {t('Category breakdown is unavailable for this run.')}
             </p>
           )}
-          <div className="mt-2">
+          <div
+            className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex-nowrap"
+            data-slot="context-diagnostics-row"
+          >
             <BreakdownDiagnostics usage={usage} />
+            {cacheReadPercent === undefined ? null : (
+              <div className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                {t('cache-read {{cached}}% · uncached {{uncached}}%', {
+                  cached: cacheReadPercent,
+                  uncached: 100 - cacheReadPercent
+                })}
+              </div>
+            )}
           </div>
-          {cacheReadPercent === undefined ? null : (
-            <div className="mt-1 text-[10px] tabular-nums text-muted-foreground">
-              {t('cache-read {{cached}}% · uncached {{uncached}}%', {
-                cached: cacheReadPercent,
-                uncached: 100 - cacheReadPercent
-              })}
-            </div>
-          )}
         </div>
 
         <div className="min-w-0 space-y-1 text-[11px] leading-4 text-muted-foreground">
@@ -445,7 +460,7 @@ const ContextHistoryChart = ({
       </div>
       <div ref={scrollerRef} className="min-w-0 flex-1 overflow-x-auto pb-1">
         <div
-          className="relative h-60"
+          className="relative h-60 min-w-full"
           style={{ width: `${chartWidth}px` }}
           role="group"
           aria-label={t('Context window chart across {{count}} terminal outcomes', {
@@ -460,7 +475,7 @@ const ContextHistoryChart = ({
             <span className="border-t border-border" />
             <span className="border-t border-border" />
           </div>
-          <div className="absolute inset-0 flex items-end gap-1 px-2">
+          <div className="absolute inset-0 flex items-end justify-around gap-1 px-2">
             {points.map((point, index) => {
               const usage = point.sample.contextWindow
               const categories = visibleCategories(usage)
