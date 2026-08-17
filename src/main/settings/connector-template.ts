@@ -31,20 +31,20 @@ type ParseOptions = {
 }
 
 const ROOT_FIELDS = new Set([
-  'schemaVersion',
+  'schema_version',
   'kind',
   'name',
-  'displayName',
+  'display_name',
   'description',
   'transport',
   'command',
   'args',
   'url',
-  'requiredSecrets',
+  'required_secrets',
   'oauth'
 ])
 const SECRET_FIELDS = new Set(['environment', 'headers'])
-const OAUTH_FIELDS = new Set(['clientMetadataUrl', 'authorizationServerUrl', 'scopes'])
+const OAUTH_FIELDS = new Set(['client_metadata_url', 'authorization_server_url', 'scopes'])
 const TRANSPORTS = new Set<CustomServerTransport>(['stdio', 'streamable_http', 'sse'])
 const SUSPICIOUS_QUERY_KEYS = new Set([
   'accesstoken',
@@ -237,14 +237,14 @@ const readOAuth = (
   }
   rejectUnknownFields(value, OAUTH_FIELDS, diagnostics, 'oauth.')
   const clientMetadataUrl = readHttpUrl(
-    value.clientMetadataUrl,
+    value.client_metadata_url,
     diagnostics,
-    'oauth.clientMetadataUrl'
+    'oauth.client_metadata_url'
   )
   const authorizationServerUrl = readHttpUrl(
-    value.authorizationServerUrl,
+    value.authorization_server_url,
     diagnostics,
-    'oauth.authorizationServerUrl'
+    'oauth.authorization_server_url'
   )
   const scopes = readStringList(value.scopes, diagnostics, 'oauth.scopes', {
     maxItems: 32,
@@ -267,19 +267,19 @@ const readRequiredSecrets = (
       diagnostics,
       'error',
       'connector-template.type',
-      'requiredSecrets must be an object.',
-      'requiredSecrets'
+      'required_secrets must be an object.',
+      'required_secrets'
     )
     return undefined
   }
-  rejectUnknownFields(value, SECRET_FIELDS, diagnostics, 'requiredSecrets.')
+  rejectUnknownFields(value, SECRET_FIELDS, diagnostics, 'required_secrets.')
   const environment = readStringList(
     value.environment,
     diagnostics,
-    'requiredSecrets.environment',
+    'required_secrets.environment',
     { maxItems: 64, maxLength: 128, pattern: SAFE_ENV_NAME }
   )
-  const headers = readStringList(value.headers, diagnostics, 'requiredSecrets.headers', {
+  const headers = readStringList(value.headers, diagnostics, 'required_secrets.headers', {
     maxItems: 64,
     maxLength: 128,
     pattern: SAFE_HEADER_NAME
@@ -387,13 +387,13 @@ export const parseConnectorTemplate = (
   }
 
   rejectUnknownFields(parsed, ROOT_FIELDS, diagnostics)
-  if (parsed.schemaVersion !== 1) {
+  if (parsed.schema_version !== 1) {
     diagnostic(
       diagnostics,
       'error',
       'connector-template.schema-version',
-      'schemaVersion must be 1.',
-      'schemaVersion'
+      'schema_version must be 1.',
+      'schema_version'
     )
   }
   if (parsed.kind !== 'open-science.connector') {
@@ -407,7 +407,7 @@ export const parseConnectorTemplate = (
   }
 
   const name = readString(parsed.name, diagnostics, 'name', { required: true, max: 64 })
-  const displayName = readString(parsed.displayName, diagnostics, 'displayName', {
+  const displayName = readString(parsed.display_name, diagnostics, 'display_name', {
     required: true,
     max: 128
   })
@@ -436,7 +436,7 @@ export const parseConnectorTemplate = (
   const command = readString(parsed.command, diagnostics, 'command', { max: 1_024 })
   const args = readStringList(parsed.args, diagnostics, 'args', { maxItems: 128, maxLength: 2_048 })
   const url = parsed.url === undefined ? undefined : readHttpUrl(parsed.url, diagnostics, 'url')
-  const requiredSecrets = readRequiredSecrets(parsed.requiredSecrets, diagnostics)
+  const requiredSecrets = readRequiredSecrets(parsed.required_secrets, diagnostics)
   const oauth = readOAuth(parsed.oauth, diagnostics)
 
   if (transport === 'stdio' && !command) {
@@ -542,7 +542,35 @@ export const parseConnectorTemplate = (
 }
 
 const templateJson = (definition: ConnectorTemplateDefinition): string =>
-  `${JSON.stringify(definition, null, 2)}\n`
+  `${JSON.stringify(
+    {
+      schema_version: definition.schemaVersion,
+      kind: definition.kind,
+      name: definition.name,
+      display_name: definition.displayName,
+      transport: definition.transport,
+      ...(definition.description ? { description: definition.description } : {}),
+      ...(definition.command ? { command: definition.command } : {}),
+      ...(definition.args ? { args: definition.args } : {}),
+      ...(definition.url ? { url: definition.url } : {}),
+      ...(definition.requiredSecrets ? { required_secrets: definition.requiredSecrets } : {}),
+      ...(definition.oauth
+        ? {
+            oauth: {
+              ...(definition.oauth.clientMetadataUrl
+                ? { client_metadata_url: definition.oauth.clientMetadataUrl }
+                : {}),
+              ...(definition.oauth.authorizationServerUrl
+                ? { authorization_server_url: definition.oauth.authorizationServerUrl }
+                : {}),
+              ...(definition.oauth.scopes ? { scopes: definition.oauth.scopes } : {})
+            }
+          }
+        : {})
+    },
+    null,
+    2
+  )}\n`
 
 export const buildConnectorTemplateExport = (
   source: ConnectorTemplateSource
