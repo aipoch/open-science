@@ -24,7 +24,7 @@ const EmptyConversationBanner = (): React.JSX.Element => {
         <path d={FLASK_LOGO_PATH} />
       </svg>
       <div className="flex flex-col gap-2">
-        <h2 className="text-balance text-2xl font-medium text-text-000 md:text-3xl">
+        <h2 className="text-balance text-2xl font-normal text-text-000 md:text-3xl">
           {t('What will you research in Open Science?')}
         </h2>
         <p className="text-sm text-text-300 md:text-base">
