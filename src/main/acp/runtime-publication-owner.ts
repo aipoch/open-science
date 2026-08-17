@@ -1,10 +1,11 @@
 import type { AcpPermissionRequest, AcpRuntimeEvent, AcpStateSnapshot } from '../../shared/acp'
 import { createLogger } from '../logger'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
-import type {
-  AcpRuntimeSnapshotOwner,
-  RuntimeEventInput,
-  RuntimeSnapshotProjection
+import {
+  ACP_RUNTIME_EVENT_RETENTION_LIMIT,
+  type AcpRuntimeSnapshotOwner,
+  type RuntimeEventInput,
+  type RuntimeSnapshotProjection
 } from './runtime-snapshot-owner'
 
 // Dev-facing counters for the acp:state trailing-edge coalescer; a throttled debug summary rides
@@ -39,6 +40,10 @@ type AcpRuntimePublicationOwnerOptions = Readonly<{
 }>
 
 const STATE_PUBLICATION_INTERVAL_MS = 16
+// A fast provider can emit more than one retained window before the 16 ms timer runs. Publish
+// midway through that window so every prefix chunk reaches subscribers before bounded history can
+// evict it, while ordinary streams still receive the same frame-level coalescing.
+const MAX_COALESCED_ASSISTANT_TEXT_EVENTS = Math.floor(ACP_RUNTIME_EVENT_RETENTION_LIMIT / 2)
 
 const scheduleStatePublication = (publish: () => void): (() => void) => {
   const timer = setTimeout(publish, STATE_PUBLICATION_INTERVAL_MS)
@@ -62,6 +67,7 @@ const preservingFrozen = <Value extends object>(source: Value, copy: Value): Val
 // Every projection is read live from the authoritative owners; this owner caches no runtime facts.
 class AcpRuntimePublicationOwner {
   private cancelScheduledStatePublication?: () => void
+  private coalescedAssistantTextEvents = 0
 
   constructor(private readonly options: AcpRuntimePublicationOwnerOptions) {}
 
@@ -86,7 +92,12 @@ class AcpRuntimePublicationOwner {
     onAppended?.()
     this.options.callbacks.onEvent?.(runtimeEvent)
     if (isCoalescibleAssistantTextEvent(runtimeEvent)) {
-      this.scheduleStatePublication()
+      this.coalescedAssistantTextEvents += 1
+      if (this.coalescedAssistantTextEvents >= MAX_COALESCED_ASSISTANT_TEXT_EVENTS) {
+        this.emitState()
+      } else {
+        this.scheduleStatePublication()
+      }
     } else {
       this.emitState()
     }
@@ -108,6 +119,11 @@ class AcpRuntimePublicationOwner {
 
   emitState(): void {
     this.cancelPendingStatePublication()
+    this.publishState()
+  }
+
+  private publishState(): void {
+    this.coalescedAssistantTextEvents = 0
     recordAcpStateBroadcastSent()
     this.options.callbacks.onStateChanged?.(this.getSnapshot())
   }
@@ -126,8 +142,7 @@ class AcpRuntimePublicationOwner {
     const schedule = this.options.scheduleStatePublication ?? scheduleStatePublication
     this.cancelScheduledStatePublication = schedule(() => {
       this.cancelScheduledStatePublication = undefined
-      recordAcpStateBroadcastSent()
-      this.options.callbacks.onStateChanged?.(this.getSnapshot())
+      this.publishState()
     })
   }
 }

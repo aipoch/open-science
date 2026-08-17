@@ -41,6 +41,39 @@ describe('AcpRuntimePublicationOwner', () => {
     expect(order).toEqual(['event:one', 'event:two', 'state:2'])
   })
 
+  it('publishes a burst before retained events can evict unseen prefix chunks', () => {
+    let releaseScheduledState: (() => void) | undefined
+    const visibleChunks = new Map<string, string>()
+    const owner = new AcpRuntimePublicationOwner({
+      snapshotOwner: new AcpRuntimeSnapshotOwner('/workspace'),
+      interactions: new AcpSessionInteractionOwner(),
+      snapshotProjection: createProjection,
+      callbacks: {
+        onStateChanged: (snapshot) => {
+          for (const event of snapshot.events) {
+            if (event.kind === 'message' && event.role === 'assistant' && event.text) {
+              visibleChunks.set(event.id, event.text)
+            }
+          }
+        }
+      },
+      scheduleStatePublication: (publish) => {
+        releaseScheduledState = publish
+        return () => {
+          if (releaseScheduledState === publish) releaseScheduledState = undefined
+        }
+      }
+    })
+    const chunks = Array.from({ length: 600 }, (_, index) => `[${index}]`)
+
+    for (const text of chunks) {
+      owner.pushEvent({ kind: 'message', level: 'info', role: 'assistant', text })
+    }
+    releaseScheduledState?.()
+
+    expect([...visibleChunks.values()].join('')).toBe(chunks.join(''))
+  })
+
   it('flushes pending assistant text at a tool boundary without losing event order', () => {
     const order: string[] = []
     const owner = new AcpRuntimePublicationOwner({
