@@ -707,13 +707,18 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // that intent inside the persistence boundary so every caller receives graph-conflict recovery.
   saveSessionSpecialistBinding(
     session: PersistedChatSession,
-    specialistId: string | undefined
+    specialistId: string | undefined,
+    specialistBindingPending = false
   ): Promise<PersistedChatSession> {
     return this.enqueue(async () => {
       await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
       return this.stateOwner.saveSession(
-        { ...session, specialistId },
-        { conflictRebaseFields: ['specialistId'] }
+        {
+          ...session,
+          specialistId,
+          specialistBindingPending: specialistBindingPending ? true : undefined
+        },
+        { conflictRebaseFields: ['specialistId', 'specialistBindingPending'] }
       )
     })
   }

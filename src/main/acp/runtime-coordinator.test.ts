@@ -363,6 +363,33 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[0].captureSessionModel).toHaveBeenCalledWith('owned-session')
   })
 
+  it('notifies the reconciliation observer only after resumed runtime ownership commits', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'claude-code',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const observer = vi.fn(async () => undefined)
+    coordinator.setSessionResumeObserver(observer)
+    const request = {
+      sessionId: 'session-1',
+      cwd: '/workspace',
+      specialistId: 'specialist-new',
+      specialistBindingPending: true as const
+    }
+
+    const response = await coordinator.resumeSession(request)
+
+    expect(created[0].resumeSession).toHaveBeenCalledWith(request)
+    expect(observer).toHaveBeenCalledWith(request, response)
+    expect(coordinator.getSnapshot().sessionIds).toContain('session-1')
+  })
+
   it('projects delegated permissions and cascades root permission and Stop controls', async () => {
     const rootPermission: AcpPermissionRequest = {
       requestId: 'delegated:permission-1',

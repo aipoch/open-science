@@ -5,6 +5,7 @@ import { SPECIALIST_IPC } from '../../shared/specialist'
 import { SessionBindingService } from './session-binding'
 import { registerSpecialistIpcHandlers } from './ipc'
 import type { ProfileService } from './service'
+import { SessionSpecialistReconfiguration } from './session-reconfiguration'
 
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
 const broadcastToRenderers = vi.hoisted(() => vi.fn())
@@ -35,8 +36,13 @@ const createProfileService = (): ProfileService =>
     getById: vi.fn().mockResolvedValue(profile),
     resolveRunnableById: vi.fn().mockResolvedValue(profile),
     listForSettings: vi.fn().mockResolvedValue([]),
+    listForSettingsSnapshot: vi.fn().mockResolvedValue({ items: [], integrity: { status: 'ok' } }),
     subscribe: vi.fn()
   }) as unknown as ProfileService
+
+const createReconfigurationStub = (): Pick<SessionSpecialistReconfiguration, 'requestSwitch'> => ({
+  requestSwitch: vi.fn().mockResolvedValue({ status: 'applied', contextReset: false })
+})
 
 describe('specialist session IPC', () => {
   it('broadcasts only an invalidation signal without profile prompts or resource paths', () => {
@@ -52,7 +58,7 @@ describe('specialist session IPC', () => {
     registerSpecialistIpcHandlers(
       service,
       new SessionBindingService(service),
-      vi.fn().mockResolvedValue(undefined)
+      createReconfigurationStub()
     )
     notify?.()
 
@@ -62,20 +68,77 @@ describe('specialist session IPC', () => {
     expect(payload).not.toMatch(/resources[/\\]specialists/)
   })
 
-  it('registers and persists a session specialist switch', async () => {
+  it('routes a session specialist switch through the reconfiguration owner', async () => {
     handlers.clear()
     const binding = new SessionBindingService(createProfileService())
-    const persistSessionSpecialist = vi.fn().mockResolvedValue(undefined)
+    const reconfiguration = createReconfigurationStub()
 
-    registerSpecialistIpcHandlers(createProfileService(), binding, persistSessionSpecialist)
+    registerSpecialistIpcHandlers(createProfileService(), binding, reconfiguration)
 
     const handler = handlers.get(SPECIALIST_IPC.SET_SESSION_SPECIALIST)
     expect(handler).toBeDefined()
 
-    await handler?.(undefined, { sessionId: 'session-1', specialistId: profile.id })
+    await expect(
+      handler?.(undefined, { sessionId: 'session-1', specialistId: profile.id })
+    ).resolves.toEqual({ status: 'applied', contextReset: false })
 
-    expect(persistSessionSpecialist).toHaveBeenCalledWith('session-1', profile.id)
-    expect(binding.getBinding('session-1')).toBe(profile.id)
+    expect(reconfiguration.requestSwitch).toHaveBeenCalledWith('session-1', profile.id)
+  })
+
+  it('does not leave durable, Main-memory, and runtime Specialist bindings silently divergent', async () => {
+    handlers.clear()
+    const service = createProfileService()
+    const binding = new SessionBindingService(service)
+    binding.setBinding('session-1', 'specialist-old')
+    let durableBinding: {
+      specialistId: string | undefined
+      specialistBindingPending?: true
+    } = { specialistId: 'specialist-old' }
+    const runtimeSpecialistId: string | undefined = 'specialist-old'
+    const reconfiguration = new SessionSpecialistReconfiguration({
+      sessionBinding: binding,
+      loadBinding: async () => durableBinding,
+      persistBinding: async (_sessionId, specialistId, pending) => {
+        durableBinding = {
+          specialistId,
+          ...(pending ? { specialistBindingPending: true as const } : {})
+        }
+      },
+      applyRuntime: async () => {
+        throw new Error('runtime replacement failed')
+      }
+    })
+
+    registerSpecialistIpcHandlers(service, binding, reconfiguration)
+
+    const handler = handlers.get(SPECIALIST_IPC.SET_SESSION_SPECIALIST)
+    let result: unknown
+    try {
+      result = await handler?.(undefined, {
+        sessionId: 'session-1',
+        specialistId: profile.id
+      })
+    } catch {
+      // A rejected switch is acceptable only when the three authorities still agree.
+    }
+
+    const authoritiesAgree =
+      new Set([durableBinding.specialistId, binding.getBinding('session-1'), runtimeSpecialistId])
+        .size === 1
+    const explicitlyPending =
+      typeof result === 'object' &&
+      result !== null &&
+      (result as { status?: unknown }).status === 'pending'
+
+    expect(authoritiesAgree || explicitlyPending).toBe(true)
+    expect(durableBinding).toEqual({
+      specialistId: profile.id,
+      specialistBindingPending: true
+    })
+    await expect(reconfiguration.assertUserPromptReady('session-1')).rejects.toThrow(
+      /has not been applied/
+    )
+    expect(runtimeSpecialistId).toBe('specialist-old')
   })
 
   it('returns only the renderer-safe template save result from main', async () => {
@@ -86,8 +149,7 @@ describe('specialist session IPC', () => {
     registerSpecialistIpcHandlers(
       createProfileService(),
       binding,
-      vi.fn(),
-      undefined,
+      createReconfigurationStub(),
       undefined,
       exportContributionTemplate
     )
@@ -115,8 +177,7 @@ describe('specialist session IPC', () => {
     registerSpecialistIpcHandlers(
       createProfileService(),
       binding,
-      vi.fn(),
-      undefined,
+      createReconfigurationStub(),
       undefined,
       undefined,
       {
@@ -170,8 +231,7 @@ describe('specialist session IPC', () => {
     registerSpecialistIpcHandlers(
       createProfileService(),
       new SessionBindingService(createProfileService()),
-      vi.fn(),
-      undefined,
+      createReconfigurationStub(),
       undefined,
       undefined,
       {
@@ -249,8 +309,7 @@ describe('specialist session IPC', () => {
     registerSpecialistIpcHandlers(
       createProfileService(),
       new SessionBindingService(createProfileService()),
-      vi.fn(),
-      undefined,
+      createReconfigurationStub(),
       onProfilesChanged,
       undefined,
       { service: packageService, selectArchive: vi.fn(), saveReport: vi.fn(), saveExport }

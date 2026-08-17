@@ -1031,14 +1031,22 @@ const ConversationPanel = ({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="text-[12px] font-medium leading-5 text-red-300">
-                          {t('Could not switch to {{name}}', {
-                            name: reconfigureError.specialistName
-                          })}
+                          {reconfigureError.committed
+                            ? t('Specialist switch is pending for {{name}}', {
+                                name: reconfigureError.specialistName
+                              })
+                            : t('Could not switch to {{name}}', {
+                                name: reconfigureError.specialistName
+                              })}
                         </div>
                         <div className="text-[11px] leading-4 text-red-400/80">
-                          {t(
-                            'The agent session could not be reconfigured. Your draft has been preserved.'
-                          )}
+                          {reconfigureError.committed
+                            ? t(
+                                'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.'
+                              )
+                            : t(
+                                'The agent session could not be reconfigured. Your draft has been preserved.'
+                              )}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <button

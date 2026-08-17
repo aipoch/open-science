@@ -715,6 +715,9 @@ export type AcpResumeSessionRequest = {
   previousBackendId?: string
   // Durable session binding, supplied on restore so session/resume reissues the Specialist whitelist.
   specialistId?: string
+  // True when disk holds a desired Specialist that the prior runtime never confirmed. A restored
+  // resume must adopt fresh provider context with that target before Main clears the durable marker.
+  specialistBindingPending?: true
 }
 
 export type AcpContinueInterruptedTurnRequest = {

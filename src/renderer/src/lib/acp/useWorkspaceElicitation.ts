@@ -44,7 +44,8 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
     previousBackendId?: AcpResumeSessionRequest['previousBackendId'],
     specialistId?: AcpResumeSessionRequest['specialistId'],
     providerSessionId?: AcpResumeSessionRequest['providerSessionId'],
-    providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken']
+    providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
+    specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending']
   ) =>
     window.api.acp.resumeSession({
       sessionId,
@@ -55,7 +56,8 @@ const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitation
       previousBackendId,
       specialistId,
       providerSessionId,
-      providerContinuityToken
+      providerContinuityToken,
+      specialistBindingPending
     }),
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],

@@ -33,6 +33,7 @@ type ReconfigureError = {
   sessionId: string
   specialistName: string
   message: string
+  committed: boolean
 }
 
 type WorkspaceSessionControllerOptions = {
@@ -124,6 +125,17 @@ type WorkspaceSessionController = {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+const specialistNameFor = (
+  items: readonly SpecialistListItem[],
+  specialistId: string | undefined
+): string => {
+  if (specialistId === undefined) return 'Main Agent'
+  const item = items.find(
+    (candidate) => candidate.kind === 'custom' && candidate.id === specialistId
+  )
+  return item?.kind === 'custom' ? item.name : 'the selected specialist'
+}
+
 const compareHandoffEventOrder = (
   left: Pick<CompletionHandoffLifecycleEvent, 'commitOrder' | 'observedAt' | 'sequence' | 'id'>,
   right: Pick<CompletionHandoffLifecycleEvent, 'commitOrder' | 'observedAt' | 'sequence' | 'id'>
@@ -194,10 +206,12 @@ const useWorkspaceSessionController = ({
   const [archivingIds, setArchivingIds] = useState<ReadonlySet<string>>(new Set())
 
   const activeHasPending = Boolean(
-    activeSession && Object.hasOwn(pendingSpecialists, activeSession.id)
+    activeSession &&
+    (activeSession.specialistBindingPending === true ||
+      Object.hasOwn(pendingSpecialists, activeSession.id))
   )
   const historySpecialistId = activeSession
-    ? activeHasPending
+    ? Object.hasOwn(pendingSpecialists, activeSession.id)
       ? pendingSpecialists[activeSession.id]
       : activeSession.specialistId
     : newConversationSpecialistId
@@ -209,15 +223,16 @@ const useWorkspaceSessionController = ({
     )
   const activeSpecialistUnavailable = activeSession
     ? specialistCatalogLoaded &&
+      !Object.hasOwn(pendingSpecialists, activeSession.id) &&
       activeSession.specialistId !== undefined &&
-      !activeHasPending &&
       !specialistItems.some(
         (item) => item.kind === 'custom' && item.enabled && item.id === activeSession.specialistId
       )
     : newConversationSpecialistUnavailable
   const specialistSendAvailable = activeSession
-    ? activeSession.specialistId === undefined ||
-      (specialistCatalogLoaded && (activeHasPending || !activeSpecialistUnavailable))
+    ? activeSession.specialistBindingPending !== true &&
+      (activeSession.specialistId === undefined ||
+        (specialistCatalogLoaded && (activeHasPending || !activeSpecialistUnavailable)))
     : !newConversationSpecialistUnavailable
   const activeHasPendingSwitch = Boolean(
     activeSession &&
@@ -366,18 +381,30 @@ const useWorkspaceSessionController = ({
     if (running) {
       setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
     } else {
-      const previousSpecialistId = activeSession.specialistId
-      setSessionSpecialistId(sessionId, specialistId)
+      const setter = window.api?.specialist?.setSessionSpecialist
+      if (!setter) return
       clearPending(sessionId)
-      void window.api?.specialist
-        ?.setSessionSpecialist?.({ sessionId, specialistId })
-        ?.then((result) => {
+      setBarrier(sessionId, true)
+      void setter({ sessionId, specialistId })
+        .then((result) => {
+          if (result?.status === 'pending') {
+            setSessionSpecialistId(sessionId, specialistId, true)
+            setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
+            setReconfigureError({
+              sessionId,
+              specialistName: specialistNameFor(specialistItems, specialistId),
+              message: 'The selection is saved, but the Agent runtime has not applied it yet.',
+              committed: true
+            })
+            return
+          }
+          setSessionSpecialistId(sessionId, specialistId)
           if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
         })
-        ?.catch((error: unknown) => {
-          setSessionSpecialistId(sessionId, previousSpecialistId)
+        .catch((error: unknown) => {
           console.warn('setSessionSpecialist failed', error)
         })
+        .finally(() => setBarrier(sessionId, false))
     }
     if (reconfigureError?.sessionId === sessionId) setReconfigureError(null)
   }
@@ -387,7 +414,12 @@ const useWorkspaceSessionController = ({
       const session = useSessionStore
         .getState()
         .sessions.find((candidate) => candidate.id === sessionId)
-      if (!session || isWorkspaceSpecialistBarrierInFlight(sessionId)) return false
+      if (
+        !session ||
+        session.specialistBindingPending === true ||
+        isWorkspaceSpecialistBarrierInFlight(sessionId)
+      )
+        return false
       if (session.specialistId === undefined) return true
       if (!specialistCatalogLoaded) {
         void loadSpecialists()
@@ -398,6 +430,7 @@ const useWorkspaceSessionController = ({
       )
     }
     if (!activeSession) return !newConversationSpecialistUnavailable
+    if (activeSession.specialistBindingPending === true) return false
     if (isWorkspaceSpecialistBarrierInFlight(activeSession.id)) return false
     if (activeSession.specialistId === undefined) return specialistSendAvailable
     if (!specialistCatalogLoaded) {
@@ -408,8 +441,16 @@ const useWorkspaceSessionController = ({
   }
 
   const captureSendIntent = (branchInNewSession: boolean): SpecialistSendIntent => {
-    const hasPending = Boolean(activeSession && Object.hasOwn(pendingSpecialists, activeSession.id))
-    const pendingSpecialistId = activeSession ? pendingSpecialists[activeSession.id] : undefined
+    const hasPending = Boolean(
+      activeSession &&
+      (activeSession.specialistBindingPending === true ||
+        Object.hasOwn(pendingSpecialists, activeSession.id))
+    )
+    const pendingSpecialistId = activeSession
+      ? Object.hasOwn(pendingSpecialists, activeSession.id)
+        ? pendingSpecialists[activeSession.id]
+        : activeSession.specialistId
+      : undefined
     return {
       draftSpecialistId: branchInNewSession
         ? hasPending
@@ -428,12 +469,36 @@ const useWorkspaceSessionController = ({
     specialistId: string | undefined
   ): Promise<boolean> => {
     if (isWorkspaceSpecialistBarrierInFlight(sessionId)) return false
+    const previous = useSessionStore
+      .getState()
+      .sessions.find((candidate) => candidate.id === sessionId)
     setBarrier(sessionId, true)
     try {
-      const result = await window.api?.specialist?.setSessionSpecialist?.({
+      const setter = window.api?.specialist?.setSessionSpecialist
+      if (!setter) throw new Error('Specialist switching is unavailable.')
+      const result = await setter({
         sessionId,
         specialistId
       })
+      if (result?.status === 'pending') {
+        setSessionSpecialistId(sessionId, specialistId, true)
+        const pendingProfile = specialistItems.find(
+          (item) => item.kind === 'custom' && item.id === specialistId
+        )
+        setReconfigureError({
+          sessionId,
+          specialistName:
+            specialistId === undefined
+              ? 'Main Agent'
+              : pendingProfile?.kind === 'custom'
+                ? pendingProfile.name
+                : 'the selected specialist',
+          message: 'The selection is saved, but the Agent runtime has not applied it yet.',
+          committed: true
+        })
+        setBarrier(sessionId, false)
+        return false
+      }
       if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
     } catch (error: unknown) {
       const pendingProfile = specialistItems.find(
@@ -447,7 +512,8 @@ const useWorkspaceSessionController = ({
             : pendingProfile?.kind === 'custom'
               ? pendingProfile.name
               : 'the selected specialist',
-        message: errorMessage(error)
+        message: errorMessage(error),
+        committed: previous?.specialistBindingPending === true
       })
       setBarrier(sessionId, false)
       return false
@@ -482,14 +548,49 @@ const useWorkspaceSessionController = ({
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
+        if (result?.status === 'pending') {
+          setSessionSpecialistId(sessionId, undefined, true)
+          setPendingSpecialists((current) => ({ ...current, [sessionId]: undefined }))
+          setReconfigureError({
+            sessionId,
+            specialistName: 'Main Agent',
+            message: 'The selection is saved, but the Agent runtime has not applied it yet.',
+            committed: true
+          })
+          return
+        }
         if (result?.contextReset) markSpecialistSwitchResetRequired(sessionId)
         setSessionSpecialistId(sessionId, undefined)
         clearPending(sessionId)
         setReconfigureError(null)
       })
-      .catch((error: unknown) => console.warn('setSessionSpecialist (none) failed', error))
+      .catch((error: unknown) => {
+        console.warn('setSessionSpecialist (none) failed', error)
+      })
       .finally(() => setBarrier(sessionId, false))
   }
+
+  useEffect(() => {
+    if (!activeSession || activeSession.specialistBindingPending !== true) return
+    // The durable Session store is an external source. Mirror its restored recovery state so the
+    // existing retry/choose-another interaction remains available after an application restart.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPendingSpecialists((current) =>
+      Object.hasOwn(current, activeSession.id)
+        ? current
+        : { ...current, [activeSession.id]: activeSession.specialistId }
+    )
+    setReconfigureError((current) =>
+      current?.sessionId === activeSession.id
+        ? current
+        : {
+            sessionId: activeSession.id,
+            specialistName: specialistNameFor(specialistItems, activeSession.specialistId),
+            message: 'The selection is saved, but the Agent runtime has not applied it yet.',
+            committed: true
+          }
+    )
+  }, [activeSession, specialistItems])
 
   useEffect(() => {
     if (typeof window.api?.specialist?.list !== 'function') return

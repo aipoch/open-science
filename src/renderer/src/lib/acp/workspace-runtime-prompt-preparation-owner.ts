@@ -268,7 +268,8 @@ const prepareExistingWorkspacePrompt = async (
         currentSession?.agentBackendId,
         currentSession?.specialistId,
         currentSession?.providerSessionId,
-        currentSession?.providerContinuityToken
+        currentSession?.providerContinuityToken,
+        currentSession?.specialistBindingPending
       )
       contextResetFromResume = Boolean(resumeResult?.contextReset)
       useSessionStore.getState().markResumed(

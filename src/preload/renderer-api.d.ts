@@ -330,7 +330,7 @@ import type {
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
   DuplicateSpecialistRequest,
-  SpecialistListItem,
+  SpecialistCatalogSnapshot,
   SpecialistProfileView,
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
@@ -565,7 +565,7 @@ export interface OpenScienceAPI {
     onChanged(listener: () => void): RemoveListener
   }
   specialist: {
-    list(): Promise<SpecialistListItem[]>
+    list(): Promise<SpecialistCatalogSnapshot>
     create(request: CreateSpecialistRequest): Promise<SpecialistProfileView>
     update(request: UpdateSpecialistRequest): Promise<SpecialistProfileView>
     setEnabled(request: SetSpecialistEnabledRequest): Promise<SpecialistProfileView>

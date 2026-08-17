@@ -89,6 +89,7 @@ type TaskAgentResumeSessionRequest = {
   previousFrameworkId?: AgentFrameworkId
   previousBackendId?: string
   specialistId?: string
+  specialistBindingPending?: true
 }
 
 type TaskAgentPromptRequest = {
@@ -716,7 +717,8 @@ class TaskRunner {
           previousBackendId: existing.agentBackendId,
           providerSessionId: existing.providerSessionId,
           providerContinuityToken: existing.providerContinuityToken,
-          ...(specialistId ? { specialistId } : {})
+          ...(specialistId ? { specialistId } : {}),
+          ...(existing.specialistBindingPending === true ? { specialistBindingPending: true } : {})
         })
       }
     } else {

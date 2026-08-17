@@ -174,7 +174,10 @@ const installApi = (): void => {
       onChanged: vi.fn(() => () => undefined)
     },
     specialist: {
-      list: vi.fn().mockResolvedValue([{ kind: 'reviewer', id: 'reviewer' }]),
+      list: vi.fn().mockResolvedValue({
+        items: [{ kind: 'reviewer', id: 'reviewer' }],
+        integrity: { status: 'ok' }
+      }),
       create: vi.fn(),
       setEnabled: vi.fn(),
       onCatalogChanged: vi.fn(() => vi.fn())
@@ -2120,9 +2123,10 @@ describe('SettingsPage layout', () => {
       selectedCapabilities: { skillIds: [], connectorIds: [], connectorTools: [] },
       revision: 1
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { kind: 'custom', ...researcher }
-    ])
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [{ kind: 'custom', ...researcher }],
+      integrity: { status: 'ok' }
+    })
     useSpecialistStore.setState({ items: [{ kind: 'custom', ...researcher }], isLoaded: true })
     useSettingsStore.setState({ pendingSpecialistId: researcher.id })
 

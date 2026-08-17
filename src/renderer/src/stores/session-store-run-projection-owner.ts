@@ -347,6 +347,7 @@ export const createSessionRunProjectionOwner = <
           errorReportable: undefined,
           interrupted: undefined,
           resumeRecovery: undefined,
+          specialistBindingPending: undefined,
           agentFrameworkId: update?.agentFrameworkId ?? session.agentFrameworkId,
           agentBackendId: update?.agentBackendId ?? session.agentBackendId,
           providerSessionId: update?.providerSessionId ?? session.providerSessionId,

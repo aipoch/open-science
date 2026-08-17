@@ -177,7 +177,9 @@ const apiStub = (specialistOverrides?: Record<string, unknown>): typeof window.a
       }),
       retryHandoff: vi.fn(() => Promise.resolve()),
       cancelHandoff: vi.fn(() => Promise.resolve()),
-      setSessionSpecialist: vi.fn(() => Promise.resolve({ contextReset: false })),
+      setSessionSpecialist: vi.fn(() =>
+        Promise.resolve({ status: 'applied' as const, contextReset: false })
+      ),
       resolveSessionSpecialist: vi.fn(() => Promise.resolve({ kind: 'main' as const })),
       ...specialistOverrides
     }
@@ -408,7 +410,9 @@ describe('WorkspacePage pending-switch broadcast', () => {
       isLoaded: true,
       load: vi.fn()
     })
-    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const setSessionSpecialist = vi.fn(() =>
+      Promise.resolve({ status: 'applied' as const, contextReset: false })
+    )
     window.api = apiStub({ setSessionSpecialist })
 
     await renderPage(root)
@@ -451,7 +455,9 @@ describe('WorkspacePage pending-switch broadcast', () => {
       isLoaded: true,
       load: vi.fn()
     })
-    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const setSessionSpecialist = vi.fn(() =>
+      Promise.resolve({ status: 'applied' as const, contextReset: false })
+    )
     window.api = apiStub({ setSessionSpecialist })
 
     await renderPage(root)
@@ -498,7 +504,9 @@ describe('WorkspacePage pending-switch broadcast', () => {
       isLoaded: true,
       load: vi.fn()
     })
-    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const setSessionSpecialist = vi.fn(() =>
+      Promise.resolve({ status: 'applied' as const, contextReset: false })
+    )
     window.api = apiStub({ setSessionSpecialist })
 
     await renderPage(root)
@@ -575,6 +583,65 @@ describe('WorkspacePage pending-switch broadcast', () => {
     })
   })
 
+  it('keeps the saved target pending when runtime application fails after persistence', async () => {
+    setupBase()
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
+      selectedSessionId: 'sess-a'
+    })
+    useSpecialistStore.setState({
+      items: [makeSpecialist('spec-a', 'Data Analyst'), makeSpecialist('spec-b', 'SQL Wrangler')],
+      isLoaded: true,
+      load: vi.fn()
+    })
+    const setSessionSpecialist = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'pending' as const,
+        reason: 'runtime-application-failed' as const
+      })
+      .mockResolvedValueOnce({ status: 'applied' as const, contextReset: false })
+    window.api = apiStub({ setSessionSpecialist })
+
+    await renderPage(root)
+
+    await act(async () => {
+      ;(conversationProps.composer.actions.changeDoc as (doc: ComposerDoc) => void)(
+        textDoc('keep pending draft')
+      )
+      pendingSwitchListener?.({ sessionId: 'sess-a', targetName: 'SQL Wrangler' })
+      useSessionStore.getState().finishRun('sess-a')
+    })
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    })
+
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0]).toMatchObject({
+      specialistId: 'spec-b',
+      specialistBindingPending: true
+    })
+    expect(conversationProps.specialist.view.specialist.reconfigureError).toMatchObject({
+      committed: true
+    })
+    expect((conversationProps.composer.view.doc as ComposerDoc).nodes[0]).toMatchObject({
+      type: 'text',
+      text: 'keep pending draft'
+    })
+
+    await act(async () => {
+      conversationProps.conversation.actions.submit.draft({
+        forcedSkillIds: [],
+        mode: 'retry-reconfigure'
+      })
+    })
+
+    expect(setSessionSpecialist).toHaveBeenCalledTimes(2)
+    expect(useSessionStore.getState().sessions[0].specialistBindingPending).toBeUndefined()
+    expect(runtime.sendMessage).toHaveBeenCalledOnce()
+  })
+
   it('falls back to the durable binding when the target name is not in the loaded catalog', async () => {
     setupBase()
     useSessionStore.setState({
@@ -589,7 +656,9 @@ describe('WorkspacePage pending-switch broadcast', () => {
       isLoaded: true,
       load: vi.fn()
     })
-    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const setSessionSpecialist = vi.fn(() =>
+      Promise.resolve({ status: 'applied' as const, contextReset: false })
+    )
     const resolveSessionSpecialist = vi.fn(() =>
       Promise.resolve({
         kind: 'bound' as const,
@@ -627,7 +696,9 @@ describe('WorkspacePage pending-switch broadcast', () => {
       isLoaded: true,
       load: vi.fn()
     })
-    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const setSessionSpecialist = vi.fn(() =>
+      Promise.resolve({ status: 'applied' as const, contextReset: false })
+    )
     window.api = apiStub({ setSessionSpecialist })
 
     await renderPage(root)

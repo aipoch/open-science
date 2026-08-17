@@ -6,7 +6,7 @@ import type {
   SetSpecialistEnabledRequest,
   DuplicateSpecialistRequest,
   CreateSpecialistInput,
-  SpecialistListItem,
+  SpecialistCatalogSnapshot,
   SpecialistProfileView,
   SetSessionSpecialistRequest,
   SetSessionSpecialistResponse,
@@ -33,13 +33,9 @@ import type {
   SpecialistDeletePreview
 } from '../../shared/specialist-package'
 import type { SpecialistPackageService } from './package/service'
+import type { SessionSpecialistReconfiguration } from './session-reconfiguration'
 
 const log = createLogger('specialist:ipc')
-
-type PersistSessionSpecialist = (
-  sessionId: string,
-  specialistId: string | undefined
-) => Promise<void>
 
 type PackageImportIpc = {
   service: Pick<
@@ -110,18 +106,9 @@ const broadcastCatalogChanged = (): void => {
 export const registerSpecialistIpcHandlers = (
   service: ProfileService,
   sessionBindingService: SessionBindingService,
-  // Persists the specialist UUID to the durable session file before exposing the binding to the
-  // runtime. Required — an absent writer silently disables durability, which is the same failure
-  // shape the previous TODO introduced. Tests pass a vi.fn() mock; headless callers may pass an
-  // explicit no-op if session persistence is unavailable in their environment.
-  persistSessionSpecialist: PersistSessionSpecialist,
-  // Applies a switch to the live agent runtime. Kept as a callback so this module stays decoupled
-  // from the ACP coordinator. Returns whether the runtime replaced the agent session (context reset),
-  // which tells the renderer to replay conversation history into the next prompt.
-  switchSessionSpecialist?: (
-    sessionId: string,
-    specialistId: string | undefined
-  ) => Promise<{ contextReset: boolean }>,
+  // One owner commits desired+pending, applies runtime, then clears pending. Keeping this transaction
+  // behind one port prevents IPC from independently advancing disk, Main memory, and runtime.
+  sessionReconfiguration: Pick<SessionSpecialistReconfiguration, 'requestSwitch'>,
   // Notifies the runtime that a specialist profile's capabilities changed (skills/connectors/enabled).
   // The runtime reconnects so live sessions re-provision skills and re-apply the updated whitelist on
   // the next turn. Optional so headless/tests can omit it.
@@ -132,9 +119,9 @@ export const registerSpecialistIpcHandlers = (
   // Subscribe once so every mutation (create, setEnabled) triggers a broadcast.
   service.subscribe(broadcastCatalogChanged)
 
-  ipcMainHandle(SPECIALIST_IPC.LIST, async (): Promise<SpecialistListItem[]> => {
+  ipcMainHandle(SPECIALIST_IPC.LIST, async (): Promise<SpecialistCatalogSnapshot> => {
     try {
-      return await service.listForSettings()
+      return await service.listForSettingsSnapshot()
     } catch (error) {
       log.error('specialist:list failed', { error })
       throw error
@@ -302,31 +289,7 @@ export const registerSpecialistIpcHandlers = (
       if (request.specialistId !== undefined && typeof request.specialistId !== 'string') {
         throw new Error('SET_SESSION_SPECIALIST: specialistId must be a string or undefined.')
       }
-      // Validate the UUID exists and is enabled before accepting it.
-      if (request.specialistId !== undefined) {
-        const resolution = await sessionBindingService.resolve(
-          request.sessionId,
-          request.specialistId
-        )
-        if (resolution.kind === 'unavailable') {
-          // Surface the reason so the renderer can show a meaningful message.
-          throw new Error(resolution.reason)
-        }
-      }
-      // Make the durable session file authoritative before exposing the new binding to runtime.
-      // Otherwise an app restart between these steps would silently restore the old specialist.
-      await persistSessionSpecialist(request.sessionId, request.specialistId)
-      sessionBindingService.setBinding(request.sessionId, request.specialistId)
-
-      // Apply the switch to the live agent session so the new specialist takes effect now, not
-      // just on the next session create/resume. When no runtime is wired (headless/tests) this is
-      // a no-op and the binding recorded above still takes effect on the next create/resume.
-      let contextReset = false
-      if (switchSessionSpecialist) {
-        const result = await switchSessionSpecialist(request.sessionId, request.specialistId)
-        contextReset = result.contextReset
-      }
-      return { contextReset }
+      return sessionReconfiguration.requestSwitch(request.sessionId, request.specialistId)
     }
   )
 

@@ -10,6 +10,7 @@ import type {
 } from '../../shared/specialist-package'
 import type {
   BuiltinSpecialistEntry,
+  SpecialistCatalogSnapshot,
   SpecialistProfileView,
   SpecialistListItem,
   CreateSpecialistInput,
@@ -262,11 +263,19 @@ export class ProfileService {
 
   // Returns the full list for the Settings UI, including the built-in Reviewer placeholder.
   async listForSettings(): Promise<SpecialistListItem[]> {
-    const [custom, builtin] = await Promise.all([this.list(), this.builtinEntries()])
+    return (await this.listForSettingsSnapshot()).items
+  }
+
+  async listForSettingsSnapshot(): Promise<SpecialistCatalogSnapshot> {
+    const [snapshot, builtin] = await Promise.all([
+      this.repo.getAllWithIntegrity(),
+      this.builtinEntries()
+    ])
+    const custom = snapshot.document.specialists.map(toView)
     const items: SpecialistListItem[] = custom.map((v) => ({ kind: 'custom' as const, ...v }))
     items.push(...builtin.map((entry) => this.toBuiltinView(entry)))
     items.push({ kind: 'reviewer', id: 'reviewer' })
-    return items
+    return { items, integrity: snapshot.integrity }
   }
 
   async resolveRunnableById(id: string): Promise<SpecialistProfileView> {

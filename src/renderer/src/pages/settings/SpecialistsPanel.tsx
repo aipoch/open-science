@@ -134,6 +134,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const items = useSpecialistStore((s) => s.items)
   const isLoaded = useSpecialistStore((s) => s.isLoaded)
   const loadError = useSpecialistStore((s) => s.loadError)
+  const integrity = useSpecialistStore((s) => s.integrity)
   const load = useSpecialistStore((s) => s.load)
   const setEnabled = useSpecialistStore((s) => s.setEnabled)
   const createSpecialist = useSpecialistStore((s) => s.create)
@@ -175,6 +176,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
   const [exportError, setExportError] = useState<string | undefined>()
   // Specialist currently exporting from the list row (direct export bypasses the chooser).
   const [exportingId, setExportingId] = useState<string | null>(null)
+  const catalogReadOnly = integrity.status === 'degraded'
 
   // Memoised so visibleCustomItems' memo can reference a stable value.
   const customItems = useMemo(() => items.filter((i) => i.kind === 'custom'), [items])
@@ -188,6 +190,15 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
     const unsub = window.api.specialist.onCatalogChanged(() => void load())
     return unsub
   }, [load])
+
+  useEffect(() => {
+    if (
+      catalogReadOnly &&
+      (view.kind === 'create' || view.kind === 'edit' || view.kind === 'import')
+    ) {
+      onNavigate({ kind: 'list' })
+    }
+  }, [catalogReadOnly, onNavigate, view.kind])
 
   useEffect(() => {
     if (view.kind !== 'export') return
@@ -1138,7 +1149,11 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'create' })}>
+            <DropdownMenuItem
+              className="gap-2.5"
+              disabled={catalogReadOnly}
+              onSelect={() => onNavigate({ kind: 'create' })}
+            >
               <Pencil className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
                 <span>{t('Write from scratch')}</span>
@@ -1178,7 +1193,11 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
               </>
             ) : null}
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="gap-2.5" onSelect={() => onNavigate({ kind: 'import' })}>
+            <DropdownMenuItem
+              className="gap-2.5"
+              disabled={catalogReadOnly}
+              onSelect={() => onNavigate({ kind: 'import' })}
+            >
               <Upload className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex flex-col">
                 <span>{t('Import ZIP')}</span>
@@ -1212,6 +1231,36 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
         </div>
       ) : null}
 
+      {catalogReadOnly ? (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-warning-100/50 bg-warning-100/10 px-3 py-2 text-sm"
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="font-medium">{t('Some Specialist data could not be read.')}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t('No Specialist changes will be saved until the data is repaired.')}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => void load()}>
+              {t('Retry')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void window.api.storage.revealAppStorage()}
+            >
+              {t('Open data folder')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {!isLoaded && !loadError ? (
         <p className="text-sm text-muted-foreground">{t('Loading…')}</p>
       ) : isLoaded ? (
@@ -1237,6 +1286,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         {/* Click the row body to open the editor (prefilled) */}
                         <button
                           type="button"
+                          disabled={catalogReadOnly}
                           onClick={() => onNavigate({ kind: 'edit', id: item.id })}
                           aria-label={
                             item.setupPending
@@ -1245,7 +1295,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                                 })
                               : t('Edit {{name}}', { name: item.displayName ?? item.name })
                           }
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                         >
                           {/* Avatar */}
                           <SpecialistAvatar iconKey={item.iconKey} colorKey={item.colorKey} />
@@ -1281,7 +1331,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                         {/* Enabled toggle */}
                         <SettingsToggle
                           enabled={item.enabled}
-                          disabled={item.setupPending}
+                          disabled={catalogReadOnly || item.setupPending}
                           aria-label={
                             item.setupPending
                               ? t('Complete setup before enabling {{name}}', {
@@ -1325,6 +1375,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
                               className="gap-2 text-xs"
+                              disabled={catalogReadOnly}
                               onSelect={() =>
                                 void duplicateSpecialist(item.id).then((draft) =>
                                   onNavigate({ kind: 'create', draft })
@@ -1341,6 +1392,7 @@ const SpecialistsPanel = ({ view, onNavigate }: SpecialistsPanelProps): React.JS
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="gap-2 text-xs text-destructive"
+                              disabled={catalogReadOnly}
                               onSelect={() => {
                                 setDeleteError(undefined)
                                 setDeleteSkillIds(new Set())

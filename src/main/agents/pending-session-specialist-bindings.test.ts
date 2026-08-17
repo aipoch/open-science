@@ -12,7 +12,10 @@ describe('PendingSessionSpecialistBindings', () => {
   it('take consumes and returns the stashed binding, clearing the pending state', () => {
     const pending = new PendingSessionSpecialistBindings()
     pending.stash('s1', 'sp-1')
-    expect(pending.take('s1')).toBe('sp-1')
+    expect(pending.take('s1')).toEqual({
+      specialistId: 'sp-1',
+      specialistBindingPending: true
+    })
     expect(pending.has('s1')).toBe(false)
     // A second take on the same session returns undefined (nothing pending).
     expect(pending.take('s1')).toBeUndefined()
@@ -22,7 +25,10 @@ describe('PendingSessionSpecialistBindings', () => {
     const pending = new PendingSessionSpecialistBindings()
     pending.stash('s1', 'sp-1')
     pending.stash('s1', 'sp-2')
-    expect(pending.take('s1')).toBe('sp-2')
+    expect(pending.take('s1')).toEqual({
+      specialistId: 'sp-2',
+      specialistBindingPending: true
+    })
   })
 
   it('stashes a cleared (Main Agent) binding as undefined and still reports it pending', () => {
@@ -32,7 +38,10 @@ describe('PendingSessionSpecialistBindings', () => {
     const pending = new PendingSessionSpecialistBindings()
     pending.stash('s1', undefined)
     expect(pending.has('s1')).toBe(true)
-    expect(pending.take('s1')).toBeUndefined()
+    expect(pending.take('s1')).toEqual({
+      specialistId: undefined,
+      specialistBindingPending: true
+    })
     expect(pending.has('s1')).toBe(false)
   })
 
@@ -46,8 +55,14 @@ describe('PendingSessionSpecialistBindings', () => {
     const pending = new PendingSessionSpecialistBindings()
     pending.stash('s1', 'sp-1')
     pending.stash('s2', 'sp-2')
-    expect(pending.take('s1')).toBe('sp-1')
+    expect(pending.take('s1')).toEqual({
+      specialistId: 'sp-1',
+      specialistBindingPending: true
+    })
     expect(pending.has('s2')).toBe(true)
-    expect(pending.take('s2')).toBe('sp-2')
+    expect(pending.take('s2')).toEqual({
+      specialistId: 'sp-2',
+      specialistBindingPending: true
+    })
   })
 })

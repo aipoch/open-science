@@ -515,10 +515,14 @@ export type PersistedChatSession = {
   // Main-owned reversible visibility state. Whole-session renderer saves must preserve the durable
   // value; only the dedicated archive command changes it.
   archivedAt?: number
-  // Immutable Specialist ID bound at session creation. Absent means no specialist binding (Main
-  // Agent). Written once when the session is created and never changed; the Profile is resolved
-  // fresh from ProfileService before every turn via the ID.
+  // Desired Specialist ID for this Session. Absent means Main Agent. The Profile is resolved fresh
+  // from ProfileService before every turn via the ID.
   specialistId?: string
+  // Main-owned commit marker. True means the desired binding above is durable, but the live Agent
+  // runtime has not yet confirmed that it applied the same target. User prompts fail closed until
+  // Main applies the target and clears this marker. Older Session files omit it and are treated as
+  // already applied.
+  specialistBindingPending?: true
   // Last known context-window usage. A live attached runtime replaces or clears this snapshot; a
   // detached restored Session keeps it so the indicator survives an app restart.
   contextUsage?: AcpContextUsage
@@ -568,6 +572,7 @@ export type SessionConflictRebaseField =
   | 'enabledComputeHosts'
   | 'pinned'
   | 'specialistId'
+  | 'specialistBindingPending'
 
 export type SaveSessionOptions = {
   conflictRebaseFields?: SessionConflictRebaseField[]
@@ -3450,6 +3455,9 @@ const sanitizeSession = (
   // at send time; the sanitizer only ensures the value is safe to re-persist.
   const specialistId = asString(session.specialistId)
   if (specialistId) sanitized.specialistId = specialistId
+  // Pending is a fail-closed marker: only the explicit true value survives sanitization. Historical
+  // files omit it and retain the pre-marker behavior (their desired binding is considered applied).
+  if (session.specialistBindingPending === true) sanitized.specialistBindingPending = true
   const contextUsage = sanitizeAcpContextUsage(session.contextUsage)
   if (contextUsage) sanitized.contextUsage = contextUsage
   const runtimeContext = sanitizeSessionRuntimeContext(session.runtimeContext)

@@ -116,6 +116,11 @@ export class AcpProviderSessionResumer {
     request: AcpResumeSessionRequest,
     attachment: AcpSessionAttachment
   ): Promise<AcpCreateSessionResponse> {
+    if (request.specialistBindingPending === true) {
+      throw new Error(
+        'A pending Specialist binding cannot be reconciled through an already attached provider session.'
+      )
+    }
     const entry = this.deps.registry.lookup(request.sessionId)
     if (!entry) throw new Error(`ACP session is not registered: ${request.sessionId}`)
     const connection = this.deps.currentConnection()
@@ -233,6 +238,13 @@ export class AcpProviderSessionResumer {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
+    if (request.specialistBindingPending === true) {
+      log.info('adopting fresh provider context for pending Specialist binding', {
+        sessionId: request.sessionId,
+        ...this.deps.diagnosticContext()
+      })
+      return this.adopt(request, connection, cwd, projectId, identity)
+    }
     const decision = this.policy.decide({
       appSessionId: request.sessionId,
       providerSessionId: persistedProviderSessionId ?? request.sessionId,

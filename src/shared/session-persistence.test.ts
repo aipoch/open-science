@@ -74,6 +74,32 @@ describe('Session file envelope versions', () => {
   })
 })
 
+describe('Session Specialist binding persistence', () => {
+  it('restores only an explicit pending marker and keeps historical files applied by default', () => {
+    const pending = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      specialistId: 'specialist-new',
+      specialistBindingPending: true
+    })
+    const historical = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      specialistId: 'specialist-old'
+    })
+    const malformed = normalizeSessionFile({
+      ...createSessionWithActivity(undefined),
+      specialistId: 'specialist-old',
+      specialistBindingPending: 'yes'
+    })
+
+    expect(pending).toMatchObject({
+      specialistId: 'specialist-new',
+      specialistBindingPending: true
+    })
+    expect(historical?.specialistBindingPending).toBeUndefined()
+    expect(malformed?.specialistBindingPending).toBeUndefined()
+  })
+})
+
 describe('artifact persistence', () => {
   it('preserves valid creation timestamps while accepting historical artifacts without one', () => {
     const restored = normalizeSessionFile({

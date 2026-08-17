@@ -50,8 +50,7 @@ const SESSION_CONFLICT_REBASE_FIELDS = [
   'title',
   'permissionProfile',
   'autoReviewEnabled',
-  'pinned',
-  'specialistId'
+  'pinned'
 ] as const satisfies readonly SessionConflictRebaseField[]
 
 const conflictRebaseFieldChanged = (

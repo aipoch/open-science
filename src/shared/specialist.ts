@@ -86,13 +86,20 @@ export type SetSessionSpecialistRequest = {
   specialistId: string | undefined
 }
 
-// Response for SET_SESSION_SPECIALIST. `contextReset` is true when the live agent session was
-// replaced so the new specialist identity could take effect (Claude bakes identity into session
-// _meta at creation, so a switch requires a fresh session). When true, the renderer must replay the
-// conversation history into the next prompt so the new specialist retains continuity.
-export type SetSessionSpecialistResponse = {
-  contextReset: boolean
-}
+// Response for SET_SESSION_SPECIALIST. Persistence is committed before runtime application, so a
+// post-commit runtime/clear failure is reported as an explicit pending state and is never presented
+// as a rollback. While pending, Main rejects new user prompts and the renderer keeps drafts queued.
+export type SetSessionSpecialistResponse =
+  | {
+      status: 'applied'
+      // True when the live agent session was replaced. The renderer must replay the active Branch
+      // history into the next prompt so the new Specialist retains continuity.
+      contextReset: boolean
+    }
+  | {
+      status: 'pending'
+      reason: 'runtime-application-failed' | 'pending-state-clear-failed'
+    }
 
 export type ResolveSessionSpecialistRequest = {
   sessionId: string
@@ -242,6 +249,30 @@ export type BuiltinSpecialistEntry = {
 // runnable profile.
 export type SpecialistListItem =
   ({ kind: 'custom' } & SpecialistProfileView) | BuiltinSpecialistEntry | ReviewerEntry
+
+export type SpecialistDocumentIntegrityIssue = Readonly<{
+  code:
+    | 'document-invalid'
+    | 'version-unsupported'
+    | 'legacy-schema-unsupported'
+    | 'record-invalid'
+    | 'record-sanitized'
+  // Position only; never return the malformed record because it may contain system instructions or
+  // unexpected sensitive fields.
+  recordIndex?: number
+}>
+
+export type SpecialistDocumentIntegrity =
+  | Readonly<{ status: 'ok' }>
+  | Readonly<{
+      status: 'degraded'
+      issues: readonly SpecialistDocumentIntegrityIssue[]
+    }>
+
+export type SpecialistCatalogSnapshot = Readonly<{
+  items: SpecialistListItem[]
+  integrity: SpecialistDocumentIntegrity
+}>
 
 // Resolution of a session's specialist binding at send time (requires SpecialistProfileView above).
 // 'main'        — no binding, main agent is used.

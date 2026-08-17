@@ -242,9 +242,10 @@ const useWorkspaceConversationController = (
     const submitDraft = ({ forcedSkillIds, mode = 'continue' }: DraftSubmitIntent): void => {
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
-      if (mode === 'retry-reconfigure' && !session.actions.beginReconfigureRetry()) return
+      const reconfigureRetry = mode === 'retry-reconfigure'
+      if (reconfigureRetry && !session.actions.beginReconfigureRetry()) return
       const queueDraft = mode === 'continue' && canQueueDraft(current)
-      if (!queueDraft && !session.lifecycle.canStartSend()) return
+      if (!queueDraft && !reconfigureRetry && !session.lifecycle.canStartSend()) return
       const queueBlocksImmediateSend = Boolean(
         activeSession && messageQueue.lifecycle.blocksImmediateSend(activeSession.id)
       )

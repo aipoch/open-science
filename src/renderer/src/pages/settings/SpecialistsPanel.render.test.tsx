@@ -92,11 +92,12 @@ const specialistItems: SpecialistListItem[] = [
 beforeEach(() => {
   window.api = {
     specialist: {
-      list: vi.fn().mockResolvedValue(specialistItems),
+      list: vi.fn().mockResolvedValue({ items: specialistItems, integrity: { status: 'ok' } }),
       create: vi.fn(),
       setEnabled: vi.fn(),
       onCatalogChanged: vi.fn(() => vi.fn())
     },
+    storage: { revealAppStorage: vi.fn() },
     settings: {
       listConnectors: vi.fn().mockResolvedValue({ connectors: [], customServers: [], ncbi: null }),
       onConnectorRuntimeChanged: vi.fn(() => vi.fn()),
@@ -144,7 +145,7 @@ describe('SpecialistsPanel', () => {
     const list = vi
       .fn()
       .mockRejectedValueOnce(new Error('specialist database unavailable'))
-      .mockResolvedValueOnce(specialistItems)
+      .mockResolvedValueOnce({ items: specialistItems, integrity: { status: 'ok' } })
     window.api.specialist.list = list
     useSpecialistStore.setState({ items: [], isLoaded: false })
 
@@ -165,6 +166,39 @@ describe('SpecialistsPanel', () => {
 
     await vi.waitFor(() => expect(document.body.textContent).toContain('RNA Reviewer'))
     expect(list).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps healthy rows visible but disables mutations when the document is degraded', async () => {
+    window.api.specialist.list = vi.fn().mockResolvedValue({
+      items: specialistItems,
+      integrity: {
+        status: 'degraded',
+        issues: [{ code: 'record-invalid', recordIndex: 1 }]
+      }
+    })
+    useSpecialistStore.setState({ items: [], isLoaded: false, integrity: { status: 'ok' } })
+
+    await act(async () => {
+      root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
+    })
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Some Specialist data could not be read.')
+    )
+    expect(document.body.textContent).toContain('RNA Reviewer')
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit RNA Reviewer"]')?.disabled
+    ).toBe(true)
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle RNA Reviewer"]')?.disabled
+    ).toBe(true)
+
+    const openFolder = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Open data folder'
+    )
+    expect(openFolder).toBeDefined()
+    await act(async () => fireEvent.click(openFolder!))
+    expect(window.api.storage.revealAppStorage).toHaveBeenCalledOnce()
   })
 
   // Shared preview fixture: builtin + owned selected by default, referenced skill unchecked.
@@ -814,10 +848,10 @@ describe('SpecialistsPanel', () => {
       }
     }
     useSpecialistStore.setState({ items: [imported, { kind: 'reviewer', id: 'reviewer' }] })
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      imported,
-      { kind: 'reviewer', id: 'reviewer' }
-    ])
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [imported, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
     await act(async () => {
       root.render(<SpecialistsPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />)
     })
@@ -953,10 +987,10 @@ describe('SpecialistsPanel', () => {
       setupPending: true,
       origin: 'imported' as const
     }
-    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue([
-      pending,
-      { kind: 'reviewer', id: 'reviewer' }
-    ])
+    ;(window.api.specialist.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [pending, { kind: 'reviewer', id: 'reviewer' }],
+      integrity: { status: 'ok' }
+    })
     useSpecialistStore.setState({ items: [pending, { kind: 'reviewer', id: 'reviewer' }] })
     const onNavigate = vi.fn()
 
@@ -1076,16 +1110,16 @@ describe('SpecialistsPanel', () => {
     ;(window.api.specialist as unknown as { list: ReturnType<typeof vi.fn> }).list = vi.fn(
       async () => {
         listCallCount++
-        if (listCallCount > 1) return updatedItems
-        return specialistItems
+        if (listCallCount > 1) return { items: updatedItems, integrity: { status: 'ok' } }
+        return { items: specialistItems, integrity: { status: 'ok' } }
       }
     )
     useSpecialistStore.setState({
       ...useSpecialistStore.getState(),
       update: updateMock,
       load: async () => {
-        const items = await window.api.specialist.list()
-        useSpecialistStore.setState({ items })
+        const snapshot = await window.api.specialist.list()
+        useSpecialistStore.setState({ items: snapshot.items, integrity: snapshot.integrity })
       }
     })
 

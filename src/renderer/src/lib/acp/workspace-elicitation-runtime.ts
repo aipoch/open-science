@@ -149,7 +149,8 @@ const reviseWorkspaceElicitation = async (
         session.agentBackendId,
         session.specialistId,
         session.providerSessionId,
-        session.providerContinuityToken
+        session.providerContinuityToken,
+        session.specialistBindingPending
       )
       contextResetFromResume = Boolean(resumed?.contextReset)
       useSessionStore.getState().markResumed(
@@ -312,7 +313,8 @@ const respondToWorkspaceElicitation = async (
       session.agentBackendId,
       session.specialistId,
       session.providerSessionId,
-      session.providerContinuityToken
+      session.providerContinuityToken,
+      session.specialistBindingPending
     )
     useSessionStore.getState().markResumed(
       session.id,

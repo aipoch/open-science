@@ -64,9 +64,13 @@ type SessionStore = SessionStoreData &
     setPermissionProfile: (sessionId: string, profile: PermissionProfileId) => void
     // Persists the per-session auto-review toggle. true = on; false = off (default).
     setAutoReviewEnabled: (sessionId: string, enabled: boolean) => void
-    // Updates the persisted specialist UUID for an existing session after reconfigure succeeds.
-    // Passing undefined clears the binding (Main Agent). Persistence only stores the UUID.
-    setSessionSpecialistId: (sessionId: string, specialistId: string | undefined) => void
+    // Mirrors Main's desired Specialist binding and its durable pending marker. Passing undefined
+    // clears the binding (Main Agent); pending blocks sends until Main confirms runtime application.
+    setSessionSpecialistId: (
+      sessionId: string,
+      specialistId: string | undefined,
+      pending?: boolean
+    ) => void
     // Toggles whether a conversation is pinned to the top section of the sidebar.
     togglePinned: (sessionId: string) => void
     updateSessionArchive: (request: UpdateSessionArchiveRequest) => Promise<ChatSession>
@@ -201,15 +205,14 @@ const createSessionStoreInitializer = (): StateCreator<SessionStore> => (set, ge
     })
   },
 
-  // Updates the persisted specialist UUID for an existing session (called after reconfigure succeeds).
-  // Passing undefined clears the binding (Main Agent). Session persistence stores only the UUID.
-  setSessionSpecialistId: (sessionId, specialistId) => {
+  setSessionSpecialistId: (sessionId, specialistId, pending = false) => {
     set((state) => ({
       sessions: state.sessions.map((session) =>
         session.id === sessionId
           ? {
               ...session,
               specialistId: specialistId ?? undefined,
+              specialistBindingPending: pending ? true : undefined,
               updatedAt: Date.now()
             }
           : session

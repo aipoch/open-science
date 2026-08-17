@@ -149,7 +149,9 @@ const apiStub = (specialistOverrides?: Record<string, unknown>): typeof window.a
     compute: { enabledHostsSet: vi.fn(() => Promise.resolve()) },
     specialist: {
       onCatalogChanged: vi.fn(() => vi.fn()),
-      setSessionSpecialist: vi.fn(() => Promise.resolve({ contextReset: false })),
+      setSessionSpecialist: vi.fn(() =>
+        Promise.resolve({ status: 'applied' as const, contextReset: false })
+      ),
       ...specialistOverrides
     }
   }) as never
@@ -320,7 +322,9 @@ describe('WorkspacePage fail-closed send gate', () => {
 
   it('applies a pending switch to Main Agent before sending', async () => {
     setupBase()
-    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const setSessionSpecialist = vi.fn(() =>
+      Promise.resolve({ status: 'applied' as const, contextReset: false })
+    )
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
@@ -364,7 +368,9 @@ describe('WorkspacePage fail-closed send gate', () => {
 
   it('uses an existing pending specialist for a branched child without reconfiguring the source', async () => {
     setupBase()
-    const setSessionSpecialist = vi.fn(() => Promise.resolve({ contextReset: false }))
+    const setSessionSpecialist = vi.fn(() =>
+      Promise.resolve({ status: 'applied' as const, contextReset: false })
+    )
     useSessionStore.setState({
       ...createInitialSessionState(),
       sessions: [createSession({ specialistId: 'spec-a', status: 'running' })],
@@ -420,7 +426,7 @@ describe('WorkspacePage Retry recovery action', () => {
     const setSessionSpecialist = vi
       .fn()
       .mockRejectedValueOnce(new Error('session reset failed'))
-      .mockResolvedValueOnce({ contextReset: false })
+      .mockResolvedValueOnce({ status: 'applied' as const, contextReset: false })
 
     useSessionStore.setState({
       ...createInitialSessionState(),
@@ -473,10 +479,10 @@ describe('WorkspacePage Retry recovery action', () => {
     expect(conversationProps.specialist.view.specialist.reconfigureError).toBeNull()
   })
 
-  it('commits Main Agent to the session store only after Use None succeeds', async () => {
+  it('keeps the current binding while Use None is in flight', async () => {
     setupBase()
-    let resolveUseNone!: (value: { contextReset: boolean }) => void
-    const useNonePromise = new Promise<{ contextReset: boolean }>((resolve) => {
+    let resolveUseNone!: (value: { status: 'applied'; contextReset: boolean }) => void
+    const useNonePromise = new Promise<{ status: 'applied'; contextReset: boolean }>((resolve) => {
       resolveUseNone = resolve
     })
     const setSessionSpecialist = vi
@@ -526,11 +532,12 @@ describe('WorkspacePage Retry recovery action', () => {
 
     expect(setSessionSpecialist).toHaveBeenCalledTimes(2)
     expect(useSessionStore.getState().sessions[0].specialistId).toBe('spec-a')
+    expect(useSessionStore.getState().sessions[0].specialistBindingPending).toBeUndefined()
     expect(conversationProps.specialist.view.specialist.reconfigureError).toBeTruthy()
     expect(runtime.sendMessage).not.toHaveBeenCalled()
 
     await act(async () => {
-      resolveUseNone({ contextReset: false })
+      resolveUseNone({ status: 'applied', contextReset: false })
     })
 
     expect(setSessionSpecialist).toHaveBeenLastCalledWith({
@@ -538,6 +545,7 @@ describe('WorkspacePage Retry recovery action', () => {
       specialistId: undefined
     })
     expect(useSessionStore.getState().sessions[0].specialistId).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].specialistBindingPending).toBeUndefined()
     expect(conversationProps.specialist.view.specialist.reconfigureError).toBeNull()
     expect(runtime.sendMessage).not.toHaveBeenCalled()
   })
@@ -550,8 +558,8 @@ describe('WorkspacePage Retry recovery action', () => {
 describe('WorkspacePage double-send race prevention', () => {
   it('blocks a second send while the barrier is in flight', async () => {
     setupBase()
-    let resolveSwitch!: (v: { contextReset: boolean }) => void
-    const switchPromise = new Promise<{ contextReset: boolean }>((res) => {
+    let resolveSwitch!: (v: { status: 'applied'; contextReset: boolean }) => void
+    const switchPromise = new Promise<{ status: 'applied'; contextReset: boolean }>((res) => {
       resolveSwitch = res
     })
     const setSessionSpecialist = vi.fn(() => switchPromise)
@@ -595,7 +603,7 @@ describe('WorkspacePage double-send race prevention', () => {
 
     // Resolve the barrier and let the async work settle.
     await act(async () => {
-      resolveSwitch({ contextReset: false })
+      resolveSwitch({ status: 'applied', contextReset: false })
     })
 
     // Only one sendMessage call — the second was blocked by the in-flight guard.

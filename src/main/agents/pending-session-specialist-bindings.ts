@@ -13,13 +13,22 @@
 // as undefined — is still flushed (the disk binding must be cleared too), not mistaken for "nothing
 // pending".
 
+export type PendingSessionSpecialistBinding = Readonly<{
+  specialistId: string | undefined
+  specialistBindingPending: boolean
+}>
+
 export class PendingSessionSpecialistBindings {
-  private readonly pending = new Map<string, string | undefined>()
+  private readonly pending = new Map<string, PendingSessionSpecialistBinding>()
 
   // Record a binding for a session that is not yet durable. Overwrites a prior stash for the same
   // session (last-write-wins), mirroring the live SessionBindingService.
-  stash(sessionId: string, specialistId: string | undefined): void {
-    this.pending.set(sessionId, specialistId)
+  stash(
+    sessionId: string,
+    specialistId: string | undefined,
+    specialistBindingPending = true
+  ): void {
+    this.pending.set(sessionId, { specialistId, specialistBindingPending })
   }
 
   // Whether a stashed binding is waiting to be flushed when this session is next saved. Use this
@@ -30,7 +39,7 @@ export class PendingSessionSpecialistBindings {
 
   // Consume and return the stashed binding for a session (possibly undefined = clear to Main),
   // removing it from the pending set. Called by the save path right after the session becomes durable.
-  take(sessionId: string): string | undefined {
+  take(sessionId: string): PendingSessionSpecialistBinding | undefined {
     const value = this.pending.get(sessionId)
     this.pending.delete(sessionId)
     return value

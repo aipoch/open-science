@@ -261,6 +261,10 @@ import {
   resolveContributionTemplateReadmePath
 } from './specialist/package/contribution-template'
 import { SessionBindingService } from './specialist/session-binding'
+import {
+  SessionSpecialistReconfiguration,
+  type PersistedSessionSpecialistBinding
+} from './specialist/session-reconfiguration'
 import { SPECIALIST_IPC } from '../shared/specialist'
 import {
   CONNECTOR_TEMPLATE_MAX_BYTES,
@@ -866,11 +870,14 @@ const createApplicationModules = async (
       // so the approved target survives a restart before the next message (the in-memory binding
       // alone does not persist across restart).
       if (pendingSpecialistBindings.has(durableSession.id)) {
-        const specialistId = pendingSpecialistBindings.take(durableSession.id)
-        await sessionPersistenceCoordinator.saveSessionSpecialistBinding(
-          durableSession,
-          specialistId
-        )
+        const binding = pendingSpecialistBindings.take(durableSession.id)
+        if (binding) {
+          await sessionPersistenceCoordinator.saveSessionSpecialistBinding(
+            durableSession,
+            binding.specialistId,
+            binding.specialistBindingPending
+          )
+        }
       }
       return { created, session: durableSession }
     },
@@ -1038,6 +1045,51 @@ const createApplicationModules = async (
   // Per-session specialist binding store. Shared between the SET_SESSION_SPECIALIST barrier
   // (validate + record) and the runtime switch so a hot-switch lands on the same source of truth.
   const sessionBindingService = new SessionBindingService(profileService)
+  const specialistPersistLog = createLogger('specialist:persist')
+  const loadSessionSpecialistBinding = async (
+    sessionId: string
+  ): Promise<PersistedSessionSpecialistBinding | undefined> => {
+    const session = (await sessionRepository.loadAll()).sessions.find(
+      (candidate) => candidate.id === sessionId
+    )
+    return session
+      ? {
+          specialistId: session.specialistId,
+          specialistBindingPending: session.specialistBindingPending
+        }
+      : undefined
+  }
+  const persistSessionSpecialistBinding = async (
+    sessionId: string,
+    specialistId: string | undefined,
+    pending: boolean
+  ): Promise<void> => {
+    const allSessions = await sessionRepository.loadAll()
+    const session = allSessions.sessions.find((candidate) => candidate.id === sessionId)
+    if (!session) {
+      // Fresh unsent drafts are not durable yet. Carry both the desired ID and pending marker into
+      // their first save; the marker can also be cleared here when runtime applies before that save.
+      pendingSpecialistBindings.stash(sessionId, specialistId, pending)
+      specialistPersistLog.debug('session not yet durable; stashed Specialist binding state', {
+        sessionId,
+        specialistId,
+        pending
+      })
+      return
+    }
+    pendingSpecialistBindings.take(sessionId)
+    await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId, pending)
+  }
+  const sessionSpecialistReconfiguration = new SessionSpecialistReconfiguration({
+    sessionBinding: sessionBindingService,
+    loadBinding: loadSessionSpecialistBinding,
+    persistBinding: persistSessionSpecialistBinding,
+    applyRuntime: async (sessionId, specialistId) => {
+      const runtime = runtimeRef.current
+      if (!runtime) throw new Error('Agent runtime is not initialized.')
+      return runtime.switchSpecialist(sessionId, specialistId)
+    }
+  })
   // Compose the interceptor before ACP because Notebook construction precedes runtime construction.
   // Startup registers the complete production adapter below before any IPC surface becomes callable.
   const completionGateRuntimeRegistry = new CompletionGateRuntimeRegistry()
@@ -1373,27 +1425,8 @@ const createApplicationModules = async (
     // ProfileService already broadcasts specialist:catalog-changed on update/delete; this refreshes the
     // RUNTIME capability resolution (mirrors the Settings IPC path's onProfilesChanged callback).
     invalidateCatalog: () => void runtime.requestSkillsReload(),
-    persistSessionSpecialist: async (sessionId, specialistId) => {
-      const allSessions = await sessionRepository.loadAll()
-      const session = allSessions.sessions.find((s) => s.id === sessionId)
-      if (!session) {
-        // The calling session is a fresh unsent draft that is not yet on disk. Stash the approved
-        // binding so the save path flushes it on first persist — otherwise an app restart before the
-        // first save would silently lose the approved switch (only the in-memory binding survives).
-        pendingSpecialistBindings.stash(sessionId, specialistId)
-        specialistPersistLog.debug(
-          'session not yet durable; stashed specialist binding for first save',
-          {
-            sessionId,
-            specialistId
-          }
-        )
-        return
-      }
-      // The session is already durable: this write is authoritative, so drop any stale stash.
-      pendingSpecialistBindings.take(sessionId)
-      await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
-    }
+    persistSessionSpecialist: (sessionId, specialistId) =>
+      sessionSpecialistReconfiguration.commitDesired(sessionId, specialistId)
   })
   const notebookRpcServerRef: { current?: NotebookLocalRpcServer } = {}
   const requireNotebookRpcServer = (): NotebookLocalRpcServer => {
@@ -1603,6 +1636,9 @@ const createApplicationModules = async (
                       : {}),
                     ...(latest.agentBackendId ? { previousBackendId: latest.agentBackendId } : {}),
                     ...(latest.specialistId ? { specialistId: latest.specialistId } : {}),
+                    ...(latest.specialistBindingPending === true
+                      ? { specialistBindingPending: true }
+                      : {}),
                     ...(latest.providerSessionId
                       ? { providerSessionId: latest.providerSessionId }
                       : {}),
@@ -1950,6 +1986,10 @@ const createApplicationModules = async (
   )
   surfaceAdapters = afterAcpAdapters
   runtimeRef.current = runtime
+  runtime.setSessionResumeObserver(async (request) => {
+    if (request.specialistBindingPending !== true) return
+    await sessionSpecialistReconfiguration.completeResume(request.sessionId, request.specialistId)
+  })
   const userSkillCatalogObserver = await modules.add(
     {
       storageRoot: configRoot,
@@ -2084,6 +2124,10 @@ const createApplicationModules = async (
   // visibility, so an archived Project/Session cannot restart work through another surface.
   runtime.setPromptAdmissionGuard(async (sessionId) => {
     await archiveCoordinator.assertSessionAvailableById(sessionId)
+    await sessionSpecialistReconfiguration.assertUserPromptReady(sessionId)
+    if (!(await completionHandoffLifecycle.canStartUserPrompt(sessionId))) {
+      throw new Error('The approved Specialist handoff must finish or be cancelled before sending.')
+    }
     if (sideChatRuntime.hasForParent(sessionId)) {
       throw new Error('Close Side chat before sending a message to Main.')
     }
@@ -2149,13 +2193,31 @@ const createApplicationModules = async (
     // completion through the wrong continuation path.
     completionGateRuntimeRegistry.register(
       createCodexCompletionGateRuntime({
-        runtime,
+        runtime: {
+          isSessionUsingFramework: (sessionId, frameworkId) =>
+            runtime.isSessionUsingFramework(sessionId, frameworkId),
+          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          waitForPromptRelease: (sessionId) => runtime.waitForPromptRelease(sessionId),
+          switchSpecialist: (sessionId, specialistId) =>
+            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+          continueApprovedHandoff: (sessionId, text) =>
+            runtime.continueApprovedHandoff(sessionId, text)
+        },
         resolveApprovedSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId)
       })
     )
     completionGateRuntimeRegistry.register(
       createOpenCodeImmediateHandoffRuntime({
-        runtime,
+        runtime: {
+          getSessionFramework: (sessionId) => runtime.getSessionFramework(sessionId),
+          capturePromptForHandoff: (sessionId) => runtime.capturePromptForHandoff(sessionId),
+          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          waitForPromptOwnershipRelease: (sessionId) =>
+            runtime.waitForPromptOwnershipRelease(sessionId),
+          switchSpecialist: (sessionId, specialistId) =>
+            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+          startContinuation: (request) => runtime.startContinuation(request)
+        },
         resolveSpecialistId: (sessionId) => sessionBindingService.getBinding(sessionId),
         reportHandoffFailure: async (failure) =>
           runtime.reportApprovedHandoffFailure(failure.sessionId)
@@ -2163,7 +2225,14 @@ const createApplicationModules = async (
     )
     completionGateRuntimeRegistry.register(
       createProductionAppHandoffRuntime({
-        runtime,
+        runtime: {
+          cancelPrompt: (request) => runtime.cancelPrompt(request),
+          waitForPromptOwnershipRelease: (sessionId) =>
+            runtime.waitForPromptOwnershipRelease(sessionId),
+          switchSpecialist: (sessionId, specialistId) =>
+            sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
+          sendAppContinuation: (request) => runtime.sendAppContinuation(request)
+        },
         sessionBinding: sessionBindingService
       })
     )
@@ -2202,7 +2271,7 @@ const createApplicationModules = async (
     },
     discardReplayContext: async (sessionId) => runtime.discardClaudeCodeHandoffReplay(sessionId),
     switchSpecialist: (sessionId, specialistId) =>
-      runtime.switchSpecialist(sessionId, specialistId),
+      sessionSpecialistReconfiguration.applyPersisted(sessionId, specialistId),
     createContinuationRequest: (input) => runtime.createClaudeCodeContinuationRequest(input),
     sendAppContinuation: (request) => runtime.sendAppContinuation(request),
     reportHandoffFailure: async (_error, _handoff, context) => {
@@ -2398,43 +2467,18 @@ const createApplicationModules = async (
     sessionPersistenceBackend.deleteSession.bind(sessionPersistenceBackend)
   sessionPersistenceBackend.deleteSession = async (projectId, sessionId) => {
     await originalDeleteSession(projectId, sessionId)
-    sessionBindingService.clearSession(sessionId)
+    sessionSpecialistReconfiguration.clearSession(sessionId)
   }
   const sessionPersistenceHandlers = createSessionPersistenceHandlersWithAttributionAuthority(
     sessionPersistenceBackend,
     reviewRepository,
     messageAttributionAuthority
   )
-  const specialistPersistLog = createLogger('specialist:persist')
   declareElectronAdapter('specialist', () =>
     registerSpecialistIpcHandlers(
       profileService,
       sessionBindingService,
-      // Persist only the specialist UUID to the durable session file — never a profile snapshot.
-      // Read the current session file, patch specialistId, and save so the binding survives restarts.
-      // Reading all sessions to locate the target is intentional: sessionId alone is not sufficient to
-      // open the file (it lives under sessions/<projectId>/<sessionId>.json), and this operation is
-      // infrequent enough that the scan cost is acceptable.
-      async (sessionId, specialistId) => {
-        const allSessions = await sessionRepository.loadAll()
-        const session = allSessions.sessions.find((s) => s.id === sessionId)
-        if (!session) {
-          // The session has not yet been persisted (created but not saved). The specialistId will be
-          // written when the renderer calls sessions:save-session for the first time.
-          specialistPersistLog.debug(
-            'session not yet durable; specialistId will be written on first save',
-            {
-              sessionId,
-              specialistId
-            }
-          )
-          return
-        }
-        await sessionPersistenceCoordinator.saveSessionSpecialistBinding(session, specialistId)
-      },
-      // Apply the switch to the live agent runtime. The closure is invoked per-request, so a
-      // late-bound reference is unnecessary.
-      (sessionId, specialistId) => runtime.switchSpecialist(sessionId, specialistId),
+      sessionSpecialistReconfiguration,
       // A specialist capability edit (skills/connectors/enabled) must reach live sessions on the next
       // turn: reconnect so the agent respawns (re-provisioning skills) and resumes with the updated
       // specialist whitelist in the session _meta.

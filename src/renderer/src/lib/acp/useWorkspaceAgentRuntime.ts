@@ -446,7 +446,8 @@ const useOwnedWorkspaceAgentRuntime = (): WorkspaceAgentRuntime => {
                 session.agentBackendId,
                 session.specialistId,
                 session.providerSessionId,
-                session.providerContinuityToken
+                session.providerContinuityToken,
+                session.specialistBindingPending
               )
               useSessionStore.getState().markResumed(
                 session.id,

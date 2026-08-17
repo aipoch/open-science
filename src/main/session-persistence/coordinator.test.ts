@@ -887,6 +887,8 @@ describe('SessionPersistenceCoordinator', () => {
       title: 'Before rename',
       status: 'waiting-plan-approval',
       updatedAt: previousUpdatedAt,
+      specialistId: 'specialist-new',
+      specialistBindingPending: true,
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
     })
     const repository = createSessionRepository({
@@ -902,6 +904,7 @@ describe('SessionPersistenceCoordinator', () => {
     const staleRendererSnapshot = createSession({
       title: 'Renamed by renderer',
       status: 'idle',
+      specialistId: 'specialist-old',
       runtimeContext: {
         version: 1,
         revision: 0,
@@ -912,6 +915,8 @@ describe('SessionPersistenceCoordinator', () => {
     await expect(coordinator.saveSession(staleRendererSnapshot)).resolves.toMatchObject({
       title: 'Renamed by renderer',
       status: 'waiting-plan-approval',
+      specialistId: 'specialist-new',
+      specialistBindingPending: true,
       runtimeContext: { version: 1, revision: 2, plan: createRuntimePlan() }
     })
     expect(durable.runtimeContext).toEqual({
@@ -2114,10 +2119,12 @@ describe('SessionPersistenceCoordinator', () => {
 
     const result = await coordinator.saveSessionSpecialistBinding(
       submittedSession,
-      'specialist-new'
+      'specialist-new',
+      true
     )
 
     expect(result.specialistId).toBe('specialist-new')
+    expect(result.specialistBindingPending).toBe(true)
     expect(result.messages).toEqual(authoritativeSession.messages)
     expect(repository.saveSession).toHaveBeenCalledWith(result)
   })

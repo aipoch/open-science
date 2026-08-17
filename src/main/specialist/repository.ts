@@ -12,6 +12,8 @@ import {
 } from './types'
 import type {
   SpecialistCapabilityMode,
+  SpecialistDocumentIntegrity,
+  SpecialistDocumentIntegrityIssue,
   SpecialistFullAccessConfig,
   SpecialistSelectedConfig,
   ConnectorToolRule
@@ -25,6 +27,17 @@ export class SpecialistIdConflictError extends Error {
   constructor(readonly specialistId: string) {
     super(`Specialist with id ${specialistId} already exists.`)
     this.name = 'SpecialistIdConflictError'
+  }
+}
+
+export class SpecialistDocumentDegradedError extends Error {
+  readonly code = 'SPECIALIST_DOCUMENT_DEGRADED' as const
+
+  constructor(readonly integrity: Extract<SpecialistDocumentIntegrity, { status: 'degraded' }>) {
+    super(
+      'Specialist data contains records that cannot be safely rewritten. Repair the file first.'
+    )
+    this.name = 'SpecialistDocumentDegradedError'
   }
 }
 
@@ -44,6 +57,120 @@ const asNumber = (v: unknown): number | undefined =>
 
 const asStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+
+const hasOnlyKeys = (value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean =>
+  Object.keys(value).every((key) => allowed.has(key))
+
+const isExactStringArray = (value: unknown): boolean =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string')
+
+const CONNECTOR_TOOL_RULE_KEYS = new Set([
+  'connectorId',
+  'includedMethods',
+  'excludedMethods',
+  'includeToolsPattern',
+  'excludeToolsPattern'
+])
+
+const connectorToolRuleWouldLoseData = (value: unknown): boolean => {
+  if (!isRecord(value) || !hasOnlyKeys(value, CONNECTOR_TOOL_RULE_KEYS)) return true
+  if (typeof value.connectorId !== 'string' || !value.connectorId) return true
+  if (value.includedMethods !== undefined && !isExactStringArray(value.includedMethods)) return true
+  if (value.excludedMethods !== undefined && !isExactStringArray(value.excludedMethods)) return true
+  if (value.includeToolsPattern !== undefined && typeof value.includeToolsPattern !== 'string') {
+    return true
+  }
+  return value.excludeToolsPattern !== undefined && typeof value.excludeToolsPattern !== 'string'
+}
+
+const FULL_ACCESS_KEYS = new Set(['excludedSkillIds', 'excludedConnectorIds', 'connectorTools'])
+const SELECTED_KEYS = new Set(['skillIds', 'connectorIds', 'connectorTools'])
+
+const capabilityConfigWouldLoseData = (
+  value: unknown,
+  allowed: ReadonlySet<string>,
+  stringArrayKeys: readonly string[]
+): boolean => {
+  if (value === undefined) return false
+  if (!isRecord(value) || !hasOnlyKeys(value, allowed)) return true
+  for (const key of stringArrayKeys) {
+    if (value[key] !== undefined && !isExactStringArray(value[key])) return true
+  }
+  return (
+    value.connectorTools !== undefined &&
+    (!Array.isArray(value.connectorTools) ||
+      value.connectorTools.some(connectorToolRuleWouldLoseData))
+  )
+}
+
+const IMPORT_BASELINE_KEYS = new Set([
+  'importedAt',
+  'archiveDigest',
+  'contentDigest',
+  'packageContentDigest',
+  'packageVersion'
+])
+const SPECIALIST_KEYS = new Set([
+  'id',
+  'name',
+  'displayName',
+  'description',
+  'systemPrompt',
+  'iconKey',
+  'colorKey',
+  'enabled',
+  'setupPending',
+  'capabilityMode',
+  'fullAccess',
+  'selectedCapabilities',
+  'revision',
+  'packageVersion',
+  'origin',
+  'ownedSkillIds',
+  'importBaseline'
+])
+
+const storedSpecialistWouldLoseData = (value: Record<string, unknown>): boolean => {
+  if (!hasOnlyKeys(value, SPECIALIST_KEYS)) return true
+  for (const key of ['displayName', 'iconKey', 'colorKey', 'packageVersion'] as const) {
+    if (value[key] !== undefined && typeof value[key] !== 'string') return true
+  }
+  if (value.setupPending !== undefined && typeof value.setupPending !== 'boolean') return true
+  if (value.origin !== undefined && value.origin !== 'local' && value.origin !== 'imported') {
+    return true
+  }
+  if (value.ownedSkillIds !== undefined && !isExactStringArray(value.ownedSkillIds)) return true
+  if (
+    capabilityConfigWouldLoseData(value.fullAccess, FULL_ACCESS_KEYS, [
+      'excludedSkillIds',
+      'excludedConnectorIds'
+    ]) ||
+    capabilityConfigWouldLoseData(value.selectedCapabilities, SELECTED_KEYS, [
+      'skillIds',
+      'connectorIds'
+    ])
+  ) {
+    return true
+  }
+  if (value.importBaseline !== undefined) {
+    if (!isRecord(value.importBaseline)) return true
+    if (
+      !hasOnlyKeys(value.importBaseline, IMPORT_BASELINE_KEYS) ||
+      sanitizeImportBaseline(value.importBaseline) === undefined
+    ) {
+      return true
+    }
+    for (const key of ['packageContentDigest', 'packageVersion'] as const) {
+      if (
+        value.importBaseline[key] !== undefined &&
+        typeof value.importBaseline[key] !== 'string'
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
 
 const sanitizeImportBaseline = (v: unknown): SpecialistImportBaseline | undefined => {
   if (!isRecord(v)) return undefined
@@ -160,30 +287,58 @@ export const sanitizeStoredSpecialist = (v: unknown): StoredSpecialist | undefin
   return specialist
 }
 
-const sanitizeSpecialists = (v: unknown): StoredSpecialists => {
-  if (!isRecord(v)) return createEmptySpecialists()
+const sanitizeSpecialistsWithIntegrity = (
+  v: unknown
+): {
+  document: StoredSpecialists
+  integrity: SpecialistDocumentIntegrity
+} => {
+  const issues: SpecialistDocumentIntegrityIssue[] = []
+  if (!isRecord(v)) {
+    return {
+      document: createEmptySpecialists(),
+      integrity: { status: 'degraded', issues: [{ code: 'document-invalid' }] }
+    }
+  }
+  if (!hasOnlyKeys(v, new Set(['version', 'specialists'])) || !Array.isArray(v.specialists)) {
+    issues.push({ code: 'document-invalid' })
+  }
+  if (v.version !== 1 && v.version !== SPECIALISTS_FILE_VERSION) {
+    issues.push({ code: 'version-unsupported' })
+  }
   // Detect old experimental feat/specialist schema (kebab-case agentId) and ignore it.
   if (Array.isArray(v.specialists)) {
     const first = v.specialists[0]
     if (isRecord(first) && typeof first.agentId === 'string' && /[a-z]/.test(first.agentId)) {
       log.warn('ignoring old experimental specialist schema (kebab-case agentId detected)')
-      return createEmptySpecialists()
+      return {
+        document: createEmptySpecialists(),
+        integrity: { status: 'degraded', issues: [{ code: 'legacy-schema-unsupported' }] }
+      }
     }
   }
-  // Deliberate policy: a malformed *individual* record is silently dropped rather than
-  // failing the whole read.  Rationale: a single corrupt record is most likely from a
-  // schema migration or manual edit gone wrong; surfacing all valid specialists is better
-  // than blocking all access.  The risk of silent loss on next write is mitigated by
-  // getAll() now throwing on OS-level read failures — the dangerous path (transient
-  // EMFILE/EACCES producing an empty document that then gets written back) is closed.
-  // If you change this policy, audit callers of sanitizeSpecialists in mutate().
-  const specialists = Array.isArray(v.specialists)
-    ? v.specialists
-        .map(sanitizeStoredSpecialist)
-        .filter((s): s is StoredSpecialist => s !== undefined)
-    : []
-  return { version: SPECIALISTS_FILE_VERSION, specialists }
+  const specialists: StoredSpecialist[] = []
+  if (Array.isArray(v.specialists)) {
+    v.specialists.forEach((candidate, recordIndex) => {
+      const sanitized = sanitizeStoredSpecialist(candidate)
+      if (!sanitized) {
+        issues.push({ code: 'record-invalid', recordIndex })
+        return
+      }
+      specialists.push(sanitized)
+      if (isRecord(candidate) && storedSpecialistWouldLoseData(candidate)) {
+        issues.push({ code: 'record-sanitized', recordIndex })
+      }
+    })
+  }
+  return {
+    document: { version: SPECIALISTS_FILE_VERSION, specialists },
+    integrity: issues.length > 0 ? { status: 'degraded', issues } : { status: 'ok' }
+  }
 }
+
+const sanitizeSpecialists = (v: unknown): StoredSpecialists =>
+  sanitizeSpecialistsWithIntegrity(v).document
 
 // ---------------------------------------------------------------------------
 // Repository class
@@ -202,6 +357,13 @@ export class SpecialistRepository {
   }
 
   async getAll(): Promise<StoredSpecialists> {
+    return (await this.getAllWithIntegrity()).document
+  }
+
+  async getAllWithIntegrity(): Promise<{
+    document: StoredSpecialists
+    integrity: SpecialistDocumentIntegrity
+  }> {
     let raw: string
     try {
       raw = await readFile(this.filePath, 'utf8')
@@ -210,7 +372,7 @@ export class SpecialistRepository {
       // Any other OS error (EMFILE, EACCES, truncated read, etc.) must propagate so
       // that mutate() aborts rather than silently overwriting a store we could not read.
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return createEmptySpecialists()
+        return { document: createEmptySpecialists(), integrity: { status: 'ok' } }
       }
       log.error('failed to read specialists file — aborting to prevent data loss', {
         code: (err as NodeJS.ErrnoException).code
@@ -233,7 +395,7 @@ export class SpecialistRepository {
       throw err
     }
 
-    return sanitizeSpecialists(parsed)
+    return sanitizeSpecialistsWithIntegrity(parsed)
   }
 
   // Insert a new specialist (caller supplies a fully-formed record).
@@ -315,7 +477,10 @@ export class SpecialistRepository {
 
   // Package transactions use this narrow document swap after journaling their before/after state.
   async replaceAll(doc: StoredSpecialists): Promise<void> {
-    const run = this.saveQueue.then(() => this.write(doc))
+    const run = this.saveQueue.then(async () => {
+      await this.readWritableDocument()
+      await this.write(doc)
+    })
     this.saveQueue = run.then(
       () => undefined,
       () => undefined
@@ -332,7 +497,7 @@ export class SpecialistRepository {
     replacement: StoredSpecialists
   ): Promise<void> {
     const run = this.saveQueue.then(async () => {
-      const current = await this.getAll()
+      const current = await this.readWritableDocument()
       if (JSON.stringify(current) !== JSON.stringify(expected)) {
         throw new Error('Specialist document changed during package transaction.')
       }
@@ -348,7 +513,7 @@ export class SpecialistRepository {
   // Serializes mutations so concurrent callers cannot clobber each other.
   private mutate(fn: (doc: StoredSpecialists) => StoredSpecialists): Promise<StoredSpecialists> {
     const run = this.saveQueue.then(async () => {
-      const current = await this.getAll()
+      const current = await this.readWritableDocument()
       const next = fn(current)
       await this.write(next)
       return next
@@ -360,6 +525,14 @@ export class SpecialistRepository {
     return run
   }
 
+  private async readWritableDocument(): Promise<StoredSpecialists> {
+    const snapshot = await this.getAllWithIntegrity()
+    if (snapshot.integrity.status === 'degraded') {
+      throw new SpecialistDocumentDegradedError(snapshot.integrity)
+    }
+    return snapshot.document
+  }
+
   private async write(doc: StoredSpecialists): Promise<void> {
     await mkdir(this.storageDir, { recursive: true })
     this.writeSequence += 1
@@ -369,4 +542,8 @@ export class SpecialistRepository {
   }
 }
 
-export { sanitizeStoredSpecialist as sanitizeSpecialist, sanitizeSpecialists }
+export {
+  sanitizeStoredSpecialist as sanitizeSpecialist,
+  sanitizeSpecialists,
+  sanitizeSpecialistsWithIntegrity
+}

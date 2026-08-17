@@ -149,6 +149,10 @@ class AcpRuntimeCoordinator {
   private readonly activeRootAdmissions = new Map<string, RootAdmissionLease>()
   private promptAdmissionGuard?: (sessionId: string) => Promise<void>
   private promptDispatchAdmissionGuard?: PromptAdmissionGuard
+  private sessionResumeObserver?: (
+    request: AcpResumeSessionRequest,
+    response: AcpCreateSessionResponse
+  ) => Promise<void>
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionAdoptions = new Map<string, AcpRuntime>()
@@ -523,6 +527,7 @@ class AcpRuntimeCoordinator {
     this.sessionConnectionStatuses.set(response.sessionId, runtime.getSnapshot().status)
     this.lastRuntime = runtime
     if (transfersOwnership) this.callbacks.onStateChanged?.(this.getSnapshot())
+    await this.sessionResumeObserver?.(request, response)
     await this.delegatedWork?.wakeMessages?.(response.sessionId)
     return response
   }
@@ -651,6 +656,15 @@ class AcpRuntimeCoordinator {
 
   setPromptDispatchAdmissionGuard(guard: PromptAdmissionGuard): void {
     this.promptDispatchAdmissionGuard = guard
+  }
+
+  setSessionResumeObserver(
+    observer: (
+      request: AcpResumeSessionRequest,
+      response: AcpCreateSessionResponse
+    ) => Promise<void>
+  ): void {
+    this.sessionResumeObserver = observer
   }
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
