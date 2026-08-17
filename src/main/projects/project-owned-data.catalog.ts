@@ -326,7 +326,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'project-session-json',
     medium: 'filesystem',
-    resources: ['sessions/<projectId>/', 'sessions/.deleted/<projectId>/'],
+    resources: ['sessions/<projectId>/', 'deleted-sessions/<projectId>/'],
     policy: {
       kind: 'coordinator-cleanup',
       effect: 'hard-delete',
@@ -362,7 +362,7 @@ const PROJECT_OWNED_DATA_CATALOG: readonly ProjectOwnedDataCatalogEntry[] = [
   {
     id: 'delegated-frame-workspaces',
     medium: 'filesystem',
-    resources: ['delegation workspaces/<projectId>/'],
+    resources: ['delegation/<projectId>/'],
     policy: {
       kind: 'coordinator-cleanup',
       effect: 'hard-delete',

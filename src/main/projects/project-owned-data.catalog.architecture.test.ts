@@ -81,6 +81,18 @@ const functionScope = (relativePath: string, functionName: string): SourceScope 
   return { file, node: declaration }
 }
 
+const variableInitializer = (relativePath: string, variableName: string): SourceScope => {
+  const file = sourceFile(relativePath)
+  let initializer: Node | undefined
+  visit(file, (node) => {
+    if (isVariableDeclaration(node) && node.name.getText(file) === variableName) {
+      initializer = node.initializer
+    }
+  })
+  if (!initializer) throw new Error(`Variable initializer not found: ${variableName}`)
+  return { file, node: initializer }
+}
+
 const callsIn = ({ file, node }: SourceScope): CallRecord[] => {
   const calls: CallRecord[] = []
   visit(node, (candidate) => {
@@ -527,6 +539,17 @@ describe('Project-owned data catalog architecture', () => {
   })
 
   it('proves Session tombstones and delegated workspaces perform their declared filesystem cleanup', () => {
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'project-session-json')?.resources
+    ).toEqual(['sessions/<projectId>/', 'deleted-sessions/<projectId>/'])
+    expect(
+      normalized(
+        variableInitializer(
+          'src/main/session-persistence/repository.ts',
+          'DELETED_SESSIONS_DIR'
+        ).node.getText()
+      )
+    ).toBe("'deleted-sessions'")
     expectCallsInOrder(
       classMethod(
         'src/main/session-persistence/repository.ts',
@@ -548,6 +571,22 @@ describe('Project-owned data catalog architecture', () => {
       'src/main/delegation/production-composition.ts',
       'createProductionDelegatedWorkComposition'
     )
+    expect(
+      PROJECT_OWNED_DATA_CATALOG.find((entry) => entry.id === 'delegated-frame-workspaces')
+        ?.resources
+    ).toEqual(['delegation/<projectId>/'])
+    const workspaceConstruction = expectCall(delegated, 'createProductionFrameWorkspace').call
+      .arguments[0]
+    expect(workspaceConstruction && isObjectLiteralExpression(workspaceConstruction)).toBe(true)
+    expect(
+      normalized(
+        objectProperty(
+          delegated.file,
+          workspaceConstruction as ObjectLiteralExpression,
+          'root'
+        ).getText(delegated.file)
+      )
+    ).toBe("root:join(options.dataRoot,'delegation')")
     expectCall(nestedMethod(delegated, 'deleteProject'), 'workspace.deleteProject')
     const workspace = functionScope(
       'src/main/delegation/frame-workspace.ts',
