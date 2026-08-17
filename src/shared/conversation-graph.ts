@@ -807,6 +807,71 @@ export const ensureConversationRuntimeSegment = (
   return next
 }
 
+// Rewrites the session-id-derived root identity ids (root frame, root branch, initial runtime
+// segment) when a pending Session binds to its backend id, so no graph id keeps embedding the dead
+// pending id. Every reference across frames, branches, messages, activities, activity groups, and
+// runtime segments is remapped; ids not derived from the Session id are left untouched.
+export const rebaseConversationGraphSessionId = (
+  graph: PersistedConversationGraph,
+  fromSessionId: string,
+  toSessionId: string
+): PersistedConversationGraph => {
+  if (fromSessionId === toSessionId) return graph
+
+  const next = structuredClone(graph)
+  const renamedIds = new Map<string, string>()
+  for (const kind of ['root-frame', 'message-branch', 'runtime-segment']) {
+    const fromId = `${kind}-${fromSessionId}`
+    if (
+      next.rootFrameId === fromId ||
+      next.frames.some((frame) => frame.id === fromId) ||
+      next.branches.some((branch) => branch.id === fromId) ||
+      next.runtimeSegments.some((segment) => segment.id === fromId)
+    ) {
+      renamedIds.set(fromId, `${kind}-${toSessionId}`)
+    }
+  }
+  if (renamedIds.size === 0) return graph
+
+  const remap = (id: string): string => renamedIds.get(id) ?? id
+  const remapOptional = (id: string | undefined): string | undefined =>
+    id === undefined ? undefined : remap(id)
+
+  next.rootFrameId = remap(next.rootFrameId)
+  next.activeFrameId = remap(next.activeFrameId)
+  for (const frame of next.frames) {
+    frame.id = remap(frame.id)
+    frame.parentFrameId = remapOptional(frame.parentFrameId)
+    frame.activeBranchId = remap(frame.activeBranchId)
+  }
+  for (const branch of next.branches) {
+    branch.id = remap(branch.id)
+    branch.agentFrameId = remap(branch.agentFrameId)
+    branch.parentBranchId = remapOptional(branch.parentBranchId)
+  }
+  for (const message of next.messages) {
+    message.agentFrameId = remap(message.agentFrameId)
+    message.introducedOnBranchId = remap(message.introducedOnBranchId)
+    message.runtimeSegmentId = remapOptional(message.runtimeSegmentId)
+  }
+  for (const activity of next.activities) {
+    activity.agentFrameId = remap(activity.agentFrameId)
+    activity.messageBranchId = remap(activity.messageBranchId)
+    activity.runtimeSegmentId = remap(activity.runtimeSegmentId)
+  }
+  for (const group of next.activityGroups) {
+    group.agentFrameId = remap(group.agentFrameId)
+    group.messageBranchId = remap(group.messageBranchId)
+  }
+  for (const segment of next.runtimeSegments) {
+    segment.id = remap(segment.id)
+    segment.agentFrameId = remap(segment.agentFrameId)
+  }
+
+  validateConversationGraph(next)
+  return next
+}
+
 export const getActiveConversationContext = (
   graph: PersistedConversationGraph,
   promptMessageId: string

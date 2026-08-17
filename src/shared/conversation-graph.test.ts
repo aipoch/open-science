@@ -8,6 +8,7 @@ import {
   forkConversationAfterActivity,
   forkEditedConversationMessage,
   getActiveConversationContext,
+  rebaseConversationGraphSessionId,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
   synchronizeActiveConversationActivities,
@@ -466,5 +467,78 @@ describe('conversation graph', () => {
 
     const visibleAgain = activateConversationBranch(hidden, originalBranchId)
     expect(visibleAgain.activeFrameId).toBe(hidden.rootFrameId)
+  })
+
+  it('rebases session-derived root ids across every reference when a pending Session binds', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'pending-session-1',
+      messages: [message('u1', 'user', 'question', 1), message('a1', 'agent', 'answer', 2)],
+      frameworkId: 'opencode',
+      createdAt: 1,
+      updatedAt: 2
+    })
+
+    const rebased = rebaseConversationGraphSessionId(graph, 'pending-session-1', 'session-1')
+
+    expect(rebased.rootFrameId).toBe('root-frame-session-1')
+    expect(rebased.activeFrameId).toBe('root-frame-session-1')
+    expect(rebased.frames[0]).toMatchObject({
+      id: 'root-frame-session-1',
+      activeBranchId: 'message-branch-session-1'
+    })
+    expect(rebased.branches[0]).toMatchObject({
+      id: 'message-branch-session-1',
+      agentFrameId: 'root-frame-session-1'
+    })
+    expect(rebased.runtimeSegments[0]).toMatchObject({
+      id: 'runtime-segment-session-1',
+      agentFrameId: 'root-frame-session-1'
+    })
+    expect(
+      rebased.messages.every(
+        (node) =>
+          node.agentFrameId === 'root-frame-session-1' &&
+          node.introducedOnBranchId === 'message-branch-session-1' &&
+          node.runtimeSegmentId === 'runtime-segment-session-1'
+      )
+    ).toBe(true)
+    // The input graph is untouched.
+    expect(graph.rootFrameId).toBe('root-frame-pending-session-1')
+    expect(JSON.stringify(rebased)).not.toContain('pending-session-1')
+  })
+
+  it('rebase leaves forked branch and delegate frame ids untouched', () => {
+    const base = createLinearConversationGraph({
+      sessionId: 'pending-session-1',
+      messages: [message('u1', 'user', 'question', 1), message('a1', 'agent', 'answer', 2)],
+      frameworkId: 'opencode',
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const forked = forkEditedConversationMessage(base, 'u1', 'branch-edited', 3)
+
+    const rebased = rebaseConversationGraphSessionId(forked, 'pending-session-1', 'session-1')
+
+    expect(rebased.branches.map((branch) => branch.id)).toEqual([
+      'message-branch-session-1',
+      'branch-edited'
+    ])
+    expect(rebased.branches[1]).toMatchObject({
+      agentFrameId: 'root-frame-session-1',
+      parentBranchId: 'message-branch-session-1'
+    })
+    expect(rebased.activeFrameId).toBe('root-frame-session-1')
+  })
+
+  it('rebase returns the input graph unchanged when no session-derived ids exist', () => {
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages: [message('u1', 'user', 'question', 1)],
+      frameworkId: 'opencode',
+      createdAt: 1,
+      updatedAt: 1
+    })
+
+    expect(rebaseConversationGraphSessionId(graph, 'pending-session-9', 'session-9')).toBe(graph)
   })
 })

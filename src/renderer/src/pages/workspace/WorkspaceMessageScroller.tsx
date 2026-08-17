@@ -371,8 +371,18 @@ const WorkspaceMessageScrollerImpl = ({
   const activeConversationFrame = activeSession?.conversationGraph?.frames.find(
     (frame) => frame.id === activeSession.conversationGraph?.activeFrameId
   )
-  const currentPresentationScopeId = currentSessionId
-    ? JSON.stringify([currentSessionId, activeConversationFrame?.activeBranchId ?? 'legacy'])
+  // A pending Session keeps its first-rendered presentation identities after binding (the store
+  // records them as boundFromPending*/boundTo*), so neither the id swap nor the graph rebase
+  // remounts the transcript. A later intentional branch switch still changes the scope (#1124).
+  const activeBranchId = activeConversationFrame?.activeBranchId
+  const presentationBranchId =
+    activeSession?.boundToMessageBranchId !== undefined &&
+    activeBranchId === activeSession.boundToMessageBranchId
+      ? activeSession.boundFromPendingMessageBranchId
+      : activeBranchId
+  const presentationSessionId = activeSession?.boundFromPendingSessionId ?? currentSessionId
+  const currentPresentationScopeId = presentationSessionId
+    ? JSON.stringify([presentationSessionId, presentationBranchId ?? 'legacy'])
     : undefined
   const artifactVisibility = useWorkspaceArtifactVisibility(activeSession)
   const handoffEvents = useHandoffLifecycleEvents(handoffLifecycleSource, currentSessionId)
@@ -1019,7 +1029,7 @@ const WorkspaceMessageScrollerImpl = ({
   return (
     <>
       <MessageScrollerProvider
-        key={activeSession?.id ?? 'empty-conversation'}
+        key={activeSession?.boundFromPendingSessionId ?? activeSession?.id ?? 'empty-conversation'}
         autoScroll
         defaultScrollPosition="last-anchor"
         scrollPreviousItemPeek={64}

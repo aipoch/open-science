@@ -3,6 +3,7 @@ import {
   activateConversationBranch,
   forkEditedConversationMessage,
   projectConversationMessage,
+  rebaseConversationGraphSessionId,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
@@ -452,6 +453,20 @@ export const createSessionMessageGraphOwner = <
     )
     if (!pendingSession) return undefined
 
+    // Keep the transcript's presentation identity continuous across the id swap: remember the
+    // pending-side identities the UI was keyed on, and rebase the conversation graph's
+    // session-derived root ids off the dead pending id.
+    const previousActiveBranchId = pendingSession.conversationGraph?.frames.find(
+      (frame) => frame.id === pendingSession.conversationGraph?.activeFrameId
+    )?.activeBranchId
+    const boundFromPendingMessageBranchId = previousActiveBranchId?.endsWith(`-${pendingSessionId}`)
+      ? previousActiveBranchId
+      : undefined
+    const boundToMessageBranchId = boundFromPendingMessageBranchId?.replace(
+      `-${pendingSessionId}`,
+      `-${sessionId}`
+    )
+
     const now = Date.now()
     set({
       selectedSessionId:
@@ -462,6 +477,17 @@ export const createSessionMessageGraphOwner = <
               ...session,
               id: sessionId,
               isPending: false,
+              boundFromPendingSessionId: pendingSessionId,
+              ...(boundFromPendingMessageBranchId && boundToMessageBranchId
+                ? { boundFromPendingMessageBranchId, boundToMessageBranchId }
+                : {}),
+              conversationGraph: session.conversationGraph
+                ? rebaseConversationGraphSessionId(
+                    session.conversationGraph,
+                    pendingSessionId,
+                    sessionId
+                  )
+                : session.conversationGraph,
               cwd: cwd ?? session.cwd,
               agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
               agentBackendId: agentBackendId ?? session.agentBackendId,
