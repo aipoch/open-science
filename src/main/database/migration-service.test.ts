@@ -897,6 +897,65 @@ describe('application database migrations', () => {
     ).resolves.toMatchObject({ name: 'Preserved', archivedAt: null })
   })
 
+  it('repairs frozen pre-ledger ComputeJob columns without losing existing rows', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-legacy-compute-job-'))
+    client = createProjectDbClient(storageRoot)
+    await client.$executeRawUnsafe(`CREATE TABLE "ComputeJob" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "providerId" TEXT NOT NULL,
+      "shape" TEXT NOT NULL,
+      "sessionId" TEXT NOT NULL,
+      "projectId" TEXT NOT NULL,
+      "status" TEXT NOT NULL DEFAULT 'submitted',
+      "intent" TEXT NOT NULL,
+      "command" TEXT NOT NULL,
+      "commandHash" TEXT NOT NULL,
+      "environment" TEXT,
+      "resourceRequest" TEXT,
+      "inputManifest" TEXT,
+      "outputManifest" TEXT,
+      "harvestConfig" TEXT,
+      "timeoutSeconds" INTEGER,
+      "remoteWorkdir" TEXT,
+      "remoteHandle" TEXT,
+      "exitCode" INTEGER,
+      "stdoutTail" TEXT,
+      "stderrTail" TEXT,
+      "errorCode" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "submittedAt" DATETIME,
+      "startedAt" DATETIME,
+      "finishedAt" DATETIME,
+      "harvestedAt" DATETIME
+    )`)
+    await client.$executeRaw`
+      INSERT INTO "ComputeJob" (
+        "id", "providerId", "shape", "sessionId", "projectId", "intent", "command",
+        "commandHash", "status", "createdAt"
+      ) VALUES (
+        ${'legacy-job'}, ${'ssh:test'}, ${'direct_ssh'}, ${'legacy-session'},
+        ${'legacy-project'}, ${'preserved intent'}, ${'echo ok'}, ${'hash123'},
+        ${'submitted'}, ${new Date('2026-01-02T03:04:05Z')}
+      )
+    `
+
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      adoptedLegacy: true,
+      applied: MIGRATION_MANIFEST.map((migration) => migration.id)
+    })
+    await expect(
+      client.computeJob.findUniqueOrThrow({ where: { id: 'legacy-job' } })
+    ).resolves.toMatchObject({
+      intent: 'preserved intent',
+      lastPollError: null,
+      harvestError: null,
+      leftOnRemote: null,
+      notifiedAt: null,
+      notificationConsumedAt: null
+    })
+    await expect(verifyCurrentRuntimeSchema(client)).resolves.toBeUndefined()
+  })
+
   it('keeps explicitly retired Review and Finding columns after final verification', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-retired-columns-'))
     client = createProjectDbClient(storageRoot)

@@ -6,10 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { ComputeJobRepository } from './job-repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 
-// Verifies ComputeJob schema migration is purely additive (CLAUDE.md requirement):
-// - The table + indexes can be created on a fresh DB.
-// - Re-running ensure is idempotent.
-// - The table can be added to a pre-existing DB (Project only) without disturbing existing rows.
+// Exercises ComputeJobRepository against the current application schema in a real SQLite database.
+// Schema migration behavior is owned by src/main/database/migration-service.test.ts.
 
 let storageRoot: string | undefined
 let disconnect: (() => Promise<void>) | undefined
@@ -24,8 +22,8 @@ afterEach(async () => {
   }
 })
 
-describe('ComputeJob schema migration (integration)', () => {
-  it('creates the ComputeJob table and round-trips CRUD', async () => {
+describe('ComputeJob repository (SQLite integration)', () => {
+  it('round-trips CRUD', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-'))
 
     const client = createProjectDbClient(storageRoot)
@@ -36,10 +34,6 @@ describe('ComputeJob schema migration (integration)', () => {
     const repo = new ComputeJobRepository(() => Promise.resolve(client))
 
     // Fresh DB: no jobs.
-    expect(await repo.findNonTerminal()).toEqual([])
-
-    // Idempotent second run.
-    await migrateApplicationDatabase(client)
     expect(await repo.findNonTerminal()).toEqual([])
 
     // Create a job with all required fields.
@@ -138,153 +132,6 @@ describe('ComputeJob schema migration (integration)', () => {
     const forHostB = await repo.findNonTerminalByProvider('ssh:host-b')
     expect(forHostB).toHaveLength(1)
     expect(forHostB[0]!.job_id).toBe('job-b')
-  })
-
-  it('adds ComputeJob to a pre-existing DB with Project table only (additive migration)', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-migrate-'))
-
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-
-    // Simulate a pre-3a DB: only Project and ComputeHost tables exist.
-    await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Project" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "name" TEXT NOT NULL,
-      "description" TEXT NOT NULL DEFAULT '',
-      "isExample" BOOLEAN NOT NULL DEFAULT false,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL
-    )`)
-    await client.$executeRawUnsafe(
-      `INSERT INTO "Project" ("id","name","updatedAt") VALUES ('p1','Existing',CURRENT_TIMESTAMP)`
-    )
-    await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ComputeHost" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "providerId" TEXT NOT NULL,
-      "displayName" TEXT NOT NULL,
-      "shape" TEXT NOT NULL DEFAULT 'direct_ssh',
-      "sshAlias" TEXT NOT NULL,
-      "sshOverrides" TEXT,
-      "scratchRoot" TEXT,
-      "scratchPinned" BOOLEAN NOT NULL DEFAULT false,
-      "concurrencyLimit" INTEGER,
-      "probeResult" TEXT,
-      "detailsDoc" TEXT NOT NULL DEFAULT '',
-      "detailsUpdatedAt" DATETIME,
-      "detailsUpdatedBy" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL
-    )`)
-
-    // migrateApplicationDatabase must add ComputeJob without disturbing existing rows.
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      adoptedLegacy: true,
-      applied: [
-        '0001_runtime_schema_baseline',
-        '0002_project_agent_context',
-        '0003_granted_local_roots',
-        '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints',
-        '0007_notification_attention_metadata',
-        '0008_database_json_constraints'
-      ]
-    })
-    // Idempotent second run.
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
-
-    // Existing Project row is intact.
-    const projects = await client.project.findMany()
-    expect(projects).toHaveLength(1)
-    expect(projects[0]!.name).toBe('Existing')
-
-    // ComputeJob table is usable.
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
-    expect(await repo.findNonTerminal()).toHaveLength(0)
-
-    const created = await repo.create({
-      id: 'job-migrated',
-      providerId: 'ssh:test',
-      shape: 'direct_ssh',
-      sessionId: 's1',
-      projectId: 'p1',
-      intent: 'test',
-      command: 'echo ok',
-      commandHash: 'hash'
-    })
-    expect(created.job_id).toBe('job-migrated')
-  })
-
-  it('applies Phase 3b columns to a Phase 3a DB: old rows readable, new columns null', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-3a-to-3b-'))
-
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-
-    // Simulate a Phase 3a DB: ComputeJob table WITHOUT the 4 new 3b columns.
-    await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ComputeJob" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "providerId" TEXT NOT NULL,
-      "shape" TEXT NOT NULL,
-      "sessionId" TEXT NOT NULL,
-      "projectId" TEXT NOT NULL,
-      "status" TEXT NOT NULL DEFAULT 'submitted',
-      "intent" TEXT NOT NULL,
-      "command" TEXT NOT NULL,
-      "commandHash" TEXT NOT NULL,
-      "environment" TEXT,
-      "resourceRequest" TEXT,
-      "inputManifest" TEXT,
-      "outputManifest" TEXT,
-      "harvestConfig" TEXT,
-      "timeoutSeconds" INTEGER,
-      "remoteWorkdir" TEXT,
-      "remoteHandle" TEXT,
-      "exitCode" INTEGER,
-      "stdoutTail" TEXT,
-      "stderrTail" TEXT,
-      "errorCode" TEXT,
-      "lastPollError" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "submittedAt" DATETIME,
-      "startedAt" DATETIME,
-      "finishedAt" DATETIME,
-      "harvestedAt" DATETIME
-    )`)
-    // Insert a row with only 3a columns populated.
-    await client.$executeRawUnsafe(
-      `INSERT INTO "ComputeJob" ("id","providerId","shape","sessionId","projectId","intent","command","commandHash","status","createdAt")
-       VALUES ('old-job-1','ssh:test','direct_ssh','s1','p1','legacy intent','echo ok','hash123','submitted',CURRENT_TIMESTAMP)`
-    )
-
-    // Apply migrateApplicationDatabase — must add the 4 new columns without error.
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      adoptedLegacy: true,
-      applied: [
-        '0001_runtime_schema_baseline',
-        '0002_project_agent_context',
-        '0003_granted_local_roots',
-        '0004_review_assessment_snapshots',
-        '0005_project_preview_state_owner_fk',
-        '0006_database_domain_constraints',
-        '0007_notification_attention_metadata',
-        '0008_database_json_constraints'
-      ]
-    })
-    // Idempotent second run.
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
-
-    // Old row is readable via the repository; new columns default to null/undefined.
-    const repo = new ComputeJobRepository(() => Promise.resolve(client))
-    const jobs = await repo.findNonTerminal()
-    expect(jobs).toHaveLength(1)
-    expect(jobs[0]!.job_id).toBe('old-job-1')
-    expect(jobs[0]!.intent).toBe('legacy intent')
-    // New 3b columns must be undefined (null → undefined at repository boundary).
-    expect(jobs[0]!.harvest_error).toBeUndefined()
-    expect(jobs[0]!.left_on_remote).toBeUndefined()
-    expect(jobs[0]!.notified_at).toBeUndefined()
-    expect(jobs[0]!.notification_consumed_at).toBeUndefined()
   })
 
   it('round-trips the 4 new Phase 3b columns (harvestError, leftOnRemote, notifiedAt, notificationConsumedAt)', async () => {

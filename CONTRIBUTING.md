@@ -112,6 +112,11 @@ schema module is generated; do not edit it or add feature DDL to startup code.
 Prisma CLI is a development and CI tool only. Packaged applications execute the checked-in
 migration manifest and do not ship the Prisma migrate engine.
 
+Migration history is owned by `src/main/database/`. Module tests may run
+`migrateApplicationDatabase` to create a current-schema fixture, but handcrafted historical schemas,
+upgrade assertions, and migration-ledger expectations belong in the database migration tests rather
+than in feature-module suites.
+
 ### Branch names
 
 Use the format `<type>/<short-description>`, with a lowercase, hyphen-separated
